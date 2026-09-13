@@ -1,0 +1,24 @@
+/build/
+/build-*/
+/development/build-*/
+/_CPack_Packages/
+*.deb
+*.AppImage
+*.user
+*~
+# CMake generated files when configuring in the source directory
+CMakeCache.txt
+CMakeFiles/
+CPackConfig.cmake
+CPackSourceConfig.cmake
+CTestTestfile.cmake
+DartConfiguration.tcl
+cmake_install.cmake
+install_manifest.txt
+Testing/
+.qt/
+
+# Release documentation and screenshots are source assets, not build output.
+!docs/
+!docs/screenshots/
+!docs/screenshots/*.png
