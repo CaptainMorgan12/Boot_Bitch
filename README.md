@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.15 — first public release
+# Boot Bitch 0.2.16 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.15 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.16 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
 
 ## Minimum recovery requirement
 
@@ -73,6 +73,12 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 ### Settings
 
 ![Settings](docs/screenshots/08-settings.png)
+
+## 0.2.16 refinements
+
+- Fix Qt 6.4/Ubuntu CI compatibility for compact single-line snapshot rows.
+- Install `pkexec` in the GitHub Actions runner so repair-readiness UI tests exercise the same guarded capability path as supported desktop systems.
+- Accept a readable uploaded shell helper when a web-based copy loses its executable bit, invoking it explicitly through `/bin/bash`.
 
 ## 0.2.15 refinements
 
