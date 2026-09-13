@@ -1461,7 +1461,10 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotTable->setLineWidth(1);
     m_snapshotTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     m_snapshotTable->verticalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    m_snapshotTable->verticalHeader()->setMinimumSectionSize(qMax(28, fontMetrics().height() + 10));
+    // Keep single-line rows compact across Qt/platform font metrics.  A fixed
+    // 28px floor made Qt 6.4 builds exceed the intended one-line height.
+    m_snapshotTable->verticalHeader()->setMinimumSectionSize(
+        m_snapshotTable->fontMetrics().lineSpacing() + 10);
     // Recalculate after the table receives its final width. Snapshot loading
     // may run asynchronously while the page is still hidden; measuring rows
     // at that point otherwise leaves every row at an unnecessarily tall
@@ -2476,6 +2479,13 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
 
     QString program = helper;
     QStringList processArguments = {QStringLiteral("session")};
+    const QFileInfo helperInfo(helper);
+    const bool invokeThroughShell = !helperInfo.isExecutable()
+        && helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0;
+    if (invokeThroughShell) {
+        program = QStringLiteral("/bin/bash");
+        processArguments.prepend(helper);
+    }
 #ifdef Q_OS_UNIX
     if (geteuid() != 0) {
         program = QStandardPaths::findExecutable(QStringLiteral("pkexec"));
@@ -2483,7 +2493,12 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
             setError(QStringLiteral("pkexec/Polkit is required to authorize privileged Boot Bitch operations."));
             return false;
         }
-        processArguments.prepend(helper);
+        if (processArguments.isEmpty() || processArguments.first() != helper) {
+            processArguments.prepend(helper);
+        }
+        if (invokeThroughShell) {
+            processArguments.prepend(QStringLiteral("/bin/bash"));
+        }
     }
 #endif
 
@@ -3382,7 +3397,11 @@ void MainWindow::resizeSnapshotRows()
     }
 
     const QFontMetrics metrics(m_snapshotTable->font());
-    const int oneLineHeight = qMax(28, metrics.lineSpacing() + 10);
+    // Keep rows compact across Qt styles and font metrics.  Qt 6.4 on the
+    // Ubuntu CI runner uses a smaller line spacing than newer desktop builds;
+    // a fixed 28px floor would turn a single-line row into an unnecessary
+    // wrapped-looking gap and make the table less dense.
+    const int oneLineHeight = qMax(24, metrics.lineSpacing() + 10);
     m_snapshotTable->verticalHeader()->setDefaultSectionSize(oneLineHeight);
 
     for (int row = 0; row < m_snapshotTable->rowCount(); ++row) {
@@ -4078,7 +4097,7 @@ void MainWindow::resizeCapabilityRows()
     }
 
     const QFontMetrics metrics(m_capabilityTable->font());
-    const int oneLineHeight = qMax(28, metrics.lineSpacing() + 10);
+    const int oneLineHeight = metrics.lineSpacing() + 10;
     m_capabilityTable->verticalHeader()->setDefaultSectionSize(oneLineHeight);
 
     for (int row = 0; row < m_capabilityTable->rowCount(); ++row) {
@@ -5569,7 +5588,11 @@ QString MainWindow::repairHelperPath() const
 
     for (const QString &candidate : candidates) {
         QFileInfo info(candidate);
-        if (info.exists() && info.isFile() && info.isExecutable()) {
+        // Web-uploaded source trees may lose the executable bit on shell
+        // helpers.  Accept a readable .sh here; the session launcher invokes
+        // it explicitly through /bin/bash below.
+        if (info.exists() && info.isFile()
+            && (info.isExecutable() || info.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0)) {
             return info.canonicalFilePath().isEmpty() ? info.absoluteFilePath() : info.canonicalFilePath();
         }
     }

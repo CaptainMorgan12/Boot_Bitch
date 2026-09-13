@@ -1,5 +1,14 @@
 # Changelog
 
+## 0.2.16 — 2026-09-13
+
+Maintenance release following the first public 0.2.15 release.
+
+- Fixed compact snapshot-row sizing on Qt 6.4/Ubuntu CI.
+- Added `pkexec` to the GitHub Actions test environment so repair-readiness UI checks run with the required capability present.
+- Made source-tree helper discovery tolerant of a lost executable bit by invoking readable shell helpers through `/bin/bash`.
+- Revalidated the UI, Chroot Shell, display-manager contract, package, desktop-entry and AppStream checks.
+
 ## 0.2.15 — 2026-09-13
 
 First official GitHub release of Boot Bitch (published as `Boot_Bitch`).

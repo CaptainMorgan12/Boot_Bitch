@@ -57,6 +57,54 @@ For a completely empty repository, the shorter alternative is: `git init`,
 `git branch -M main`, `git remote add origin <repository-url>`, `git add -A`,
 `git commit`, and `git push -u origin main`.
 
+## Create the two GitHub releases
+
+Create the first release while the clone is still at the original 0.2.15
+commit. The package saved at `/tmp/boot-repair_0.2.15_amd64.deb` is the
+package built before the CI fixes.
+
+```bash
+cd /home/amiga/Projects/Boot_Bitch-github-fixed
+git status
+git log -1 --oneline
+git tag -a v0.2.15 -m "Boot Bitch 0.2.15 first public release"
+git push origin v0.2.15
+gh release create v0.2.15 \
+  /tmp/boot-repair_0.2.15_amd64.deb \
+  --title "Boot Bitch 0.2.15" \
+  --notes "First official Boot Bitch release."
+```
+
+Then synchronize the local maintenance fixes, push them to `main`, rebuild,
+and create the second release:
+
+```bash
+SOURCE=/home/amiga/Projects/Boot_Repair
+DEST=/home/amiga/Projects/Boot_Bitch-github-fixed
+
+rsync -a --delete \
+  --exclude='.git/' \
+  --exclude='build*/' \
+  --exclude='*.deb' \
+  --exclude='*.AppImage' \
+  "$SOURCE/" "$DEST/"
+find "$DEST" -maxdepth 1 -type f \
+  \( -name '*.deb' -o -name '*.AppImage' \) -print -delete
+
+cd "$DEST"
+git add -A
+git commit -m "Boot Bitch 0.2.16 CI compatibility fixes"
+git push origin main
+./scripts/build.sh
+QT_QPA_PLATFORM=offscreen ctest --test-dir build-release --output-on-failure
+gh release create v0.2.16 \
+  build-release/boot-repair_0.2.16_amd64.deb \
+  --title "Boot Bitch 0.2.16" \
+  --notes "Maintenance release: fixed Qt 6.4 CI row sizing, installed pkexec in CI, and made helper launching tolerant of lost executable bits."
+```
+
+The release assets are attached to GitHub Releases and are not copied into the source tree.
+
 ## GitHub web upload
 
 Choose **Add file → Upload files**, then drag the contents of this project
