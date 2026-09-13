@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>org.bootrepair.BootRepair</id>
+  <name>Boot Bitch</name>
+  <developer id="org.bootrepair">
+    <name>Boot Bitch Project</name>
+  </developer>
+  <summary>Inspect Linux systems and repair boot configuration</summary>
+  <url type="homepage">https://github.com/CaptainMorgan12/Boot_Bitch</url>
+  <url type="bugtracker">https://github.com/CaptainMorgan12/Boot_Bitch/issues</url>
+  <description>
+    <p>
+      Boot Bitch diagnoses Linux boot environments and performs guarded
+      recovery operations on a selected repair target. It supports encrypted
+      LUKS volumes, Btrfs subvolumes, GRUB, initramfs, EFI/UKI boot paths and
+      graphical login configuration.
+    </p>
+    <p>
+      Target changes are previewed and recorded, and read-only diagnostics are
+      available before repair actions are run.
+    </p>
+  </description>
+  <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
+  <releases>
+    <release version="0.2.15" date="2026-09-13">
+      <description>
+        <p>First official Boot Bitch release with guarded diagnostics, repair workflows, and support for configured graphical login managers.</p>
+      </description>
+    </release>
+  </releases>
+  <provides>
+    <binary>boot-repair</binary>
+  </provides>
+  <icon type="stock">org.bootrepair.BootRepair</icon>
+  <categories>
+    <category>System</category>
+    <category>Utility</category>
+  </categories>
+  <keywords>
+    <keyword>boot</keyword>
+    <keyword>repair</keyword>
+    <keyword>recovery</keyword>
+    <keyword>linux</keyword>
+    <keyword>grub</keyword>
+    <keyword>btrfs</keyword>
+    <keyword>luks</keyword>
+  </keywords>
+  <metadata_license>CC0-1.0</metadata_license>
+  <project_license>MIT</project_license>
+  <content_rating type="oars-1.1"/>
+</component>

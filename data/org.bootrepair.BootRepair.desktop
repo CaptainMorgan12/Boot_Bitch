@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Version=1.5
+Name=Boot Bitch
+GenericName=Linux Recovery Utility
+Comment=Inspect Linux systems and run guarded boot recovery operations
+Exec=boot-repair
+Icon=org.bootrepair.BootRepair
+Terminal=false
+Categories=System;
+Keywords=boot;repair;recovery;linux;grub;btrfs;luks;disk;
+StartupNotify=true
