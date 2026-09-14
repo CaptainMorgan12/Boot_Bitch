@@ -3,10 +3,18 @@
 #include <QApplication>
 #include <QCoreApplication>
 #include <QIcon>
+#include <QDir>
 
 int main(int argc, char *argv[])
 {
     QApplication application(argc, argv);
+
+    // Make the bundled hicolor application assets discoverable when running
+    // from an AppImage, while leaving the host desktop theme in control of
+    // widget styling and any icons it provides.
+    const QString appShare = QDir(QCoreApplication::applicationDirPath()).absoluteFilePath(QStringLiteral("../share"));
+    QIcon::setThemeSearchPaths({QDir(appShare).absoluteFilePath(QStringLiteral("icons")),
+                                QStringLiteral("/usr/share/icons")});
 
     QCoreApplication::setOrganizationName(QStringLiteral("BootRepair"));
     QCoreApplication::setOrganizationDomain(QStringLiteral("bootrepair.org"));
