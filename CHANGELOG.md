@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.2.20 — 2026-09-13
+
+- Add native Qt fallback glyphs and bundled icon search paths so AppImage
+  controls remain visible when the host desktop theme is unavailable.
+- Keep GNOME, GTK and KDE platform-theme styling while making portable
+  launches use the same readable icon treatment as installed builds.
+
 ## 0.2.19 — 2026-09-13
 
 - Add CaptainMorgan12 attribution to the About dialog, AppStream metadata,

@@ -5,11 +5,19 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-appimage}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
-APPIMAGETOOL="${APPIMAGETOOL:-appimagetool}"
+APPIMAGETOOL="${APPIMAGETOOL:-}"
 LINUXDEPLOY="${LINUXDEPLOY:-linuxdeploy}"
 LINUXDEPLOY_PLUGIN_QT="${LINUXDEPLOY_PLUGIN_QT:-linuxdeploy-plugin-qt}"
 APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
 QMAKE="${QMAKE:-$(command -v qmake6 2>/dev/null || command -v qmake 2>/dev/null || true)}"
+
+# Prefer the disposable local development install when no system tool was
+# selected. This keeps AppImage tooling out of the host package manager while
+# making repeated release-development builds one-command operations.
+if [[ -z "$APPIMAGETOOL" && -x "$ROOT_DIR/Development/tools/appimagetool-x86_64.AppImage" ]]; then
+    APPIMAGETOOL="$ROOT_DIR/Development/tools/appimagetool-x86_64.AppImage"
+fi
+APPIMAGETOOL="${APPIMAGETOOL:-appimagetool}"
 
 run_appimagetool()
 {

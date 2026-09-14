@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.19 — maintenance release
+# Boot Bitch 0.2.20 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.19 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.20 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -33,7 +33,7 @@ This build can:
 - perform a guarded transactional Btrfs `@` rollback after a read-only preflight, while keeping the source snapshot unchanged and retaining the previous root under a timestamped `@rollback-before-*` name;
 - build a Release executable and Debian package with the privileged helper included.
 
-Still intentionally constrained in 0.2.15:
+Still intentionally constrained in 0.2.20:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
@@ -78,11 +78,13 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ![Settings](docs/screenshots/08-settings.png)
 
-## 0.2.19 refinements
+## 0.2.20 refinements
 
 - Keep snapshot and host-capability table rows compact under GNOME/GTK styles; only wrapped text receives additional height.
 - Tint monochrome theme glyphs to the active readable text color in dark palettes while preserving colored status artwork.
 - Update GitHub Actions checkout to the Node.js 24-compatible `actions/checkout@v5`.
+- Add native Qt fallback glyphs and bundled icon search paths so AppImage controls
+  remain visible when the host desktop theme is unavailable.
 
 ## 0.2.17 refinements
 
@@ -370,6 +372,10 @@ privilege boundary or repair logic, and the Debian package lists them as
 optional suggestions so minimal KDE, GNOME and headless installations remain
 supported.
 
+To compare available diagnostic and tab icons on the current desktop theme,
+run `./scripts/check-icon-theme.sh`. It reports missing names and suggests
+equivalent freedesktop icons without changing the active theme.
+
 ## Build dependencies
 
 Required:
@@ -589,8 +595,8 @@ The script creates a clean Release build, stages the complete CMake install
 under an AppDir, validates the executable and privileged helper, lets
 `linuxdeploy` bundle Qt/shared-library dependencies, and invokes
 `appimagetool`. It does not install anything on the host. Run the artifact with
-`chmod +x build-release/boot-repair_0.2.19_x86_64.AppImage` followed by
-`./build-release/boot-repair_0.2.19_x86_64.AppImage`. If only `appimagetool`
+`chmod +x build-release/boot-repair_0.2.20_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.20_x86_64.AppImage`. If only `appimagetool`
 is available, the script creates a diagnostic AppImage and warns that it uses
 the host's Qt libraries; do not publish that fallback as a portable release.
 

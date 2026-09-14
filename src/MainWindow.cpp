@@ -40,6 +40,7 @@
 #include <QMenuBar>
 #include <QModelIndex>
 #include <QMessageBox>
+#include <QMouseEvent>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QPushButton>
@@ -168,31 +169,325 @@ QIcon terminalIcon(const QColor &foreground)
     return icon;
 }
 
+// AppImages may run without any discoverable host icon theme, and a few Qt
+// styles return an empty standard icon in that case.  Keep the interface
+// usable by drawing small, high-contrast glyphs ourselves as the final
+// fallback.  These are deliberately simple geometric marks so they render
+// consistently with both the raster and vector Qt backends.
+QIcon glyphIcon(const QString &name, const QColor &requestedForeground)
+{
+    const QPalette palette = QApplication::palette();
+    QColor foreground = requestedForeground;
+    if (foreground.lightness() < 120) {
+        foreground = palette.color(QPalette::WindowText);
+    }
+    if (foreground.lightness() < 120) {
+        foreground = QColor(235, 235, 235);
+    }
+
+    QIcon icon;
+    for (const int size : {16, 20, 22, 24, 32, 48, 64}) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const qreal s = static_cast<qreal>(size);
+        const qreal width = qMax<qreal>(1.5, s / 9.0);
+        QPen pen(foreground, width);
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        painter.setBrush(Qt::NoBrush);
+
+        if (name.contains(QStringLiteral("warning")) || name.contains(QStringLiteral("error"))) {
+            QPolygonF triangle;
+            triangle << QPointF(s * 0.50, s * 0.12)
+                     << QPointF(s * 0.88, s * 0.83)
+                     << QPointF(s * 0.12, s * 0.83);
+            painter.drawPolygon(triangle);
+            painter.drawLine(QPointF(s * 0.50, s * 0.34), QPointF(s * 0.50, s * 0.58));
+            painter.drawPoint(QPointF(s * 0.50, s * 0.70));
+        } else if (name.contains(QStringLiteral("task-complete")) || name.contains(QStringLiteral("dialog-ok"))
+                   || name == QStringLiteral("ok") || name.contains(QStringLiteral("apply"))) {
+            painter.drawEllipse(QRectF(s * 0.14, s * 0.14, s * 0.72, s * 0.72));
+            painter.drawLine(QPointF(s * 0.29, s * 0.50), QPointF(s * 0.44, s * 0.65));
+            painter.drawLine(QPointF(s * 0.44, s * 0.65), QPointF(s * 0.72, s * 0.34));
+        } else if (name.contains(QStringLiteral("refresh"))) {
+            painter.drawArc(QRectF(s * 0.18, s * 0.18, s * 0.64, s * 0.64), 40 * 16, 285 * 16);
+            QPolygonF arrow;
+            arrow << QPointF(s * 0.74, s * 0.16)
+                  << QPointF(s * 0.86, s * 0.17)
+                  << QPointF(s * 0.82, s * 0.30);
+            painter.setBrush(foreground);
+            painter.drawPolygon(arrow);
+        } else if (name.contains(QStringLiteral("copy"))) {
+            painter.drawRoundedRect(QRectF(s * 0.28, s * 0.14, s * 0.52, s * 0.58), s * 0.05, s * 0.05);
+            painter.drawRoundedRect(QRectF(s * 0.14, s * 0.30, s * 0.52, s * 0.56), s * 0.05, s * 0.05);
+        } else if (name.contains(QStringLiteral("terminal"))) {
+            return terminalIcon(foreground);
+        } else if (name.contains(QStringLiteral("lock")) || name.contains(QStringLiteral("password"))
+                   || name.contains(QStringLiteral("encrypt")) || name.contains(QStringLiteral("unlocked"))) {
+            painter.drawRoundedRect(QRectF(s * 0.20, s * 0.42, s * 0.60, s * 0.42), s * 0.05, s * 0.05);
+            painter.drawArc(QRectF(s * 0.32, s * 0.16, s * 0.36, s * 0.50), 0, 180 * 16);
+            painter.drawLine(QPointF(s * 0.50, s * 0.55), QPointF(s * 0.50, s * 0.69));
+        } else if (name.contains(QStringLiteral("drive")) || name == QStringLiteral("computer")
+                   || name.contains(QStringLiteral("removable"))) {
+            painter.drawRoundedRect(QRectF(s * 0.12, s * 0.22, s * 0.76, s * 0.56), s * 0.06, s * 0.06);
+            painter.drawLine(QPointF(s * 0.22, s * 0.62), QPointF(s * 0.78, s * 0.62));
+            painter.drawPoint(QPointF(s * 0.70, s * 0.46));
+        } else if (name.contains(QStringLiteral("folder"))) {
+            QPolygonF folder;
+            folder << QPointF(s * 0.12, s * 0.28) << QPointF(s * 0.42, s * 0.28)
+                   << QPointF(s * 0.50, s * 0.18) << QPointF(s * 0.86, s * 0.18)
+                   << QPointF(s * 0.86, s * 0.78) << QPointF(s * 0.12, s * 0.78);
+            painter.drawPolygon(folder);
+        } else if (name.contains(QStringLiteral("settings")) || name.contains(QStringLiteral("preferences"))) {
+            for (const qreal y : {s * 0.30, s * 0.50, s * 0.70}) {
+                painter.drawLine(QPointF(s * 0.16, y), QPointF(s * 0.84, y));
+            }
+            painter.setBrush(foreground);
+            painter.drawEllipse(QPointF(s * 0.34, s * 0.30), width, width);
+            painter.drawEllipse(QPointF(s * 0.65, s * 0.50), width, width);
+            painter.drawEllipse(QPointF(s * 0.42, s * 0.70), width, width);
+        } else if (name.contains(QStringLiteral("run")) || name.contains(QStringLiteral("play"))) {
+            QPolygonF play;
+            play << QPointF(s * 0.30, s * 0.16) << QPointF(s * 0.76, s * 0.50)
+                 << QPointF(s * 0.30, s * 0.84);
+            painter.drawPolygon(play);
+        } else if (name.contains(QStringLiteral("help")) || name.contains(QStringLiteral("information"))) {
+            painter.drawEllipse(QRectF(s * 0.16, s * 0.16, s * 0.68, s * 0.68));
+            painter.drawText(QRectF(0, s * 0.16, s, s * 0.68), Qt::AlignCenter, QStringLiteral("i"));
+        } else if (name.contains(QStringLiteral("display")) || name.contains(QStringLiteral("video"))) {
+            painter.drawRect(QRectF(s * 0.14, s * 0.18, s * 0.72, s * 0.52));
+            painter.drawLine(QPointF(s * 0.38, s * 0.82), QPointF(s * 0.62, s * 0.82));
+            painter.drawLine(QPointF(s * 0.50, s * 0.70), QPointF(s * 0.50, s * 0.82));
+        } else if (name.contains(QStringLiteral("remove")) || name.contains(QStringLiteral("clear"))) {
+            painter.drawLine(QPointF(s * 0.22, s * 0.50), QPointF(s * 0.78, s * 0.50));
+        } else if (name.contains(QStringLiteral("document")) || name.contains(QStringLiteral("file"))
+                   || name.contains(QStringLiteral("text")) || name.contains(QStringLiteral("log"))) {
+            painter.drawRect(QRectF(s * 0.22, s * 0.12, s * 0.56, s * 0.76));
+            for (const qreal y : {s * 0.36, s * 0.52, s * 0.68}) {
+                painter.drawLine(QPointF(s * 0.34, y), QPointF(s * 0.66, y));
+            }
+        } else {
+            painter.drawEllipse(QRectF(s * 0.18, s * 0.18, s * 0.64, s * 0.64));
+            painter.drawLine(QPointF(s * 0.34, s * 0.50), QPointF(s * 0.66, s * 0.50));
+            painter.drawLine(QPointF(s * 0.50, s * 0.34), QPointF(s * 0.50, s * 0.66));
+        }
+
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+        icon.addPixmap(pixmap, QIcon::Disabled, QIcon::Off);
+    }
+    return icon;
+}
+
+QIcon fallbackGlyphIcon(const QString &name, const QColor &foreground)
+{
+    QString glyph = QStringLiteral("?");
+    if (name.contains(QStringLiteral("drive")) || name == QStringLiteral("computer")) glyph = QStringLiteral("D");
+    else if (name.contains(QStringLiteral("warning")) || name.contains(QStringLiteral("error"))) glyph = QStringLiteral("!");
+    else if (name.contains(QStringLiteral("information")) || name.contains(QStringLiteral("help"))) glyph = QStringLiteral("i");
+    else if (name.contains(QStringLiteral("terminal"))) glyph = QStringLiteral(">");
+    else if (name.contains(QStringLiteral("copy"))) glyph = QStringLiteral("C");
+    else if (name.contains(QStringLiteral("refresh"))) glyph = QStringLiteral("R");
+    else if (name.contains(QStringLiteral("settings")) || name.contains(QStringLiteral("configure"))) glyph = QStringLiteral("S");
+    else if (name.contains(QStringLiteral("wizard")) || name.contains(QStringLiteral("repair"))) glyph = QStringLiteral("W");
+    else if (name.contains(QStringLiteral("revert")) || name.contains(QStringLiteral("snapshot"))) glyph = QStringLiteral("V");
+    else if (name.contains(QStringLiteral("log"))) glyph = QStringLiteral("L");
+    else if (name.contains(QStringLiteral("lock")) || name.contains(QStringLiteral("encrypt"))) glyph = QStringLiteral("K");
+
+    QIcon icon;
+    for (const int size : {16, 20, 22, 24, 32, 48, 64}) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        painter.setPen(QPen(foreground, qMax(1, size / 12)));
+        painter.setBrush(Qt::NoBrush);
+        painter.drawRoundedRect(QRectF(size * 0.12, size * 0.12, size * 0.76, size * 0.76), size * 0.12, size * 0.12);
+        QFont font = painter.font();
+        font.setBold(true);
+        font.setPixelSize(qMax(8, static_cast<int>(size * 0.58)));
+        painter.setFont(font);
+        painter.drawText(QRectF(0, 0, size, size), Qt::AlignCenter, glyph);
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+        icon.addPixmap(pixmap, QIcon::Disabled, QIcon::Off);
+    }
+    return icon;
+}
+
+// A small semantic atlas is compiled into the executable.  It is used only
+// when the active desktop theme does not provide a usable icon, which keeps
+// AppImages and minimal GTK/Qt installations visually consistent without
+// replacing a user's native theme artwork.
+QIcon bundledIcon(const QString &name)
+{
+    QString atlasName = QStringLiteral("document");
+    if (name == QStringLiteral("task-complete") || name == QStringLiteral("dialog-ok-apply")) {
+        atlasName = QStringLiteral("check");
+    } else if (name == QStringLiteral("system-run") || name == QStringLiteral("tools-wizard")) {
+        atlasName = QStringLiteral("run");
+    } else if (name == QStringLiteral("view-refresh")) {
+        atlasName = QStringLiteral("refresh");
+    } else if (name == QStringLiteral("document-edit") || name == QStringLiteral("edit-clear")) {
+        atlasName = QStringLiteral("edit");
+    } else if (name == QStringLiteral("document-save")) {
+        atlasName = QStringLiteral("save");
+    } else if (name == QStringLiteral("document-open") || name == QStringLiteral("folder-open")) {
+        atlasName = QStringLiteral("open");
+    } else if (name == QStringLiteral("document-open-recent")) {
+        atlasName = QStringLiteral("snapshot");
+    } else if (name == QStringLiteral("list-remove") || name == QStringLiteral("application-exit")) {
+        atlasName = QStringLiteral("trash");
+    } else if (name == QStringLiteral("security-high")) {
+        atlasName = QStringLiteral("security");
+    } else if (name == QStringLiteral("dialog-information") || name == QStringLiteral("help-contextual")
+               || name == QStringLiteral("help-about") || name == QStringLiteral("help-contents")) {
+        atlasName = QStringLiteral("info");
+    } else if (name == QStringLiteral("dialog-password")) {
+        atlasName = QStringLiteral("question");
+    } else if (name == QStringLiteral("system-software-install")) {
+        atlasName = QStringLiteral("install");
+    } else if (name == QStringLiteral("system-software-update")) {
+        atlasName = QStringLiteral("update");
+    } else if (name == QStringLiteral("applications-development") || name == QStringLiteral("dkms")) {
+        atlasName = QStringLiteral("development");
+    } else if (name.contains(QStringLiteral("drive")) || name == QStringLiteral("computer")) {
+        atlasName = QStringLiteral("drive");
+    } else if (name.contains(QStringLiteral("btrfs")) || name.contains(QStringLiteral("filesystem"))
+               || name.contains(QStringLiteral("ext4"))) {
+        atlasName = QStringLiteral("filesystem");
+    } else if (name.contains(QStringLiteral("configure")) || name.contains(QStringLiteral("settings"))
+               || name.contains(QStringLiteral("preferences")) || name.contains(QStringLiteral("repair"))) {
+        atlasName = QStringLiteral("gear");
+    } else if (name.contains(QStringLiteral("terminal"))) {
+        atlasName = QStringLiteral("terminal");
+    } else if (name.contains(QStringLiteral("lock")) || name.contains(QStringLiteral("encrypt"))
+               || name.contains(QStringLiteral("password")) || name.contains(QStringLiteral("unlocked"))) {
+        atlasName = QStringLiteral("lock");
+    } else if (name.contains(QStringLiteral("warning")) || name.contains(QStringLiteral("error"))
+               || name.contains(QStringLiteral("report-bug"))) {
+        atlasName = QStringLiteral("warning");
+    } else if (name.contains(QStringLiteral("display")) || name.contains(QStringLiteral("video"))) {
+        atlasName = QStringLiteral("display");
+    } else if (name.contains(QStringLiteral("copy"))) {
+        atlasName = QStringLiteral("copy");
+    } else if (name.contains(QStringLiteral("folder")) || name.contains(QStringLiteral("log"))) {
+        atlasName = QStringLiteral("folder");
+    } else if (name.contains(QStringLiteral("snapshot")) || name.contains(QStringLiteral("revert"))) {
+        atlasName = QStringLiteral("snapshot");
+    } else if (name.contains(QStringLiteral("help")) || name.contains(QStringLiteral("information"))) {
+        atlasName = QStringLiteral("info");
+    }
+    const QString path = QStringLiteral(":/icons/atlas/%1.svg").arg(atlasName);
+    return QFile::exists(path) ? QIcon(path) : QIcon();
+}
+
 QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
 {
     QIcon source = QIcon::fromTheme(name, fallback);
+    // Try common freedesktop aliases before drawing a fallback.  Themes often
+    // ship a semantically equivalent name rather than every application
+    // specific name used by Boot Bitch.
+    if (source.isNull() || name == QStringLiteral("preferences-system")
+        || name == QStringLiteral("dialog-information")) {
+        QStringList aliases;
+        if (name == QStringLiteral("preferences-system")) aliases << QStringLiteral("applications-system") << QStringLiteral("preferences-desktop");
+        else if (name == QStringLiteral("tools-report-bug")) aliases << QStringLiteral("dialog-warning") << QStringLiteral("applications-development");
+        else if (name == QStringLiteral("tools-wizard")) aliases << QStringLiteral("applications-utilities") << QStringLiteral("system-run");
+        else if (name == QStringLiteral("document-revert")) aliases << QStringLiteral("document-open-recent") << QStringLiteral("view-refresh");
+        else if (name == QStringLiteral("text-x-log")) aliases << QStringLiteral("text-x-generic") << QStringLiteral("document-preview");
+        else if (name == QStringLiteral("dialog-information")) aliases << QStringLiteral("help-about") << QStringLiteral("dialog-question");
+        else if (name == QStringLiteral("document-preview")) aliases << QStringLiteral("document-properties") << QStringLiteral("document-open");
+        else if (name == QStringLiteral("filesystem-btrfs")
+                 || name == QStringLiteral("filesystem-ext4")
+                 || name == QStringLiteral("filesystem-xfs")
+                 || name == QStringLiteral("filesystem-ntfs")
+                 || name == QStringLiteral("filesystem-vfat")
+                 || name == QStringLiteral("filesystem-swap")) {
+            // Filesystem-specific names are optional in all three desktop
+            // icon ecosystems.  A disk/partition icon still communicates
+            // "this is storage" when a theme has no dedicated filesystem
+            // artwork.
+            aliases << QStringLiteral("filesystem-generic")
+                    << QStringLiteral("drive-partition")
+                    << QStringLiteral("drive-harddisk");
+        } else if (name == QStringLiteral("filesystem-generic")) aliases << QStringLiteral("drive-partition") << QStringLiteral("drive-harddisk");
+        for (const QString &alias : aliases) {
+            source = QIcon::fromTheme(alias);
+            if (!source.isNull()) break;
+        }
+    }
+    // A few desktop themes return a solid placeholder for an unknown name.
+    // Treat that as missing so the semantic high-contrast glyph below is used
+    // instead of displaying an unreadable white square.
+    if (!source.isNull()) {
+        const QImage probe = source.pixmap(24, 24, QIcon::Normal, QIcon::Off).toImage().convertToFormat(QImage::Format_ARGB32);
+        if (!probe.isNull()) {
+            int visible = 0;
+            int uniform = 0;
+            QColor reference;
+            for (int y = 0; y < probe.height(); ++y) {
+                for (int x = 0; x < probe.width(); ++x) {
+                    const QColor pixel = probe.pixelColor(x, y);
+                    if (pixel.alpha() <= 20) continue;
+                    ++visible;
+                    if (!reference.isValid()) reference = pixel;
+                    if (reference.isValid() && std::abs(pixel.red() - reference.red()) < 8
+                        && std::abs(pixel.green() - reference.green()) < 8
+                        && std::abs(pixel.blue() - reference.blue()) < 8) {
+                        ++uniform;
+                    }
+                }
+            }
+            if (visible > 180 && uniform * 10 >= visible * 9) {
+                source = QIcon();
+            }
+        }
+    }
     if (source.isNull()) {
+        source = bundledIcon(name);
+    }
+    if (source.isNull() || source.pixmap(24, 24).isNull()) {
         // Portable AppImages do not always inherit the host icon-theme search
         // path. Keep every control legible with a native Qt fallback while
         // still preferring the active GNOME/KDE theme when it is available.
         QStyle::StandardPixmap standard = QStyle::SP_FileIcon;
+        bool hasStandard = false;
         if (name.contains(QStringLiteral("drive")) || name == QStringLiteral("computer")) {
             standard = QStyle::SP_ComputerIcon;
+            hasStandard = true;
         } else if (name.contains(QStringLiteral("warning")) || name.contains(QStringLiteral("error"))) {
             standard = QStyle::SP_MessageBoxWarning;
+            hasStandard = true;
         } else if (name.contains(QStringLiteral("ok")) || name == QStringLiteral("task-complete")) {
             standard = QStyle::SP_DialogApplyButton;
+            hasStandard = true;
         } else if (name.contains(QStringLiteral("refresh"))) {
             standard = QStyle::SP_BrowserReload;
+            hasStandard = true;
         } else if (name.contains(QStringLiteral("copy"))) {
             standard = QStyle::SP_FileDialogDetailedView;
+            hasStandard = true;
         } else if (name.contains(QStringLiteral("terminal"))) {
             standard = QStyle::SP_CommandLink;
+            hasStandard = true;
         }
-        source = QApplication::style()->standardIcon(standard);
+        if (hasStandard) {
+            source = QApplication::style()->standardIcon(standard);
+        }
+        if (!hasStandard || source.isNull()) {
+            const QPalette palette = QApplication::palette();
+            source = fallbackGlyphIcon(name, palette.color(QPalette::WindowText));
+        }
     }
-    if (source.isNull()) {
-        return source;
+    if (source.isNull() || source.pixmap(24, 24).isNull()) {
+        const QPalette palette = QApplication::palette();
+        QColor foreground = palette.color(QPalette::WindowText);
+        if (palette.color(QPalette::Text).lightness() > foreground.lightness()) {
+            foreground = palette.color(QPalette::Text);
+        }
+        return glyphIcon(name, foreground);
     }
 
     // Some GNOME/GTK icon themes provide dark monochrome glyphs even when the
@@ -265,6 +560,33 @@ QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
     return tinted.isNull() ? source : tinted;
 }
 
+QIcon filesystemIcon(const QString &fileSystem)
+{
+    const QString fs = fileSystem.trimmed().toLower();
+    if (fs == QStringLiteral("btrfs")) {
+        return themedIcon(QStringLiteral("filesystem-btrfs"));
+    }
+    if (fs == QStringLiteral("ext4") || fs == QStringLiteral("ext3") || fs == QStringLiteral("ext2")) {
+        return themedIcon(QStringLiteral("filesystem-ext4"));
+    }
+    if (fs == QStringLiteral("xfs")) {
+        return themedIcon(QStringLiteral("filesystem-xfs"));
+    }
+    if (fs == QStringLiteral("ntfs") || fs == QStringLiteral("ntfs3")) {
+        return themedIcon(QStringLiteral("filesystem-ntfs"));
+    }
+    if (fs == QStringLiteral("vfat") || fs == QStringLiteral("fat16") || fs == QStringLiteral("fat32")) {
+        return themedIcon(QStringLiteral("filesystem-vfat"));
+    }
+    if (fs == QStringLiteral("swap")) {
+        return themedIcon(QStringLiteral("filesystem-swap"));
+    }
+    if (!fs.isEmpty() && fs != QStringLiteral("—")) {
+        return themedIcon(QStringLiteral("filesystem-generic"));
+    }
+    return QIcon();
+}
+
 QLabel *subtleLabel(const QString &text)
 {
     auto *label = new QLabel(text);
@@ -302,6 +624,46 @@ QVBoxLayout *standardDialogLayout(QDialog *dialog, int minimumWidth = 500)
     return layout;
 }
 
+// Informational help is a lightweight, modeless popup.  Keep the explicit
+// Close button and Escape handling, while also making a click elsewhere in
+// the application dismiss it so it never blocks the page underneath.
+class DismissibleHelpDialog final : public QDialog
+{
+public:
+    explicit DismissibleHelpDialog(QWidget *parent)
+        : QDialog(parent)
+    {
+        setAttribute(Qt::WA_DeleteOnClose);
+        setModal(false);
+        setWindowModality(Qt::NonModal);
+        if (auto *application = qApp) {
+            application->installEventFilter(this);
+        }
+    }
+
+    ~DismissibleHelpDialog() override
+    {
+        if (auto *application = qApp) {
+            application->removeEventFilter(this);
+        }
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        Q_UNUSED(watched);
+        if (event->type() == QEvent::MouseButtonPress && isVisible()) {
+            const auto *mouseEvent = static_cast<const QMouseEvent *>(event);
+            const QPoint globalPosition = mouseEvent->globalPosition().toPoint();
+            if (!frameGeometry().contains(globalPosition)) {
+                close();
+                return true;
+            }
+        }
+        return QDialog::eventFilter(watched, event);
+    }
+};
+
 void configureTargetSummaryLabel(QLabel *label)
 {
     if (!label) {
@@ -322,9 +684,14 @@ void configureTargetSummaryLabel(QLabel *label)
 
 void showCompactHelp(QWidget *parent, const QString &title, const QString &text)
 {
-    QDialog dialog(parent);
-    dialog.setWindowTitle(title);
-    auto *layout = standardDialogLayout(&dialog, 390);
+    auto *dialog = new DismissibleHelpDialog(parent);
+    dialog->setWindowTitle(title);
+    auto *layout = standardDialogLayout(dialog, 390);
+    // standardDialogLayout is shared with genuinely modal editors and
+    // confirmations; help remains explicitly modeless so outside clicks can
+    // reach the application and dismiss this popup.
+    dialog->setModal(false);
+    dialog->setWindowModality(Qt::NonModal);
 
     layout->addWidget(sectionTitle(title));
 
@@ -334,10 +701,12 @@ void showCompactHelp(QWidget *parent, const QString &title, const QString &text)
     layout->addWidget(body);
 
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-    QObject::connect(buttons, &QDialogButtonBox::rejected, &dialog, &QDialog::reject);
+    QObject::connect(buttons, &QDialogButtonBox::rejected, dialog, &QDialog::reject);
     layout->addWidget(buttons);
 
-    dialog.exec();
+    dialog->show();
+    dialog->raise();
+    dialog->activateWindow();
 }
 
 QToolButton *contextHelpButton(QWidget *parent, const QString &title, const QString &text)
@@ -2336,6 +2705,13 @@ void MainWindow::addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node)
 
     auto *item = parent ? new QTreeWidgetItem(parent) : new QTreeWidgetItem(m_deviceTree);
     item->setIcon(0, iconForDevice(node));
+    // Keep the device identity icon in column 0 and show the detected
+    // filesystem type alongside its text.  This gives Btrfs/ext4 and other
+    // filesystems a useful visual cue without depending on a particular
+    // desktop's icon-theme vocabulary.
+    if (!node.fileSystem.isEmpty()) {
+        item->setIcon(4, filesystemIcon(node.fileSystem));
+    }
     item->setText(0, nameText);
     item->setText(1, statusText);
     item->setText(2, connectionText);
@@ -2612,8 +2988,11 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     QString program = helper;
     QStringList processArguments = {QStringLiteral("session")};
     const QFileInfo helperInfo(helper);
-    const bool invokeThroughShell = !helperInfo.isExecutable()
-        && helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0;
+    // The AppImage may be mounted with a noexec /tmp policy.  The helper is a
+    // shell script even though installation preserves its executable bit, so
+    // invoke it through bash explicitly to avoid an EACCES from the mount.
+    const bool invokeThroughShell = helperInfo.fileName() == QStringLiteral("boot-repair-helper")
+        || helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0;
     if (invokeThroughShell) {
         program = QStringLiteral("/bin/bash");
         processArguments.prepend(helper);
@@ -5697,6 +6076,14 @@ QString MainWindow::repairHelperPath() const
     const QStringList candidates = {
         QDir(appDir).absoluteFilePath(QStringLiteral("../scripts/boot-repair-helper.sh")),
         QDir(appDir).absoluteFilePath(QStringLiteral("scripts/boot-repair-helper.sh")),
+        // Source-tree builds are often launched from the checkout while the
+        // binary lives in a temporary build directory.  Resolve the helper
+        // from the working directory as well so guarded UI preflight remains
+        // testable and useful before installation.
+        QDir::current().absoluteFilePath(QStringLiteral("scripts/boot-repair-helper.sh")),
+#ifdef BOOT_REPAIR_SOURCE_DIR
+        QStringLiteral(BOOT_REPAIR_SOURCE_DIR "/scripts/boot-repair-helper.sh"),
+#endif
         // AppImage/CMake AppDir layout: usr/bin/boot-repair beside
         // usr/libexec/boot-repair/boot-repair-helper.
         QDir(appDir).absoluteFilePath(QStringLiteral("../libexec/boot-repair/boot-repair-helper")),

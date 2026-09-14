@@ -1,5 +1,29 @@
 <RCC>
   <qresource prefix="/icons">
     <file alias="org.bootrepair.BootRepair.png">org.bootrepair.BootRepair.png</file>
+    <file alias="atlas/drive.svg">icons/atlas/drive.svg</file>
+    <file alias="atlas/filesystem.svg">icons/atlas/filesystem.svg</file>
+    <file alias="atlas/gear.svg">icons/atlas/gear.svg</file>
+    <file alias="atlas/info.svg">icons/atlas/info.svg</file>
+    <file alias="atlas/document.svg">icons/atlas/document.svg</file>
+    <file alias="atlas/terminal.svg">icons/atlas/terminal.svg</file>
+    <file alias="atlas/lock.svg">icons/atlas/lock.svg</file>
+    <file alias="atlas/warning.svg">icons/atlas/warning.svg</file>
+    <file alias="atlas/display.svg">icons/atlas/display.svg</file>
+    <file alias="atlas/copy.svg">icons/atlas/copy.svg</file>
+    <file alias="atlas/folder.svg">icons/atlas/folder.svg</file>
+    <file alias="atlas/snapshot.svg">icons/atlas/snapshot.svg</file>
+    <file alias="atlas/check.svg">icons/atlas/check.svg</file>
+    <file alias="atlas/run.svg">icons/atlas/run.svg</file>
+    <file alias="atlas/refresh.svg">icons/atlas/refresh.svg</file>
+    <file alias="atlas/edit.svg">icons/atlas/edit.svg</file>
+    <file alias="atlas/save.svg">icons/atlas/save.svg</file>
+    <file alias="atlas/open.svg">icons/atlas/open.svg</file>
+    <file alias="atlas/trash.svg">icons/atlas/trash.svg</file>
+    <file alias="atlas/security.svg">icons/atlas/security.svg</file>
+    <file alias="atlas/question.svg">icons/atlas/question.svg</file>
+    <file alias="atlas/install.svg">icons/atlas/install.svg</file>
+    <file alias="atlas/update.svg">icons/atlas/update.svg</file>
+    <file alias="atlas/development.svg">icons/atlas/development.svg</file>
   </qresource>
 </RCC>
