@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.20 — maintenance release
+# Boot Bitch 0.2.21 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.20 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.21 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -8,7 +8,7 @@ This project was written with LLM assistance under human guidance, requirements 
 
 ## Minimum recovery requirement
 
-Boot Bitch must be launched from a **different booted Linux environment than the system being repaired**. Use a Linux live USB, recovery stick, or another Linux installation on a different physical drive. The running host is never a valid repair target.
+Boot Bitch must be launched from a **different booted Linux environment for ordinary repair-target work**. Use a Linux live USB, recovery stick, or another Linux installation on a different physical drive when repairing another system. The running host remains protected from ordinary target selection; an explicit Host Maintenance scope is available for guarded native maintenance of the active Debian/Ubuntu-family system.
 
 ## Safety boundary
 
@@ -16,6 +16,7 @@ This build can:
 
 - enumerate and rank Linux storage devices with the existing read-only scanner;
 - protect the top-level device backing `/`, `/boot` and `/boot/efi`;
+- keep the protected running host separate from ordinary repair targets, while allowing deliberate Host Maintenance selection after repeating the host identity and mount checks;
 - select a physical repair disk and its best visible Linux root component;
 - unlock a selected non-host LUKS repair component through `cryptsetup` + Polkit without placing the passphrase in command arguments or logs;
 - prefer the newly visible Linux filesystem inside an unlocked LUKS stack;
@@ -25,6 +26,8 @@ This build can:
 - mount target `/boot` and `/boot/efi` entries when they are safely resolvable on the selected disk;
 - bind the minimum runtime filesystems needed for a chroot repair;
 - on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, offline SDDM graphical-login recovery, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`;
+- in Host Maintenance scope, run the same supported repair stages natively on the active Debian/Ubuntu-family system, with package-lock checks, writable-mount checks, and a private read-only EFI-variable namespace for indirect hooks;
+- inspect the running host with the full read-only diagnostic set, including EFI/UKI files, embedded kernel/cmdline, PARTUUID-owned firmware entries, BootOrder, GRUB handoff, and journal evidence;
 - require an explicit confirmation in the GUI before every modifying operation;
 - request administrator authorization once per Boot Bitch window and retain only the narrow whitelisted helper session until explicitly locked or the app exits;
 - show modifying operations and Run All diagnostics in a modal privileged-output window, while individual diagnostics write directly into the persistent Results pane; persist the session log to `/var/log/boot-repair-session.log` only for requests that deliberately crossed the read-write boundary and still have a writable target log mount;
@@ -33,11 +36,11 @@ This build can:
 - perform a guarded transactional Btrfs `@` rollback after a read-only preflight, while keeping the source snapshot unchanged and retaining the previous root under a timestamped `@rollback-before-*` name;
 - build a Release executable and Debian package with the privileged helper included.
 
-Still intentionally constrained in 0.2.20:
+Still intentionally constrained in 0.2.21:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
-- modifying repair backends for non-Debian package families.
+- modifying repair backends for non-Debian package families; native Host Maintenance changes use the same Debian/Ubuntu-family limitation;
 
 
 
@@ -78,7 +81,7 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ![Settings](docs/screenshots/08-settings.png)
 
-## 0.2.20 refinements
+## 0.2.21 refinements
 
 - Bundle the completed semantic Qt/KDE icon atlas and restore the stable 0.2.13
   defaults for tabs, diagnostics, repair stages and actions.
@@ -416,8 +419,8 @@ The script creates a clean Release build, stages the complete CMake install
 under an AppDir, validates the executable and privileged helper, lets
 `linuxdeploy` bundle Qt/shared-library dependencies, and invokes
 `appimagetool`. It does not install anything on the host. Run the artifact with
-`chmod +x build-release/boot-repair_0.2.20_x86_64.AppImage` followed by
-`./build-release/boot-repair_0.2.20_x86_64.AppImage`. If only `appimagetool`
+`chmod +x build-release/boot-repair_0.2.21_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.21_x86_64.AppImage`. If only `appimagetool`
 is available, the script creates a diagnostic AppImage and warns that it uses
 the host's Qt libraries; do not publish that fallback as a portable release.
 
@@ -433,11 +436,11 @@ The uninstall helper uses CMake's generated `build/install_manifest.txt`, lists 
 
 ### Systems
 
-Shows the protected running host separately, then ranks selectable physical repair drives. Technical child volumes are collapsed by default and are informational only. Locked LUKS candidates expose an Unlock button beside Select Target; after a successful unlock the device topology refreshes and the mapped Linux filesystem becomes the preferred repair component.
+Shows the protected running host separately, then ranks selectable physical repair drives. Technical child volumes are collapsed by default and are informational only. Locked LUKS candidates expose an Unlock button beside Select Target; after a successful unlock the device topology refreshes and the mapped Linux filesystem becomes the preferred repair component. Host Maintenance deliberately selects the protected active system for its guarded native repair stages.
 
 ### Diagnostics
 
-Provides always-available troubleshooting navigation for the protected running host or selected repair target. Results remain read-only, selectable, copyable and savable. The Repair → Validate action adds a privileged read-only mount validation when deeper target confirmation is needed.
+Provides always-available troubleshooting navigation for the protected **Running Host** or the explicitly selected **repair drive**. Choose the scope from **Inspect**. Both scopes use the full read-only inspection backend; host EFI/UKI diagnostics classify every firmware entry by ESP PARTUUID and show the active host's actual boot files, embedded UKI kernel/cmdline and BootOrder. Results remain read-only, selectable, copyable and savable. The Repair → Validate action adds a privileged read-only mount validation when deeper repair-drive confirmation is needed.
 
 ### Chroot Shell
 
@@ -445,7 +448,7 @@ Runs one command at a time as root inside the selected repair system. Commands r
 
 ### Repair
 
-Settings define the Full Repair plan. Enabled stages are shown in execution order. Every configurable stage also appears one-for-one under Individual repair tools: package configuration, broken-dependency repair, package metadata refresh, adaptive package upgrade, DKMS, SDDM graphical login, initramfs, EFI/UKI, and GRUB. Validate environment remains an automatic preflight, and Boot stack reconciliation remains a manual recovery tool.
+Settings define the Full Repair plan. Enabled stages are shown in execution order. Every configurable stage also appears one-for-one under Individual repair tools: package configuration, broken-dependency repair, package metadata refresh, adaptive package upgrade, DKMS, SDDM graphical login, initramfs, EFI/UKI, and GRUB. Select a repair drive for offline repair, or choose **Host Maintenance** on the protected Running Host card to run the same supported stages natively on the active Debian/Ubuntu-family system. Host maintenance repeats disk/root/boot-mount identity checks, prevents package races, and isolates firmware variables from indirect hooks; the helper then reconciles only the active host's EFI entry while preserving every other disk's entries and BootOrder. After reconciliation, decoded entries on the selected ESP keep their distribution/vendor label and receive the selected disk model once (for example `tuxedo WD_BLACK SN8100 HS 4000GB`); an existing model name is never duplicated. If an `iPXE.efi` loader exists on that ESP but has no matching firmware entry, TUXEDO systems receive `WFAI <model>` and other distributions receive `iPXE <model>`, always within the same PARTUUID boundary. Validate environment remains an automatic preflight, and Boot stack reconciliation remains a manual recovery tool.
 
 ### Snapshots
 
@@ -453,7 +456,7 @@ Shows the guarded Btrfs rollback workflow. Loading and inspection remain read-on
 
 ### File Copy
 
-A direction selector runs either Host → Repair or Repair → Host transfers. Host paths use native file dialogs; repair-side paths are absolute paths inside the selected repair system. Preview is a guarded rsync dry-run. Copy execution validates containment and ownership, uses `rsync -aHAX --numeric-ids` without `--delete`, and verifies the result with a checksum/metadata dry-run plus SHA-256 for regular files.
+A direction selector runs either Host → Repair or Repair → Host transfers. Host paths use native file dialogs; repair-side paths are absolute paths inside the selected repair system. **Browse Target Folders** reads the selected repair tree through a temporary read-only helper mount for each directory view, so it never displays the host folders as a substitute and never leaves the target mounted. A destination may still be entered as a new absolute path when the folder does not exist yet. Preview is a guarded rsync dry-run. Copy execution validates containment and ownership, uses `rsync -aHAX --numeric-ids` without `--delete`, and verifies the result with a checksum/metadata dry-run plus SHA-256 for regular files.
 
 ### Logs
 

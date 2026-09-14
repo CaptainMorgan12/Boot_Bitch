@@ -34,7 +34,7 @@ find "$DEST" -maxdepth 1 -type f \
 cd "$DEST"
 git add -A
 git status
-git commit -m "Prepare Boot Bitch 0.2.20 release"
+git commit -m "Prepare Boot Bitch 0.2.21 release"
 git push origin main
 ```
 
@@ -60,7 +60,8 @@ For a completely empty repository, the shorter alternative is: `git init`,
 
 ## Create the GitHub release
 
-Create the 0.2.20 release after the icon atlas build has passed. The tested
+Create the 0.2.21 release after the package, helper, EFI reconciliation, and
+UI contract checks have passed. The tested
 artifacts are kept in the local release workspace and are intentionally not
 copied into the source tree.
 
@@ -68,13 +69,13 @@ copied into the source tree.
 cd /home/amiga/Projects/Boot_Bitch-github-fixed
 git status
 git log -1 --oneline
-git tag -a v0.2.20 -m "Boot Bitch 0.2.20 icon atlas release"
-git push origin v0.2.20
-gh release create v0.2.20 \
-  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_amd64.deb \
-  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_x86_64.AppImage \
-  --title "Boot Bitch 0.2.20" \
-  --notes-file docs/release-notes-0.2.20.md
+git tag -a v0.2.21 -m "Boot Bitch 0.2.21 host maintenance release"
+git push origin v0.2.21
+gh release create v0.2.21 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.21_amd64.deb \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.21_x86_64.AppImage \
+  --title "Boot Bitch 0.2.21" \
+  --notes-file docs/release-notes-0.2.21.md
 ```
 
 The release assets are attached to GitHub Releases and are not copied into the source tree.
@@ -101,8 +102,8 @@ to the matching GitHub release (the AppImage remains ignored by source-tree
 syncs):
 
 ```bash
-gh release upload v0.2.20 \
-  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_x86_64.AppImage
+gh release upload v0.2.21 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.21_x86_64.AppImage
 ```
 
 If a tool is not on `PATH`, provide its path explicitly, for example:

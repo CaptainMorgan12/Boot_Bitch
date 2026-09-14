@@ -25,6 +25,9 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
+    <release version="0.2.21" date="2026-09-14">
+      <description><p>Add guarded running-host maintenance, host EFI/UKI restoration, model-aware firmware labels, and target-aware repair file browsing.</p></description>
+    </release>
     <release version="0.2.20" date="2026-09-13">
       <description><p>Add native Qt icon fallbacks and bundled icon search paths for portable AppImage launches.</p></description>
     </release>

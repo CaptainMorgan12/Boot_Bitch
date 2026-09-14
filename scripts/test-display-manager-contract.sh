@@ -24,7 +24,7 @@ grep -q 'display-manager.service does not resolve to \$DISPLAY_MANAGER_LABEL' "$
 # Diagnostic evidence must include all supported manager names and graphics
 # journal signals, while repair remains offline and never starts a GUI.
 grep -q 'Installed display managers and units' "$HELPER"
-grep -q 'Recent target display-manager boot evidence' "$HELPER"
+grep -q 'Recent .*display-manager boot evidence' "$HELPER"
 grep -q 'sddm|gdm|lightdm|greetd' "$HELPER"
 grep -q 'will NOT be started inside the repair chroot' "$HELPER"
 grep -q '^trial_display_manager_headless()' "$HELPER"
