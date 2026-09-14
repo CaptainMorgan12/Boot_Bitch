@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.17
+    VERSION 0.2.18
     DESCRIPTION "Guarded Linux boot repair and recovery utility with diagnostics and privileged target repair backend"
     LANGUAGES CXX
 )
@@ -136,8 +136,8 @@ endif()
 # The generated Debian package uses standard /usr paths regardless of that
 # local-install prefix.
 set(CPACK_PACKAGE_NAME "boot-repair")
-set(CPACK_PACKAGE_VENDOR "Boot Bitch Project")
-set(CPACK_PACKAGE_CONTACT "Boot Bitch Project <boot-repair@example.com>")
+set(CPACK_PACKAGE_VENDOR "CaptainMorgan12")
+set(CPACK_PACKAGE_CONTACT "CaptainMorgan12 <captainmorgan12@users.noreply.github.com>")
 set(CPACK_PACKAGE_DESCRIPTION_SUMMARY "Linux recovery and boot-repair utility")
 set(CPACK_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_PACKAGE_INSTALL_DIRECTORY "Boot Bitch")

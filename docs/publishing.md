@@ -105,6 +105,32 @@ gh release create v0.2.16 \
 
 The release assets are attached to GitHub Releases and are not copied into the source tree.
 
+## Build and attach an AppImage
+
+AppImages are generated locally because `appimagetool` is a separate upstream
+release utility. Install it from the
+[official releases](https://github.com/AppImage/appimagetool/releases), place
+the executable on `PATH`, and run this from the source tree:
+
+```bash
+./scripts/build-appimage.sh
+```
+
+The script creates `build-release/boot-repair_<version>_x86_64.AppImage` and
+bundles the GUI, desktop metadata, icons, documentation and guarded helper.
+The helper still uses host `pkexec`/Polkit and repair commands, so the target
+system must provide those runtime dependencies. Attach the generated artifact
+to the matching GitHub release (the AppImage remains ignored by source-tree
+syncs):
+
+```bash
+gh release upload v0.2.18 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.18_x86_64.AppImage
+```
+
+If `appimagetool` is not on `PATH`, provide its path explicitly with
+`APPIMAGETOOL=/path/to/appimagetool ./scripts/build-appimage.sh`.
+
 ## GitHub web upload
 
 Choose **Add file → Upload files**, then drag the contents of this project

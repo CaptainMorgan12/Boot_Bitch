@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.2.18 — 2026-09-13
+
+- Keep table rows compact under GNOME/GTK platform themes and grow only rows that wrap.
+- Improve dark-theme icon contrast while preserving colored status artwork.
+- Update GitHub Actions checkout to `actions/checkout@v5` for Node.js 24 runners.
+
 ## 0.2.17 — 2026-09-13
 
 - Add optional GNOME/GTK Qt platform-theme and XDG portal package suggestions.
