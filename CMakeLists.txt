@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.16
+    VERSION 0.2.17
     DESCRIPTION "Guarded Linux boot repair and recovery utility with diagnostics and privileged target repair backend"
     LANGUAGES CXX
 )
@@ -145,6 +145,9 @@ set(CPACK_PACKAGING_INSTALL_PREFIX "/usr")
 set(CPACK_DEBIAN_PACKAGE_SECTION "utils")
 set(CPACK_DEBIAN_PACKAGE_PRIORITY "optional")
 set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
+# Optional platform-theme integrations make Qt controls and dialogs blend
+# into GNOME without overriding KDE's native Qt theme.
+set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-platformtheme, qgnomeplatform-qt6")
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, hicolor-icon-theme")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)

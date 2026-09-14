@@ -1,5 +1,10 @@
 # Changelog
 
+## 0.2.17 — 2026-09-13
+
+- Add optional GNOME/GTK Qt platform-theme and XDG portal package suggestions.
+- Document environment-driven GNOME theme selection while retaining native KDE styling.
+
 ## 0.2.16 — 2026-09-13
 
 Maintenance release following the first public 0.2.15 release.

@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.16 — maintenance release
+# Boot Bitch 0.2.17 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.16 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.17 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
 
 ## Minimum recovery requirement
 
@@ -73,6 +73,11 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 ### Settings
 
 ![Settings](docs/screenshots/08-settings.png)
+
+## 0.2.17 refinements
+
+- Add optional Debian package suggestions for the Qt GTK platform theme, XDG desktop portal integration, and the dedicated GNOME Qt platform theme. KDE installations continue using their native Plasma style.
+- Document GNOME launch options (`QT_QPA_PLATFORMTHEME=gtk3` or `gnome`) and keep theme selection environment-driven so dark/light settings and accessibility preferences come from the desktop.
 
 ## 0.2.16 refinements
 
@@ -333,6 +338,28 @@ Generated build output belongs in `build/` and is ignored by Git.
 - Storage discovery must not assume NVMe, internal disks, encryption or one filesystem layout.
 - Current-system protection is mandatory and cannot be disabled.
 
+### GNOME and KDE/Qt desktop integration
+
+Boot Bitch is a Qt 6 Widgets application and deliberately does not force a
+global stylesheet or the Fusion style. It follows the desktop's font, palette,
+spacing, icons, dialogs and accessibility settings. KDE uses its normal Qt
+platform theme. On GNOME, install the optional Qt platform-theme and portal
+plugins for GTK-like controls and native file dialogs:
+
+```bash
+sudo apt install qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme
+```
+
+`qgnomeplatform-qt6` is another optional GNOME theme implementation when your
+distribution provides it. With that package installed, an explicit
+`QT_QPA_PLATFORMTHEME=gnome` launch selects it; otherwise leave the variable
+unset and Qt will use the available desktop platform theme. The GTK plugin can
+also be selected explicitly with `QT_QPA_PLATFORMTHEME=gtk3 boot-repair`.
+These packages only affect presentation. They do not change Boot Bitch's
+privilege boundary or repair logic, and the Debian package lists them as
+optional suggestions so minimal KDE, GNOME and headless installations remain
+supported.
+
 ## Build dependencies
 
 Required:
@@ -542,4 +569,3 @@ Missing optional tools disable the related action. Modifying repair execution is
 ## License
 
 Boot Bitch is released under the MIT License. See `LICENSE`.
-
