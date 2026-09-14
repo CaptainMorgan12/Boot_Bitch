@@ -2,6 +2,8 @@
 
 Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.18 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
 
+This was written entirely by LLM with guidance, and requirements provided as well as tests manually verified.
+
 **Developer:** CaptainMorgan12
 
 ## Minimum recovery requirement
