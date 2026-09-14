@@ -1,6 +1,6 @@
 # Boot Bitch development summary
 
-Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development series. Earlier versions were hardware and workflow candidates; this summary groups the changes by capability for readers who do not need the full version-by-version changelog.
+Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development series. Versions before 0.2.15 were development iterations and are retained as historical notes rather than public releases. Earlier versions were hardware and workflow candidates; this summary groups the changes by capability for readers who do not need the full version-by-version changelog.
 
 ## Recovery foundation
 
