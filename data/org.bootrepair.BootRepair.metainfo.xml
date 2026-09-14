@@ -3,7 +3,7 @@
   <id>org.bootrepair.BootRepair</id>
   <name>Boot Bitch</name>
   <developer id="org.bootrepair">
-    <name>Boot Bitch Project</name>
+    <name>CaptainMorgan12</name>
   </developer>
   <summary>Inspect Linux systems and repair boot configuration</summary>
   <url type="homepage">https://github.com/CaptainMorgan12/Boot_Bitch</url>
@@ -22,6 +22,9 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
+    <release version="0.2.18" date="2026-09-13">
+      <description><p>Improve GNOME dark-theme icon contrast and keep table rows compact across platform styles.</p></description>
+    </release>
     <release version="0.2.17" date="2026-09-13">
       <description><p>Optional GNOME and GTK Qt platform-theme integration and cross-desktop documentation.</p></description>
     </release>

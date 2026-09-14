@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.17 — maintenance release
+# Boot Bitch 0.2.18 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.17 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.18 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
 
 ## Minimum recovery requirement
 
@@ -73,6 +73,12 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 ### Settings
 
 ![Settings](docs/screenshots/08-settings.png)
+
+## 0.2.18 refinements
+
+- Keep snapshot and host-capability table rows compact under GNOME/GTK styles; only wrapped text receives additional height.
+- Tint monochrome theme glyphs to the active readable text color in dark palettes while preserving colored status artwork.
+- Update GitHub Actions checkout to the Node.js 24-compatible `actions/checkout@v5`.
 
 ## 0.2.17 refinements
 
@@ -516,7 +522,38 @@ cmake --build build-deb --target package
 
 The Debian package uses `/usr` paths even though a normal manual CMake installation can still use `/usr/local` or another chosen prefix.
 
-An AppImage is intentionally deferred because the privileged helper should be installed at a stable root-owned path with the operating system authorization stack. A `.deb` is the safer fit for this release than embedding a mutable privileged helper inside a portable image.
+An AppImage is also available for portable testing and systems without a local
+package build. It bundles the GUI and guarded helper, while privileged actions
+still use the host's `pkexec`/Polkit and system utilities. Install the normal
+runtime tools listed above before attempting a repair. Build one locally with
+`./scripts/build-appimage.sh`; the resulting artifact is written to
+`build-release/` and is excluded from Git source uploads.
+
+The AppImage is a convenience distribution format, not a sandbox: the helper
+must be authorized by the host and reads or changes only the explicitly
+selected repair target. For regular installation and desktop integration, the
+Debian package remains the recommended format.
+
+## Build an AppImage
+
+Install [`appimagetool`](https://github.com/AppImage/appimagetool/releases)
+and make it available on `PATH`, then run:
+
+```bash
+./scripts/build-appimage.sh
+```
+
+To use a tool installed at another path:
+
+```bash
+APPIMAGETOOL="$HOME/bin/appimagetool" ./scripts/build-appimage.sh
+```
+
+The script creates a clean Release build, stages the complete CMake install
+under an AppDir, validates the executable and privileged helper, and invokes
+`appimagetool`. It does not install anything on the host. Run the artifact with
+`chmod +x build-release/boot-repair_0.2.18_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.18_x86_64.AppImage`.
 
 ## Uninstall
 

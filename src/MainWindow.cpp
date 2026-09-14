@@ -32,6 +32,7 @@
 #include <QHeaderView>
 #include <QIcon>
 #include <QInputDialog>
+#include <QImage>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -142,6 +143,70 @@ static const DiagnosticSpec diagnosticSpecs[] = {
     {"report", "Full diagnostic report", "Combines all read-only diagnostics; target scope uses one privileged inspection session.", "document-preview"}
 };
 
+QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
+{
+    const QIcon source = QIcon::fromTheme(name, fallback);
+    if (source.isNull()) {
+        return source;
+    }
+
+    // Some GNOME/GTK icon themes provide dark monochrome glyphs even when the
+    // application palette is dark. Tint only monochrome glyphs to the current
+    // text colour so they remain legible, while leaving coloured status and
+    // device artwork unchanged.
+    const QPalette palette = QApplication::palette();
+    const QColor background = palette.color(QPalette::Window);
+    QColor foreground = palette.color(QPalette::WindowText);
+    const QColor buttonText = palette.color(QPalette::ButtonText);
+    const QColor text = palette.color(QPalette::Text);
+    if (buttonText.lightness() > foreground.lightness()) {
+        foreground = buttonText;
+    }
+    if (text.lightness() > foreground.lightness()) {
+        foreground = text;
+    }
+    if (background.lightness() >= 150 || foreground.lightness() <= background.lightness()) {
+        return source;
+    }
+
+    QIcon tinted;
+    const QList<int> sizes{16, 20, 22, 24, 32, 48, 64};
+    for (const int size : sizes) {
+        const QPixmap pixmap = source.pixmap(size, QIcon::Normal, QIcon::Off);
+        if (pixmap.isNull()) {
+            continue;
+        }
+        QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
+        bool coloured = false;
+        for (int y = 0; y < image.height() && !coloured; ++y) {
+            for (int x = 0; x < image.width(); ++x) {
+                const QColor pixel = image.pixelColor(x, y);
+                if (pixel.alpha() > 20 && pixel.saturationF() > 0.18) {
+                    coloured = true;
+                    break;
+                }
+            }
+        }
+        if (!coloured) {
+            for (int y = 0; y < image.height(); ++y) {
+                for (int x = 0; x < image.width(); ++x) {
+                    QColor pixel = image.pixelColor(x, y);
+                    if (pixel.alpha() > 0) {
+                        pixel.setRed(foreground.red());
+                        pixel.setGreen(foreground.green());
+                        pixel.setBlue(foreground.blue());
+                        image.setPixelColor(x, y, pixel);
+                    }
+                }
+            }
+            tinted.addPixmap(QPixmap::fromImage(image), QIcon::Normal, QIcon::Off);
+        } else {
+            tinted.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+        }
+    }
+    return tinted.isNull() ? source : tinted;
+}
+
 QLabel *subtleLabel(const QString &text)
 {
     auto *label = new QLabel(text);
@@ -220,7 +285,7 @@ void showCompactHelp(QWidget *parent, const QString &title, const QString &text)
 QToolButton *contextHelpButton(QWidget *parent, const QString &title, const QString &text)
 {
     auto *button = new QToolButton(parent);
-    const QIcon icon = QIcon::fromTheme(QStringLiteral("help-contextual"));
+    const QIcon icon = themedIcon(QStringLiteral("help-contextual"));
     if (icon.isNull()) {
         button->setText(QStringLiteral("?"));
     } else {
@@ -693,14 +758,14 @@ MainWindow::MainWindow(QWidget *parent)
         if (!m_tabs || m_tabs->count() == 0) return;
         m_tabs->setCurrentIndex(qMin(m_tabs->count() - 1, m_tabs->currentIndex() + 1));
     });
-    m_tabs->addTab(buildSystemsPage(), QIcon::fromTheme(QStringLiteral("drive-harddisk")), QStringLiteral("Systems"));
-    m_tabs->addTab(buildDiagnosticsPage(), QIcon::fromTheme(QStringLiteral("tools-report-bug")), QStringLiteral("Diagnostics"));
-    m_tabs->addTab(buildRepairPage(), QIcon::fromTheme(QStringLiteral("tools-wizard")), QStringLiteral("Repair"));
-    m_tabs->addTab(buildSnapshotsPage(), QIcon::fromTheme(QStringLiteral("document-revert")), QStringLiteral("Snapshots"));
-    m_tabs->addTab(buildChrootShellPage(), QIcon::fromTheme(QStringLiteral("utilities-terminal")), QStringLiteral("Chroot Shell"));
-    m_tabs->addTab(buildFileCopyPage(), QIcon::fromTheme(QStringLiteral("edit-copy")), QStringLiteral("File Copy"));
-    m_tabs->addTab(buildLogsPage(), QIcon::fromTheme(QStringLiteral("text-x-log")), QStringLiteral("Logs"));
-    m_tabs->addTab(buildSettingsPage(), QIcon::fromTheme(QStringLiteral("settings-configure")), QStringLiteral("Settings"));
+    m_tabs->addTab(buildSystemsPage(), themedIcon(QStringLiteral("drive-harddisk")), QStringLiteral("Systems"));
+    m_tabs->addTab(buildDiagnosticsPage(), themedIcon(QStringLiteral("tools-report-bug")), QStringLiteral("Diagnostics"));
+    m_tabs->addTab(buildRepairPage(), themedIcon(QStringLiteral("tools-wizard")), QStringLiteral("Repair"));
+    m_tabs->addTab(buildSnapshotsPage(), themedIcon(QStringLiteral("document-revert")), QStringLiteral("Snapshots"));
+    m_tabs->addTab(buildChrootShellPage(), themedIcon(QStringLiteral("utilities-terminal")), QStringLiteral("Chroot Shell"));
+    m_tabs->addTab(buildFileCopyPage(), themedIcon(QStringLiteral("edit-copy")), QStringLiteral("File Copy"));
+    m_tabs->addTab(buildLogsPage(), themedIcon(QStringLiteral("text-x-log")), QStringLiteral("Logs"));
+    m_tabs->addTab(buildSettingsPage(), themedIcon(QStringLiteral("settings-configure")), QStringLiteral("Settings"));
     const QStringList tabNames = {
         QStringLiteral("Systems"), QStringLiteral("Diagnostics"), QStringLiteral("Repair"),
         QStringLiteral("Snapshots"), QStringLiteral("Chroot Shell"), QStringLiteral("File Copy"), QStringLiteral("Logs"), QStringLiteral("Settings")
@@ -756,12 +821,12 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 void MainWindow::buildMenuBar()
 {
     auto *fileMenu = menuBar()->addMenu(QStringLiteral("&File"));
-    QAction *refreshAction = fileMenu->addAction(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
+    QAction *refreshAction = fileMenu->addAction(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
     refreshAction->setShortcut(QKeySequence::Refresh);
     connect(refreshAction, &QAction::triggered, this, &MainWindow::refreshDevices);
 
     m_lockAuthorizationAction = fileMenu->addAction(
-        QIcon::fromTheme(QStringLiteral("system-lock-screen")),
+        themedIcon(QStringLiteral("system-lock-screen")),
         QStringLiteral("Lock Administrator Session"));
     m_lockAuthorizationAction->setEnabled(false);
     m_lockAuthorizationAction->setToolTip(QStringLiteral(
@@ -774,7 +839,7 @@ void MainWindow::buildMenuBar()
     });
 
     fileMenu->addSeparator();
-    QAction *quitAction = fileMenu->addAction(QIcon::fromTheme(QStringLiteral("application-exit")), QStringLiteral("Quit"));
+    QAction *quitAction = fileMenu->addAction(themedIcon(QStringLiteral("application-exit")), QStringLiteral("Quit"));
     quitAction->setShortcut(QKeySequence::Quit);
     connect(quitAction, &QAction::triggered, this, &QWidget::close);
 
@@ -798,10 +863,10 @@ void MainWindow::buildMenuBar()
     connect(m_wrapLogsAction, &QAction::toggled, this, &MainWindow::setLogWrapEnabled);
 
     auto *helpMenu = menuBar()->addMenu(QStringLiteral("&Help"));
-    QAction *usageAction = helpMenu->addAction(QIcon::fromTheme(QStringLiteral("help-contents")), QStringLiteral("Using Boot Bitch"));
+    QAction *usageAction = helpMenu->addAction(themedIcon(QStringLiteral("help-contents")), QStringLiteral("Using Boot Bitch"));
     connect(usageAction, &QAction::triggered, this, &MainWindow::showUsageHelp);
     helpMenu->addSeparator();
-    QAction *aboutAction = helpMenu->addAction(QIcon::fromTheme(QStringLiteral("help-about")), QStringLiteral("About Boot Bitch"));
+    QAction *aboutAction = helpMenu->addAction(themedIcon(QStringLiteral("help-about")), QStringLiteral("About Boot Bitch"));
     connect(aboutAction, &QAction::triggered, this, &MainWindow::showAboutDialog);
 }
 
@@ -827,7 +892,7 @@ QWidget *MainWindow::buildSystemsPage()
     topRow->addWidget(contextHelpButton(page, QStringLiteral("Systems"),
         QStringLiteral("Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected and can only be inspected.")));
     topRow->addStretch(1);
-    m_refreshDevicesButton = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
+    m_refreshDevicesButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
     connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
     topRow->addWidget(m_refreshDevicesButton, 0, Qt::AlignTop);
     layout->addLayout(topRow);
@@ -841,8 +906,8 @@ QWidget *MainWindow::buildSystemsPage()
     hostLayout->setSpacing(9);
 
     auto *hostIcon = new QLabel;
-    hostIcon->setPixmap(QIcon::fromTheme(QStringLiteral("security-high"),
-                                        QIcon::fromTheme(QStringLiteral("drive-harddisk"))).pixmap(30, 30));
+    hostIcon->setPixmap(themedIcon(QStringLiteral("security-high"),
+                                        themedIcon(QStringLiteral("drive-harddisk"))).pixmap(30, 30));
     hostIcon->setFixedSize(34, 34);
     hostIcon->setAlignment(Qt::AlignCenter);
     hostLayout->addWidget(hostIcon, 0, Qt::AlignTop);
@@ -878,7 +943,7 @@ QWidget *MainWindow::buildSystemsPage()
     protectedBadge->setToolTip(QStringLiteral("The running host is never offered as a repair target."));
     hostLayout->addWidget(protectedBadge, 0, Qt::AlignTop);
 
-    m_hostDetailsButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-preview")), QStringLiteral("Details"));
+    m_hostDetailsButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), QStringLiteral("Details"));
     m_hostDetailsButton->setEnabled(false);
     m_hostDetailsButton->setToolTip(QStringLiteral("Show read-only details for the protected running host."));
     connect(m_hostDetailsButton, &QPushButton::clicked, this, &MainWindow::showHostDetails);
@@ -937,11 +1002,11 @@ QWidget *MainWindow::buildSystemsPage()
     connect(m_deviceTree, &QTreeWidget::itemCollapsed, this, [this] { updateDeviceTreeHeight(); });
 
     auto *buttonRow = new QHBoxLayout;
-    m_setTargetButton = new QPushButton(QIcon::fromTheme(QStringLiteral("dialog-ok-apply")), QStringLiteral("Select Target"));
+    m_setTargetButton = new QPushButton(themedIcon(QStringLiteral("dialog-ok-apply")), QStringLiteral("Select Target"));
     m_setTargetButton->setEnabled(false);
     connect(m_setTargetButton, &QPushButton::clicked, this, &MainWindow::setPreviewTarget);
 
-    m_unlockTargetButton = new QPushButton(QIcon::fromTheme(QStringLiteral("object-unlocked")), QStringLiteral("Unlock"));
+    m_unlockTargetButton = new QPushButton(themedIcon(QStringLiteral("object-unlocked")), QStringLiteral("Unlock"));
     m_unlockTargetButton->setEnabled(false);
     m_unlockTargetButton->setToolTip(QStringLiteral("Select a drive whose detected target is a locked LUKS volume."));
     connect(m_unlockTargetButton, &QPushButton::clicked, this, &MainWindow::unlockSelectedTarget);
@@ -1067,7 +1132,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticScopeCombo->setMinimumContentsLength(14);
     heading->addWidget(m_diagnosticScopeCombo);
 
-    m_runAllDiagnosticsButton = new QPushButton(QIcon::fromTheme(QStringLiteral("system-run")), QStringLiteral("Run All"));
+    m_runAllDiagnosticsButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run All"));
     heading->addWidget(m_runAllDiagnosticsButton);
     m_targetConfigCombo = new QComboBox;
     m_targetConfigCombo->addItem(QStringLiteral("/etc/fstab"), QStringLiteral("fstab"));
@@ -1082,7 +1147,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_targetConfigCombo->addItem(QStringLiteral("/etc/initramfs-tools/initramfs.conf"), QStringLiteral("initramfs"));
     m_targetConfigCombo->setToolTip(QStringLiteral("Select a target configuration file to inspect or edit through the guarded helper."));
     m_targetConfigCombo->setVisible(false);
-    m_editTargetConfigButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-edit")), QStringLiteral("Edit Target File…"));
+    m_editTargetConfigButton = new QPushButton(themedIcon(QStringLiteral("document-edit")), QStringLiteral("Edit Target File…"));
     m_editTargetConfigButton->setVisible(false);
     m_editTargetConfigButton->setToolTip(QStringLiteral("Read or edit the selected target configuration file. Changes invalidate cached diagnostics."));
     layout->addLayout(heading);
@@ -1110,7 +1175,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     installCopyAction(m_diagnosticList);
 
     for (const DiagnosticSpec &spec : diagnosticSpecs) {
-        auto *item = new QListWidgetItem(QIcon::fromTheme(QString::fromLatin1(spec.icon)),
+        auto *item = new QListWidgetItem(themedIcon(QString::fromLatin1(spec.icon)),
                                          QString::fromLatin1(spec.title),
                                          m_diagnosticList);
         item->setData(Qt::UserRole, QString::fromLatin1(spec.key));
@@ -1140,7 +1205,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     auto *runRow = new QHBoxLayout;
     runRow->setContentsMargins(0, 0, 0, 0);
     runRow->addStretch(1);
-    m_runDiagnosticButton = new QPushButton(QIcon::fromTheme(QStringLiteral("system-run")), QStringLiteral("Run Diagnostic"));
+    m_runDiagnosticButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run Diagnostic"));
     runRow->addWidget(m_runDiagnosticButton);
     detailLayout->addLayout(runRow);
 
@@ -1163,8 +1228,8 @@ QWidget *MainWindow::buildDiagnosticsPage()
     auto *resultButtons = new QHBoxLayout;
     resultButtons->setContentsMargins(0, 0, 0, 0);
     resultButtons->addStretch(1);
-    m_copyDiagnosticButton = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-copy")), QStringLiteral("Copy Results"));
-    m_saveDiagnosticButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-save")), QStringLiteral("Save Results…"));
+    m_copyDiagnosticButton = new QPushButton(themedIcon(QStringLiteral("edit-copy")), QStringLiteral("Copy Results"));
+    m_saveDiagnosticButton = new QPushButton(themedIcon(QStringLiteral("document-save")), QStringLiteral("Save Results…"));
     m_copyDiagnosticButton->setEnabled(false);
     m_saveDiagnosticButton->setEnabled(false);
     resultButtons->addWidget(m_copyDiagnosticButton);
@@ -1258,7 +1323,7 @@ QWidget *MainWindow::buildRepairPage()
     m_fullRepairReadinessLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     planHeader->addStretch(1);
-    auto *configurePlan = new QPushButton(QIcon::fromTheme(QStringLiteral("settings-configure")), QStringLiteral("Configure Plan…"));
+    auto *configurePlan = new QPushButton(themedIcon(QStringLiteral("settings-configure")), QStringLiteral("Configure Plan…"));
     configurePlan->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     configurePlan->setFixedWidth(configurePlan->sizeHint().width());
     connect(configurePlan, &QPushButton::clicked, this, [this] {
@@ -1268,7 +1333,7 @@ QWidget *MainWindow::buildRepairPage()
     });
     planHeader->addWidget(configurePlan);
 
-    m_runFullRepairButton = new QPushButton(QIcon::fromTheme(QStringLiteral("tools-wizard")), QStringLiteral("Run Full Repair"));
+    m_runFullRepairButton = new QPushButton(themedIcon(QStringLiteral("tools-wizard")), QStringLiteral("Run Full Repair"));
     m_runFullRepairButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_runFullRepairButton->setFixedWidth(m_runFullRepairButton->sizeHint().width());
     m_runFullRepairButton->setEnabled(false);
@@ -1349,7 +1414,7 @@ QWidget *MainWindow::buildRepairPage()
         auto *item = new QTreeWidgetItem(m_repairToolTree);
         item->setText(0, QString::fromLatin1(spec.title));
         item->setData(0, Qt::UserRole, QString::fromLatin1(spec.key));
-        item->setIcon(0, QIcon::fromTheme(QString::fromLatin1(spec.icon)));
+        item->setIcon(0, themedIcon(QString::fromLatin1(spec.icon)));
         item->setToolTip(0, item->text(0));
         item->setToolTip(1, QStringLiteral("Mirrors the corresponding Settings → Full Repair plan checkbox. Individual tools remain runnable independently."));
     }
@@ -1460,7 +1525,10 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotTable->setFrameShadow(QFrame::Plain);
     m_snapshotTable->setLineWidth(1);
     m_snapshotTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
-    m_snapshotTable->verticalHeader()->setSectionResizeMode(QHeaderView::Interactive);
+    // Rows are sized by resizeSnapshotRows().  Fixed section mode prevents
+    // platform styles (notably GNOME/GTK) from stretching each row to fill
+    // the viewport while still allowing genuinely wrapped content to grow.
+    m_snapshotTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     // Keep single-line rows compact across Qt/platform font metrics.  A fixed
     // 28px floor made Qt 6.4 builds exceed the intended one-line height.
     m_snapshotTable->verticalHeader()->setMinimumSectionSize(
@@ -1501,7 +1569,7 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotSplitter->setChildrenCollapsible(false);
     m_snapshotSplitter->addWidget(m_snapshotTable);
     m_snapshotSplitter->addWidget(m_snapshotDetails);
-    const int rowHeight = qMax(28, fontMetrics().lineSpacing() + 10);
+    const int rowHeight = qMax(24, fontMetrics().lineSpacing() + 10);
     m_snapshotSplitter->setStretchFactor(0, 1);
     m_snapshotSplitter->setStretchFactor(1, 1);
     m_snapshotSplitter->setSizes({13 * rowHeight + 32, 220});
@@ -1511,9 +1579,9 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotButtonLayout->setContentsMargins(0, 0, 0, 0);
     m_snapshotButtonLayout->setSpacing(8);
 
-    m_snapshotLoadButton = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Load Snapshots"));
-    m_snapshotInspectButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-preview")), QStringLiteral("Inspect Selected"));
-    m_snapshotRollbackButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-revert")), QStringLiteral("Roll Back to Selected"));
+    m_snapshotLoadButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Load Snapshots"));
+    m_snapshotInspectButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), QStringLiteral("Inspect Selected"));
+    m_snapshotRollbackButton = new QPushButton(themedIcon(QStringLiteral("document-revert")), QStringLiteral("Roll Back to Selected"));
 
     m_snapshotLoadButton->setEnabled(false);
     m_snapshotInspectButton->setEnabled(false);
@@ -1575,7 +1643,7 @@ QWidget *MainWindow::buildChrootShellPage()
     m_chrootShellCommandEdit->setAccessibleName(QStringLiteral("Chroot shell command"));
     m_chrootShellCommandEdit->setClearButtonEnabled(true);
     commandRow->addWidget(m_chrootShellCommandEdit, 1);
-    m_chrootShellRunButton = new QPushButton(QIcon::fromTheme(QStringLiteral("utilities-terminal")), QStringLiteral("Run Command"));
+    m_chrootShellRunButton = new QPushButton(themedIcon(QStringLiteral("utilities-terminal")), QStringLiteral("Run Command"));
     m_chrootShellRunButton->setToolTip(QStringLiteral("Execute the command inside the selected repair system as root."));
     commandRow->addWidget(m_chrootShellRunButton);
     layout->addLayout(commandRow);
@@ -1593,7 +1661,7 @@ QWidget *MainWindow::buildChrootShellPage()
     auto *warning = new QLabel(QStringLiteral("Commands can modify the target system. Review each command before running it."));
     warning->setWordWrap(true);
     footer->addWidget(warning, 1);
-    auto *clear = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-clear")), QStringLiteral("Clear Output"));
+    auto *clear = new QPushButton(themedIcon(QStringLiteral("edit-clear")), QStringLiteral("Clear Output"));
     footer->addWidget(clear);
     layout->addLayout(footer);
 
@@ -1655,9 +1723,9 @@ QWidget *MainWindow::buildFileCopyPage()
     sourceLayout->addWidget(m_sourceList);
 
     auto *sourceButtons = new QHBoxLayout;
-    m_fileCopyAddFilesButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-open")), QStringLiteral("Add Files…"));
-    m_fileCopyAddFolderButton = new QPushButton(QIcon::fromTheme(QStringLiteral("folder-open")), QStringLiteral("Add Folder…"));
-    auto *remove = new QPushButton(QIcon::fromTheme(QStringLiteral("list-remove")), QStringLiteral("Remove"));
+    m_fileCopyAddFilesButton = new QPushButton(themedIcon(QStringLiteral("document-open")), QStringLiteral("Add Files…"));
+    m_fileCopyAddFolderButton = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Add Folder…"));
+    auto *remove = new QPushButton(themedIcon(QStringLiteral("list-remove")), QStringLiteral("Remove"));
     auto *clear = new QPushButton(QStringLiteral("Clear"));
     connect(m_fileCopyAddFilesButton, &QPushButton::clicked, this, &MainWindow::addSourceFiles);
     connect(m_fileCopyAddFolderButton, &QPushButton::clicked, this, &MainWindow::addSourceFolder);
@@ -1675,7 +1743,7 @@ QWidget *MainWindow::buildFileCopyPage()
     auto *destinationLayout = new QHBoxLayout(m_fileCopyDestinationBox);
     m_destinationEdit = new QLineEdit;
     m_destinationEdit->setReadOnly(true);
-    m_fileCopyBrowseDestinationButton = new QPushButton(QIcon::fromTheme(QStringLiteral("folder-open")), QStringLiteral("Choose Path…"));
+    m_fileCopyBrowseDestinationButton = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Choose Path…"));
     connect(m_fileCopyBrowseDestinationButton, &QPushButton::clicked, this, &MainWindow::browseFileCopyDestination);
     destinationLayout->addWidget(m_destinationEdit, 1);
     destinationLayout->addWidget(m_fileCopyBrowseDestinationButton);
@@ -1696,8 +1764,8 @@ QWidget *MainWindow::buildFileCopyPage()
     layout->addWidget(optionsBox);
 
     auto *copyButtons = new QHBoxLayout;
-    m_fileCopyPreviewButton = new QPushButton(QIcon::fromTheme(QStringLiteral("document-preview")), QStringLiteral("Preview Changes"));
-    m_fileCopyRunButton = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-copy")), QStringLiteral("Copy and Verify"));
+    m_fileCopyPreviewButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), QStringLiteral("Preview Changes"));
+    m_fileCopyRunButton = new QPushButton(themedIcon(QStringLiteral("edit-copy")), QStringLiteral("Copy and Verify"));
     m_fileCopyPreviewButton->setEnabled(false);
     m_fileCopyRunButton->setEnabled(false);
     m_fileCopyPreviewButton->setToolTip(QStringLiteral("Run an rsync dry-run through the guarded helper. No files are changed."));
@@ -1742,7 +1810,7 @@ QWidget *MainWindow::buildLogsPage()
     top->addWidget(contextHelpButton(page, QStringLiteral("Logs"),
         QStringLiteral("Shows this application's session activity. Save a copy when you need to share troubleshooting details.")));
     top->addStretch(1);
-    auto *save = new QPushButton(QIcon::fromTheme(QStringLiteral("document-save")), QStringLiteral("Save As…"));
+    auto *save = new QPushButton(themedIcon(QStringLiteral("document-save")), QStringLiteral("Save As…"));
     auto *clear = new QPushButton(QStringLiteral("Clear Register"));
     connect(save, &QPushButton::clicked, this, &MainWindow::saveLogAs);
     connect(clear, &QPushButton::clicked, this, [this] {
@@ -1898,16 +1966,20 @@ QWidget *MainWindow::buildSettingsPage()
     m_capabilityTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
     m_capabilityTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
     m_capabilityTable->horizontalHeader()->setStretchLastSection(true);
-    m_capabilityTable->verticalHeader()->setSectionResizeMode(QHeaderView::Interactive);
-    m_capabilityTable->verticalHeader()->setMinimumSectionSize(qMax(28, fontMetrics().height() + 10));
+    // Keep rows content-sized across desktop styles.  Wrapped rows are
+    // explicitly enlarged by resizeCapabilityRows(); all others stay at the
+    // compact one-line height.
+    m_capabilityTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
+    m_capabilityTable->verticalHeader()->setMinimumSectionSize(
+        qMax(24, m_capabilityTable->fontMetrics().lineSpacing() + 10));
     connect(m_capabilityTable->horizontalHeader(), &QHeaderView::sectionResized, this, [this] {
         QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
     });
     capabilityLayout->addWidget(m_capabilityTable);
 
     auto *capabilityButtons = new QHBoxLayout;
-    auto *refresh = new QPushButton(QIcon::fromTheme(QStringLiteral("view-refresh")), QStringLiteral("Refresh Capabilities"));
-    auto *install = new QPushButton(QIcon::fromTheme(QStringLiteral("system-software-install")), QStringLiteral("Install Missing Support…"));
+    auto *refresh = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Capabilities"));
+    auto *install = new QPushButton(themedIcon(QStringLiteral("system-software-install")), QStringLiteral("Install Missing Support…"));
     install->setEnabled(false);
     install->setToolTip(QStringLiteral("Automatic installation will require explicit package mapping and privilege authorization."));
     connect(refresh, &QPushButton::clicked, this, &MainWindow::refreshCapabilities);
@@ -2961,8 +3033,8 @@ void MainWindow::unlockSelectedTarget()
         auto *passBody = new QHBoxLayout;
         passBody->setSpacing(16);
         auto *passIcon = new QLabel;
-        passIcon->setPixmap(QIcon::fromTheme(QStringLiteral("dialog-password"),
-                                              QIcon::fromTheme(QStringLiteral("document-encrypt"))).pixmap(56, 56));
+        passIcon->setPixmap(themedIcon(QStringLiteral("dialog-password"),
+                                              themedIcon(QStringLiteral("document-encrypt"))).pixmap(56, 56));
         passIcon->setFixedSize(60, 60);
         passIcon->setAlignment(Qt::AlignCenter);
         passBody->addWidget(passIcon, 0, Qt::AlignTop);
@@ -3672,7 +3744,7 @@ void MainWindow::browseFileCopyDestination()
 
     auto *headingRow = new QHBoxLayout;
     auto *headingIcon = new QLabel;
-    headingIcon->setPixmap(QIcon::fromTheme(QStringLiteral("folder-open")).pixmap(32, 32));
+    headingIcon->setPixmap(themedIcon(QStringLiteral("folder-open")).pixmap(32, 32));
     headingRow->addWidget(headingIcon, 0, Qt::AlignTop);
     auto *heading = new QLabel(QStringLiteral("Choose destination folder"));
     QFont headingFont = heading->font();
@@ -3693,10 +3765,10 @@ void MainWindow::browseFileCopyDestination()
     pathEdit->setClearButtonEnabled(true);
     pathEdit->setPlaceholderText(QStringLiteral("Absolute path inside repaired system (for example /home/user/Recovered)"));
     pathRow->addWidget(pathEdit, 1);
-    auto *selectFolder = new QPushButton(QIcon::fromTheme(QStringLiteral("folder-open")), QStringLiteral("Select Folder…"));
+    auto *selectFolder = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Select Folder…"));
     selectFolder->setToolTip(QStringLiteral("Choose an absolute path name. The selected path is validated against the repaired system during the guarded copy."));
     pathRow->addWidget(selectFolder);
-    auto *clearPath = new QPushButton(QIcon::fromTheme(QStringLiteral("edit-clear")), QStringLiteral("Clear"));
+    auto *clearPath = new QPushButton(themedIcon(QStringLiteral("edit-clear")), QStringLiteral("Clear"));
     clearPath->setToolTip(QStringLiteral("Clear the destination path."));
     pathRow->addWidget(clearPath);
     dialogLayout->addLayout(pathRow);
@@ -4079,7 +4151,7 @@ void MainWindow::refreshCapabilities()
             for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
                 QTableWidgetItem *item = m_capabilityTable->item(row, column);
                 if (item) {
-                    item->setIcon(column == 3 ? QIcon::fromTheme(QStringLiteral("dialog-warning")) : QIcon());
+                    item->setIcon(column == 3 ? themedIcon(QStringLiteral("dialog-warning")) : QIcon());
                 }
             }
         }
@@ -5162,6 +5234,7 @@ void MainWindow::showAboutDialog()
                        QStringLiteral("About Boot Bitch"),
                        QStringLiteral(
                            "<h3>Boot Bitch %1</h3>"
+                           "<p><b>Developer:</b> CaptainMorgan12</p>"
                            "<p>A native Qt 6 Linux recovery and boot-repair utility.</p>"
                            "<p><b>Guarded repair mode:</b> Debian/Ubuntu-family target repairs can run through a privileged helper after explicit target selection and confirmation. The running host is re-checked and refused by the helper.</p>"
                            "<p>The first privileged action authorizes one narrow helper session for the current Boot Bitch window while the Qt GUI remains unprivileged. It can be ended at any time from File → Lock Administrator Session.</p>"
@@ -5319,14 +5392,14 @@ void MainWindow::updateFullRepairSummary()
         }
         ++selectedCount;
         const QString orderedTitle = QStringLiteral("%1. %2").arg(selectedCount).arg(entry.title);
-        auto *item = new QListWidgetItem(QIcon::fromTheme(entry.icon), orderedTitle, m_fullRepairStageList);
+        auto *item = new QListWidgetItem(themedIcon(entry.icon), orderedTitle, m_fullRepairStageList);
         item->setToolTip(QStringLiteral("Execution order %1: %2").arg(selectedCount).arg(entry.title));
     }
 
 
     if (selectedCount == 0) {
         m_fullRepairCountLabel->setText(QStringLiteral("No stages selected"));
-        auto *item = new QListWidgetItem(QIcon::fromTheme(QStringLiteral("dialog-information")),
+        auto *item = new QListWidgetItem(themedIcon(QStringLiteral("dialog-information")),
                                          QStringLiteral("No Full Repair stages selected — use Configure Plan… or Settings."),
                                          m_fullRepairStageList);
         item->setToolTip(item->text());
@@ -5550,7 +5623,7 @@ void MainWindow::updateRepairToolDetails()
     m_repairToolDescription->setText(description);
     m_repairToolPlanStatus->setText(planText);
     m_repairToolButton->setText(buttonText);
-    m_repairToolButton->setIcon(QIcon::fromTheme(iconName));
+    m_repairToolButton->setIcon(themedIcon(iconName));
     const QSize buttonHint = m_repairToolButton->sizeHint();
     m_repairToolButton->setMinimumWidth(buttonHint.width());
     m_repairToolButton->setMinimumHeight(qMax(buttonHint.height(), fontMetrics().height() + 14));
@@ -5582,6 +5655,9 @@ QString MainWindow::repairHelperPath() const
     const QStringList candidates = {
         QDir(appDir).absoluteFilePath(QStringLiteral("../scripts/boot-repair-helper.sh")),
         QDir(appDir).absoluteFilePath(QStringLiteral("scripts/boot-repair-helper.sh")),
+        // AppImage/CMake AppDir layout: usr/bin/boot-repair beside
+        // usr/libexec/boot-repair/boot-repair-helper.
+        QDir(appDir).absoluteFilePath(QStringLiteral("../libexec/boot-repair/boot-repair-helper")),
         QStringLiteral("/usr/libexec/boot-repair/boot-repair-helper"),
         QStringLiteral("/usr/lib/boot-repair/boot-repair-helper")
     };
@@ -6027,19 +6103,19 @@ QString MainWindow::deviceKind(const DeviceNode &node)
 QIcon MainWindow::iconForDevice(const DeviceNode &node)
 {
     if (node.protectedDevice) {
-        return QIcon::fromTheme(QStringLiteral("security-high"), QIcon::fromTheme(QStringLiteral("drive-harddisk")));
+        return themedIcon(QStringLiteral("security-high"), themedIcon(QStringLiteral("drive-harddisk")));
     }
     if (node.encrypted) {
-        return QIcon::fromTheme(QStringLiteral("document-encrypt"), QIcon::fromTheme(QStringLiteral("drive-harddisk")));
+        return themedIcon(QStringLiteral("document-encrypt"), themedIcon(QStringLiteral("drive-harddisk")));
     }
     if (node.installedLinux) {
-        return QIcon::fromTheme(QStringLiteral("computer"), QIcon::fromTheme(QStringLiteral("drive-harddisk")));
+        return themedIcon(QStringLiteral("computer"), themedIcon(QStringLiteral("drive-harddisk")));
     }
     if (node.removable || node.transport.compare(QStringLiteral("usb"), Qt::CaseInsensitive) == 0) {
-        return QIcon::fromTheme(QStringLiteral("drive-removable-media"), QIcon::fromTheme(QStringLiteral("drive-harddisk")));
+        return themedIcon(QStringLiteral("drive-removable-media"), themedIcon(QStringLiteral("drive-harddisk")));
     }
     if (node.type == QStringLiteral("part")) {
-        return QIcon::fromTheme(QStringLiteral("drive-harddisk"));
+        return themedIcon(QStringLiteral("drive-harddisk"));
     }
-    return QIcon::fromTheme(QStringLiteral("drive-harddisk"));
+    return themedIcon(QStringLiteral("drive-harddisk"));
 }
