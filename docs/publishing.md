@@ -107,29 +107,35 @@ The release assets are attached to GitHub Releases and are not copied into the s
 
 ## Build and attach an AppImage
 
-AppImages are generated locally because `appimagetool` is a separate upstream
-release utility. Install it from the
-[official releases](https://github.com/AppImage/appimagetool/releases), place
-the executable on `PATH`, and run this from the source tree:
+AppImages are generated locally because `linuxdeploy` and `appimagetool` are
+separate upstream release utilities. Install
+[`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy/releases), its
+`linuxdeploy-plugin-qt`, and
+[`appimagetool`](https://github.com/AppImage/appimagetool/releases), place
+both executables on `PATH`, and run this from the source tree:
 
 ```bash
 ./scripts/build-appimage.sh
 ```
 
 The script creates `build-release/boot-repair_<version>_x86_64.AppImage` and
-bundles the GUI, desktop metadata, icons, documentation and guarded helper.
+uses linuxdeploy's Qt integration to bundle the GUI's shared libraries along
+with desktop metadata, icons, documentation and guarded helper.
 The helper still uses host `pkexec`/Polkit and repair commands, so the target
 system must provide those runtime dependencies. Attach the generated artifact
 to the matching GitHub release (the AppImage remains ignored by source-tree
 syncs):
 
 ```bash
-gh release upload v0.2.18 \
-  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.18_x86_64.AppImage
+gh release upload v0.2.19 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.19_x86_64.AppImage
 ```
 
-If `appimagetool` is not on `PATH`, provide its path explicitly with
-`APPIMAGETOOL=/path/to/appimagetool ./scripts/build-appimage.sh`.
+If a tool is not on `PATH`, provide its path explicitly, for example:
+`LINUXDEPLOY=/path/to/linuxdeploy LINUXDEPLOY_PLUGIN_QT=/path/to/linuxdeploy-plugin-qt APPIMAGETOOL=/path/to/appimagetool ./scripts/build-appimage.sh`.
+With only appimagetool available the script emits a host-library warning; that
+fallback is useful for smoke tests but should not be uploaded as a portable
+release.
 
 ## GitHub web upload
 

@@ -1,8 +1,14 @@
-# Boot Bitch 0.2.18 — maintenance release
+# Boot Bitch 0.2.19 — maintenance release
 
+<<<<<<< HEAD
 Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.18 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written entirely due to a lack of coherent tooling that let's a non-developer restore a system to allow it boot if something goes wrong. The most common issues can be addressed by this tool and it has enough flexibility to use for trouble shooting and implementation of manual fixes.
 
 This was written entirely by LLM with guidance, and requirements provided as well as tests manually verified.
+=======
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.19 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+
+This project was written with LLM assistance under human guidance, requirements and manually verified tests.
+>>>>>>> 2435edb (Boot Bitch 0.2.19 developer metadata and AppImage)
 
 **Developer:** CaptainMorgan12
 
@@ -78,7 +84,7 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ![Settings](docs/screenshots/08-settings.png)
 
-## 0.2.18 refinements
+## 0.2.19 refinements
 
 - Keep snapshot and host-capability table rows compact under GNOME/GTK styles; only wrapped text receives additional height.
 - Tint monochrome theme glyphs to the active readable text color in dark palettes while preserving colored status artwork.
@@ -569,24 +575,30 @@ Debian package remains the recommended format.
 
 ## Build an AppImage
 
-Install [`appimagetool`](https://github.com/AppImage/appimagetool/releases)
-and make it available on `PATH`, then run:
+Install [`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy/releases),
+its `linuxdeploy-plugin-qt`, and
+[`appimagetool`](https://github.com/AppImage/appimagetool/releases), make all
+three available on `PATH`, then run:
 
 ```bash
 ./scripts/build-appimage.sh
 ```
 
-To use a tool installed at another path:
+To use tools installed at another path:
 
 ```bash
+LINUXDEPLOY="$HOME/bin/linuxdeploy" \
 APPIMAGETOOL="$HOME/bin/appimagetool" ./scripts/build-appimage.sh
 ```
 
 The script creates a clean Release build, stages the complete CMake install
-under an AppDir, validates the executable and privileged helper, and invokes
+under an AppDir, validates the executable and privileged helper, lets
+`linuxdeploy` bundle Qt/shared-library dependencies, and invokes
 `appimagetool`. It does not install anything on the host. Run the artifact with
-`chmod +x build-release/boot-repair_0.2.18_x86_64.AppImage` followed by
-`./build-release/boot-repair_0.2.18_x86_64.AppImage`.
+`chmod +x build-release/boot-repair_0.2.19_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.19_x86_64.AppImage`. If only `appimagetool`
+is available, the script creates a diagnostic AppImage and warns that it uses
+the host's Qt libraries; do not publish that fallback as a portable release.
 
 ## Uninstall
 

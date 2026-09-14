@@ -22,6 +22,9 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
+    <release version="0.2.19" date="2026-09-13">
+      <description><p>Add developer attribution, Qt-bundled AppImage packaging, and stronger GNOME/GTK icon and table rendering.</p></description>
+    </release>
     <release version="0.2.18" date="2026-09-13">
       <description><p>Improve GNOME dark-theme icon contrast and keep table rows compact across platform styles.</p></description>
     </release>
