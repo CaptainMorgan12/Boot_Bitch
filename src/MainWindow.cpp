@@ -33,6 +33,8 @@
 #include <QIcon>
 #include <QInputDialog>
 #include <QImage>
+#include <QPainter>
+#include <QPainter>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -143,6 +145,29 @@ static const DiagnosticSpec diagnosticSpecs[] = {
     {"report", "Full diagnostic report", "Combines all read-only diagnostics; target scope uses one privileged inspection session.", "document-preview"}
 };
 
+QIcon terminalIcon(const QColor &foreground)
+{
+    QIcon icon;
+    for (const int size : {16, 20, 22, 24, 32, 48, 64}) {
+        QPixmap pixmap(size, size);
+        pixmap.fill(Qt::transparent);
+        QPainter painter(&pixmap);
+        painter.setRenderHint(QPainter::Antialiasing);
+        QPen pen(foreground, qMax(1, size / 10));
+        pen.setCapStyle(Qt::RoundCap);
+        pen.setJoinStyle(Qt::RoundJoin);
+        painter.setPen(pen);
+        const QRectF frame(size * 0.12, size * 0.18, size * 0.76, size * 0.62);
+        painter.drawRoundedRect(frame, size * 0.08, size * 0.08);
+        painter.drawLine(QPointF(size * 0.28, size * 0.39), QPointF(size * 0.40, size * 0.49));
+        painter.drawLine(QPointF(size * 0.40, size * 0.49), QPointF(size * 0.28, size * 0.59));
+        painter.drawLine(QPointF(size * 0.48, size * 0.59), QPointF(size * 0.68, size * 0.59));
+        icon.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+        icon.addPixmap(pixmap, QIcon::Disabled, QIcon::Off);
+    }
+    return icon;
+}
+
 QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
 {
     const QIcon source = QIcon::fromTheme(name, fallback);
@@ -168,6 +193,9 @@ QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
     if (background.lightness() >= 150 || foreground.lightness() <= background.lightness()) {
         return source;
     }
+    if (name == QStringLiteral("utilities-terminal")) {
+        return terminalIcon(foreground);
+    }
 
     QIcon tinted;
     const QList<int> sizes{16, 20, 22, 24, 32, 48, 64};
@@ -177,21 +205,25 @@ QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
             continue;
         }
         QImage image = pixmap.toImage().convertToFormat(QImage::Format_ARGB32);
-        bool coloured = false;
-        for (int y = 0; y < image.height() && !coloured; ++y) {
+        int colouredPixels = 0;
+        int visiblePixels = 0;
+        for (int y = 0; y < image.height(); ++y) {
             for (int x = 0; x < image.width(); ++x) {
                 const QColor pixel = image.pixelColor(x, y);
-                if (pixel.alpha() > 20 && pixel.saturationF() > 0.18) {
-                    coloured = true;
-                    break;
+                if (pixel.alpha() > 20) {
+                    ++visiblePixels;
+                    if (pixel.saturationF() > 0.18) {
+                        ++colouredPixels;
+                    }
                 }
             }
         }
-        if (!coloured) {
+        const bool mostlyMonochrome = visiblePixels == 0 || colouredPixels * 8 < visiblePixels;
+        if (mostlyMonochrome) {
             for (int y = 0; y < image.height(); ++y) {
                 for (int x = 0; x < image.width(); ++x) {
                     QColor pixel = image.pixelColor(x, y);
-                    if (pixel.alpha() > 0) {
+                    if (pixel.alpha() > 0 && pixel.saturationF() <= 0.18) {
                         pixel.setRed(foreground.red());
                         pixel.setGreen(foreground.green());
                         pixel.setBlue(foreground.blue());
@@ -199,9 +231,15 @@ QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
                     }
                 }
             }
-            tinted.addPixmap(QPixmap::fromImage(image), QIcon::Normal, QIcon::Off);
+            const QPixmap recolored = QPixmap::fromImage(image);
+            // GTK platform styles often render disabled tree/list rows with a
+            // separate black glyph. Supply an explicit light disabled variant
+            // so stage and diagnostic icons remain visible on dark palettes.
+            tinted.addPixmap(recolored, QIcon::Normal, QIcon::Off);
+            tinted.addPixmap(recolored, QIcon::Disabled, QIcon::Off);
         } else {
             tinted.addPixmap(pixmap, QIcon::Normal, QIcon::Off);
+            tinted.addPixmap(pixmap, QIcon::Disabled, QIcon::Off);
         }
     }
     return tinted.isNull() ? source : tinted;
@@ -1520,14 +1558,16 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_snapshotTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_snapshotTable->setTextElideMode(Qt::ElideRight);
-    m_snapshotTable->setWordWrap(true);
+    // Keep snapshot rows single-line; long descriptions are elided instead
+    // of allowing GTK styles to expand every row to a tall wrapped hint.
+    m_snapshotTable->setWordWrap(false);
     m_snapshotTable->setFrameShape(QFrame::StyledPanel);
     m_snapshotTable->setFrameShadow(QFrame::Plain);
     m_snapshotTable->setLineWidth(1);
     m_snapshotTable->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     // Rows are sized by resizeSnapshotRows().  Fixed section mode prevents
     // platform styles (notably GNOME/GTK) from stretching each row to fill
-    // the viewport while still allowing genuinely wrapped content to grow.
+    // the viewport while keeping content compact and elided.
     m_snapshotTable->verticalHeader()->setSectionResizeMode(QHeaderView::Fixed);
     // Keep single-line rows compact across Qt/platform font metrics.  A fixed
     // 28px floor made Qt 6.4 builds exceed the intended one-line height.
@@ -3477,25 +3517,7 @@ void MainWindow::resizeSnapshotRows()
     m_snapshotTable->verticalHeader()->setDefaultSectionSize(oneLineHeight);
 
     for (int row = 0; row < m_snapshotTable->rowCount(); ++row) {
-        int rowHeight = oneLineHeight;
-        bool needsWrapping = false;
-        for (int column = 0; column < m_snapshotTable->columnCount(); ++column) {
-            QTableWidgetItem *item = m_snapshotTable->item(row, column);
-            if (!item || item->text().isEmpty()) {
-                continue;
-            }
-            const int availableWidth = qMax(24, m_snapshotTable->columnWidth(column) - 14);
-            if (metrics.horizontalAdvance(item->text()) <= availableWidth) {
-                continue;
-            }
-            needsWrapping = true;
-            const QRect bounds = metrics.boundingRect(
-                QRect(0, 0, availableWidth, 10000),
-                Qt::TextWordWrap | Qt::AlignLeft | Qt::AlignTop,
-                item->text());
-            rowHeight = qMax(rowHeight, bounds.height() + 10);
-        }
-        m_snapshotTable->setRowHeight(row, needsWrapping ? rowHeight : oneLineHeight);
+        m_snapshotTable->setRowHeight(row, oneLineHeight);
     }
 }
 

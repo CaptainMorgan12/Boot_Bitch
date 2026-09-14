@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.2.19 — 2026-09-13
+
+- Add CaptainMorgan12 attribution to the About dialog, AppStream metadata,
+  Debian package metadata and copyright files.
+- Add a Qt-aware AppImage build workflow with optional linuxdeploy Qt bundling.
+- Keep GNOME/GTK snapshot rows compact and improve dark-theme icon contrast,
+  including terminal and disabled-stage icons.
+
 ## 0.2.18 — 2026-09-13
 
 - Keep table rows compact under GNOME/GTK platform themes and grow only rows that wrap.

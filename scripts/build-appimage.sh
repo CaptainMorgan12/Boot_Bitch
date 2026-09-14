@@ -7,6 +7,18 @@ BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 APPIMAGETOOL="${APPIMAGETOOL:-appimagetool}"
 LINUXDEPLOY="${LINUXDEPLOY:-linuxdeploy}"
+LINUXDEPLOY_PLUGIN_QT="${LINUXDEPLOY_PLUGIN_QT:-linuxdeploy-plugin-qt}"
+APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
+QMAKE="${QMAKE:-$(command -v qmake6 2>/dev/null || command -v qmake 2>/dev/null || true)}"
+
+run_appimagetool()
+{
+    local tool="$1"
+    shift
+    local tool_dir
+    tool_dir="$(cd -- "$(dirname -- "$(command -v "$tool")")" && pwd)"
+    PATH="$tool_dir:$PATH" run_tool "$tool" "$@"
+}
 
 need()
 {
@@ -14,6 +26,17 @@ need()
         echo "Missing required build command: $1" >&2
         exit 1
     }
+}
+
+run_tool()
+{
+    local tool="$1"
+    shift
+    if [[ "$tool" == *.AppImage ]]; then
+        "$tool" --appimage-extract-and-run "$@"
+    else
+        "$tool" "$@"
+    fi
 }
 
 for cmd in cmake ninja c++; do
@@ -24,13 +47,18 @@ done
 # Keep appimagetool-only mode as a useful fallback for local smoke testing, but
 # call it out because that mode packages the AppDir without copying libraries.
 USE_LINUXDEPLOY=0
-if command -v "$LINUXDEPLOY" >/dev/null 2>&1; then
+if command -v "$LINUXDEPLOY" >/dev/null 2>&1 \
+   && command -v "$LINUXDEPLOY_PLUGIN_QT" >/dev/null 2>&1; then
     need "$APPIMAGETOOL"
     USE_LINUXDEPLOY=1
+    # linuxdeploy discovers plugins by executable name on PATH. Preserve that
+    # behavior when callers provide an absolute plugin path via the override.
+    LINUXDEPLOY_PLUGIN_DIR="$(dirname -- "$(command -v "$LINUXDEPLOY_PLUGIN_QT")")"
+    export PATH="$LINUXDEPLOY_PLUGIN_DIR:$PATH"
 else
     need "$APPIMAGETOOL"
-    echo "WARN: linuxdeploy was not found; creating an AppImage from the AppDir without bundling shared libraries." >&2
-    echo "      Install linuxdeploy and its Qt plugin for a portable artifact." >&2
+    echo "WARN: linuxdeploy and linuxdeploy-plugin-qt were not both found; creating an AppImage from the AppDir without bundling shared libraries." >&2
+    echo "      Install linuxdeploy, linuxdeploy-plugin-qt, and appimagetool for a portable artifact." >&2
 fi
 
 bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
@@ -77,29 +105,50 @@ cp "$APPDIR/usr/share/icons/hicolor/256x256/apps/org.bootrepair.BootRepair.png" 
    "$APPDIR/org.bootrepair.BootRepair.png"
 
 ARCH="${ARCH:-x86_64}"
-OUTPUT="${OUTPUT:-$ROOT_DIR/build-release/boot-repair_${BUILD_VERSION:-$(sed -n 's/.*VERSION \([0-9][0-9.]*\).*/\1/p' "$ROOT_DIR/CMakeLists.txt" | head -1)}_${ARCH}.AppImage}"
+PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' "$ROOT_DIR/CMakeLists.txt" | head -1)"
+[[ -n "$PROJECT_VERSION" ]] || { echo "Unable to determine project version from CMakeLists.txt" >&2; exit 1; }
+OUTPUT="${OUTPUT:-$ROOT_DIR/build-release/boot-repair_${BUILD_VERSION:-$PROJECT_VERSION}_${ARCH}.AppImage}"
 mkdir -p -- "$(dirname -- "$OUTPUT")"
 
 if (( USE_LINUXDEPLOY )); then
-    # linuxdeploy writes its output in the current directory. Set the output
-    # directory to the requested artifact's directory and normalize the name
-    # afterwards so releases use the same versioned filename in every mode.
+    # First let linuxdeploy populate the AppDir and bundle Qt. We invoke
+    # appimagetool ourselves so APPIMAGE_RUNTIME_FILE can be supplied on hosts
+    # where the tool cannot download its runtime (for example, restricted CI).
     output_dir="$(dirname -- "$OUTPUT")"
-    (cd "$output_dir" && ARCH="$ARCH" "$LINUXDEPLOY" \
+    deploy_dir="$(mktemp -d "$output_dir/.appimage-output.XXXXXX")"
+    plugin_dir="$(mktemp -d "$output_dir/.appimage-plugin.XXXXXX")"
+    trap 'rm -rf -- "$deploy_dir" "$plugin_dir"' EXIT
+    # linuxdeploy discovers plugins by the canonical linuxdeploy-plugin-*
+    # name. This also supports a downloaded, architecture-suffixed AppImage
+    # supplied through LINUXDEPLOY_PLUGIN_QT.
+    plugin_path="$(command -v "$LINUXDEPLOY_PLUGIN_QT")"
+    if [[ "$plugin_path" == *.AppImage ]]; then
+        cat > "$plugin_dir/linuxdeploy-plugin-qt" <<PLUGIN_WRAPPER
+#!/bin/sh
+exec "$plugin_path" --appimage-extract-and-run "\$@"
+PLUGIN_WRAPPER
+        chmod 755 "$plugin_dir/linuxdeploy-plugin-qt"
+    else
+        ln -s "$plugin_path" "$plugin_dir/linuxdeploy-plugin-qt"
+    fi
+    (cd "$deploy_dir" && PATH="$plugin_dir:$PATH" ARCH="$ARCH" QMAKE="$QMAKE" run_tool "$LINUXDEPLOY" \
         --appdir "$APPDIR" \
         --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
         --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
-        --output appimage)
-    mapfile -t generated < <(find "$output_dir" -maxdepth 1 -type f -name '*.AppImage' -print)
-    [[ ${#generated[@]} -gt 0 ]] || {
-        echo "linuxdeploy completed but produced no AppImage in $output_dir" >&2
-        exit 1
-    }
-    if [[ "${generated[0]}" != "$OUTPUT" ]]; then
-        mv -f -- "${generated[0]}" "$OUTPUT"
+        --plugin qt)
+    runtime_args=()
+    if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
+        [[ -f "$APPIMAGE_RUNTIME_FILE" ]] || { echo "AppImage runtime file not found: $APPIMAGE_RUNTIME_FILE" >&2; exit 1; }
+        runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
     fi
+    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
 else
-    ARCH="$ARCH" "$APPIMAGETOOL" "$APPDIR" "$OUTPUT"
+    runtime_args=()
+    if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
+        [[ -f "$APPIMAGE_RUNTIME_FILE" ]] || { echo "AppImage runtime file not found: $APPIMAGE_RUNTIME_FILE" >&2; exit 1; }
+        runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
+    fi
+    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
 fi
 [[ -s "$OUTPUT" ]] || {
     echo "appimagetool completed but produced no AppImage: $OUTPUT" >&2
@@ -112,5 +161,5 @@ echo "  $OUTPUT"
 echo
 echo "The AppImage still uses host pkexec/Polkit and repair utilities (mount, cryptsetup, btrfs, efibootmgr, and so on)."
 if (( ! USE_LINUXDEPLOY )); then
-    echo "WARN: this appimagetool-only artifact expects Qt libraries from the host; use linuxdeploy for a portable release artifact." >&2
+    echo "WARN: this appimagetool-only artifact expects Qt libraries from the host; use linuxdeploy-plugin-qt for a portable release artifact." >&2
 fi
