@@ -2,6 +2,8 @@
 
 Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.18 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing.
 
+**Developer:** CaptainMorgan12
+
 ## Minimum recovery requirement
 
 Boot Bitch must be launched from a **different booted Linux environment than the system being repaired**. Use a Linux live USB, recovery stick, or another Linux installation on a different physical drive. The running host is never a valid repair target.
@@ -446,6 +448,20 @@ Run without installing:
 ./build/boot-repair
 ```
 
+To preview the same build with a desktop platform theme, set the Qt platform
+theme for that launch:
+
+```bash
+# Native Qt/KDE styling (the default on Plasma and other Qt desktops)
+./build/boot-repair
+
+# GNOME platform theme, when qgnomeplatform-qt6 is installed
+QT_QPA_PLATFORMTHEME=gnome ./build/boot-repair
+
+# GTK3 platform plugin, when qt6-gtk-platformtheme is installed
+QT_QPA_PLATFORMTHEME=gtk3 ./build/boot-repair
+```
+
 For a release build:
 
 ```bash
@@ -474,6 +490,21 @@ Build a package first, then either simulate or install it:
 ```
 
 `install.sh` does nothing destructive until you type `INSTALL` exactly. The normal Debian path installs the generated `.deb` through APT.
+
+After package installation, launch the installed command as follows:
+
+```bash
+# Native Qt/KDE styling
+boot-repair
+
+# GNOME: install the optional integration packages once, then launch normally
+sudo apt install qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme
+boot-repair
+
+# Explicit GNOME or GTK platform theme selection
+QT_QPA_PLATFORMTHEME=gnome boot-repair
+QT_QPA_PLATFORMTHEME=gtk3 boot-repair
+```
 
 Equivalent standard CMake flow for a manual source install:
 
