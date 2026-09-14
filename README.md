@@ -80,11 +80,31 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ## 0.2.20 refinements
 
-- Keep snapshot and host-capability table rows compact under GNOME/GTK styles; only wrapped text receives additional height.
-- Tint monochrome theme glyphs to the active readable text color in dark palettes while preserving colored status artwork.
+- Bundle the completed semantic Qt/KDE icon atlas and restore the stable 0.2.13
+  defaults for tabs, diagnostics, repair stages and actions.
+- Prefer the active desktop theme, equivalent freedesktop aliases and bundled
+  artwork before using native Qt glyphs when a theme is incomplete.
+- Add filesystem-aware device icons, solid-placeholder detection and native
+  high-contrast fallbacks so AppImage controls remain visible without a host
+  icon theme.
+- Keep repeatable AppImage development builds pointed at the local
+  `Development/tools` appimagetool installation.
+
+## 0.2.19 refinements
+
+- Add CaptainMorgan12 attribution to the About dialog, AppStream metadata,
+  Debian package metadata and copyright files.
+- Add a Qt-aware AppImage build workflow with optional linuxdeploy Qt bundling.
+- Keep GNOME/GTK snapshot rows compact and improve dark-theme icon contrast,
+  including terminal and disabled-stage icons.
+
+## 0.2.18 refinements
+
+- Keep snapshot and host-capability table rows compact under GNOME/GTK styles;
+  only wrapped text receives additional height.
+- Tint monochrome theme glyphs to the active readable text color in dark
+  palettes while preserving colored status artwork.
 - Update GitHub Actions checkout to the Node.js 24-compatible `actions/checkout@v5`.
-- Add native Qt fallback glyphs and bundled icon search paths so AppImage controls
-  remain visible when the host desktop theme is unavailable.
 
 ## 0.2.17 refinements
 
