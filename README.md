@@ -1,6 +1,5 @@
 # Boot Bitch 0.2.19 — maintenance release
 
-<<<<<<< HEAD
 Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.18 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written entirely due to a lack of coherent tooling that let's a non-developer restore a system to allow it boot if something goes wrong. The most common issues can be addressed by this tool and it has enough flexibility to use for trouble shooting and implementation of manual fixes.
 
 This was written entirely by LLM with guidance, and requirements provided as well as tests manually verified.
@@ -8,7 +7,6 @@ This was written entirely by LLM with guidance, and requirements provided as wel
 Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.19 retains the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
->>>>>>> 2435edb (Boot Bitch 0.2.19 developer metadata and AppImage)
 
 **Developer:** CaptainMorgan12
 
