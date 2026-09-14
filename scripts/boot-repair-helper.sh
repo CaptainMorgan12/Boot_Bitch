@@ -30,13 +30,22 @@ TARGET_SUBVOL=""
 MOUNTS=()
 TARGET_DATA_MOUNTS=()
 SESSION_LOG=""
+TEMP_TARGET_PATHS=()
 EFI_ESP_SOURCE=""
 EFI_ESP_FSTYPE=""
+EFI_HOST_ESP_SOURCE=""
+EFI_HOST_ESP_PARTUUID=""
+EFI_HOST_ESP_MOUNT=""
+EFI_TARGET_ESP_PARTUUID=""
 EFI_GRUB_INSTALL_PATH=""
 EFI_BOOTLOADER_ID=""
 SNAPSHOT_TOP=""
 TARGET_WRITE_INTENT=0
 CURRENT_STAGE=""
+RUNNING_HOST_MODE=0
+HOST_COMMAND_GUARD=0
+HOST_COMMAND_GUARD_DIR=""
+DIAGNOSTIC_SCOPE="Repair Target"
 
 # Display-manager selection is discovered from the target's existing
 # display-manager.service link and installed units.  Keep this state scoped to
@@ -96,7 +105,12 @@ Usage:
   $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>
   $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id]
   $PROGRAM_NAME repair       <target-disk> <root-device> <stage> [stage ...]
+  $PROGRAM_NAME host-repair  <host-disk> <root-device> <stage> [stage ...]
+  $PROGRAM_NAME host-validate <host-disk> <root-device>
+  $PROGRAM_NAME host-diagnose <host-disk> <root-device> <diagnostic|all>
+  $PROGRAM_NAME host-default <host-disk> <root-device>
   $PROGRAM_NAME shell        <target-disk> <root-device> <command>
+  $PROGRAM_NAME browse-target <target-disk> <root-device> <absolute-directory>
   $PROGRAM_NAME copy-preview <target-disk> <root-device> <direction> <ownership> <approval> <destination> <source> [source ...]
   $PROGRAM_NAME copy         <target-disk> <root-device> <direction> <ownership> <approval> <destination> <source> [source ...]
 
@@ -144,6 +158,10 @@ from standard input and is never accepted as a command-line argument. File copy
 uses rsync without --delete and independently validates host/target containment.
 Modifying repair stages remain limited to Debian/Ubuntu-family targets. EFI
 bootloader reinstall is an explicit stage and is never selected implicitly.
+Host maintenance is a separate native-running-system path. It accepts all
+listed repair stages with the same stage-specific checks. Host validation
+and diagnostics are read-only; snapshot, shell and file-copy workflows remain
+separate target tools.
 USAGE
 }
 
@@ -176,6 +194,14 @@ cleanup()
             cat "$SESSION_LOG"
         } >> "$TARGET_ROOT/var/log/boot-repair-session.log" 2>/dev/null || true
     fi
+
+    # Request-scoped helper files must be removed while the target is still
+    # mounted.  This also covers an interrupted UKI builder before its normal
+    # post-command cleanup runs.
+    for target_path in "${TEMP_TARGET_PATHS[@]:-}"; do
+        [[ -n "$target_path" && ( -e "$target_path" || -L "$target_path" ) ]] \
+            && rm -rf -- "$target_path" 2>/dev/null || true
+    done
 
     for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
         mountpoint="${MOUNTS[$idx]}"
@@ -473,6 +499,44 @@ assert_target_not_host()
                 fail "Selected target ${target_tops[0]} backs the currently running system; refusing all writes."
             fi
         done
+    done
+}
+
+assert_target_is_running_host()
+{
+    local target="$1" root_device="$2" root_source source_dev mp boot_source boot_dev
+    local -a target_tops=() root_tops=() boot_tops=()
+
+    mapfile -t target_tops < <(top_disks_for "$target" | sort -u)
+    ((${#target_tops[@]} == 1)) || fail "Host disk resolves through a multi-device stack; refusing to guess."
+
+    # The host path is intentionally native: it must prove that the supplied
+    # disk is the physical backing disk of the currently running root and that
+    # the selected ESP belongs to that same disk. This prevents a caller from
+    # turning a mounted data disk into a privileged write target.
+    root_source="$(findmnt -rn -o SOURCE --target / 2>/dev/null | head -n1 || true)"
+    root_source="${root_source%%\[*}"
+    [[ -n "$root_source" ]] || fail "Unable to identify the currently running root filesystem."
+    root_source="$(canonical_block "$root_source" 2>/dev/null || true)"
+    [[ -n "$root_source" ]] || fail "The currently running root is not backed by a block device."
+    mapfile -t root_tops < <(top_disks_for "$root_source" | sort -u)
+    [[ ${#root_tops[@]} -eq 1 && "${root_tops[0]}" == "${target_tops[0]}" ]] \
+        || fail "Selected host disk does not back the currently running root filesystem."
+
+    root_device="$(canonical_block "$root_device" 2>/dev/null || true)"
+    [[ -n "$root_device" && "$root_device" == "$root_source" ]] \
+        || fail "Supplied root component does not match the currently running root filesystem."
+
+    for mp in /boot /boot/efi; do
+        boot_source="$(findmnt -rn -o SOURCE --target "$mp" 2>/dev/null \
+            | awk '/^\/dev\// {print; exit}' || true)"
+        [[ -n "$boot_source" ]] || continue
+        boot_source="${boot_source%%\[*}"
+        boot_dev="$(canonical_block "$boot_source" 2>/dev/null || true)"
+        [[ -n "$boot_dev" ]] || fail "The running host $mp mount is not backed by a block device."
+        mapfile -t boot_tops < <(top_disks_for "$boot_dev" | sort -u)
+        [[ ${#boot_tops[@]} -eq 1 && "${boot_tops[0]}" == "${target_tops[0]}" ]] \
+            || fail "Running host $mp resolves outside the selected host disk; refusing native boot maintenance."
     done
 }
 
@@ -876,6 +940,66 @@ prepare_target()
     fi
 }
 
+prepare_running_host()
+{
+    local raw_target="$1" raw_root="$2" require_debian="${3:-yes}" require_rw="${4:-no}" fstype
+
+    need lsblk
+    need findmnt
+    need blkid
+    need readlink
+
+    TARGET_DISK="$(canonical_block "$raw_target" 2>/dev/null || true)"
+    [[ -n "$TARGET_DISK" ]] || fail "Host disk is not a block device: $raw_target"
+    ROOT_CANONICAL="$(canonical_block "$raw_root" 2>/dev/null || true)"
+    [[ -n "$ROOT_CANONICAL" ]] || fail "Host root component is not a block device: $raw_root"
+    ROOT_DEVICE="$(preferred_block_path "$raw_root" "$ROOT_CANONICAL")"
+
+    assert_target_is_running_host "$TARGET_DISK" "$ROOT_CANONICAL"
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    [[ "$fstype" != "crypto_LUKS" && -n "$fstype" ]] \
+        || fail "The running host root is not an unlocked filesystem."
+
+    # Native host maintenance deliberately does not mount, remount or bind
+    # recovery filesystems. Existing command runners use chroot /, while every
+    # path resolves to the live system guarded by the identity check above.
+    SESSION_DIR="$(mktemp -d "$STATE_ROOT/session.XXXXXX")"
+    MOUNT_BASE="/"
+    TARGET_ROOT="/"
+    TARGET_SUBVOL=""
+    TARGET_DATA_MOUNTS=()
+    SESSION_LOG="$SESSION_DIR/session.log"
+    touch "$SESSION_LOG"
+
+    if [[ "$fstype" == "btrfs" ]]; then
+        TARGET_SUBVOL="$(current_btrfs_subvol 2>/dev/null || true)"
+    fi
+    read_target_os
+    if [[ "$require_debian" == yes ]]; then
+        is_debian_family || fail "Native host maintenance is limited to Debian/Ubuntu-family systems. Detected: $TARGET_PRETTY"
+    fi
+    EFI_ESP_SOURCE=""
+    EFI_ESP_FSTYPE=""
+    if mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
+        validate_target_esp
+    fi
+    if [[ "$require_rw" == yes ]]; then
+        target_path_is_mounted_rw / || fail "The running host root filesystem is not writable. Repair from another system instead."
+        target_path_is_mounted_rw /boot || fail "The running host /boot filesystem is not writable."
+        if [[ -n "$EFI_ESP_SOURCE" ]]; then
+            target_path_is_mounted_rw /boot/efi || fail "The running host EFI System Partition is not writable."
+        fi
+        TARGET_WRITE_INTENT=1
+    fi
+    RUNNING_HOST_MODE=1
+
+    log "Running-host identity and boot-mount check: PASS" | tee -a "$SESSION_LOG"
+    log "Host disk: $TARGET_DISK" | tee -a "$SESSION_LOG"
+    log "Host root component: $ROOT_DEVICE ($fstype)" | tee -a "$SESSION_LOG"
+    log "Host root mount: / (subvolume=${TARGET_SUBVOL:-default/none})" | tee -a "$SESSION_LOG"
+    log "Host EFI System Partition: $EFI_ESP_SOURCE ($EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+}
+
 promote_target_rw()
 {
     [[ -n "$MOUNT_BASE" && -d "$MOUNT_BASE" ]] || fail "Internal target mount is not prepared."
@@ -910,7 +1034,7 @@ validate_virtual_path()
 {
     local path="$1" component
     [[ "$path" == /* ]] || fail "Repair-system paths must be absolute: $path"
-    [[ "$path" != *$'\n'* && "$path" != *$'\r'* ]] || fail "Paths containing line breaks are not supported."
+    [[ "$path" != *$'\n'* && "$path" != *$'\r'* && "$path" != *$'\t'* ]] || fail "Paths containing line breaks or tabs are not supported."
     [[ "$path" != "/" ]] || fail "The repair-system root directory cannot be used as a File Copy source or destination. Choose a more specific path."
 
     IFS='/' read -ra components <<< "$path"
@@ -919,9 +1043,59 @@ validate_virtual_path()
     done
 }
 
+# File Copy intentionally treats repair-system paths as a virtual namespace
+# until the guarded helper mounts the selected target.  The folder browser
+# uses the same namespace, but it must also be able to inspect / itself.
+validate_browse_virtual_path()
+{
+    local path="$1" component
+    [[ "$path" == /* ]] || fail "Repair-system paths must be absolute: $path"
+    [[ "$path" != *$'\n'* && "$path" != *$'\r'* && "$path" != *$'\t'* ]] \
+        || fail "Paths containing line breaks or tabs are not supported."
+
+    IFS='/' read -ra components <<< "$path"
+    for component in "${components[@]}"; do
+        [[ "$component" != ".." ]] \
+            || fail "Parent-directory traversal is not accepted in repair-system paths: $path"
+    done
+}
+
+browse_target_directory()
+{
+    local virtual_path="$1" candidate root_real candidate_real entry name encoded
+    validate_browse_virtual_path "$virtual_path"
+    need find
+    need base64
+
+    # Every browse request gets its own temporary read-only target mount.  No
+    # target path is left mounted when this request exits, including on error.
+    prepare_target ro
+    maybe_mount_target_path "$virtual_path" ro
+
+    candidate="$TARGET_ROOT$virtual_path"
+    [[ -d "$candidate" && ! -L "$candidate" ]] \
+        || fail "Repair-system folder does not exist: $virtual_path"
+    root_real="$(realpath -e -- "$TARGET_ROOT")" \
+        || fail "Unable to resolve mounted target root."
+    candidate_real="$(realpath -e -- "$candidate")" \
+        || fail "Unable to resolve repair-system folder: $virtual_path"
+    path_within "$candidate_real" "$root_real" \
+        || fail "Repair-system folder escapes the selected target through a symlink: $virtual_path"
+
+    # Emit only immediate real directories.  Names are base64-encoded so a
+    # valid directory containing whitespace, tabs or newlines remains one
+    # unambiguous protocol record for the unprivileged Qt browser.
+    while IFS= read -r -d '' entry; do
+        name="${entry##*/}"
+        encoded="$(printf '%s' "$name" | base64 | tr -d '\n')"
+        printf 'BROWSE_ENTRY\t%s\n' "$encoded"
+    done < <(find "$candidate_real" -mindepth 1 -maxdepth 1 -type d ! -type l -print0)
+}
+
 path_within()
 {
     local child="$1" parent="$2"
+    [[ "$parent" == / && "$child" == /* ]] && return 0
     [[ "$child" == "$parent" || "$child" == "$parent/"* ]]
 }
 
@@ -1323,6 +1497,87 @@ validate_mapper_crypttab()
     log "Mapper/crypttab consistency gate: PASS" | tee -a "$SESSION_LOG"
 }
 
+prepare_host_command_guard()
+{
+    local real_efi
+    need unshare
+    need mount
+    HOST_COMMAND_GUARD_DIR="$SESSION_DIR/host-command-guard"
+    mkdir -m 0700 "$HOST_COMMAND_GUARD_DIR"
+    real_efi="$(command -v efibootmgr || true)"
+    if [[ -n "$real_efi" ]]; then
+        cat > "$HOST_COMMAND_GUARD_DIR/efibootmgr" <<EOF
+#!/bin/sh
+set -eu
+for arg in "\$@"; do
+    case "\$arg" in
+        -v|--verbose|-h|--help|-V|--version) ;;
+        *)
+            echo "Boot Bitch EFI guard: hook firmware mutation deferred to the selected-system reconciler." >&2
+            exit 0
+            ;;
+    esac
+done
+exec "$real_efi" "\$@"
+EOF
+        chmod 0700 "$HOST_COMMAND_GUARD_DIR/efibootmgr"
+    fi
+    HOST_COMMAND_GUARD=1
+    run_selected_chroot /bin/true \
+        || fail "Unable to isolate firmware writes for native host maintenance; no repair stage was started."
+    log "Host command guard: firmware variables are read-only to package/kernel/vendor hooks; the helper owns explicit firmware registration." | tee -a "$SESSION_LOG"
+}
+
+host_package_manager_gate()
+{
+    local proc
+    # Native package actions must not race apt, dpkg, unattended-upgrades, or
+    # another package frontend already using the live host. Stale lock files
+    # alone are not considered active; inspect processes and lock holders.
+    for proc in apt apt-get dpkg unattended-upgrade packagekitd; do
+        if pgrep -x "$proc" >/dev/null 2>&1; then
+            fail "Package manager process '$proc' is already running; refusing a concurrent host package repair."
+        fi
+    done
+    if command -v fuser >/dev/null 2>&1; then
+        for proc in /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock; do
+            if [[ -e "$proc" ]] && fuser -s "$proc" 2>/dev/null; then
+                fail "Package manager lock '$proc' is active; refusing a concurrent host package repair."
+            fi
+        done
+    fi
+    log "Host package-manager concurrency gate: PASS" | tee -a "$SESSION_LOG"
+}
+
+run_selected_chroot()
+{
+    local i
+    local -a args=("$@")
+    if (( HOST_COMMAND_GUARD == 1 )); then
+        # Keep the standard command environment, adding the hook shim to each
+        # explicit PATH assignment. Absolute efibootmgr calls still encounter
+        # a read-only efivarfs in the private mount namespace below.
+        for i in "${!args[@]}"; do
+            if [[ "${args[$i]}" == PATH=* ]]; then
+                args[$i]="PATH=$HOST_COMMAND_GUARD_DIR:${args[$i]#PATH=}"
+            fi
+        done
+        unshare --mount --propagation private /bin/sh -eu -c '
+            if mountpoint -q /sys/firmware/efi/efivars; then
+                mount --bind /sys/firmware/efi/efivars /sys/firmware/efi/efivars
+                mount -o remount,bind,ro /sys/firmware/efi/efivars
+                findmnt -rn -o OPTIONS --target /sys/firmware/efi/efivars | tr "," "\n" | grep -Fxq ro
+            elif [ -d /sys/firmware/efi/efivars ]; then
+                echo "Unable to prove firmware variable mount isolation." >&2
+                exit 1
+            fi
+            exec chroot "$@"
+        ' boot-repair-host-command "$TARGET_ROOT" "${args[@]}"
+    else
+        chroot "$TARGET_ROOT" "${args[@]}"
+    fi
+}
+
 run_chroot()
 {
     local label="$1"; shift
@@ -1333,7 +1588,7 @@ run_chroot()
     # the pipeline status explicitly, then route it through fail() so the
     # caller receives the command's output and the owning repair stage.
     set +e
-    chroot "$TARGET_ROOT" /usr/bin/env \
+    run_selected_chroot /usr/bin/env \
         HOME=/root \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         DEBIAN_FRONTEND=noninteractive \
@@ -1350,7 +1605,7 @@ run_apt_update()
     local output rc
     log "BEGIN: Refresh package metadata" | tee -a "$SESSION_LOG"
     set +e
-    output="$(chroot "$TARGET_ROOT" /usr/bin/env \
+    output="$(run_selected_chroot /usr/bin/env \
         HOME=/root \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         DEBIAN_FRONTEND=noninteractive \
@@ -1381,7 +1636,7 @@ simulate_apt_upgrade_mode()
 
     set +e
     output="$(
-        chroot "$TARGET_ROOT" /usr/bin/env \
+        run_selected_chroot /usr/bin/env \
             HOME=/root \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
@@ -1510,7 +1765,7 @@ adaptive_apt_upgrade()
     # check. Any output is logged for the recovery record without turning a
     # harmless informational audit into a second package operation.
     log "Post-upgrade dpkg audit:" | tee -a "$SESSION_LOG"
-    chroot "$TARGET_ROOT" /usr/bin/env \
+    run_selected_chroot /usr/bin/env \
         HOME=/root \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg --audit 2>&1 | tee -a "$SESSION_LOG" || true
@@ -1529,7 +1784,7 @@ adaptive_fix_broken()
     log "SIMULATE: apt-get --fix-broken install (no packages will be changed)" | tee -a "$SESSION_LOG"
     set +e
     output="$(
-        chroot "$TARGET_ROOT" /usr/bin/env \
+        run_selected_chroot /usr/bin/env \
             HOME=/root \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
@@ -1558,7 +1813,7 @@ run_chroot_try()
     log "TRY: $label" | tee -a "$SESSION_LOG"
     set +e
     output="$(
-        chroot "$TARGET_ROOT" /usr/bin/env \
+        run_selected_chroot /usr/bin/env \
             HOME=/root \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
@@ -1585,7 +1840,7 @@ installed_kernel_versions()
 apt_package_available()
 {
     local package="$1"
-    chroot "$TARGET_ROOT" /usr/bin/env \
+    run_selected_chroot /usr/bin/env \
         HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         apt-cache show "$package" >/dev/null 2>&1
 }
@@ -1609,7 +1864,7 @@ safe_apt_install_packages()
     {
         set +e
         output="$(
-            chroot "$TARGET_ROOT" /usr/bin/env \
+            run_selected_chroot /usr/bin/env \
                 HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
                 apt-get "${sim_args[@]}" 2>&1
@@ -1633,7 +1888,7 @@ safe_apt_install_packages()
         log "KNOWN ISSUE: APT correction is blocked by broken dependencies; simulating --fix-broken before retry." | tee -a "$SESSION_LOG"
         set +e
         fix_output="$(
-            chroot "$TARGET_ROOT" /usr/bin/env \
+            run_selected_chroot /usr/bin/env \
                 HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
                 apt-get -s -o Debug::NoLocking=1 -f install 2>&1
@@ -1698,7 +1953,7 @@ preflight_dkms()
 
     while IFS= read -r kver; do
         [[ -n "$kver" ]] || continue
-        if chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        if run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             test -e "/lib/modules/$kver/build"; then
             log "DKMS preflight: headers/build tree present for $kver" | tee -a "$SESSION_LOG"
             continue
@@ -1723,7 +1978,7 @@ preflight_dkms()
     # solely because an old installed kernel has no repository headers; DKMS may
     # have no module work for it.  The real autoinstall result remains decisive.
     for kver in "${missing_headers[@]}"; do
-        if chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        if run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             test -e "/lib/modules/$kver/build"; then
             log "DKMS preflight correction: build tree now present for $kver" | tee -a "$SESSION_LOG"
         fi
@@ -1816,7 +2071,7 @@ target_package_installed()
 {
     local package="$1"
     [[ -n "$package" && -x "$TARGET_ROOT/usr/bin/dpkg-query" ]] || return 1
-    chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+    run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null \
         | grep -Fxq installed
 }
@@ -1925,7 +2180,7 @@ preflight_display_manager()
 
     detect_display_manager
     log "Detected graphical login manager: $DISPLAY_MANAGER_LABEL ($DISPLAY_MANAGER_SERVICE)" | tee -a "$SESSION_LOG"
-    manager_status="$(chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+    manager_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg-query -W -f='${db:Status-Status}' "$DISPLAY_MANAGER_PACKAGE" 2>/dev/null || true)"
     if [[ -n "$DISPLAY_MANAGER_PACKAGE" && "$manager_status" != "installed" ]]; then
         safe_apt_install_packages "Install missing $DISPLAY_MANAGER_LABEL display manager" no "$DISPLAY_MANAGER_PACKAGE"
@@ -1933,7 +2188,7 @@ preflight_display_manager()
     fi
 
     if [[ "$TARGET_OS_ID" == "tuxedo" ]]; then
-        desktop_status="$(chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        desktop_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             dpkg-query -W -f='${db:Status-Status}' tuxedoos-desktop 2>/dev/null || true)"
         if [[ "$desktop_status" != "installed" ]] && apt_package_available tuxedoos-desktop; then
             safe_apt_install_packages "Restore the TUXEDO desktop meta-package required for graphical login" no tuxedoos-desktop
@@ -2024,7 +2279,7 @@ adaptive_initramfs_repair()
         if [[ -x "$TARGET_ROOT/usr/bin/lsinitramfs" || -x "$TARGET_ROOT/usr/sbin/lsinitramfs" ]]; then
             local verify_err="$SESSION_DIR/lsinitramfs-$kver.err" verify_rc
             set +e
-            chroot "$TARGET_ROOT" /usr/bin/env \
+            run_selected_chroot /usr/bin/env \
                 HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 lsinitramfs "/boot/initrd.img-$kver" >/dev/null 2>"$verify_err"
             verify_rc=$?
@@ -2065,7 +2320,7 @@ preflight_grub()
     {
         set +e
         output="$(
-            chroot "$TARGET_ROOT" /usr/bin/env \
+            run_selected_chroot /usr/bin/env \
                 HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 "$grub_mkconfig" 2>"$err_path"
         )"
@@ -2098,16 +2353,58 @@ preflight_grub()
         rm -f "$TARGET_ROOT$target_sim_path"
         ((CHROOT_TRY_RC == 0)) || fail "Trial GRUB configuration failed grub-script-check."
     fi
+    guard_grub_candidate_preserves_entries "$TARGET_ROOT/boot/grub/grub.cfg" "$sim_path" \
+        || fail "Refusing to replace GRUB configuration because one or more existing boot entries are absent from the generated candidate. Enable/configure os-prober or inspect the candidate before retrying."
     rm -f "$TARGET_ROOT$target_sim_path"
     log "PASS: GRUB trial configuration generated successfully." | tee -a "$SESSION_LOG"
 }
 
+grub_entry_keys()
+{
+    local config="$1"
+    [[ -s "$config" ]] || return 0
+    # Menuentry/submenu declarations are stable identifiers for the existing
+    # boot menu.  Ignore indentation differences so a harmless formatter change
+    # does not block a repair, while retaining the complete declaration (title,
+    # class and menuentry id) so entries from another ESP cannot disappear
+    # unnoticed.
+    sed -nE '/^[[:space:]]*(menuentry|submenu)[[:space:]]/p' "$config" \
+        | sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' \
+        | sort -u
+}
+
+guard_grub_candidate_preserves_entries()
+{
+    local existing="$1" candidate="$2" old_keys new_keys missing
+
+    [[ -s "$existing" && -s "$candidate" ]] || return 0
+    old_keys="$SESSION_DIR/grub-existing-entries"
+    new_keys="$SESSION_DIR/grub-candidate-entries"
+    missing="$SESSION_DIR/grub-missing-entries"
+    grub_entry_keys "$existing" > "$old_keys"
+    grub_entry_keys "$candidate" > "$new_keys"
+    comm -23 "$old_keys" "$new_keys" > "$missing" || true
+    if [[ -s "$missing" ]]; then
+        log "ERROR: GRUB preflight candidate would remove existing menu entries; the target configuration was left unchanged." | tee -a "$SESSION_LOG"
+        sed 's/^/  preserved-entry-required: /' "$missing" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+}
+
 adaptive_grub_repair()
 {
+    local old_cfg="$SESSION_DIR/grub-before-update.cfg"
+
     preflight_grub
+    if [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]]; then
+        install -m 0644 "$TARGET_ROOT/boot/grub/grub.cfg" "$old_cfg"
+    else
+        rm -f "$old_cfg"
+    fi
     run_chroot_try "Regenerate GRUB configuration" update-grub
     if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
         if repair_stale_mapper_mount_alias; then
+            [[ -s "$old_cfg" ]] && install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
             preflight_grub
             run_chroot_try "Retry GRUB configuration after mapper alias correction" update-grub
         fi
@@ -2115,6 +2412,15 @@ adaptive_grub_repair()
     ((CHROOT_TRY_RC == 0)) || fail "update-grub failed after preflight/known correction."
     [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]] \
         || fail "update-grub completed but /boot/grub/grub.cfg is missing or empty."
+    if [[ -s "$old_cfg" ]]; then
+        if ! guard_grub_candidate_preserves_entries "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"; then
+            # The candidate has already been generated, but restoring the
+            # known-good file keeps a repair failure from silently removing
+            # another disk's Linux menu entries.
+            install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
+            fail "GRUB regeneration was rolled back because it removed an existing boot entry."
+        fi
+    fi
     if [[ -x "$TARGET_ROOT/usr/bin/grub-script-check" || -x "$TARGET_ROOT/usr/sbin/grub-script-check" ]]; then
         run_chroot_try "Verify installed GRUB configuration syntax" grub-script-check /boot/grub/grub.cfg
         ((CHROOT_TRY_RC == 0)) || fail "Installed GRUB configuration failed grub-script-check after regeneration."
@@ -2269,16 +2575,17 @@ diagnostic_title()
 
 diagnostic_environment()
 {
-    local fstype
+    local fstype scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     fstype="$(lsblk -ndo FSTYPE "$ROOT_DEVICE" 2>/dev/null | head -n1 || true)"
     printf 'System: %s\n' "$TARGET_PRETTY"
     printf 'Physical drive: %s\n' "$TARGET_DISK"
     printf 'Detected component: %s\n' "$ROOT_DEVICE"
     printf 'Root subvolume: %s\n' "${TARGET_SUBVOL:-none}"
     printf 'Filesystem: %s\n' "${fstype:-unknown}"
-    printf 'Repair root mount source: %s\n' "$(findmnt -rn -o SOURCE --target "$TARGET_ROOT" 2>/dev/null | head -n1 || echo unknown)"
-    printf 'Repair root mount options: %s\n' "$(findmnt -rn -o OPTIONS --target "$TARGET_ROOT" 2>/dev/null | head -n1 || echo unknown)"
-    printf 'Inspection mount: read-only\n'
+    printf '%s root mount source: %s\n' "${scope_label^}" "$(findmnt -rn -o SOURCE --target "$TARGET_ROOT" 2>/dev/null | head -n1 || echo unknown)"
+    printf '%s root mount options: %s\n' "${scope_label^}" "$(findmnt -rn -o OPTIONS --target "$TARGET_ROOT" 2>/dev/null | head -n1 || echo unknown)"
+    printf 'Inspection mode: read-only\n'
     printf '/etc/os-release: %s\n' "$([[ -f "$TARGET_ROOT/etc/os-release" ]] && echo present || echo missing)"
     printf '/etc/fstab: %s\n' "$([[ -s "$TARGET_ROOT/etc/fstab" ]] && echo present || echo missing/empty)"
     printf '/etc/crypttab: %s\n' "$([[ -s "$TARGET_ROOT/etc/crypttab" ]] && echo present || echo missing/empty)"
@@ -2288,13 +2595,15 @@ diagnostic_environment()
 
 diagnostic_boot()
 {
-    echo "Target mounts:"
+    local scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    echo "${scope_label^} mounts:"
     findmnt -R "$MOUNT_BASE" 2>/dev/null || true
     echo
-    echo "Target /boot:"
+    echo "${scope_label^} /boot:"
     ls -lah "$TARGET_ROOT/boot" 2>&1 | head -200 || true
     echo
-    echo "Target /boot/efi:"
+    echo "${scope_label^} /boot/efi:"
     if [[ -d "$TARGET_ROOT/boot/efi" ]]; then
         ls -lah "$TARGET_ROOT/boot/efi" 2>&1 | head -200 || true
     else
@@ -2342,19 +2651,20 @@ diagnostic_boot_evidence()
     local journal_dir="$TARGET_ROOT/var/log/journal"
     local grub_cfg="$TARGET_ROOT/boot/grub/grub.cfg"
     local cmdline_file="$TARGET_ROOT/proc/cmdline"
-    local evidence_rc=0
+    local evidence_rc=0 efi_nvram_evidence scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
 
     echo "Boot evidence (read-only):"
-    echo "Target root: $TARGET_ROOT"
+    echo "${scope_label^} root: $TARGET_ROOT"
     echo "Captured: $(date --iso-8601=seconds 2>/dev/null || date)"
-    echo "Mounted target source/options: $(findmnt -rn -o SOURCE,OPTIONS --target "$TARGET_ROOT" 2>/dev/null | head -1 || echo unknown)"
+    echo "Mounted ${scope_label} source/options: $(findmnt -rn -o SOURCE,OPTIONS --target "$TARGET_ROOT" 2>/dev/null | head -1 || echo unknown)"
     echo
 
     echo "Current recovery host kernel (context only):"
     uname -a 2>&1 || true
     echo
 
-    echo "Target bootloader selection settings:"
+    echo "${scope_label^} bootloader selection settings:"
     if [[ -f "$TARGET_ROOT/etc/default/grub" ]]; then
         grep -E '^[[:space:]]*(GRUB_DEFAULT|GRUB_SAVEDEFAULT|GRUB_TIMEOUT|GRUB_CMDLINE_LINUX)' \
             "$TARGET_ROOT/etc/default/grub" 2>/dev/null || echo "No GRUB selection settings found."
@@ -2365,7 +2675,7 @@ diagnostic_boot_evidence()
         grep -nE 'saved_entry|next_entry|menuentry |submenu |^[[:space:]]*linux(|efi) |^[[:space:]]*initrd(|efi) ' \
             "$grub_cfg" 2>/dev/null | head -240 || true
     else
-        echo "Target grub.cfg is not visible."
+        echo "${scope_label^} grub.cfg is not visible."
     fi
     if [[ -f "$TARGET_ROOT/boot/grub/grubenv" ]]; then
         echo "GRUB environment (saved/next selection):"
@@ -2390,18 +2700,21 @@ diagnostic_boot_evidence()
         fi
     fi
     if command -v efibootmgr >/dev/null 2>&1; then
-        echo "Firmware boot selection (host NVRAM context):"
-        efibootmgr -v 2>&1 | grep -E '^(Boot(Current|Next|Order)|Boot[0-9A-Fa-f]{4})' | head -160 || true
+        echo "Firmware boot selection and ownership (host NVRAM context):"
+        efi_nvram_evidence="$SESSION_DIR/boot-evidence-efi-nvram.txt"
+        efibootmgr -v > "$efi_nvram_evidence" 2>&1 || true
+        efi_print_firmware_inventory "$efi_nvram_evidence"
+        efibootmgr -v 2>&1 | grep -E '^(Boot(Current|Next|Order):)' | head -20 || true
     fi
     echo
 
-    echo "Target kernel and initramfs selection candidates:"
+    echo "${scope_label^} kernel and initramfs selection candidates:"
     find "$TARGET_ROOT/boot" -maxdepth 1 -type f \
         \( -name 'vmlinuz-*' -o -name 'initrd.img-*' -o -name 'config-*' \) \
         -printf '%f %TY-%Tm-%Td %TH:%TM:%TS %s bytes\n' 2>/dev/null | sort -V | tail -160 || echo "No kernel artifacts found."
     if [[ -r "$cmdline_file" ]]; then
         echo
-        echo "Target /proc/cmdline (when proc is available):"
+        echo "${scope_label^} /proc/cmdline (when proc is available):"
         sed -E 's/(crypt(id|root)?|rd\.luks\.(uuid|name)|luks\.uuid|password|passwd|passphrase)=[^[:space:]]+/\1=[REDACTED]/Ig' \
             "$cmdline_file" 2>/dev/null || true
     fi
@@ -2443,33 +2756,33 @@ diagnostic_boot_evidence()
             | head -100 || true
     fi
     if [[ -f "$TARGET_ROOT/etc/crypttab" ]]; then
-        echo "Target crypttab unlock definitions (key contents are not read):"
+        echo "${scope_label^} crypttab unlock definitions (key contents are not read):"
         sed -E 's/^[[:space:]]*#/\#/; /^[[:space:]]*$/d' "$TARGET_ROOT/etc/crypttab" \
             | sed -E 's/[[:space:]]+[^[:space:]]*key(file)?=[^[:space:]]+/ keyfile=[REDACTED]/Ig' || true
     fi
     if [[ -d "$journal_dir" ]] && command -v journalctl >/dev/null 2>&1; then
-        # Restrict issue evidence to the most recent target boot. Older boots
+        # Restrict issue evidence to the most recent selected-system boot. Older boots
         # are retained in the boot-ID inventory below, but their resolved
         # failures should not drive a repair decision for the current boot.
         journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1200 2>/dev/null \
             | journal_current_boot_actionable \
             | grep -Ei 'cryptsetup|systemd-cryptsetup|luks|passphrase|password|unlock|keyslot|dracut|initramfs' \
             | sed -E 's/(password|passphrase|passwd|key)[=:][[:space:]]*[^[:space:]]+/\1=[REDACTED]/Ig' \
-            | tail -260 || echo "No unlock-related target journal entries found."
+            | tail -260 || echo "No unlock-related ${scope_label} journal entries found."
     else
         echo "No persistent target journal is available."
     fi
     echo
 
-    echo "Boot-selection and kernel messages (target journal):"
+    echo "Boot-selection and kernel messages (${scope_label} journal):"
     if [[ -d "$journal_dir" ]] && command -v journalctl >/dev/null 2>&1; then
-        echo "Journal scope: latest target boot (-b 0); older boot failures are omitted from repair evidence."
+        echo "Journal scope: latest ${scope_label} boot (-b 0); older boot failures are omitted from inspection evidence."
         journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1600 2>/dev/null \
             | journal_current_boot_actionable \
             | grep -Ei 'kernel command line|BOOT_IMAGE|selected|default entry|menuentry|grub|systemd-boot|efiboot|efi|initramfs|mount.*(root|boot)|failed|timeout|dependency' \
             | tail -360 || echo "No boot-selection messages found."
         echo
-        echo "Target journal boot IDs (if available):"
+        echo "${scope_label^} journal boot IDs (if available):"
         journalctl --root="$TARGET_ROOT" --list-boots --no-pager 2>&1 | tail -40 || true
     else
         echo "No persistent target journal is available."
@@ -2482,11 +2795,12 @@ diagnostic_boot_evidence()
 
 diagnostic_kernel()
 {
-    local kernel version rc=0
+    local kernel version rc=0 scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     local -a kernels=()
     shopt -s nullglob
     kernels=("$TARGET_ROOT"/boot/vmlinuz-*)
-    echo "Target kernel files:"
+    echo "${scope_label^} kernel files:"
     if ((${#kernels[@]} == 0)); then
         echo "  none found"
         rc=1
@@ -2494,7 +2808,7 @@ diagnostic_kernel()
         ls -lh "${kernels[@]}" 2>/dev/null || true
     fi
     echo
-    echo "Target initramfs files:"
+    echo "${scope_label^} initramfs files:"
     local -a initrds=("$TARGET_ROOT"/boot/initrd.img-*)
     if ((${#initrds[@]} == 0)); then
         echo "  none found"
@@ -2518,7 +2832,8 @@ diagnostic_kernel()
 
 diagnostic_grub()
 {
-    local cfg="$TARGET_ROOT/boot/grub/grub.cfg"
+    local cfg="$TARGET_ROOT/boot/grub/grub.cfg" scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     echo "GRUB configuration: $cfg"
     if [[ -f "$cfg" ]]; then
         grep -E '^[[:space:]]*(menuentry|submenu)|linux[[:space:]]|linuxefi[[:space:]]|initrd[[:space:]]|initrdefi[[:space:]]|root=|subvol' "$cfg" \
@@ -2557,9 +2872,10 @@ diagnostic_grub()
 
 diagnostic_uki()
 {
-    local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" tmp_uname tmp_cmdline partuuid embedded=""
+    local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" tmp_uname tmp_cmdline partuuid embedded="" efi_nvram_diag scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
 
-    echo "Selected target EFI System Partition:"
+    echo "Selected ${scope_label} EFI System Partition:"
     if mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
         findmnt -rn -o SOURCE,FSTYPE,OPTIONS --target "$TARGET_ROOT/boot/efi" 2>&1 || true
     else
@@ -2604,11 +2920,16 @@ diagnostic_uki()
     fi
 
     echo
-    echo "Firmware entries on the selected ESP:"
+    echo "Firmware entry inventory (host, selected ${scope_label} ESP, and other disks):"
     if command -v efibootmgr >/dev/null 2>&1 && [[ -n "$EFI_ESP_SOURCE" || -d "$TARGET_ROOT/boot/efi" ]]; then
         if [[ -z "$EFI_ESP_SOURCE" ]] && mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
             EFI_ESP_SOURCE="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT/boot/efi" 2>/dev/null | head -1 || true)"
         fi
+        efi_nvram_diag="$SESSION_DIR/diag-efi-nvram.txt"
+        efibootmgr -v > "$efi_nvram_diag" 2>&1 || true
+        efi_print_firmware_inventory "$efi_nvram_diag"
+        echo
+        echo "Entries referencing the selected ${scope_label} ESP only:"
         partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
         if [[ -n "$partuuid" ]]; then
             efibootmgr -v 2>&1 | grep -iF "$partuuid" || echo "No NVRAM entries reference selected ESP PARTUUID $partuuid."
@@ -2624,7 +2945,8 @@ diagnostic_uki()
 
 diagnostic_display()
 {
-    local display_link pkg service unit status configured_manager="none"
+    local display_link pkg service unit status configured_manager="none" scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     local -a services=(sddm.service gdm3.service lightdm.service greetd.service ly.service)
 
     echo "Systemd default target:"
@@ -2651,7 +2973,7 @@ diagnostic_display()
     if [[ -x "$TARGET_ROOT/usr/bin/dpkg-query" ]]; then
         for service in "${services[@]}"; do
             pkg="$(display_manager_package_for_service "$service")"
-            status="$(chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
                 dpkg-query -W -f='${db:Status-Status} ${Version}' "$pkg" 2>/dev/null || true)"
             unit="$(display_manager_unit_rel "$service" || true)"
             if [[ -n "$status" || -n "$unit" ]]; then
@@ -2662,11 +2984,11 @@ diagnostic_display()
             fi
         done
     else
-        echo "dpkg-query is not available in the target."
+        echo "dpkg-query is not available in the ${scope_label}."
     fi
 
     echo
-    echo "Recent target display-manager boot evidence (selected target journal, latest boot):"
+    echo "Recent ${scope_label} display-manager boot evidence (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && [[ -d "$TARGET_ROOT/var/log/journal" ]]; then
         # Keep the complete boot stream through the shutdown filter so the
         # systemd-logind reboot marker remains visible.  A unit-scoped
@@ -2679,11 +3001,11 @@ diagnostic_display()
             | grep -Eiv 'gkr-pam: unable to locate daemon control file|pam_kwallet5: open_session called without kwallet5_key' \
             | tail -120 || true
     else
-        echo "No persistent target journal is available."
+        echo "No persistent ${scope_label} journal is available."
     fi
 
     echo
-    echo "Recent target graphics/display errors (selected target journal, latest boot):"
+    echo "Recent ${scope_label} graphics/display errors (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && [[ -d "$TARGET_ROOT/var/log/journal" ]]; then
         # Preserve the full stream until after shutdown filtering; priority
         # queries do not include the reboot marker used by that filter.
@@ -2693,26 +3015,28 @@ diagnostic_display()
             | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
             | tail -160 || true
     else
-        echo "No persistent target journal is available."
+        echo "No persistent ${scope_label} journal is available."
     fi
 }
 
 diagnostic_errors()
 {
+    local scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     if ! command -v journalctl >/dev/null 2>&1; then
         echo "journalctl is not installed in the recovery host."
         return 0
     fi
     if [[ ! -d "$TARGET_ROOT/var/log/journal" ]]; then
-        echo "Target has no persistent /var/log/journal directory."
+        echo "${scope_label^} has no persistent /var/log/journal directory."
         return 0
     fi
-    echo "Recent target error-priority journal entries:"
-    echo "Journal scope: latest target boot (-b 0), excluding intentional shutdown teardown."
+    echo "Recent ${scope_label} error-priority journal entries:"
+    echo "Journal scope: latest ${scope_label} boot (-b 0), excluding intentional shutdown teardown."
     journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 --no-pager 2>&1 \
         | journal_current_boot_actionable || true
     echo
-    echo "Recent failure-related target journal lines:"
+    echo "Recent failure-related ${scope_label} journal lines:"
     journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 500 2>/dev/null \
         | journal_current_boot_actionable \
         | grep -iE 'failed|failure|dependency failed|timed out' \
@@ -2736,17 +3060,22 @@ diagnostic_fstab()
     if [[ -f "$TARGET_ROOT/etc/fstab" ]]; then
         cat "$TARGET_ROOT/etc/fstab"
     else
-        echo "Target /etc/fstab is not present."
+        if (( RUNNING_HOST_MODE == 1 )); then
+            echo "Running host /etc/fstab is not present."
+        else
+            echo "Target /etc/fstab is not present."
+        fi
         return 1
     fi
 }
 
 diagnostic_btrfs()
 {
-    local fstype
+    local fstype scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     fstype="$(findmnt -n -o FSTYPE "$MOUNT_BASE" 2>/dev/null || true)"
     if [[ "$fstype" != "btrfs" ]]; then
-        echo "Target root filesystem is ${fstype:-unknown}, not Btrfs."
+        echo "${scope_label^} root filesystem is ${fstype:-unknown}, not Btrfs."
         return 0
     fi
     if ! command -v btrfs >/dev/null 2>&1; then
@@ -2782,10 +3111,12 @@ diagnostic_mapper()
 
 diagnostic_luks()
 {
+    local scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     echo "Encrypted/mapped ancestry:"
     lsblk -srpo NAME,TYPE,FSTYPE,UUID "$ROOT_DEVICE" 2>&1 || true
     echo
-    echo "Target /etc/crypttab:"
+    echo "${scope_label^} /etc/crypttab:"
     if [[ -f "$TARGET_ROOT/etc/crypttab" ]]; then
         # crypttab's third field may contain key files or sensitive options;
         # retain mapper/source identity and replace all remaining fields.
@@ -2795,7 +3126,7 @@ diagnostic_luks()
         echo "not present"
     fi
     echo
-    echo "Target /etc/fstab mapper references:"
+    echo "${scope_label^} /etc/fstab mapper references:"
     if [[ -f "$TARGET_ROOT/etc/fstab" ]]; then
         grep -E '/dev/mapper|UUID=' "$TARGET_ROOT/etc/fstab" 2>/dev/null || echo "No mapper/UUID references found."
     else
@@ -2803,15 +3134,15 @@ diagnostic_luks()
     fi
 }
 
-run_one_target_diagnostic()
+run_one_diagnostic()
 {
-    local key="$1" title rc=0
+    local key="$1" scope="${2:-Repair Target}" title rc=0
     title="$(diagnostic_title "$key")"
     echo "========================================"
     echo "$title"
     echo "========================================"
     echo "Diagnostic: $key"
-    echo "Scope: Repair Target"
+    echo "Scope: $scope"
     echo "Time: $(date --iso-8601=seconds 2>/dev/null || date)"
     echo
     case "$key" in
@@ -2832,6 +3163,11 @@ run_one_target_diagnostic()
     esac
     echo
     return "$rc"
+}
+
+run_one_target_diagnostic()
+{
+    run_one_diagnostic "$1" "Repair Target"
 }
 
 run_target_diagnostic()
@@ -2855,6 +3191,27 @@ run_target_diagnostic()
     # Diagnostics are informational. Individual audit failures are retained in
     # the output but do not turn a successfully completed read-only inspection
     # into a helper transport failure.
+    return 0
+}
+
+run_host_diagnostic()
+{
+    local requested="${1:-}" key overall=0
+    [[ -n "$requested" ]] || fail "host-diagnose requires a diagnostic name or 'all'."
+    (($# == 1)) || fail "host-diagnose accepts exactly one diagnostic name or 'all'."
+
+    CURRENT_STAGE="host read-only diagnostic"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no no
+    DIAGNOSTIC_SCOPE="Running Host"
+    if [[ "$requested" == all || "$requested" == report ]]; then
+        for key in environment boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
+            run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || overall=1
+        done
+    else
+        run_one_diagnostic "$requested" "$DIAGNOSTIC_SCOPE" || overall=1
+    fi
+    DIAGNOSTIC_SCOPE="Repair Target"
     return 0
 }
 
@@ -3372,7 +3729,7 @@ snapshot_post_switch_reconcile()
     snapshot_verify_installed_kernels
 
     if [[ -x "$TARGET_ROOT/usr/bin/dpkg" || -x "$TARGET_ROOT/usr/bin/dpkg-query" ]]; then
-        audit="$(chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin dpkg --audit 2>/dev/null || true)"
+        audit="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin dpkg --audit 2>/dev/null || true)"
         if [[ -n "$audit" ]]; then
             printf '%s\n' "$audit" | tee -a "$SESSION_LOG"
             fail "The selected snapshot contains an incomplete dpkg state; repair packages before relying on this rollback."
@@ -3653,6 +4010,28 @@ validate_target()
     log "Validation complete; no target files were changed." | tee -a "$SESSION_LOG"
 }
 
+validate_running_host()
+{
+    CURRENT_STAGE="host validation"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no no
+    log "Running-host validation summary" | tee -a "$SESSION_LOG"
+    log "  OS: $TARGET_PRETTY" | tee -a "$SESSION_LOG"
+    log "  Root: $ROOT_DEVICE" | tee -a "$SESSION_LOG"
+    log "  Root filesystem: $(lsblk -ndo FSTYPE "$ROOT_CANONICAL" | head -n1)" | tee -a "$SESSION_LOG"
+    log "  /etc/fstab: $([[ -s "$TARGET_ROOT/etc/fstab" ]] && echo present || echo missing/empty)" | tee -a "$SESSION_LOG"
+    log "  /etc/crypttab: $([[ -s "$TARGET_ROOT/etc/crypttab" ]] && echo present || echo missing/empty)" | tee -a "$SESSION_LOG"
+    log "  /boot: $([[ -d "$TARGET_ROOT/boot" ]] && echo present || echo missing)" | tee -a "$SESSION_LOG"
+    log "  /boot/efi: $([[ -n "$EFI_ESP_SOURCE" ]] && echo "$EFI_ESP_SOURCE ($EFI_ESP_FSTYPE)" || echo "not separately mounted")" | tee -a "$SESSION_LOG"
+    validate_mapper_crypttab
+    if is_debian_family; then
+        log "  Supported modifying backend: Debian/APT family" | tee -a "$SESSION_LOG"
+    else
+        log "  Supported modifying backend: NO (diagnostics only for this host family)" | tee -a "$SESSION_LOG"
+    fi
+    log "Running-host validation complete; no host files were changed." | tee -a "$SESSION_LOG"
+}
+
 validate_stage()
 {
     case "$1" in
@@ -3734,8 +4113,12 @@ validate_target_esp()
     [[ -d "$TARGET_ROOT/boot/efi" ]] || fail "Target /boot/efi directory is not available."
     mountpoint -q "$TARGET_ROOT/boot/efi" || fail "Target EFI System Partition is not mounted at /boot/efi."
 
-    EFI_ESP_SOURCE="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT/boot/efi" 2>/dev/null | head -n1 || true)"
-    EFI_ESP_FSTYPE="$(findmnt -rn -o FSTYPE --target "$TARGET_ROOT/boot/efi" 2>/dev/null | head -n1 || true)"
+    # A native systemd automount may report autofs before its FAT mount.
+    # Select the block-backed mount instead of accepting the synthetic row.
+    read -r EFI_ESP_SOURCE EFI_ESP_FSTYPE < <(
+        findmnt -rn -o SOURCE,FSTYPE --target "$TARGET_ROOT/boot/efi" 2>/dev/null \
+            | awk '$1 ~ /^\/dev\// {print $1, $2; exit}'
+    ) || true
     [[ -n "$EFI_ESP_SOURCE" ]] && is_block_device "$EFI_ESP_SOURCE" \
         || fail "Unable to identify the mounted EFI System Partition source."
     same_single_top_disk "$TARGET_DISK" "$EFI_ESP_SOURCE" \
@@ -3783,84 +4166,827 @@ efi_entry_id_for_target_label()
     efibootmgr -v 2>/dev/null \
         | grep -iF "$partuuid" \
         | grep -F "$label" \
+        | { if [[ "$label" == "TUXEDO UKI" ]]; then grep -F 'TUX.EFI'; else cat; fi; } \
         | sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]]+.*/\1/p' \
         | head -1
 }
 
-restore_efi_order_after_uki()
+# efibootmgr prints one Boot#### definition per line, followed by optional
+# decoded device-path detail lines. Keep the parser limited to the definition
+# line: it gives us a stable firmware identity without trying to decode
+# vendor-specific binary data.
+efi_entry_id_line()
 {
-    local old_order="$1" old_uki="$2" new_uki="$3" old_next="$4"
-    local id out_csv="" seen_csv="," replacement
+    sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$1" \
+        | tr '[:lower:]' '[:upper:]'
+}
+
+efi_entry_definition_line()
+{
+    sed -E 's/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]+//; s/[[:space:]]+/ /g; s/^ //; s/ $//' <<<"$1"
+}
+
+efi_entry_label_line()
+{
+    local definition="$1" label_re='^(.*)[[:space:]]+(HD\(|File\(|PciRoot\(|VenHw\(|MemoryMapped\()'
+    definition="$(efi_entry_definition_line "$definition")"
+    if [[ "$definition" =~ $label_re ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    else
+        # A definition without a decoded path is still useful for inventory
+        # and preservation checks. The whole definition is the best safe
+        # label available in that case.
+        printf '%s\n' "$definition"
+    fi
+}
+
+efi_entry_partuuid_line()
+{
+    sed -nE 's/.*HD\([0-9]+,GPT,([[:alnum:]-]{36}),.*/\1/p' <<<"$1" \
+        | tr '[:upper:]' '[:lower:]'
+}
+
+efi_entry_loader_line()
+{
+    local line="$1" loader_re='HD\([^)]*\)/([^[:space:]]+)'
+    if [[ "$line" =~ $loader_re ]]; then
+        # efibootmgr appends optional-data bytes (commonly `0000424f`) after
+        # a normal `.EFI` file path. They are not part of the loader name and
+        # cannot be passed back through --loader, so preserve the path while
+        # deliberately ignoring only that suffix for identity/recreation.
+        printf '%s\n' "${BASH_REMATCH[1]}" \
+            | sed -E 's/(\.[Ee][Ff][Ii])[0-9A-Fa-f]{8}$/\1/'
+    fi
+}
+
+efi_selected_system_model()
+{
+    local esp="$1" disk model
+
+    [[ -n "$esp" ]] || return 1
+    disk="$(lsblk -ndo PKNAME "$esp" 2>/dev/null | head -n1 || true)"
+    [[ -n "$disk" ]] || return 1
+    disk="${disk#/dev/}"
+    model="$(lsblk -ndo MODEL "/dev/$disk" 2>/dev/null | head -n1 || true)"
+    model="$(sed -E 's/[[:space:]]+/ /g; s/^ //; s/ $//' <<<"$model")"
+    [[ -n "$model" ]] || return 1
+    printf '%s\n' "$model"
+}
+
+efi_disk_and_partnum_for_esp()
+{
+    local esp="$1" disk partnum sysname disk_path
+
+    # `PARTNUM` is not a portable lsblk column.  Debian util-linux exposes
+    # the partition number as `PARTN`; retain a sysfs fallback for older or
+    # reduced lsblk builds and for device paths that are not fully represented
+    # by lsblk.  Return the canonical disk path and numeric partition number
+    # as a tab-separated pair so callers do not duplicate this resolver.
+    [[ -n "$esp" ]] || return 1
+    disk="$(lsblk -ndo PKNAME "$esp" 2>/dev/null | head -n1 || true)"
+    [[ -n "$disk" ]] || return 1
+    disk="${disk#/dev/}"
+    disk_path="/dev/$disk"
+    is_block_device "$disk_path" || return 1
+
+    partnum="$(lsblk -ndo PARTN "$esp" 2>/dev/null | head -n1 || true)"
+    if [[ ! "$partnum" =~ ^[0-9]+$ ]]; then
+        sysname="$(basename -- "$esp")"
+        partnum="$(cat "/sys/class/block/$sysname/partition" 2>/dev/null || true)"
+    fi
+    [[ "$partnum" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\t%s\n' "$disk_path" "$partnum"
+}
+
+efi_label_match_text()
+{
+    # Firmware labels and lsblk models do not use one consistent separator
+    # convention (for example WD_BLACK versus WD BLACK). Compare a compact,
+    # case-insensitive form so a model already present in a vendor label is
+    # not appended a second time.
+    tr '[:upper:]' '[:lower:]' \
+        | sed -E 's/[_-]+/ /g; s/[^[:alnum:]]+/ /g; s/[[:space:]]+/ /g; s/^ //; s/ $//'
+}
+
+efi_label_has_selected_model()
+{
+    local label="$1" model="$2" label_key model_key model_stem
+    label_key="$(efi_label_match_text <<<"$label")"
+    model_key="$(efi_label_match_text <<<"$model")"
+    [[ -n "$model_key" && "$label_key" == *"$model_key"* ]] && return 0
+
+    # Capacity is often omitted from an existing vendor-generated label
+    # (for example WD_BLACK SN8100 HS versus WD_BLACK SN8100 HS 4000GB). Treat
+    # that stable model stem as present as well, while requiring at least two
+    # meaningful words so a generic label cannot suppress annotation.
+    model_stem="$(sed -E 's/[[:space:]]+[0-9]+(gb|tb|gib|tib)$//' <<<"$model_key")"
+    [[ "$model_stem" != "$model_key" && "$model_stem" == *' '* \
+       && "$label_key" == *"$model_stem"* ]]
+}
+
+efi_label_with_selected_model()
+{
+    local label="$1" model="$2"
+    if efi_label_has_selected_model "$label" "$model"; then
+        printf '%s\n' "$label"
+    else
+        printf '%s %s\n' "$label" "$model"
+    fi
+}
+
+efi_entry_ids_for_partuuid_loader()
+{
+    local partuuid="${1,,}" wanted_loader="${2,,}" line part loader id
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    [[ -n "$partuuid" && -n "$wanted_loader" ]] || return 1
+
+    while IFS= read -r line; do
+        part="$(efi_entry_partuuid_line "$line")"
+        [[ "$part" == "$partuuid" ]] || continue
+        loader="$(efi_entry_loader_line "$line" || true)"
+        [[ "${loader,,}" == "$wanted_loader" ]] || continue
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] && printf '%s\n' "$id"
+    done < <(efibootmgr -v 2>/dev/null | sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p')
+}
+
+efi_selected_entry_role()
+{
+    local loader="${1,,}" basename
+    basename="${loader##*\\}"
+    case "$loader" in
+        '\efi\boot\tux.efi') printf 'uki\n' ;;
+        *)
+            case "$basename" in
+                ipxe.efi) printf 'wfai\n' ;;
+                bootx64.efi) printf 'fallback\n' ;;
+                # EFI vendor directories and loader names vary by
+                # distribution. Any remaining decoded EFI file on the
+                # selected ESP is a boot entry we can label without needing
+                # to guess whether it is Debian, Ubuntu, Fedora, or another
+                # distribution. The PARTUUID boundary is enforced by the
+                # caller, so another disk's entry is never touched.
+                *.efi) printf 'loader\n' ;;
+            esac
+            ;;
+    esac
+}
+
+efi_selected_wfai_loader()
+{
+    local efi_root="$TARGET_ROOT/boot/efi/EFI" path relative
+    [[ -d "$efi_root" ]] || return 1
+    path="$(find "$efi_root" -type f -iname 'iPXE.efi' -print -quit 2>/dev/null || true)"
+    [[ -n "$path" ]] || return 1
+    relative="${path#"$efi_root"/}"
+    [[ "$relative" != "$path" ]] || return 1
+    printf '%s\n' "\\EFI\\${relative//\//\\}"
+}
+
+efi_ensure_selected_wfai_entry()
+{
+    local partuuid="$1" model="$2" esp disk partnum label current loader entry_name os_id resolved
     local -a ids=()
 
-    [[ -n "$old_order" && -n "$new_uki" ]] || return 0
-    IFS=',' read -ra ids <<< "$old_order"
-    for id in "${ids[@]}"; do
-        id="${id^^}"
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$esp" ]] || return 0
+    loader="$(efi_selected_wfai_loader || true)"
+    [[ -n "$loader" ]] || {
+        log "iPXE/WebFAI EFI loader is absent on selected system ESP; no recovery firmware entry was created." | tee -a "$SESSION_LOG"
+        return 0
+    }
+
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
+    if ((${#ids[@]} > 1)); then
+        log "ERROR: more than one iPXE/WebFAI firmware entry points to the selected system ESP: ${ids[*]}" | tee -a "$SESSION_LOG" >&2
+        return 1
+    fi
+    if ((${#ids[@]} == 1)); then
+        return 0
+    fi
+
+    uefi_nvram_writable || {
+        log "iPXE/WebFAI EFI loader is present on the selected system ESP, but firmware variables are not writable; no recovery firmware entry was created." | tee -a "$SESSION_LOG"
+        return 0
+    }
+    resolved="$(efi_disk_and_partnum_for_esp "$esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] || {
+        log "ERROR: unable to derive disk and partition for selected system ESP while restoring WebFAI." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    entry_name="iPXE"
+    os_id="${TARGET_OS_ID:-}"
+    [[ "${os_id,,}" == tuxedo ]] && entry_name="WFAI"
+    label="$entry_name $model"
+    log "Restoring missing ${entry_name} firmware entry on selected system ESP $esp as '$label' ($loader)." | tee -a "$SESSION_LOG"
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader "$loader" 2>&1 \
+        | tee -a "$SESSION_LOG" || return 1
+    current="$SESSION_DIR/efi-nvram-wfai.txt"
+    efibootmgr -v > "$current" 2>&1 || return 1
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
+    ((${#ids[@]} == 1)) || {
+        log "ERROR: iPXE/WebFAI registration completed but could not be verified uniquely on selected system ESP $esp." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    log "PASS: ${entry_name} firmware entry restored as Boot${ids[0]} on selected system ESP $esp." | tee -a "$SESSION_LOG"
+}
+
+efi_annotate_selected_entries()
+{
+    local esp partuuid model line id part loader role label new_label
+    local nvram="$SESSION_DIR/efi-nvram-annotate-before.txt"
+
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$esp" ]] || return 0
+    partuuid="$(blkid -s PARTUUID -o value "$esp" 2>/dev/null || true)"
+    partuuid="${partuuid,,}"
+    [[ -n "$partuuid" ]] || return 0
+    model="$(efi_selected_system_model "$esp" 2>/dev/null || true)"
+    [[ -n "$model" ]] || return 0
+
+    efibootmgr -v > "$nvram" 2>&1 || return 1
+    log "Annotating selected-system EFI entries with OS/model identity: ${TARGET_PRETTY:-${TARGET_OS_ID:-Linux}} / $model (PARTUUID $partuuid)." | tee -a "$SESSION_LOG"
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
         [[ -n "$id" ]] || continue
-        replacement="$id"
-        if [[ -n "$old_uki" && "$id" == "${old_uki^^}" ]]; then
-            replacement="${new_uki^^}"
+        part="$(efi_entry_partuuid_line "$line")"
+        [[ "$part" == "$partuuid" ]] || continue
+        loader="$(efi_entry_loader_line "$line" || true)"
+        role="$(efi_selected_entry_role "$loader" || true)"
+        [[ -n "$role" ]] || continue
+        label="$(efi_entry_label_line "$line")"
+        new_label="$(efi_label_with_selected_model "$label" "$model")"
+        if [[ "$new_label" == "$label" ]]; then
+            log "EFI Boot$id already names selected model; leaving label '$label' unchanged." | tee -a "$SESSION_LOG"
+            continue
         fi
-        [[ "$seen_csv" == *",$replacement,"* ]] && continue
-        seen_csv+="$replacement,"
-        if [[ -z "$out_csv" ]]; then
-            out_csv="$replacement"
-        else
-            out_csv+=",$replacement"
+        efibootmgr --bootnum "$id" --label "$new_label" 2>&1 \
+            | tee -a "$SESSION_LOG" || return 1
+        log "EFI Boot$id ($role) label updated to '$new_label' on selected system ESP only." | tee -a "$SESSION_LOG"
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+
+    efi_ensure_selected_wfai_entry "$partuuid" "$model"
+}
+
+efi_entry_key_line()
+{
+    local line="$1" part label loader definition
+    part="$(efi_entry_partuuid_line "$line")"
+    label="$(efi_entry_label_line "$line")"
+    loader="$(efi_entry_loader_line "$line" || true)"
+    definition="$(efi_entry_definition_line "$line")"
+    if [[ -n "$part" ]]; then
+        # PARTUUID + label + loader distinguishes two valid loaders on one
+        # ESP while remaining stable when firmware assigns a new Boot#### ID.
+        printf '%s|%s|%s\n' "$part" "${label,,}" "${loader,,}"
+    else
+        # Keep entries whose firmware path cannot be decoded in the identity
+        # model. They can be preserved exactly, but are intentionally not
+        # reconstructed from a guessed path if a vendor tool deletes them.
+        printf 'unknown|%s\n' "${definition,,}"
+    fi
+}
+
+efi_entry_partition_label_key_line()
+{
+    local line="$1" part label
+    part="$(efi_entry_partuuid_line "$line")"
+    label="$(efi_entry_label_line "$line")"
+    [[ -n "$part" ]] || return 1
+    printf '%s|%s\n' "$part" "${label,,}"
+}
+
+efi_entry_class_line()
+{
+    local line="$1" host_partuuid="$2" target_partuuid="$3" part
+    part="$(efi_entry_partuuid_line "$line")"
+    if [[ -n "$host_partuuid" && "$part" == "${host_partuuid,,}" \
+          && ( "$RUNNING_HOST_MODE" == 1 || -z "$target_partuuid" || "$part" != "${target_partuuid,,}" ) ]]; then
+        printf 'host\n'
+    elif [[ -n "$target_partuuid" && "$part" == "${target_partuuid,,}" ]]; then
+        printf 'repair\n'
+    elif [[ -n "$part" ]]; then
+        printf 'foreign\n'
+    else
+        printf 'unknown\n'
+    fi
+}
+
+efi_host_esp_source()
+{
+    local source
+    # systemd automounts expose an `autofs` row before the actual vfat row;
+    # choose the block-backed mount rather than the synthetic systemd-1 source.
+    source="$(findmnt -rn -o SOURCE,FSTYPE --target /boot/efi 2>/dev/null \
+        | awk '$1 ~ /^\/dev\// && $2 ~ /^(vfat|fat|fat16|fat32|msdos)$/ {print $1; exit}' || true)"
+    source="${source%%\[*}"
+    [[ -n "$source" && -b "$source" ]] || return 1
+    canonical_block "$source"
+}
+
+efi_set_inventory_esp_ids()
+{
+    local host_source=""
+    EFI_TARGET_ESP_PARTUUID=""
+    EFI_HOST_ESP_SOURCE=""
+    EFI_HOST_ESP_PARTUUID=""
+    EFI_HOST_ESP_MOUNT=""
+
+    if [[ -n "$EFI_ESP_SOURCE" && -b "$EFI_ESP_SOURCE" ]]; then
+        EFI_TARGET_ESP_PARTUUID="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+        EFI_TARGET_ESP_PARTUUID="${EFI_TARGET_ESP_PARTUUID,,}"
+    fi
+    host_source="$(efi_host_esp_source 2>/dev/null || true)"
+    if [[ -n "$host_source" ]]; then
+        EFI_HOST_ESP_SOURCE="$host_source"
+        EFI_HOST_ESP_MOUNT="/boot/efi"
+        EFI_HOST_ESP_PARTUUID="$(blkid -s PARTUUID -o value "$host_source" 2>/dev/null || true)"
+        EFI_HOST_ESP_PARTUUID="${EFI_HOST_ESP_PARTUUID,,}"
+    fi
+}
+
+efi_print_firmware_inventory()
+{
+    local nvram="$1" line id class part label loader selected_label="repair-ESP"
+    [[ -s "$nvram" ]] || return 0
+    efi_set_inventory_esp_ids
+    [[ "$RUNNING_HOST_MODE" == 1 ]] && selected_label="selected-system-ESP"
+    printf 'EFI inventory (all firmware entries): host-ESP=%s (%s) %s=%s (%s)\n' \
+        "${EFI_HOST_ESP_PARTUUID:-unknown}" "${EFI_HOST_ESP_SOURCE:-unresolved}" \
+        "$selected_label" \
+        "${EFI_TARGET_ESP_PARTUUID:-unknown}" "${EFI_ESP_SOURCE:-unresolved}"
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        part="$(efi_entry_partuuid_line "$line")"
+        label="$(efi_entry_label_line "$line")"
+        loader="$(efi_entry_loader_line "$line" || true)"
+        printf '  Boot%s class=%s partuuid=%s label=%s loader=%s\n' \
+            "$id" "$class" "${part:-unknown}" "$label" "${loader:-device-path-only}"
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+}
+
+efi_find_entry_by_key()
+{
+    local nvram="$1" wanted="$2" line key id
+    while IFS= read -r line; do
+        key="$(efi_entry_key_line "$line")"
+        [[ "$key" == "$wanted" ]] || continue
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] && { printf '%s\n' "$id"; return 0; }
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+    return 1
+}
+
+efi_create_entry_from_definition()
+{
+    local line="$1" class="$2" partuuid label loader esp disk partnum current id resolved
+    partuuid="$(efi_entry_partuuid_line "$line")"
+    label="$(efi_entry_label_line "$line")"
+    loader="$(efi_entry_loader_line "$line" || true)"
+    [[ -n "$partuuid" ]] || {
+        log "ERROR: cannot restore $class firmware entry without a GPT PARTUUID: $line" | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    # Reconstruct only ordinary EFI file-path entries. PCI-only or vendor
+    # paths (for example a firmware-generated `UEFI OS` entry) have no safe
+    # efibootmgr command-line equivalent and must never be guessed.
+    [[ "$loader" =~ ^\\EFI\\[^[:space:]]+\.[Ee][Ff][Ii]$ ]] || {
+        log "ERROR: $class firmware entry $label disappeared, but its device path is vendor-specific; refusing to guess a replacement." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    esp="$(blkid -t "PARTUUID=$partuuid" -o device 2>/dev/null | head -n1 || true)"
+    [[ -n "$esp" && -b "$esp" ]] || {
+        log "ERROR: cannot resolve ESP PARTUUID $partuuid while restoring $class firmware entry $label." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    resolved="$(efi_disk_and_partnum_for_esp "$esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] || {
+        log "ERROR: cannot derive disk/partition for ESP $esp while restoring firmware entry $label." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    log "Restoring $class firmware entry '$label' for PARTUUID $partuuid (EFI path $loader)." | tee -a "$SESSION_LOG" >&2
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader "$loader" 2>&1 | tee -a "$SESSION_LOG" \
+        || return 1
+    current="$SESSION_DIR/efi-nvram-recreate.$partuuid"
+    efibootmgr -v > "$current" 2>&1 || return 1
+    id="$(efi_find_entry_by_key "$current" "$(efi_entry_key_line "$line")" || true)"
+    [[ -n "$id" ]] || {
+        log "ERROR: efibootmgr completed but restored entry '$label' could not be found by identity." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    printf '%s\n' "$id"
+}
+
+
+efi_target_uki_entry_ids()
+{
+    local partuuid
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$partuuid" ]] || return 1
+
+    efi_uki_entry_ids_for_partuuid "$partuuid"
+}
+
+efi_uki_entry_ids_for_partuuid()
+{
+    local partuuid="${1,,}"
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    [[ -n "$partuuid" ]] || return 1
+
+    efibootmgr -v 2>/dev/null \
+        | awk -v partuuid="$partuuid" '
+            BEGIN { IGNORECASE=1 }
+            /^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/ \
+                && index(tolower($0), tolower(partuuid)) \
+                && index($0, "TUXEDO UKI") \
+                && index(toupper($0), "TUX.EFI") {
+                    id=$1
+                    sub(/^Boot/, "", id)
+                    sub(/\*.*/, "", id)
+                    print toupper(id)
+                }
+        ' | sort -u
+}
+
+efi_host_tuxedo_uki_entry_ids()
+{
+    efi_set_inventory_esp_ids
+    [[ -n "$EFI_HOST_ESP_PARTUUID" ]] || return 1
+    efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID"
+}
+
+restore_missing_host_tuxedo_uki_entry()
+{
+    local allow_same_esp="${1:-0}" host_mount host_uki host_esp disk partnum current resolved model label
+    local -a ids=()
+
+    # This is deliberately limited to the running host ESP.  A repair of a
+    # second disk may restore a missing host registration, but it must never
+    # scan arbitrary ESPs or infer a TUXEDO installation from a disk model.
+    efi_set_inventory_esp_ids
+    host_esp="$EFI_HOST_ESP_SOURCE"
+    host_mount="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    [[ -n "$host_esp" && -n "$EFI_HOST_ESP_PARTUUID" ]] || return 0
+    [[ "$allow_same_esp" == 1 || "$host_esp" != "$EFI_ESP_SOURCE" ]] || return 0
+    [[ -d "$host_mount/EFI/TUXEDO" ]] || return 0
+    host_uki="$host_mount/EFI/BOOT/TUX.EFI"
+    [[ -s "$host_uki" ]] || return 0
+
+    mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
+    if ((${#ids[@]} == 1)); then
+        log "Host TUXEDO UKI firmware entry already present: Boot${ids[0]} on $host_esp." | tee -a "$SESSION_LOG"
+        return 0
+    fi
+    if ((${#ids[@]} > 1)); then
+        log "ERROR: more than one host TUXEDO UKI entry points to $host_esp: ${ids[*]}; refusing to remove or choose one." | tee -a "$SESSION_LOG" >&2
+        return 1
+    fi
+
+    uefi_nvram_writable || {
+        log "Host TUXEDO UKI file is present on $host_esp, but firmware variables are not writable; host registration was not changed." | tee -a "$SESSION_LOG"
+        return 0
+    }
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    host_esp="$(canonical_block "$host_esp" 2>/dev/null || true)"
+    [[ -n "$host_esp" ]] && is_block_device "$host_esp" || {
+        log "ERROR: host TUXEDO UKI file is present, but its ESP could not be resolved as a block device." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    resolved="$(efi_disk_and_partnum_for_esp "$host_esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] || {
+        log "ERROR: unable to derive the host disk and partition for ESP $host_esp." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+
+    label="TUXEDO UKI"
+    model="$(efi_selected_system_model "$host_esp" 2>/dev/null || true)"
+    if [[ -n "$model" ]]; then
+        label="$(efi_label_with_selected_model "$label" "$model")"
+    fi
+    log "Restoring missing host TUXEDO UKI firmware entry on $host_esp as '$label'; existing host, repair, and foreign entries are untouched." | tee -a "$SESSION_LOG"
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader '\EFI\BOOT\TUX.EFI' 2>&1 \
+        | tee -a "$SESSION_LOG" || return 1
+    current="$SESSION_DIR/efi-nvram-host-uki.txt"
+    efibootmgr -v > "$current" 2>&1 || return 1
+    mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
+    ((${#ids[@]} == 1)) || {
+        log "ERROR: host TUXEDO UKI registration completed but could not be verified uniquely on $host_esp." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    log "PASS: host TUXEDO UKI firmware entry restored as Boot${ids[0]} on $host_esp." | tee -a "$SESSION_LOG"
+}
+
+efi_reconcile_firmware_inventory()
+{
+    local before="$1" map_file="$2" current_file line id old_id key class mapped definition current_line
+    local partition_label_key
+    local -A current_by_id=() current_by_key=() current_by_partition_label=()
+    local -a old_ids=()
+
+    [[ -s "$before" ]] || return 0
+    efi_set_inventory_esp_ids
+    current_file="$SESSION_DIR/efi-nvram-current-before-reconcile.txt"
+    efibootmgr -v > "$current_file" 2>&1 \
+        || fail "Unable to capture firmware entries for post-operation reconciliation."
+    : > "$map_file"
+    mapfile -t old_ids < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$before" | tr '[:lower:]' '[:upper:]' | sort -u)
+
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        current_by_id["$id"]="$line"
+        key="$(efi_entry_key_line "$line")"
+        [[ -n "${current_by_key[$key]:-}" ]] || current_by_key["$key"]="$id"
+        partition_label_key="$(efi_entry_partition_label_key_line "$line" || true)"
+        [[ -n "$partition_label_key" && -n "${current_by_partition_label[$partition_label_key]:-}" ]] \
+            || [[ -z "$partition_label_key" ]] \
+            || current_by_partition_label["$partition_label_key"]="$id"
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
+
+    # First map exact IDs. If firmware/vendor tooling reused an ID, fall back
+    # to the stable PARTUUID/label/loader identity before recreating anything.
+    for old_id in "${old_ids[@]}"; do
+        line="$(grep -E "^Boot${old_id}\*?[[:space:]]" "$before" | head -n1 || true)"
+        [[ -n "$line" ]] || continue
+        key="$(efi_entry_key_line "$line")"
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        definition="$(efi_entry_definition_line "$line")"
+        current_line="${current_by_id[$old_id]:-}"
+        mapped=""
+        if [[ -n "$current_line" && "$(efi_entry_definition_line "$current_line")" == "$definition" ]]; then
+            mapped="$old_id"
+        elif [[ -n "${current_by_key[$key]:-}" ]]; then
+            mapped="${current_by_key[$key]}"
+            log "EFI entry identity preserved while firmware ID changed: Boot$old_id -> Boot$mapped." | tee -a "$SESSION_LOG"
+        elif [[ "$class" == repair ]]; then
+            # A conventional GRUB install may intentionally replace only the
+            # loader file on the selected repair ESP (for example shim ->
+            # grubx64.efi) while retaining the same partition and entry label.
+            # Accept that target-side replacement; host and foreign entries
+            # still require an exact loader identity and are reconstructed.
+            partition_label_key="$(efi_entry_partition_label_key_line "$line" || true)"
+            if [[ -n "$partition_label_key" && -n "${current_by_partition_label[$partition_label_key]:-}" ]]; then
+                mapped="${current_by_partition_label[$partition_label_key]}"
+                log "Repair-target EFI entry label preserved while loader changed: Boot$old_id -> Boot$mapped." | tee -a "$SESSION_LOG"
+            fi
         fi
+        if [[ -z "$mapped" ]]; then
+            mapped="$(efi_create_entry_from_definition "$line" "$class" || true)"
+            [[ -n "$mapped" ]] || return 1
+            current_file="$SESSION_DIR/efi-nvram-current-before-reconcile.txt"
+            efibootmgr -v > "$current_file" 2>&1 || return 1
+            current_by_id=()
+            current_by_key=()
+            current_by_partition_label=()
+            while IFS= read -r current_line; do
+                id="$(efi_entry_id_line "$current_line")"
+                [[ -n "$id" ]] || continue
+                current_by_id["$id"]="$current_line"
+                key="$(efi_entry_key_line "$current_line")"
+                [[ -n "${current_by_key[$key]:-}" ]] || current_by_key["$key"]="$id"
+                partition_label_key="$(efi_entry_partition_label_key_line "$current_line" || true)"
+                [[ -n "$partition_label_key" && -n "${current_by_partition_label[$partition_label_key]:-}" ]] \
+                    || [[ -z "$partition_label_key" ]] \
+                    || current_by_partition_label["$partition_label_key"]="$id"
+            done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
+        fi
+        printf '%s\t%s\t%s\n' "$old_id" "$mapped" "$key" >> "$map_file"
     done
 
-    if [[ "$seen_csv" != *",${new_uki^^},"* ]]; then
-        if [[ -n "$old_uki" ]]; then
-            # The old entry disappeared from BootOrder unexpectedly. Keep all
-            # existing entries and append the recreated target entry.
-            out_csv+="${out_csv:+,}${new_uki^^}"
-        else
-            # First-time/previously missing TUXEDO UKI entry: make the newly
-            # created target entry reachable without dropping or reordering the
-            # other disks' firmware entries.
-            out_csv="${new_uki^^}${out_csv:+,$out_csv}"
-        fi
+    efi_print_firmware_inventory "$current_file" | tee -a "$SESSION_LOG"
+}
+
+efi_restore_reconciled_order()
+{
+    local before="$1" map_file="$2" extra_id="${3:-}" old_order old_next mapped id current out_csv="" seen_csv="," mapped_csv="," next_mapped=""
+    local -a ids=()
+    old_order="$(sed -n 's/^BootOrder: //p' "$before" | head -n1 || true)"
+    old_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$before" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    current="$(efibootmgr -v 2>/dev/null || true)"
+
+    if [[ -n "$old_order" ]]; then
+        IFS=',' read -ra ids <<< "$old_order"
+        for id in "${ids[@]}"; do
+            id="${id^^}"
+            [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
+            mapped="$(awk -F '\t' -v old="$id" '$1 == old {print $2; exit}' "$map_file" 2>/dev/null || true)"
+            [[ -n "$mapped" ]] || return 1
+            grep -Eq "^Boot${mapped}\*?[[:space:]]" <<<"$current" || return 1
+            [[ "$seen_csv" == *",$mapped,"* ]] && continue
+            seen_csv+="$mapped,"
+            out_csv+="${out_csv:+,}$mapped"
+        done
     fi
 
-    [[ -n "$out_csv" ]] || return 0
-    log "Restoring EFI BootOrder after TUXEDO UKI rebuild: $out_csv" | tee -a "$SESSION_LOG"
-    efibootmgr -o "$out_csv" 2>&1 | tee -a "$SESSION_LOG" || \
-        log "WARNING: unable to restore EFI BootOrder; inspect efibootmgr output before reboot." | tee -a "$SESSION_LOG"
+    while IFS=$'\t' read -r _old_id mapped _key; do
+        [[ -n "$mapped" ]] || continue
+        mapped_csv+="$mapped,"
+    done < "$map_file"
 
-    if [[ -n "$old_next" && -n "$old_uki" && "${old_next^^}" == "${old_uki^^}" ]]; then
-        log "Restoring BootNext to recreated TUXEDO UKI entry ${new_uki^^}" | tee -a "$SESSION_LOG"
-        efibootmgr -n "${new_uki^^}" 2>&1 | tee -a "$SESSION_LOG" || true
+    # Preserve entries created by a repair tool after the pre-state capture.
+    # Entries that existed before but were intentionally absent from
+    # BootOrder stay absent; only genuinely new entries are appended.
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        [[ "$mapped_csv" == *",$id,"* ]] && continue
+        [[ "$seen_csv" == *",$id,"* ]] && continue
+        seen_csv+="$id,"
+        out_csv+="${out_csv:+,}$id"
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
+
+    if [[ -n "$extra_id" && "$seen_csv" != *",${extra_id^^},"* ]]; then
+        out_csv+="${out_csv:+,}${extra_id^^}"
     fi
+    if [[ -n "$out_csv" ]]; then
+        log "Restoring reconciled EFI BootOrder (all pre-existing entries retained): $out_csv" | tee -a "$SESSION_LOG"
+        efibootmgr -o "$out_csv" 2>&1 | tee -a "$SESSION_LOG" || return 1
+    fi
+
+    if [[ -n "$old_next" ]]; then
+        next_mapped="$(awk -F '\t' -v old="$old_next" '$1 == old {print $2; exit}' "$map_file" 2>/dev/null || true)"
+        [[ -n "$next_mapped" ]] || return 1
+        log "Restoring reconciled BootNext: $next_mapped" | tee -a "$SESSION_LOG"
+        efibootmgr -n "$next_mapped" 2>&1 | tee -a "$SESSION_LOG" || return 1
+    elif grep -q '^BootNext:' <<<"$before"; then
+        # The pre-state explicitly had no active BootNext; clear any value a
+        # builder may have introduced while preserving the rest of NVRAM.
+        log "Clearing BootNext introduced during EFI repair." | tee -a "$SESSION_LOG"
+        efibootmgr -N 2>&1 | tee -a "$SESSION_LOG" || return 1
+    fi
+}
+
+ensure_target_tuxedo_uki_entry()
+{
+    local -a ids=()
+    local esp disk partnum resolved model label
+
+    mapfile -t ids < <(efi_target_uki_entry_ids 2>/dev/null || true)
+    if ((${#ids[@]} == 1)); then
+        printf '%s\n' "${ids[0]}"
+        return 0
+    fi
+    if ((${#ids[@]} > 1)); then
+        log "ERROR: more than one TUXEDO UKI entry points to the selected ESP: ${ids[*]}" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+
+    uefi_nvram_writable || return 1
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    is_block_device "$esp" || return 1
+    resolved="$(efi_disk_and_partnum_for_esp "$esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] || return 1
+
+    label="TUXEDO UKI"
+    model="$(efi_selected_system_model "$esp" 2>/dev/null || true)"
+    if [[ -n "$model" ]]; then
+        label="$(efi_label_with_selected_model "$label" "$model")"
+    fi
+    log "TUXEDO UKI firmware entry is absent for the selected system ESP; creating only that selected-system entry as '$label'." | tee -a "$SESSION_LOG" >&2
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader '\EFI\BOOT\TUX.EFI' 2>&1 \
+        | tee -a "$SESSION_LOG" >&2 || return 1
+    mapfile -t ids < <(efi_target_uki_entry_ids 2>/dev/null || true)
+    ((${#ids[@]} == 1)) || return 1
+    printf '%s\n' "${ids[0]}"
+}
+
+run_tuxedo_uki_builder()
+{
+    local label="$1"; shift
+    local session_tag="${SESSION_DIR##*/}" guard_parent guard_dir wrapper real_efibootmgr="" rc
+    local target_real parent_real
+
+    [[ "$session_tag" =~ ^session\.[[:alnum:]_-]+$ ]] \
+        || fail "Unable to derive a safe request identifier for the temporary EFI guard."
+    guard_parent="$TARGET_ROOT/usr/local/libexec"
+    guard_dir="$guard_parent/boot-repair-efi-guard.$session_tag"
+    wrapper="$guard_dir/efibootmgr"
+    target_real="$(realpath -e "$TARGET_ROOT" 2>/dev/null || true)"
+    parent_real="$(realpath -m "$guard_parent" 2>/dev/null || true)"
+    [[ -n "$target_real" && -n "$parent_real" ]] \
+        || fail "Unable to resolve the target path for the temporary EFI guard."
+    path_within "$parent_real" "$target_real" \
+        || fail "Temporary EFI guard path escapes the selected target: $guard_parent"
+
+    # The vendor script currently deletes the first globally matching
+    # `TUXEDO UKI` entry before creating a new one.  With two TUXEDO ESPs that
+    # can remove the other disk's valid UKI.  Put a request-scoped shim first
+    # in PATH: reads still use efibootmgr, but the vendor's delete/create calls
+    # are no-ops.  The helper performs the selected-target registration itself
+    # after the UKI image has been verified.
+    if [[ -x "$TARGET_ROOT/usr/bin/efibootmgr" ]]; then
+        real_efibootmgr="/usr/bin/efibootmgr"
+    elif [[ -x "$TARGET_ROOT/usr/sbin/efibootmgr" ]]; then
+        real_efibootmgr="/usr/sbin/efibootmgr"
+    fi
+
+    if [[ -n "$real_efibootmgr" ]]; then
+        [[ ! -e "$guard_dir" && ! -L "$guard_dir" ]] \
+            || fail "Temporary EFI guard path already exists: $guard_dir"
+        mkdir -p -- "$guard_dir"
+        TEMP_TARGET_PATHS+=("$guard_dir")
+        cat > "$wrapper" <<EOF
+#!/bin/sh
+set -eu
+for arg in "\$@"; do
+    case "\$arg" in
+        -B|--create|-c)
+            echo "Boot Bitch EFI guard: vendor NVRAM mutation suppressed; helper will reconcile the selected system." >&2
+            exit 0
+            ;;
+    esac
+done
+exec $real_efibootmgr "\$@"
+EOF
+        chmod 0755 -- "$wrapper"
+    fi
+
+    log "BEGIN: $label" | tee -a "$SESSION_LOG"
+    set +e
+    if [[ -n "$real_efibootmgr" ]]; then
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH="/usr/local/libexec/boot-repair-efi-guard.$session_tag:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            "$@" 2>&1 | tee -a "$SESSION_LOG"
+    else
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            "$@" 2>&1 | tee -a "$SESSION_LOG"
+    fi
+    rc=${PIPESTATUS[0]}
+    set -e
+    rm -rf -- "$guard_dir"
+    ((rc == 0)) || fail "$label failed with exit code $rc"
+    log "PASS: $label" | tee -a "$SESSION_LOG"
 }
 
 rebuild_tuxedo_uki()
 {
-    local kver old_order="" old_uki="" new_uki="" old_next="" uki tmp embedded
+    local kver new_uki="" uki tmp embedded
+    local nvram_pre="" nvram_post="" nvram_map=""
 
     validate_tuxedo_uki_target
     kver="$(newest_tuxedo_kernel)"
     uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"
 
     if uefi_nvram_writable && command -v efibootmgr >/dev/null 2>&1; then
-        old_order="$(efibootmgr 2>/dev/null | sed -n 's/^BootOrder: //p' | head -1 || true)"
-        old_next="$(efibootmgr 2>/dev/null | sed -n 's/^BootNext: //p' | head -1 || true)"
-        old_uki="$(efi_entry_id_for_target_label 'TUXEDO UKI' || true)"
-        log "TUXEDO UKI pre-state: entry=${old_uki:-none}, BootOrder=${old_order:-unknown}, BootNext=${old_next:-none}" | tee -a "$SESSION_LOG"
+        nvram_pre="$SESSION_DIR/efi-nvram-pre.txt"
+        nvram_post="$SESSION_DIR/efi-nvram-post.txt"
+        efibootmgr -v > "$nvram_pre" 2>&1 || fail "Unable to capture firmware entries before TUXEDO UKI rebuild."
+        efi_print_firmware_inventory "$nvram_pre" | tee -a "$SESSION_LOG"
+        log "Captured complete firmware entry state before UKI rebuild: $nvram_pre" | tee -a "$SESSION_LOG"
     else
         log "Writable UEFI variables/efibootmgr are unavailable; UKI file rebuild will proceed without BootOrder restoration." | tee -a "$SESSION_LOG"
     fi
 
-    run_chroot "Rebuild TUXEDO UKI for $kver" /usr/sbin/create_boot_uki_base.sh "$kver"
+    run_tuxedo_uki_builder "Rebuild TUXEDO UKI for $kver" /usr/sbin/create_boot_uki_base.sh "$kver"
 
     [[ -s "$uki" ]] || fail "TUXEDO UKI builder completed but /boot/efi/EFI/BOOT/TUX.EFI is missing or empty."
 
-    if [[ -n "$old_order" ]]; then
-        new_uki="$(efi_entry_id_for_target_label 'TUXEDO UKI' || true)"
+    if [[ -n "$nvram_pre" ]]; then
+        nvram_map="$SESSION_DIR/efi-nvram-map-uki.tsv"
+        efi_reconcile_firmware_inventory "$nvram_pre" "$nvram_map" \
+            || fail "Firmware inventory reconciliation could not restore every host, repair-target, and foreign entry safely."
+
+        # In running-host mode the selected ESP is also the host ESP.  Restore
+        # that installation's UKI registration before asking the generic
+        # selected-target lookup to resolve it.  This avoids treating the
+        # host/target overlap as an ambiguous foreign entry after the vendor
+        # builder's NVRAM calls have been suppressed.
+        if [[ "$RUNNING_HOST_MODE" == 1 ]]; then
+            restore_missing_host_tuxedo_uki_entry 1 \
+                || fail "Unable to restore the running host TUXEDO UKI entry without risking existing firmware entries."
+        fi
+        new_uki="$(ensure_target_tuxedo_uki_entry || true)"
         [[ -n "$new_uki" ]] \
-            || fail "TUXEDO UKI was rebuilt but its firmware entry could not be found on the selected target ESP."
-        restore_efi_order_after_uki "$old_order" "$old_uki" "$new_uki" "$old_next"
+            || fail "TUXEDO UKI was rebuilt but its firmware entry could not be found or created on the selected system ESP."
+        if [[ "$RUNNING_HOST_MODE" != 1 ]]; then
+            restore_missing_host_tuxedo_uki_entry "$RUNNING_HOST_MODE" \
+                || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
+        fi
+        efi_annotate_selected_entries \
+            || fail "Unable to annotate selected-system EFI entries or restore its iPXE/WebFAI registration safely."
+        efi_restore_reconciled_order "$nvram_pre" "$nvram_map" "$new_uki" \
+            || fail "Unable to restore the reconciled EFI BootOrder without risking loss of another disk's entry."
+        efibootmgr -v > "$nvram_post" 2>&1 \
+            || fail "Unable to capture firmware entries after TUXEDO UKI rebuild."
     fi
 
     if command -v objcopy >/dev/null 2>&1; then
@@ -3932,7 +5058,7 @@ SNAPSHOT_TOP=""
         fail "grub-install is not installed in the target system."
     fi
 
-    arch="$(chroot "$TARGET_ROOT" /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin dpkg --print-architecture 2>/dev/null || true)"
+    arch="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin dpkg --print-architecture 2>/dev/null || true)"
     [[ "$arch" == "amd64" ]] \
         || fail "EFI reinstall currently supports amd64/x86_64 GRUB targets only (detected ${arch:-unknown})."
 
@@ -3945,6 +5071,7 @@ SNAPSHOT_TOP=""
 reinstall_efi_bootloader()
 {
     local nvram_mode efi_dir
+    local nvram_pre="" nvram_map=""
     local -a install_args
 
     # Current encrypted TUXEDO Debian systems use a UKI primary boot path. Use
@@ -3964,6 +5091,14 @@ reinstall_efi_bootloader()
     # above is intentionally advisory/read-only; this second gate protects
     # against device topology changes between planning and execution.
     validate_efi_bootloader_target
+
+    if uefi_nvram_writable && command -v efibootmgr >/dev/null 2>&1; then
+        nvram_pre="$SESSION_DIR/efi-nvram-pre-grub-install.txt"
+        efibootmgr -v > "$nvram_pre" 2>&1 \
+            || fail "Unable to capture firmware entries before conventional GRUB EFI install."
+        efi_print_firmware_inventory "$nvram_pre" | tee -a "$SESSION_LOG"
+        log "Captured complete firmware entry state before conventional GRUB EFI install: $nvram_pre" | tee -a "$SESSION_LOG"
+    fi
 
     log "EFI System Partition: $EFI_ESP_SOURCE ($EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
     log "EFI bootloader ID: $EFI_BOOTLOADER_ID" | tee -a "$SESSION_LOG"
@@ -3995,6 +5130,18 @@ reinstall_efi_bootloader()
     fi
 
     ((CHROOT_TRY_RC == 0)) || fail "EFI bootloader reinstall failed after preflight/known NVRAM fallback."
+
+    if [[ -n "$nvram_pre" ]]; then
+        nvram_map="$SESSION_DIR/efi-nvram-map-grub.tsv"
+        efi_reconcile_firmware_inventory "$nvram_pre" "$nvram_map" \
+            || fail "Firmware inventory reconciliation could not restore every host, repair-target, and foreign entry safely after conventional GRUB EFI install."
+        restore_missing_host_tuxedo_uki_entry "$RUNNING_HOST_MODE" \
+            || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
+        efi_annotate_selected_entries \
+            || fail "Unable to annotate selected-system EFI entries or restore its iPXE/WebFAI registration safely after conventional GRUB EFI install."
+        efi_restore_reconciled_order "$nvram_pre" "$nvram_map" \
+            || fail "Unable to restore the reconciled EFI BootOrder safely after conventional GRUB EFI install."
+    fi
 
     efi_dir="$TARGET_ROOT/boot/efi/EFI/$EFI_BOOTLOADER_ID"
     [[ -d "$efi_dir" ]] \
@@ -4076,6 +5223,153 @@ repair_boot_stack()
     fi
     adaptive_grub_repair
     log "PASS: boot stack reconciliation completed after component simulations and verification." | tee -a "$SESSION_LOG"
+}
+
+efi_promote_entry_first()
+{
+    local wanted="${1^^}" current old_order id out_csv="" seen="," all_ids
+    local -a ids=()
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    grep -Eq "^Boot${wanted}\\*?[[:space:]]" <<<"$current" \
+        || fail "Requested default EFI entry Boot$wanted is not present."
+    old_order="$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)"
+
+    out_csv="$wanted"
+    seen+=",$wanted,"
+    if [[ -n "$old_order" ]]; then
+        IFS=',' read -ra ids <<< "$old_order"
+        for id in "${ids[@]}"; do
+            id="${id^^}"
+            [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
+            grep -Eq "^Boot${id}\\*?[[:space:]]" <<<"$current" || continue
+            [[ "$seen" == *",$id,"* ]] && continue
+            seen+=",$id,"
+            out_csv+=",$id"
+        done
+    fi
+
+    # Firmware may expose valid entries that were not in BootOrder. Preserve
+    # those entries by appending them in their current efibootmgr listing order.
+    while IFS= read -r id; do
+        id="${id^^}"
+        [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
+        [[ "$seen" == *",$id,"* ]] && continue
+        seen+=",$id,"
+        out_csv+=",$id"
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
+
+    log "Making Boot$wanted the explicit default while preserving all other EFI entries: $out_csv" | tee -a "$SESSION_LOG"
+    efibootmgr -o "$out_csv" 2>&1 | tee -a "$SESSION_LOG" || return 1
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    [[ "$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)" == "$out_csv" ]] \
+        || fail "Firmware did not retain the requested default EFI entry Boot$wanted."
+    log "PASS: Boot$wanted is first in BootOrder; all other entries were retained." | tee -a "$SESSION_LOG"
+}
+
+run_host_repair()
+{
+    local raw_disk="$1" raw_root="$2" stage previous_rank=0 current_rank
+    local package_stage=false efi_requested=false grub_requested=false boot_stack_requested=false
+    shift 2
+    (($# > 0)) || fail "host-repair requires at least one repair stage."
+
+    for stage in "$@"; do
+        validate_stage "$stage"
+        current_rank="$(stage_rank "$stage")"
+        (( current_rank >= previous_rank )) \
+            || fail "Repair stages are out of safe dependency order: $stage must run after earlier stages."
+        previous_rank="$current_rank"
+        [[ "$stage" == efi ]] && efi_requested=true
+        [[ "$stage" == grub ]] && grub_requested=true
+        [[ "$stage" == boot-stack ]] && boot_stack_requested=true
+        case "$stage" in
+            dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager) package_stage=true ;;
+        esac
+    done
+
+    CURRENT_STAGE="host safety preflight"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$raw_disk" "$raw_root" yes yes
+    if [[ "$package_stage" == true ]]; then
+        host_package_manager_gate
+    fi
+    if [[ "$efi_requested" == true ]]; then
+        if is_tuxedo_uki_layout; then
+            validate_tuxedo_uki_target
+            log "Host TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+        else
+            validate_efi_bootloader_target
+            log "Host EFI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE, id=$EFI_BOOTLOADER_ID)" | tee -a "$SESSION_LOG"
+        fi
+    fi
+    if [[ "$boot_stack_requested" == true && "$TARGET_OS_ID" == tuxedo ]]; then
+        validate_tuxedo_uki_target
+        log "Host boot-stack TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+    fi
+    # Every native modifying stage runs through the private firmware-variable
+    # namespace.  Package, kernel, display, GRUB and vendor hooks can all
+    # indirectly invoke efibootmgr; keeping the guard active for the complete
+    # request prevents an unrelated hook from changing host NVRAM behind the
+    # selected-system reconciler.
+    prepare_host_command_guard
+    uefi_nvram_writable || {
+        log "Writable UEFI variables are unavailable; host maintenance will preserve files and BootOrder without firmware registration." | tee -a "$SESSION_LOG"
+    }
+    log "Native running-host repair preflight: PASS" | tee -a "$SESSION_LOG"
+
+    for stage in "$@"; do
+        CURRENT_STAGE="$stage"
+        case "$stage" in
+            dpkg-configure) run_chroot "Complete interrupted package configuration" dpkg --configure -a ;;
+            fix-broken) adaptive_fix_broken ;;
+            apt-update) run_apt_update ;;
+            apt-upgrade) adaptive_apt_upgrade ;;
+            dkms) adaptive_dkms_repair ;;
+            display-manager) adaptive_display_manager_repair ;;
+            initramfs) adaptive_initramfs_repair ;;
+            efi) reinstall_efi_bootloader ;;
+            grub) adaptive_grub_repair ;;
+            boot-stack) repair_boot_stack ;;
+        esac
+    done
+
+    # Keep the same EFI follow-up behavior as target repair: a standalone EFI
+    # repair regenerates the menu after the loader files have been updated.
+    if [[ "$efi_requested" == true && "$grub_requested" != true && "$boot_stack_requested" != true ]]; then
+        CURRENT_STAGE="grub (EFI follow-up)"
+        log "EFI repair completed; regenerating the running host GRUB fallback configuration." | tee -a "$SESSION_LOG"
+        adaptive_grub_repair
+    fi
+
+    sync
+    log "All requested running-host repair stages completed successfully." | tee -a "$SESSION_LOG"
+}
+
+run_host_default()
+{
+    local raw_disk="$1" raw_root="$2" pre current
+    local -a ids=()
+
+    CURRENT_STAGE="host default EFI entry"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$raw_disk" "$raw_root" yes yes
+    uefi_nvram_writable || fail "UEFI variables are not writable; cannot change the running host's default EFI entry."
+    command -v efibootmgr >/dev/null 2>&1 || fail "efibootmgr is required to change the running host's default EFI entry."
+
+    pre="$SESSION_DIR/efi-nvram-host-default-before.txt"
+    efibootmgr -v > "$pre" 2>&1 || fail "Unable to capture firmware entries before changing the host default."
+    efi_print_firmware_inventory "$pre" | tee -a "$SESSION_LOG"
+    restore_missing_host_tuxedo_uki_entry 1 \
+        || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
+    efi_annotate_selected_entries \
+        || fail "Unable to annotate the running host's selected ESP or restore its iPXE/WebFAI registration safely."
+    current="$SESSION_DIR/efi-nvram-host-default-after-create.txt"
+    efibootmgr -v > "$current" 2>&1 || fail "Unable to capture firmware entries after host entry restoration."
+    mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
+    ((${#ids[@]} == 1)) || fail "Host TUXEDO UKI entry is not uniquely identifiable; refusing to change BootOrder."
+    efi_promote_entry_first "${ids[0]}"
+    log "PASS: running host default EFI entry is Boot${ids[0]} on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
 }
 
 run_repair()
@@ -4272,7 +5566,8 @@ session_server()
         command="${fields[0]}"
         op_args=("${fields[@]:1}")
         case "$command" in
-            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|copy-preview|copy) ;;
+            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy) ;;
+            host-validate|host-diagnose|host-repair|host-default) ;;
             *)
                 secret=""
                 session_protocol_error "$request_id" "Command is not permitted by the privileged-session broker: $command"
@@ -4356,6 +5651,14 @@ main()
         diagnose)
             run_target_diagnostic "$@"
             ;;
+        host-diagnose)
+            [[ $# -eq 1 ]] || fail "host-diagnose requires exactly one diagnostic name or 'all'."
+            run_host_diagnostic "$1"
+            ;;
+        host-validate)
+            [[ $# -eq 0 ]] || fail "host-validate does not accept repair stages."
+            validate_running_host
+            ;;
         config-read)
             [[ $# -eq 1 ]] || fail "config-read requires exactly one configuration key."
             run_target_config read "$1"
@@ -4371,8 +5674,19 @@ main()
             [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
             run_chroot_shell "$1"
             ;;
+        browse-target)
+            [[ $# -eq 1 ]] || fail "browse-target requires exactly one absolute directory path."
+            browse_target_directory "$1"
+            ;;
         repair)
             run_repair "$@"
+            ;;
+        host-repair)
+            run_host_repair "$TARGET_DISK" "$ROOT_DEVICE" "$@"
+            ;;
+        host-default)
+            [[ $# -eq 0 ]] || fail "host-default does not accept extra arguments."
+            run_host_default "$TARGET_DISK" "$ROOT_DEVICE"
             ;;
         copy-preview|copy)
             run_file_copy "$command" "$@"

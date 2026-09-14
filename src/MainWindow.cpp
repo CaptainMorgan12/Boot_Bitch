@@ -130,20 +130,20 @@ private:
 };
 
 static const DiagnosticSpec diagnosticSpecs[] = {
-    {"environment", "Environment validation", "Summarizes the selected system, protection state, mounted target identity and inspection readiness.", "task-complete"},
-    {"boot", "Boot diagnostics", "Shows boot mounts, /boot and EFI contents plus storage evidence without changing the target.", "system-run"},
+    {"environment", "Environment validation", "Summarizes the selected system, protection state, mounted identity and inspection readiness.", "task-complete"},
+    {"boot", "Boot diagnostics", "Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.", "system-run"},
     {"boot-evidence", "Boot evidence and selection history", "Correlates bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence.", "dialog-information"},
-    {"kernel", "Kernel / initramfs", "Reviews target kernel files and verifies matching initramfs images through a read-only inspection mount.", "preferences-system"},
-    {"grub", "GRUB configuration", "Reviews target GRUB configuration and /etc/default/grub without changing boot files.", "preferences-system"},
-    {"uki", "EFI / UKI boot state", "Inspects the selected ESP, TUXEDO UKI embedded kernel/cmdline and firmware entries that reference only the selected target ESP.", "drive-removable-media"},
+    {"kernel", "Kernel / initramfs", "Reviews kernel files and verifies matching initramfs images through a read-only inspection.", "preferences-system"},
+    {"grub", "GRUB configuration", "Reviews GRUB configuration and /etc/default/grub without changing boot files.", "preferences-system"},
+    {"uki", "EFI / UKI boot state", "Inspects the selected ESP, TUXEDO UKI embedded kernel/cmdline and firmware entries with PARTUUID ownership classification.", "drive-removable-media"},
     {"display", "Graphical login / display manager", "Reviews graphical.target, the configured display manager (for example SDDM, GDM3, LightDM, or another systemd manager), installed desktop packages, and recent boot/journal evidence without starting the GUI.", "video-display"},
-    {"errors", "Boot errors", "Reads recent error-priority entries from the target persistent journal when available.", "dialog-warning"},
+    {"errors", "Boot errors", "Reads recent error-priority entries from the running host or selected repair system's persistent journal when available.", "dialog-warning"},
     {"usage", "Disk usage", "Summarizes filesystem capacity/free space for the running host or read-only repair target.", "drive-harddisk"},
-    {"fstab", "fstab", "Displays the running host or selected target fstab; target inspection is mounted read-only.", "text-x-generic"},
-    {"btrfs", "Btrfs status", "Shows Btrfs filesystem and subvolume information for the selected read-only target.", "drive-harddisk"},
+    {"fstab", "fstab", "Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.", "text-x-generic"},
+    {"btrfs", "Btrfs status", "Shows Btrfs filesystem and subvolume information for the running host or selected repair system.", "drive-harddisk"},
     {"mapper", "Mapper status", "Shows selected mapper ancestry, device-mapper state and cryptsetup status when available.", "document-encrypt"},
-    {"luks", "LUKS / crypttab", "Shows LUKS/mapped ancestry plus the target crypttab and fstab mapper references.", "document-encrypt"},
-    {"report", "Full diagnostic report", "Combines all read-only diagnostics; target scope uses one privileged inspection session.", "document-preview"}
+    {"luks", "LUKS / crypttab", "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.", "document-encrypt"},
+    {"report", "Full diagnostic report", "Combines all read-only diagnostics for the selected scope in one privileged inspection session.", "document-preview"}
 };
 
 QIcon terminalIcon(const QColor &foreground)
@@ -1137,7 +1137,7 @@ MainWindow::MainWindow(QWidget *parent)
     modeBadge->setFrameShape(QFrame::StyledPanel);
     modeBadge->setContentsMargins(9, 5, 9, 5);
     modeBadge->setToolTip(QStringLiteral(
-        "Repair execution is available only for an explicitly selected non-host target and requires privilege authorization."));
+        "Ordinary repairs require an explicitly selected non-host target. The protected running host has a separate deliberate maintenance mode with the same guarded repair stages and requires privilege authorization."));
 
     headerLayout->addWidget(iconLabel);
     headerLayout->addLayout(titleColumn, 1);
@@ -1317,7 +1317,7 @@ QWidget *MainWindow::buildSystemsPage()
     auto *topRow = new QHBoxLayout;
     topRow->addWidget(sectionTitle(QStringLiteral("Systems")));
     topRow->addWidget(contextHelpButton(page, QStringLiteral("Systems"),
-        QStringLiteral("Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected and can only be inspected.")));
+        QStringLiteral("Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system.")));
     topRow->addStretch(1);
     m_refreshDevicesButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
     connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
@@ -1325,7 +1325,8 @@ QWidget *MainWindow::buildSystemsPage()
     layout->addLayout(topRow);
 
     // Compact, permanently protected running-host card. It is never part of
-    // the candidate list, but its read-only details can still be inspected.
+    // the ordinary candidate list, but its read-only details and explicit
+    // maintenance path remains available.
     auto *hostBox = new QFrame;
     hostBox->setFrameShape(QFrame::StyledPanel);
     auto *hostLayout = new QHBoxLayout(hostBox);
@@ -1367,7 +1368,7 @@ QWidget *MainWindow::buildSystemsPage()
     protectedBadge->setFont(protectedFont);
     protectedBadge->setFrameShape(QFrame::StyledPanel);
     protectedBadge->setContentsMargins(8, 4, 8, 4);
-    protectedBadge->setToolTip(QStringLiteral("The running host is never offered as a repair target."));
+    protectedBadge->setToolTip(QStringLiteral("The running host remains protected from ordinary repair-target operations."));
     hostLayout->addWidget(protectedBadge, 0, Qt::AlignTop);
 
     m_hostDetailsButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), QStringLiteral("Details"));
@@ -1375,6 +1376,20 @@ QWidget *MainWindow::buildSystemsPage()
     m_hostDetailsButton->setToolTip(QStringLiteral("Show read-only details for the protected running host."));
     connect(m_hostDetailsButton, &QPushButton::clicked, this, &MainWindow::showHostDetails);
     hostLayout->addWidget(m_hostDetailsButton, 0, Qt::AlignTop);
+
+    m_hostMaintenanceButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Host Maintenance"));
+    m_hostMaintenanceButton->setEnabled(false);
+    m_hostMaintenanceButton->setToolTip(QStringLiteral(
+        "Select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+    connect(m_hostMaintenanceButton, &QPushButton::clicked, this, &MainWindow::selectHostForMaintenance);
+    hostLayout->addWidget(m_hostMaintenanceButton, 0, Qt::AlignTop);
+
+    m_hostDefaultButton = new QPushButton(themedIcon(QStringLiteral("preferences-system")), QStringLiteral("Make Default"));
+    m_hostDefaultButton->setEnabled(false);
+    m_hostDefaultButton->setToolTip(QStringLiteral(
+        "Restore the host's uniquely identified TUXEDO UKI entry if needed, then place it first in BootOrder while preserving every other entry."));
+    connect(m_hostDefaultButton, &QPushButton::clicked, this, &MainWindow::setHostDefaultBootEntry);
+    hostLayout->addWidget(m_hostDefaultButton, 0, Qt::AlignTop);
 
     layout->addWidget(hostBox);
 
@@ -1548,7 +1563,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     auto *heading = new QHBoxLayout;
     heading->addWidget(sectionTitle(QStringLiteral("Diagnostics")));
     heading->addWidget(contextHelpButton(page, QStringLiteral("Diagnostics"),
-        QStringLiteral("Run read-only troubleshooting checks for the running host or selected repair target. Diagnostics never change the selected system.")));
+        QStringLiteral("Use Inspect to choose either the protected Running Host or a selected repair drive. Both scopes provide read-only diagnostics; host EFI/UKI checks inspect the active ESP and firmware entries, while repair-drive checks mount only that system read-only.")));
     heading->addStretch(1);
     heading->addWidget(new QLabel(QStringLiteral("Inspect:")));
 
@@ -1556,6 +1571,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticScopeCombo->addItem(QStringLiteral("Repair Target"));
     m_diagnosticScopeCombo->addItem(QStringLiteral("Running Host"));
     m_diagnosticScopeCombo->setCurrentIndex(1);
+    m_diagnosticScopeCombo->setToolTip(QStringLiteral("Choose the protected Running Host or the selected repair drive for read-only diagnostics."));
     m_diagnosticScopeCombo->setMinimumContentsLength(14);
     heading->addWidget(m_diagnosticScopeCombo);
 
@@ -1719,7 +1735,7 @@ QWidget *MainWindow::buildRepairPage()
     auto *heading = new QHBoxLayout;
     heading->addWidget(sectionTitle(QStringLiteral("Repair")));
     heading->addWidget(contextHelpButton(page, QStringLiteral("Repair"),
-        QStringLiteral("Run one repair tool or use the Full Repair plan. Full Repair uses the enabled stages from Settings in the order shown.")));
+        QStringLiteral("Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host.")));
     heading->addStretch(1);
     m_repairTargetLabel = new QLabel(QStringLiteral("Target: none selected"));
     configureTargetSummaryLabel(m_repairTargetLabel);
@@ -1727,7 +1743,7 @@ QWidget *MainWindow::buildRepairPage()
     layout->addLayout(heading);
 
     layout->addWidget(subtleLabel(QStringLiteral(
-        "Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state.")));
+        "Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.")));
 
     auto *planBox = new QGroupBox(QStringLiteral("Full Repair plan"));
     auto *planLayout = new QVBoxLayout(planBox);
@@ -1743,7 +1759,7 @@ QWidget *MainWindow::buildRepairPage()
     planHeader->addWidget(m_fullRepairCountLabel);
 
     m_fullRepairReadinessLabel = subtleLabel(QStringLiteral(
-        "Run All diagnostics for the selected target before starting Full Repair. "
+        "Run All diagnostics for the selected target or running host before starting Full Repair. "
         "The report is read-only evidence used to choose and confirm repair stages."));
     m_fullRepairReadinessLabel->setWordWrap(true);
     m_fullRepairReadinessLabel->setObjectName(QStringLiteral("fullRepairReadinessLabel"));
@@ -1764,7 +1780,7 @@ QWidget *MainWindow::buildRepairPage()
     m_runFullRepairButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
     m_runFullRepairButton->setFixedWidth(m_runFullRepairButton->sizeHint().width());
     m_runFullRepairButton->setEnabled(false);
-    m_runFullRepairButton->setToolTip(QStringLiteral("Select a safe repair target first."));
+    m_runFullRepairButton->setToolTip(QStringLiteral("Select a repair drive, or choose Host Maintenance on the protected running-host card."));
     planHeader->addWidget(m_runFullRepairButton);
     // Keep the header and readiness message content-sized.  The vertical
     // splitter may provide extra room, but it should remain below the plan
@@ -1882,7 +1898,7 @@ QWidget *MainWindow::buildRepairPage()
     actionRow->addStretch(1);
     m_repairToolButton = new QPushButton(QStringLiteral("Run Tool"));
     m_repairToolButton->setEnabled(false);
-    m_repairToolButton->setToolTip(QStringLiteral("Select a safe repair target first."));
+    m_repairToolButton->setToolTip(QStringLiteral("Select a repair drive, or choose Host Maintenance on the protected running-host card."));
     actionRow->addWidget(m_repairToolButton);
     detailLayout->addLayout(actionRow);
 
@@ -2125,7 +2141,7 @@ QWidget *MainWindow::buildFileCopyPage()
     m_fileCopyHeading = sectionTitle(QStringLiteral("File copy"));
     heading->addWidget(m_fileCopyHeading);
     heading->addWidget(contextHelpButton(page, QStringLiteral("File Copy"),
-        QStringLiteral("Copy and verify files in either direction. Host to Repair remounts only the selected target filesystem read-write after safety checks; Repair to Host keeps the repair target read-only. Transfers use rsync without --delete, with path containment, ownership validation and post-copy verification.")));
+        QStringLiteral("Copy and verify files in either direction. Host to Repair remounts only the selected target filesystem read-write after safety checks; Repair to Host keeps the repair target read-only. Browse Target Folders reads the selected repair tree through temporary read-only mounts, while transfers use rsync without --delete, path containment, ownership validation and post-copy verification.")));
     heading->addStretch(1);
     m_fileCopyTargetLabel = new QLabel(QStringLiteral("Target: none selected"));
     configureTargetSummaryLabel(m_fileCopyTargetLabel);
@@ -2636,14 +2652,33 @@ void MainWindow::updateHostSystemSummary(const QList<DeviceNode> &devices)
     QStringList storageLines;
     QStringList criticalMounts;
     m_hostPrimaryPath.clear();
+    m_hostPrimaryComponentPath.clear();
+
+    auto treeHasMount = [](auto &&self, const DeviceNode &node, const QString &mount) -> bool {
+        if (node.mountPoints.contains(mount)) {
+            return true;
+        }
+        for (const DeviceNode &child : node.children) {
+            if (self(self, child, mount)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
     for (const DeviceNode &device : devices) {
         if (!device.protectedDevice) {
             continue;
         }
 
-        if (m_hostPrimaryPath.isEmpty() && !device.path.isEmpty()) {
+        // Prefer the protected disk that actually backs `/`; systems with a
+        // separate EFI or /boot disk may expose more than one protected tree.
+        if ((m_hostPrimaryPath.isEmpty() || treeHasMount(treeHasMount, device, QStringLiteral("/")))
+            && !device.path.isEmpty()) {
             m_hostPrimaryPath = device.path;
+            const DeviceNode *preferred = preferredRepairNode(device);
+            m_hostPrimaryComponentPath = preferred && !preferred->path.isEmpty()
+                ? preferred->path : device.path;
         }
 
         if (osName.isEmpty()) {
@@ -2675,6 +2710,8 @@ void MainWindow::updateHostSystemSummary(const QList<DeviceNode> &devices)
         m_hostMountsLabel->clear();
         m_hostMountsLabel->setVisible(false);
         m_hostDetailsButton->setEnabled(false);
+        m_hostMaintenanceButton->setEnabled(false);
+        m_hostDefaultButton->setEnabled(false);
         return;
     }
 
@@ -2691,6 +2728,8 @@ void MainWindow::updateHostSystemSummary(const QList<DeviceNode> &devices)
     m_hostMountsLabel->clear();
     m_hostMountsLabel->setVisible(false);
     m_hostDetailsButton->setEnabled(!m_hostPrimaryPath.isEmpty());
+    m_hostMaintenanceButton->setEnabled(!m_hostPrimaryPath.isEmpty() && !m_hostPrimaryComponentPath.isEmpty());
+    m_hostDefaultButton->setEnabled(!m_hostPrimaryPath.isEmpty() && !m_hostPrimaryComponentPath.isEmpty());
 }
 
 void MainWindow::addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node)
@@ -2821,6 +2860,93 @@ void MainWindow::showHostDetails()
     statusBar()->showMessage(QStringLiteral("Showing protected running-host details"), 3000);
 }
 
+void MainWindow::selectHostForMaintenance()
+{
+    QString reason;
+    if (m_hostMaintenanceMode) {
+        m_hostMaintenanceMode = false;
+        if (m_hostMaintenanceButton) {
+            m_hostMaintenanceButton->setText(QStringLiteral("Host Maintenance"));
+        }
+        appendLog(QStringLiteral("Running-host maintenance deselected; ordinary repair-target mode restored."));
+        updateTargetLabels();
+        return;
+    }
+
+    if (!hostBootTargetReady(&reason)) {
+        QMessageBox::warning(this, QStringLiteral("Host maintenance unavailable"), reason);
+        return;
+    }
+
+    // Keep the protected host out of the ordinary repair-target state. This
+    // prevents snapshots, file copy and chroot controls from inheriting a
+    // live-root selection while the explicit host-maintenance mode is active.
+    m_previewTargetPath.clear();
+    m_previewTargetComponentPath.clear();
+    clearTargetDiagnosticCache();
+    m_targetDiagnosticsNeedRegeneration = false;
+    m_hostMaintenanceMode = true;
+    if (m_hostMaintenanceButton) {
+        m_hostMaintenanceButton->setText(QStringLiteral("Exit Host Maintenance"));
+        m_hostMaintenanceButton->setToolTip(QStringLiteral(
+            "Leave running-host maintenance and return to ordinary repair-target mode."));
+    }
+    if (m_diagnosticScopeCombo) {
+        m_diagnosticScopeCombo->setCurrentIndex(1);
+    }
+    appendLog(QStringLiteral(
+        "Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; snapshots, shell and file-copy workflows remain separate tools.")
+                  .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    updateTargetLabels();
+}
+
+void MainWindow::setHostDefaultBootEntry()
+{
+    QString reason;
+    if (!hostBootTargetReady(&reason)) {
+        QMessageBox::warning(this, QStringLiteral("Host default unavailable"), reason);
+        return;
+    }
+
+    QMessageBox box(this);
+    box.setIcon(QMessageBox::Warning);
+    box.setWindowTitle(QStringLiteral("Make host the default boot entry"));
+    box.setText(QStringLiteral("Restore and select the running host's default EFI entry?"));
+    box.setInformativeText(QStringLiteral(
+        "Host disk: %1\nRoot: %2\n\nBoot Bitch will identify the host ESP by PARTUUID, restore a missing TUXEDO UKI registration when the file is present, and place that one host entry first in BootOrder. Existing entries on this and other disks remain in the firmware inventory.")
+        .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    box.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
+    box.setDefaultButton(QMessageBox::Cancel);
+    box.button(QMessageBox::Yes)->setText(QStringLiteral("Make Default"));
+    if (box.exec() != QMessageBox::Yes) {
+        return;
+    }
+
+    appendLog(QStringLiteral("Starting privileged host default EFI operation on %1 (%2).")
+                  .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    bool succeeded = false;
+    const QString output = runPrivilegedRequest(
+        QStringLiteral("Make host default boot entry"),
+        {QStringLiteral("host-default"), m_hostPrimaryPath, m_hostPrimaryComponentPath},
+        QByteArray(), &succeeded);
+    const QString detail = output.trimmed().isEmpty()
+        ? QStringLiteral("The privileged helper returned no diagnostic output.")
+        : output.trimmed();
+    appendLog(QStringLiteral("Host default EFI output\nDiagnostic: Make host default boot entry\n%1").arg(detail),
+              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    m_hostDiagnosticCache.clear();
+    m_hostDiagnosticTimes.clear();
+    if (succeeded) {
+        QMessageBox::information(
+            this,
+            QStringLiteral("Host default restored"),
+            QStringLiteral("The running host's TUXEDO UKI entry was restored and placed first in BootOrder.\n\nFull helper output is available in Logs."));
+    } else {
+        QMessageBox::critical(this, QStringLiteral("Host default operation failed"),
+                              QStringLiteral("The host default operation failed. Review Logs for details."));
+    }
+}
+
 void MainWindow::showDeviceDetails(const DeviceNode &disk, bool allowRepairTarget, const DeviceNode *inspectedNode)
 {
     const DeviceNode *preferred = preferredRepairNode(disk);
@@ -2930,6 +3056,15 @@ void MainWindow::setPreviewTarget()
                              QStringLiteral("The selected drive is no longer available. Refresh devices and select it again."));
         m_setTargetButton->setEnabled(false);
         return;
+    }
+    if (m_hostMaintenanceMode) {
+        m_hostMaintenanceMode = false;
+        if (m_hostMaintenanceButton) {
+            m_hostMaintenanceButton->setText(QStringLiteral("Host Maintenance"));
+            m_hostMaintenanceButton->setToolTip(QStringLiteral(
+                "Select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+        }
+        appendLog(QStringLiteral("Repair target selection ended running-host maintenance mode."));
     }
     const DeviceNode disk = m_deviceIndex.value(path);
     if (disk.protectedDevice) {
@@ -3622,7 +3757,12 @@ void MainWindow::updateTargetLabels()
     QString text = QStringLiteral("Target: none selected");
     QString tooltip;
 
-    if (!m_previewTargetPath.isEmpty()) {
+    if (m_hostMaintenanceMode) {
+        text = QStringLiteral("Host maintenance: %1").arg(m_hostPrimaryPath.isEmpty()
+            ? QStringLiteral("unresolved") : m_hostPrimaryPath);
+        tooltip = QStringLiteral("Running host selected for guarded maintenance: %1\nRoot component: %2")
+            .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath);
+    } else if (!m_previewTargetPath.isEmpty()) {
         text = QStringLiteral("Target: %1").arg(m_previewTargetPath);
         tooltip = QStringLiteral("Selected physical repair drive: %1").arg(m_previewTargetPath);
 
@@ -3648,12 +3788,16 @@ void MainWindow::updateTargetLabels()
                 committedSummary = QStringLiteral("%1  •  %2").arg(model, m_previewTargetPath);
             }
         }
-        m_systemTargetLabel->setText(m_previewTargetPath.isEmpty()
-            ? QStringLiteral("Committed target: none")
-            : QStringLiteral("Committed target: %1").arg(committedSummary));
-        m_systemTargetLabel->setToolTip(m_previewTargetPath.isEmpty()
-            ? QStringLiteral("Row selection is inspection only. Press Select Target to commit a repair drive.")
-            : QStringLiteral("Committed repair target. Repair, Diagnostics, Snapshots and File Copy target this physical drive until another drive is explicitly selected with Select Target.\n%1").arg(tooltip));
+        m_systemTargetLabel->setText(m_hostMaintenanceMode
+            ? QStringLiteral("Host maintenance: %1").arg(m_hostPrimaryPath)
+            : (m_previewTargetPath.isEmpty()
+                ? QStringLiteral("Committed target: none")
+                : QStringLiteral("Committed target: %1").arg(committedSummary)));
+        m_systemTargetLabel->setToolTip(m_hostMaintenanceMode
+            ? QStringLiteral("Explicit native running-host maintenance is active. Ordinary target repairs, snapshots, file copy and chroot remain unavailable.")
+            : (m_previewTargetPath.isEmpty()
+                ? QStringLiteral("Row selection is inspection only. Press Select Target to commit a repair drive.")
+                : QStringLiteral("Committed repair target. Repair, Diagnostics, Snapshots and File Copy target this physical drive until another drive is explicitly selected with Select Target.\n%1").arg(tooltip)));
     }
 
     updateCommittedTargetVisual();
@@ -4102,9 +4246,9 @@ void MainWindow::updateFileCopyDirection()
         m_destinationEdit->setPlaceholderText(m_previewTargetPath.isEmpty()
             ? QStringLiteral("Select a repair target first")
             : QStringLiteral("Choose an absolute destination path inside the repaired system"));
-        m_fileCopyBrowseDestinationButton->setText(QStringLiteral("Select Folder…"));
+        m_fileCopyBrowseDestinationButton->setText(QStringLiteral("Browse Target Folders…"));
         m_fileCopyBrowseDestinationButton->setToolTip(QStringLiteral(
-            "Choose an absolute path as it appears inside the repaired system. The target stays unmounted in the GUI; the guarded copy validates the selected path before any mount or write."));
+            "Browse the selected repair system through temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing."));
         m_fileCopyBrowseDestinationButton->setEnabled(!m_previewTargetPath.isEmpty());
     }
 
@@ -4154,10 +4298,10 @@ void MainWindow::browseFileCopyDestination()
         return;
     }
 
-    // The target is intentionally not left mounted by the GUI.  Use a small
-    // KDE-style chooser instead of QInputDialog: the folder browser supplies
-    // an absolute path vocabulary, while the guarded helper remains the final
-    // authority on whether that path exists and stays inside the target.
+    // The target is intentionally not left mounted by the GUI.  The folder
+    // browser below asks the guarded helper for one read-only directory view
+    // at a time, so the dialog shows the repaired system's actual folders
+    // without exposing the host filesystem or keeping a target mount open.
     QDialog dialog(this);
     dialog.setObjectName(QStringLiteral("repairDestinationDialog"));
     dialog.setWindowTitle(QStringLiteral("Select repair-system destination"));
@@ -4167,7 +4311,7 @@ void MainWindow::browseFileCopyDestination()
     auto *headingIcon = new QLabel;
     headingIcon->setPixmap(themedIcon(QStringLiteral("folder-open")).pixmap(32, 32));
     headingRow->addWidget(headingIcon, 0, Qt::AlignTop);
-    auto *heading = new QLabel(QStringLiteral("Choose destination folder"));
+    auto *heading = new QLabel(QStringLiteral("Choose a destination folder inside the repaired system"));
     QFont headingFont = heading->font();
     headingFont.setBold(true);
     headingFont.setPointSize(headingFont.pointSize() + 2);
@@ -4176,7 +4320,7 @@ void MainWindow::browseFileCopyDestination()
     dialogLayout->addLayout(headingRow);
 
     auto *description = new QLabel(QStringLiteral(
-        "The repaired filesystem stays unmounted while browsing. Select a path as it appears inside that system; the guarded copy validates it before any mount or write."));
+        "Browse folders from the selected repaired system through temporary read-only mounts. Nothing is written while browsing, and the guarded copy validates the chosen path again before any write."));
     description->setWordWrap(true);
     description->setTextFormat(Qt::PlainText);
     dialogLayout->addWidget(description);
@@ -4186,8 +4330,8 @@ void MainWindow::browseFileCopyDestination()
     pathEdit->setClearButtonEnabled(true);
     pathEdit->setPlaceholderText(QStringLiteral("Absolute path inside repaired system (for example /home/user/Recovered)"));
     pathRow->addWidget(pathEdit, 1);
-    auto *selectFolder = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Select Folder…"));
-    selectFolder->setToolTip(QStringLiteral("Choose an absolute path name. The selected path is validated against the repaired system during the guarded copy."));
+    auto *selectFolder = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Browse repair folders…"));
+    selectFolder->setToolTip(QStringLiteral("Open a read-only view of the selected repair system's folders. The target is unmounted again after each directory listing."));
     pathRow->addWidget(selectFolder);
     auto *clearPath = new QPushButton(themedIcon(QStringLiteral("edit-clear")), QStringLiteral("Clear"));
     clearPath->setToolTip(QStringLiteral("Clear the destination path."));
@@ -4195,21 +4339,160 @@ void MainWindow::browseFileCopyDestination()
     dialogLayout->addLayout(pathRow);
 
     connect(clearPath, &QPushButton::clicked, pathEdit, &QLineEdit::clear);
-    connect(selectFolder, &QPushButton::clicked, &dialog, [pathEdit, &dialog] {
-        QString startPath = pathEdit->text().trimmed().isEmpty()
-            ? QDir::rootPath() : QDir::cleanPath(pathEdit->text().trimmed());
-        // A virtual target path may not exist on the running host.  Start the
-        // picker at its nearest existing parent so QFileDialog opens reliably.
-        QFileInfo startInfo(startPath);
-        while (!startInfo.exists() && startPath != QDir::rootPath()) {
-            startPath = QFileInfo(startPath).absoluteDir().absolutePath();
-            startInfo.setFile(startPath);
+    connect(selectFolder, &QPushButton::clicked, &dialog, [this, pathEdit, &dialog] {
+        QString initialPath = QDir::cleanPath(pathEdit->text().trimmed());
+        if (!initialPath.startsWith(QLatin1Char('/'))
+            || initialPath == QStringLiteral("/..")
+            || initialPath.startsWith(QStringLiteral("/../"))) {
+            initialPath = QStringLiteral("/home");
         }
-        const QString selected = QFileDialog::getExistingDirectory(
-            &dialog, QStringLiteral("Select folder path"), startPath,
-            QFileDialog::ShowDirsOnly | QFileDialog::DontResolveSymlinks);
-        if (!selected.isEmpty()) {
-            pathEdit->setText(QDir::cleanPath(selected));
+
+        QDialog browser(&dialog);
+        browser.setObjectName(QStringLiteral("repairFolderBrowser"));
+        browser.setWindowTitle(QStringLiteral("Browse repaired-system folders"));
+        auto *browserLayout = standardDialogLayout(&browser, 760);
+
+        auto *browserHeadingRow = new QHBoxLayout;
+        auto *browserHeadingIcon = new QLabel;
+        browserHeadingIcon->setPixmap(themedIcon(QStringLiteral("folder-open")).pixmap(32, 32));
+        browserHeadingRow->addWidget(browserHeadingIcon, 0, Qt::AlignTop);
+        auto *browserHeading = new QLabel(QStringLiteral("Choose a folder from the repaired system"));
+        QFont browserHeadingFont = browserHeading->font();
+        browserHeadingFont.setBold(true);
+        browserHeadingFont.setPointSize(browserHeadingFont.pointSize() + 2);
+        browserHeading->setFont(browserHeadingFont);
+        browserHeadingRow->addWidget(browserHeading, 1, Qt::AlignVCenter);
+        browserLayout->addLayout(browserHeadingRow);
+
+        auto *browserDescription = new QLabel(QStringLiteral(
+            "The selected repair filesystem is mounted read-only only for the current directory listing. The mount is removed after the request; the host filesystem is never used as the folder tree."));
+        browserDescription->setWordWrap(true);
+        browserDescription->setTextFormat(Qt::PlainText);
+        browserLayout->addWidget(browserDescription);
+
+        auto *currentPathLabel = new QLabel;
+        currentPathLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+        browserLayout->addWidget(currentPathLabel);
+
+        auto *folderList = new QListWidget;
+        folderList->setAlternatingRowColors(true);
+        folderList->setSelectionMode(QAbstractItemView::SingleSelection);
+        folderList->setMinimumHeight(260);
+        browserLayout->addWidget(folderList, 1);
+
+        auto *navigation = new QHBoxLayout;
+        auto *upButton = new QPushButton(themedIcon(QStringLiteral("go-up")), QStringLiteral("Up"));
+        auto *openButton = new QPushButton(themedIcon(QStringLiteral("document-open")), QStringLiteral("Open Selected"));
+        auto *refreshButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh"));
+        upButton->setToolTip(QStringLiteral("Show the parent folder in the repaired system."));
+        openButton->setToolTip(QStringLiteral("Open the selected repaired-system folder."));
+        refreshButton->setToolTip(QStringLiteral("Reload this repaired-system folder through a fresh read-only mount."));
+        navigation->addWidget(upButton);
+        navigation->addWidget(openButton);
+        navigation->addWidget(refreshButton);
+        navigation->addStretch(1);
+        browserLayout->addLayout(navigation);
+
+        auto *browserStatus = new QLabel(QStringLiteral("Read-only target view; no files are modified."));
+        browserStatus->setWordWrap(true);
+        browserLayout->addWidget(browserStatus);
+
+        auto *browserButtons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+        QPushButton *chooseButton = browserButtons->button(QDialogButtonBox::Ok);
+        chooseButton->setText(QStringLiteral("Choose This Folder"));
+        browserLayout->addWidget(browserButtons);
+        connect(browserButtons, &QDialogButtonBox::accepted, &browser, &QDialog::accept);
+        connect(browserButtons, &QDialogButtonBox::rejected, &browser, &QDialog::reject);
+
+        QString currentPath;
+        bool pathLoaded = false;
+        const auto loadPath = [this, &browser, &currentPath, &pathLoaded, currentPathLabel,
+                               folderList, upButton, chooseButton, browserStatus](const QString &requestedPath) {
+            const QString candidate = QDir::cleanPath(requestedPath);
+            if (!candidate.startsWith(QLatin1Char('/'))
+                || candidate == QStringLiteral("/..")
+                || candidate.startsWith(QStringLiteral("/../"))) {
+                browserStatus->setText(QStringLiteral("Invalid repair-system path."));
+                pathLoaded = false;
+                chooseButton->setEnabled(false);
+                return false;
+            }
+
+            bool succeeded = false;
+            const QString output = runPrivilegedRequest(
+                QStringLiteral("Browse repaired-system folders"),
+                {QStringLiteral("browse-target"), m_previewTargetPath, m_previewTargetComponentPath, candidate},
+                QByteArray(), &succeeded, false);
+            if (!succeeded) {
+                browserStatus->setText(QStringLiteral("Unable to read this repaired-system folder. Review Logs for the helper error."));
+                pathLoaded = false;
+                chooseButton->setEnabled(false);
+                return false;
+            }
+
+            QStringList childPaths;
+            const QString marker = QStringLiteral("BROWSE_ENTRY\\t");
+            for (const QString &line : output.split(QLatin1Char('\n'))) {
+                if (!line.startsWith(marker)) {
+                    continue;
+                }
+                const QByteArray decoded = QByteArray::fromBase64(line.mid(marker.size()).trimmed().toLatin1());
+                const QString name = QString::fromUtf8(decoded);
+                if (name.isEmpty() || name == QStringLiteral(".") || name == QStringLiteral("..")
+                    || name.contains(QLatin1Char('/')) || name.contains(QChar::Null)) {
+                    continue;
+                }
+                childPaths.append(candidate == QStringLiteral("/")
+                    ? QStringLiteral("/") + name
+                    : candidate + QStringLiteral("/") + name);
+            }
+            childPaths.sort(Qt::CaseInsensitive);
+            folderList->clear();
+            for (const QString &childPath : childPaths) {
+                auto *item = new QListWidgetItem(QFileInfo(childPath).fileName(), folderList);
+                item->setData(Qt::UserRole, childPath);
+                item->setToolTip(childPath);
+            }
+            currentPath = candidate;
+            currentPathLabel->setText(QStringLiteral("Current repaired-system folder: %1").arg(currentPath));
+            upButton->setEnabled(currentPath != QStringLiteral("/"));
+            pathLoaded = true;
+            chooseButton->setEnabled(true);
+            browserStatus->setText(QStringLiteral("Read-only target view; %1 subfolder(s) found. Nothing was modified.").arg(childPaths.size()));
+            return true;
+        };
+
+        connect(upButton, &QPushButton::clicked, &browser, [&loadPath, &currentPath] {
+            if (currentPath == QStringLiteral("/")) {
+                return;
+            }
+            loadPath(QFileInfo(currentPath).path());
+        });
+        connect(refreshButton, &QPushButton::clicked, &browser, [&loadPath, &currentPath] {
+            loadPath(currentPath);
+        });
+        connect(openButton, &QPushButton::clicked, &browser, [&loadPath, folderList] {
+            QListWidgetItem *item = folderList->currentItem();
+            if (item) {
+                loadPath(item->data(Qt::UserRole).toString());
+            }
+        });
+        connect(folderList, &QListWidget::itemDoubleClicked, &browser,
+                [&loadPath](QListWidgetItem *item) {
+            if (item) {
+                loadPath(item->data(Qt::UserRole).toString());
+            }
+        });
+
+        pathLoaded = loadPath(initialPath);
+        if (!pathLoaded && initialPath != QStringLiteral("/")) {
+            // A destination may be new and therefore absent from the target;
+            // show its nearest useful existing namespace instead of falling
+            // back to a host QFileDialog.
+            pathLoaded = loadPath(QStringLiteral("/"));
+        }
+        if (browser.exec() == QDialog::Accepted && pathLoaded) {
+            pathEdit->setText(currentPath);
         }
     });
 
@@ -4697,12 +4980,22 @@ void MainWindow::updateDiagnosticDetails()
         return;
     }
 
+    if (!targetScope) {
+        QString hostReason;
+        if (!hostBootTargetReady(&hostReason)) {
+            m_diagnosticAvailability->setText(hostReason);
+            m_runDiagnosticButton->setText(QStringLiteral("Run Diagnostic"));
+            m_runDiagnosticButton->setEnabled(false);
+            return;
+        }
+    }
+
     if (!cached.isEmpty()) {
         const QString stamp = cachedAt.isValid()
             ? cachedAt.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))
             : QStringLiteral("this session");
         m_diagnosticAvailability->setText(targetScope
-            ? QStringLiteral("Cached: %1 — read-only target result. Selecting another diagnostic and returning here keeps this output; use Re-run only for fresh data.").arg(stamp)
+            ? QStringLiteral("Cached: %1 — read-only selected repair-system result. Selecting another diagnostic and returning here keeps this output; use Re-run only for fresh data.").arg(stamp)
             : QStringLiteral("Cached: %1 — protected running-host result.").arg(stamp));
         m_runDiagnosticButton->setText(QStringLiteral("Re-run Diagnostic"));
     } else {
@@ -4710,8 +5003,8 @@ void MainWindow::updateDiagnosticDetails()
             m_diagnosticAvailability->setText(m_targetDiagnosticsNeedRegeneration
                 ? QStringLiteral("Please re-run this diagnostic after the last repair or target configuration change.")
                 : (m_privilegedSessionReady
-                    ? QStringLiteral("Available — read-only target inspection; administrator authorization is already active for this Boot Bitch window.")
-                    : QStringLiteral("Available — read-only target inspection; the first root action will request administrator authorization.")));
+                    ? QStringLiteral("Available — read-only selected repair-system inspection; administrator authorization is already active for this Boot Bitch window.")
+                    : QStringLiteral("Available — read-only selected repair-system inspection; the first root action will request administrator authorization.")));
         } else {
             m_diagnosticAvailability->setText(QStringLiteral("Available — protected running host"));
         }
@@ -4849,7 +5142,7 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         if (targetScope) {
             stream << "Target EFI/UKI inspection requires the target and ESP to be mounted read-only.\n";
         } else {
-            stream << "Running-host UKI/EFI inspection is available through the target helper for a selected repair system.\n";
+            stream << "Running-host EFI/UKI inspection is collected by the privileged read-only host diagnostic backend.\n";
         }
     } else if (key == QStringLiteral("display")) {
         if (targetScope) {
@@ -4978,6 +5271,34 @@ QString MainWindow::runTargetDiagnosticHelper(const QString &key, bool *succeede
     return captured;
 }
 
+QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
+                                             bool showProgressDialog)
+{
+    if (succeeded) {
+        *succeeded = false;
+    }
+
+    QString reason;
+    if (!hostBootTargetReady(&reason)) {
+        QMessageBox::warning(this, QStringLiteral("Host diagnostic unavailable"), reason);
+        return QStringLiteral("ERROR: %1\n").arg(reason);
+    }
+
+    appendLog(QStringLiteral("Starting read-only running-host diagnostic '%1' on %2 (%3).")
+                  .arg(key, m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    const QString captured = runPrivilegedRequest(
+        key == QStringLiteral("all") || key == QStringLiteral("report")
+            ? QStringLiteral("Run running-host diagnostics")
+            : QStringLiteral("Read-only running-host diagnostic"),
+        {QStringLiteral("host-diagnose"), m_hostPrimaryPath, m_hostPrimaryComponentPath, key},
+        QByteArray(), succeeded, showProgressDialog);
+
+    appendLog(QStringLiteral("Read-only running-host diagnostic '%1' %2.")
+                  .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
+              (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    return captured;
+}
+
 QString MainWindow::currentTargetDiagnosticCacheIdentity() const
 {
     // Diagnostics are scoped to the explicitly selected physical drive. The
@@ -4994,6 +5315,46 @@ void MainWindow::clearTargetDiagnosticCache()
     m_targetDiagnosticCache.clear();
     m_targetDiagnosticTimes.clear();
     m_targetDiagnosticCacheIdentity = currentTargetDiagnosticCacheIdentity();
+}
+
+void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
+{
+    m_hostDiagnosticCache.clear();
+    m_hostDiagnosticTimes.clear();
+    const QDateTime capturedAt = QDateTime::currentDateTime();
+    m_hostDiagnosticCache.insert(QStringLiteral("report"), bundle.trimmed());
+    m_hostDiagnosticTimes.insert(QStringLiteral("report"), capturedAt);
+
+    const QString divider = QStringLiteral("========================================\n");
+    for (const DiagnosticSpec &spec : diagnosticSpecs) {
+        const QString key = QString::fromLatin1(spec.key);
+        if (key == QStringLiteral("report")) {
+            continue;
+        }
+        const QString marker = QStringLiteral("Diagnostic: %1\n").arg(key);
+        const int markerPos = bundle.indexOf(marker);
+        if (markerPos < 0) {
+            continue;
+        }
+        int sectionStart = bundle.lastIndexOf(divider, markerPos);
+        if (sectionStart >= 0) {
+            const int priorDivider = bundle.lastIndexOf(divider, sectionStart - 1);
+            if (priorDivider >= 0) {
+                sectionStart = priorDivider;
+            }
+        } else {
+            sectionStart = markerPos;
+        }
+        int sectionEnd = bundle.indexOf(divider, markerPos + marker.size());
+        if (sectionEnd < 0) {
+            sectionEnd = bundle.size();
+        }
+        const QString section = bundle.mid(sectionStart, sectionEnd - sectionStart).trimmed();
+        if (!section.isEmpty()) {
+            m_hostDiagnosticCache.insert(key, section);
+            m_hostDiagnosticTimes.insert(key, capturedAt);
+        }
+    }
 }
 
 bool MainWindow::targetDiagnosticEvidenceReady(QString *reason) const
@@ -5030,6 +5391,21 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
             *reason = text;
         }
     };
+
+    if (m_hostMaintenanceMode) {
+        QString hostReason;
+        if (!hostBootTargetReady(&hostReason)) {
+            setReason(hostReason);
+            return false;
+        }
+        if (m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
+            setReason(QStringLiteral("Run All diagnostics for the protected running host before starting this maintenance action."));
+            return false;
+        }
+        setReason(QStringLiteral("Required read-only running-host diagnostics are cached for this maintenance action."));
+        return true;
+    }
+
     QString diagnosticKey = QStringLiteral("report");
     if (toolKey == QStringLiteral("validate")) diagnosticKey = QStringLiteral("environment");
     else if (toolKey == QStringLiteral("grub")) diagnosticKey = QStringLiteral("grub");
@@ -5133,7 +5509,7 @@ void MainWindow::runSelectedDiagnostic()
     bool ok = true;
     const QString result = targetScope
         ? runTargetDiagnosticHelper(key, &ok)
-        : diagnosticResultForKey(key);
+        : runHostDiagnosticHelper(key, &ok);
 
     const QDateTime capturedAt = QDateTime::currentDateTime();
     if (targetScope) {
@@ -5153,12 +5529,14 @@ void MainWindow::runSelectedDiagnostic()
             m_targetDiagnosticTimes.insert(key, capturedAt);
         }
     } else {
-        if (key != QStringLiteral("report")) {
+        if (key == QStringLiteral("report")) {
+            cacheHostDiagnosticBundle(result);
+        } else {
             m_hostDiagnosticCache.remove(QStringLiteral("report"));
             m_hostDiagnosticTimes.remove(QStringLiteral("report"));
+            m_hostDiagnosticCache.insert(key, result);
+            m_hostDiagnosticTimes.insert(key, capturedAt);
         }
-        m_hostDiagnosticCache.insert(key, result);
-        m_hostDiagnosticTimes.insert(key, capturedAt);
     }
 
     updateDiagnosticDetails();
@@ -5292,23 +5670,10 @@ void MainWindow::runAllDiagnostics()
             m_targetDiagnosticsNeedRegeneration = false;
         }
     } else {
-        const QDateTime capturedAt = QDateTime::currentDateTime();
-        QTextStream stream(&combined);
-        for (const DiagnosticSpec &spec : diagnosticSpecs) {
-            const QString key = QString::fromLatin1(spec.key);
-            if (key == QStringLiteral("report")) {
-                continue;
-            }
-            const QString result = diagnosticResultForKey(key);
-            m_hostDiagnosticCache.insert(key, result);
-            m_hostDiagnosticTimes.insert(key, capturedAt);
-            stream << "========================================\n";
-            stream << QString::fromLatin1(spec.title) << '\n';
-            stream << "========================================\n";
-            stream << result << "\n\n";
+        combined = runHostDiagnosticHelper(QStringLiteral("all"), &ok, false);
+        if (ok && !combined.isEmpty()) {
+            cacheHostDiagnosticBundle(combined);
         }
-        m_hostDiagnosticCache.insert(QStringLiteral("report"), combined.trimmed());
-        m_hostDiagnosticTimes.insert(QStringLiteral("report"), capturedAt);
     }
 
     m_diagnosticResults->setPlainText(combined);
@@ -5644,7 +6009,8 @@ void MainWindow::showUsageHelp()
                     QStringLiteral(
                         "Boot Bitch must run from a different booted Linux environment than the system being repaired. "
                         "Use a Linux live USB or another Linux installation on a different physical drive. "
-                        "The running host is protected and cannot be selected as a repair target. "
+                        "The running host is protected from ordinary repair-target selection, but it can be explicitly selected through Host Maintenance for guarded native diagnostics and supported maintenance stages. "
+                        "Diagnostics can inspect either Running Host or the selected repair drive; choose the scope in Diagnostics → Inspect. "
                         "The first root action requests administrator authorization once for this Boot Bitch window; "
                         "File → Lock Administrator Session ends that helper session immediately."));
 }
@@ -5657,9 +6023,9 @@ void MainWindow::showAboutDialog()
                            "<h3>Boot Bitch %1</h3>"
                            "<p><b>Developer:</b> CaptainMorgan12</p>"
                            "<p>A native Qt 6 Linux recovery and boot-repair utility.</p>"
-                           "<p><b>Guarded repair mode:</b> Debian/Ubuntu-family target repairs can run through a privileged helper after explicit target selection and confirmation. The running host is re-checked and refused by the helper.</p>"
+                           "<p><b>Guarded repair mode:</b> read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. Debian/Ubuntu-family repairs can run through a privileged helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.</p>"
                            "<p>The first privileged action authorizes one narrow helper session for the current Boot Bitch window while the Qt GUI remains unprivileged. It can be ended at any time from File → Lock Administrator Session.</p>"
-                           "<p>LUKS target unlock, verified bidirectional File Copy, read-only target diagnostics, transactional Btrfs snapshot rollback, offline graphical login recovery, distribution-aware EFI/UKI repair and boot-stack reconciliation are enabled through the guarded helper. Snapshot rollback preserves the previous @ and automatically restores it if critical post-switch reconciliation fails.</p>")
+                           "<p>LUKS target unlock, verified bidirectional File Copy, read-only host/repair diagnostics, transactional Btrfs snapshot rollback, offline graphical login recovery, distribution-aware EFI/UKI repair and boot-stack reconciliation are enabled through the guarded helper. Snapshot rollback preserves the previous @ and automatically restores it if critical post-switch reconciliation fails.</p>")
                            .arg(QCoreApplication::applicationVersion()));
 }
 
@@ -5785,6 +6151,8 @@ void MainWindow::updateFullRepairSummary()
         return;
     }
 
+    updateRepairScopeControls();
+
     struct StageEntry {
         QCheckBox *check;
         QString title;
@@ -5838,7 +6206,9 @@ void MainWindow::updateFullRepairSummary()
 
     if (m_runFullRepairButton) {
         QString reason;
-        const bool targetReady = repairTargetReady(&reason);
+        const bool targetReady = m_hostMaintenanceMode
+            ? hostMaintenanceReady(&reason)
+            : repairTargetReady(&reason);
         QString diagnosticReason;
         bool diagnosticsReady = targetReady;
         if (diagnosticsReady) {
@@ -5953,7 +6323,7 @@ void MainWindow::updateRepairToolDetails()
     if (key == QStringLiteral("validate")) {
         title = QStringLiteral("Validate environment");
         description = QStringLiteral(
-            "Check target mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. "
+            "Check the running host or selected repair system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. "
             "This is an independent safety preflight rather than an optional Full Repair stage.");
         buttonText = QStringLiteral("Validate");
         iconName = QStringLiteral("task-complete");
@@ -5961,21 +6331,21 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("dpkg")) {
         title = QStringLiteral("Complete package configuration");
         description = QStringLiteral(
-            "Complete interrupted dpkg package configuration in the selected target. This is the same stage controlled by Settings → Full Repair plan → Complete interrupted package configuration, but it can also be run independently here.");
+            "Complete interrupted dpkg package configuration in the running host or selected repair system. This is the same stage controlled by Settings → Full Repair plan → Complete interrupted package configuration, but it can also be run independently here.");
         buttonText = QStringLiteral("Complete Configuration");
         iconName = QStringLiteral("dialog-ok-apply");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("fixbroken")) {
         title = QStringLiteral("Repair broken dependencies");
         description = QStringLiteral(
-            "Run APT's broken-dependency repair in the selected target after the mandatory safety preflight. This maps directly to Settings → Repair broken package dependencies.");
+            "Run APT's broken-dependency repair in the running host or selected repair system after the mandatory safety preflight. This maps directly to Settings → Repair broken package dependencies.");
         buttonText = QStringLiteral("Repair Dependencies");
         iconName = QStringLiteral("dialog-ok-apply");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("aptupdate")) {
         title = QStringLiteral("Refresh package metadata");
         description = QStringLiteral(
-            "Refresh the selected target's APT package metadata without upgrading installed packages. This maps directly to Settings → Refresh package metadata.");
+            "Refresh the running host or selected repair system's APT package metadata without upgrading installed packages. This maps directly to Settings → Refresh package metadata.");
         buttonText = QStringLiteral("Refresh Metadata");
         iconName = QStringLiteral("view-refresh");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
@@ -5989,37 +6359,37 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("dkms")) {
         title = QStringLiteral("DKMS");
         description = QStringLiteral(
-            "Rebuild out-of-tree kernel modules for kernels installed in the selected system. The helper refuses this action when DKMS is not installed in the target environment.");
+            "Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system. The helper refuses this action when DKMS is not installed in the selected system.");
         buttonText = QStringLiteral("Rebuild DKMS");
         iconName = QStringLiteral("applications-development");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("display")) {
         title = QStringLiteral("Graphical login / display manager");
         description = QStringLiteral(
-            "Restore the display manager identified from the selected target's boot evidence and configuration (for example SDDM, GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service. "
-            "Boot Bitch deliberately does not start a graphical session inside the repair chroot; use Diagnostics to inspect installed packages, service configuration, and recent boot/journal evidence first when graphical boot fails.");
+            "Restore the display manager identified from the running host or selected repair system's boot evidence and configuration (for example SDDM, GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service. "
+            "Boot Bitch deliberately does not start a graphical session inside a repair chroot or host helper; use Diagnostics to inspect installed packages, service configuration, and recent boot/journal evidence first when graphical boot fails.");
         buttonText = QStringLiteral("Restore Graphical Login");
         iconName = QStringLiteral("video-display");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("initramfs")) {
         title = QStringLiteral("Initramfs");
         description = QStringLiteral(
-            "Rebuild target initramfs images only after mapper and crypttab consistency checks pass. The privileged helper enforces this safety gate before running update-initramfs.");
+            "Rebuild initramfs images for the running host or selected repair system only after mapper and crypttab consistency checks pass. The privileged helper enforces this safety gate before running update-initramfs.");
         buttonText = QStringLiteral("Rebuild Initramfs");
         iconName = QStringLiteral("view-refresh");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("EFI / UKI bootloader");
         description = QStringLiteral(
-            "Repair the selected target's EFI boot path. On current TUXEDO systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves the target ESP's existing firmware BootOrder. "
-            "On conventional GRUB EFI systems it performs a guarded grub-install on the selected disk's validated ESP. Unrelated EFI entries on other disks are never removed.");
+            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder. "
+            "On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP. Afterward, decoded entries on that ESP retain their distribution/vendor label and receive its disk model once; an existing model name is not duplicated. If an iPXE loader is present without a matching entry, TUXEDO uses its WFAI name and other distributions use an iPXE name, always on that ESP only. Unrelated EFI entries on other disks are never removed.");
         buttonText = QStringLiteral("Repair EFI / UKI");
         iconName = QStringLiteral("drive-removable-media");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("grub")) {
         title = QStringLiteral("GRUB configuration");
         description = QStringLiteral(
-            "Regenerate the selected target's GRUB menu/configuration after the mandatory safety preflight. "
+            "Regenerate the running host or selected repair system's GRUB menu/configuration after the mandatory safety preflight. "
             "This does not reinstall EFI loader files; use EFI / UKI bootloader when the firmware loader itself needs repair.");
         buttonText = QStringLiteral("Regenerate GRUB");
         iconName = QStringLiteral("preferences-system");
@@ -6027,7 +6397,7 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Boot stack reconciliation");
         description = QStringLiteral(
-            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the target provides its official builder, and regenerate the GRUB fallback. "
+            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, and regenerate the GRUB fallback. "
             "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or EFI entries.");
         buttonText = QStringLiteral("Reconcile Boot Stack");
         iconName = QStringLiteral("system-run");
@@ -6049,7 +6419,9 @@ void MainWindow::updateRepairToolDetails()
     m_repairToolButton->setMinimumWidth(buttonHint.width());
     m_repairToolButton->setMinimumHeight(qMax(buttonHint.height(), fontMetrics().height() + 14));
     QString reason;
-    const bool targetReady = repairTargetReady(&reason);
+    const bool targetReady = m_hostMaintenanceMode
+        ? hostMaintenanceReady(&reason)
+        : repairTargetReady(&reason);
     QString diagnosticReason;
     const bool diagnosticsReady = repairEvidenceReadyForTool(
         m_repairToolTree && m_repairToolTree->currentItem()
@@ -6059,7 +6431,7 @@ void MainWindow::updateRepairToolDetails()
     m_repairToolButton->setEnabled(targetReady && diagnosticsReady);
     QString displayedPlanStatus = planText;
     if (!targetReady || !diagnosticsReady) {
-        displayedPlanStatus += QStringLiteral("\nIndividual action: ")
+        displayedPlanStatus += QStringLiteral("\nUnavailable: ")
             + (!targetReady ? reason : diagnosticReason);
     }
     m_repairToolPlanStatus->setText(displayedPlanStatus);
@@ -6119,6 +6491,24 @@ QStringList MainWindow::selectedRepairStages() const
     return stages;
 }
 
+void MainWindow::updateRepairScopeControls()
+{
+    const QList<QCheckBox *> allStages = {
+        m_fullRepairDpkg, m_fullRepairBrokenPackages, m_fullRepairAptUpdate,
+        m_fullRepairUpgrade, m_fullRepairDkms, m_fullRepairDisplayManager,
+        m_fullRepairInitramfs, m_fullRepairEfi, m_fullRepairGrub
+    };
+    for (QCheckBox *check : allStages) {
+        if (!check) {
+            continue;
+        }
+        check->setEnabled(true);
+        check->setToolTip(m_hostMaintenanceMode
+            ? QStringLiteral("Allowed for the explicitly selected running host. The helper repeats host identity, mount, package-lock and boot preservation checks.")
+            : QString());
+    }
+}
+
 bool MainWindow::repairTargetReady(QString *reason) const
 {
     auto setReason = [reason](const QString &text) {
@@ -6163,18 +6553,76 @@ bool MainWindow::repairTargetReady(QString *reason) const
     return true;
 }
 
+bool MainWindow::hostBootTargetReady(QString *reason) const
+{
+    auto setReason = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+    };
+
+    if (m_hostPrimaryPath.isEmpty() || m_hostPrimaryComponentPath.isEmpty()
+        || !m_deviceIndex.contains(m_hostPrimaryPath)
+        || !m_deviceIndex.contains(m_hostPrimaryComponentPath)) {
+        setReason(QStringLiteral("The running host disk and root component could not be resolved."));
+        return false;
+    }
+
+    const DeviceNode disk = m_deviceIndex.value(m_hostPrimaryPath);
+    const DeviceNode component = m_deviceIndex.value(m_hostPrimaryComponentPath);
+    if (!disk.protectedDevice || !component.protectedDevice) {
+        setReason(QStringLiteral("The selected host identity is no longer marked as the protected running system. Refresh devices before retrying."));
+        return false;
+    }
+    if (repairHelperPath().isEmpty()) {
+        setReason(QStringLiteral("The privileged Boot Bitch helper was not found. Rebuild or install this source tree."));
+        return false;
+    }
+
+#ifdef Q_OS_UNIX
+    if (geteuid() != 0 && QStandardPaths::findExecutable(QStringLiteral("pkexec")).isEmpty()) {
+        setReason(QStringLiteral("pkexec/Polkit is required to authorize host maintenance."));
+        return false;
+    }
+#endif
+
+    setReason(QStringLiteral("Running host is ready for explicit guarded maintenance."));
+    return true;
+}
+
+bool MainWindow::hostMaintenanceReady(QString *reason) const
+{
+    if (!m_hostMaintenanceMode) {
+        if (reason) {
+            *reason = QStringLiteral("Select Host Maintenance on the protected running-host card first.");
+        }
+        return false;
+    }
+    return hostBootTargetReady(reason);
+}
+
 bool MainWindow::confirmRepairAction(const QString &title, const QStringList &operations)
 {
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(title);
-    box.setText(QStringLiteral("Confirm changes to the selected repair system"));
-    box.setInformativeText(QStringLiteral(
-        "Target disk: %1\nLinux root: %2\n\nThe following target-system changes will run:\n• %3\n\n"
-        "The running host is independently re-checked and refused by the privileged helper."
-    ).arg(m_previewTargetPath,
-          m_previewTargetComponentPath,
-          operations.join(QStringLiteral("\n• "))));
+    if (m_hostMaintenanceMode) {
+        box.setText(QStringLiteral("Confirm changes to the running host"));
+        box.setInformativeText(QStringLiteral(
+            "Host disk: %1\nLinux root: %2\n\nThe following guarded changes will run natively on the active system:\n• %3\n\n"
+            "The helper independently re-checks that the selected disk backs /, /boot and /boot/efi, and applies the same package, mapper, EFI/NVRAM and GRUB preservation safeguards used for repair targets."
+        ).arg(m_hostPrimaryPath,
+              m_hostPrimaryComponentPath,
+              operations.join(QStringLiteral("\n• "))));
+    } else {
+        box.setText(QStringLiteral("Confirm changes to the selected repair system"));
+        box.setInformativeText(QStringLiteral(
+            "Target disk: %1\nLinux root: %2\n\nThe following target-system changes will run:\n• %3\n\n"
+            "The running host is independently re-checked and refused by the privileged helper."
+        ).arg(m_previewTargetPath,
+              m_previewTargetComponentPath,
+              operations.join(QStringLiteral("\n• "))));
+    }
     box.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
     box.setDefaultButton(QMessageBox::Cancel);
     box.button(QMessageBox::Yes)->setText(QStringLiteral("Run Repair"));
@@ -6184,20 +6632,30 @@ bool MainWindow::confirmRepairAction(const QString &title, const QStringList &op
 void MainWindow::runRepairHelper(const QString &title, const QStringList &arguments)
 {
     QString reason;
-    if (!repairTargetReady(&reason)) {
+    const bool hostMode = m_hostMaintenanceMode;
+    if (!(hostMode ? hostMaintenanceReady(&reason) : repairTargetReady(&reason))) {
         QMessageBox::warning(this, QStringLiteral("Repair unavailable"), reason);
         return;
     }
 
+    const QString diskPath = hostMode ? m_hostPrimaryPath : m_previewTargetPath;
+    const QString componentPath = hostMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath;
     appendLog(QStringLiteral("Starting privileged action: %1 on %2 (%3).")
-                  .arg(title, m_previewTargetPath, m_previewTargetComponentPath));
+                  .arg(title, diskPath, componentPath));
 
     const bool targetModified = !arguments.isEmpty()
         && (arguments.first() == QStringLiteral("repair")
             || (arguments.first() == QStringLiteral("copy")
                 && arguments.value(3) == QStringLiteral("host-to-repair")));
     bool processSucceeded = false;
-    const QString helperOutput = runPrivilegedRequest(title, arguments, QByteArray(), &processSucceeded);
+    QStringList helperArguments = arguments;
+    if (hostMode && !helperArguments.isEmpty()
+        && helperArguments.first() == QStringLiteral("repair")) {
+        helperArguments[0] = QStringLiteral("host-repair");
+        helperArguments[1] = m_hostPrimaryPath;
+        helperArguments[2] = m_hostPrimaryComponentPath;
+    }
+    const QString helperOutput = runPrivilegedRequest(title, helperArguments, QByteArray(), &processSucceeded);
 
     // Persist the helper transcript in the action register. The progress
     // dialog is transient, while Logs must retain the complete stage output
@@ -6212,23 +6670,32 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         if (targetModified) {
             // A failed modifying workflow may have completed an earlier stage
             // before stopping. Treat its evidence as stale until a fresh
-            // target diagnostic proves the resulting state.
-            clearTargetDiagnosticCache();
-            m_targetDiagnosticsNeedRegeneration = true;
+            // diagnostic proves the resulting state in the active scope.
+            if (hostMode) {
+                m_hostDiagnosticCache.clear();
+                m_hostDiagnosticTimes.clear();
+            } else {
+                clearTargetDiagnosticCache();
+                m_targetDiagnosticsNeedRegeneration = true;
+            }
             updateFullRepairSummary();
-            appendLog(QStringLiteral("STALE DIAGNOSTICS: repair failed after a target-modifying action. Regenerate diagnostics before the next repair."),
+            appendLog(QStringLiteral("STALE DIAGNOSTICS: repair failed after a modifying action. Regenerate diagnostics before the next repair."),
                       QStringLiteral("ERROR"));
         }
         QMessageBox::critical(this, QStringLiteral("%1 failed").arg(title),
-                              QStringLiteral("The repair action failed. Review the captured helper output in Logs for the failing stage and its reason.")
-                                  .arg(title));
+                              QStringLiteral("The repair action failed. Review the captured helper output in Logs for the failing stage and its reason."));
     }
 
     if (processSucceeded) {
         if (targetModified) {
-            clearTargetDiagnosticCache();
-            m_targetDiagnosticsNeedRegeneration = true;
-            appendLog(QStringLiteral("STALE DIAGNOSTICS: target was modified by repair action. Regenerate diagnostics before the next repair."));
+            if (hostMode) {
+                m_hostDiagnosticCache.clear();
+                m_hostDiagnosticTimes.clear();
+            } else {
+                clearTargetDiagnosticCache();
+                m_targetDiagnosticsNeedRegeneration = true;
+            }
+            appendLog(QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Regenerate diagnostics before the next repair."));
         }
         refreshDevices();
         if (targetModified) {
@@ -6256,6 +6723,11 @@ void MainWindow::runSelectedRepairTool()
         return;
     }
     if (key == QStringLiteral("validate")) {
+        if (m_hostMaintenanceMode) {
+            runRepairHelper(QStringLiteral("Validate running host"),
+                            {QStringLiteral("host-validate"), m_hostPrimaryPath, m_hostPrimaryComponentPath});
+            return;
+        }
         runRepairHelper(QStringLiteral("Validate repair target"),
                         {QStringLiteral("validate"), m_previewTargetPath, m_previewTargetComponentPath});
         return;
@@ -6264,51 +6736,54 @@ void MainWindow::runSelectedRepairTool()
     QStringList stages;
     QStringList operations;
     QString title;
+    const QString selectedSystemLabel = m_hostMaintenanceMode
+        ? QStringLiteral("running host")
+        : QStringLiteral("selected repair system");
     if (key == QStringLiteral("dpkg")) {
         title = QStringLiteral("Complete package configuration");
         stages = {QStringLiteral("dpkg-configure")};
-        operations = {QStringLiteral("Complete interrupted package configuration with dpkg --configure -a")};
+        operations = {QStringLiteral("Complete interrupted package configuration in the %1 with dpkg --configure -a").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("fixbroken")) {
         title = QStringLiteral("Repair broken dependencies");
         stages = {QStringLiteral("fix-broken")};
-        operations = {QStringLiteral("Repair broken APT package dependencies")};
+        operations = {QStringLiteral("Repair broken APT package dependencies in the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("aptupdate")) {
         title = QStringLiteral("Refresh package metadata");
         stages = {QStringLiteral("apt-update")};
-        operations = {QStringLiteral("Refresh APT package metadata in the selected target")};
+        operations = {QStringLiteral("Refresh APT package metadata in the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("upgrade")) {
         title = QStringLiteral("Upgrade installed packages");
         stages = {QStringLiteral("apt-upgrade")};
-        operations = {QStringLiteral("Simulate upgrade modes first and automatically choose a safe upgrade/full-upgrade/dist-upgrade transaction")};
+        operations = {QStringLiteral("Simulate upgrade modes first, then choose a safe transaction for the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("dkms")) {
         title = QStringLiteral("Rebuild DKMS");
         stages = {QStringLiteral("dkms")};
-        operations = {QStringLiteral("Run DKMS autoinstall in the selected target")};
+        operations = {QStringLiteral("Run DKMS autoinstall in the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("display")) {
         title = QStringLiteral("Restore detected graphical login manager");
         stages = {QStringLiteral("display-manager")};
-        operations = {QStringLiteral("Set graphical.target as the selected target's default boot target"),
-                      QStringLiteral("Enable the detected display manager and repair display-manager.service without starting it inside chroot")};
+        operations = {QStringLiteral("Set graphical.target as the %1's default boot target").arg(selectedSystemLabel),
+                      QStringLiteral("Enable the detected display manager and repair display-manager.service without starting it inside a chroot or host helper")};
     } else if (key == QStringLiteral("initramfs")) {
         title = QStringLiteral("Rebuild initramfs");
         stages = {QStringLiteral("initramfs")};
-        operations = {QStringLiteral("Rebuild all target initramfs images")};
+        operations = {QStringLiteral("Rebuild all initramfs images for the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("Repair EFI / UKI bootloader");
         stages = {QStringLiteral("efi")};
-        operations = {QStringLiteral("Use the TUXEDO vendor UKI builder when that layout is detected, preserving existing BootOrder"),
-                      QStringLiteral("Otherwise reinstall GRUB EFI loader files only on the selected target's validated ESP"),
+        operations = {QStringLiteral("Use the TUXEDO vendor UKI builder when that layout is detected for the %1, preserving every other firmware entry and BootOrder").arg(selectedSystemLabel),
+                      QStringLiteral("Otherwise reinstall GRUB EFI loader files only on the %1's validated ESP").arg(selectedSystemLabel),
                       QStringLiteral("Regenerate GRUB configuration afterward")};
     } else if (key == QStringLiteral("grub")) {
         title = QStringLiteral("Regenerate GRUB configuration");
         stages = {QStringLiteral("grub")};
-        operations = {QStringLiteral("Regenerate the target GRUB configuration")};
+        operations = {QStringLiteral("Regenerate the %1's GRUB configuration").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Reconcile boot stack");
         stages = {QStringLiteral("boot-stack")};
-        operations = {QStringLiteral("Validate mapper/crypttab against the selected target"),
+        operations = {QStringLiteral("Validate mapper/crypttab against the %1").arg(selectedSystemLabel),
                       QStringLiteral("Rebuild initramfs for installed kernels"),
-                      QStringLiteral("Rebuild the TUXEDO UKI with its official target-side builder when available"),
+                      QStringLiteral("Rebuild the TUXEDO UKI with the selected system's official builder when available"),
                       QStringLiteral("Regenerate the GRUB fallback configuration")};
     } else {
         QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"),
@@ -6316,7 +6791,9 @@ void MainWindow::runSelectedRepairTool()
         return;
     }
 
-    const QString evidence = m_targetDiagnosticCache.value(QStringLiteral("report"));
+    const QString evidence = m_hostMaintenanceMode
+        ? m_hostDiagnosticCache.value(QStringLiteral("report"))
+        : m_targetDiagnosticCache.value(QStringLiteral("report"));
     appendLog(QStringLiteral("Using cached read-only diagnostic evidence for %1 (%2 bytes).")
                   .arg(title)
                   .arg(evidence.toUtf8().size()));
@@ -6340,12 +6817,26 @@ void MainWindow::runFullRepair()
     }
 
     QString diagnosticReason;
-    if (!targetDiagnosticEvidenceReady(&diagnosticReason)) {
+    if (m_hostMaintenanceMode) {
+        QString hostReason;
+        if (!hostMaintenanceReady(&hostReason)) {
+            QMessageBox::warning(this, QStringLiteral("Host maintenance unavailable"), hostReason);
+            return;
+        }
+        if (m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
+            QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"),
+                                 QStringLiteral("Run All diagnostics for the protected running host before starting maintenance."));
+            return;
+        }
+    } else if (!targetDiagnosticEvidenceReady(&diagnosticReason)) {
         QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"), diagnosticReason);
         return;
     }
 
     QStringList operations;
+    const QString selectedSystemLabel = m_hostMaintenanceMode
+        ? QStringLiteral("running host")
+        : QStringLiteral("selected repair system");
     for (const QString &stage : stages) {
         if (stage == QStringLiteral("dpkg-configure")) operations << QStringLiteral("Complete interrupted package configuration");
         else if (stage == QStringLiteral("fix-broken")) operations << QStringLiteral("Repair broken APT dependencies");
@@ -6354,11 +6845,13 @@ void MainWindow::runFullRepair()
         else if (stage == QStringLiteral("dkms")) operations << QStringLiteral("Rebuild DKMS modules");
         else if (stage == QStringLiteral("display-manager")) operations << QStringLiteral("Restore the detected display manager and graphical.target without starting the GUI inside chroot");
         else if (stage == QStringLiteral("initramfs")) operations << QStringLiteral("Rebuild all initramfs images");
-        else if (stage == QStringLiteral("efi")) operations << QStringLiteral("Repair the selected target EFI / UKI boot path using its validated ESP");
-        else if (stage == QStringLiteral("grub")) operations << QStringLiteral("Regenerate GRUB configuration");
+        else if (stage == QStringLiteral("efi")) operations << QStringLiteral("Repair the %1 EFI / UKI boot path using its validated ESP").arg(selectedSystemLabel);
+        else if (stage == QStringLiteral("grub")) operations << QStringLiteral("Regenerate the %1's GRUB configuration").arg(selectedSystemLabel);
     }
 
-    const QString evidence = m_targetDiagnosticCache.value(QStringLiteral("report"));
+    const QString evidence = m_hostMaintenanceMode
+        ? m_hostDiagnosticCache.value(QStringLiteral("report"))
+        : m_targetDiagnosticCache.value(QStringLiteral("report"));
     appendLog(QStringLiteral("Using cached read-only diagnostic evidence for Full Repair (%1 bytes).")
                   .arg(evidence.toUtf8().size()));
     operations.prepend(QStringLiteral("Read-only diagnostics completed; review the full evidence in Logs before confirming repair."));

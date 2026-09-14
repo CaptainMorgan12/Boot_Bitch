@@ -66,6 +66,8 @@ private:
     void indexDevice(const DeviceNode &node);
     void updateDeviceDetails();
     void showHostDetails();
+    void selectHostForMaintenance();
+    void setHostDefaultBootEntry();
     void showDeviceDetails(const DeviceNode &disk, bool allowRepairTarget, const DeviceNode *inspectedNode = nullptr);
     void setPreviewTarget();
     void unlockSelectedTarget();
@@ -107,7 +109,10 @@ private:
     QString diagnosticResultForKey(const QString &key) const;
     QString runTargetDiagnosticHelper(const QString &key, bool *succeeded = nullptr,
                                       bool showProgressDialog = false);
+    QString runHostDiagnosticHelper(const QString &key, bool *succeeded = nullptr,
+                                    bool showProgressDialog = false);
     void cacheTargetDiagnosticBundle(const QString &bundle);
+    void cacheHostDiagnosticBundle(const QString &bundle);
     QString currentTargetDiagnosticCacheIdentity() const;
     void clearTargetDiagnosticCache();
     bool targetDiagnosticEvidenceReady(QString *reason = nullptr) const;
@@ -123,12 +128,15 @@ private:
     QString repairHelperPath() const;
     QStringList selectedRepairStages() const;
     bool repairTargetReady(QString *reason = nullptr) const;
+    bool hostBootTargetReady(QString *reason = nullptr) const;
+    bool hostMaintenanceReady(QString *reason = nullptr) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
     bool confirmRepairAction(const QString &title, const QStringList &operations);
     void runRepairHelper(const QString &title, const QStringList &arguments);
 
     void updateResponsiveLayout();
     void updateFullRepairSummary();
+    void updateRepairScopeControls();
     void updateRepairToolDetails();
     void setLogWrapEnabled(bool enabled);
     void refreshLogView();
@@ -167,6 +175,8 @@ private:
     QLabel *m_hostStorageLabel = nullptr;
     QLabel *m_hostMountsLabel = nullptr;
     QPushButton *m_hostDetailsButton = nullptr;
+    QPushButton *m_hostMaintenanceButton = nullptr;
+    QPushButton *m_hostDefaultButton = nullptr;
 
     QLabel *m_detailPath = nullptr;
     QLabel *m_detailResolvedTarget = nullptr;
@@ -258,6 +268,8 @@ private:
     QList<DeviceNode> m_lastDevices;
     QMap<QString, DeviceNode> m_deviceIndex;
     QString m_hostPrimaryPath;
+    QString m_hostPrimaryComponentPath;
+    bool m_hostMaintenanceMode = false;
     QString m_previewTargetPath;
     QString m_previewTargetComponentPath;
     QString m_snapshotResultIdentity;
