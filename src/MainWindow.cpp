@@ -34,7 +34,6 @@
 #include <QInputDialog>
 #include <QImage>
 #include <QPainter>
-#include <QPainter>
 #include <QLabel>
 #include <QLineEdit>
 #include <QListWidget>
@@ -52,6 +51,7 @@
 #include <QSettings>
 #include <QSize>
 #include <QSizePolicy>
+#include <QStyle>
 #include <QSplitter>
 #include <QStandardPaths>
 #include <QStorageInfo>
@@ -170,7 +170,27 @@ QIcon terminalIcon(const QColor &foreground)
 
 QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
 {
-    const QIcon source = QIcon::fromTheme(name, fallback);
+    QIcon source = QIcon::fromTheme(name, fallback);
+    if (source.isNull()) {
+        // Portable AppImages do not always inherit the host icon-theme search
+        // path. Keep every control legible with a native Qt fallback while
+        // still preferring the active GNOME/KDE theme when it is available.
+        QStyle::StandardPixmap standard = QStyle::SP_FileIcon;
+        if (name.contains(QStringLiteral("drive")) || name == QStringLiteral("computer")) {
+            standard = QStyle::SP_ComputerIcon;
+        } else if (name.contains(QStringLiteral("warning")) || name.contains(QStringLiteral("error"))) {
+            standard = QStyle::SP_MessageBoxWarning;
+        } else if (name.contains(QStringLiteral("ok")) || name == QStringLiteral("task-complete")) {
+            standard = QStyle::SP_DialogApplyButton;
+        } else if (name.contains(QStringLiteral("refresh"))) {
+            standard = QStyle::SP_BrowserReload;
+        } else if (name.contains(QStringLiteral("copy"))) {
+            standard = QStyle::SP_FileDialogDetailedView;
+        } else if (name.contains(QStringLiteral("terminal"))) {
+            standard = QStyle::SP_CommandLink;
+        }
+        source = QApplication::style()->standardIcon(standard);
+    }
     if (source.isNull()) {
         return source;
     }
