@@ -5,6 +5,9 @@
   <developer id="org.bootrepair">
     <name>CaptainMorgan12</name>
   </developer>
+  <!-- Legacy field retained for software centers that do not yet read the
+       structured developer element. -->
+  <developer_name>CaptainMorgan12</developer_name>
   <summary>Inspect Linux systems and repair boot configuration</summary>
   <url type="homepage">https://github.com/CaptainMorgan12/Boot_Bitch</url>
   <url type="bugtracker">https://github.com/CaptainMorgan12/Boot_Bitch/issues</url>
@@ -22,6 +25,9 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
+    <release version="0.2.20" date="2026-09-13">
+      <description><p>Add native Qt icon fallbacks and bundled icon search paths for portable AppImage launches.</p></description>
+    </release>
     <release version="0.2.19" date="2026-09-13">
       <description><p>Add developer attribution, Qt-bundled AppImage packaging, and stronger GNOME/GTK icon and table rendering.</p></description>
     </release>

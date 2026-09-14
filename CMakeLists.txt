@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.19
+    VERSION 0.2.20
     DESCRIPTION "Guarded Linux boot repair and recovery utility with diagnostics and privileged target repair backend"
     LANGUAGES CXX
 )
@@ -60,6 +60,7 @@ endif()
 target_compile_definitions(boot-repair
     PRIVATE
         BOOT_REPAIR_VERSION="${PROJECT_VERSION}"
+        BOOT_REPAIR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -184,6 +185,7 @@ target_include_directories(boot-repair-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_D
 target_compile_definitions(boot-repair-ui-tests
     PRIVATE
         BOOT_REPAIR_VERSION="${PROJECT_VERSION}"
+        BOOT_REPAIR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
@@ -195,3 +197,5 @@ add_test(NAME boot-repair-chroot-shell-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-chroot-shell-contract.sh)
 add_test(NAME boot-repair-display-manager-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-manager-contract.sh)
+add_test(NAME boot-repair-icon-atlas-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)

@@ -16,11 +16,12 @@ release.
 sudo apt install git rsync
 
 SOURCE=/home/amiga/Projects/Boot_Repair
-DEST=/home/amiga/Projects/Boot_Bitch-github
+DEST=/home/amiga/Projects/Boot_Bitch-github-fixed
 
 git clone https://github.com/CaptainMorgan12/Boot_Bitch.git "$DEST"
 rsync -a --delete \
   --exclude='.git/' \
+  --exclude='Development/' \
   --exclude='build*/' \
   --exclude='*.deb' \
   --exclude='*.AppImage' \
@@ -33,7 +34,7 @@ find "$DEST" -maxdepth 1 -type f \
 cd "$DEST"
 git add -A
 git status
-git commit -m "Prepare Boot Bitch 0.2.15 release"
+git commit -m "Prepare Boot Bitch 0.2.20 release"
 git push origin main
 ```
 
@@ -57,50 +58,23 @@ For a completely empty repository, the shorter alternative is: `git init`,
 `git branch -M main`, `git remote add origin <repository-url>`, `git add -A`,
 `git commit`, and `git push -u origin main`.
 
-## Create the two GitHub releases
+## Create the GitHub release
 
-Create the first release while the clone is still at the original 0.2.15
-commit. The package saved at `/tmp/boot-repair_0.2.15_amd64.deb` is the
-package built before the CI fixes.
+Create the 0.2.20 release after the icon atlas build has passed. The tested
+artifacts are kept in the local release workspace and are intentionally not
+copied into the source tree.
 
 ```bash
 cd /home/amiga/Projects/Boot_Bitch-github-fixed
 git status
 git log -1 --oneline
-git tag -a v0.2.15 -m "Boot Bitch 0.2.15 first public release"
-git push origin v0.2.15
-gh release create v0.2.15 \
-  /tmp/boot-repair_0.2.15_amd64.deb \
-  --title "Boot Bitch 0.2.15" \
-  --notes "First official Boot Bitch release."
-```
-
-Then synchronize the local maintenance fixes, push them to `main`, rebuild,
-and create the second release:
-
-```bash
-SOURCE=/home/amiga/Projects/Boot_Repair
-DEST=/home/amiga/Projects/Boot_Bitch-github-fixed
-
-rsync -a --delete \
-  --exclude='.git/' \
-  --exclude='build*/' \
-  --exclude='*.deb' \
-  --exclude='*.AppImage' \
-  "$SOURCE/" "$DEST/"
-find "$DEST" -maxdepth 1 -type f \
-  \( -name '*.deb' -o -name '*.AppImage' \) -print -delete
-
-cd "$DEST"
-git add -A
-git commit -m "Boot Bitch 0.2.16 CI compatibility fixes"
-git push origin main
-./scripts/build.sh
-QT_QPA_PLATFORM=offscreen ctest --test-dir build-release --output-on-failure
-gh release create v0.2.16 \
-  build-release/boot-repair_0.2.16_amd64.deb \
-  --title "Boot Bitch 0.2.16" \
-  --notes "Maintenance release: fixed Qt 6.4 CI row sizing, installed pkexec in CI, and made helper launching tolerant of lost executable bits."
+git tag -a v0.2.20 -m "Boot Bitch 0.2.20 icon atlas release"
+git push origin v0.2.20
+gh release create v0.2.20 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_amd64.deb \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_x86_64.AppImage \
+  --title "Boot Bitch 0.2.20" \
+  --notes-file docs/release-notes-0.2.20.md
 ```
 
 The release assets are attached to GitHub Releases and are not copied into the source tree.
@@ -127,8 +101,8 @@ to the matching GitHub release (the AppImage remains ignored by source-tree
 syncs):
 
 ```bash
-gh release upload v0.2.19 \
-  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.19_x86_64.AppImage
+gh release upload v0.2.20 \
+  /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.20_x86_64.AppImage
 ```
 
 If a tool is not on `PATH`, provide its path explicitly, for example:
