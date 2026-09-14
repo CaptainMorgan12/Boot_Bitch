@@ -47,6 +47,14 @@ optional_packages=()
 if apt-cache show libkf6auth-dev >/dev/null 2>&1; then
     optional_packages+=(libkf6auth-dev)
 fi
+# These plugins are optional at runtime, but allow developers to verify native
+# looking Qt controls and dialogs on GNOME as well as KDE. Keep this
+# conditional because package names vary across distributions.
+for package in qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme qgnomeplatform-qt6; do
+    if apt-cache show "$package" >/dev/null 2>&1; then
+        optional_packages+=("$package")
+    fi
+done
 
 "${SUDO[@]}" apt-get install --no-install-recommends -y "${base_packages[@]}" "${optional_packages[@]}"
 
