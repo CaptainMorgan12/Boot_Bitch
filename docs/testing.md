@@ -26,3 +26,20 @@ device and mount access; use a VM instead.
 The GitHub Actions workflow runs the safe build and test set on Ubuntu. The
 packaging scripts can then create a Debian package in an external build
 directory for inspection before release.
+
+For Arch-family build and package testing, use the disposable VM when it is
+available:
+
+```bash
+VM="arch-boot-repair"
+sudo virsh start "$VM"
+virt-viewer --connect qemu:///system "$VM"
+```
+
+The VM can exchange source trees or generated packages through
+`/home/amiga/VMs/boot-repair/shared/`. Inside the VM, run
+`./scripts/setup-dev-deps.sh`, `./scripts/package-arch.sh`, and
+`./scripts/test-packaging-profile-contract.sh`. Package creation defaults to
+`makepkg`; it does not install dependencies unless `--syncdeps` is explicitly
+requested. Install the resulting package with `pacman -U` only after
+the artifact and dependency list have been reviewed.

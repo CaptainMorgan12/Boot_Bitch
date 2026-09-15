@@ -159,6 +159,22 @@ set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family host maintenance and repair-system recovery, LUKS\n unlock and verified bidirectional file recovery/copy.")
 
+# CPack can also produce an RPM for Fedora, openSUSE and other RPM-based
+# systems.  Keep these requirements separate from the Debian dependency names;
+# rpmbuild resolves the shared Qt libraries from the generated ELF metadata.
+set(CPACK_RPM_PACKAGE_NAME "boot-bitch")
+set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
+set(CPACK_RPM_PACKAGE_RELEASE "1")
+set(CPACK_RPM_PACKAGE_LICENSE "MIT")
+set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, hicolor-icon-theme")
+set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
+
+# TGZ is a package-manager-neutral staging artifact for Arch, SUSE variants,
+# immutable desktops and other systems where a native package recipe is not
+# available.  It contains the same /usr install tree as the DEB/RPM formats.
+set(CPACK_ARCHIVE_COMPONENT_INSTALL OFF)
+
 include(CPack)
 
 # -----------------------------------------------------------------------------
@@ -207,6 +223,10 @@ add_test(NAME boot-repair-chroot-shell-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-chroot-shell-contract.sh)
 add_test(NAME boot-repair-display-manager-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-manager-contract.sh)
+add_test(NAME boot-repair-backend-profile-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-backend-profile-contract.sh)
+add_test(NAME boot-repair-packaging-profile-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
 

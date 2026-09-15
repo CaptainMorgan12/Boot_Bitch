@@ -26,6 +26,13 @@ SESSION_OWNED_MAPPERS=()
 TARGET_OS_ID=""
 TARGET_OS_LIKE=""
 TARGET_PRETTY=""
+TARGET_DISTRO_FAMILY=""
+TARGET_PACKAGE_MANAGER=""
+TARGET_INITRAMFS_BACKEND=""
+TARGET_BOOTLOADER_BACKEND=""
+TARGET_ESP_MOUNT=""
+TARGET_KERNEL_LAYOUT=""
+TARGET_REPAIR_BACKEND=""
 TARGET_SUBVOL=""
 MOUNTS=()
 TARGET_DATA_MOUNTS=()
@@ -128,7 +135,7 @@ Approval:
   sensitive-ok   Explicit GUI confirmation for target system paths such as /etc or /boot
 
 Diagnostics:
-  environment boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks report all
+  environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks report all
 
 Config keys (guarded target read/write): fstab crypttab grub-defaults grub-config sddm gdm3 lightdm greetd ly initramfs
 
@@ -158,6 +165,9 @@ from standard input and is never accepted as a command-line argument. File copy
 uses rsync without --delete and independently validates host/target containment.
 Modifying repair stages remain limited to Debian/Ubuntu-family targets. EFI
 bootloader reinstall is an explicit stage and is never selected implicitly.
+Read-only diagnostics also profile Arch-family targets (pacman, initramfs
+generator, GRUB/systemd-boot/UKI layout, ESP mount and kernel naming) without
+enabling modifying Arch actions.
 Host maintenance is a separate native-running-system path. It accepts all
 listed repair stages with the same stage-specific checks. Host validation
 and diagnostics are read-only; snapshot, shell and file-copy workflows remain
@@ -485,7 +495,7 @@ assert_target_not_host()
         fail "Selected target ${target_tops[0]} contains a running-system mountpoint; refusing all writes."
     fi
 
-    for mp in / /boot /boot/efi; do
+    for mp in / /boot /boot/efi /efi; do
         source="$(findmnt -rn -o SOURCE --target "$mp" 2>/dev/null | head -n1 || true)"
         [[ -n "$source" ]] || continue
         # findmnt may represent Btrfs subvolumes as /dev/XYZ[/subvol]. Strip
@@ -527,7 +537,7 @@ assert_target_is_running_host()
     [[ -n "$root_device" && "$root_device" == "$root_source" ]] \
         || fail "Supplied root component does not match the currently running root filesystem."
 
-    for mp in /boot /boot/efi; do
+    for mp in /boot /boot/efi /efi; do
         boot_source="$(findmnt -rn -o SOURCE --target "$mp" 2>/dev/null \
             | awk '/^\/dev\// {print; exit}' || true)"
         [[ -n "$boot_source" ]] || continue
@@ -754,7 +764,7 @@ mount_target_btrfs_subvolumes()
         options="$(fstab_unescape "$options")"
         [[ "$mountpoint_name" == /* ]] || continue
         case "$mountpoint_name" in
-            /|/boot|/boot/efi|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*|/run|/run/*) continue ;;
+            /|/boot|/boot/efi|/efi|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*|/run|/run/*) continue ;;
         esac
 
         resolved="$(resolve_fstab_source "$spec")"
@@ -837,6 +847,141 @@ read_target_os()
 is_debian_family()
 {
     [[ "$TARGET_OS_ID" =~ ^(debian|ubuntu|tuxedo|linuxmint|pop)$ ]] || [[ " $TARGET_OS_LIKE " == *" debian "* ]] || [[ " $TARGET_OS_LIKE " == *" ubuntu "* ]]
+}
+
+is_arch_family()
+{
+    [[ "$TARGET_OS_ID" =~ ^(arch|manjaro|endeavouros|garuda|artix)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" arch "* ]]
+}
+
+target_has_executable()
+{
+    local path
+    for path in "$@"; do
+        [[ -x "$TARGET_ROOT$path" ]] && return 0
+    done
+    return 1
+}
+
+target_has_path()
+{
+    local path
+    for path in "$@"; do
+        [[ -e "$TARGET_ROOT$path" ]] && return 0
+    done
+    return 1
+}
+
+target_distro_family()
+{
+    if is_debian_family; then
+        printf '%s\n' "debian"
+    elif is_arch_family; then
+        printf '%s\n' "arch"
+    elif [[ "$TARGET_OS_ID" =~ ^(fedora|rhel|rocky|almalinux)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" fedora "* ]] \
+        || [[ " $TARGET_OS_LIKE " == *" rhel "* ]]; then
+        printf '%s\n' "fedora"
+    elif [[ "$TARGET_OS_ID" =~ ^(opensuse|opensuse-tumbleweed|suse)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" suse "* ]]; then
+        printf '%s\n' "suse"
+    else
+        printf '%s\n' "unknown"
+    fi
+}
+
+profile_target_backends()
+{
+    local family="${TARGET_DISTRO_FAMILY:-}" esp_path
+    [[ -n "$family" ]] || family="$(target_distro_family)"
+    TARGET_DISTRO_FAMILY="$family"
+
+    if target_has_executable /usr/bin/pacman /usr/bin/pacman-static; then
+        TARGET_PACKAGE_MANAGER="pacman"
+    elif target_has_executable /usr/bin/apt-get /usr/bin/apt; then
+        TARGET_PACKAGE_MANAGER="apt/dpkg"
+    elif target_has_executable /usr/bin/dnf /usr/bin/yum; then
+        TARGET_PACKAGE_MANAGER="dnf/rpm"
+    elif target_has_executable /usr/bin/zypper; then
+        TARGET_PACKAGE_MANAGER="zypper/rpm"
+    else
+        TARGET_PACKAGE_MANAGER="unknown"
+    fi
+
+    if target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio \
+        || target_has_path /etc/mkinitcpio.conf /etc/mkinitcpio.d; then
+        TARGET_INITRAMFS_BACKEND="mkinitcpio"
+    elif target_has_executable /usr/bin/dracut /usr/sbin/dracut \
+        || target_has_path /etc/dracut.conf /etc/dracut.conf.d; then
+        TARGET_INITRAMFS_BACKEND="dracut"
+    elif target_has_executable /usr/bin/booster /usr/lib/booster/booster; then
+        TARGET_INITRAMFS_BACKEND="booster"
+    elif target_has_executable /usr/sbin/update-initramfs /usr/bin/update-initramfs \
+        || target_has_executable /usr/sbin/mkinitramfs /usr/bin/mkinitramfs; then
+        TARGET_INITRAMFS_BACKEND="initramfs-tools"
+    else
+        TARGET_INITRAMFS_BACKEND="unknown"
+    fi
+
+    if target_has_path /boot/grub/grub.cfg \
+        || target_has_executable /usr/sbin/grub-mkconfig /usr/bin/grub-mkconfig \
+        || target_has_executable /usr/sbin/update-grub /usr/bin/update-grub; then
+        TARGET_BOOTLOADER_BACKEND="grub"
+    elif target_has_path /boot/loader /efi/loader /boot/EFI/systemd /efi/EFI/systemd \
+        || target_has_executable /usr/bin/bootctl /usr/bin/kernel-install; then
+        if target_has_path /efi/EFI/Linux /boot/efi/EFI/Linux /boot/EFI/Linux; then
+            TARGET_BOOTLOADER_BACKEND="systemd-boot + UKI"
+        else
+            TARGET_BOOTLOADER_BACKEND="systemd-boot"
+        fi
+    elif target_has_path /efi/EFI/Linux /boot/efi/EFI/Linux /boot/EFI/Linux; then
+        TARGET_BOOTLOADER_BACKEND="generic UKI"
+    else
+        TARGET_BOOTLOADER_BACKEND="unknown EFI loader"
+    fi
+
+    TARGET_ESP_MOUNT=""
+    for esp_path in /efi /boot/efi /boot; do
+        if mountpoint -q "$TARGET_ROOT$esp_path" 2>/dev/null \
+            && findmnt -rn -o FSTYPE --target "$TARGET_ROOT$esp_path" 2>/dev/null \
+                | grep -Eiq '^(vfat|fat|fat16|fat32|msdos)$'; then
+            TARGET_ESP_MOUNT="$esp_path"
+            break
+        fi
+    done
+    if [[ -z "$TARGET_ESP_MOUNT" ]]; then
+        for esp_path in /efi /boot/efi /boot; do
+            if [[ -d "$TARGET_ROOT$esp_path/EFI" || -d "$TARGET_ROOT$esp_path/loader" ]]; then
+                TARGET_ESP_MOUNT="$esp_path"
+                break
+            fi
+        done
+    fi
+    [[ -n "$TARGET_ESP_MOUNT" ]] || TARGET_ESP_MOUNT="unresolved"
+
+    if find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'vmlinuz-linux*' -print -quit 2>/dev/null | grep -q .; then
+        TARGET_KERNEL_LAYOUT="Arch-style named kernels (vmlinuz-linux*)"
+    elif find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'vmlinuz-*' -print -quit 2>/dev/null | grep -q .; then
+        TARGET_KERNEL_LAYOUT="versioned vmlinuz-* kernels"
+    else
+        TARGET_KERNEL_LAYOUT="no conventional vmlinuz files detected"
+    fi
+
+    if [[ "$family" == arch ]]; then
+        TARGET_REPAIR_BACKEND="Arch profile — diagnostics only (modifying backend not enabled)"
+    elif [[ "$family" == debian ]]; then
+        TARGET_REPAIR_BACKEND="Debian/APT profile — existing guarded modifying backend"
+    else
+        TARGET_REPAIR_BACKEND="${family^} profile — diagnostics only (modifying backend not enabled)"
+    fi
+}
+
+profile_esp_root()
+{
+    profile_target_backends
+    [[ "$TARGET_ESP_MOUNT" != unresolved ]] || return 1
+    printf '%s\n' "$TARGET_ROOT$TARGET_ESP_MOUNT"
 }
 
 prepare_target()
@@ -980,14 +1125,12 @@ prepare_running_host()
     fi
     EFI_ESP_SOURCE=""
     EFI_ESP_FSTYPE=""
-    if mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
-        validate_target_esp
-    fi
+    detect_mounted_esp || true
     if [[ "$require_rw" == yes ]]; then
         target_path_is_mounted_rw / || fail "The running host root filesystem is not writable. Repair from another system instead."
         target_path_is_mounted_rw /boot || fail "The running host /boot filesystem is not writable."
-        if [[ -n "$EFI_ESP_SOURCE" ]]; then
-            target_path_is_mounted_rw /boot/efi || fail "The running host EFI System Partition is not writable."
+        if [[ -n "$EFI_ESP_SOURCE" && -n "$TARGET_ESP_MOUNT" ]]; then
+            target_path_is_mounted_rw "$TARGET_ESP_MOUNT" || fail "The running host EFI System Partition is not writable."
         fi
         TARGET_WRITE_INTENT=1
     fi
@@ -997,7 +1140,7 @@ prepare_running_host()
     log "Host disk: $TARGET_DISK" | tee -a "$SESSION_LOG"
     log "Host root component: $ROOT_DEVICE ($fstype)" | tee -a "$SESSION_LOG"
     log "Host root mount: / (subvolume=${TARGET_SUBVOL:-default/none})" | tee -a "$SESSION_LOG"
-    log "Host EFI System Partition: $EFI_ESP_SOURCE ($EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+    log "Host EFI System Partition: ${EFI_ESP_SOURCE:-not detected} (${EFI_ESP_FSTYPE:-unknown})${TARGET_ESP_MOUNT:+ mounted at $TARGET_ESP_MOUNT}" | tee -a "$SESSION_LOG"
 }
 
 promote_target_rw()
@@ -2557,6 +2700,7 @@ diagnostic_title()
 {
     case "$1" in
         environment) printf '%s\n' "Environment validation" ;;
+        backend)     printf '%s\n' "Distribution and boot backend profile" ;;
         boot)        printf '%s\n' "Boot diagnostics" ;;
         boot-evidence) printf '%s\n' "Boot evidence and selection history" ;;
         kernel)      printf '%s\n' "Kernel / initramfs" ;;
@@ -2591,6 +2735,34 @@ diagnostic_environment()
     printf '/etc/crypttab: %s\n' "$([[ -s "$TARGET_ROOT/etc/crypttab" ]] && echo present || echo missing/empty)"
     printf '/boot: %s\n' "$([[ -d "$TARGET_ROOT/boot" ]] && echo present || echo missing)"
     printf '/boot/efi: %s\n' "$([[ -d "$TARGET_ROOT/boot/efi" ]] && echo present || echo missing)"
+    printf '/efi: %s\n' "$([[ -d "$TARGET_ROOT/efi" ]] && echo present || echo missing)"
+}
+
+diagnostic_backend_profile()
+{
+    local scope_label="target"
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    profile_target_backends
+
+    echo "${scope_label^} backend profile (read-only):"
+    echo "Distribution ID: ${TARGET_OS_ID:-unknown}"
+    echo "Distribution family: ${TARGET_DISTRO_FAMILY:-unknown}"
+    echo "Distribution name: ${TARGET_PRETTY:-unknown}"
+    echo "Package manager backend: ${TARGET_PACKAGE_MANAGER:-unknown}"
+    echo "Initramfs backend: ${TARGET_INITRAMFS_BACKEND:-unknown}"
+    echo "Bootloader backend: ${TARGET_BOOTLOADER_BACKEND:-unknown}"
+    echo "ESP mount candidate: ${TARGET_ESP_MOUNT:-unresolved}"
+    echo "Kernel layout: ${TARGET_KERNEL_LAYOUT:-unknown}"
+    echo "Repair capability: ${TARGET_REPAIR_BACKEND:-unknown}"
+
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        echo "Arch policy: package changes require an explicit full pacman transaction; partial metadata refresh is not treated as a repair."
+        echo "Arch status: read-only diagnostics are enabled; modifying Arch actions remain gated until their backend preflight is implemented."
+    elif [[ "$TARGET_DISTRO_FAMILY" == debian ]]; then
+        echo "Debian policy: existing guarded APT/dpkg repair backend selected when its stage-specific preflight passes."
+    else
+        echo "Policy: this profile is currently diagnostics-only."
+    fi
 }
 
 diagnostic_boot()
@@ -2608,6 +2780,13 @@ diagnostic_boot()
         ls -lah "$TARGET_ROOT/boot/efi" 2>&1 | head -200 || true
     else
         echo "No /boot/efi directory is visible."
+    fi
+    echo
+    echo "${scope_label^} /efi:"
+    if [[ -d "$TARGET_ROOT/efi" ]]; then
+        ls -lah "$TARGET_ROOT/efi" 2>&1 | head -200 || true
+    else
+        echo "No /efi directory is visible."
     fi
 }
 
@@ -2644,17 +2823,28 @@ journal_current_boot_actionable()
 
 diagnostic_boot_chain()
 {
-    local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"
+    local uki="" esp_root=""
     local grub_cfg="$TARGET_ROOT/boot/grub/grub.cfg"
     local root_type backing luks_uuid crypttab_line crypttab_key
     local uki_cmdline="" uki_luks_uuid="" uki_luks_name="" cryptdevice_uuid=""
     local tmp
     local has_uki=false has_grub=false
 
+    profile_target_backends
+    esp_root="$(profile_esp_root 2>/dev/null || true)"
+    [[ -n "$esp_root" ]] && uki="$esp_root/EFI/BOOT/TUX.EFI"
+
     [[ -s "$uki" ]] && has_uki=true
     [[ -s "$grub_cfg" ]] && has_grub=true
     echo "Detected boot chain (read-only):"
-    if [[ "$has_uki" == true && -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]; then
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == "systemd-boot + UKI" ]]; then
+        echo "Primary: firmware EFI entry -> systemd-boot -> UKI or loader entry -> initramfs -> root filesystem -> graphical login."
+        [[ "$has_grub" == true ]] && echo "Fallback: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+    elif [[ "$TARGET_BOOTLOADER_BACKEND" == "systemd-boot" ]]; then
+        echo "Primary: firmware EFI entry -> systemd-boot loader entry -> initramfs -> root filesystem -> graphical login."
+    elif [[ "$TARGET_BOOTLOADER_BACKEND" == "generic UKI" ]]; then
+        echo "Primary: firmware EFI entry -> distribution UKI -> embedded initramfs -> root filesystem -> graphical login."
+    elif [[ "$has_uki" == true && -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]; then
         echo "Primary: firmware EFI entry -> TUXEDO UKI (TUX.EFI) -> initramfs -> root filesystem -> graphical login."
         [[ "$has_grub" == true ]] && echo "Fallback: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
     elif [[ "$has_grub" == true ]]; then
@@ -2860,11 +3050,14 @@ diagnostic_boot_evidence()
 
 diagnostic_kernel()
 {
-    local kernel version rc=0 scope_label="target"
+    local kernel kernel_name version initrd rc=0 scope_label="target"
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     local -a kernels=()
     shopt -s nullglob
-    kernels=("$TARGET_ROOT"/boot/vmlinuz-*)
+    for kernel in "$TARGET_ROOT"/boot/vmlinuz "$TARGET_ROOT"/boot/vmlinuz-*; do
+        [[ -f "$kernel" ]] && kernels+=("$kernel")
+    done
+    profile_target_backends
     echo "${scope_label^} kernel files:"
     if ((${#kernels[@]} == 0)); then
         echo "  none found"
@@ -2874,7 +3067,11 @@ diagnostic_kernel()
     fi
     echo
     echo "${scope_label^} initramfs files:"
-    local -a initrds=("$TARGET_ROOT"/boot/initrd.img-*)
+    local -a initrds=()
+    for initrd in "$TARGET_ROOT"/boot/initrd.img "$TARGET_ROOT"/boot/initrd.img-* \
+                  "$TARGET_ROOT"/boot/initramfs-*.img; do
+        [[ -f "$initrd" ]] && initrds+=("$initrd")
+    done
     if ((${#initrds[@]} == 0)); then
         echo "  none found"
     else
@@ -2883,11 +3080,21 @@ diagnostic_kernel()
     echo
     echo "Kernel/initramfs pairing:"
     for kernel in "${kernels[@]}"; do
-        version="${kernel##*/vmlinuz-}"
-        if [[ -f "$TARGET_ROOT/boot/initrd.img-$version" ]]; then
-            echo "PASS: $version has matching initramfs."
+        kernel_name="${kernel##*/}"
+        if [[ "$kernel_name" == vmlinuz-* ]]; then
+            version="${kernel_name#vmlinuz-}"
         else
-            echo "FAIL: $version has no matching initramfs."
+            version="$kernel_name"
+        fi
+        if [[ -f "$TARGET_ROOT/boot/initrd.img-$version" ]]; then
+            echo "PASS: $kernel_name has matching initramfs initrd.img-$version."
+        elif [[ -f "$TARGET_ROOT/boot/initramfs-$version.img" || -f "$TARGET_ROOT/boot/initramfs-$version-fallback.img" ]]; then
+            echo "PASS: $kernel_name has matching initramfs initramfs-$version*.img."
+        elif [[ "$version" == linux || "$version" == linux-lts ]] \
+            && compgen -G "$TARGET_ROOT/boot/initramfs-${version}*.img" >/dev/null; then
+            echo "PASS: $kernel_name has matching named-kernel initramfs."
+        else
+            echo "FAIL: $kernel_name has no matching initramfs."
             rc=1
         fi
     done
@@ -2899,6 +3106,11 @@ diagnostic_grub()
 {
     local cfg="$TARGET_ROOT/boot/grub/grub.cfg" scope_label="target"
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    profile_target_backends
+    echo "Detected bootloader backend: ${TARGET_BOOTLOADER_BACKEND:-unknown}"
+    if [[ "$TARGET_BOOTLOADER_BACKEND" != grub ]]; then
+        echo "GRUB is not the selected backend; showing any visible GRUB files for comparison only."
+    fi
     echo "GRUB configuration: $cfg"
     if [[ -f "$cfg" ]]; then
         grep -E '^[[:space:]]*(menuentry|submenu)|linux[[:space:]]|linuxefi[[:space:]]|initrd[[:space:]]|initrdefi[[:space:]]|root=|subvol' "$cfg" \
@@ -2937,20 +3149,27 @@ diagnostic_grub()
 
 diagnostic_uki()
 {
-    local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" tmp_uname tmp_cmdline partuuid embedded="" efi_nvram_diag scope_label="target"
+    local uki="" esp_root="" efi_root="" tmp_uname tmp_cmdline partuuid embedded="" efi_nvram_diag scope_label="target"
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    profile_target_backends
+    esp_root="$(profile_esp_root 2>/dev/null || true)"
+    if [[ -n "$esp_root" ]]; then
+        efi_root="$esp_root"
+        uki="$efi_root/EFI/BOOT/TUX.EFI"
+    fi
 
     echo "Selected ${scope_label} EFI System Partition:"
-    if mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
-        findmnt -rn -o SOURCE,FSTYPE,OPTIONS --target "$TARGET_ROOT/boot/efi" 2>&1 || true
+    if [[ -n "$TARGET_ESP_MOUNT" && "$TARGET_ESP_MOUNT" != unresolved ]] \
+        && mountpoint -q "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null; then
+        findmnt -rn -o SOURCE,FSTYPE,OPTIONS --target "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>&1 || true
     else
-        echo "No separately mounted /boot/efi is visible."
+        echo "No separately mounted ESP is visible."
     fi
 
     echo
     echo "EFI files:"
-    if [[ -d "$TARGET_ROOT/boot/efi/EFI" ]]; then
-        find "$TARGET_ROOT/boot/efi/EFI" -maxdepth 3 -type f -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' 2>/dev/null \
+    if [[ -n "$efi_root" && -d "$efi_root/EFI" ]]; then
+        find "$efi_root/EFI" -maxdepth 3 -type f -printf '%TY-%Tm-%Td %TH:%TM  %10s  %p\n' 2>/dev/null \
             | sed "s#${TARGET_ROOT}##" \
             | sort \
             | head -250
@@ -2960,7 +3179,7 @@ diagnostic_uki()
 
     if [[ -s "$uki" ]]; then
         echo
-        echo "TUXEDO UKI: /boot/efi/EFI/BOOT/TUX.EFI"
+        echo "TUXEDO UKI: ${uki#"$TARGET_ROOT"}"
         if command -v objcopy >/dev/null 2>&1; then
             tmp_uname="$(mktemp "$SESSION_DIR/diag-uki-uname.XXXXXX")"
             tmp_cmdline="$(mktemp "$SESSION_DIR/diag-uki-cmdline.XXXXXX")"
@@ -2984,11 +3203,48 @@ diagnostic_uki()
         fi
     fi
 
+    if [[ -n "$efi_root" && -d "$efi_root/EFI/Linux" ]]; then
+        echo
+        echo "Generic UKI images under ${efi_root#"$TARGET_ROOT"}/EFI/Linux:"
+        find "$efi_root/EFI/Linux" -maxdepth 1 -type f -iname '*.efi' \
+            -printf '%f\n' 2>/dev/null | sort | head -120
+        if command -v objcopy >/dev/null 2>&1; then
+            while IFS= read -r generic_uki; do
+                [[ -s "$generic_uki" ]] || continue
+                echo "Generic UKI image: ${generic_uki#"$TARGET_ROOT"}"
+                tmp_uname="$SESSION_DIR/diag-generic-uki-uname"
+                tmp_cmdline="$SESSION_DIR/diag-generic-uki-cmdline"
+                rm -f -- "$tmp_uname" "$tmp_cmdline"
+                if objcopy --dump-section ".uname=$tmp_uname" "$generic_uki" >/dev/null 2>&1; then
+                    echo "Embedded kernel: $(tr '\0' '\n' < "$tmp_uname" | head -1)"
+                else
+                    echo "Embedded kernel: unavailable"
+                fi
+                if objcopy --dump-section ".cmdline=$tmp_cmdline" "$generic_uki" >/dev/null 2>&1; then
+                    echo "Embedded command line: $(tr '\0' ' ' < "$tmp_cmdline" | head -1)"
+                fi
+            done < <(find "$efi_root/EFI/Linux" -maxdepth 1 -type f -iname '*.efi' -print 2>/dev/null | sort | head -40)
+        fi
+    fi
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == systemd-boot* ]]; then
+        echo
+        echo "systemd-boot loader layout:"
+        for loader_root in "$TARGET_ROOT/boot/loader" "$TARGET_ROOT/efi/loader"; do
+            [[ -d "$loader_root" ]] || continue
+            echo "Loader root: ${loader_root#"$TARGET_ROOT"}"
+            [[ -f "$loader_root/loader.conf" ]] && sed -n '1,80p' "$loader_root/loader.conf"
+            if [[ -d "$loader_root/entries" ]]; then
+                find "$loader_root/entries" -maxdepth 1 -type f -name '*.conf' -printf '%f\n' 2>/dev/null | sort | head -120
+            fi
+        done
+    fi
+
     echo
     echo "Firmware entry inventory (host, selected ${scope_label} ESP, and other disks):"
-    if command -v efibootmgr >/dev/null 2>&1 && [[ -n "$EFI_ESP_SOURCE" || -d "$TARGET_ROOT/boot/efi" ]]; then
-        if [[ -z "$EFI_ESP_SOURCE" ]] && mountpoint -q "$TARGET_ROOT/boot/efi" 2>/dev/null; then
-            EFI_ESP_SOURCE="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT/boot/efi" 2>/dev/null | head -1 || true)"
+    if command -v efibootmgr >/dev/null 2>&1 && [[ -n "$EFI_ESP_SOURCE" || -n "$efi_root" ]]; then
+        if [[ -z "$EFI_ESP_SOURCE" && -n "$TARGET_ESP_MOUNT" && "$TARGET_ESP_MOUNT" != unresolved ]] \
+            && mountpoint -q "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null; then
+            EFI_ESP_SOURCE="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null | head -1 || true)"
         fi
         efi_nvram_diag="$SESSION_DIR/diag-efi-nvram.txt"
         efibootmgr -v > "$efi_nvram_diag" 2>&1 || true
@@ -3212,6 +3468,7 @@ run_one_diagnostic()
     echo
     case "$key" in
         environment) diagnostic_environment || rc=$? ;;
+        backend)     diagnostic_backend_profile || rc=$? ;;
         boot)        diagnostic_boot || rc=$? ;;
         boot-evidence) diagnostic_boot_evidence || rc=$? ;;
         kernel)      diagnostic_kernel || rc=$? ;;
@@ -3244,9 +3501,10 @@ run_target_diagnostic()
     prepare_target ro
     mount_target_boot_entry "/boot" ro
     mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
 
     if [[ "$requested" == "all" || "$requested" == "report" ]]; then
-        for key in environment boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
+        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
             run_one_target_diagnostic "$key" || overall=1
         done
     else
@@ -3270,7 +3528,7 @@ run_host_diagnostic()
     prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no no
     DIAGNOSTIC_SCOPE="Running Host"
     if [[ "$requested" == all || "$requested" == report ]]; then
-        for key in environment boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
+        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || overall=1
         done
     else
@@ -4055,6 +4313,8 @@ validate_target()
     prepare_target ro
     mount_target_boot_entry "/boot" ro
     mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
+    profile_target_backends
 
     log "Validation summary" | tee -a "$SESSION_LOG"
     log "  OS: $TARGET_PRETTY" | tee -a "$SESSION_LOG"
@@ -4066,11 +4326,12 @@ validate_target()
     log "  /etc/crypttab: $([[ -s "$TARGET_ROOT/etc/crypttab" ]] && echo present || echo missing/empty)" | tee -a "$SESSION_LOG"
     log "  /boot: $([[ -d "$TARGET_ROOT/boot" ]] && echo present || echo missing)" | tee -a "$SESSION_LOG"
     log "  GRUB config: $([[ -f "$TARGET_ROOT/boot/grub/grub.cfg" ]] && echo present || echo not-visible)" | tee -a "$SESSION_LOG"
-    if is_debian_family; then
-        log "  Supported modifying backend: Debian/APT family" | tee -a "$SESSION_LOG"
-    else
-        log "  Supported modifying backend: NO (diagnostics only for this target family)" | tee -a "$SESSION_LOG"
-    fi
+    log "  Distribution family: $TARGET_DISTRO_FAMILY" | tee -a "$SESSION_LOG"
+    log "  Package manager backend: $TARGET_PACKAGE_MANAGER" | tee -a "$SESSION_LOG"
+    log "  Initramfs backend: $TARGET_INITRAMFS_BACKEND" | tee -a "$SESSION_LOG"
+    log "  Bootloader backend: $TARGET_BOOTLOADER_BACKEND" | tee -a "$SESSION_LOG"
+    log "  ESP mount candidate: $TARGET_ESP_MOUNT" | tee -a "$SESSION_LOG"
+    log "  Supported modifying backend: $TARGET_REPAIR_BACKEND" | tee -a "$SESSION_LOG"
 
     log "Validation complete; no target files were changed." | tee -a "$SESSION_LOG"
 }
@@ -4080,6 +4341,7 @@ validate_running_host()
     CURRENT_STAGE="host validation"
     RUNNING_HOST_MODE=1
     prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no no
+    profile_target_backends
     log "Running-host validation summary" | tee -a "$SESSION_LOG"
     log "  OS: $TARGET_PRETTY" | tee -a "$SESSION_LOG"
     log "  Root: $ROOT_DEVICE" | tee -a "$SESSION_LOG"
@@ -4089,11 +4351,12 @@ validate_running_host()
     log "  /boot: $([[ -d "$TARGET_ROOT/boot" ]] && echo present || echo missing)" | tee -a "$SESSION_LOG"
     log "  /boot/efi: $([[ -n "$EFI_ESP_SOURCE" ]] && echo "$EFI_ESP_SOURCE ($EFI_ESP_FSTYPE)" || echo "not separately mounted")" | tee -a "$SESSION_LOG"
     validate_mapper_crypttab
-    if is_debian_family; then
-        log "  Supported modifying backend: Debian/APT family" | tee -a "$SESSION_LOG"
-    else
-        log "  Supported modifying backend: NO (diagnostics only for this host family)" | tee -a "$SESSION_LOG"
-    fi
+    log "  Distribution family: $TARGET_DISTRO_FAMILY" | tee -a "$SESSION_LOG"
+    log "  Package manager backend: $TARGET_PACKAGE_MANAGER" | tee -a "$SESSION_LOG"
+    log "  Initramfs backend: $TARGET_INITRAMFS_BACKEND" | tee -a "$SESSION_LOG"
+    log "  Bootloader backend: $TARGET_BOOTLOADER_BACKEND" | tee -a "$SESSION_LOG"
+    log "  ESP mount candidate: $TARGET_ESP_MOUNT" | tee -a "$SESSION_LOG"
+    log "  Supported modifying backend: $TARGET_REPAIR_BACKEND" | tee -a "$SESSION_LOG"
     log "Running-host validation complete; no host files were changed." | tee -a "$SESSION_LOG"
 }
 
@@ -4192,6 +4455,40 @@ validate_target_esp()
         vfat|fat|fat16|fat32|msdos) ;;
         *) fail "Mounted /boot/efi is not a FAT EFI System Partition (detected ${EFI_ESP_FSTYPE:-unknown})." ;;
     esac
+}
+
+# Read-only ESP discovery used by host diagnostics and backend profiling.  The
+# Debian repair path intentionally keeps validate_target_esp() strict at
+# /boot/efi, while Arch and other distributions commonly mount their ESP at
+# /boot or /efi.  Do not require a separate ESP here: a caller can continue
+# with an empty result and report that no FAT ESP is mounted.
+detect_mounted_esp()
+{
+    local esp_mount source fstype
+    EFI_ESP_SOURCE=""
+    EFI_ESP_FSTYPE=""
+    TARGET_ESP_MOUNT=""
+
+    for esp_mount in /boot/efi /efi /boot; do
+        [[ -d "$TARGET_ROOT$esp_mount" ]] || continue
+        mountpoint -q "$TARGET_ROOT$esp_mount" 2>/dev/null || continue
+        read -r source fstype < <(
+            findmnt -rn -o SOURCE,FSTYPE --target "$TARGET_ROOT$esp_mount" 2>/dev/null \
+                | awk '$1 ~ /^\/dev\// {print $1, $2; exit}'
+        ) || true
+        [[ -n "$source" ]] || continue
+        case "${fstype,,}" in
+            vfat|fat|fat16|fat32|msdos) ;;
+            *) continue ;;
+        esac
+        is_block_device "$source" || continue
+        same_single_top_disk "$TARGET_DISK" "$source" || continue
+        EFI_ESP_SOURCE="$source"
+        EFI_ESP_FSTYPE="$fstype"
+        TARGET_ESP_MOUNT="$esp_mount"
+        return 0
+    done
+    return 1
 }
 
 is_tuxedo_uki_layout()

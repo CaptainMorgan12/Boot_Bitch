@@ -2,7 +2,19 @@
 
 ## Unreleased
 
-- Development changes will be listed here.
+- Add a read-only distribution and boot backend profiler for the running host
+  and selected repair target. Debian/APT and Arch/pacman families are detected
+  separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
+  mount and kernel naming evidence.
+- Add an Arch-family diagnostics layer for mkinitcpio, dracut, GRUB,
+  systemd-boot, generic UKI and `/efi` layouts. Arch modifying repairs remain
+  disabled until their transaction-specific preflights are implemented.
+- Add a backend-profile contract test and portable kernel/initramfs pairing
+  diagnostics for Arch-style `vmlinuz-linux` and `initramfs-*.img` files.
+- Make build dependency setup and installation package-manager aware for
+  APT/dpkg, pacman, DNF/RPM and zypper/RPM hosts. Add native Arch, RPM and
+  package-manager-neutral TGZ workflows while keeping `.deb` generation
+  explicitly Debian-family.
 
 ## 0.2.23 — 2026-09-15
 

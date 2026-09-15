@@ -24,12 +24,15 @@ rsync -a --delete \
   --exclude='Development/' \
   --exclude='build*/' \
   --exclude='*.deb' \
+  --exclude='*.rpm' \
+  --exclude='*.pkg.tar.*' \
+  --exclude='*.tar.gz' \
   --exclude='*.AppImage' \
   "$SOURCE/" "$DEST/"
 
 # Remove any old packages tracked by the partial upload.
 find "$DEST" -maxdepth 1 -type f \
-  \( -name '*.deb' -o -name '*.AppImage' \) -print -delete
+  \( -name '*.deb' -o -name '*.rpm' -o -name '*.pkg.tar.*' -o -name '*.tar.gz' -o -name '*.AppImage' \) -print -delete
 
 cd "$DEST"
 git add -A

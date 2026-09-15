@@ -19,6 +19,11 @@ Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development se
 ## Diagnostics and evidence
 
 - Added read-only target diagnostics for environment, boot state, boot evidence, kernels/initramfs, GRUB, EFI/UKI, graphical login, errors, usage, `fstab`, Btrfs, mapper and LUKS/crypttab.
+- Added a read-only distribution/backend profile that distinguishes Debian/APT
+  and Arch/pacman systems, detects mkinitcpio/dracut/initramfs-tools,
+  GRUB/systemd-boot/generic UKI layouts, `/efi` versus `/boot/efi`, and common
+  kernel naming conventions. Arch modifying actions remain gated while their
+  transaction-specific repair backend is developed.
 - Added **Run All** to populate every per-diagnostic cache through one read-only target session.
 - Added capture timestamps and cache identity based on physical disk and root filesystem.
 - Added authoritative cache invalidation after target edits, repairs, snapshot rollback, Host → Repair copies and shell commands that may modify files.
@@ -55,6 +60,9 @@ Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development se
 - Added responsive tab navigation with arrows, stable scrollbar gutters, content-sized rows, adjustable Repair splitters and narrow-window layouts.
 - Added theme-neutral palette handling so stale log entries remain readable in KDE and GNOME light/dark themes.
 - Added application icon resources, desktop entry, AppStream metadata, man page and Debian packaging with the helper installed at a stable root-owned path.
+- Added package-manager-aware setup and installation workflows for APT/dpkg,
+  pacman, DNF/RPM and zypper/RPM hosts, plus native Arch, RPM and portable TGZ
+  package scripts. Debian package generation remains available through CPack.
 - Added development dependency setup, environment checks, UI/contract tests, shell syntax checks and AppStream validation.
 - Added anonymized Ubuntu VM screenshots and a disposable VM testing guide.
 

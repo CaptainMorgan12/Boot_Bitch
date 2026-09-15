@@ -6,6 +6,19 @@ BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
 
+host_is_debian=0
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    case "${ID:-}" in
+        debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) host_is_debian=1 ;;
+        *)
+            if [[ " ${ID_LIKE:-} " == *" debian "* || " ${ID_LIKE:-} " == *" ubuntu "* ]]; then
+                host_is_debian=1
+            fi
+            ;;
+    esac
+fi
+
 need()
 {
     command -v "$1" >/dev/null 2>&1 || {
@@ -121,7 +134,8 @@ fi
 echo "Staged install validation: PASS"
 
 # Debian packaging is automatic when the normal Debian packaging tools exist.
-if command -v cpack >/dev/null 2>&1 \
+if (( host_is_debian )) \
+   && command -v cpack >/dev/null 2>&1 \
    && command -v dpkg-shlibdeps >/dev/null 2>&1 \
    && command -v dpkg-deb >/dev/null 2>&1
 then
@@ -147,9 +161,14 @@ then
     echo "  $ROOT_DIR/scripts/test-deb.sh ${packages[0]}"
 else
     echo
-    echo "Debian packaging tools were not found."
-    echo "The application build is valid; .deb generation was skipped."
-    echo "On Debian-family systems install dpkg-dev to enable .deb packaging."
+    if (( host_is_debian )); then
+        echo "Debian packaging tools were not found."
+        echo "The application build is valid; .deb generation was skipped."
+        echo "On Debian-family systems install dpkg-dev to enable .deb packaging."
+    else
+        echo "Non-Debian build host detected; .deb generation was skipped by policy."
+        echo "Use package-arch.sh, package-rpm.sh, package-tarball.sh, or install.sh --source."
+    fi
 fi
 
 echo

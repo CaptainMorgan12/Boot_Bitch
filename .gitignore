@@ -5,6 +5,9 @@
 /_CPack_Packages/
 *.deb
 *.AppImage
+*.rpm
+*.pkg.tar.*
+*.tar.gz
 *.user
 *~
 # CMake generated files when configuring in the source directory
