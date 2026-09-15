@@ -132,7 +132,7 @@ private:
 static const DiagnosticSpec diagnosticSpecs[] = {
     {"environment", "Environment validation", "Summarizes the selected system, protection state, mounted identity and inspection readiness.", "task-complete"},
     {"boot", "Boot diagnostics", "Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.", "system-run"},
-    {"boot-evidence", "Boot evidence and selection history", "Correlates bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence.", "dialog-information"},
+    {"boot-evidence", "Boot evidence and selection history", "Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.", "dialog-information"},
     {"kernel", "Kernel / initramfs", "Reviews kernel files and verifies matching initramfs images through a read-only inspection.", "preferences-system"},
     {"grub", "GRUB configuration", "Reviews GRUB configuration and /etc/default/grub without changing boot files.", "preferences-system"},
     {"uki", "EFI / UKI boot state", "Inspects the selected ESP, TUXEDO UKI embedded kernel/cmdline and firmware entries with PARTUUID ownership classification.", "drive-removable-media"},
@@ -6387,8 +6387,7 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("EFI / UKI bootloader");
         description = QStringLiteral(
-            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder. "
-            "On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP. Afterward, decoded entries on that ESP retain their distribution/vendor label and receive its disk model once; an existing model name is not duplicated. If an iPXE loader is present without a matching entry, TUXEDO uses its WFAI name and other distributions use an iPXE name, always on that ESP only. Unrelated EFI entries on other disks are never removed.");
+            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO Debian-base systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder; TUXEDO Ubuntu layouts without that builder continue to use their GRUB path. On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP. Afterward, decoded entries on each maintained ESP retain their distribution/vendor label and receive that drive's model once; an existing model name is not duplicated. The maintained BootOrder groups each drive's primary loader, fallback and WebFAI destinations and removes only entries that resolve to a duplicate destination, such as a device-path-only UEFI fallback beside BOOTX64.EFI. Unrelated EFI entries on other disks are never removed.");
         buttonText = QStringLiteral("Repair EFI / UKI");
         iconName = QStringLiteral("drive-removable-media");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
@@ -6403,8 +6402,8 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Boot stack reconciliation");
         description = QStringLiteral(
-            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, and regenerate the GRUB fallback. "
-            "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or EFI entries.");
+            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, reconcile one canonical EFI destination per purpose, and regenerate the GRUB fallback. "
+            "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or unrelated ESP entries.");
         buttonText = QStringLiteral("Reconcile Boot Stack");
         iconName = QStringLiteral("system-run");
         planText = QStringLiteral("Full Repair plan: Manual recovery tool");
@@ -6789,7 +6788,7 @@ void MainWindow::runSelectedRepairTool()
         stages = {QStringLiteral("boot-stack")};
         operations = {QStringLiteral("Validate mapper/crypttab against the %1").arg(selectedSystemLabel),
                       QStringLiteral("Rebuild initramfs for installed kernels"),
-                      QStringLiteral("Rebuild the TUXEDO UKI with the selected system's official builder when available"),
+                      QStringLiteral("Rebuild the TUXEDO UKI with the selected system's official builder when available and remove only duplicate EFI destinations"),
                       QStringLiteral("Regenerate the GRUB fallback configuration")};
     } else {
         QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"),

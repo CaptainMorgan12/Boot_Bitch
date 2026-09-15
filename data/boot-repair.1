@@ -1,4 +1,4 @@
-.TH BOOT-REPAIR 1 "September 2026" "Boot Bitch 0.2.22" "User Commands"
+.TH BOOT-REPAIR 1 "September 2026" "Boot Bitch 0.2.23" "User Commands"
 .SH NAME
 boot-repair \- graphical Linux recovery and guarded boot-repair utility
 .SH SYNOPSIS
@@ -31,7 +31,7 @@ example EFI repair). The Repair page states the condition and the diagnostic to
 run. Read-only inspection and a failed command that reports no target change do
 not invalidate diagnostic evidence.
 .SH REPAIR SUPPORT
-Version 0.2.22 supports Debian, Ubuntu, and compatible targets for guarded
+Version 0.2.23 supports Debian, Ubuntu, and compatible targets for guarded
 package repair, DKMS, adaptive package upgrades, initramfs, GRUB, distribution-
 aware EFI/UKI recovery, boot-stack reconciliation, and transactional Btrfs
 root rollback on supported layouts. Graphical-login recovery examines the
@@ -40,6 +40,13 @@ and recent boot evidence. It restores an unambiguous configured or last-boot
 manager such as SDDM, GDM3, LightDM, greetd, ly, or a custom systemd unit. A
 headless preflight verifies the unit and executable; no graphical session is
 started inside the repair chroot.
+.PP
+Boot evidence describes the detected chain. TUXEDO Debian-base systems with
+the vendor UKI builder use the TUXEDO UKI before initramfs and the root LUKS
+unlock; TUXEDO Ubuntu layouts without that builder use the GRUB menu first.
+EFI records are classified as UKI, fallback, WebFAI/iPXE, vendor loader, or
+device-path fallback, and maintained BootOrder groups each drive's routes
+without retaining duplicate destinations.
 .PP
 Diagnostics are read-only and cached per target and diagnostic. Re-running a
 diagnostic replaces its cache; Run All replaces the complete set. Target
