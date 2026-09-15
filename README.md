@@ -6,7 +6,7 @@ This project was written with LLM assistance under human guidance, requirements 
 
 **Developer:** CaptainMorgan12
 
-## Minimum recovery requirement
+## Choose the system to repair
 
 Boot Bitch must be launched from a **different booted Linux environment for ordinary repair-target work**. Use a Linux live USB, recovery stick, or another Linux installation on a different physical drive when repairing another system. The running host remains protected from ordinary target selection; an explicit Host Maintenance scope is available for guarded native maintenance of the active Debian/Ubuntu-family system.
 
@@ -25,7 +25,7 @@ This build can:
 - validate `/etc/os-release`, `/etc/fstab`, `/etc/crypttab`, boot files and target-family support;
 - mount target `/boot` and `/boot/efi` entries when they are safely resolvable on the selected disk;
 - bind the minimum runtime filesystems needed for a chroot repair;
-- on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, offline SDDM graphical-login recovery, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`;
+- on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, recovery of the detected graphical login manager, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`;
 - in Host Maintenance scope, run the same supported repair stages natively on the active Debian/Ubuntu-family system, with package-lock checks, writable-mount checks, and a private read-only EFI-variable namespace for indirect hooks;
 - inspect the running host with the full read-only diagnostic set, including EFI/UKI files, embedded kernel/cmdline, PARTUUID-owned firmware entries, BootOrder, GRUB handoff, and journal evidence;
 - require an explicit confirmation in the GUI before every modifying operation;
@@ -99,6 +99,9 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ## 0.2.23 refinements
 
+This release includes the local 0.2.21 and 0.2.22 iterations below. The previous
+GitHub release was 0.2.20; see the [cumulative release notes](docs/release-notes-0.2.23.md).
+
 - Maintain one canonical UKI, firmware fallback, and WebFAI destination per
   maintained ESP, removing only safely identified duplicate routes such as a
   device-path-only fallback beside `\EFI\BOOT\BOOTX64.EFI`.
@@ -117,15 +120,31 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ## 0.2.22 refinements
 
-- Bundle the completed semantic Qt/KDE icon atlas and restore the stable 0.2.13
-  defaults for tabs, diagnostics, repair stages and actions.
-- Prefer the active desktop theme, equivalent freedesktop aliases and bundled
-  artwork before using native Qt glyphs when a theme is incomplete.
-- Add filesystem-aware device icons, solid-placeholder detection and native
-  high-contrast fallbacks so AppImage controls remain visible without a host
-  icon theme.
-- Keep repeatable AppImage development builds pointed at the local
-  `Development/tools` appimagetool installation.
+- Decode the helper's directory records correctly so the repair destination
+  browser displays the selected system's folders.
+- Make the browser compact by default and freely resizable, with further
+  layout corrections included in 0.2.23.
+
+## 0.2.21 refinements
+
+- Extend read-only diagnostics and guarded repairs to the explicitly selected
+  Running Host while preserving the protected-host checks for ordinary repair
+  targets.
+- Restore a missing host TUXEDO UKI entry and maintain host, selected-repair,
+  and foreign ESP entries without losing their BootOrder or BootNext state.
+- Make Host → Repair destination browsing use temporary read-only mounts of
+  the selected repair filesystem, so its folder tree cannot be confused with
+  the host's folders.
+- Add drive-model annotation to selected-ESP vendor labels, with verified
+  writes and duplicate-destination maintenance completed in 0.2.23.
+
+## 0.2.20 refinements
+
+- Bundle the semantic Qt/KDE icon atlas for tabs, diagnostics, repair stages
+  and actions. Use usable host-theme icons or freedesktop aliases first,
+  then bundled artwork and native high-contrast fallbacks.
+- Add filesystem-aware device icons and reject solid theme placeholders so
+  controls remain readable when the host icon theme is incomplete.
 
 ## 0.2.19 refinements
 
@@ -199,22 +218,27 @@ Generated build output belongs in `build/` and is ignored by Git.
 ## Design goals
 
 - Native Qt 6 Widgets application with standard resizable window controls.
-- Follow the active Qt/KDE/desktop theme; no hard-coded light/dark stylesheet.
+- Follow the active Qt/KDE/desktop theme for widget styling, palettes, spacing,
+  dialogs and accessibility without a hard-coded light/dark stylesheet. The
+  application does not require a system icon theme: semantic icons use a
+  usable host theme when available, then the bundled atlas and native
+  high-contrast fallbacks.
 - Keep the source tree and dependency set small.
 - KDE Frameworks 6 KAuth remains optional; guarded builds use a separate root helper launched through Polkit/pkexec.
 - Privileged work is isolated from the normal GUI process and exposes only whitelisted operations.
 - Missing optional runtime tools disable only the related feature.
-- Never silently install host packages; target package changes require explicit repair confirmation.
+- Package changes in either Host Maintenance or the selected repair system require explicit repair confirmation.
 - Storage discovery must not assume NVMe, internal disks, encryption or one filesystem layout.
-- Current-system protection is mandatory and cannot be disabled.
+- Current-system identity checks are mandatory. Ordinary repair-target actions refuse the running host; Host Maintenance must be selected explicitly.
 
 ### GNOME and KDE/Qt desktop integration
 
 Boot Bitch is a Qt 6 Widgets application and deliberately does not force a
 global stylesheet or the Fusion style. It follows the desktop's font, palette,
-spacing, icons, dialogs and accessibility settings. KDE uses its normal Qt
-platform theme. On GNOME, install the optional Qt platform-theme and portal
-plugins for GTK-like controls and native file dialogs:
+spacing, dialogs and accessibility settings, while resolving semantic icons
+from the active theme first and the bundled atlas when a theme is incomplete.
+KDE uses its normal Qt platform theme. On GNOME, install the optional Qt
+platform-theme and portal plugins for GTK-like controls and native file dialogs:
 
 ```bash
 sudo apt install qt6-gtk-platformtheme qt6-xdgdesktopportal-platformtheme
@@ -230,9 +254,10 @@ privilege boundary or repair logic, and the Debian package lists them as
 optional suggestions so minimal KDE, GNOME and headless installations remain
 supported.
 
-To compare available diagnostic and tab icons on the current desktop theme,
-run `./scripts/check-icon-theme.sh`. It reports missing names and suggests
-equivalent freedesktop icons without changing the active theme.
+To audit available diagnostic and tab icons on the current desktop theme, run
+`./scripts/check-icon-theme.sh`. It reports missing names and suggests
+equivalent freedesktop icons; missing host-theme names do not disable the
+application because the corresponding semantic artwork is bundled.
 
 ## Build dependencies
 
@@ -247,9 +272,10 @@ Runtime/packaging support used by guarded repair builds:
 
 - Polkit / `pkexec`
 - util-linux (`lsblk`, `findmnt`, `blkid`, mount tools)
-- systemd `systemctl` for offline graphical-target/SDDM repair
+- systemd `systemctl` for graphical-target and detected display-manager repair
 - `efibootmgr` for guarded UEFI entry/order inspection when firmware variables are available
 - binutils `objcopy` for TUXEDO UKI verification
+- Python 3 for guarded EFI label updates and their regression test
 - Debian packaging tools when generating `.deb` files
 - KDE Frameworks 6 KAuth development files remain optional
 
@@ -267,7 +293,7 @@ sudo apt update && sudo apt install --no-install-recommends -y \
     qt6-base-dev qt6-base-dev-tools extra-cmake-modules \
     dpkg-dev desktop-file-utils lintian \
     pkexec util-linux mount rsync cryptsetup btrfs-progs systemd \
-    efibootmgr binutils lvm2 mdadm
+    efibootmgr binutils python3 lvm2 mdadm
 ```
 
 To inspect the environment without installing anything:
@@ -426,9 +452,9 @@ runtime tools listed above before attempting a repair. Build one locally with
 `./scripts/build-appimage.sh`; the resulting artifact is written to
 `build-release/` and is excluded from Git source uploads.
 
-The AppImage is a convenience distribution format, not a sandbox: the helper
-must be authorized by the host and reads or changes only the explicitly
-selected repair target. For regular installation and desktop integration, the
+The AppImage uses the same privilege boundary: the helper must be authorized
+and acts on the selected repair system or explicitly selected Host Maintenance
+scope. For regular installation and desktop integration, the
 Debian package remains the recommended format.
 
 ## Build an AppImage
@@ -482,7 +508,9 @@ Runs one command at a time as root inside the selected repair system. Commands r
 
 ### Repair
 
-Settings define the Full Repair plan. Enabled stages are shown in execution order. Every configurable stage also appears one-for-one under Individual repair tools: package configuration, broken-dependency repair, package metadata refresh, adaptive package upgrade, DKMS, SDDM graphical login, initramfs, EFI/UKI, and GRUB. Select a repair drive for offline repair, or choose **Host Maintenance** on the protected Running Host card to run the same supported stages natively on the active Debian/Ubuntu-family system. Host maintenance repeats disk/root/boot-mount identity checks, prevents package races, and isolates firmware variables from indirect hooks; the helper then reconciles only the active host's EFI entry while preserving every other disk's entries and BootOrder. After reconciliation, decoded entries on the selected ESP keep their distribution/vendor label and receive the selected disk model once (for example `tuxedo WD_BLACK SN8100 HS 4000GB`); an existing model name is never duplicated. If an `iPXE.efi` loader exists on that ESP but has no matching firmware entry, TUXEDO systems receive `WFAI <model>` and other distributions receive `iPXE <model>`, always within the same PARTUUID boundary. Validate environment remains an automatic preflight, and Boot stack reconciliation remains a manual recovery tool.
+Settings define the Full Repair plan. Enabled stages are shown in execution order. Every configurable stage also appears under Individual repair tools: package configuration, broken-dependency repair, package metadata refresh, adaptive package upgrade, DKMS, detected graphical login manager, initramfs, EFI/UKI, and GRUB. Select a repair drive for offline repair, or choose **Host Maintenance** on the protected Running Host card to run the same supported stages natively on the active Debian/Ubuntu-family system. Host maintenance repeats disk/root/boot-mount identity checks, checks package locks, and isolates firmware variables from indirect hooks. Validate environment remains an automatic preflight, and Boot stack reconciliation remains a manual recovery tool.
+
+EFI maintenance validates entry ownership by ESP PARTUUID, removes only identified duplicate destinations on the maintained ESP, and groups retained entries by drive and normal boot use. Labels retain their distribution/vendor wording and receive the disk model once (for example `tuxedo WD_BLACK SN8100 HS 4000GB`); existing model text is not duplicated. If an `iPXE.efi` loader exists on that ESP but has no matching firmware entry, TUXEDO systems receive `WFAI <model>` and other distributions receive `iPXE <model>`. The helper retains unrelated firmware entries and verifies the resulting labels and BootOrder.
 
 ### Snapshots
 
@@ -504,7 +532,9 @@ Contains live device-display preferences, the Full Repair plan, mandatory safety
 
 Boot Bitch checks capabilities independently. Examples include `lsblk`, `blkid`, `findmnt`, `cryptsetup`, `btrfs`, `rsync`, `chroot`, `grub-install`, `update-grub`, `update-initramfs`, `dkms`, optional LVM tools, and `mdadm`.
 
-Missing optional tools disable the related action. Modifying repair execution is currently limited to supported Debian/Ubuntu-family targets and never installs missing host tools silently.
+Missing optional tools disable the related action. Modifying repair execution
+is currently limited to supported Debian/Ubuntu-family systems in either
+scope. Missing host tools are never installed silently.
 
 ## License
 

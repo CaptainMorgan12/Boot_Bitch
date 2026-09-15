@@ -14,8 +14,17 @@ QMAKE="${QMAKE:-$(command -v qmake6 2>/dev/null || command -v qmake 2>/dev/null 
 # Prefer the disposable local development install when no system tool was
 # selected. This keeps AppImage tooling out of the host package manager while
 # making repeated release-development builds one-command operations.
+if [[ "$LINUXDEPLOY" == "linuxdeploy" && -x "$ROOT_DIR/Development/tools/linuxdeploy-x86_64.AppImage" ]]; then
+    LINUXDEPLOY="$ROOT_DIR/Development/tools/linuxdeploy-x86_64.AppImage"
+fi
+if [[ "$LINUXDEPLOY_PLUGIN_QT" == "linuxdeploy-plugin-qt" && -x "$ROOT_DIR/Development/tools/linuxdeploy-plugin-qt-x86_64.AppImage" ]]; then
+    LINUXDEPLOY_PLUGIN_QT="$ROOT_DIR/Development/tools/linuxdeploy-plugin-qt-x86_64.AppImage"
+fi
 if [[ -z "$APPIMAGETOOL" && -x "$ROOT_DIR/Development/tools/appimagetool-x86_64.AppImage" ]]; then
     APPIMAGETOOL="$ROOT_DIR/Development/tools/appimagetool-x86_64.AppImage"
+fi
+if [[ -z "$APPIMAGE_RUNTIME_FILE" && -f "$ROOT_DIR/Development/tools/runtime-x86_64" ]]; then
+    APPIMAGE_RUNTIME_FILE="$ROOT_DIR/Development/tools/runtime-x86_64"
 fi
 APPIMAGETOOL="${APPIMAGETOOL:-appimagetool}"
 

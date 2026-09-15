@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
     VERSION 0.2.23
-    DESCRIPTION "Guarded Linux boot repair and recovery utility with diagnostics and privileged target repair backend"
+    DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
 
@@ -157,7 +157,7 @@ set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-p
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, hicolor-icon-theme")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected system discovery, diagnostics and guarded target\n repairs. The privileged backend currently supports Debian/Ubuntu-family\n target repairs, LUKS unlock and guarded bidirectional file recovery/copy.")
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family host maintenance and repair-system recovery, LUKS\n unlock and verified bidirectional file recovery/copy.")
 
 include(CPack)
 
