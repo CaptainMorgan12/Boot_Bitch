@@ -191,6 +191,11 @@ target_compile_definitions(boot-repair-ui-tests
     PRIVATE
         BOOT_REPAIR_VERSION="${PROJECT_VERSION}"
         BOOT_REPAIR_SOURCE_DIR="${CMAKE_CURRENT_SOURCE_DIR}"
+        # Host diagnostics normally use the interactive Polkit-backed helper.
+        # The UI regression test must stay deterministic in headless CI, so
+        # MainWindow uses its read-only in-process diagnostic implementation
+        # for this test target only.
+        BOOT_REPAIR_UI_TEST=1
 )
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
