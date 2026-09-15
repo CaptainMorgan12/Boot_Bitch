@@ -4350,7 +4350,13 @@ void MainWindow::browseFileCopyDestination()
         QDialog browser(&dialog);
         browser.setObjectName(QStringLiteral("repairFolderBrowser"));
         browser.setWindowTitle(QStringLiteral("Browse repaired-system folders"));
-        auto *browserLayout = standardDialogLayout(&browser, 760);
+        auto *browserLayout = standardDialogLayout(&browser, 620);
+        // The folder browser is intentionally compact on first open but may
+        // be enlarged freely when a long path or a large directory needs
+        // more room.  Keep a usable minimum so the action row never clips.
+        browser.setSizeGripEnabled(true);
+        browser.setMinimumSize(560, 360);
+        browser.resize(700, 500);
 
         auto *browserHeadingRow = new QHBoxLayout;
         auto *browserHeadingIcon = new QLabel;
@@ -4431,7 +4437,7 @@ void MainWindow::browseFileCopyDestination()
             }
 
             QStringList childPaths;
-            const QString marker = QStringLiteral("BROWSE_ENTRY\\t");
+            const QString marker = QStringLiteral("BROWSE_ENTRY\t");
             for (const QString &line : output.split(QLatin1Char('\n'))) {
                 if (!line.startsWith(marker)) {
                     continue;
