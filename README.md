@@ -109,6 +109,11 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 - Explain TUXEDO Debian-base UKI versus TUXEDO Ubuntu/GRUB behavior in the EFI
   repair description and annotate maintained entries with their drive model
   without duplicating existing model text.
+- Update an existing firmware description only after validating its EFI
+  variable's PARTUUID and loader and reading it back; this avoids treating
+  `efibootmgr -b … -L …` as an edit operation when it only labels new entries.
+- Keep the repaired-system folder browser's navigation and confirmation rows
+  visible at compact sizes while allowing the browser to be resized.
 
 ## 0.2.22 refinements
 

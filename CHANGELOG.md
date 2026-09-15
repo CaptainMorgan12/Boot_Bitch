@@ -17,6 +17,11 @@
   distinct and repairs do not introduce a second unlock route.
 - Clarify EFI repair behavior and model-aware destination labels in the UI and
   documentation.
+- Update existing EFI descriptions through a guarded EFI_LOAD_OPTION rewrite
+  with PARTUUID/loader validation and read-back verification; `efibootmgr -L`
+  is used only for creation because it does not rename an existing entry.
+- Keep the repaired-system folder browser's navigation row outside the folder
+  list's minimum height so compact dialogs do not overlap their controls.
 
 ## 0.2.22 — 2026-09-14
 

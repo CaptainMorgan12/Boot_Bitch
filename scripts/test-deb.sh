@@ -83,6 +83,11 @@ grep -q '^Icon=org.bootrepair.BootRepair$' \
     exit 1
 }
 
+[[ -x "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py" ]] || {
+    echo "FAIL: EFI label updater missing from extracted package." >&2
+    exit 1
+}
+
 grep -q '<id>org.bootrepair.BootRepair</id>' \
     "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || {
         echo "FAIL: AppStream metadata has the wrong component ID." >&2
@@ -100,6 +105,7 @@ grep -q '<binary>boot-repair</binary>' \
     }
 
 bash -n "$TMP/root/usr/libexec/boot-repair/boot-repair-helper"
+python3 -m py_compile "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.py"
 
 echo "PASS: executable, desktop entry, application icons and privileged helper are present."
 

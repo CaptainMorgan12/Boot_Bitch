@@ -59,12 +59,12 @@ validate_manifest_entry()
         [[ ! -L "$canonical" ]] || return 1
     fi
     case "$canonical" in
-        /usr/bin/boot-repair|/usr/libexec/boot-repair/boot-repair-helper|\
+        /usr/bin/boot-repair|/usr/libexec/boot-repair/boot-repair-helper|/usr/libexec/boot-repair/boot-repair-efi-label.py|\
         /usr/share/applications/org.bootrepair.BootRepair.desktop|\
         /usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml|\
         /usr/share/icons/hicolor/*/apps/org.bootrepair.BootRepair.png|\
         /usr/share/doc/boot-repair/*|/usr/share/man/man1/boot-repair.1.gz|\
-        /usr/local/bin/boot-repair|/usr/local/libexec/boot-repair/boot-repair-helper|\
+        /usr/local/bin/boot-repair|/usr/local/libexec/boot-repair/boot-repair-helper|/usr/local/libexec/boot-repair/boot-repair-efi-label.py|\
         /usr/local/share/applications/org.bootrepair.BootRepair.desktop|\
         /usr/local/share/metainfo/org.bootrepair.BootRepair.metainfo.xml|\
         /usr/local/share/icons/hicolor/*/apps/org.bootrepair.BootRepair.png|\
