@@ -23,7 +23,9 @@ This build can:
 - mount the selected target in a private `/run/boot-repair` session;
 - independently re-check that the selected target does not back the running host before any write;
 - validate `/etc/os-release`, `/etc/fstab`, `/etc/crypttab`, boot files and target-family support;
-- mount target `/boot` and `/boot/efi` entries when they are safely resolvable on the selected disk;
+- mount target `/boot`, `/boot/efi`, and `/efi` entries when they are safely resolvable on the selected disk;
+- profile the selected system or protected running host as Debian/APT, Arch/pacman, another known family, or unknown; report its initramfs generator, bootloader, ESP location, kernel naming layout, and current repair capability in the read-only diagnostics;
+- inspect Arch-family systems read-only, including common `mkinitcpio`, `dracut`, GRUB, systemd-boot, and generic UKI layouts, while Arch modifying actions remain disabled until their stage-specific backend is implemented;
 - bind the minimum runtime filesystems needed for a chroot repair;
 - on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, recovery of the detected graphical login manager, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`;
 - in Host Maintenance scope, run the same supported repair stages natively on the active Debian/Ubuntu-family system, with package-lock checks, writable-mount checks, and a private read-only EFI-variable namespace for indirect hooks;
@@ -56,7 +58,7 @@ Still intentionally constrained in 0.2.23:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
-- modifying repair backends for non-Debian package families; native Host Maintenance changes use the same Debian/Ubuntu-family limitation;
+- modifying repair backends for non-Debian package families; native Host Maintenance changes use the same Debian/Ubuntu-family limitation. Arch-family systems currently have a read-only backend profile and diagnostics layer;
 
 
 
@@ -277,15 +279,31 @@ Runtime/packaging support used by guarded repair builds:
 - binutils `objcopy` for TUXEDO UKI verification
 - Python 3 for guarded EFI label updates and their regression test
 - Debian packaging tools when generating `.deb` files
+- RPM packaging tools (`rpmbuild`) when generating Fedora/openSUSE packages
+- Arch packaging tools (`makepkg`) when generating an Arch package
+- CPack's TGZ generator for a package-manager-neutral archive
 - KDE Frameworks 6 KAuth development files remain optional
 
-### Debian / Ubuntu / TUXEDO OS — one command
+### Package-manager aware dependency setup
+
+The setup script detects the build host from `/etc/os-release` and uses the
+native package manager. It supports Debian/Ubuntu/TUXEDO, Arch-family,
+Fedora/RHEL and openSUSE/SUSE hosts. It performs package installation only
+when you invoke it explicitly:
 
 ```bash
 ./scripts/setup-dev-deps.sh
 ```
 
-Equivalent direct package command (KF6Auth is optional and the setup script adds it automatically when the distribution provides it):
+On Arch-family hosts it runs `pacman -Syu --needed`, keeping the package
+database and installed libraries synchronized. Fedora/RHEL uses DNF;
+openSUSE/SUSE uses zypper. Optional desktop-theme plugins remain
+distribution-specific, so the setup script installs the common build/runtime
+set and the environment checker reports optional additions.
+
+The Debian/Ubuntu/TUXEDO equivalent direct package command (KF6Auth is
+optional and the setup script adds it automatically when the distribution
+provides it) is:
 
 ```bash
 sudo apt update && sudo apt install --no-install-recommends -y \
@@ -294,6 +312,16 @@ sudo apt update && sudo apt install --no-install-recommends -y \
     dpkg-dev desktop-file-utils lintian \
     pkexec util-linux mount rsync cryptsetup btrfs-progs systemd \
     efibootmgr binutils python3 lvm2 mdadm
+```
+
+For a manual Arch setup, the corresponding core command is:
+
+```bash
+sudo pacman -Syu --needed \
+    base-devel cmake ninja pkgconf qt6-base qt6-tools extra-cmake-modules \
+    desktop-file-utils appstream polkit util-linux rsync cryptsetup \
+    btrfs-progs systemd efibootmgr binutils python hicolor-icon-theme \
+    lvm2 mdadm
 ```
 
 To inspect the environment without installing anything:
@@ -381,7 +409,12 @@ Build a package first, then either simulate or install it:
 ./scripts/install.sh
 ```
 
-`install.sh` does nothing destructive until you type `INSTALL` exactly. The normal Debian path installs the generated `.deb` through APT.
+`install.sh` detects the host package family. It installs a generated `.deb`
+through APT/dpkg, a generated RPM through DNF/zypper, or a generated Arch
+package through pacman. It does nothing destructive until you type `INSTALL`
+exactly. On any supported Linux desktop, `./scripts/install.sh --source`
+installs the staged CMake build under `/usr/local` (or `PREFIX=/opt/boot-repair`
+for another absolute prefix) after the same confirmation.
 
 After package installation, launch the installed command as follows:
 
@@ -408,10 +441,10 @@ cmake --build build
 sudo cmake --install build
 ```
 
-Alternative prefix:
+Alternative source-install prefix:
 
 ```bash
-PREFIX=/opt/boot-repair ./scripts/install.sh
+PREFIX=/opt/boot-repair ./scripts/install.sh --source
 ```
 
 
@@ -445,6 +478,42 @@ cmake --build build-deb --target package
 
 The Debian package uses `/usr` paths even though a normal manual CMake installation can still use `/usr/local` or another chosen prefix.
 
+## Build native packages on Arch and RPM systems
+
+Arch-family hosts can build a native package from the current working tree:
+
+```bash
+./scripts/package-arch.sh
+sudo pacman -U Development/build-arch-package/boot-bitch-*.pkg.tar.*
+```
+
+The recipe defaults to `makepkg --force`; `makepkg` checks dependencies but
+does not install them unless `--syncdeps` is explicitly requested. Set
+`MAKEPKG_ARGS='--force --syncdeps'` when dependency installation is desired.
+The package depends on Arch's native
+names for Qt, Polkit, storage tools, EFI inspection and Python.
+
+Fedora/RHEL and openSUSE/SUSE hosts can use the RPM workflow:
+
+```bash
+./scripts/package-rpm.sh
+sudo dnf install Development/build-rpm/boot-bitch-*.rpm
+# or: sudo zypper install Development/build-rpm/boot-bitch-*.rpm
+```
+
+When a native package tool is unavailable, CPack's portable archive keeps the
+same `/usr` install tree available:
+
+```bash
+./scripts/package-tarball.sh
+```
+
+All three formats ship the same executable, bundled icons, desktop metadata,
+Python EFI label helper and privileged shell helper. Repair-time commands
+remain host-provided (`pkexec`, `mount`, `cryptsetup`, `btrfs`, `efibootmgr`,
+and the selected distribution's boot tools), so installing the GUI does not
+imply that a non-Debian repair backend is enabled.
+
 An AppImage is also available for portable testing and systems without a local
 package build. It bundles the GUI and guarded helper, while privileged actions
 still use the host's `pkexec`/Polkit and system utilities. Install the normal
@@ -454,8 +523,9 @@ runtime tools listed above before attempting a repair. Build one locally with
 
 The AppImage uses the same privilege boundary: the helper must be authorized
 and acts on the selected repair system or explicitly selected Host Maintenance
-scope. For regular installation and desktop integration, the
-Debian package remains the recommended format.
+scope. For regular installation and desktop integration, use the native
+package for the host family, or the source-install flow when no native package
+tool is available.
 
 ## Build an AppImage
 
@@ -486,7 +556,11 @@ the host's Qt libraries; do not publish that fallback as a portable release.
 
 ## Uninstall
 
-The uninstall helper uses CMake's generated `build/install_manifest.txt`, lists every installed file, and requires an explicit `UNINSTALL` confirmation:
+The uninstall helper removes a detected native package through its package
+manager. For a source install it uses the manifest recorded by
+`install.sh --source`, lists every installed file, and requires an explicit
+`UNINSTALL` confirmation. A manually reviewed CMake manifest can be supplied
+with `INSTALL_MANIFEST=/absolute/path`:
 
 ```bash
 ./scripts/uninstall.sh
@@ -530,7 +604,7 @@ Contains live device-display preferences, the Full Repair plan, mandatory safety
 
 ## Runtime capability model
 
-Boot Bitch checks capabilities independently. Examples include `lsblk`, `blkid`, `findmnt`, `cryptsetup`, `btrfs`, `rsync`, `chroot`, `grub-install`, `update-grub`, `update-initramfs`, `dkms`, optional LVM tools, and `mdadm`.
+Boot Bitch checks capabilities independently. Examples include `lsblk`, `blkid`, `findmnt`, `cryptsetup`, `btrfs`, `rsync`, `chroot`, `efibootmgr`, `grub-install`, `update-grub`/`grub-mkconfig`, `update-initramfs`/`mkinitcpio`/`dracut`, `bootctl`, `dkms`, optional LVM tools, and `mdadm`. The backend profile records which package manager and boot tools the inspected system actually provides, so an Arch or RPM system is not mistaken for a Debian target.
 
 Missing optional tools disable the related action. Modifying repair execution
 is currently limited to supported Debian/Ubuntu-family systems in either

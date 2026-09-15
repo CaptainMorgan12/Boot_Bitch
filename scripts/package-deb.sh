@@ -3,6 +3,20 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+fi
+case "${ID:-}" in
+    debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) ;;
+    *)
+        if [[ " ${ID_LIKE:-} " != *" debian "* && " ${ID_LIKE:-} " != *" ubuntu "* ]]; then
+            echo "The .deb workflow is restricted to Debian-family packaging hosts." >&2
+            echo "Use package-arch.sh, package-rpm.sh, or install.sh --source on this host." >&2
+            exit 2
+        fi
+        ;;
+esac
+
 for cmd in cpack dpkg-shlibdeps dpkg-deb
  do
     command -v "$cmd" >/dev/null 2>&1 || {

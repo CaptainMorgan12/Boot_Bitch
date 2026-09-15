@@ -131,11 +131,12 @@ private:
 
 static const DiagnosticSpec diagnosticSpecs[] = {
     {"environment", "Environment validation", "Summarizes the selected system, protection state, mounted identity and inspection readiness.", "task-complete"},
+    {"backend", "Distribution and boot backend profile", "Identifies the distribution family, package manager, initramfs generator, bootloader, ESP location and current guarded repair capability.", "preferences-system"},
     {"boot", "Boot diagnostics", "Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.", "system-run"},
     {"boot-evidence", "Boot evidence and selection history", "Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.", "dialog-information"},
     {"kernel", "Kernel / initramfs", "Reviews kernel files and verifies matching initramfs images through a read-only inspection.", "preferences-system"},
     {"grub", "GRUB configuration", "Reviews GRUB configuration and /etc/default/grub without changing boot files.", "preferences-system"},
-    {"uki", "EFI / UKI boot state", "Inspects the selected ESP, TUXEDO UKI embedded kernel/cmdline and firmware entries with PARTUUID ownership classification.", "drive-removable-media"},
+    {"uki", "EFI / UKI boot state", "Inspects the selected ESP, vendor or generic UKI images, systemd-boot loader files, embedded kernel/cmdline data and firmware entries with PARTUUID ownership classification.", "drive-removable-media"},
     {"display", "Graphical login / display manager", "Reviews graphical.target, the configured display manager (for example SDDM, GDM3, LightDM, or another systemd manager), installed desktop packages, and recent boot/journal evidence without starting the GUI.", "video-display"},
     {"errors", "Boot errors", "Reads recent error-priority entries from the running host or selected repair system's persistent journal when available.", "dialog-warning"},
     {"usage", "Disk usage", "Summarizes filesystem capacity/free space for the running host or read-only repair target.", "drive-harddisk"},
@@ -5118,6 +5119,12 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         stream << "Protected: " << (disk.protectedDevice ? QStringLiteral("yes") : QStringLiteral("no")) << '\n';
         stream << "Distribution (host): " << CapabilityChecker::distributionLabel() << '\n';
         stream << "Package manager (host): " << CapabilityChecker::packageManagerLabel() << '\n';
+    } else if (key == QStringLiteral("backend")) {
+        stream << (targetScope
+            ? QStringLiteral("Selected repair-system backend profiling is collected by the privileged read-only helper.\n")
+            : QStringLiteral("Running-host backend profiling is collected by the privileged read-only helper.\n"));
+        stream << "The profile reports distribution family, package manager, initramfs generator, bootloader, ESP location, kernel layout, and whether modifying actions are currently enabled.\n";
+        stream << "Arch-family systems are currently diagnostics-only until their modifying backend is implemented and preflighted.\n";
     } else if (key == QStringLiteral("boot")) {
         stream << "Physical drive: " << disk.path << '\n';
         stream << "Detected component: " << preferredPath << '\n';
@@ -5235,7 +5242,7 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         }
     } else if (key == QStringLiteral("report")) {
         static const QStringList keys = {
-            QStringLiteral("environment"), QStringLiteral("boot"), QStringLiteral("kernel"),
+            QStringLiteral("environment"), QStringLiteral("backend"), QStringLiteral("boot"), QStringLiteral("kernel"),
             QStringLiteral("grub"), QStringLiteral("uki"), QStringLiteral("display"), QStringLiteral("errors"), QStringLiteral("usage"),
             QStringLiteral("fstab"), QStringLiteral("btrfs"), QStringLiteral("mapper"), QStringLiteral("luks")
         };
@@ -6061,6 +6068,7 @@ void MainWindow::showAboutDialog()
                            "<p><b>Developer:</b> CaptainMorgan12</p>"
                            "<p>A native Qt 6 Linux recovery and boot-repair utility.</p>"
                            "<p><b>Guarded repair mode:</b> read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. Debian/Ubuntu-family repairs can run through a privileged helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.</p>"
+                           "<p>Arch-family and RPM-family systems expose the same read-only backend profiling and diagnostics, while modifying repair stages remain gated until their distribution-specific transaction preflights are available.</p>"
                            "<p>The first privileged action authorizes one narrow helper session for the current Boot Bitch window while the Qt GUI remains unprivileged. It can be ended at any time from File → Lock Administrator Session.</p>"
                            "<p>LUKS target unlock, verified bidirectional File Copy, read-only host/repair diagnostics, transactional Btrfs snapshot rollback, offline graphical login recovery, distribution-aware EFI/UKI repair and boot-stack reconciliation are enabled through the guarded helper. Snapshot rollback preserves the previous @ and automatically restores it if critical post-switch reconciliation fails.</p>")
                            .arg(QCoreApplication::applicationVersion()));

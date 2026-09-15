@@ -4,6 +4,7 @@
 #include <QMap>
 #include <QRegularExpression>
 #include <QStandardPaths>
+#include <QStringList>
 #include <QTextStream>
 
 namespace {
@@ -59,6 +60,53 @@ QMap<QString, QString> readOsRelease()
     }
     return values;
 }
+
+bool isArchLike(const QString &id, const QMap<QString, QString> &values)
+{
+    if (id == QStringLiteral("arch") || id == QStringLiteral("manjaro")
+        || id == QStringLiteral("endeavouros") || id == QStringLiteral("garuda")
+        || id == QStringLiteral("artix")) {
+        return true;
+    }
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    return like.contains(QStringLiteral("arch"));
+}
+
+bool isDebianLike(const QString &id, const QMap<QString, QString> &values)
+{
+    if (id == QStringLiteral("debian") || id == QStringLiteral("ubuntu")
+        || id == QStringLiteral("tuxedo") || id == QStringLiteral("linuxmint")
+        || id == QStringLiteral("pop") || id == QStringLiteral("elementary")
+        || id == QStringLiteral("zorin")) {
+        return true;
+    }
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    return like.contains(QStringLiteral("debian")) || like.contains(QStringLiteral("ubuntu"));
+}
+
+bool isFedoraLike(const QString &id, const QMap<QString, QString> &values)
+{
+    if (id == QStringLiteral("fedora") || id == QStringLiteral("rhel")
+        || id == QStringLiteral("rocky") || id == QStringLiteral("almalinux")) {
+        return true;
+    }
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    return like.contains(QStringLiteral("fedora")) || like.contains(QStringLiteral("rhel"));
+}
+
+bool isSuseLike(const QString &id, const QMap<QString, QString> &values)
+{
+    if (id.startsWith(QStringLiteral("opensuse")) || id == QStringLiteral("suse")
+        || id == QStringLiteral("sles")) {
+        return true;
+    }
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    return like.contains(QStringLiteral("suse"));
+}
 } // namespace
 
 QList<Capability> CapabilityChecker::scanHost()
@@ -84,7 +132,14 @@ QList<Capability> CapabilityChecker::scanHost()
         {"UKI verification", "objcopy", "Host", "Used to verify the kernel embedded in a rebuilt unified kernel image", true},
         {"GRUB EFI repair", "grub-install", "Target/Host", "Required only for conventional GRUB-based EFI systems", true},
         {"GRUB configuration", "update-grub", "Target", "Debian-family GRUB helper", true},
+        {"GRUB configuration", "grub-mkconfig", "Target", "Portable GRUB configuration generator used by Arch and other non-Debian systems", true},
         {"Initramfs rebuild", "update-initramfs", "Target", "Debian-family initramfs helper", true},
+        {"Initramfs rebuild", "mkinitcpio", "Target", "Arch-family initramfs generator", true},
+        {"Initramfs rebuild", "dracut", "Target", "Alternative initramfs generator used by Arch and other distributions", true},
+        {"Initramfs verification", "lsinitcpio", "Target", "Read-only verification for mkinitcpio images", true},
+        {"Initramfs verification", "lsinitrd", "Target", "Read-only verification for dracut images", true},
+        {"systemd-boot inspection", "bootctl", "Host/Target", "Read-only inspection of systemd-boot and generic UKI layouts", true},
+        {"Arch package manager", "pacman", "Host/Target", "Arch-family package database and transaction tool", true},
         {"DKMS rebuild", "dkms", "Target", "Required only when target uses DKMS modules", true},
         {"LVM inspection", "lvs", "Host", "Optional LVM storage-stack support", true},
         {"Software RAID", "mdadm", "Host", "Optional Linux MD RAID support", true}
@@ -118,17 +173,18 @@ QString CapabilityChecker::distributionLabel()
 
 QString CapabilityChecker::packageManagerLabel()
 {
-    const QString id = distributionId();
-    if (id == QStringLiteral("debian") || id == QStringLiteral("ubuntu") || id == QStringLiteral("tuxedo") || id == QStringLiteral("linuxmint")) {
+    const QMap<QString, QString> values = readOsRelease();
+    const QString id = values.value(QStringLiteral("ID")).toLower();
+    if (isDebianLike(id, values)) {
         return QStringLiteral("APT / dpkg");
     }
-    if (id == QStringLiteral("fedora") || id == QStringLiteral("rhel") || id == QStringLiteral("rocky") || id == QStringLiteral("almalinux")) {
+    if (isFedoraLike(id, values)) {
         return QStringLiteral("DNF / RPM");
     }
-    if (id == QStringLiteral("arch") || id == QStringLiteral("manjaro")) {
+    if (isArchLike(id, values)) {
         return QStringLiteral("pacman");
     }
-    if (id == QStringLiteral("opensuse") || id == QStringLiteral("opensuse-tumbleweed") || id == QStringLiteral("suse")) {
+    if (isSuseLike(id, values)) {
         return QStringLiteral("zypper / RPM");
     }
     return QStringLiteral("Unknown / unsupported automatic mapping");
@@ -139,6 +195,18 @@ QString CapabilityChecker::distributionId()
     const QMap<QString, QString> values = readOsRelease();
     QString id = values.value(QStringLiteral("ID")).toLower();
     if (!id.isEmpty()) {
+        if (isArchLike(id, values)) {
+            return QStringLiteral("arch");
+        }
+        if (isDebianLike(id, values)) {
+            return QStringLiteral("debian");
+        }
+        if (isFedoraLike(id, values)) {
+            return QStringLiteral("fedora");
+        }
+        if (isSuseLike(id, values)) {
+            return QStringLiteral("opensuse");
+        }
         return id;
     }
 
@@ -167,7 +235,10 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
             {QStringLiteral("objcopy"), QStringLiteral("binutils")},
             {QStringLiteral("grub-install"), QStringLiteral("grub2-common")},
             {QStringLiteral("update-grub"), QStringLiteral("grub-common")},
+            {QStringLiteral("grub-mkconfig"), QStringLiteral("grub-common")},
             {QStringLiteral("update-initramfs"), QStringLiteral("initramfs-tools")},
+            {QStringLiteral("lsinitramfs"), QStringLiteral("initramfs-tools-core")},
+            {QStringLiteral("bootctl"), QStringLiteral("systemd")},
             {QStringLiteral("dkms"), QStringLiteral("dkms")},
             {QStringLiteral("lvs"), QStringLiteral("lvm2")},
             {QStringLiteral("mdadm"), QStringLiteral("mdadm")}
@@ -189,6 +260,10 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
             {QStringLiteral("efibootmgr"), QStringLiteral("efibootmgr")},
             {QStringLiteral("objcopy"), QStringLiteral("binutils")},
             {QStringLiteral("grub-install"), QStringLiteral("grub2-tools")},
+            {QStringLiteral("grub-mkconfig"), QStringLiteral("grub2-tools")},
+            {QStringLiteral("dracut"), QStringLiteral("dracut")},
+            {QStringLiteral("lsinitrd"), QStringLiteral("dracut")},
+            {QStringLiteral("bootctl"), QStringLiteral("systemd")},
             {QStringLiteral("dkms"), QStringLiteral("dkms")},
             {QStringLiteral("lvs"), QStringLiteral("lvm2")},
             {QStringLiteral("mdadm"), QStringLiteral("mdadm")}
@@ -196,7 +271,9 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
         return packages.value(command, QStringLiteral("Distribution-specific"));
     }
 
-    if (distributionId == QStringLiteral("arch") || distributionId == QStringLiteral("manjaro")) {
+    if (distributionId == QStringLiteral("arch") || distributionId == QStringLiteral("manjaro")
+        || distributionId == QStringLiteral("endeavouros") || distributionId == QStringLiteral("garuda")
+        || distributionId == QStringLiteral("artix")) {
         static const QMap<QString, QString> packages = {
             {QStringLiteral("lsblk"), QStringLiteral("util-linux")},
             {QStringLiteral("blkid"), QStringLiteral("util-linux")},
@@ -209,6 +286,13 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
             {QStringLiteral("efibootmgr"), QStringLiteral("efibootmgr")},
             {QStringLiteral("objcopy"), QStringLiteral("binutils")},
             {QStringLiteral("grub-install"), QStringLiteral("grub")},
+            {QStringLiteral("grub-mkconfig"), QStringLiteral("grub")},
+            {QStringLiteral("mkinitcpio"), QStringLiteral("mkinitcpio")},
+            {QStringLiteral("dracut"), QStringLiteral("dracut")},
+            {QStringLiteral("lsinitcpio"), QStringLiteral("mkinitcpio")},
+            {QStringLiteral("lsinitrd"), QStringLiteral("dracut")},
+            {QStringLiteral("bootctl"), QStringLiteral("systemd")},
+            {QStringLiteral("pacman"), QStringLiteral("pacman")},
             {QStringLiteral("dkms"), QStringLiteral("dkms")},
             {QStringLiteral("lvs"), QStringLiteral("lvm2")},
             {QStringLiteral("mdadm"), QStringLiteral("mdadm")}
@@ -229,6 +313,10 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
             {QStringLiteral("efibootmgr"), QStringLiteral("efibootmgr")},
             {QStringLiteral("objcopy"), QStringLiteral("binutils")},
             {QStringLiteral("grub-install"), QStringLiteral("grub2")},
+            {QStringLiteral("grub-mkconfig"), QStringLiteral("grub2")},
+            {QStringLiteral("dracut"), QStringLiteral("dracut")},
+            {QStringLiteral("lsinitrd"), QStringLiteral("dracut")},
+            {QStringLiteral("bootctl"), QStringLiteral("systemd")},
             {QStringLiteral("dkms"), QStringLiteral("dkms")},
             {QStringLiteral("lvs"), QStringLiteral("lvm2")},
             {QStringLiteral("mdadm"), QStringLiteral("mdadm")}
