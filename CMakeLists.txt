@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.22
+    VERSION 0.2.23
     DESCRIPTION "Guarded Linux boot repair and recovery utility with diagnostics and privileged target repair backend"
     LANGUAGES CXX
 )

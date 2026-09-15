@@ -2642,6 +2642,68 @@ journal_current_boot_actionable()
     '
 }
 
+diagnostic_boot_chain()
+{
+    local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"
+    local grub_cfg="$TARGET_ROOT/boot/grub/grub.cfg"
+    local root_type backing luks_uuid crypttab_line crypttab_key
+    local uki_cmdline="" uki_luks_uuid="" uki_luks_name="" cryptdevice_uuid=""
+    local tmp
+    local has_uki=false has_grub=false
+
+    [[ -s "$uki" ]] && has_uki=true
+    [[ -s "$grub_cfg" ]] && has_grub=true
+    echo "Detected boot chain (read-only):"
+    if [[ "$has_uki" == true && -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]; then
+        echo "Primary: firmware EFI entry -> TUXEDO UKI (TUX.EFI) -> initramfs -> root filesystem -> graphical login."
+        [[ "$has_grub" == true ]] && echo "Fallback: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+    elif [[ "$has_grub" == true ]]; then
+        echo "Primary: firmware EFI entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+    else
+        echo "Primary: firmware EFI entry -> distribution EFI loader -> initramfs -> root filesystem -> graphical login."
+    fi
+
+    root_type="$(lsblk -ndo TYPE "$ROOT_DEVICE" 2>/dev/null | head -n1 || true)"
+    if [[ "$root_type" == crypt ]]; then
+        backing="$(crypt_backing_device "$ROOT_DEVICE" 2>/dev/null || true)"
+        if [[ -n "$backing" ]] && command -v cryptsetup >/dev/null 2>&1; then
+            luks_uuid="$(cryptsetup luksUUID "$backing" 2>/dev/null || true)"
+        fi
+        crypttab_line="$(sed -E '/^[[:space:]]*#/d; /^[[:space:]]*$/d' "$TARGET_ROOT/etc/crypttab" 2>/dev/null \
+            | awk 'NF >= 2 {print; exit}' || true)"
+        crypttab_key="$(awk '{print $3}' <<<"$crypttab_line")"
+        if [[ -n "$crypttab_line" && "$crypttab_key" != none && "$crypttab_key" != "-" && "$crypttab_key" != "" ]]; then
+            echo "Unlock handoff: crypttab supplies a key or non-interactive option for the root LUKS mapping; no extra bootloader prompt is added."
+        else
+            echo "Unlock handoff: initramfs requests one root LUKS passphrase, then continues to the mounted root; the EFI/GRUB handoff does not add a second prompt."
+        fi
+
+        # Decode the UKI command line when available and compare its LUKS
+        # identity with the unlocked root. `rd.luks.uuid` and `cryptdevice`
+        # are compatible declarations of the same volume, not two prompts.
+        if [[ "$has_uki" == true ]] && command -v objcopy >/dev/null 2>&1; then
+            tmp="$SESSION_DIR/diag-boot-chain-cmdline"
+            if objcopy --dump-section ".cmdline=$tmp" "$uki" >/dev/null 2>&1; then
+                uki_cmdline="$(tr '\0' ' ' < "$tmp")"
+                uki_luks_uuid="$(sed -nE 's/.*(^|[[:space:]])rd\.luks\.uuid=([^[:space:]]+).*/\2/p' <<<"$uki_cmdline" | head -n1)"
+                uki_luks_name="$(sed -nE 's/.*(^|[[:space:]])rd\.luks\.name=([^=[:space:]]+)=.*/\2/p' <<<"$uki_cmdline" | head -n1)"
+                cryptdevice_uuid="$(sed -nE 's/.*(^|[[:space:]])cryptdevice=UUID=([^:[:space:]]+):.*/\2/p' <<<"$uki_cmdline" | head -n1)"
+            fi
+        fi
+        if [[ -n "$luks_uuid" && ( -n "$uki_luks_uuid" || -n "$cryptdevice_uuid" ) ]]; then
+            if [[ "$uki_luks_uuid" == "$luks_uuid" || "$cryptdevice_uuid" == "$luks_uuid" || "$uki_luks_name" == "$luks_uuid" ]]; then
+                echo "PASS: bootloader/initramfs LUKS declarations bind to the root volume UUID $luks_uuid; one unlock path is expected."
+            else
+                echo "FAIL: UKI LUKS declaration does not match the mounted root volume UUID $luks_uuid."
+            fi
+        elif [[ "$has_uki" == true ]]; then
+            echo "INFO: UKI LUKS identity could not be compared with the mapped root on this inspection host."
+        fi
+    else
+        echo "Unlock handoff: root is not an active LUKS mapping; no disk-decryption prompt is expected from this boot path."
+    fi
+}
+
 diagnostic_boot_evidence()
 {
     # This inspection intentionally records evidence about boot selection and
@@ -2677,6 +2739,9 @@ diagnostic_boot_evidence()
     else
         echo "${scope_label^} grub.cfg is not visible."
     fi
+    echo
+    diagnostic_boot_chain
+    echo
     if [[ -f "$TARGET_ROOT/boot/grub/grubenv" ]]; then
         echo "GRUB environment (saved/next selection):"
         if command -v grub-editenv >/dev/null 2>&1; then
@@ -4332,6 +4397,33 @@ efi_selected_entry_role()
     esac
 }
 
+efi_entry_destination_role()
+{
+    local line="$1" loader basename label label_key
+    loader="$(efi_entry_loader_line "$line" || true)"
+    loader="${loader,,}"
+    basename="${loader##*\\}"
+    case "$loader" in
+        '\efi\boot\tux.efi') printf 'uki\n'; return 0 ;;
+        *) ;;
+    esac
+    case "$basename" in
+        bootx64.efi) printf 'fallback\n'; return 0 ;;
+        ipxe.efi) printf 'wfai\n'; return 0 ;;
+    esac
+    if [[ -n "$loader" ]]; then
+        printf 'vendor-loader\n'
+        return 0
+    fi
+    label="$(efi_entry_label_line "$line")"
+    label_key="$(efi_label_match_text <<<"$label")"
+    if [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]]; then
+        printf 'fallback-device-path\n'
+    else
+        printf 'unknown\n'
+    fi
+}
+
 efi_selected_wfai_loader()
 {
     local efi_root="$TARGET_ROOT/boot/efi/EFI" path relative
@@ -4358,8 +4450,8 @@ efi_ensure_selected_wfai_entry()
 
     mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
     if ((${#ids[@]} > 1)); then
-        log "ERROR: more than one iPXE/WebFAI firmware entry points to the selected system ESP: ${ids[*]}" | tee -a "$SESSION_LOG" >&2
-        return 1
+        log "Multiple iPXE/WebFAI entries already point to the selected system ESP (${ids[*]}); destination maintenance will retain one after the repair." | tee -a "$SESSION_LOG"
+        return 0
     fi
     if ((${#ids[@]} == 1)); then
         return 0
@@ -4391,6 +4483,280 @@ efi_ensure_selected_wfai_entry()
         return 1
     }
     log "PASS: ${entry_name} firmware entry restored as Boot${ids[0]} on selected system ESP $esp." | tee -a "$SESSION_LOG"
+}
+
+efi_prune_selected_duplicate_destinations()
+{
+    local esp partuuid current_file line id loader label label_key basename key priority
+    local current_id next_id order new_order="" removed_ids="" remove_id keep_id keep_priority
+    local verify_file verify_key verify_loader verify_basename verify_label_key
+    local -a ids=()
+    local -a legacy_shim_ids=()
+    local -A destination_id=() destination_priority=()
+    local -a remove_list=()
+
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$esp" ]] || return 0
+    efi_set_inventory_esp_ids
+    partuuid="${EFI_TARGET_ESP_PARTUUID,,}"
+    [[ -n "$partuuid" ]] || return 0
+
+    current_file="$SESSION_DIR/efi-nvram-destination-maintenance.txt"
+    efibootmgr -v > "$current_file" 2>&1 || return 1
+    current_id="$(sed -nE 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' "$current_file" | head -n1 | tr '[:lower:]' '[:upper:]')"
+    next_id="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$current_file" | head -n1 | tr '[:lower:]' '[:upper:]')"
+
+    # A destination is identified by selected ESP PARTUUID plus its decoded
+    # loader path. Firmware-generated partition-only fallback records are
+    # treated as the conventional BOOTX64.EFI destination only when their
+    # label clearly identifies a UEFI partition/OS entry. Unknown device paths
+    # remain untouched rather than being guessed.
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        [[ "$(efi_entry_partuuid_line "$line")" == "$partuuid" ]] || continue
+        loader="$(efi_entry_loader_line "$line" || true)"
+        label="$(efi_entry_label_line "$line")"
+        key=""
+        priority=10
+        if [[ -n "$loader" ]]; then
+            loader="${loader,,}"
+            basename="${loader##*\\}"
+            case "$loader" in
+                '\efi\boot\tux.efi') key="uki"; priority=0 ;;
+                '\efi\boot\bootx64.efi') key="fallback"; priority=0 ;;
+                *)
+                    if [[ "$basename" == ipxe.efi ]]; then
+                        key="wfai"
+                        priority=0
+                    elif [[ "${TARGET_OS_ID,,}" == tuxedo && "$basename" == shimx64.efi \
+                          && "$loader" == *"\tuxedo\shimx64.efi" ]]; then
+                        # Once a verified TUXEDO UKI exists, the old signed
+                        # shim route is a legacy route for the same system.
+                        key="legacy-tuxedo-shim"
+                        priority=5
+                    else
+                        key="loader:$loader"
+                        priority=0
+                    fi
+                    ;;
+            esac
+        else
+            label_key="$(efi_label_match_text <<<"$label")"
+            if [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]]; then
+                key="fallback"
+                priority=1
+            fi
+        fi
+        [[ -n "$key" ]] || continue
+
+        if [[ "$key" == legacy-tuxedo-shim ]]; then
+            # Defer this decision until every selected-ESP entry has been
+            # inspected. A firmware order can list the legacy shim before the
+            # canonical UKI; the final pass removes it once that UKI is known.
+            legacy_shim_ids+=("$id")
+            continue
+        fi
+
+        keep_id="${destination_id[$key]:-}"
+        if [[ -z "$keep_id" ]]; then
+            destination_id["$key"]="$id"
+            destination_priority["$key"]="$priority"
+            continue
+        fi
+        keep_priority="${destination_priority[$key]}"
+        if [[ "$id" == "$current_id" || "$id" == "$next_id" ]]; then
+            remove_list+=("$keep_id")
+            destination_id["$key"]="$id"
+            destination_priority["$key"]="$priority"
+        elif [[ "$keep_id" == "$current_id" || "$keep_id" == "$next_id" ]]; then
+            remove_list+=("$id")
+        elif (( priority < keep_priority )); then
+            remove_list+=("$keep_id")
+            destination_id["$key"]="$id"
+            destination_priority["$key"]="$priority"
+        else
+            remove_list+=("$id")
+        fi
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
+
+    # A TUXEDO UKI and the old signed shim are two ways into the same target
+    # installation. Keep the shim only when no UKI exists, or while firmware
+    # is actively using it and deleting it would disrupt the current boot.
+    if [[ -n "${destination_id[uki]:-}" ]]; then
+        for id in "${legacy_shim_ids[@]}"; do
+            [[ "$id" == "$current_id" || "$id" == "$next_id" ]] || remove_list+=("$id")
+        done
+    fi
+
+    ((${#remove_list[@]} > 0)) || {
+        log "PASS: selected ESP firmware destinations are unique; no duplicate entries removed." | tee -a "$SESSION_LOG"
+        return 0
+    }
+
+    # Avoid issuing the same delete twice when an active-entry preference and
+    # a destination collision identify the same firmware number.
+    local -A removed_seen=()
+    for remove_id in "${remove_list[@]}"; do
+        [[ -n "${removed_seen[$remove_id]:-}" ]] && continue
+        removed_seen["$remove_id"]=1
+        [[ "$remove_id" != "$current_id" && "$remove_id" != "$next_id" ]] || {
+            log "ERROR: refusing to remove active/next firmware entry Boot$remove_id while pruning selected ESP destinations." | tee -a "$SESSION_LOG" >&2
+            return 1
+        }
+        log "Removing duplicate/legacy selected-ESP firmware destination Boot$remove_id." | tee -a "$SESSION_LOG"
+        efibootmgr -b "$remove_id" -B 2>&1 \
+            | tee -a "$SESSION_LOG" || return 1
+        removed_ids+="${removed_ids:+,}$remove_id"
+    done
+
+    # Keep the current order relative to every retained entry, filtering only
+    # the entries explicitly removed above.
+    current_file="$SESSION_DIR/efi-nvram-destination-maintenance-after.txt"
+    efibootmgr -v > "$current_file" 2>&1 || return 1
+    order="$(sed -n 's/^BootOrder: //p' "$current_file" | head -n1 || true)"
+    if [[ -n "$order" ]]; then
+        IFS=',' read -ra ids <<< "$order"
+        for id in "${ids[@]}"; do
+            id="${id^^}"
+            [[ -n "${removed_seen[$id]:-}" ]] && continue
+            grep -Eq "^Boot${id}\*?[[:space:]]" "$current_file" || continue
+            new_order+="${new_order:+,}$id"
+        done
+        if [[ -n "$new_order" ]]; then
+            efibootmgr -o "$new_order" 2>&1 | tee -a "$SESSION_LOG" || return 1
+        fi
+    fi
+
+    # Verify the post-state from firmware itself. This catches a helper or
+    # firmware implementation that accepted a delete request but left a
+    # second record behind, before the repair is reported successful.
+    verify_file="$SESSION_DIR/efi-nvram-destination-maintenance-verified.txt"
+    efibootmgr -v > "$verify_file" 2>&1 || return 1
+    for remove_id in "${!removed_seen[@]}"; do
+        ! grep -Eq "^Boot${remove_id}\*?[[:space:]]" "$verify_file" || {
+            log "ERROR: firmware still reports removed selected-ESP entry Boot$remove_id." | tee -a "$SESSION_LOG" >&2
+            return 1
+        }
+    done
+    local -A final_destination_count=()
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        [[ "$(efi_entry_partuuid_line "$line")" == "$partuuid" ]] || continue
+        verify_loader="$(efi_entry_loader_line "$line" || true)"
+        verify_loader="${verify_loader,,}"
+        verify_basename="${verify_loader##*\\}"
+        verify_key=""
+        case "$verify_loader" in
+            '\efi\boot\tux.efi') verify_key="uki" ;;
+            '\efi\boot\bootx64.efi') verify_key="fallback" ;;
+            *) [[ "$verify_basename" == ipxe.efi ]] && verify_key="wfai" ;;
+        esac
+        if [[ -z "$verify_key" && -z "$verify_loader" ]]; then
+            verify_label_key="$(efi_label_match_text <<<"$(efi_entry_label_line "$line")")"
+            [[ "$verify_label_key" == "uefi os" || ( "$verify_label_key" == uefi\ * && "$verify_label_key" == *partition* ) ]] && verify_key="fallback"
+        fi
+        [[ -n "$verify_key" ]] || continue
+        final_destination_count["$verify_key"]=$(( ${final_destination_count[$verify_key]:-0} + 1 ))
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$verify_file")
+    for verify_key in uki fallback wfai; do
+        (( ${final_destination_count[$verify_key]:-0} <= 1 )) || {
+            log "ERROR: selected ESP still has duplicate $verify_key destinations after maintenance." | tee -a "$SESSION_LOG" >&2
+            return 1
+        }
+    done
+    log "PASS: selected ESP firmware destinations reconciled; removed Boot$removed_ids." | tee -a "$SESSION_LOG"
+}
+
+efi_group_firmware_boot_order()
+{
+    local current_file line id part loader basename role_key group rank seq current_order sorted_order candidate_file label_key
+    local -a ids=()
+    local -A order_index=() seen=()
+
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    efi_set_inventory_esp_ids
+    current_file="$SESSION_DIR/efi-nvram-grouped-order.txt"
+    efibootmgr -v > "$current_file" 2>&1 || return 1
+    current_order="$(sed -n 's/^BootOrder: //p' "$current_file" | head -n1 || true)"
+
+    if [[ -n "$current_order" ]]; then
+        IFS=',' read -ra ids <<< "$current_order"
+        seq=0
+        for id in "${ids[@]}"; do
+            id="${id^^}"
+            [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
+            order_index["$id"]="$seq"
+            seq=$((seq + 1))
+        done
+    fi
+
+    # Sort complete ESP groups without inventing any new paths. UKI is the
+    # primary route where present, followed by the conventional vendor
+    # loader, the firmware fallback, and WebFAI. Unknown entries retain their
+    # membership and are placed after recognized routes for that ESP.
+    candidate_file="$SESSION_DIR/efi-nvram-grouped-candidates.tsv"
+    : > "$candidate_file"
+    seq=0
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" && -z "${seen[$id]:-}" ]] || continue
+        seen["$id"]=1
+        # BootOrder may intentionally omit an otherwise valid, inactive
+        # firmware record. Reordering must preserve that omission.
+        if [[ -n "$current_order" && -z "${order_index[$id]+present}" ]]; then
+            continue
+        fi
+        part="$(efi_entry_partuuid_line "$line")"
+        loader="$(efi_entry_loader_line "$line" || true)"
+        loader="${loader,,}"
+        basename="${loader##*\\}"
+        role_key="other"
+        if [[ "$loader" == '\efi\boot\tux.efi' ]]; then
+            role_key="uki"
+        elif [[ "$basename" == bootx64.efi ]]; then
+            role_key="fallback"
+        elif [[ "$basename" == ipxe.efi ]]; then
+            role_key="wfai"
+        elif [[ -n "$loader" ]]; then
+            role_key="loader"
+        else
+            label_key="$(efi_label_match_text <<<"$(efi_entry_label_line "$line")")"
+            [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]] \
+                && role_key="fallback"
+        fi
+
+        if [[ -n "$part" && "$part" == "${EFI_HOST_ESP_PARTUUID,,}" ]]; then
+            group=0
+        elif [[ -n "$part" && "$part" == "${EFI_TARGET_ESP_PARTUUID,,}" ]]; then
+            group=1
+        else
+            group=2
+        fi
+        case "$role_key" in
+            uki) rank=0 ;;
+            loader) rank=1 ;;
+            fallback) rank=2 ;;
+            wfai) rank=3 ;;
+            *) rank=4 ;;
+        esac
+        if [[ -z "${order_index[$id]:-}" ]]; then
+            order_index["$id"]=$((100000 + seq))
+        fi
+        printf '%03d\t%06d\t%s\n' "$((group * 10 + rank))" "${order_index[$id]}" "$id" >> "$candidate_file"
+        seq=$((seq + 1))
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
+
+    sorted_order="$(sort -n -k1,1 -k2,2 "$candidate_file" | cut -f3 | paste -sd, -)"
+    [[ -n "$sorted_order" && "$sorted_order" != "$current_order" ]] || {
+        log "PASS: EFI BootOrder already groups each ESP's vendor destinations by normal use." | tee -a "$SESSION_LOG"
+        return 0
+    }
+    log "Grouping EFI BootOrder by ESP and normal boot use: $sorted_order" | tee -a "$SESSION_LOG"
+    efibootmgr -o "$sorted_order" 2>&1 | tee -a "$SESSION_LOG" || return 1
+    log "PASS: EFI BootOrder grouped by drive; all retained firmware entries remain present." | tee -a "$SESSION_LOG"
 }
 
 efi_annotate_selected_entries()
@@ -4510,7 +4876,7 @@ efi_set_inventory_esp_ids()
 
 efi_print_firmware_inventory()
 {
-    local nvram="$1" line id class part label loader selected_label="repair-ESP"
+    local nvram="$1" line id class part label loader role selected_label="repair-ESP"
     [[ -s "$nvram" ]] || return 0
     efi_set_inventory_esp_ids
     [[ "$RUNNING_HOST_MODE" == 1 ]] && selected_label="selected-system-ESP"
@@ -4525,8 +4891,9 @@ efi_print_firmware_inventory()
         part="$(efi_entry_partuuid_line "$line")"
         label="$(efi_entry_label_line "$line")"
         loader="$(efi_entry_loader_line "$line" || true)"
-        printf '  Boot%s class=%s partuuid=%s label=%s loader=%s\n' \
-            "$id" "$class" "${part:-unknown}" "$label" "${loader:-device-path-only}"
+        role="$(efi_entry_destination_role "$line")"
+        printf '  Boot%s class=%s role=%s partuuid=%s label=%s loader=%s\n' \
+            "$id" "$class" "$role" "${part:-unknown}" "$label" "${loader:-device-path-only}"
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
 }
 
@@ -4836,8 +5203,12 @@ ensure_target_tuxedo_uki_entry()
         return 0
     fi
     if ((${#ids[@]} > 1)); then
-        log "ERROR: more than one TUXEDO UKI entry points to the selected ESP: ${ids[*]}" | tee -a "$SESSION_LOG"
-        return 1
+        # Keep the first verified path long enough for BootOrder reconciliation;
+        # the selected-ESP destination pass removes the remaining duplicate
+        # after all vendor changes have completed.
+        log "Multiple TUXEDO UKI entries already point to the selected ESP (${ids[*]}); destination maintenance will retain one after the repair." | tee -a "$SESSION_LOG"
+        printf '%s\n' "${ids[0]}"
+        return 0
     fi
 
     uefi_nvram_writable || return 1
@@ -4985,6 +5356,10 @@ rebuild_tuxedo_uki()
             || fail "Unable to annotate selected-system EFI entries or restore its iPXE/WebFAI registration safely."
         efi_restore_reconciled_order "$nvram_pre" "$nvram_map" "$new_uki" \
             || fail "Unable to restore the reconciled EFI BootOrder without risking loss of another disk's entry."
+        efi_prune_selected_duplicate_destinations \
+            || fail "Unable to reconcile duplicate selected-system EFI destinations safely."
+        efi_group_firmware_boot_order \
+            || fail "Unable to group the retained EFI entries by drive and boot use."
         efibootmgr -v > "$nvram_post" 2>&1 \
             || fail "Unable to capture firmware entries after TUXEDO UKI rebuild."
     fi
@@ -5141,6 +5516,10 @@ reinstall_efi_bootloader()
             || fail "Unable to annotate selected-system EFI entries or restore its iPXE/WebFAI registration safely after conventional GRUB EFI install."
         efi_restore_reconciled_order "$nvram_pre" "$nvram_map" \
             || fail "Unable to restore the reconciled EFI BootOrder safely after conventional GRUB EFI install."
+        efi_prune_selected_duplicate_destinations \
+            || fail "Unable to reconcile duplicate selected-system EFI destinations safely after conventional GRUB EFI install."
+        efi_group_firmware_boot_order \
+            || fail "Unable to group the retained EFI entries by drive and boot use after conventional GRUB EFI install."
     fi
 
     efi_dir="$TARGET_ROOT/boot/efi/EFI/$EFI_BOOTLOADER_ID"
@@ -5369,6 +5748,10 @@ run_host_default()
     mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
     ((${#ids[@]} == 1)) || fail "Host TUXEDO UKI entry is not uniquely identifiable; refusing to change BootOrder."
     efi_promote_entry_first "${ids[0]}"
+    efi_prune_selected_duplicate_destinations \
+        || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
+    efi_group_firmware_boot_order \
+        || fail "Unable to group the retained host EFI entries by drive and boot use."
     log "PASS: running host default EFI entry is Boot${ids[0]} on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
 }
 

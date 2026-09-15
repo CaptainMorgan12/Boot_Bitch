@@ -4,6 +4,20 @@
 
 - Development changes will be listed here.
 
+## 0.2.23 — 2026-09-14
+
+- Maintain one canonical UKI, fallback, and WebFAI destination per maintained
+  ESP. Safely remove duplicate selected-ESP routes such as a legacy TUXEDO
+  shim or device-path-only fallback when the explicit destination is present;
+  unrelated ESP entries remain untouched.
+- Group retained firmware entries by drive and normal boot use, keeping each
+  drive's UKI or vendor loader before its fallback and WebFAI route.
+- Add a read-only detected boot-chain and root-LUKS handoff summary to boot
+  evidence so TUXEDO Debian-base UKI and TUXEDO Ubuntu/GRUB paths remain
+  distinct and repairs do not introduce a second unlock route.
+- Clarify EFI repair behavior and model-aware destination labels in the UI and
+  documentation.
+
 ## 0.2.22 — 2026-09-14
 
 - Fix Host → Repair destination browsing to decode directory records correctly

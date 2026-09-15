@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.22 — maintenance release
+# Boot Bitch 0.2.23 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.22 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.23 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -36,7 +36,23 @@ This build can:
 - perform a guarded transactional Btrfs `@` rollback after a read-only preflight, while keeping the source snapshot unchanged and retaining the previous root under a timestamped `@rollback-before-*` name;
 - build a Release executable and Debian package with the privileged helper included.
 
-Still intentionally constrained in 0.2.22:
+Firmware destination roles are reported explicitly in EFI diagnostics. `uki`
+is the vendor TUXEDO UKI path (`\\EFI\\BOOT\\TUX.EFI`), `fallback` is the
+ordinary `BOOTX64.EFI` path, and `wfai` is the WebFAI/iPXE recovery path when
+that file exists. A conventional `shimx64.efi` or another distribution loader
+is reported as `vendor-loader`; a firmware-generated device-path-only UEFI
+fallback is reported separately so it can be recognized as a duplicate of an
+explicit fallback path without guessing at vendor-specific device data.
+
+Boot evidence also records the expected chain for the selected distribution.
+TUXEDO Debian-base systems that provide `create_boot_uki_base.sh` use firmware
+→ TUXEDO UKI → initramfs → LUKS unlock → root → login; TUXEDO Ubuntu and other
+systems without that UKI builder use firmware → GRUB menu → initramfs → LUKS
+unlock → root → login. The report compares the root LUKS identity and marks
+whether an interactive unlock is expected once, so an EFI repair does not add
+another decryption prompt.
+
+Still intentionally constrained in 0.2.23:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
@@ -80,6 +96,19 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 ### Settings
 
 ![Settings](docs/screenshots/08-settings.png)
+
+## 0.2.23 refinements
+
+- Maintain one canonical UKI, firmware fallback, and WebFAI destination per
+  maintained ESP, removing only safely identified duplicate routes such as a
+  device-path-only fallback beside `\EFI\BOOT\BOOTX64.EFI`.
+- Group each drive's retained firmware entries in BootOrder by drive and normal
+  use, with the primary UKI or vendor loader before fallback and WebFAI.
+- Record the detected UKI or GRUB boot chain and root-LUKS handoff in boot
+  evidence so repairs preserve the distribution's expected single unlock path.
+- Explain TUXEDO Debian-base UKI versus TUXEDO Ubuntu/GRUB behavior in the EFI
+  repair description and annotate maintained entries with their drive model
+  without duplicating existing model text.
 
 ## 0.2.22 refinements
 
@@ -419,8 +448,8 @@ The script creates a clean Release build, stages the complete CMake install
 under an AppDir, validates the executable and privileged helper, lets
 `linuxdeploy` bundle Qt/shared-library dependencies, and invokes
 `appimagetool`. It does not install anything on the host. Run the artifact with
-`chmod +x build-release/boot-repair_0.2.22_x86_64.AppImage` followed by
-`./build-release/boot-repair_0.2.22_x86_64.AppImage`. If only `appimagetool`
+`chmod +x build-release/boot-repair_0.2.23_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.23_x86_64.AppImage`. If only `appimagetool`
 is available, the script creates a diagnostic AppImage and warns that it uses
 the host's Qt libraries; do not publish that fallback as a portable release.
 

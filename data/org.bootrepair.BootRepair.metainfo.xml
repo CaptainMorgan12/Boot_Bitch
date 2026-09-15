@@ -25,6 +25,9 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
+    <release version="0.2.23" date="2026-09-14">
+      <description><p>Deduplicate and group per-drive EFI destinations, preserve distribution-specific boot chains, and record the expected root-LUKS handoff.</p></description>
+    </release>
     <release version="0.2.22" date="2026-09-14">
       <description><p>Fix the repaired-system folder browser layout and show target directories through a compact, resizable read-only dialog.</p></description>
     </release>
