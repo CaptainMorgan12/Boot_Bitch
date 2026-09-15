@@ -97,6 +97,11 @@ install(PROGRAMS scripts/boot-repair-helper.sh
     RENAME boot-repair-helper
 )
 
+install(PROGRAMS scripts/boot-repair-efi-label.py
+    DESTINATION ${CMAKE_INSTALL_LIBEXECDIR}/boot-repair
+    RENAME boot-repair-efi-label.py
+)
+
 # Install Debian-compatible package copyright metadata. The full upstream MIT
 # license remains in LICENSE at the source-tree root.
 install(FILES data/copyright
@@ -149,7 +154,7 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 # Optional platform-theme integrations make Qt controls and dialogs blend
 # into GNOME without overriding KDE's native Qt theme.
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-platformtheme, qgnomeplatform-qt6")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, hicolor-icon-theme")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, hicolor-icon-theme")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected system discovery, diagnostics and guarded target\n repairs. The privileged backend currently supports Debian/Ubuntu-family\n target repairs, LUKS unlock and guarded bidirectional file recovery/copy.")
@@ -199,3 +204,6 @@ add_test(NAME boot-repair-display-manager-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-manager-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
+
+add_test(NAME boot-repair-efi-label-update
+    COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)

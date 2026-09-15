@@ -4761,7 +4761,7 @@ efi_group_firmware_boot_order()
 
 efi_annotate_selected_entries()
 {
-    local esp partuuid model line id part loader role label new_label
+    local esp partuuid model line id part loader role label new_label updater backup_dir backup
     local nvram="$SESSION_DIR/efi-nvram-annotate-before.txt"
 
     command -v efibootmgr >/dev/null 2>&1 || return 0
@@ -4789,12 +4789,55 @@ efi_annotate_selected_entries()
             log "EFI Boot$id already names selected model; leaving label '$label' unchanged." | tee -a "$SESSION_LOG"
             continue
         fi
-        efibootmgr --bootnum "$id" --label "$new_label" 2>&1 \
+        updater="${EFI_LABEL_UPDATER:-/usr/libexec/boot-repair/boot-repair-efi-label.py}"
+        if [[ ! -x "$updater" ]]; then
+            updater="$(dirname "${BASH_SOURCE[0]}")/boot-repair-efi-label.py"
+        fi
+        [[ -x "$updater" ]] || {
+            log "ERROR: EFI label updater is not installed; refusing to report an unverified label change." | tee -a "$SESSION_LOG" >&2
+            return 1
+        }
+        backup_dir="$SESSION_DIR/efi-label-backups"
+        backup="$backup_dir/Boot${id^^}.bin"
+        "$updater" --bootnum "$id" --partuuid "$partuuid" \
+            --loader "$loader" --label "$new_label" --backup "$backup" 2>&1 \
             | tee -a "$SESSION_LOG" || return 1
         log "EFI Boot$id ($role) label updated to '$new_label' on selected system ESP only." | tee -a "$SESSION_LOG"
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
 
     efi_ensure_selected_wfai_entry "$partuuid" "$model"
+}
+
+efi_verify_selected_model_labels()
+{
+    local esp partuuid model nvram line id part loader role label
+
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$esp" ]] || return 0
+    partuuid="$(blkid -s PARTUUID -o value "$esp" 2>/dev/null || true)"
+    partuuid="${partuuid,,}"
+    [[ -n "$partuuid" ]] || return 0
+    model="$(efi_selected_system_model "$esp" 2>/dev/null || true)"
+    [[ -n "$model" ]] || return 0
+
+    nvram="$SESSION_DIR/efi-nvram-labels-verified.txt"
+    efibootmgr -v > "$nvram" 2>&1 || return 1
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        part="$(efi_entry_partuuid_line "$line")"
+        [[ "$part" == "$partuuid" ]] || continue
+        loader="$(efi_entry_loader_line "$line" || true)"
+        role="$(efi_selected_entry_role "$loader" || true)"
+        [[ -n "$role" ]] || continue
+        label="$(efi_entry_label_line "$line")"
+        efi_label_has_selected_model "$label" "$model" || {
+            log "ERROR: selected ESP Boot$id label '$label' still lacks drive model '$model' after EFI order maintenance." | tee -a "$SESSION_LOG" >&2
+            return 1
+        }
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+    log "PASS: selected ESP EFI labels retain the drive model after final BootOrder maintenance." | tee -a "$SESSION_LOG"
 }
 
 efi_entry_key_line()
@@ -5305,17 +5348,20 @@ EOF
     set -e
     rm -rf -- "$guard_dir"
     ((rc == 0)) || fail "$label failed with exit code $rc"
-    log "PASS: $label" | tee -a "$SESSION_LOG"
+    log "Vendor command completed successfully: $label" | tee -a "$SESSION_LOG"
 }
 
 rebuild_tuxedo_uki()
 {
-    local kver new_uki="" uki tmp embedded
+    local kver new_uki="" uki tmp embedded old_uki_sha="" new_uki_sha=""
     local nvram_pre="" nvram_post="" nvram_map=""
 
     validate_tuxedo_uki_target
     kver="$(newest_tuxedo_kernel)"
     uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"
+    if [[ -s "$uki" ]] && command -v sha256sum >/dev/null 2>&1; then
+        old_uki_sha="$(sha256sum "$uki" | awk '{print $1}')"
+    fi
 
     if uefi_nvram_writable && command -v efibootmgr >/dev/null 2>&1; then
         nvram_pre="$SESSION_DIR/efi-nvram-pre.txt"
@@ -5330,6 +5376,14 @@ rebuild_tuxedo_uki()
     run_tuxedo_uki_builder "Rebuild TUXEDO UKI for $kver" /usr/sbin/create_boot_uki_base.sh "$kver"
 
     [[ -s "$uki" ]] || fail "TUXEDO UKI builder completed but /boot/efi/EFI/BOOT/TUX.EFI is missing or empty."
+    if command -v sha256sum >/dev/null 2>&1; then
+        new_uki_sha="$(sha256sum "$uki" | awk '{print $1}')"
+    fi
+    if [[ -n "$old_uki_sha" && "$old_uki_sha" == "$new_uki_sha" ]]; then
+        log "WARNING: vendor UKI command completed without changing TUX.EFI; the existing image will be validated against the selected target before this repair is reported successful." | tee -a "$SESSION_LOG"
+    else
+        log "PASS: vendor UKI command produced a changed TUX.EFI image." | tee -a "$SESSION_LOG"
+    fi
 
     if [[ -n "$nvram_pre" ]]; then
         nvram_map="$SESSION_DIR/efi-nvram-map-uki.tsv"
@@ -5360,6 +5414,12 @@ rebuild_tuxedo_uki()
             || fail "Unable to reconcile duplicate selected-system EFI destinations safely."
         efi_group_firmware_boot_order \
             || fail "Unable to group the retained EFI entries by drive and boot use."
+        # BootOrder maintenance must not silently undo selected-drive labels;
+        # re-read and verify the final NVRAM state after all mutations.
+        efi_annotate_selected_entries \
+            || fail "Unable to retain selected-system EFI labels after BootOrder maintenance."
+        efi_verify_selected_model_labels \
+            || fail "Selected-system EFI labels could not be verified after BootOrder maintenance."
         efibootmgr -v > "$nvram_post" 2>&1 \
             || fail "Unable to capture firmware entries after TUXEDO UKI rebuild."
     fi
@@ -5376,7 +5436,11 @@ rebuild_tuxedo_uki()
         fi
     fi
 
-    log "PASS: TUXEDO UKI rebuilt for $kver on selected ESP $EFI_ESP_SOURCE" | tee -a "$SESSION_LOG"
+    if [[ -n "$old_uki_sha" && "$old_uki_sha" == "$new_uki_sha" ]]; then
+        log "PASS: existing TUXEDO UKI validated for $kver on selected ESP $EFI_ESP_SOURCE; no replacement image was needed." | tee -a "$SESSION_LOG"
+    else
+        log "PASS: TUXEDO UKI rebuilt for $kver on selected ESP $EFI_ESP_SOURCE" | tee -a "$SESSION_LOG"
+    fi
 }
 
 verify_tuxedo_uki_root_binding()
@@ -5520,6 +5584,10 @@ reinstall_efi_bootloader()
             || fail "Unable to reconcile duplicate selected-system EFI destinations safely after conventional GRUB EFI install."
         efi_group_firmware_boot_order \
             || fail "Unable to group the retained EFI entries by drive and boot use after conventional GRUB EFI install."
+        efi_annotate_selected_entries \
+            || fail "Unable to retain selected-system EFI labels after GRUB BootOrder maintenance."
+        efi_verify_selected_model_labels \
+            || fail "Selected-system EFI labels could not be verified after GRUB BootOrder maintenance."
     fi
 
     efi_dir="$TARGET_ROOT/boot/efi/EFI/$EFI_BOOTLOADER_ID"
@@ -5752,6 +5820,10 @@ run_host_default()
         || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
     efi_group_firmware_boot_order \
         || fail "Unable to group the retained host EFI entries by drive and boot use."
+    efi_annotate_selected_entries \
+        || fail "Unable to retain host EFI labels after BootOrder maintenance."
+    efi_verify_selected_model_labels \
+        || fail "Host EFI labels could not be verified after BootOrder maintenance."
     log "PASS: running host default EFI entry is Boot${ids[0]} on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
 }
 

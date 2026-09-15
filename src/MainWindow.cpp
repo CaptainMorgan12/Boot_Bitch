@@ -4383,10 +4383,18 @@ void MainWindow::browseFileCopyDestination()
         auto *folderList = new QListWidget;
         folderList->setAlternatingRowColors(true);
         folderList->setSelectionMode(QAbstractItemView::SingleSelection);
-        folderList->setMinimumHeight(260);
+        // Let the list yield vertical space to the navigation and confirmation
+        // rows at the compact minimum size. A fixed list minimum makes those
+        // rows overlap the list frame on short displays.
+        folderList->setMinimumHeight(0);
+        folderList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
         browserLayout->addWidget(folderList, 1);
 
-        auto *navigation = new QHBoxLayout;
+        auto *navigationWidget = new QWidget;
+        navigationWidget->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+        auto *navigation = new QHBoxLayout(navigationWidget);
+        navigation->setContentsMargins(0, 0, 0, 0);
+        navigation->setSpacing(8);
         auto *upButton = new QPushButton(themedIcon(QStringLiteral("go-up")), QStringLiteral("Up"));
         auto *openButton = new QPushButton(themedIcon(QStringLiteral("document-open")), QStringLiteral("Open Selected"));
         auto *refreshButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh"));
@@ -4397,7 +4405,7 @@ void MainWindow::browseFileCopyDestination()
         navigation->addWidget(openButton);
         navigation->addWidget(refreshButton);
         navigation->addStretch(1);
-        browserLayout->addLayout(navigation);
+        browserLayout->addWidget(navigationWidget, 0);
 
         auto *browserStatus = new QLabel(QStringLiteral("Read-only target view; no files are modified."));
         browserStatus->setWordWrap(true);
