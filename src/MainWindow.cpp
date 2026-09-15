@@ -5292,6 +5292,28 @@ QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
         *succeeded = false;
     }
 
+#ifdef BOOT_REPAIR_UI_TEST
+    Q_UNUSED(showProgressDialog);
+    // The production host diagnostic path intentionally goes through the
+    // privileged helper so it can inspect protected mounts, EFI variables,
+    // journals and package state.  A headless UI test cannot complete a
+    // Polkit conversation, however.  Keep the test focused on the scope,
+    // cache, clipboard and action-register behavior by using the same
+    // read-only in-process formatter that supplies the unprivileged preview
+    // data.  This branch is compiled only into boot-repair-ui-tests.
+    const QString diagnosticKey = key == QStringLiteral("all")
+        ? QStringLiteral("report")
+        : key;
+    const QString captured = diagnosticResultForKey(diagnosticKey);
+    if (succeeded) {
+        *succeeded = !captured.trimmed().isEmpty();
+    }
+    appendLog(QStringLiteral("Read-only running-host diagnostic '%1' %2 (UI test backend).")
+                  .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
+              (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    return captured;
+#else
+
     QString reason;
     if (!hostBootTargetReady(&reason)) {
         QMessageBox::warning(this, QStringLiteral("Host diagnostic unavailable"), reason);
@@ -5311,6 +5333,7 @@ QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
                   .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
               (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
     return captured;
+#endif
 }
 
 QString MainWindow::currentTargetDiagnosticCacheIdentity() const
