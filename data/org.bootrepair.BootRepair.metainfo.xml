@@ -14,19 +14,20 @@
   <description>
     <p>
       Boot Bitch diagnoses Linux boot environments and performs guarded
-      recovery operations on a selected repair target. It supports encrypted
+      maintenance of the explicitly selected running host or recovery operations
+      on a selected repair system. It supports encrypted
       LUKS volumes, Btrfs subvolumes, GRUB, initramfs, EFI/UKI boot paths and
       graphical login configuration.
     </p>
     <p>
-      Target changes are previewed and recorded, and read-only diagnostics are
-      available before repair actions are run.
+      Changes require confirmation and are recorded. Read-only diagnostics are
+      available for both scopes before repair actions are run.
     </p>
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <releases>
-    <release version="0.2.23" date="2026-09-14">
-      <description><p>Deduplicate and group per-drive EFI destinations, preserve distribution-specific boot chains, and record the expected root-LUKS handoff.</p></description>
+    <release version="0.2.23" date="2026-09-15">
+      <description><p>Cumulative release with guarded host maintenance, repair-system folder browsing, verified EFI labels, per-drive destination grouping and boot-chain diagnostics.</p></description>
     </release>
     <release version="0.2.22" date="2026-09-14">
       <description><p>Fix the repaired-system folder browser layout and show target directories through a compact, resizable read-only dialog.</p></description>

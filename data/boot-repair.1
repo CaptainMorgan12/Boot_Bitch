@@ -5,14 +5,16 @@ boot-repair \- graphical Linux recovery and guarded boot-repair utility
 .B boot-repair
 .SH DESCRIPTION
 .B Boot Bitch
-is a graphical Qt 6 Linux recovery utility for inspecting and repairing a
-Linux installation from a separate recovery environment. It provides protected
+is a graphical Qt 6 Linux utility for inspecting the running host or repairing
+another Linux installation from a separate recovery environment. It provides protected
 storage discovery, read-only diagnostics, encrypted-volume handling, Btrfs
 snapshot recovery, and a guarded privileged repair backend.
 .PP
-Boot Bitch must be launched from a different booted Linux environment than the
-system being repaired, such as a live Linux USB or another Linux installation
-on a different physical drive. The running host is never a valid repair target.
+Ordinary repair-target work requires a different booted Linux environment, such
+as a live Linux USB or another Linux installation on a different physical drive.
+The running host is protected from ordinary target selection. Explicit Host
+Maintenance enables supported native maintenance of the active Debian/Ubuntu-family
+system after independent host identity and boot-mount checks.
 .SH WORKFLOW
 Select and commit a physical repair drive in Systems, unlock its LUKS volume
 when necessary, then run Diagnostics for the Repair Target. Run All creates a
@@ -24,6 +26,11 @@ matching evidence for every selected stage on the same target; Run All is the
 simplest way to populate the complete set, while a one-stage plan can use that
 stage's fresh diagnostic.
 .PP
+For native host work, select Host Maintenance on the Running Host card, choose
+Running Host in Diagnostics, and run the required fresh diagnostics before
+starting a supported repair stage. Snapshot rollback, the Chroot Shell and
+repair-side File Copy browsing continue to operate on the separate repair target.
+.PP
 A disabled repair button means that no target is committed, the target is
 locked or unsupported, the required diagnostic is stale or missing, a required
 capability is unavailable, or the operation is deliberately opt-in (for
@@ -31,7 +38,7 @@ example EFI repair). The Repair page states the condition and the diagnostic to
 run. Read-only inspection and a failed command that reports no target change do
 not invalidate diagnostic evidence.
 .SH REPAIR SUPPORT
-Version 0.2.23 supports Debian, Ubuntu, and compatible targets for guarded
+Version 0.2.23 supports Debian, Ubuntu, and compatible systems for guarded
 package repair, DKMS, adaptive package upgrades, initramfs, GRUB, distribution-
 aware EFI/UKI recovery, boot-stack reconciliation, and transactional Btrfs
 root rollback on supported layouts. Graphical-login recovery examines the
@@ -48,7 +55,7 @@ EFI records are classified as UKI, fallback, WebFAI/iPXE, vendor loader, or
 device-path fallback, and maintained BootOrder groups each drive's routes
 without retaining duplicate destinations.
 .PP
-Diagnostics are read-only and cached per target and diagnostic. Re-running a
+Diagnostics are read-only and cached per system scope and diagnostic. Re-running a
 diagnostic replaces its cache; Run All replaces the complete set. Target
 writes invalidate related evidence and are marked stale in Logs. Every
 modifying operation requires explicit confirmation. The first privileged action
@@ -56,8 +63,11 @@ opens one whitelisted administrator helper session through Polkit; later
 privileged actions reuse it until the user locks the session or exits. LUKS
 passphrases are sent over standard input and are never logged.
 .SH SAFETY
-The helper repeats the host-protection check and refuses a target that resolves
-to a disk backing /, /boot, or /boot/efi on the running system. Temporary target
+For ordinary repair requests, the helper repeats the host-protection check and
+refuses a target that resolves to a disk backing /, /boot, or /boot/efi on the
+running system. Host Maintenance separately validates the active host identity,
+writable boot mounts and package locks and guards firmware variables from
+indirect package or vendor hooks. Temporary target
 mounts are removed after each operation. Existing LUKS mappings are reused;
 mappings opened by Boot Bitch are closed when its administrator session ends.
 .SH FILES

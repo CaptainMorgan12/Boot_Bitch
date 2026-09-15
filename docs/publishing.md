@@ -65,6 +65,10 @@ UI contract checks have passed. The tested
 artifacts are kept in the local release workspace and are intentionally not
 copied into the source tree.
 
+Publish one cumulative 0.2.23 release from the previous GitHub release,
+0.2.20. The 0.2.21 and 0.2.22 changelog entries describe local testing
+iterations included in this release. Keep their commits in the source history.
+
 ```bash
 cd /home/amiga/Projects/Boot_Bitch-github-fixed
 git status
@@ -74,11 +78,18 @@ git push origin v0.2.23
 gh release create v0.2.23 \
   /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.23_amd64.deb \
   /home/amiga/Projects/Boot_Repair/build-release/boot-repair_0.2.23_x86_64.AppImage \
+  /home/amiga/Projects/Boot_Repair/Development/release-0.2.23/SHA256SUMS \
+  docs/release-notes-0.2.23.md \
+  /home/amiga/Projects/Boot_Repair/Development/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch \
+  --verify-tag \
   --title "Boot Bitch 0.2.23" \
   --notes-file docs/release-notes-0.2.23.md
 ```
 
 The release assets are attached to GitHub Releases and are not copied into the source tree.
+Generate SHA256SUMS from the final package, AppImage, notes and source diff,
+using asset basenames so downloaded files can be verified together with
+`sha256sum -c SHA256SUMS`.
 
 ## Build and attach an AppImage
 

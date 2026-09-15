@@ -4,7 +4,9 @@
 
 - Development changes will be listed here.
 
-## 0.2.23 — 2026-09-14
+## 0.2.23 — 2026-09-15
+
+This GitHub release includes the local 0.2.21 and 0.2.22 iterations below.
 
 - Maintain one canonical UKI, fallback, and WebFAI destination per maintained
   ESP. Safely remove duplicate selected-ESP routes such as a legacy TUXEDO
@@ -22,6 +24,8 @@
   is used only for creation because it does not rename an existing entry.
 - Keep the repaired-system folder browser's navigation row outside the folder
   list's minimum height so compact dialogs do not overlap their controls.
+- Clarify bundled icon fallbacks and Running Host versus selected repair-system
+  support in the README, installed manual and package descriptions.
 
 ## 0.2.22 — 2026-09-14
 

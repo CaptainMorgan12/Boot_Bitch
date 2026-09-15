@@ -29,7 +29,7 @@ fi
 }
 
 DEB="$(realpath "$DEB")"
-TMP="$(mktemp -d /tmp/boot-repair-deb-test.XXXXXX)"
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-deb-test.XXXXXX")"
 trap 'rm -rf "$TMP"' EXIT
 
 echo "========================================"
