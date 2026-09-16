@@ -56,7 +56,7 @@ fi
 case "$family" in
 debian)
     base_packages=(
-        build-essential cmake ninja-build pkg-config qt6-base-dev
+        build-essential cmake ninja-build pkg-config qt6-base-dev qt6-svg-dev
         qt6-base-dev-tools extra-cmake-modules dpkg-dev desktop-file-utils
         lintian pkexec util-linux mount rsync cryptsetup btrfs-progs systemd
         efibootmgr binutils lvm2 mdadm
@@ -80,7 +80,7 @@ arch)
     # Never run -Sy alone. A full upgrade keeps the package database and
     # installed libraries in sync on Arch-family systems.
     base_packages=(
-        base-devel cmake ninja pkgconf qt6-base qt6-tools extra-cmake-modules
+    base-devel cmake ninja pkgconf qt6-base qt6-svg qt6-tools extra-cmake-modules
         desktop-file-utils appstream polkit util-linux rsync cryptsetup
         btrfs-progs efibootmgr binutils python hicolor-icon-theme
         lvm2 mdadm
@@ -92,7 +92,7 @@ arch)
     ;;
 rpm)
     base_packages=(
-        gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel
+        gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
         rsync cryptsetup btrfs-progs systemd efibootmgr binutils python3
         hicolor-icon-theme lvm2 mdadm rpm-build
@@ -101,7 +101,7 @@ rpm)
     ;;
 suse)
     base_packages=(
-        gcc-c++ cmake ninja pkg-config libqt6-qtbase-devel
+        gcc-c++ cmake ninja pkg-config libqt6-qtbase-devel libqt6svg6-dev
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
         rsync cryptsetup btrfsprogs systemd efibootmgr binutils python3
         hicolor-icon-theme lvm2 mdadm rpm-build

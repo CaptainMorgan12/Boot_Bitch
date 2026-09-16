@@ -392,16 +392,13 @@ QIcon bundledIcon(const QString &name)
 
 QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
 {
-    // Prefer our semantic atlas for controls whose desktop-theme variants are
-    // frequently generic (K badges, blank pages, distro crests). This keeps
-    // the UI consistent across Arch, Debian, GNOME and Plasma themes.
-    QIcon source;
-    if (name == QStringLiteral("text-x-generic") || name == QStringLiteral("document")
-        || name == QStringLiteral("document-encrypt") || name == QStringLiteral("lock")
-        || name == QStringLiteral("settings-configure") || name == QStringLiteral("preferences-system")
-        || name == QStringLiteral("security-high")) {
-        source = bundledIcon(name);
-    }
+    // Use the application's bundled semantic atlas first.  A host theme can
+    // return misleading placeholders (K badges, question marks, blank pages)
+    // for valid names, especially on Arch/XFCE.  The atlas is the same
+    // repository shipped for every desktop, so controls remain identical on
+    // KDE, GNOME and lightweight sessions.  Desktop icons remain a fallback
+    // for names that are intentionally outside the atlas.
+    QIcon source = bundledIcon(name);
     if (source.isNull()) source = QIcon::fromTheme(name, fallback);
     // Try common freedesktop aliases before drawing a fallback.  Themes often
     // ship a semantically equivalent name rather than every application
