@@ -2666,11 +2666,19 @@ preflight_grub()
     else
         fail "grub-mkconfig is not installed in the target system."
     fi
-    if [[ -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
-        generator_mode="update-grub"
-    else
+    # update-grub is only a wrapper that writes /boot/grub/grub.cfg and sends
+    # progress to stdout.  It cannot produce an isolated candidate for a
+    # guarded preflight, so prefer grub-mkconfig whenever it is installed.
+    # This also makes the Linux-entry check inspect the actual generated file
+    # on Debian/TUXEDO instead of the wrapper's progress messages.
+    if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" ]]; then
         generator_mode="grub-mkconfig"
-        log "Generic/Arch GRUB layout detected; using grub-mkconfig with an isolated output path for preflight." | tee -a "$SESSION_LOG"
+        log "Using grub-mkconfig with an isolated output path for preflight." | tee -a "$SESSION_LOG"
+    elif [[ -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+        generator_mode="update-grub"
+        log "grub-mkconfig unavailable; using update-grub output for preflight." | tee -a "$SESSION_LOG"
+    else
+        fail "Neither grub-mkconfig nor update-grub is installed in the target system."
     fi
 
     sim_path="$SESSION_DIR/grub-preflight.cfg"
@@ -6523,7 +6531,12 @@ run_host_default()
             fi
             ids=()
         done
-        ((${#ids[@]} == 1)) || fail "No unique bootloader entry exists for the running host ESP; repair EFI first, then retry the default selection."
+        if ((${#ids[@]} != 1)); then
+            log "No unique firmware entry exists for the running host ESP; creating the canonical host loader entry before selecting the default." | tee -a "$SESSION_LOG"
+            reinstall_efi_bootloader
+            mapfile -t ids < <(efi_entry_ids_for_partuuid_role "$partuuid" vendor-loader 2>/dev/null || true)
+            ((${#ids[@]} == 1)) || fail "Unable to resolve a unique bootloader entry for the running host ESP after canonical EFI registration."
+        fi
         efi_annotate_selected_entries \
             || fail "Unable to annotate the running host's selected ESP entries safely."
     fi
