@@ -17,6 +17,19 @@ run_privileged()
     fi
 }
 
+remove_legacy_source_install()
+{
+    # Older source installs under /usr/local take precedence over packaged
+    # /usr/bin/boot-repair and make desktop launches appear stale. Remove only
+    # the files owned by this application; leave unrelated directories intact.
+    run_privileged rm -f -- \
+        /usr/local/bin/boot-repair \
+        /usr/local/libexec/boot-repair/boot-repair-helper \
+        /usr/local/libexec/boot-repair/boot-repair-efi-label.py \
+        /usr/local/share/applications/org.bootrepair.BootRepair.desktop
+    run_privileged sh -c 'find /usr/local/share/icons/hicolor -path "*/apps/org.bootrepair.BootRepair.png" -type f -delete 2>/dev/null || true'
+}
+
 if command -v dpkg-query >/dev/null 2>&1 \
    && dpkg-query -W -f='${Status}\n' boot-repair 2>/dev/null \
       | grep -q '^install ok installed$'
@@ -31,6 +44,7 @@ then
     else
         run_privileged dpkg --remove boot-repair
     fi
+    remove_legacy_source_install
     exit $?
 fi
 
@@ -43,6 +57,7 @@ then
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
     run_privileged pacman -R boot-bitch
+    remove_legacy_source_install
     exit $?
 fi
 
@@ -61,6 +76,7 @@ then
     else
         run_privileged rpm -e boot-bitch
     fi
+    remove_legacy_source_install
     exit $?
 fi
 
