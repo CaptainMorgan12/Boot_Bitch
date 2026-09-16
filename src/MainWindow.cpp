@@ -5124,7 +5124,7 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
             ? QStringLiteral("Selected repair-system backend profiling is collected by the privileged read-only helper.\n")
             : QStringLiteral("Running-host backend profiling is collected by the privileged read-only helper.\n"));
         stream << "The profile reports distribution family, package manager, initramfs generator, bootloader, ESP location, kernel layout, and whether modifying actions are currently enabled.\n";
-        stream << "Arch-family systems are currently diagnostics-only until their modifying backend is implemented and preflighted.\n";
+        stream << "Arch-family package, initramfs, GRUB and conventional EFI repairs require a transaction-specific preflight; unsupported stages remain gated.\n";
     } else if (key == QStringLiteral("boot")) {
         stream << "Physical drive: " << disk.path << '\n';
         stream << "Detected component: " << preferredPath << '\n';
@@ -6068,7 +6068,7 @@ void MainWindow::showAboutDialog()
                            "<p><b>Developer:</b> CaptainMorgan12</p>"
                            "<p>A native Qt 6 Linux recovery and boot-repair utility.</p>"
                            "<p><b>Guarded repair mode:</b> read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. Debian/Ubuntu-family repairs can run through a privileged helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.</p>"
-                           "<p>Arch-family and RPM-family systems expose the same read-only backend profiling and diagnostics, while modifying repair stages remain gated until their distribution-specific transaction preflights are available.</p>"
+                           "<p>Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. RPM-family systems remain diagnostics-only until their transaction backend is implemented.</p>"
                            "<p>The first privileged action authorizes one narrow helper session for the current Boot Bitch window while the Qt GUI remains unprivileged. It can be ended at any time from File → Lock Administrator Session.</p>"
                            "<p>LUKS target unlock, verified bidirectional File Copy, read-only host/repair diagnostics, transactional Btrfs snapshot rollback, offline graphical login recovery, distribution-aware EFI/UKI repair and boot-stack reconciliation are enabled through the guarded helper. Snapshot rollback preserves the previous @ and automatically restores it if critical post-switch reconciliation fails.</p>")
                            .arg(QCoreApplication::applicationVersion()));
@@ -6383,21 +6383,21 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("fixbroken")) {
         title = QStringLiteral("Repair broken dependencies");
         description = QStringLiteral(
-            "Run APT's broken-dependency repair in the running host or selected repair system after the mandatory safety preflight. This maps directly to Settings → Repair broken package dependencies.");
+            "Repair package dependencies in the running host or selected repair system after the mandatory safety preflight. Debian/Ubuntu uses APT; Arch uses one sandbox-preflighted full pacman transaction. This maps directly to Settings → Repair broken package dependencies.");
         buttonText = QStringLiteral("Repair Dependencies");
         iconName = QStringLiteral("dialog-ok-apply");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("aptupdate")) {
         title = QStringLiteral("Refresh package metadata");
         description = QStringLiteral(
-            "Refresh the running host or selected repair system's APT package metadata without upgrading installed packages. This maps directly to Settings → Refresh package metadata.");
+            "Refresh Debian/Ubuntu APT metadata in the running host or selected repair system without upgrading installed packages. Arch deliberately refuses a partial metadata-only transaction. This maps directly to Settings → Refresh package metadata.");
         buttonText = QStringLiteral("Refresh Metadata");
         iconName = QStringLiteral("view-refresh");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("upgrade")) {
         title = QStringLiteral("Upgrade installed packages");
         description = QStringLiteral(
-            "Simulate APT transactions first, inspect distribution feedback and proposed removals, then automatically choose a safe upgrade, full-upgrade, or dist-upgrade operation. This maps directly to Settings → Upgrade installed packages.");
+            "Simulate the distribution's package transaction first, inspect proposed removals, then apply a safe upgrade. Debian/Ubuntu chooses an APT mode; Arch runs one full pacman transaction. This maps directly to Settings → Upgrade installed packages.");
         buttonText = QStringLiteral("Simulate and Upgrade");
         iconName = QStringLiteral("system-software-update");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
@@ -6419,29 +6419,28 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("initramfs")) {
         title = QStringLiteral("Initramfs");
         description = QStringLiteral(
-            "Rebuild initramfs images for the running host or selected repair system only after mapper and crypttab consistency checks pass. The privileged helper enforces this safety gate before running update-initramfs.");
+            "Rebuild initramfs images for the running host or selected repair system only after mapper and crypttab consistency checks pass. The helper uses update-initramfs on Debian/Ubuntu and transaction-specific mkinitcpio trials on Arch.");
         buttonText = QStringLiteral("Rebuild Initramfs");
         iconName = QStringLiteral("view-refresh");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("EFI / UKI bootloader");
         description = QStringLiteral(
-            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO Debian-base systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder; TUXEDO Ubuntu layouts without that builder continue to use their GRUB path. On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP. Afterward, decoded entries on each maintained ESP retain their distribution/vendor label and receive that drive's model once; an existing model name is not duplicated. The maintained BootOrder groups each drive's primary loader, fallback and WebFAI destinations and removes only entries that resolve to a duplicate destination, such as a device-path-only UEFI fallback beside BOOTX64.EFI. Unrelated EFI entries on other disks are never removed.");
+            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO Debian-base systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder; TUXEDO Ubuntu layouts without that builder continue to use their GRUB path. On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP and restores one verified vendor-loader firmware entry if the guarded installer only writes files. Afterward, decoded entries on each maintained ESP retain their distribution/vendor label and receive that drive's model once; an existing model name is not duplicated. The maintained BootOrder groups each drive's primary loader, fallback and WebFAI destinations and removes only entries that resolve to a duplicate destination, such as a device-path-only UEFI fallback beside BOOTX64.EFI. Unrelated EFI entries on other disks are never removed.");
         buttonText = QStringLiteral("Repair EFI / UKI");
         iconName = QStringLiteral("drive-removable-media");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("grub")) {
         title = QStringLiteral("GRUB configuration");
         description = QStringLiteral(
-            "Regenerate the running host or selected repair system's GRUB menu/configuration after the mandatory safety preflight. "
-            "This does not reinstall EFI loader files; use EFI / UKI bootloader when the firmware loader itself needs repair.");
+            "Regenerate the running host or selected repair system's GRUB menu/configuration after the mandatory safety preflight. Debian/Ubuntu uses update-grub and Arch uses grub-mkconfig with an isolated trial output. This does not reinstall EFI loader files; use EFI / UKI bootloader when the firmware loader itself needs repair.");
         buttonText = QStringLiteral("Regenerate GRUB");
         iconName = QStringLiteral("preferences-system");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Boot stack reconciliation");
         description = QStringLiteral(
-            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, reconcile one canonical EFI destination per purpose, and regenerate the GRUB fallback. "
+            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, or use the detected Arch EFI/GRUB path, reconcile one canonical EFI destination per purpose, and regenerate the GRUB fallback. "
             "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or unrelated ESP entries.");
         buttonText = QStringLiteral("Reconcile Boot Stack");
         iconName = QStringLiteral("system-run");
@@ -6798,7 +6797,7 @@ void MainWindow::runSelectedRepairTool()
     } else if (key == QStringLiteral("upgrade")) {
         title = QStringLiteral("Upgrade installed packages");
         stages = {QStringLiteral("apt-upgrade")};
-        operations = {QStringLiteral("Simulate upgrade modes first, then choose a safe transaction for the %1").arg(selectedSystemLabel)};
+        operations = {QStringLiteral("Run the distribution-specific transaction preflight, then choose a safe upgrade for the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("dkms")) {
         title = QStringLiteral("Rebuild DKMS");
         stages = {QStringLiteral("dkms")};
@@ -6811,7 +6810,7 @@ void MainWindow::runSelectedRepairTool()
     } else if (key == QStringLiteral("initramfs")) {
         title = QStringLiteral("Rebuild initramfs");
         stages = {QStringLiteral("initramfs")};
-        operations = {QStringLiteral("Rebuild all initramfs images for the %1").arg(selectedSystemLabel)};
+        operations = {QStringLiteral("Trial-build and then rebuild all initramfs images for the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("Repair EFI / UKI bootloader");
         stages = {QStringLiteral("efi")};
@@ -6821,13 +6820,13 @@ void MainWindow::runSelectedRepairTool()
     } else if (key == QStringLiteral("grub")) {
         title = QStringLiteral("Regenerate GRUB configuration");
         stages = {QStringLiteral("grub")};
-        operations = {QStringLiteral("Regenerate the %1's GRUB configuration").arg(selectedSystemLabel)};
+        operations = {QStringLiteral("Trial-generate and then regenerate the %1's GRUB configuration").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Reconcile boot stack");
         stages = {QStringLiteral("boot-stack")};
         operations = {QStringLiteral("Validate mapper/crypttab against the %1").arg(selectedSystemLabel),
-                      QStringLiteral("Rebuild initramfs for installed kernels"),
-                      QStringLiteral("Rebuild the TUXEDO UKI with the selected system's official builder when available and remove only duplicate EFI destinations"),
+                      QStringLiteral("Trial-build and rebuild initramfs for installed kernels"),
+                      QStringLiteral("Rebuild the TUXEDO UKI or detected Arch EFI path when supported, removing only duplicate EFI destinations"),
                       QStringLiteral("Regenerate the GRUB fallback configuration")};
     } else {
         QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"),

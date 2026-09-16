@@ -6,9 +6,12 @@
   and selected repair target. Debian/APT and Arch/pacman families are detected
   separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
   mount and kernel naming evidence.
-- Add an Arch-family diagnostics layer for mkinitcpio, dracut, GRUB,
-  systemd-boot, generic UKI and `/efi` layouts. Arch modifying repairs remain
-  disabled until their transaction-specific preflights are implemented.
+- Add transaction-specific Arch repair preflights and guarded apply paths for
+  full pacman package transactions, mkinitcpio, conventional GRUB and EFI.
+  Conventional EFI repair restores one verified vendor-loader firmware entry
+  when a guarded grub-install leaves only files on the ESP.
+  Repository/download errors, removals, unresolved dependencies, standalone
+  APT/dpkg operations and unknown layouts stay explicitly gated.
 - Add a backend-profile contract test and portable kernel/initramfs pairing
   diagnostics for Arch-style `vmlinuz-linux` and `initramfs-*.img` files.
 - Make build dependency setup and installation package-manager aware for

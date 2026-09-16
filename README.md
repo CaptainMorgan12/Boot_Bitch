@@ -25,10 +25,10 @@ This build can:
 - validate `/etc/os-release`, `/etc/fstab`, `/etc/crypttab`, boot files and target-family support;
 - mount target `/boot`, `/boot/efi`, and `/efi` entries when they are safely resolvable on the selected disk;
 - profile the selected system or protected running host as Debian/APT, Arch/pacman, another known family, or unknown; report its initramfs generator, bootloader, ESP location, kernel naming layout, and current repair capability in the read-only diagnostics;
-- inspect Arch-family systems read-only, including common `mkinitcpio`, `dracut`, GRUB, systemd-boot, and generic UKI layouts, while Arch modifying actions remain disabled until their stage-specific backend is implemented;
+- inspect Arch-family systems, including common `mkinitcpio`, `dracut`, GRUB, systemd-boot, and generic UKI layouts; Arch package, initramfs, GRUB and conventional EFI repairs are enabled only after their transaction-specific preflights pass;
 - bind the minimum runtime filesystems needed for a chroot repair;
-- on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, recovery of the detected graphical login manager, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`;
-- in Host Maintenance scope, run the same supported repair stages natively on the active Debian/Ubuntu-family system, with package-lock checks, writable-mount checks, and a private read-only EFI-variable namespace for indirect hooks;
+- on Debian/Ubuntu/TUXEDO-family targets, run guarded package repair, DKMS rebuild, recovery of the detected graphical login manager, initramfs rebuild, distribution-aware EFI/UKI recovery, boot-stack reconciliation, and `update-grub`; Arch targets use the corresponding guarded pacman, mkinitcpio, conventional EFI and GRUB paths when their transaction preflights pass;
+- in Host Maintenance scope, run the supported package, DKMS, graphical-login, initramfs, EFI, GRUB and boot-stack stages natively on the active Debian/Ubuntu or Arch system, with package-lock checks, writable-mount checks, and a private read-only EFI-variable namespace for indirect hooks;
 - inspect the running host with the full read-only diagnostic set, including EFI/UKI files, embedded kernel/cmdline, PARTUUID-owned firmware entries, BootOrder, GRUB handoff, and journal evidence;
 - require an explicit confirmation in the GUI before every modifying operation;
 - request administrator authorization once per Boot Bitch window and retain only the narrow whitelisted helper session until explicitly locked or the app exits;
@@ -58,7 +58,7 @@ Still intentionally constrained in 0.2.23:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
-- modifying repair backends for non-Debian package families; native Host Maintenance changes use the same Debian/Ubuntu-family limitation. Arch-family systems currently have a read-only backend profile and diagnostics layer;
+- unsupported package-manager operations on Arch (such as standalone APT/dpkg stages), unknown boot layouts, and package transactions whose preflight reports repository errors, removals or unresolved dependencies; these remain hard-gated;
 
 
 

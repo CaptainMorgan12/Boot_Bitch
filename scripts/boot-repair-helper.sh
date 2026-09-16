@@ -34,6 +34,10 @@ TARGET_ESP_MOUNT=""
 TARGET_KERNEL_LAYOUT=""
 TARGET_REPAIR_BACKEND=""
 TARGET_SUBVOL=""
+ARCH_PACMAN_SANDBOX=""
+ARCH_PACMAN_DB_REL=""
+ARCH_PACMAN_CACHE_REL=""
+ARCH_PACMAN_LOG_REL=""
 MOUNTS=()
 TARGET_DATA_MOUNTS=()
 SESSION_LOG=""
@@ -154,7 +158,7 @@ Stages:
   display-manager  Detect installed/configured display manager then restore offline graphical login
   initramfs        Trial-build, then create/update and verify initramfs images
   efi              Preflight and repair TUXEDO UKI or conventional GRUB EFI
-  boot-stack       Adaptive initramfs + TUXEDO UKI + GRUB reconciliation
+  boot-stack       Adaptive initramfs + EFI/UKI + GRUB reconciliation
   grub             Trial-generate, then regenerate and verify GRUB configuration
 
 Shell:
@@ -163,15 +167,20 @@ Shell:
 LUKS unlock is supported for non-host target devices. The passphrase is read
 from standard input and is never accepted as a command-line argument. File copy
 uses rsync without --delete and independently validates host/target containment.
-Modifying repair stages remain limited to Debian/Ubuntu-family targets. EFI
-bootloader reinstall is an explicit stage and is never selected implicitly.
+Modifying repair stages use a transaction-specific backend preflight. Debian/
+Ubuntu uses APT/dpkg; Arch uses a sandboxed full pacman transaction, mkinitcpio,
+and its detected EFI/GRUB layout. Unsupported package or boot layouts remain
+hard-gated. EFI bootloader reinstall is an explicit stage and is never selected
+implicitly.
 Read-only diagnostics also profile Arch-family targets (pacman, initramfs
-generator, GRUB/systemd-boot/UKI layout, ESP mount and kernel naming) without
-enabling modifying Arch actions.
+generator, GRUB/systemd-boot/UKI layout, ESP mount and kernel naming). Arch
+modifying stages are enabled only where the corresponding guarded preflight
+supports the detected layout.
 Host maintenance is a separate native-running-system path. It accepts all
-listed repair stages with the same stage-specific checks. Host validation
-and diagnostics are read-only; snapshot, shell and file-copy workflows remain
-separate target tools.
+repair stages supported by the detected backend with the same stage-specific
+checks; unsupported package or boot stages are rejected before any write.
+Host validation and diagnostics are read-only; snapshot, shell and file-copy
+workflows remain separate target tools.
 USAGE
 }
 
@@ -969,7 +978,7 @@ profile_target_backends()
     fi
 
     if [[ "$family" == arch ]]; then
-        TARGET_REPAIR_BACKEND="Arch profile — diagnostics only (modifying backend not enabled)"
+        TARGET_REPAIR_BACKEND="Arch profile — guarded pacman/mkinitcpio/GRUB/EFI repairs when transaction preflights pass"
     elif [[ "$family" == debian ]]; then
         TARGET_REPAIR_BACKEND="Debian/APT profile — existing guarded modifying backend"
     else
@@ -1077,6 +1086,7 @@ prepare_target()
     if [[ "$mode" == "rw" ]]; then
         mount_target_boot_entry "/boot"
         mount_target_boot_entry "/boot/efi"
+        mount_target_boot_entry "/efi"
         mount_special rbind-ro /dev "$TARGET_ROOT/dev"
         mount_special proc proc "$TARGET_ROOT/proc"
         mount_special rbind-ro /sys "$TARGET_ROOT/sys"
@@ -1152,6 +1162,7 @@ promote_target_rw()
     remount_target_data_rw
     mount_target_boot_entry "/boot"
     mount_target_boot_entry "/boot/efi"
+    mount_target_boot_entry "/efi"
     mount_special rbind-ro /dev "$TARGET_ROOT/dev"
     mount_special proc proc "$TARGET_ROOT/proc"
     mount_special rbind-ro /sys "$TARGET_ROOT/sys"
@@ -1677,7 +1688,7 @@ host_package_manager_gate()
     # Native package actions must not race apt, dpkg, unattended-upgrades, or
     # another package frontend already using the live host. Stale lock files
     # alone are not considered active; inspect processes and lock holders.
-    for proc in apt apt-get dpkg unattended-upgrade packagekitd; do
+    for proc in apt apt-get dpkg pacman makepkg yay paru unattended-upgrade packagekitd; do
         if pgrep -x "$proc" >/dev/null 2>&1; then
             fail "Package manager process '$proc' is already running; refusing a concurrent host package repair."
         fi
@@ -1688,6 +1699,11 @@ host_package_manager_gate()
                 fail "Package manager lock '$proc' is active; refusing a concurrent host package repair."
             fi
         done
+    fi
+    if command -v fuser >/dev/null 2>&1 \
+       && [[ -e /var/lib/pacman/db.lck ]] \
+       && fuser -s /var/lib/pacman/db.lck 2>/dev/null; then
+        fail "Package manager lock '/var/lib/pacman/db.lck' is active; refusing a concurrent host package repair."
     fi
     log "Host package-manager concurrency gate: PASS" | tee -a "$SESSION_LOG"
 }
@@ -1945,6 +1961,100 @@ adaptive_fix_broken()
     run_chroot "Repair broken package dependencies" apt-get -y -f install
 }
 
+ARCH_PACMAN_TRY_OUTPUT=""
+ARCH_PACMAN_TRY_RC=0
+
+arch_pacman_prepare_sandbox()
+{
+    local tag
+    [[ "$TARGET_DISTRO_FAMILY" == arch && "$TARGET_PACKAGE_MANAGER" == pacman ]] \
+        || fail "Arch pacman backend is not selected for this target."
+    [[ -x "$TARGET_ROOT/usr/bin/pacman" || -x "$TARGET_ROOT/usr/bin/pacman-static" ]] \
+        || fail "pacman is not installed in the target system."
+    [[ -f "$TARGET_ROOT/etc/pacman.conf" ]] \
+        || fail "The target has no /etc/pacman.conf; refusing a package transaction."
+    [[ -d "$TARGET_ROOT/var/lib/pacman" ]] \
+        || fail "The target pacman database directory is missing."
+    [[ ! -e "$TARGET_ROOT/var/lib/pacman/db.lck" ]] \
+        || fail "The target pacman database is locked; refusing a concurrent package transaction."
+
+    tag="$(basename -- "$SESSION_DIR")"
+    [[ "$tag" =~ ^session\.[[:alnum:]]+$ ]] || tag="session"
+    ARCH_PACMAN_SANDBOX="/tmp/boot-repair-pacman-$tag"
+    ARCH_PACMAN_DB_REL="$ARCH_PACMAN_SANDBOX/db"
+    ARCH_PACMAN_CACHE_REL="$ARCH_PACMAN_SANDBOX/cache"
+    ARCH_PACMAN_LOG_REL="$ARCH_PACMAN_SANDBOX/pacman.log"
+    TEMP_TARGET_PATHS+=("$ARCH_PACMAN_SANDBOX")
+    rm -rf -- "$TARGET_ROOT$ARCH_PACMAN_SANDBOX"
+    mkdir -p -- "$TARGET_ROOT$ARCH_PACMAN_DB_REL" "$TARGET_ROOT$ARCH_PACMAN_CACHE_REL"
+    cp -a -- "$TARGET_ROOT/var/lib/pacman/." "$TARGET_ROOT$ARCH_PACMAN_DB_REL/"
+    log "Arch pacman transaction sandbox prepared under $ARCH_PACMAN_SANDBOX; the target package database will not be used for preflight." | tee -a "$SESSION_LOG"
+}
+
+arch_pacman_transaction_try()
+{
+    local label="$1"; shift
+    local output rc
+    log "TRY: $label" | tee -a "$SESSION_LOG"
+    set +e
+    output="$(
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            pacman --config /etc/pacman.conf \
+                --dbpath "$ARCH_PACMAN_DB_REL" \
+                --cachedir "$ARCH_PACMAN_CACHE_REL" \
+                --logfile "$ARCH_PACMAN_LOG_REL" \
+                "$@" 2>&1
+    )"
+    rc=$?
+    set -e
+    ARCH_PACMAN_TRY_OUTPUT="$output"
+    ARCH_PACMAN_TRY_RC=$rc
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    log "TRY exit code: $rc ($label)" | tee -a "$SESSION_LOG"
+    return 0
+}
+
+arch_pacman_transaction_is_safe()
+{
+    local output="$1" package_count
+    if grep -Eiq 'failed retrieving file|failed to synchronize|failed to download|could not resolve host|could not resolve address|invalid or corrupted package|failed to prepare transaction|failed to commit transaction' <<<"$output"; then
+        log "REFUSED: pacman preflight reported repository, download or transaction integrity errors." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    if grep -Eiq '(^|[[:space:]])(removing|remove)[[:space:]]|packages[[:space:]]+to[[:space:]]+remove|cannot[[:space:]]+resolve[[:space:]]+dependencies' <<<"$output"; then
+        log "REFUSED: pacman preflight proposes removals or unresolved dependencies." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    package_count="$(sed -nE 's/^[[:space:]]*Packages \(([0-9]+)\):.*/\1/p; s/^[[:space:]]*Packages \(([0-9]+)\).*/\1/p' <<<"$output" | head -1)"
+    if [[ "$package_count" =~ ^[0-9]+$ ]] && ((package_count > 1000)); then
+        log "REFUSED: pacman preflight proposes $package_count packages (safety limit: 1000)." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    return 0
+}
+
+preflight_arch_pacman_transaction()
+{
+    arch_pacman_prepare_sandbox
+    log "SIMULATE/PREFLIGHT: full Arch pacman transaction (sandboxed database/cache; no target packages will be changed)" | tee -a "$SESSION_LOG"
+    arch_pacman_transaction_try "Arch pacman full transaction preflight" -Syu --downloadonly --noconfirm
+    ((ARCH_PACMAN_TRY_RC == 0)) \
+        || fail "Arch pacman transaction preflight failed; no target packages were changed."
+    arch_pacman_transaction_is_safe "$ARCH_PACMAN_TRY_OUTPUT" \
+        || fail "Arch pacman transaction was rejected by Boot Bitch safety policy."
+    log "PASS: Arch pacman transaction preflight resolved without removals." | tee -a "$SESSION_LOG"
+}
+
+adaptive_arch_pacman_repair()
+{
+    local label="${1:-Upgrade installed packages}"
+    preflight_arch_pacman_transaction
+    run_chroot "$label (pacman -Syu)" pacman --noconfirm -Syu
+    log "PASS: $label completed through one full pacman transaction." | tee -a "$SESSION_LOG"
+}
+
 CHROOT_TRY_OUTPUT=""
 CHROOT_TRY_RC=0
 
@@ -2085,6 +2195,21 @@ preflight_dkms()
     local kver header_pkg
     local -a missing_headers=() available_headers=()
 
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]] \
+            || fail "DKMS is not installed in the Arch target system."
+        log "SIMULATE/PREFLIGHT: Arch DKMS rebuild (headers must already be installed; no package guessing is performed)" | tee -a "$SESSION_LOG"
+        while IFS= read -r kver; do
+            [[ -n "$kver" ]] || continue
+            run_selected_chroot /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                test -e "/lib/modules/$kver/build" \
+                || fail "Arch DKMS preflight found no /lib/modules/$kver/build tree; install the matching headers and retry."
+            log "DKMS preflight: headers/build tree present for $kver" | tee -a "$SESSION_LOG"
+        done < <(arch_kernel_versions)
+        run_chroot_try "Inspect Arch DKMS state" dkms status
+        return 0
+    fi
+
     [[ -x "$TARGET_ROOT/usr/sbin/dkms" || -x "$TARGET_ROOT/usr/bin/dkms" ]] \
         || fail "DKMS is not installed in the target system."
 
@@ -2147,6 +2272,13 @@ adaptive_dkms_repair()
 
 display_manager_package_for_service()
 {
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        case "$1" in
+            gdm.service|gdm3.service) printf '%s\n' 'gdm' ;;
+            *) printf '%s\n' "${1%.service}" ;;
+        esac
+        return 0
+    fi
     case "$1" in
         sddm.service) printf '%s\n' 'sddm' ;;
         gdm.service|gdm3.service) printf '%s\n' 'gdm3' ;;
@@ -2213,6 +2345,12 @@ trial_display_manager_headless()
 target_package_installed()
 {
     local package="$1"
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        [[ -n "$package" && ( -x "$TARGET_ROOT/usr/bin/pacman" || -x "$TARGET_ROOT/usr/bin/pacman-static" ) ]] || return 1
+        run_selected_chroot /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            pacman --root / -Q "$package" >/dev/null 2>&1
+        return $?
+    fi
     [[ -n "$package" && -x "$TARGET_ROOT/usr/bin/dpkg-query" ]] || return 1
     run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg-query -W -f='${db:Status-Status}' "$package" 2>/dev/null \
@@ -2318,6 +2456,19 @@ preflight_display_manager()
     need systemctl
 
     log "SIMULATE/PREFLIGHT: graphical login / display manager" | tee -a "$SESSION_LOG"
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        detect_display_manager
+        log "Detected Arch display manager: $DISPLAY_MANAGER_LABEL ($DISPLAY_MANAGER_SERVICE)" | tee -a "$SESSION_LOG"
+        target_package_installed "$DISPLAY_MANAGER_PACKAGE" \
+            || fail "$DISPLAY_MANAGER_LABEL is not installed according to pacman; refusing to enable an unverified display manager."
+        [[ -f "$TARGET_ROOT/usr/lib/systemd/system/graphical.target" || -f "$TARGET_ROOT/lib/systemd/system/graphical.target" ]] \
+            || fail "graphical.target is missing from the Arch target system."
+        [[ -f "$TARGET_ROOT$DISPLAY_MANAGER_UNIT_REL" ]] \
+            || fail "$DISPLAY_MANAGER_LABEL service unit is missing from the Arch target."
+        trial_display_manager_headless
+        log "Arch display-manager preflight passed; repair will only adjust offline systemd links." | tee -a "$SESSION_LOG"
+        return 0
+    fi
     [[ -x "$TARGET_ROOT/usr/bin/dpkg-query" ]] \
         || fail "dpkg-query is unavailable in the target; cannot validate graphical-login packages."
 
@@ -2391,8 +2542,75 @@ preflight_initramfs()
     done
 }
 
+arch_kernel_versions()
+{
+    local root candidate
+    for root in /usr/lib/modules /lib/modules; do
+        [[ -d "$TARGET_ROOT$root" ]] || continue
+        while IFS= read -r candidate; do
+            [[ "$candidate" =~ ^[[:alnum:]][[:alnum:].+_-]*$ ]] || continue
+            printf '%s\n' "$candidate"
+        done < <(find "$TARGET_ROOT$root" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null)
+    done | sort -V -u
+}
+
+preflight_arch_initramfs()
+{
+    local kver sim_path
+    local -a kernels=()
+
+    [[ "$TARGET_INITRAMFS_BACKEND" == mkinitcpio ]] \
+        || fail "mkinitcpio is not the selected initramfs backend for this target."
+    target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio \
+        || fail "mkinitcpio is not installed in the target system."
+    validate_mapper_crypttab
+    mapfile -t kernels < <(arch_kernel_versions)
+    ((${#kernels[@]} > 0)) || fail "No installed kernel module directories were found for mkinitcpio."
+
+    log "SIMULATE/PREFLIGHT: mkinitcpio trial builds for ${#kernels[@]} installed kernel(s)" | tee -a "$SESSION_LOG"
+    for kver in "${kernels[@]}"; do
+        sim_path="/tmp/boot-repair-initramfs-preflight-${kver}.img"
+        rm -f -- "$TARGET_ROOT$sim_path"
+        run_chroot_try "Trial mkinitcpio build for $kver (temporary output only)" \
+            mkinitcpio -k "$kver" -g "$sim_path"
+        ((CHROOT_TRY_RC == 0)) \
+            || fail "Trial mkinitcpio build failed for $kver; target initramfs files were not changed."
+        [[ -s "$TARGET_ROOT$sim_path" ]] \
+            || fail "Trial mkinitcpio build for $kver produced no image."
+        rm -f -- "$TARGET_ROOT$sim_path"
+        log "PASS: trial mkinitcpio build for $kver" | tee -a "$SESSION_LOG"
+    done
+}
+
+adaptive_arch_initramfs_repair()
+{
+    local image verify_rc
+    local -a images=()
+    preflight_arch_initramfs
+    run_chroot_try "Rebuild Arch initramfs images with mkinitcpio -P" mkinitcpio -P
+    ((CHROOT_TRY_RC == 0)) || fail "mkinitcpio -P failed after transaction-specific preflight."
+    mapfile -t images < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'initramfs-*.img' -size +0c -print 2>/dev/null | sort -V)
+    ((${#images[@]} > 0)) || fail "mkinitcpio completed but no non-empty /boot/initramfs-*.img image was found."
+    if target_has_executable /usr/bin/lsinitcpio /usr/sbin/lsinitcpio; then
+        for image in "${images[@]}"; do
+            set +e
+            run_selected_chroot /usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                lsinitcpio "${image#"$TARGET_ROOT"}" >/dev/null 2>&1
+            verify_rc=$?
+            set -e
+            ((verify_rc == 0)) || fail "Generated Arch initramfs could not be read back by lsinitcpio: ${image#"$TARGET_ROOT"}"
+        done
+        log "PASS: lsinitcpio verified ${#images[@]} Arch initramfs image(s)" | tee -a "$SESSION_LOG"
+    fi
+    log "PASS: Arch initramfs images rebuilt and verified." | tee -a "$SESSION_LOG"
+}
+
 adaptive_initramfs_repair()
 {
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        adaptive_arch_initramfs_repair
+        return 0
+    fi
     local kver mode
     local -a kernels=()
 
@@ -2439,16 +2657,20 @@ adaptive_initramfs_repair()
 
 preflight_grub()
 {
-    local grub_mkconfig="" sim_path target_sim_path err_path output err_output rc
+    local grub_mkconfig="" sim_path target_sim_path err_path output err_output rc generator_mode
 
-    [[ -x "$TARGET_ROOT/usr/sbin/update-grub" ]] \
-        || fail "update-grub is not installed in the target system."
     if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" ]]; then
         grub_mkconfig="/usr/sbin/grub-mkconfig"
     elif [[ -x "$TARGET_ROOT/usr/bin/grub-mkconfig" ]]; then
         grub_mkconfig="/usr/bin/grub-mkconfig"
     else
         fail "grub-mkconfig is not installed in the target system."
+    fi
+    if [[ -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+        generator_mode="update-grub"
+    else
+        generator_mode="grub-mkconfig"
+        log "Generic/Arch GRUB layout detected; using grub-mkconfig with an isolated output path for preflight." | tee -a "$SESSION_LOG"
     fi
 
     sim_path="$SESSION_DIR/grub-preflight.cfg"
@@ -2462,11 +2684,19 @@ preflight_grub()
     grub_trial_once()
     {
         set +e
-        output="$(
-            run_selected_chroot /usr/bin/env \
-                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                "$grub_mkconfig" 2>"$err_path"
-        )"
+        if [[ "$generator_mode" == update-grub ]]; then
+            output="$(
+                run_selected_chroot /usr/bin/env \
+                    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    update-grub 2>"$err_path"
+            )"
+        else
+            output="$(
+                run_selected_chroot /usr/bin/env \
+                    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    "$grub_mkconfig" -o "$target_sim_path" 2>"$err_path"
+            )"
+        fi
         rc=$?
         set -e
         err_output="$(cat "$err_path" 2>/dev/null || true)"
@@ -2483,7 +2713,12 @@ preflight_grub()
     fi
     ((rc == 0)) || fail "GRUB trial generation failed; /boot/grub/grub.cfg was not changed."
 
-    printf '%s\n' "$output" > "$sim_path"
+    if [[ "$generator_mode" == update-grub ]]; then
+        printf '%s\n' "$output" > "$sim_path"
+    else
+        [[ -s "$TARGET_ROOT$target_sim_path" ]] || fail "grub-mkconfig completed but produced no temporary configuration."
+        cp -- "$TARGET_ROOT$target_sim_path" "$sim_path"
+    fi
     [[ -s "$sim_path" ]] || fail "GRUB trial generation produced an empty configuration."
     install -D -m 0644 "$sim_path" "$TARGET_ROOT$target_sim_path"
     if compgen -G "$TARGET_ROOT/boot/vmlinuz-*" >/dev/null \
@@ -2536,7 +2771,11 @@ guard_grub_candidate_preserves_entries()
 
 adaptive_grub_repair()
 {
-    local old_cfg="$SESSION_DIR/grub-before-update.cfg"
+    local old_cfg="$SESSION_DIR/grub-before-update.cfg" generator="update-grub"
+
+    if [[ ! -x "$TARGET_ROOT/usr/sbin/update-grub" && ! -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+        generator="grub-mkconfig"
+    fi
 
     preflight_grub
     if [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]]; then
@@ -2544,17 +2783,25 @@ adaptive_grub_repair()
     else
         rm -f "$old_cfg"
     fi
-    run_chroot_try "Regenerate GRUB configuration" update-grub
+    if [[ "$generator" == update-grub ]]; then
+        run_chroot_try "Regenerate GRUB configuration" update-grub
+    else
+        run_chroot_try "Regenerate GRUB configuration with grub-mkconfig" grub-mkconfig -o /boot/grub/grub.cfg
+    fi
     if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
         if repair_stale_mapper_mount_alias; then
             [[ -s "$old_cfg" ]] && install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
             preflight_grub
-            run_chroot_try "Retry GRUB configuration after mapper alias correction" update-grub
+            if [[ "$generator" == update-grub ]]; then
+                run_chroot_try "Retry GRUB configuration after mapper alias correction" update-grub
+            else
+                run_chroot_try "Retry GRUB configuration after mapper alias correction" grub-mkconfig -o /boot/grub/grub.cfg
+            fi
         fi
     fi
-    ((CHROOT_TRY_RC == 0)) || fail "update-grub failed after preflight/known correction."
+    ((CHROOT_TRY_RC == 0)) || fail "$generator failed after preflight/known correction."
     [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]] \
-        || fail "update-grub completed but /boot/grub/grub.cfg is missing or empty."
+        || fail "$generator completed but /boot/grub/grub.cfg is missing or empty."
     if [[ -s "$old_cfg" ]]; then
         if ! guard_grub_candidate_preserves_entries "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"; then
             # The candidate has already been generated, but restoring the
@@ -2757,7 +3004,7 @@ diagnostic_backend_profile()
 
     if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
         echo "Arch policy: package changes require an explicit full pacman transaction; partial metadata refresh is not treated as a repair."
-        echo "Arch status: read-only diagnostics are enabled; modifying Arch actions remain gated until their backend preflight is implemented."
+        echo "Arch status: modifying package, initramfs, GRUB and conventional EFI actions require their transaction-specific preflight."
     elif [[ "$TARGET_DISTRO_FAMILY" == debian ]]; then
         echo "Debian policy: existing guarded APT/dpkg repair backend selected when its stage-specific preflight passes."
     else
@@ -4388,15 +4635,16 @@ stage_rank()
 
 detect_efi_bootloader_id()
 {
-    local os_id existing_dir name lower
+    local os_id existing_dir name lower esp_root
     local -a candidates=()
 
     os_id="${TARGET_OS_ID//[^[:alnum:]_.-]/}"
+    esp_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI"
 
     # Prefer an existing target-owned EFI vendor directory so a repair updates
     # the installation the firmware was already using rather than inventing a
     # second entry. Ignore the generic fallback and common foreign OS folders.
-    if [[ -d "$TARGET_ROOT/boot/efi/EFI" ]]; then
+    if [[ -d "$esp_root" ]]; then
         while IFS= read -r existing_dir; do
             [[ -d "$existing_dir" ]] || continue
             name="$(basename -- "$existing_dir")"
@@ -4413,7 +4661,7 @@ detect_efi_bootloader_id()
                 | grep -q .; then
                 candidates+=("$name")
             fi
-        done < <(find "$TARGET_ROOT/boot/efi/EFI" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)
+        done < <(find "$esp_root" -mindepth 1 -maxdepth 1 -type d -print 2>/dev/null | sort)
     fi
 
     if ((${#candidates[@]} == 1)); then
@@ -4455,6 +4703,37 @@ validate_target_esp()
         vfat|fat|fat16|fat32|msdos) ;;
         *) fail "Mounted /boot/efi is not a FAT EFI System Partition (detected ${EFI_ESP_FSTYPE:-unknown})." ;;
     esac
+}
+
+validate_selected_esp()
+{
+    local mount_path source fstype
+    if [[ "$TARGET_DISTRO_FAMILY" != arch && "$TARGET_ESP_MOUNT" == "/boot/efi" ]]; then
+        validate_target_esp
+        return 0
+    fi
+    profile_target_backends
+    mount_path="${TARGET_ESP_MOUNT:-}"
+    [[ "$mount_path" == /boot || "$mount_path" == /boot/efi || "$mount_path" == /efi ]] \
+        || fail "Unable to derive a supported EFI System Partition mount for this target."
+    [[ -d "$TARGET_ROOT$mount_path" ]] || fail "Target EFI mount directory is not available: $mount_path"
+    mountpoint -q "$TARGET_ROOT$mount_path" \
+        || fail "Target EFI System Partition is not mounted at $mount_path."
+    read -r source fstype < <(
+        findmnt -rn -o SOURCE,FSTYPE --target "$TARGET_ROOT$mount_path" 2>/dev/null \
+            | awk '$1 ~ /^\/dev\// {print $1, $2; exit}'
+    ) || true
+    [[ -n "$source" ]] && is_block_device "$source" \
+        || fail "Unable to identify the mounted EFI System Partition source at $mount_path."
+    same_single_top_disk "$TARGET_DISK" "$source" \
+        || fail "EFI System Partition resolves outside the selected target disk: $source"
+    case "${fstype,,}" in
+        vfat|fat|fat16|fat32|msdos) ;;
+        *) fail "Mounted $mount_path is not a FAT EFI System Partition (detected ${fstype:-unknown})." ;;
+    esac
+    EFI_ESP_SOURCE="$source"
+    EFI_ESP_FSTYPE="$fstype"
+    log "Selected EFI System Partition: $EFI_ESP_SOURCE ($EFI_ESP_FSTYPE) mounted at $mount_path" | tee -a "$SESSION_LOG"
 }
 
 # Read-only ESP discovery used by host diagnostics and backend profiling.  The
@@ -4723,13 +5002,90 @@ efi_entry_destination_role()
 
 efi_selected_wfai_loader()
 {
-    local efi_root="$TARGET_ROOT/boot/efi/EFI" path relative
+    local efi_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI" path relative
     [[ -d "$efi_root" ]] || return 1
     path="$(find "$efi_root" -type f -iname 'iPXE.efi' -print -quit 2>/dev/null || true)"
     [[ -n "$path" ]] || return 1
     relative="${path#"$efi_root"/}"
     [[ "$relative" != "$path" ]] || return 1
     printf '%s\n' "\\EFI\\${relative//\//\\}"
+}
+
+efi_selected_generic_loader()
+{
+    local efi_root vendor_root path relative candidate
+    efi_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI"
+    vendor_root="$efi_root/${EFI_BOOTLOADER_ID:-}"
+    [[ -d "$vendor_root" ]] || return 1
+
+    # Prefer the conventional vendor loader names while accepting a
+    # distribution-specific filename when the directory provides one. Never
+    # select the ESP fallback or a backup artifact as the primary destination.
+    for candidate in grubx64.efi shimx64.efi systemd-bootx64.efi; do
+        path="$(find "$vendor_root" -maxdepth 1 -type f -iname "$candidate" -print -quit 2>/dev/null || true)"
+        [[ -n "$path" ]] || continue
+        relative="${path#"$efi_root"/}"
+        [[ "$relative" != "$path" ]] || continue
+        printf '%s\n' "\\EFI\\${relative//\//\\}"
+        return 0
+    done
+    while IFS= read -r -d '' path; do
+        [[ "${path,,}" != *.bak && "${path,,}" != *.backup ]] || continue
+        relative="${path#"$efi_root"/}"
+        [[ "$relative" != "$path" ]] || continue
+        printf '%s\n' "\\EFI\\${relative//\//\\}"
+        return 0
+    done < <(find "$vendor_root" -maxdepth 1 -type f -iname '*.efi' ! -iname 'bootx64.efi' -print0 2>/dev/null)
+    return 1
+}
+
+efi_ensure_selected_generic_entry()
+{
+    local partuuid="$1" model="$2" loader esp disk partnum label resolved current
+    local -a ids=()
+
+    loader="$(efi_selected_generic_loader || true)"
+    [[ -n "$loader" ]] || {
+        log "Selected EFI vendor directory has no primary loader; no generic firmware entry was created." | tee -a "$SESSION_LOG"
+        return 0
+    }
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
+    if ((${#ids[@]} > 1)); then
+        log "Multiple generic EFI entries already point to the selected system loader (${ids[*]}); destination maintenance will retain one after the repair." | tee -a "$SESSION_LOG"
+        return 0
+    fi
+    ((${#ids[@]} == 0)) || return 0
+
+    uefi_nvram_writable || {
+        log "Selected EFI loader is present at $loader, but firmware variables are not writable; no generic firmware entry was created." | tee -a "$SESSION_LOG"
+        return 0
+    }
+    command -v efibootmgr >/dev/null 2>&1 || return 0
+    esp="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    [[ -n "$esp" ]] && is_block_device "$esp" || {
+        log "ERROR: selected EFI loader is present, but its ESP could not be resolved as a block device." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    resolved="$(efi_disk_and_partnum_for_esp "$esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] || {
+        log "ERROR: unable to derive disk and partition for selected ESP while restoring its generic EFI entry." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    label="${EFI_BOOTLOADER_ID:-Linux}"
+    [[ -n "$model" ]] && label="$(efi_label_with_selected_model "$label" "$model")"
+    log "Restoring missing generic EFI firmware entry on selected system ESP $esp as '$label' ($loader)." | tee -a "$SESSION_LOG"
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader "$loader" 2>&1 \
+        | tee -a "$SESSION_LOG" || return 1
+    current="$SESSION_DIR/efi-nvram-generic.txt"
+    efibootmgr -v > "$current" 2>&1 || return 1
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" || true)
+    ((${#ids[@]} == 1)) || {
+        log "ERROR: generic EFI registration completed but could not be verified uniquely on selected system ESP $esp." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
+    log "PASS: generic EFI firmware entry restored as Boot${ids[0]} on selected system ESP $esp." | tee -a "$SESSION_LOG"
 }
 
 efi_ensure_selected_wfai_entry()
@@ -5183,10 +5539,13 @@ efi_entry_class_line()
 
 efi_host_esp_source()
 {
-    local source
+    local source esp_mount="/boot/efi"
+    if [[ "$RUNNING_HOST_MODE" == 1 && -n "$TARGET_ESP_MOUNT" ]]; then
+        esp_mount="$TARGET_ESP_MOUNT"
+    fi
     # systemd automounts expose an `autofs` row before the actual vfat row;
     # choose the block-backed mount rather than the synthetic systemd-1 source.
-    source="$(findmnt -rn -o SOURCE,FSTYPE --target /boot/efi 2>/dev/null \
+    source="$(findmnt -rn -o SOURCE,FSTYPE --target "$esp_mount" 2>/dev/null \
         | awk '$1 ~ /^\/dev\// && $2 ~ /^(vfat|fat|fat16|fat32|msdos)$/ {print $1; exit}' || true)"
     source="${source%%\[*}"
     [[ -n "$source" && -b "$source" ]] || return 1
@@ -5208,7 +5567,7 @@ efi_set_inventory_esp_ids()
     host_source="$(efi_host_esp_source 2>/dev/null || true)"
     if [[ -n "$host_source" ]]; then
         EFI_HOST_ESP_SOURCE="$host_source"
-        EFI_HOST_ESP_MOUNT="/boot/efi"
+        EFI_HOST_ESP_MOUNT="${TARGET_ESP_MOUNT:-/boot/efi}"
         EFI_HOST_ESP_PARTUUID="$(blkid -s PARTUUID -o value "$host_source" 2>/dev/null || true)"
         EFI_HOST_ESP_PARTUUID="${EFI_HOST_ESP_PARTUUID,,}"
     fi
@@ -5321,6 +5680,22 @@ efi_uki_entry_ids_for_partuuid()
                     print toupper(id)
                 }
         ' | sort -u
+}
+
+efi_entry_ids_for_partuuid_role()
+{
+    local partuuid="${1,,}" wanted_role="$2" nvram line part role id
+    command -v efibootmgr >/dev/null 2>&1 || return 1
+    [[ -n "$partuuid" ]] || return 1
+    nvram="$(efibootmgr -v 2>/dev/null || true)"
+    while IFS= read -r line; do
+        part="$(efi_entry_partuuid_line "$line")"
+        [[ "$part" == "$partuuid" ]] || continue
+        role="$(efi_entry_destination_role "$line")"
+        [[ "$role" == "$wanted_role" ]] || continue
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] && printf '%s\n' "${id^^}"
+    done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' <<<"$nvram")
 }
 
 efi_host_tuxedo_uki_entry_ids()
@@ -5779,12 +6154,9 @@ verify_tuxedo_uki_root_binding()
 
 validate_efi_bootloader_target()
 {
-    local arch
-
     EFI_GRUB_INSTALL_PATH=""
     EFI_BOOTLOADER_ID=""
-SNAPSHOT_TOP=""
-    validate_target_esp
+    validate_selected_esp
 
     if [[ -x "$TARGET_ROOT/usr/sbin/grub-install" ]]; then
         EFI_GRUB_INSTALL_PATH="/usr/sbin/grub-install"
@@ -5793,10 +6165,6 @@ SNAPSHOT_TOP=""
     else
         fail "grub-install is not installed in the target system."
     fi
-
-    arch="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin dpkg --print-architecture 2>/dev/null || true)"
-    [[ "$arch" == "amd64" ]] \
-        || fail "EFI reinstall currently supports amd64/x86_64 GRUB targets only (detected ${arch:-unknown})."
 
     EFI_BOOTLOADER_ID="$(detect_efi_bootloader_id)"
     [[ -n "$EFI_BOOTLOADER_ID" ]] || fail "Unable to derive a safe EFI bootloader ID."
@@ -5842,7 +6210,7 @@ reinstall_efi_bootloader()
     install_args=(
         "$EFI_GRUB_INSTALL_PATH"
         --target=x86_64-efi
-        --efi-directory=/boot/efi
+        --efi-directory="${TARGET_ESP_MOUNT:-/boot/efi}"
         --bootloader-id="$EFI_BOOTLOADER_ID"
         --recheck
     )
@@ -5871,6 +6239,10 @@ reinstall_efi_bootloader()
         nvram_map="$SESSION_DIR/efi-nvram-map-grub.tsv"
         efi_reconcile_firmware_inventory "$nvram_pre" "$nvram_map" \
             || fail "Firmware inventory reconciliation could not restore every host, repair-target, and foreign entry safely after conventional GRUB EFI install."
+        efi_ensure_selected_generic_entry \
+            "${EFI_TARGET_ESP_PARTUUID,,}" \
+            "$(efi_selected_system_model "$EFI_ESP_SOURCE" 2>/dev/null || true)" \
+            || fail "Unable to restore and verify the selected system's generic EFI firmware entry."
         restore_missing_host_tuxedo_uki_entry "$RUNNING_HOST_MODE" \
             || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
         efi_annotate_selected_entries \
@@ -5887,16 +6259,16 @@ reinstall_efi_bootloader()
             || fail "Selected-system EFI labels could not be verified after GRUB BootOrder maintenance."
     fi
 
-    efi_dir="$TARGET_ROOT/boot/efi/EFI/$EFI_BOOTLOADER_ID"
+    efi_dir="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI/$EFI_BOOTLOADER_ID"
     [[ -d "$efi_dir" ]] \
-        || fail "grub-install completed but EFI vendor directory was not found: /boot/efi/EFI/$EFI_BOOTLOADER_ID"
+        || fail "grub-install completed but EFI vendor directory was not found: ${TARGET_ESP_MOUNT:-/boot/efi}/EFI/$EFI_BOOTLOADER_ID"
     if ! find "$efi_dir" -maxdepth 1 -type f \
         \( -iname 'grub*.efi' -o -iname 'shim*.efi' \) -print -quit 2>/dev/null \
         | grep -q .; then
-        fail "grub-install completed but no GRUB/shim EFI binary was found under /boot/efi/EFI/$EFI_BOOTLOADER_ID."
+        fail "grub-install completed but no GRUB/shim EFI binary was found under ${TARGET_ESP_MOUNT:-/boot/efi}/EFI/$EFI_BOOTLOADER_ID."
     fi
 
-    log "PASS: EFI loader files verified under /boot/efi/EFI/$EFI_BOOTLOADER_ID" | tee -a "$SESSION_LOG"
+    log "PASS: EFI loader files verified under ${TARGET_ESP_MOUNT:-/boot/efi}/EFI/$EFI_BOOTLOADER_ID" | tee -a "$SESSION_LOG"
     log "EFI registration mode: $nvram_mode" | tee -a "$SESSION_LOG"
 }
 
@@ -5905,9 +6277,10 @@ restore_display_manager()
     local display_link default_link
     need systemctl
 
-    [[ -x "$TARGET_ROOT/usr/bin/dpkg-query" ]] \
-        || fail "dpkg-query is unavailable in the target; cannot verify display-manager package state."
     detect_display_manager
+    if [[ "$TARGET_DISTRO_FAMILY" != arch && ! -x "$TARGET_ROOT/usr/bin/dpkg-query" ]]; then
+        fail "dpkg-query is unavailable in the target; cannot verify display-manager package state."
+    fi
     if [[ -n "$DISPLAY_MANAGER_PACKAGE" ]] && ! target_package_installed "$DISPLAY_MANAGER_PACKAGE"; then
         fail "$DISPLAY_MANAGER_LABEL is not fully installed in the target. Run package repair/reinstall before restoring graphical login."
     fi
@@ -5962,6 +6335,9 @@ repair_boot_stack()
         preflight_tuxedo_uki
         rebuild_tuxedo_uki
         verify_tuxedo_uki_root_binding
+    elif [[ "$TARGET_DISTRO_FAMILY" == arch && "$TARGET_BOOTLOADER_BACKEND" == grub ]]; then
+        log "Arch GRUB layout detected; applying the guarded conventional EFI reinstall after initramfs preflight." | tee -a "$SESSION_LOG"
+        reinstall_efi_bootloader
     else
         log "No TUXEDO UKI builder detected; preserving the distribution's existing EFI layout during boot-stack reconciliation." | tee -a "$SESSION_LOG"
     fi
@@ -6034,7 +6410,21 @@ run_host_repair()
 
     CURRENT_STAGE="host safety preflight"
     RUNNING_HOST_MODE=1
-    prepare_running_host "$raw_disk" "$raw_root" yes yes
+    prepare_running_host "$raw_disk" "$raw_root" no yes
+    profile_target_backends
+    if ! is_debian_family && ! is_arch_family; then
+        fail "Native host repairs require a supported Debian/Ubuntu or Arch backend. Detected: $TARGET_PRETTY"
+    fi
+    if is_arch_family; then
+        for stage in "$@"; do
+            case "$stage" in
+                dpkg-configure)
+                    fail "dpkg configuration is not available on Arch; use the Arch package transaction stages instead." ;;
+                apt-update)
+                    fail "Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction." ;;
+            esac
+        done
+    fi
     if [[ "$package_stage" == true ]]; then
         host_package_manager_gate
     fi
@@ -6047,9 +6437,14 @@ run_host_repair()
             log "Host EFI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE, id=$EFI_BOOTLOADER_ID)" | tee -a "$SESSION_LOG"
         fi
     fi
-    if [[ "$boot_stack_requested" == true && "$TARGET_OS_ID" == tuxedo ]]; then
-        validate_tuxedo_uki_target
-        log "Host boot-stack TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+    if [[ "$boot_stack_requested" == true ]]; then
+        if is_tuxedo_uki_layout; then
+            validate_tuxedo_uki_target
+            log "Host boot-stack TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+        elif is_arch_family; then
+            validate_efi_bootloader_target
+            log "Host boot-stack Arch EFI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE, id=$EFI_BOOTLOADER_ID)" | tee -a "$SESSION_LOG"
+        fi
     fi
     # Every native modifying stage runs through the private firmware-variable
     # namespace.  Package, kernel, display, GRUB and vendor hooks can all
@@ -6066,9 +6461,12 @@ run_host_repair()
         CURRENT_STAGE="$stage"
         case "$stage" in
             dpkg-configure) run_chroot "Complete interrupted package configuration" dpkg --configure -a ;;
-            fix-broken) adaptive_fix_broken ;;
-            apt-update) run_apt_update ;;
-            apt-upgrade) adaptive_apt_upgrade ;;
+            fix-broken)
+                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies"; else adaptive_fix_broken; fi ;;
+            apt-update)
+                run_apt_update ;;
+            apt-upgrade)
+                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages"; else adaptive_apt_upgrade; fi ;;
             dkms) adaptive_dkms_repair ;;
             display-manager) adaptive_display_manager_repair ;;
             initramfs) adaptive_initramfs_repair ;;
@@ -6092,26 +6490,49 @@ run_host_repair()
 
 run_host_default()
 {
-    local raw_disk="$1" raw_root="$2" pre current
+    local raw_disk="$1" raw_root="$2" pre current partuuid role
     local -a ids=()
 
     CURRENT_STAGE="host default EFI entry"
     RUNNING_HOST_MODE=1
-    prepare_running_host "$raw_disk" "$raw_root" yes yes
+    prepare_running_host "$raw_disk" "$raw_root" no yes
+    profile_target_backends
+    if ! is_debian_family && ! is_arch_family; then
+        fail "Native host default selection requires a supported Debian/Ubuntu or Arch backend. Detected: $TARGET_PRETTY"
+    fi
     uefi_nvram_writable || fail "UEFI variables are not writable; cannot change the running host's default EFI entry."
     command -v efibootmgr >/dev/null 2>&1 || fail "efibootmgr is required to change the running host's default EFI entry."
 
     pre="$SESSION_DIR/efi-nvram-host-default-before.txt"
     efibootmgr -v > "$pre" 2>&1 || fail "Unable to capture firmware entries before changing the host default."
     efi_print_firmware_inventory "$pre" | tee -a "$SESSION_LOG"
-    restore_missing_host_tuxedo_uki_entry 1 \
-        || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
-    efi_annotate_selected_entries \
-        || fail "Unable to annotate the running host's selected ESP or restore its iPXE/WebFAI registration safely."
+    if is_tuxedo_uki_layout; then
+        restore_missing_host_tuxedo_uki_entry 1 \
+            || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
+        efi_annotate_selected_entries \
+            || fail "Unable to annotate the running host's selected ESP or restore its iPXE/WebFAI registration safely."
+    else
+        validate_efi_bootloader_target
+        partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+        partuuid="${partuuid,,}"
+        [[ -n "$partuuid" ]] || fail "Unable to identify the running host ESP PARTUUID for default selection."
+        for role in uki vendor-loader fallback wfai; do
+            mapfile -t ids < <(efi_entry_ids_for_partuuid_role "$partuuid" "$role" 2>/dev/null || true)
+            if ((${#ids[@]} == 1)); then
+                break
+            fi
+            ids=()
+        done
+        ((${#ids[@]} == 1)) || fail "No unique bootloader entry exists for the running host ESP; repair EFI first, then retry the default selection."
+        efi_annotate_selected_entries \
+            || fail "Unable to annotate the running host's selected ESP entries safely."
+    fi
     current="$SESSION_DIR/efi-nvram-host-default-after-create.txt"
     efibootmgr -v > "$current" 2>&1 || fail "Unable to capture firmware entries after host entry restoration."
-    mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
-    ((${#ids[@]} == 1)) || fail "Host TUXEDO UKI entry is not uniquely identifiable; refusing to change BootOrder."
+    if is_tuxedo_uki_layout; then
+        mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
+        ((${#ids[@]} == 1)) || fail "Host TUXEDO UKI entry is not uniquely identifiable; refusing to change BootOrder."
+    fi
     efi_promote_entry_first "${ids[0]}"
     efi_prune_selected_duplicate_destinations \
         || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
@@ -6126,7 +6547,7 @@ run_host_default()
 
 run_repair()
 {
-    local efi_requested=false grub_requested=false boot_stack_requested=false previous_rank=0 current_rank
+    local efi_requested=false grub_requested=false boot_stack_requested=false previous_rank=0 current_rank stage
 
     (($# > 0)) || fail "No repair stages were requested."
     for stage in "$@"; do
@@ -6148,12 +6569,26 @@ run_repair()
     # filesystem read-write can replay a journal, so family support is decided
     # before promoting the mount to read-write.
     prepare_target ro
-    is_debian_family || fail "Modifying repairs are currently limited to Debian/Ubuntu-family targets. Detected: $TARGET_PRETTY"
+    profile_target_backends
+    if ! is_debian_family && ! is_arch_family; then
+        fail "Modifying repairs require a supported Debian/Ubuntu or Arch backend. Detected: $TARGET_PRETTY"
+    fi
+    if is_arch_family; then
+        for stage in "$@"; do
+            case "$stage" in
+                dpkg-configure)
+                    fail "dpkg configuration is not available on Arch; use the Arch package transaction stages instead." ;;
+                apt-update)
+                    fail "Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction." ;;
+            esac
+        done
+    fi
     # Resolve and inspect separate boot filesystems while they are still
     # read-only. promote_target_rw() will remount only these recorded target
     # mounts after every selected-disk check has succeeded.
     mount_target_boot_entry "/boot" ro
     mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
     if [[ "$efi_requested" == true ]]; then
         if is_tuxedo_uki_layout; then
             validate_tuxedo_uki_target
@@ -6163,9 +6598,14 @@ run_repair()
             log "EFI repair read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE, id=$EFI_BOOTLOADER_ID)" | tee -a "$SESSION_LOG"
         fi
     fi
-    if [[ "$boot_stack_requested" == true && "$TARGET_OS_ID" == "tuxedo" ]]; then
-        validate_tuxedo_uki_target
-        log "Boot-stack TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+    if [[ "$boot_stack_requested" == true ]]; then
+        if is_tuxedo_uki_layout; then
+            validate_tuxedo_uki_target
+            log "Boot-stack TUXEDO UKI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE)" | tee -a "$SESSION_LOG"
+        elif is_arch_family; then
+            validate_efi_bootloader_target
+            log "Boot-stack Arch EFI read-only preflight: PASS ($EFI_ESP_SOURCE, $EFI_ESP_FSTYPE, id=$EFI_BOOTLOADER_ID)" | tee -a "$SESSION_LOG"
+        fi
     fi
     need chroot
     promote_target_rw
@@ -6179,13 +6619,13 @@ run_repair()
                 run_chroot "Complete interrupted package configuration" dpkg --configure -a
                 ;;
             fix-broken)
-                adaptive_fix_broken
+                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies"; else adaptive_fix_broken; fi
                 ;;
             apt-update)
                 run_apt_update
                 ;;
             apt-upgrade)
-                adaptive_apt_upgrade
+                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages"; else adaptive_apt_upgrade; fi
                 ;;
             dkms)
                 adaptive_dkms_repair
