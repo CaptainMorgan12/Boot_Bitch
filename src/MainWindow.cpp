@@ -6550,6 +6550,16 @@ void MainWindow::updateRepairScopeControls()
             ? QStringLiteral("Allowed for the explicitly selected running host. The helper repeats host identity, mount, package-lock and boot preservation checks.")
             : QString());
     }
+    const QString evidence = m_hostMaintenanceMode
+        ? m_hostDiagnosticCache.value(QStringLiteral("backend"))
+        : m_targetDiagnosticCache.value(QStringLiteral("backend"));
+    const bool archBackend = evidence.contains(QStringLiteral("Distribution family: arch"), Qt::CaseInsensitive)
+        || evidence.contains(QStringLiteral("Package manager backend: pacman"), Qt::CaseInsensitive);
+    if (archBackend) {
+        for (QCheckBox *check : {m_fullRepairDpkg, m_fullRepairAptUpdate, m_fullRepairUpgrade}) {
+            if (check) { check->setChecked(false); check->setEnabled(false); }
+        }
+    }
 }
 
 bool MainWindow::repairTargetReady(QString *reason) const
