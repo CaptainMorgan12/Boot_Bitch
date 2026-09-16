@@ -157,7 +157,7 @@ set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-p
 set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, hicolor-icon-theme")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
-set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family host maintenance and repair-system recovery, LUKS\n unlock and verified bidirectional file recovery/copy.")
+set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family maintenance and repair-system recovery, plus guarded\n Arch package, initramfs, GRUB and conventional EFI stages after their\n transaction-specific preflights. It also provides LUKS unlock and verified\n bidirectional file recovery/copy.")
 
 # CPack can also produce an RPM for Fedora, openSUSE and other RPM-based
 # systems.  Keep these requirements separate from the Debian dependency names;

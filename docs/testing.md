@@ -43,3 +43,19 @@ The VM can exchange source trees or generated packages through
 `makepkg`; it does not install dependencies unless `--syncdeps` is explicitly
 requested. Install the resulting package with `pacman -U` only after
 the artifact and dependency list have been reviewed.
+
+After installation, the Arch VM can exercise the native guarded backend with
+the VM's disposable root (for example, `/dev/vda` and `/dev/vda2`):
+
+```bash
+/usr/libexec/boot-repair/boot-repair-helper host-diagnose /dev/vda /dev/vda2 backend
+/usr/libexec/boot-repair/boot-repair-helper host-repair /dev/vda /dev/vda2 fix-broken
+/usr/libexec/boot-repair/boot-repair-helper host-repair /dev/vda /dev/vda2 initramfs
+/usr/libexec/boot-repair/boot-repair-helper host-repair /dev/vda /dev/vda2 grub
+```
+
+The package transaction uses a copied pacman database and cache for its trial;
+repository/download errors, removals and unresolved dependencies stop the
+repair before the live transaction is started. The conventional EFI repair
+also verifies or creates one firmware entry for the selected vendor loader,
+then reruns the duplicate-destination and BootOrder checks.

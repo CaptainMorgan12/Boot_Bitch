@@ -22,8 +22,10 @@ Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development se
 - Added a read-only distribution/backend profile that distinguishes Debian/APT
   and Arch/pacman systems, detects mkinitcpio/dracut/initramfs-tools,
   GRUB/systemd-boot/generic UKI layouts, `/efi` versus `/boot/efi`, and common
-  kernel naming conventions. Arch modifying actions remain gated while their
-  transaction-specific repair backend is developed.
+  kernel naming conventions. Arch modifying actions use transaction-specific
+  pacman, mkinitcpio, GRUB and EFI preflights; conventional EFI repair also
+  restores a single verified vendor-loader entry when grub-install only leaves
+  files on the ESP. Unsupported stages remain gated.
 - Added **Run All** to populate every per-diagnostic cache through one read-only target session.
 - Added capture timestamps and cache identity based on physical disk and root filesystem.
 - Added authoritative cache invalidation after target edits, repairs, snapshot rollback, Host → Repair copies and shell commands that may modify files.
