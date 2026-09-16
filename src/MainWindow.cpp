@@ -140,10 +140,10 @@ static const DiagnosticSpec diagnosticSpecs[] = {
     {"display", "Graphical login / display manager", "Reviews graphical.target, the configured display manager (for example SDDM, GDM3, LightDM, or another systemd manager), installed desktop packages, and recent boot/journal evidence without starting the GUI.", "video-display"},
     {"errors", "Boot errors", "Reads recent error-priority entries from the running host or selected repair system's persistent journal when available.", "dialog-warning"},
     {"usage", "Disk usage", "Summarizes filesystem capacity/free space for the running host or read-only repair target.", "drive-harddisk"},
-    {"fstab", "fstab", "Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.", "text-x-generic"},
+    {"fstab", "fstab", "Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.", "document"},
     {"btrfs", "Btrfs status", "Shows Btrfs filesystem and subvolume information for the running host or selected repair system.", "drive-harddisk"},
-    {"mapper", "Mapper status", "Shows selected mapper ancestry, device-mapper state and cryptsetup status when available.", "document-encrypt"},
-    {"luks", "LUKS / crypttab", "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.", "document-encrypt"},
+    {"mapper", "Mapper status", "Shows selected mapper ancestry, device-mapper state and cryptsetup status when available.", "lock"},
+    {"luks", "LUKS / crypttab", "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.", "lock"},
     {"report", "Full diagnostic report", "Combines all read-only diagnostics for the selected scope in one privileged inspection session.", "document-preview"}
 };
 
@@ -358,7 +358,8 @@ QIcon bundledIcon(const QString &name)
     } else if (name.contains(QStringLiteral("btrfs")) || name.contains(QStringLiteral("filesystem"))
                || name.contains(QStringLiteral("ext4"))) {
         atlasName = QStringLiteral("filesystem");
-    } else if (name.contains(QStringLiteral("configure")) || name.contains(QStringLiteral("settings"))
+    } else if (name.contains(QStringLiteral("refresh")) || name.contains(QStringLiteral("run"))
+               || name.contains(QStringLiteral("software")) || name.contains(QStringLiteral("configure")) || name.contains(QStringLiteral("settings"))
                || name.contains(QStringLiteral("preferences")) || name.contains(QStringLiteral("repair"))) {
         atlasName = QStringLiteral("gear");
     } else if (name.contains(QStringLiteral("terminal"))) {
@@ -373,6 +374,11 @@ QIcon bundledIcon(const QString &name)
         atlasName = QStringLiteral("display");
     } else if (name.contains(QStringLiteral("copy"))) {
         atlasName = QStringLiteral("copy");
+    } else if (name.contains(QStringLiteral("open")) || name.contains(QStringLiteral("save"))
+               || name.contains(QStringLiteral("edit")) || name.contains(QStringLiteral("list"))) {
+        atlasName = QStringLiteral("document");
+    } else if (name.contains(QStringLiteral("removable")) || name.contains(QStringLiteral("harddisk"))) {
+        atlasName = QStringLiteral("drive");
     } else if (name.contains(QStringLiteral("folder")) || name.contains(QStringLiteral("log"))) {
         atlasName = QStringLiteral("folder");
     } else if (name.contains(QStringLiteral("snapshot")) || name.contains(QStringLiteral("revert"))) {
@@ -386,7 +392,17 @@ QIcon bundledIcon(const QString &name)
 
 QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
 {
-    QIcon source = QIcon::fromTheme(name, fallback);
+    // Prefer our semantic atlas for controls whose desktop-theme variants are
+    // frequently generic (K badges, blank pages, distro crests). This keeps
+    // the UI consistent across Arch, Debian, GNOME and Plasma themes.
+    QIcon source;
+    if (name == QStringLiteral("text-x-generic") || name == QStringLiteral("document")
+        || name == QStringLiteral("document-encrypt") || name == QStringLiteral("lock")
+        || name == QStringLiteral("settings-configure") || name == QStringLiteral("preferences-system")
+        || name == QStringLiteral("security-high")) {
+        source = bundledIcon(name);
+    }
+    if (source.isNull()) source = QIcon::fromTheme(name, fallback);
     // Try common freedesktop aliases before drawing a fallback.  Themes often
     // ship a semantically equivalent name rather than every application
     // specific name used by Boot Bitch.
@@ -1335,8 +1351,11 @@ QWidget *MainWindow::buildSystemsPage()
     hostLayout->setSpacing(9);
 
     auto *hostIcon = new QLabel;
-    hostIcon->setPixmap(themedIcon(QStringLiteral("security-high"),
-                                        themedIcon(QStringLiteral("drive-harddisk"))).pixmap(30, 30));
+    // Use the bundled protected-host shield so distro icon themes cannot
+    // substitute an unrelated distribution crest (for example Arch's flag).
+    QIcon protectedIcon = bundledIcon(QStringLiteral("security-high"));
+    if (protectedIcon.isNull()) protectedIcon = themedIcon(QStringLiteral("drive-harddisk"));
+    hostIcon->setPixmap(protectedIcon.pixmap(30, 30));
     hostIcon->setFixedSize(34, 34);
     hostIcon->setAlignment(Qt::AlignCenter);
     hostLayout->addWidget(hostIcon, 0, Qt::AlignTop);
