@@ -6572,8 +6572,25 @@ void MainWindow::updateRepairScopeControls()
     const bool archBackend = evidence.contains(QStringLiteral("Distribution family: arch"), Qt::CaseInsensitive)
         || evidence.contains(QStringLiteral("Package manager backend: pacman"), Qt::CaseInsensitive);
     if (archBackend) {
-        for (QCheckBox *check : {m_fullRepairDpkg, m_fullRepairAptUpdate, m_fullRepairUpgrade}) {
+        // Arch has no dpkg database or standalone APT metadata transaction.
+        // Its guarded package repair/upgrade is one full pacman -Syu
+        // transaction, which is exposed through the existing broken-package
+        // and upgrade actions and handled by the Arch helper backend.
+        if (m_fullRepairBrokenPackages) {
+            m_fullRepairBrokenPackages->setText(QStringLiteral("Repair Arch package dependencies (full pacman transaction)"));
+        }
+        if (m_fullRepairUpgrade) {
+            m_fullRepairUpgrade->setText(QStringLiteral("Upgrade Arch packages (full pacman transaction)"));
+        }
+        for (QCheckBox *check : {m_fullRepairDpkg, m_fullRepairAptUpdate}) {
             if (check) { check->setChecked(false); check->setEnabled(false); }
+        }
+    } else {
+        if (m_fullRepairBrokenPackages) {
+            m_fullRepairBrokenPackages->setText(QStringLiteral("Repair broken package dependencies"));
+        }
+        if (m_fullRepairUpgrade) {
+            m_fullRepairUpgrade->setText(QStringLiteral("Upgrade installed packages (adaptive APT simulation)"));
         }
     }
 }
