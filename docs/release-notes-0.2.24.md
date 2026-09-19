@@ -1,9 +1,9 @@
 # Boot Bitch 0.2.24
 
-Boot Bitch 0.2.24 rolls up the local 0.2.21 and 0.2.22 iterations and the final
-0.2.24 fixes into one release after GitHub's 0.2.20. It adds guarded running-host
-maintenance, repair-system folder browsing, and verified EFI destination and
-label maintenance.
+Boot Bitch 0.2.24 rolls up the local 0.2.21 and 0.2.22 iterations, the published
+0.2.23 release, and the final 0.2.24 fixes into one cumulative release after
+GitHub's 0.2.23. It adds guarded running-host maintenance, repair-system folder
+browsing, and verified EFI destination and label maintenance.
 
 - Run the complete read-only diagnostic set for either the protected Running
   Host or a selected repair system, and run the supported maintenance stages
@@ -134,7 +134,7 @@ icon atlas and documents both Running Host and selected repair-system scopes.
 
 The Debian package and AppImage are built locally from the complete source tree.
 
-[Full source diff: v0.2.20...v0.2.24](https://github.com/CaptainMorgan12/Boot_Bitch/compare/v0.2.20...v0.2.24).
+[Full source diff: v0.2.23...v0.2.24](https://github.com/CaptainMorgan12/Boot_Bitch/compare/v0.2.23...v0.2.24).
 
 
 ## 0.2.24 additions

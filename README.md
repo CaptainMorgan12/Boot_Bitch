@@ -101,8 +101,9 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ## 0.2.24 refinements
 
-This release includes the local 0.2.21 and 0.2.22 iterations below. The previous
-GitHub release was 0.2.20; see the [cumulative release notes](docs/release-notes-0.2.24.md).
+This release includes the local 0.2.21 and 0.2.22 iterations below, published
+in 0.2.23. The previous GitHub release was 0.2.23; see the
+[cumulative release notes](docs/release-notes-0.2.24.md).
 
 - Maintain one canonical UKI, firmware fallback, and WebFAI destination per
   maintained ESP, removing only safely identified duplicate routes such as a
@@ -330,7 +331,7 @@ To inspect the environment without installing anything:
 ./scripts/check-dev-env.sh
 ```
 
-## One-command Release build + Debian package
+## One-command Release build + packages
 
 Run:
 
@@ -338,7 +339,7 @@ Run:
 ./scripts/build.sh
 ```
 
-This performs a clean Release build and validates an isolated staged install. On Debian-family build hosts with the normal packaging tools available, it also creates a `.deb` in the same run. Nothing is installed. Output is written under `build-release/`.
+This performs a clean Release build and validates an isolated staged install. On Debian-family build hosts with the normal packaging tools available, it also creates a `.deb`; when `linuxdeploy`/`appimagetool` are available on `PATH` or in `Development/tools/`, the same run creates the versioned AppImage. Both artifacts are written under `build-release/`. If the AppImage tooling is unavailable, the script prints a warning and still finishes with the application build and `.deb`. Nothing is installed.
 
 Run the executable directly from that tree:
 
@@ -517,9 +518,11 @@ imply that a non-Debian repair backend is enabled.
 An AppImage is also available for portable testing and systems without a local
 package build. It bundles the GUI and guarded helper, while privileged actions
 still use the host's `pkexec`/Polkit and system utilities. Install the normal
-runtime tools listed above before attempting a repair. Build one locally with
-`./scripts/build-appimage.sh`; the resulting artifact is written to
-`build-release/` and is excluded from Git source uploads.
+runtime tools listed above before attempting a repair. `./scripts/build.sh`
+builds the AppImage together with the `.deb` when the AppImage tools are
+available; to build only the AppImage, run `./scripts/build-appimage.sh`. The
+resulting artifact is written to `build-release/` and is excluded from Git
+source uploads.
 
 The AppImage uses the same privilege boundary: the helper must be authorized
 and acts on the selected repair system or explicitly selected Host Maintenance
@@ -537,6 +540,11 @@ three available on `PATH`, then run:
 ```bash
 ./scripts/build-appimage.sh
 ```
+
+The standard release build (`./scripts/build.sh`) runs this step automatically
+when the tools are available and writes the same versioned artifact to
+`build-release/`; run `build-appimage.sh` directly only to build the AppImage
+by itself.
 
 To use tools installed at another path:
 
