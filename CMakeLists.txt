@@ -248,6 +248,8 @@ add_test(NAME boot-repair-filesystem-repair-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-filesystem-repair-contract.sh)
 add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
+add_test(NAME boot-repair-release-preparation-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-release-preparation-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
 
