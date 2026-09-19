@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Build the RPM package on an RPM-family host (Fedora/RHEL/openSUSE).
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-rpm}"
 
@@ -20,19 +22,12 @@ for command in cpack rpmbuild; do
     }
 done
 
-BUILD_DIR_REAL="$(realpath -m -- "$BUILD_DIR")"
-ROOT_DIR_REAL="$(realpath -m -- "$ROOT_DIR")"
-if [[ -z "$BUILD_DIR_REAL" || "$BUILD_DIR_REAL" == / || "$BUILD_DIR_REAL" == "$ROOT_DIR_REAL" ]]; then
-    echo "Refusing to remove unsafe build directory: $BUILD_DIR" >&2
-    exit 1
-fi
-
 BUILD_TYPE=Release BUILD_DIR="$BUILD_DIR" "$ROOT_DIR/scripts/build.sh"
 
 (
     cd "$BUILD_DIR"
     cpack -G RPM --config CPackConfig.cmake \
-        -D "CPACK_RPM_PACKAGE_REQUIRES=polkit, util-linux, cryptsetup, rsync, ${rpm_btrfs_package}, efibootmgr, binutils, python3, hicolor-icon-theme"
+        -D "CPACK_RPM_PACKAGE_REQUIRES=polkit, util-linux, cryptsetup, rsync, e2fsprogs, dosfstools, ${rpm_btrfs_package}, xfsprogs, efibootmgr, binutils, python3, hicolor-icon-theme"
 )
 
 mapfile -t packages < <(

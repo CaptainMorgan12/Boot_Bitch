@@ -57,6 +57,10 @@ RUNNING_HOST_MODE=0
 HOST_COMMAND_GUARD=0
 HOST_COMMAND_GUARD_DIR=""
 DIAGNOSTIC_SCOPE="Repair Target"
+# A combined Run All report emits the shared read-only capability preamble once
+# at the top instead of once per diagnostic section. Individual diagnostics
+# keep this at 0 so their output stays self-contained.
+REPORT_SHARED_PREAMBLE=0
 
 # Display-manager selection is discovered from the target's existing
 # display-manager.service link and installed units.  Keep this state scoped to
@@ -66,7 +70,13 @@ DISPLAY_MANAGER_SERVICE=""
 DISPLAY_MANAGER_PACKAGE=""
 DISPLAY_MANAGER_LABEL=""
 DISPLAY_MANAGER_UNIT_REL=""
+# True when the display-manager preflight had to install a package; the offline
+# link state alone cannot prove "unchanged" after a package write.
+DISPLAY_MANAGER_PACKAGE_WORK=false
 
+# ---------------------------------------------------------------------------
+# Logging, failure handling and shared session/evidence helpers
+# ---------------------------------------------------------------------------
 log() { printf '[%s] %s\n' "$(date '+%H:%M:%S')" "$*"; }
 fail()
 {
@@ -79,6 +89,115 @@ fail()
 }
 need() { command -v "$1" >/dev/null 2>&1 || fail "Required host command not found: $1"; }
 
+# Evidence-driven diagnostics invalidation.  Every successful modifying repair
+# action ends with exactly one stable status line so the GUI can decide whether
+# the cached read-only diagnostics must be regenerated:
+#
+#   Repair change status <tool-key>: changed
+#   Repair change status <tool-key>: unchanged|<reason>
+#
+# "changed" is the fail-safe default: a tool may report "unchanged" only after
+# proving that no write happened (identical artifact hashes, an apply step that
+# reported no work, or state that was already correct).  A failed action emits
+# no line at all and the GUI invalidates conservatively.
+repair_change_status()
+{
+    local key="$1" state="$2"
+    printf 'Repair change status %s: %s\n' "$key" "$state"
+    if [[ -n "$SESSION_LOG" ]]; then
+        printf 'Repair change status %s: %s\n' "$key" "$state" >> "$SESSION_LOG" 2>/dev/null || true
+    fi
+}
+
+# Byte fingerprint of one boot artifact.  A missing file is represented
+# explicitly so a repair that only creates it is still detected as changed.
+repair_file_fingerprint()
+{
+    local path="$1" digest
+    if [[ -s "$path" ]]; then
+        digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}')"
+        printf '%s\n' "${digest:-unreadable}"
+    else
+        printf 'missing\n'
+    fi
+}
+
+# Fingerprint every initramfs image the initramfs repair may rewrite.  The
+# images are identified by kernel/module inventory rather than by directory
+# scan so a rebuild that only updates timestamps is recognized as unchanged.
+initramfs_image_fingerprint()
+{
+    local kver path digest
+    command -v sha256sum >/dev/null 2>&1 || { printf 'no-sha256sum\n'; return 0; }
+    if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
+        while IFS= read -r path; do
+            [[ -n "$path" ]] || continue
+            digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}')"
+            printf '%s %s\n' "${path#"$TARGET_ROOT"}" "${digest:-unreadable}"
+        done < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'initramfs-*.img' -size +0c 2>/dev/null | LC_ALL=C sort)
+        return 0
+    fi
+    while IFS= read -r kver; do
+        [[ -n "$kver" ]] || continue
+        path="$TARGET_ROOT/boot/initrd.img-$kver"
+        if [[ -s "$path" ]]; then
+            digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}')"
+            printf '/boot/initrd.img-%s %s\n' "$kver" "${digest:-unreadable}"
+        else
+            printf '/boot/initrd.img-%s missing\n' "$kver"
+        fi
+    done < <(installed_kernel_versions)
+    return 0
+}
+
+# Fingerprint the EFI boot artifacts and the current firmware entry state so an
+# EFI/UKI repair that produced byte-identical files and NVRAM can report
+# unchanged instead of trusting command output.
+efi_boot_artifact_fingerprint()
+{
+    local esp_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}" path digest
+    command -v sha256sum >/dev/null 2>&1 || { printf 'no-sha256sum\n'; return 0; }
+    if [[ -d "$esp_root/EFI" ]]; then
+        while IFS= read -r path; do
+            [[ -n "$path" ]] || continue
+            digest="$(sha256sum "$path" 2>/dev/null | awk '{print $1}')"
+            printf '%s %s\n' "${path#"$esp_root"}" "${digest:-unreadable}"
+        done < <(find "$esp_root/EFI" -type f \( -iname '*.efi' -o -iname 'grub.cfg' \) 2>/dev/null | LC_ALL=C sort)
+    fi
+    if command -v efibootmgr >/dev/null 2>&1; then
+        efibootmgr -v 2>/dev/null | grep -E '^(Boot[0-9A-F]{4}|BootOrder:|BootCurrent:|Timeout:)' || true
+    fi
+    return 0
+}
+
+# APT apply/simulation output proves "no work" only when the transaction
+# summary reports nothing to do and no package/configuration action ran.
+apt_transaction_reported_no_changes()
+{
+    local output="$1"
+    grep -Eiq '^[[:space:]]*(Inst|Remv|Conf)[[:space:]]' <<<"$output" && return 1
+    grep -Eiq '(Setting up|Unpacking|Preparing to unpack|Processing triggers for) ' <<<"$output" && return 1
+    grep -Eq '^0 upgraded, 0 newly installed, 0 to remove' <<<"$output"
+}
+
+# True when dpkg has any package in a desired-install state that is not fully
+# installed (unpacked, half-configured, triggers pending, reinstall required).
+dpkg_configuration_pending()
+{
+    local status_output rc
+    set +e
+    status_output="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+        dpkg-query -W -f='${db:Status-Abbrev}\n' 2>/dev/null)"
+    rc=$?
+    set -e
+    (( rc == 0 )) || return 0
+    awk '$0 ~ /^ii( |$)/ { next } $0 ~ /^i/ { found=1 } END { exit found ? 0 : 1 }' <<<"$status_output"
+}
+
+# Create and validate the root-owned, mode-0700 private state directory that
+# holds per-request session directories and the authenticated helper copy.
+# Fails when the directory or any ancestor is a symlink or not root-owned and
+# private, so a caller cannot swap an attacker-controlled ancestor underneath.
 ensure_state_root()
 {
     local owner mode ancestor mode_value
@@ -120,6 +239,11 @@ Usage:
   $PROGRAM_NAME host-validate <host-disk> <root-device>
   $PROGRAM_NAME host-diagnose <host-disk> <root-device> <diagnostic|all>
   $PROGRAM_NAME host-default <host-disk> <root-device>
+  $PROGRAM_NAME host-shell   <host-disk> <root-device> <command>
+  $PROGRAM_NAME fs-inspect   <disk> <root-device>
+  $PROGRAM_NAME fs-repair    <disk> <root-device> <device> <mode>
+  $PROGRAM_NAME host-fs-inspect <host-disk> <root-device>
+  $PROGRAM_NAME host-fs-repair  <host-disk> <root-device> <device> <mode>
   $PROGRAM_NAME shell        <target-disk> <root-device> <command>
   $PROGRAM_NAME browse-target <target-disk> <root-device> <absolute-directory>
   $PROGRAM_NAME copy-preview <target-disk> <root-device> <direction> <ownership> <approval> <destination> <source> [source ...]
@@ -149,6 +273,17 @@ Snapshots:
   plan <id>         Validate and show a transactional rollback plan read-only
   rollback <id>     Promote a writable copy to @, reconcile boot stack, auto-revert on failure
 
+File system repair:
+  fs-inspect       Resolve root, /boot, ESP and /home filesystems and run
+                   read-only check tools (never writes)
+  fs-repair        Run the selected filesystem's repair mode after scope,
+                   mount-state and tool preflights
+  Modes: check, repair, rescue, scrub (filesystem-dependent)
+  Offline tools refuse mounted filesystems; btrfs scrub and zpool scrub are
+  online modes and require a mounted filesystem.  The running host root is
+  never repaired offline.  f2fs is repair-only (no read-only check mode);
+  btrfs check --repair is an explicitly confirmed last resort.
+
 Stages:
   dpkg-configure   Complete interrupted dpkg configuration
   fix-broken       Repair broken APT package dependencies
@@ -161,8 +296,16 @@ Stages:
   boot-stack       Adaptive initramfs + EFI/UKI + GRUB reconciliation
   grub             Trial-generate, then regenerate and verify GRUB configuration
 
+Stage mode hints:
+  --post-efi       The caller already ran the EFI/UKI stage for this scope in
+                   the same plan/session.  boot-stack then skips its second
+                   UKI/EFI rebuild and the duplicate GRUB regeneration while
+                   still validating mapper/crypttab and reconciling initramfs.
+                   The helper never infers this from the stage list.
+
 Shell:
   shell            Execute one reviewed command as root inside a fresh target chroot
+  host-shell       Execute one reviewed command as root on the running host (no chroot)
 
 LUKS unlock is supported for non-host target devices. The passphrase is read
 from standard input and is never accepted as a command-line argument. File copy
@@ -196,6 +339,11 @@ target_path_is_mounted_rw()
     esac
 }
 
+# EXIT trap for every helper invocation: when this request crossed the
+# read-write boundary, append the session log into the repaired system, remove
+# request-scoped target paths and mapper aliases, unmount helper-owned mounts,
+# close session-owned LUKS mappings and delete the session directory.  Always
+# exits with the status captured on entry so the original failure is preserved.
 cleanup()
 {
     local rc=$?
@@ -260,6 +408,9 @@ trap 'exit 130' INT
 trap 'exit 143' TERM
 trap 'exit 129' HUP
 
+# ---------------------------------------------------------------------------
+# Block-device identity, mapper aliases and target protection
+# ---------------------------------------------------------------------------
 is_block_device()
 {
     [[ -b "$1" ]]
@@ -271,7 +422,6 @@ canonical_block()
     is_block_device "$dev" || return 1
     readlink -f -- "$dev"
 }
-
 
 mapper_aliases_for_device()
 {
@@ -362,6 +512,10 @@ crypt_backing_device()
     printf '%s\n' "${slaves[0]}"
 }
 
+# Create a request-scoped /dev/mapper/<name> symlink for the installed
+# crypttab's expected mapper name when the live mapper has a different
+# recovery-only name.  Aliases are removed by cleanup() and never rename a
+# mounted mapping.  Returns without creating anything when no alias is needed.
 prepare_mapper_compatibility_aliases()
 {
     local backing name source key options resolved alias existing
@@ -490,6 +644,9 @@ same_single_top_disk()
     [[ "${a_tops[0]}" == "${b_tops[0]}" ]]
 }
 
+# Refuse every write when the selected target disk backs a running-system
+# mountpoint (/ or /boot or /boot/efi).  Checks lsblk mountpoints first, then
+# resolves each live system mount back to its top-level disk.
 assert_target_not_host()
 {
     local target="$1" source source_dev mp
@@ -521,6 +678,9 @@ assert_target_not_host()
     done
 }
 
+# Prove that the supplied host disk and root component back the currently
+# running root filesystem and that every live /boot, /boot/efi and /efi mount
+# resolves to that same disk before native host maintenance is allowed.
 assert_target_is_running_host()
 {
     local target="$1" root_device="$2" root_source source_dev mp boot_source boot_dev
@@ -559,9 +719,13 @@ assert_target_is_running_host()
     done
 }
 
+# ---------------------------------------------------------------------------
+# fstab/crypttab resolution and guarded target mount preparation
+# ---------------------------------------------------------------------------
 resolve_fstab_source()
 {
-    local spec="$1"
+    local spec
+    spec="$(fstab_unescape "$1")"
     case "$spec" in
         UUID=*) blkid -U "${spec#UUID=}" 2>/dev/null || true ;;
         PARTUUID=*) blkid -t "PARTUUID=${spec#PARTUUID=}" -o device 2>/dev/null | head -n1 ;;
@@ -657,6 +821,10 @@ mount_target_resolver()
     log "Bound recovery-host resolver into target chroot (temporary, read-only)" | tee -a "$SESSION_LOG"
 }
 
+# Mount the target's fstab entry for /boot, /boot/efi or /efi at its target
+# path, recording it in MOUNTS.  requested_mode is ro or rw.  A same-device
+# /boot entry is skipped unless it is a distinct Btrfs subvolume, and an
+# existing helper-recorded mount is only remounted when rw is requested.
 mount_target_boot_entry()
 {
     local mp="$1" requested_mode="${2:-rw}" entry spec fstype options resolved dest mount_options
@@ -755,9 +923,13 @@ current_btrfs_subvol()
     return 1
 }
 
+# Mount every same-filesystem Btrfs fstab subvolume below the target root
+# (for example @home, @var@log) in depth order so a chroot cannot write into
+# hidden mountpoint directories inside @.  The recovery mode (ro/rw) overrides
+# any fstab ro/rw option; system directories are skipped.
 mount_target_btrfs_subvolumes()
 {
-    local requested_mode="$1" depth spec mountpoint_name fstype options resolved dest mount_options option filtered_options
+    local requested_mode="$1" _depth spec mountpoint_name fstype options resolved dest mount_options option filtered_options
     local -a option_parts=()
 
     [[ "$requested_mode" == "ro" || "$requested_mode" == "rw" ]] \
@@ -767,7 +939,7 @@ mount_target_btrfs_subvolumes()
 
     log "Mounting target Btrfs fstab subvolumes ($requested_mode)" | tee -a "$SESSION_LOG"
 
-    while IFS=$'\t' read -r depth spec mountpoint_name fstype options; do
+    while IFS=$'\t' read -r _depth spec mountpoint_name fstype options; do
         [[ -n "$spec" && -n "$mountpoint_name" ]] || continue
         mountpoint_name="$(fstab_unescape "$mountpoint_name")"
         options="$(fstab_unescape "$options")"
@@ -882,6 +1054,47 @@ target_has_path()
     return 1
 }
 
+# Read-only Debian package-state evidence from the target dpkg database.  The
+# target is not chrooted while the backend profile is built, so this reads the
+# database file directly instead of invoking dpkg-query inside the target.
+target_dpkg_package_installed()
+{
+    local pkg="$1" status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 1
+    awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n"; found = 0 }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            if (name == pkg && state == "install ok installed") { found = 1; exit }
+        }
+        END { exit(found ? 0 : 1) }
+    ' "$status_file"
+}
+
+# Debian-family initramfs generator evidence.  initramfs-tools is considered
+# installed only with real package evidence: the dpkg database, its package
+# data directory, or its configuration directory.  Loose executables alone are
+# not sufficient, because dracut and vendor tools can ship compatible stubs.
+target_initramfs_tools_installed()
+{
+    target_dpkg_package_installed initramfs-tools \
+        || target_dpkg_package_installed initramfs-tools-core \
+        || target_has_path /usr/share/initramfs-tools /etc/initramfs-tools
+}
+
+# dracut counts as installed/configured only with generator evidence.  A lone
+# /usr/bin/dracut binary (for example a leftover from dracut-core pulled in as
+# a dependency) is not enough to override a real initramfs-tools installation.
+target_dracut_installed()
+{
+    target_has_path /usr/lib/dracut /etc/dracut.conf /etc/dracut.conf.d \
+        || target_dpkg_package_installed dracut
+}
+
 target_distro_family()
 {
     if is_debian_family; then
@@ -900,6 +1113,10 @@ target_distro_family()
     fi
 }
 
+# Populate the target profile globals (family, package manager, initramfs and
+# bootloader backends, ESP mount candidate, kernel layout, repair capability)
+# from read-only filesystem evidence.  Shared by capability evidence, backend
+# diagnostics and the repair preflights; never modifies the target.
 profile_target_backends()
 {
     local family="${TARGET_DISTRO_FAMILY:-}" esp_path
@@ -921,6 +1138,22 @@ profile_target_backends()
     if target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio \
         || target_has_path /etc/mkinitcpio.conf /etc/mkinitcpio.d; then
         TARGET_INITRAMFS_BACKEND="mkinitcpio"
+    elif [[ "$family" == debian ]]; then
+        # Debian-family hosts commonly carry dracut-core (or a leftover dracut
+        # binary) while initramfs-tools remains the installed generator.  The
+        # Debian dracut metapackage conflicts with initramfs-tools, so a real
+        # initramfs-tools installation takes precedence; dracut is selected
+        # only when initramfs-tools is absent and dracut is genuinely
+        # installed/configured rather than a lone binary.
+        if target_initramfs_tools_installed; then
+            TARGET_INITRAMFS_BACKEND="initramfs-tools"
+        elif target_dracut_installed; then
+            TARGET_INITRAMFS_BACKEND="dracut"
+        elif target_has_executable /usr/bin/booster /usr/lib/booster/booster; then
+            TARGET_INITRAMFS_BACKEND="booster"
+        else
+            TARGET_INITRAMFS_BACKEND="unknown"
+        fi
     elif target_has_executable /usr/bin/dracut /usr/sbin/dracut \
         || target_has_path /etc/dracut.conf /etc/dracut.conf.d; then
         TARGET_INITRAMFS_BACKEND="dracut"
@@ -993,6 +1226,10 @@ profile_esp_root()
     printf '%s\n' "$TARGET_ROOT$TARGET_ESP_MOUNT"
 }
 
+# Identify and mount the selected repair target at MOUNT_BASE.  mode ro mounts
+# only the root (and locates/mounts the Btrfs root subvolume); mode rw also
+# mounts /boot, the ESP, /dev, /proc, /sys, /run and the resolver.  Sets
+# TARGET_ROOT, TARGET_SUBVOL and SESSION_LOG after all safety checks pass.
 prepare_target()
 {
     local mode="$1" fstype mounted_root raw_target raw_root mount_mode discovered_subvol="" root_mount_options
@@ -1095,6 +1332,10 @@ prepare_target()
     fi
 }
 
+# Prepare native running-host maintenance without mounting anything: prove the
+# supplied disk/root back the live system, optionally require a Debian-family
+# backend (require_debian=yes) and writable live root/boot/ESP mounts
+# (require_rw=yes), then detect the running host ESP.
 prepare_running_host()
 {
     local raw_target="$1" raw_root="$2" require_debian="${3:-yes}" require_rw="${4:-no}" fstype
@@ -1153,6 +1394,8 @@ prepare_running_host()
     log "Host EFI System Partition: ${EFI_ESP_SOURCE:-not detected} (${EFI_ESP_FSTYPE:-unknown})${TARGET_ESP_MOUNT:+ mounted at $TARGET_ESP_MOUNT}" | tee -a "$SESSION_LOG"
 }
 
+# Remount the already-confirmed target root read-write and install the chroot
+# mounts (boot entries, data subvolumes, /dev, /proc, /sys, /run, resolver).
 promote_target_rw()
 {
     [[ -n "$MOUNT_BASE" && -d "$MOUNT_BASE" ]] || fail "Internal target mount is not prepared."
@@ -1174,7 +1417,8 @@ promote_target_rw()
     mount_target_resolver
 }
 
-
+# Promote only the target root and its Btrfs data subvolumes to rw for File
+# Copy; used after all read-only destination safety checks have passed.
 promote_target_data_rw()
 {
     [[ -n "$MOUNT_BASE" && -d "$MOUNT_BASE" ]] || fail "Internal target mount is not prepared."
@@ -1184,6 +1428,9 @@ promote_target_data_rw()
     remount_target_data_rw
 }
 
+# ---------------------------------------------------------------------------
+# File Copy: virtual path validation, ownership mapping and verified transfer
+# ---------------------------------------------------------------------------
 validate_virtual_path()
 {
     local path="$1" component
@@ -1494,6 +1741,11 @@ verify_rsync_item()
     [[ -z "$output" ]] || fail "Post-copy metadata/content verification still reports differences for $source: $output"
 }
 
+# Guarded File Copy entry point for both copy-preview and copy.  Arguments:
+# action, direction (host-to-repair|repair-to-host), ownership (smart|preserve),
+# approval (normal|sensitive-ok), destination, then one or more sources.  The
+# target is always mounted read-only first; real copies are promoted to rw only
+# after containment checks and are verified with rsync --checksum and SHA-256.
 run_file_copy()
 {
     local action="$1"; shift
@@ -1611,6 +1863,9 @@ run_file_copy()
     fi
 }
 
+# Fail unless every target crypttab entry either uses a keyless/none source or
+# resolves to a block device on the selected target disk.  Read-only gate run
+# before package, initramfs and bootloader repairs that depend on mapper names.
 validate_mapper_crypttab()
 {
     local crypttab="$TARGET_ROOT/etc/crypttab"
@@ -1651,6 +1906,12 @@ validate_mapper_crypttab()
     log "Mapper/crypttab consistency gate: PASS" | tee -a "$SESSION_LOG"
 }
 
+# ---------------------------------------------------------------------------
+# Guarded command execution (target chroot and native running host)
+# ---------------------------------------------------------------------------
+# Install the request-scoped efibootmgr shim and prove that the private mount
+# namespace can remount efivarfs read-only.  From here on every selected chroot
+# command and native host command runs with firmware writes intercepted.
 prepare_host_command_guard()
 {
     local real_efi
@@ -1688,11 +1949,17 @@ host_package_manager_gate()
     # Native package actions must not race apt, dpkg, unattended-upgrades, or
     # another package frontend already using the live host. Stale lock files
     # alone are not considered active; inspect processes and lock holders.
-    for proc in apt apt-get dpkg pacman makepkg yay paru unattended-upgrade packagekitd; do
+    # PackageKit's daemon normally stays resident on KDE-based systems even
+    # when idle, so it is only treated as a conflict while it actually holds
+    # package-manager locks or has spawned apt/dpkg.
+    for proc in apt apt-get dpkg pacman makepkg yay paru unattended-upgrade; do
         if pgrep -x "$proc" >/dev/null 2>&1; then
             fail "Package manager process '$proc' is already running; refusing a concurrent host package repair."
         fi
     done
+    if pgrep -x packagekitd >/dev/null 2>&1; then
+        log "PackageKit daemon is running; it is only a conflict while it holds package-manager locks or spawns apt/dpkg." | tee -a "$SESSION_LOG"
+    fi
     if command -v fuser >/dev/null 2>&1; then
         for proc in /var/lib/dpkg/lock /var/lib/dpkg/lock-frontend /var/lib/apt/lists/lock; do
             if [[ -e "$proc" ]] && fuser -s "$proc" 2>/dev/null; then
@@ -1708,6 +1975,9 @@ host_package_manager_gate()
     log "Host package-manager concurrency gate: PASS" | tee -a "$SESSION_LOG"
 }
 
+# Run one command inside TARGET_ROOT.  When the host command guard is active,
+# execute inside the private mount namespace that makes efivarfs read-only and
+# prepend the efibootmgr shim directory to every explicit PATH assignment.
 run_selected_chroot()
 {
     local i
@@ -1737,6 +2007,40 @@ run_selected_chroot()
     fi
 }
 
+# Native host maintenance commands run against the live running system, so
+# there is no filesystem root to enter.  They still execute inside the private
+# mount namespace that makes efivarfs read-only and the hook shim PATH-first,
+# exactly like the guarded branch of run_selected_chroot.
+run_host_command_isolated()
+{
+    local i
+    local -a args=("$@")
+    (( HOST_COMMAND_GUARD == 1 )) \
+        || fail "Host command guard is not prepared; refusing to run a native host command."
+    # Keep the standard command environment, adding the hook shim to each
+    # explicit PATH assignment. Absolute efibootmgr calls still encounter
+    # a read-only efivarfs in the private mount namespace below.
+    for i in "${!args[@]}"; do
+        if [[ "${args[$i]}" == PATH=* ]]; then
+            args[$i]="PATH=$HOST_COMMAND_GUARD_DIR:${args[$i]#PATH=}"
+        fi
+    done
+    unshare --mount --propagation private /bin/sh -eu -c '
+        if mountpoint -q /sys/firmware/efi/efivars; then
+            mount --bind /sys/firmware/efi/efivars /sys/firmware/efi/efivars
+            mount -o remount,bind,ro /sys/firmware/efi/efivars
+            findmnt -rn -o OPTIONS --target /sys/firmware/efi/efivars | tr "," "\n" | grep -Fxq ro
+        elif [ -d /sys/firmware/efi/efivars ]; then
+            echo "Unable to prove firmware variable mount isolation." >&2
+            exit 1
+        fi
+        exec "$@"
+    ' boot-repair-host-command "${args[@]}"
+}
+
+# Run a labelled command in the target chroot with a clean noninteractive
+# environment, tee the transcript into the session log and fail with the
+# command's exit code while preserving the stage context.
 run_chroot()
 {
     local label="$1"; shift
@@ -1759,9 +2063,64 @@ run_chroot()
     log "PASS: $label" | tee -a "$SESSION_LOG"
 }
 
-run_apt_update()
+# ---------------------------------------------------------------------------
+# APT/dpkg repair backend (Debian/Ubuntu family)
+# ---------------------------------------------------------------------------
+# APT aborts non-interactively when a repository's release metadata changes
+# its Origin/Label/Suite/Codename/Version.  Vendor repositories (for example
+# TUXEDO's txos.tuxedocomputers.com) make such changes legitimately.  The
+# classifier below accepts only that exact error class; every other apt error,
+# download failure or integrity warning vetoes the retry.
+apt_update_release_info_change_only()
 {
-    local output rc
+    local output="$1" line found=0
+    local release_info_re="^E: Repository '[^']*' changed its '(Origin|Label|Suite|Codename|Version)' value"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        if [[ "$line" =~ $release_info_re ]]; then
+            found=1
+            continue
+        fi
+        case "$line" in
+            E:*|Err:*|e:*) return 1 ;;
+            W:*|w:*)
+                # Benign deprecation notices (for example the legacy
+                # trusted.gpg keyring warning) must not block the retry, but
+                # any warning that reports a real error does.  The retry still
+                # performs the complete signature and key verification.
+                grep -Eiq 'error|failed|unable|could not' <<<"$line" && return 1
+                ;;
+        esac
+        if grep -Eiq 'failed to fetch|some index files failed|temporary failure resolving|could not resolve|err:[[:space:]]' <<<"$line"; then
+            return 1
+        fi
+    done <<<"$output"
+    ((found == 1))
+}
+
+apt_update_release_info_change_repos()
+{
+    local output="$1"
+    sed -n "s/^E: Repository '\([^']*\)' changed its '[^']*' value from '[^']*' to '[^']*'.*$/\1/p" <<<"$output" \
+        | LC_ALL=C sort -u \
+        | awk 'BEGIN { sep = "" } { printf "%s%s", sep, $0; sep = ", " } END { if (NR > 0) printf "\n" }'
+}
+
+apt_update_release_info_change_details()
+{
+    local output="$1"
+    sed -n "s/^E: Repository '\([^']*\)' changed its '\([^']*\)' value from '\([^']*\)' to '\([^']*\)'.*$/  \1: \2 changed from '\3' to '\4'/p" <<<"$output"
+}
+
+# Refresh package metadata.  When the only failure is a repository release
+# metadata change, name the affected repositories, retry once with
+# Acquire::AllowReleaseInfoChange=true and continue.  This option is confined
+# to this metadata refresh; package install/upgrade transactions never receive
+# it, and no signature, keyring or integrity check is relaxed.
+apt_update_allow_release_info_retry()
+{
+    local output rc first_rc first_error repos details
+
     log "BEGIN: Refresh package metadata" | tee -a "$SESSION_LOG"
     set +e
     output="$(run_selected_chroot /usr/bin/env \
@@ -1773,16 +2132,69 @@ run_apt_update()
     rc=$?
     set -e
     printf '%s\n' "$output" | tee -a "$SESSION_LOG"
-    ((rc == 0)) || fail "Refresh package metadata failed with exit code $rc."
-    # apt-get can return success while retaining stale indexes when every
-    # repository fetch fails. Treat that as a failed refresh so a subsequent
-    # package repair never proceeds on misleading metadata.
-    if grep -Eiq 'failed to fetch|some index files failed|temporary failure resolving|could not resolve|err:[[:space:]]' <<<"$output"; then
-        fail "Refresh package metadata did not complete; repository indexes could not be refreshed. Check target networking or repository configuration."
+
+    if ((rc != 0)); then
+        apt_update_release_info_change_only "$output" \
+            || fail "Refresh package metadata failed with exit code $rc."
+        first_rc=$rc
+        first_error="$(grep -E -m 1 '^(E:|Err:)' <<<"$output" || true)"
+        repos="$(apt_update_release_info_change_repos "$output")"
+        details="$(apt_update_release_info_change_details "$output")"
+        log "WARNING: apt-get update refused a repository release metadata change for: ${repos:-unknown repository}" | tee -a "$SESSION_LOG"
+        [[ -z "$details" ]] || printf '%s\n' "$details" | tee -a "$SESSION_LOG"
+        log "WARNING: retrying metadata refresh with -o Acquire::AllowReleaseInfoChange=true (release-info changes only; signatures, keys and package verification remain enforced)." | tee -a "$SESSION_LOG"
+        set +e
+        output="$(run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get update -o Acquire::AllowReleaseInfoChange=true 2>&1)"
+        rc=$?
+        set -e
+        printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+        if ((rc != 0)); then
+            fail "Refresh package metadata failed with exit code $rc after accepting repository release metadata changes. Original error (exit code $first_rc): ${first_error:-see transcript above}"
+        fi
+        if grep -Eiq 'failed to fetch|some index files failed|temporary failure resolving|could not resolve|err:[[:space:]]' <<<"$output"; then
+            fail "Refresh package metadata did not complete after accepting repository release metadata changes; repository indexes could not be refreshed. Check target networking or repository configuration."
+        fi
+        log "WARN: accepted release metadata change for ${repos:-unknown repository}; metadata refreshed." | tee -a "$SESSION_LOG"
+    else
+        # apt-get can return success while retaining stale indexes when every
+        # repository fetch fails. Treat that as a failed refresh so a subsequent
+        # package repair never proceeds on misleading metadata.
+        if grep -Eiq 'failed to fetch|some index files failed|temporary failure resolving|could not resolve|err:[[:space:]]' <<<"$output"; then
+            fail "Refresh package metadata did not complete; repository indexes could not be refreshed. Check target networking or repository configuration."
+        fi
     fi
     log "PASS: Refresh package metadata" | tee -a "$SESSION_LOG"
+    # A metadata refresh rewrites package lists and auxiliary APT state even
+    # when every repository answered "Hit"; it is always a system change.
+    repair_change_status aptupdate changed
 }
 
+run_apt_update()
+{
+    apt_update_allow_release_info_retry
+}
+
+# Complete interrupted dpkg configuration.  dpkg-query proves whether any
+# package is still unpacked/half-configured before the apply step runs; only a
+# proven-empty pending set may report unchanged.
+dpkg_configure_stage()
+{
+    local pending=false
+    if dpkg_configuration_pending; then
+        pending=true
+    fi
+    run_chroot "Complete interrupted package configuration" dpkg --configure -a
+    if [[ "$pending" == true ]]; then
+        repair_change_status dpkg changed
+    else
+        repair_change_status dpkg "unchanged|dpkg reported no packages pending configuration"
+    fi
+}
 
 APT_SIM_OUTPUT=""
 APT_SIM_RC=0
@@ -1865,9 +2277,13 @@ apt_simulation_is_safe()
     return 0
 }
 
+# Upgrade installed packages with the least invasive safe transaction:
+# simulate upgrade first, then full-upgrade/dist-upgrade only when the target's
+# policy demands it or packages remain pending.  Every candidate is validated
+# by apt_simulation_is_safe before the chosen transaction is applied.
 adaptive_apt_upgrade()
 {
-    local chosen="" upgrade_output="" full_output="" dist_output=""
+    local chosen="" upgrade_output="" full_output="" dist_output="" chosen_output=""
 
     [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]] \
         || fail "apt-get is not installed in the target system."
@@ -1917,6 +2333,12 @@ adaptive_apt_upgrade()
         fail "apt-get upgrade simulation failed for a reason that did not request a different upgrade mode. Review the simulation output above."
     fi
 
+    case "$chosen" in
+        upgrade) chosen_output="$upgrade_output" ;;
+        full-upgrade) chosen_output="$full_output" ;;
+        dist-upgrade) chosen_output="$dist_output" ;;
+    esac
+
     log "APT upgrade decision: '$chosen' selected from simulation results." | tee -a "$SESSION_LOG"
     run_chroot "Upgrade installed packages ($chosen)" apt-get -y "$chosen"
 
@@ -1928,8 +2350,19 @@ adaptive_apt_upgrade()
         HOME=/root \
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg --audit 2>&1 | tee -a "$SESSION_LOG" || true
+
+    # The apply step is the same transaction that was just simulated; a
+    # simulation with no package, removal or configuration action proves the
+    # upgrade performed no work.
+    if apt_transaction_reported_no_changes "$chosen_output"; then
+        repair_change_status upgrade "unchanged|simulated upgrade transaction proposed no package changes"
+    else
+        repair_change_status upgrade changed
+    fi
 }
 
+# Repair broken APT dependencies: simulate `apt-get -f install`, run it through
+# the shared removal safety policy and only then apply the identical command.
 adaptive_fix_broken()
 {
     local output rc
@@ -1959,11 +2392,25 @@ adaptive_fix_broken()
         || fail "The simulated apt-get --fix-broken transaction failed Boot Bitch safety checks."
 
     run_chroot "Repair broken package dependencies" apt-get -y -f install
+
+    # The simulation describes the exact apply transaction; no proposed
+    # package/removal/configuration action proves nothing was written.
+    if apt_transaction_reported_no_changes "$output"; then
+        repair_change_status fixbroken "unchanged|simulated fix-broken transaction proposed no package changes"
+    else
+        repair_change_status fixbroken changed
+    fi
 }
 
 ARCH_PACMAN_TRY_OUTPUT=""
 ARCH_PACMAN_TRY_RC=0
 
+# ---------------------------------------------------------------------------
+# Arch/pacman repair backend (one sandboxed full transaction)
+# ---------------------------------------------------------------------------
+# Copy the target pacman database into a request-scoped /tmp sandbox (without
+# sync databases) so `pacman -Syyuw` can resolve a full transaction without
+# touching the target package database.  The sandbox is removed by cleanup().
 arch_pacman_prepare_sandbox()
 {
     local tag
@@ -1988,6 +2435,8 @@ arch_pacman_prepare_sandbox()
     rm -rf -- "$TARGET_ROOT$ARCH_PACMAN_SANDBOX"
     mkdir -p -- "$TARGET_ROOT$ARCH_PACMAN_DB_REL" "$TARGET_ROOT$ARCH_PACMAN_CACHE_REL"
     cp -a -- "$TARGET_ROOT/var/lib/pacman/." "$TARGET_ROOT$ARCH_PACMAN_DB_REL/"
+    rm -rf -- "$TARGET_ROOT$ARCH_PACMAN_DB_REL/sync"
+    mkdir -p -- "$TARGET_ROOT$ARCH_PACMAN_DB_REL/sync"
     log "Arch pacman transaction sandbox prepared under $ARCH_PACMAN_SANDBOX; the target package database will not be used for preflight." | tee -a "$SESSION_LOG"
 }
 
@@ -2016,12 +2465,29 @@ arch_pacman_transaction_try()
     return 0
 }
 
+arch_pacman_preflight_result()
+{
+    local rc="$1" output="$2" fatal_errors
+    ((rc == 0)) || return 1
+    fatal_errors="$(grep -E '^error:' <<<"$output" 2>/dev/null | grep -Ev "^error: failed retrieving file '.+' from .+ : " || true)"
+    [[ -z "$fatal_errors" ]]
+}
+
 arch_pacman_transaction_is_safe()
 {
-    local output="$1" package_count
-    if grep -Eiq 'failed retrieving file|failed to synchronize|failed to download|could not resolve host|could not resolve address|invalid or corrupted package|failed to prepare transaction|failed to commit transaction' <<<"$output"; then
+    local output="$1" rc="${2:-0}" package_count mirror_failures mirrors
+    if ! arch_pacman_preflight_result "$rc" "$output"; then
         log "REFUSED: pacman preflight reported repository, download or transaction integrity errors." | tee -a "$SESSION_LOG"
         return 1
+    fi
+    mirror_failures="$(grep -Ec "^error: failed retrieving file '.+' from .+ : " <<<"$output" 2>/dev/null || true)"
+    if ((mirror_failures > 0)); then
+        log "WARN: pacman encountered ${mirror_failures} recoverable mirror retrieval failure(s)." | tee -a "$SESSION_LOG"
+        mirrors="$(sed -nE "s/^error: failed retrieving file '.+' from ([^ ]+) : .*/\1/p" <<<"$output" | sort -u)"
+        while IFS= read -r mirror; do
+            [[ -n "$mirror" ]] && log "WARN: failing mirror: $mirror" | tee -a "$SESSION_LOG"
+        done <<<"$mirrors"
+        log "Arch pacman transaction completed successfully despite mirror fallback." | tee -a "$SESSION_LOG"
     fi
     if grep -Eiq '(^|[[:space:]])(removing|remove)[[:space:]]|packages[[:space:]]+to[[:space:]]+remove|cannot[[:space:]]+resolve[[:space:]]+dependencies' <<<"$output"; then
         log "REFUSED: pacman preflight proposes removals or unresolved dependencies." | tee -a "$SESSION_LOG"
@@ -2039,25 +2505,46 @@ preflight_arch_pacman_transaction()
 {
     arch_pacman_prepare_sandbox
     log "SIMULATE/PREFLIGHT: full Arch pacman transaction (sandboxed database/cache; no target packages will be changed)" | tee -a "$SESSION_LOG"
-    arch_pacman_transaction_try "Arch pacman full transaction preflight" -Syu --downloadonly --noconfirm
+    arch_pacman_transaction_try "Arch pacman full transaction preflight" -Syyuw --noconfirm
     ((ARCH_PACMAN_TRY_RC == 0)) \
         || fail "Arch pacman transaction preflight failed; no target packages were changed."
-    arch_pacman_transaction_is_safe "$ARCH_PACMAN_TRY_OUTPUT" \
+    arch_pacman_transaction_is_safe "$ARCH_PACMAN_TRY_OUTPUT" "$ARCH_PACMAN_TRY_RC" \
         || fail "Arch pacman transaction was rejected by Boot Bitch safety policy."
     log "PASS: Arch pacman transaction preflight resolved without removals." | tee -a "$SESSION_LOG"
 }
 
+# Arch pacman apply output proves "no work" only when the transaction reports
+# nothing to do and printed no package header, action or removal line.  Any
+# package change, removal or unexpected transaction output stays "changed".
+arch_pacman_transaction_reported_no_changes()
+{
+    local output="$1"
+    grep -Eiq '^[[:space:]]*Packages \([0-9]+\)' <<<"$output" && return 1
+    grep -Eiq '^\([0-9]+/[0-9]+\)[[:space:]]+(installing|upgrading|downgrading|reinstalling|removing)' <<<"$output" && return 1
+    grep -Eiq '^[[:space:]]*(installing|upgrading|downgrading|reinstalling|removing)[[:space:]]' <<<"$output" && return 1
+    grep -Eiq 'there is nothing to do' <<<"$output"
+}
+
 adaptive_arch_pacman_repair()
 {
-    local label="${1:-Upgrade installed packages}"
+    local label="${1:-Upgrade installed packages}" tool_key="${2:-upgrade}"
     preflight_arch_pacman_transaction
-    run_chroot "$label (pacman -Syu)" pacman --noconfirm -Syu
+    run_chroot_try "$label (pacman -Syu)" pacman --noconfirm -Syu
+    ((CHROOT_TRY_RC == 0)) || fail "$label failed with exit code $CHROOT_TRY_RC."
     log "PASS: $label completed through one full pacman transaction." | tee -a "$SESSION_LOG"
+    if arch_pacman_transaction_reported_no_changes "$CHROOT_TRY_OUTPUT"; then
+        repair_change_status "$tool_key" "unchanged|pacman transaction reported no packages to install, upgrade or remove"
+    else
+        repair_change_status "$tool_key" changed
+    fi
 }
 
 CHROOT_TRY_OUTPUT=""
 CHROOT_TRY_RC=0
 
+# Non-fatal chroot runner used by simulation/trial preflights: capture output
+# and status in CHROOT_TRY_OUTPUT/CHROOT_TRY_RC instead of failing, so callers
+# can inspect the result and apply known corrections.
 run_chroot_try()
 {
     local label="$1"; shift
@@ -2098,6 +2585,10 @@ apt_package_available()
         apt-cache show "$package" >/dev/null 2>&1
 }
 
+# Simulate and safety-check a known package correction, then apply it.  label
+# is used in log lines; reinstall=yes adds --reinstall; remaining arguments are
+# the packages.  Interrupted dpkg configuration and unmet dependencies are
+# corrected once, re-simulated and only then applied.
 safe_apt_install_packages()
 {
     local label="$1" reinstall="$2" output rc fix_output fix_rc
@@ -2190,6 +2681,9 @@ output_suggests_mapper_path_failure()
         <<<"$output"
 }
 
+# Verify DKMS prerequisites for every installed kernel: Arch requires the
+# headers/build tree to be present; Debian additionally installs missing
+# repository headers through the guarded APT correction path.
 preflight_dkms()
 {
     local kver header_pkg
@@ -2268,8 +2762,14 @@ adaptive_dkms_repair()
     ((CHROOT_TRY_RC == 0)) || fail "DKMS autoinstall failed after preflight/known correction."
     log "PASS: DKMS autoinstall completed." | tee -a "$SESSION_LOG"
     run_chroot_try "Post-repair DKMS status" dkms status
+    # DKMS rebuilds cannot be proven byte-identical without hashing every
+    # module tree and its side effects; stay changed (fail safe).
+    repair_change_status dkms changed
 }
 
+# ---------------------------------------------------------------------------
+# Display manager detection and offline graphical-login restoration
+# ---------------------------------------------------------------------------
 display_manager_package_for_service()
 {
     if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
@@ -2372,6 +2872,10 @@ last_boot_display_manager_candidates()
     done
 }
 
+# Discover the target's display manager from the existing
+# display-manager.service link, installed units and last-boot journal evidence.
+# Sets DISPLAY_MANAGER_SERVICE/PACKAGE/LABEL/UNIT_REL; fails instead of
+# guessing when the configuration is ambiguous or points at a missing unit.
 detect_display_manager()
 {
     local configured_service="" link="" service="" package="" unit=""
@@ -2450,6 +2954,9 @@ detect_display_manager()
     [[ -n "$DISPLAY_MANAGER_UNIT_REL" ]] || fail "Display manager $DISPLAY_MANAGER_SERVICE has no unit file in the target."
 }
 
+# Validate that the detected display manager is installed with its unit and
+# graphical.target present, correcting known missing packages on Debian before
+# the offline systemd link repair is allowed to run.
 preflight_display_manager()
 {
     local manager_status="" desktop_status=""
@@ -2477,6 +2984,7 @@ preflight_display_manager()
     manager_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
         dpkg-query -W -f='${db:Status-Status}' "$DISPLAY_MANAGER_PACKAGE" 2>/dev/null || true)"
     if [[ -n "$DISPLAY_MANAGER_PACKAGE" && "$manager_status" != "installed" ]]; then
+        DISPLAY_MANAGER_PACKAGE_WORK=true
         safe_apt_install_packages "Install missing $DISPLAY_MANAGER_LABEL display manager" no "$DISPLAY_MANAGER_PACKAGE"
         manager_status="installed"
     fi
@@ -2485,6 +2993,7 @@ preflight_display_manager()
         desktop_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
             dpkg-query -W -f='${db:Status-Status}' tuxedoos-desktop 2>/dev/null || true)"
         if [[ "$desktop_status" != "installed" ]] && apt_package_available tuxedoos-desktop; then
+            DISPLAY_MANAGER_PACKAGE_WORK=true
             safe_apt_install_packages "Restore the TUXEDO desktop meta-package required for graphical login" no tuxedoos-desktop
         fi
     fi
@@ -2499,12 +3008,47 @@ preflight_display_manager()
     log "Display-manager preflight plan: set graphical.target default, enable $DISPLAY_MANAGER_SERVICE, and repair display-manager.service offline." | tee -a "$SESSION_LOG"
 }
 
-adaptive_display_manager_repair()
+# True when the offline graphical-login state already matches the repair
+# target: default.target resolves to graphical.target, display-manager.service
+# resolves to the detected manager, and the unit is enabled when installable.
+display_manager_already_correct()
 {
-    preflight_display_manager
-    restore_display_manager
+    local display_link default_link
+    display_link="$(readlink "$TARGET_ROOT/etc/systemd/system/display-manager.service" 2>/dev/null || true)"
+    default_link="$(readlink "$TARGET_ROOT/etc/systemd/system/default.target" 2>/dev/null || true)"
+    [[ "$display_link" == *"$DISPLAY_MANAGER_SERVICE" ]] || return 1
+    [[ "$default_link" == *graphical.target ]] || return 1
+    if grep -Eq '^\[Install\][[:space:]]*$' "$TARGET_ROOT$DISPLAY_MANAGER_UNIT_REL" 2>/dev/null; then
+        systemctl --root="$TARGET_ROOT" is-enabled "$DISPLAY_MANAGER_SERVICE" 2>/dev/null \
+            | grep -Fxq enabled || return 1
+    fi
+    return 0
 }
 
+adaptive_display_manager_repair()
+{
+    local links_before=false links_after=false
+    DISPLAY_MANAGER_PACKAGE_WORK=false
+    preflight_display_manager
+    if display_manager_already_correct; then
+        links_before=true
+    fi
+    restore_display_manager
+    if display_manager_already_correct; then
+        links_after=true
+    fi
+    # Only the offline links are proven unchanged; a preflight package install
+    # is a system change even when the links happened to be correct already.
+    if [[ "$links_before" == true && "$links_after" == true && "$DISPLAY_MANAGER_PACKAGE_WORK" != true ]]; then
+        repair_change_status display "unchanged|default.target and display-manager.service were already correct"
+    else
+        repair_change_status display changed
+    fi
+}
+
+# Trial-build an initramfs image for every installed kernel into a temporary
+# /tmp path inside the target.  The target images are not touched; a stale
+# mapper-path failure is retried once after compatibility alias correction.
 preflight_initramfs()
 {
     local kver sim_path
@@ -2605,59 +3149,81 @@ adaptive_arch_initramfs_repair()
     log "PASS: Arch initramfs images rebuilt and verified." | tee -a "$SESSION_LOG"
 }
 
+# Rebuild every installed kernel's initramfs (mkinitcpio on Arch,
+# update-initramfs on Debian), verify each image is readable and compare the
+# before/after image fingerprints for the change-status evidence line.
 adaptive_initramfs_repair()
 {
+    local fingerprint_before="" fingerprint_after=""
+    if command -v sha256sum >/dev/null 2>&1; then
+        fingerprint_before="$(initramfs_image_fingerprint)"
+    fi
     if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
         adaptive_arch_initramfs_repair
+    else
+        local kver mode
+        local -a kernels=()
+
+        preflight_initramfs
+        mapfile -t kernels < <(installed_kernel_versions)
+        for kver in "${kernels[@]}"; do
+            if [[ -s "$TARGET_ROOT/boot/initrd.img-$kver" ]]; then
+                mode="-u"
+            else
+                mode="-c"
+                log "KNOWN ISSUE: initrd.img-$kver is missing; creating it instead of attempting an update." | tee -a "$SESSION_LOG"
+            fi
+            if [[ "$mode" == "-u" ]]; then
+                run_chroot_try "Update initramfs for $kver" update-initramfs -u -k "$kver"
+            else
+                run_chroot_try "Create missing initramfs for $kver" update-initramfs -c -k "$kver"
+            fi
+            if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
+                if repair_stale_mapper_mount_alias; then
+                    run_chroot_try "Retry initramfs for $kver after mapper alias correction" \
+                        update-initramfs "$mode" -k "$kver"
+                fi
+            fi
+            ((CHROOT_TRY_RC == 0)) || fail "initramfs generation failed for $kver after known corrections."
+            [[ -s "$TARGET_ROOT/boot/initrd.img-$kver" ]] \
+                || fail "initramfs command succeeded but /boot/initrd.img-$kver is missing or empty."
+            if [[ -x "$TARGET_ROOT/usr/bin/lsinitramfs" || -x "$TARGET_ROOT/usr/sbin/lsinitramfs" ]]; then
+                local verify_err="$SESSION_DIR/lsinitramfs-$kver.err" verify_rc
+                set +e
+                run_selected_chroot /usr/bin/env \
+                    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    lsinitramfs "/boot/initrd.img-$kver" >/dev/null 2>"$verify_err"
+                verify_rc=$?
+                set -e
+                if ((verify_rc != 0)); then
+                    cat "$verify_err" 2>/dev/null | tee -a "$SESSION_LOG" || true
+                    fail "Generated initramfs for $kver could not be read back by lsinitramfs."
+                fi
+                log "PASS: lsinitramfs verified /boot/initrd.img-$kver" | tee -a "$SESSION_LOG"
+            fi
+            log "PASS: initramfs verified for $kver" | tee -a "$SESSION_LOG"
+        done
+    fi
+    # Compare the rebuilt images themselves: an update-initramfs/mkinitcpio run
+    # that produced byte-identical images did not change the system evidence.
+    if [[ -z "$fingerprint_before" ]]; then
+        repair_change_status initramfs changed
         return 0
     fi
-    local kver mode
-    local -a kernels=()
-
-    preflight_initramfs
-    mapfile -t kernels < <(installed_kernel_versions)
-    for kver in "${kernels[@]}"; do
-        if [[ -s "$TARGET_ROOT/boot/initrd.img-$kver" ]]; then
-            mode="-u"
-        else
-            mode="-c"
-            log "KNOWN ISSUE: initrd.img-$kver is missing; creating it instead of attempting an update." | tee -a "$SESSION_LOG"
-        fi
-        if [[ "$mode" == "-u" ]]; then
-            run_chroot_try "Update initramfs for $kver" update-initramfs -u -k "$kver"
-        else
-            run_chroot_try "Create missing initramfs for $kver" update-initramfs -c -k "$kver"
-        fi
-        if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
-            if repair_stale_mapper_mount_alias; then
-                run_chroot_try "Retry initramfs for $kver after mapper alias correction" \
-                    update-initramfs "$mode" -k "$kver"
-            fi
-        fi
-        ((CHROOT_TRY_RC == 0)) || fail "initramfs generation failed for $kver after known corrections."
-        [[ -s "$TARGET_ROOT/boot/initrd.img-$kver" ]] \
-            || fail "initramfs command succeeded but /boot/initrd.img-$kver is missing or empty."
-        if [[ -x "$TARGET_ROOT/usr/bin/lsinitramfs" || -x "$TARGET_ROOT/usr/sbin/lsinitramfs" ]]; then
-            local verify_err="$SESSION_DIR/lsinitramfs-$kver.err" verify_rc
-            set +e
-            run_selected_chroot /usr/bin/env \
-                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                lsinitramfs "/boot/initrd.img-$kver" >/dev/null 2>"$verify_err"
-            verify_rc=$?
-            set -e
-            if ((verify_rc != 0)); then
-                cat "$verify_err" 2>/dev/null | tee -a "$SESSION_LOG" || true
-                fail "Generated initramfs for $kver could not be read back by lsinitramfs."
-            fi
-            log "PASS: lsinitramfs verified /boot/initrd.img-$kver" | tee -a "$SESSION_LOG"
-        fi
-        log "PASS: initramfs verified for $kver" | tee -a "$SESSION_LOG"
-    done
+    fingerprint_after="$(initramfs_image_fingerprint)"
+    if [[ "$fingerprint_before" == "$fingerprint_after" ]]; then
+        repair_change_status initramfs "unchanged|rebuilt initramfs images are byte-identical"
+    else
+        repair_change_status initramfs changed
+    fi
 }
 
+# Generate a GRUB candidate configuration to an isolated path, syntax-check it,
+# require that every existing menu entry is preserved and only then allow the
+# real grub.cfg to be replaced.  A stale mapper-path failure is retried once.
 preflight_grub()
 {
-    local grub_mkconfig="" sim_path target_sim_path err_path output err_output rc generator_mode
+    local grub_mkconfig="" sim_path target_sim_path err_path output err_output rc
 
     if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" ]]; then
         grub_mkconfig="/usr/sbin/grub-mkconfig"
@@ -2672,11 +3238,7 @@ preflight_grub()
     # This also makes the Linux-entry check inspect the actual generated file
     # on Debian/TUXEDO instead of the wrapper's progress messages.
     if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" ]]; then
-        generator_mode="grub-mkconfig"
         log "Using grub-mkconfig with an isolated output path for preflight." | tee -a "$SESSION_LOG"
-    elif [[ -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
-        generator_mode="update-grub"
-        log "grub-mkconfig unavailable; using update-grub output for preflight." | tee -a "$SESSION_LOG"
     else
         fail "Neither grub-mkconfig nor update-grub is installed in the target system."
     fi
@@ -2692,19 +3254,11 @@ preflight_grub()
     grub_trial_once()
     {
         set +e
-        if [[ "$generator_mode" == update-grub ]]; then
-            output="$(
-                run_selected_chroot /usr/bin/env \
-                    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                    update-grub 2>"$err_path"
-            )"
-        else
-            output="$(
-                run_selected_chroot /usr/bin/env \
-                    HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-                    "$grub_mkconfig" -o "$target_sim_path" 2>"$err_path"
-            )"
-        fi
+        output="$(
+            run_selected_chroot /usr/bin/env \
+                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                "$grub_mkconfig" -o "$target_sim_path" 2>"$err_path"
+        )"
         rc=$?
         set -e
         err_output="$(cat "$err_path" 2>/dev/null || true)"
@@ -2721,12 +3275,8 @@ preflight_grub()
     fi
     ((rc == 0)) || fail "GRUB trial generation failed; /boot/grub/grub.cfg was not changed."
 
-    if [[ "$generator_mode" == update-grub ]]; then
-        printf '%s\n' "$output" > "$sim_path"
-    else
-        [[ -s "$TARGET_ROOT$target_sim_path" ]] || fail "grub-mkconfig completed but produced no temporary configuration."
-        cp -- "$TARGET_ROOT$target_sim_path" "$sim_path"
-    fi
+    [[ -s "$TARGET_ROOT$target_sim_path" ]] || fail "grub-mkconfig completed but produced no temporary configuration."
+    cp -- "$TARGET_ROOT$target_sim_path" "$sim_path"
     [[ -s "$sim_path" ]] || fail "GRUB trial generation produced an empty configuration."
     install -D -m 0644 "$sim_path" "$TARGET_ROOT$target_sim_path"
     if compgen -G "$TARGET_ROOT/boot/vmlinuz-*" >/dev/null \
@@ -2777,12 +3327,20 @@ guard_grub_candidate_preserves_entries()
     fi
 }
 
+# Regenerate /boot/grub/grub.cfg with the target's update-grub or grub-mkconfig
+# after the guarded preflight, roll back when a previous menu entry would be
+# lost and report changed/unchanged from the grub.cfg fingerprint.
 adaptive_grub_repair()
 {
     local old_cfg="$SESSION_DIR/grub-before-update.cfg" generator="update-grub"
+    local grub_before="" grub_after=""
 
     if [[ ! -x "$TARGET_ROOT/usr/sbin/update-grub" && ! -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
         generator="grub-mkconfig"
+    fi
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        grub_before="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
     fi
 
     preflight_grub
@@ -2824,8 +3382,21 @@ adaptive_grub_repair()
         ((CHROOT_TRY_RC == 0)) || fail "Installed GRUB configuration failed grub-script-check after regeneration."
     fi
     log "PASS: GRUB configuration regenerated and verified." | tee -a "$SESSION_LOG"
+    if [[ -z "$grub_before" ]]; then
+        repair_change_status grub changed
+        return 0
+    fi
+    grub_after="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
+    if [[ "$grub_before" == "$grub_after" ]]; then
+        repair_change_status grub "unchanged|grub.cfg is byte-identical"
+    else
+        repair_change_status grub changed
+    fi
 }
 
+# Preflight a TUXEDO UKI rebuild: validate the vendor layout, ensure the
+# newest kernel has an initramfs (rebuilding it first when missing), require
+# enough ESP free space and report whether the embedded UKI kernel is stale.
 preflight_tuxedo_uki()
 {
     local kver initrd esp_free_kb uki_kb required_kb current=""
@@ -2860,6 +3431,9 @@ preflight_tuxedo_uki()
     log "PASS: TUXEDO UKI preflight prerequisites are satisfied." | tee -a "$SESSION_LOG"
 }
 
+# Read-only conventional GRUB EFI preflight: validate the selected ESP and
+# grub-install, choose the NVRAM or --no-nvram mode and verify grub-install
+# executes inside the target before any file is written.
 preflight_generic_efi()
 {
     local nvram_mode
@@ -2874,7 +3448,9 @@ preflight_generic_efi()
     ((CHROOT_TRY_RC == 0)) || fail "grub-install is present but could not execute during EFI preflight."
 }
 
-
+# Open the selected LUKS component with the installed-system `luks-<UUID>`
+# mapper name.  The passphrase is read from stdin only; an existing mapping of
+# the same device is reused and the opened mapping is kept for the session.
 unlock_target()
 {
     local fstype uuid mapper_name mapper_path existing_mapper
@@ -2951,6 +3527,9 @@ unlock_target()
     printf 'UNLOCKED=%s\n' "$mapper_path"
 }
 
+# ---------------------------------------------------------------------------
+# Read-only diagnostics and repair capability evidence
+# ---------------------------------------------------------------------------
 diagnostic_title()
 {
     case "$1" in
@@ -3020,6 +3599,1355 @@ diagnostic_backend_profile()
     fi
 }
 
+# Read-only Arch display-manager probe: print the configured (or single
+# installed supported) display-manager unit name, or return 1 when none is
+# present.  Used by capability evidence, not by the repair path.
+arch_display_manager_present()
+{
+    local link service dir candidate
+    local -a units=(sddm.service gdm.service gdm3.service lightdm.service greetd.service ly.service)
+    local -a dirs=(usr/lib/systemd/system lib/systemd/system etc/systemd/system)
+
+    if [[ -L "$TARGET_ROOT/etc/systemd/system/display-manager.service" ]]; then
+        link="$(readlink "$TARGET_ROOT/etc/systemd/system/display-manager.service" 2>/dev/null || true)"
+        service="$(basename -- "$link" 2>/dev/null || true)"
+        [[ "$service" =~ ^[[:alnum:]_.@:+-]+\.service$ ]] || return 1
+        for dir in "${dirs[@]}"; do
+            if [[ -f "$TARGET_ROOT/$dir/$service" ]]; then
+                printf '%s\n' "$service"
+                return 0
+            fi
+        done
+        return 1
+    fi
+
+    for candidate in "${units[@]}"; do
+        for dir in "${dirs[@]}"; do
+            if [[ -f "$TARGET_ROOT/$dir/$candidate" ]]; then
+                printf '%s\n' "$candidate"
+                return 0
+            fi
+        done
+    done
+    return 1
+}
+
+# Emit the stable one-line read-only evidence string for one capability key
+# (validate, filesystem, dpkg, fixbroken, aptupdate, upgrade, dkms, display,
+# initramfs, efi, grub, bootstack).  Consumed by the GUI and contract tests.
+repair_capability_evidence()
+{
+    local key="$1" family="${TARGET_DISTRO_FAMILY:-unknown}" dm_unit kernel_list esp_root detail kver
+
+    case "$key" in
+        validate)
+            printf 'read-only preflight always available'
+            ;;
+        dpkg|aptupdate)
+            if [[ "$family" == arch ]]; then
+                printf 'not available on Arch by policy'
+            elif [[ "$key" == dpkg ]]; then
+                if [[ -x "$TARGET_ROOT/usr/bin/dpkg" ]]; then printf '/usr/bin/dpkg present'; else printf '/usr/bin/dpkg missing'; fi
+            else
+                if [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]]; then printf '/usr/bin/apt-get present'; else printf '/usr/bin/apt-get missing'; fi
+            fi
+            ;;
+        fixbroken|upgrade)
+            if [[ "$family" == arch ]]; then
+                if [[ ! -x "$TARGET_ROOT/usr/bin/pacman" && ! -x "$TARGET_ROOT/usr/bin/pacman-static" ]]; then
+                    printf 'pacman executable missing'
+                elif [[ ! -f "$TARGET_ROOT/etc/pacman.conf" ]]; then
+                    printf 'pacman executable present; /etc/pacman.conf missing'
+                elif [[ ! -d "$TARGET_ROOT/var/lib/pacman" ]]; then
+                    printf 'pacman executable present; /etc/pacman.conf present; /var/lib/pacman missing'
+                else
+                    printf 'pacman executable present; /etc/pacman.conf present; /var/lib/pacman present'
+                fi
+            elif [[ -x "$TARGET_ROOT/usr/bin/dpkg" && -x "$TARGET_ROOT/usr/bin/apt-get" ]]; then
+                printf '/usr/bin/dpkg and /usr/bin/apt-get present'
+            elif [[ -x "$TARGET_ROOT/usr/bin/dpkg" ]]; then
+                printf '/usr/bin/apt-get missing'
+            else
+                printf '/usr/bin/dpkg missing'
+            fi
+            ;;
+        dkms)
+            if [[ ! -x "$TARGET_ROOT/usr/bin/dkms" && ! -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
+                printf 'dkms executable missing'
+            else
+                detail="dkms executable present"
+                while IFS= read -r kver; do
+                    [[ -n "$kver" ]] || continue
+                    if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                        detail+="; kernel $kver build tree present"
+                    else
+                        detail+="; kernel $kver build tree missing"
+                    fi
+                done < <(arch_kernel_versions)
+                printf '%s' "$detail"
+            fi
+            ;;
+        display)
+            if [[ ! -f "$TARGET_ROOT/usr/lib/systemd/system/graphical.target" && ! -f "$TARGET_ROOT/lib/systemd/system/graphical.target" ]]; then
+                printf 'graphical.target missing'
+            elif [[ "$family" == arch ]]; then
+                dm_unit="$(arch_display_manager_present 2>/dev/null || true)"
+                if [[ -n "$dm_unit" ]]; then
+                    printf 'graphical.target present; display manager unit %s' "$dm_unit"
+                else
+                    printf 'graphical.target present; no supported display manager unit'
+                fi
+            else
+                printf 'graphical.target present'
+            fi
+            ;;
+        initramfs)
+            if [[ "$family" == arch ]]; then
+                kernel_list="$(arch_kernel_versions | paste -sd' ' -)"
+                if [[ "$TARGET_INITRAMFS_BACKEND" != mkinitcpio ]]; then
+                    printf 'initramfs backend is %s, not mkinitcpio' "$TARGET_INITRAMFS_BACKEND"
+                elif ! target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio; then
+                    printf 'mkinitcpio executable missing'
+                elif [[ -z "$kernel_list" ]]; then
+                    printf 'mkinitcpio executable present; no kernel module directories'
+                else
+                    printf 'mkinitcpio executable present; kernel module directories: %s' "$kernel_list"
+                fi
+            elif [[ "$TARGET_INITRAMFS_BACKEND" == dracut ]]; then
+                if ! target_has_executable /usr/bin/dracut /usr/sbin/dracut; then
+                    printf 'initramfs backend: dracut; dracut executable missing'
+                elif ! target_has_path /usr/lib/dracut; then
+                    printf 'initramfs backend: dracut; dracut executable present; /usr/lib/dracut missing'
+                else
+                    printf 'initramfs backend: dracut; dracut executable and /usr/lib/dracut present'
+                fi
+            elif target_has_executable /usr/sbin/update-initramfs /usr/bin/update-initramfs \
+                && target_has_executable /usr/sbin/mkinitramfs /usr/bin/mkinitramfs; then
+                printf 'initramfs backend: %s; update-initramfs and mkinitramfs present' "${TARGET_INITRAMFS_BACKEND:-unknown}"
+            else
+                printf 'initramfs backend: %s; update-initramfs or mkinitramfs missing' "${TARGET_INITRAMFS_BACKEND:-unknown}"
+            fi
+            ;;
+        grub)
+            if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" ]]; then
+                printf 'grub-mkconfig present'
+            elif [[ -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+                printf 'update-grub present'
+            else
+                printf 'grub-mkconfig and update-grub missing'
+            fi
+            ;;
+        efi)
+            if [[ "$TARGET_OS_ID" == tuxedo ]] && ! tuxedo_uki_builder_present; then
+                printf 'TUXEDO UKI builder create_boot_uki_base.sh missing'
+            elif [[ ! -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" && ! -x "$TARGET_ROOT/usr/bin/grub-mkconfig" \
+                && ! -x "$TARGET_ROOT/usr/sbin/update-grub" && ! -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+                printf 'requires GRUB configuration tooling'
+            elif [[ ! -x "$TARGET_ROOT/usr/sbin/grub-install" && ! -x "$TARGET_ROOT/usr/bin/grub-install" ]]; then
+                printf 'grub-install missing'
+            else
+                esp_root="$(profile_esp_root 2>/dev/null || true)"
+                if [[ "$family" == arch && -z "$esp_root" ]]; then
+                    printf 'grub-install present; no ESP mount candidate'
+                elif [[ "$TARGET_OS_ID" == tuxedo && -n "$esp_root" ]]; then
+                    printf 'grub-install present; TUXEDO UKI builder create_boot_uki_base.sh present; ESP mount candidate: %s' "${esp_root#"$TARGET_ROOT"}"
+                elif [[ "$TARGET_OS_ID" == tuxedo ]]; then
+                    printf 'grub-install present; TUXEDO UKI builder create_boot_uki_base.sh present; no ESP mount candidate'
+                else
+                    printf 'grub-install present; ESP mount candidate: %s' "${TARGET_ESP_MOUNT:-unresolved}"
+                fi
+            fi
+            ;;
+        bootstack)
+            if [[ "$family" == arch ]]; then
+                if [[ "$TARGET_INITRAMFS_BACKEND" == mkinitcpio ]] \
+                    && target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio \
+                    && [[ -n "$(arch_kernel_versions)" ]] \
+                    && [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" \
+                        || -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]] \
+                    && [[ -x "$TARGET_ROOT/usr/sbin/grub-install" || -x "$TARGET_ROOT/usr/bin/grub-install" ]] \
+                    && [[ -n "$(profile_esp_root 2>/dev/null || true)" ]]; then
+                    printf 'initramfs, GRUB and EFI prerequisites available'
+                else
+                    printf 'initramfs, GRUB or EFI prerequisites unavailable'
+                fi
+            elif target_has_executable /usr/sbin/update-initramfs /usr/bin/update-initramfs \
+                && target_has_executable /usr/sbin/mkinitramfs /usr/bin/mkinitramfs \
+                && [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" \
+                    || -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+                printf 'initramfs backend: %s; initramfs and GRUB prerequisites available' "${TARGET_INITRAMFS_BACKEND:-unknown}"
+            else
+                printf 'initramfs backend: %s; initramfs or GRUB prerequisites unavailable' "${TARGET_INITRAMFS_BACKEND:-unknown}"
+            fi
+            ;;
+        filesystem)
+            filesystem_capability_evidence
+            ;;
+        *)
+            printf 'no evidence recorded'
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# File system repair engine
+#
+# The engine is deliberately conservative:
+#   * fs-inspect resolves the scope's root, /boot, ESP and /home filesystems
+#     and runs each filesystem's read-only check tool.  It never writes.
+#   * fs-repair re-resolves the same scope, refuses any device that is not part
+#     of it, refuses offline tools on mounted filesystems (including the whole
+#     running host), and requires the filesystem-specific tool to exist.
+#   * Unsupported filesystems are reported, never guessed about.
+# ---------------------------------------------------------------------------
+FS_SCOPE_DEVICES=()
+FS_SCOPE_MOUNTS=()
+FS_SCOPE_FSTYPES=()
+FS_SCOPE_UUIDS=()
+FS_SCOPE_TOOLS=()
+declare -A FS_SCOPE_DEVICE_INDEX=()
+
+filesystem_normalize_fstype()
+{
+    case "${1,,}" in
+        vfat|fat16|fat32|msdos) printf 'fat\n' ;;
+        ntfs3) printf 'ntfs\n' ;;
+        zfs_member) printf 'zfs\n' ;;
+        *) printf '%s\n' "${1,,}" ;;
+    esac
+}
+
+# Authoritative mode matrix for the file system repair engine.  Every mode the
+# engine is willing to execute is declared here; `filesystem_mode_matrix`
+# exposes the same matrix to the contract test, which cross-checks it against
+# MainWindow::filesystemRepairModes() so the helper and GUI lists cannot drift.
+# f2fs is repair-only: fsck.f2fs has no read-only check mode (`-n` is a usage
+# error) and its exit status is not trustworthy, so it is never inspected.
+filesystem_mode_field()
+{
+    local fstype mode field tool offline online
+    fstype="$(filesystem_normalize_fstype "$1")"
+    mode="$2"
+    field="$3"
+    case "$fstype:$mode" in
+        ext2:check|ext3:check|ext4:check|ext2:repair|ext3:repair|ext4:repair)
+            tool=e2fsck; offline=yes; online=no ;;
+        xfs:check|xfs:repair)
+            tool=xfs_repair; offline=yes; online=no ;;
+        btrfs:check|btrfs:repair|btrfs:rescue)
+            tool=btrfs; offline=yes; online=no ;;
+        btrfs:scrub)
+            tool=btrfs; offline=no; online=yes ;;
+        fat:check|fat:repair)
+            tool=fsck.fat; offline=yes; online=no ;;
+        exfat:check|exfat:repair)
+            tool=fsck.exfat; offline=yes; online=no ;;
+        ntfs:check|ntfs:repair)
+            tool=ntfsfix; offline=yes; online=no ;;
+        f2fs:repair)
+            tool=fsck.f2fs; offline=yes; online=no ;;
+        jfs:check|jfs:repair)
+            tool=jfs_fsck; offline=yes; online=no ;;
+        reiserfs:check|reiserfs:repair)
+            tool=reiserfsck; offline=yes; online=no ;;
+        zfs:check|zfs:scrub)
+            tool=zpool; offline=no; online=yes ;;
+        *) return 1 ;;
+    esac
+    case "$field" in
+        tool) printf '%s' "$tool" ;;
+        offline) printf '%s' "$offline" ;;
+        online) printf '%s' "$online" ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# Stable text rendering of the mode matrix: one "<fstype> <mode> <offline>
+# <online>" line per supported pair.  Consumed by the contract test, never by
+# the repair path itself.
+filesystem_mode_matrix()
+{
+    local pair fstype mode offline online
+    for pair in \
+        ext2:repair ext2:check \
+        ext3:repair ext3:check \
+        ext4:repair ext4:check \
+        xfs:repair xfs:check \
+        btrfs:repair btrfs:rescue btrfs:scrub btrfs:check \
+        fat:repair fat:check \
+        exfat:repair exfat:check \
+        ntfs:repair ntfs:check \
+        f2fs:repair \
+        jfs:repair jfs:check \
+        reiserfs:repair reiserfs:check \
+        zfs:scrub zfs:check; do
+        fstype="${pair%%:*}"
+        mode="${pair##*:}"
+        offline="$(filesystem_mode_field "$fstype" "$mode" offline 2>/dev/null || true)"
+        online="$(filesystem_mode_field "$fstype" "$mode" online 2>/dev/null || true)"
+        printf '%s %s %s %s\n' "$fstype" "$mode" "$offline" "$online"
+    done
+}
+
+filesystem_repair_tool()
+{
+    local fstype tool="" path
+    fstype="$(filesystem_normalize_fstype "$1")"
+    case "$fstype" in
+        ext2|ext3|ext4) tool="e2fsck" ;;
+        xfs) tool="xfs_repair" ;;
+        btrfs) tool="btrfs" ;;
+        fat) tool="fsck.fat" ;;
+        exfat) tool="fsck.exfat" ;;
+        ntfs) tool="ntfsfix" ;;
+        f2fs) tool="fsck.f2fs" ;;
+        jfs) tool="jfs_fsck" ;;
+        reiserfs) tool="reiserfsck" ;;
+        zfs) tool="zpool" ;;
+        *) return 1 ;;
+    esac
+    for path in "/usr/sbin/$tool" "/usr/bin/$tool" "/sbin/$tool" "/bin/$tool"; do
+        if [[ -x "$path" ]]; then
+            printf '%s\n' "$path"
+            return 0
+        fi
+    done
+    if command -v "$tool" >/dev/null 2>&1; then
+        command -v "$tool"
+        return 0
+    fi
+    return 1
+}
+
+# Build FS_INSPECT_ARGUMENTS for one supported fstype:mode pair.  Read-only
+# modes use the tool's non-destructive flags; repair modes use the least
+# invasive form (for example e2fsck -p) with any forced retry handled by the
+# caller.  Returns 1 for an unsupported pair.
+filesystem_inspect_arguments()
+{
+    local fstype mode device mountpoint pool tool
+    fstype="$(filesystem_normalize_fstype "$1")"
+    mode="$2"
+    device="$3"
+    mountpoint="${4:-}"
+    pool="${5:-}"
+    FS_INSPECT_ARGUMENTS=()
+    tool="$(filesystem_mode_field "$fstype" "$mode" tool 2>/dev/null || true)"
+    [[ -n "$tool" ]] || return 1
+    case "$fstype:$mode" in
+        ext2:check|ext3:check|ext4:check) FS_INSPECT_ARGUMENTS=("$tool" -f -n "$device") ;;
+        # Safe preen first; fs_repair retries with -f -y only after preen
+        # reports uncorrected errors and the GUI confirmation is in place.
+        ext2:repair|ext3:repair|ext4:repair) FS_INSPECT_ARGUMENTS=("$tool" -f -p "$device") ;;
+        xfs:check) FS_INSPECT_ARGUMENTS=("$tool" -n "$device") ;;
+        # -e extends the exit status: 4 means repairs were applied.  -L is
+        # never used because it can destroy an unreplayed log.
+        xfs:repair) FS_INSPECT_ARGUMENTS=("$tool" -e "$device") ;;
+        btrfs:check) FS_INSPECT_ARGUMENTS=("$tool" check --readonly "$device") ;;
+        btrfs:repair) FS_INSPECT_ARGUMENTS=("$tool" check --repair "$device") ;;
+        btrfs:rescue) FS_INSPECT_ARGUMENTS=("$tool" rescue super-recover -y "$device") ;;
+        btrfs:scrub) FS_INSPECT_ARGUMENTS=("$tool" scrub start -B -d "$mountpoint") ;;
+        fat:check) FS_INSPECT_ARGUMENTS=("$tool" -n -v "$device") ;;
+        fat:repair) FS_INSPECT_ARGUMENTS=("$tool" -a -v "$device") ;;
+        exfat:check) FS_INSPECT_ARGUMENTS=("$tool" -n "$device") ;;
+        exfat:repair) FS_INSPECT_ARGUMENTS=("$tool" -p "$device") ;;
+        ntfs:check) FS_INSPECT_ARGUMENTS=("$tool" -n "$device") ;;
+        ntfs:repair) FS_INSPECT_ARGUMENTS=("$tool" "$device") ;;
+        f2fs:repair) FS_INSPECT_ARGUMENTS=("$tool" -f "$device") ;;
+        jfs:check) FS_INSPECT_ARGUMENTS=("$tool" -n "$device") ;;
+        jfs:repair) FS_INSPECT_ARGUMENTS=("$tool" -f "$device") ;;
+        reiserfs:check) FS_INSPECT_ARGUMENTS=("$tool" --check "$device") ;;
+        reiserfs:repair) FS_INSPECT_ARGUMENTS=("$tool" -y --fix-fixable "$device") ;;
+        zfs:check) FS_INSPECT_ARGUMENTS=("$tool" status -v "$pool") ;;
+        zfs:scrub) FS_INSPECT_ARGUMENTS=("$tool" scrub -w "$pool") ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+filesystem_zfs_status_result()
+{
+    local rc="$1" output="$2"
+    if (( rc != 0 )); then
+        printf 'issues\n'
+        return 0
+    fi
+    # "errors: No known data errors" is the healthy form; only the explicit
+    # permanent/uncorrectable forms count as issues.
+    if grep -Eiq 'state:[[:space:]]*(FAULTED|DEGRADED|UNAVAIL|REMOVED)|errors:[[:space:]]*(PERMANENT|UNCORRECT|LIST OF ERRORS UNAVAILABLE)|status:.*(FAULTED|UNAVAIL|REMOVED|corrupt|unrecoverable)' <<<"$output"; then
+        printf 'issues\n'
+    else
+        printf 'clean\n'
+    fi
+}
+
+filesystem_btrfs_scrub_result()
+{
+    local rc="$1" output="$2"
+    if (( rc != 0 )); then
+        # Exit code 3 is documented as uncorrectable errors.
+        printf 'issues\n'
+        return 0
+    fi
+    if grep -Eqi 'uncorrectable|superblock.*(error|corrupt)' <<<"$output"; then
+        printf 'issues\n'
+        return 0
+    fi
+    if grep -Eq 'Error summary:.*[a-z_]+=[1-9]' <<<"$output"; then
+        printf 'repaired\n'
+        return 0
+    fi
+    printf 'clean\n'
+}
+
+# Classify a filesystem tool result from the per-filesystem exit map.  The
+# upstream exit codes are authoritative; output parsing is used only where
+# upstream documents the codes as unreliable (fsck.f2fs) or where scrub
+# statistics carry the real answer (btrfs, zfs).  Returned values:
+#   clean     the tool reported no errors (a repair made no changes)
+#   repaired  the tool corrected errors or the repair modified the filesystem
+#   issues    errors remain uncorrected or the tool failed
+filesystem_result_classify()
+{
+    local fstype mode rc output
+    fstype="$(filesystem_normalize_fstype "$1")"
+    mode="$2"
+    rc="$3"
+    output="$4"
+    if [[ "$mode" == "check" ]]; then
+        if [[ "$fstype" == "zfs" ]]; then
+            filesystem_zfs_status_result "$rc" "$output"
+        elif (( rc == 0 )); then
+            printf 'clean\n'
+        else
+            printf 'issues\n'
+        fi
+        return 0
+    fi
+    case "$fstype" in
+        ext2|ext3|ext4|jfs|reiserfs|exfat)
+            # 0 clean; 1 corrected; 2 corrected with a reboot recommended;
+            # 4/6 (and anything else) uncorrected or a hard tool failure.
+            case "$rc" in
+                0) printf 'clean\n' ;;
+                1|2) printf 'repaired\n' ;;
+                *) printf 'issues\n' ;;
+            esac ;;
+        fat)
+            # 0 clean; 1 corrected; 2 is a usage error and the filesystem was
+            # not touched, so it must never be treated as success.
+            case "$rc" in
+                0) printf 'clean\n' ;;
+                1) printf 'repaired\n' ;;
+                *) printf 'issues\n' ;;
+            esac ;;
+        xfs)
+            # 0 no changes; 4 repairs applied (-e); 1 uncorrected errors;
+            # 2 dirty log with nothing repaired.
+            case "$rc" in
+                0) printf 'clean\n' ;;
+                4) printf 'repaired\n' ;;
+                *) printf 'issues\n' ;;
+            esac ;;
+        ntfs)
+            # 0 success; 1 failure; 255 errors remain.  ntfsfix never performs
+            # a full NTFS repair, so the caller must report chkdsk.
+            case "$rc" in
+                0) printf 'clean\n' ;;
+                *) printf 'issues\n' ;;
+            esac ;;
+        f2fs)
+            # fsck.f2fs exits 0 even when corruption remains; classify from
+            # its [FSCK] result lines instead of the exit status.
+            if grep -Eqi '\[Fail\]|corrupted|unrecoverable' <<<"$output"; then
+                printf 'issues\n'
+            else
+                printf 'repaired\n'
+            fi ;;
+        btrfs)
+            if [[ "$mode" == "scrub" ]]; then
+                filesystem_btrfs_scrub_result "$rc" "$output"
+            elif (( rc == 0 )); then
+                printf 'clean\n'
+            else
+                printf 'issues\n'
+            fi ;;
+        zfs)
+            filesystem_zfs_status_result "$rc" "$output" ;;
+        *)
+            (( rc == 0 )) && printf 'clean\n' || printf 'issues\n' ;;
+    esac
+}
+
+filesystem_detail_line()
+{
+    local device="$1" tool="$2" output="$3" line detail=""
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        line="${line//$'\t'/ }"
+        line="${line//$'\r'/}"
+        detail+="${detail:+; }$line"
+        ((${#detail} >= 240)) && break
+    done < <(printf '%s\n' "$output" | head -n 4)
+    detail="${detail//$'\n'/; }"
+    ((${#detail} > 320)) && detail="${detail:0:320}"
+    printf 'File system check detail %s: tool=%s output=%s\n' "$device" "${tool:-none}" "${detail:-none}"
+}
+
+filesystem_device_record()
+{
+    local device="$1" mount_hint="${2:-}" canonical fstype uuid existing mountpoint pool
+    canonical="$(canonical_block "$device" 2>/dev/null || true)"
+    if [[ -n "$canonical" ]]; then
+        fstype="$(lsblk -ndo FSTYPE "$canonical" 2>/dev/null | head -n1 || true)"
+        uuid="$(blkid -s UUID -o value "$canonical" 2>/dev/null | head -n1 || true)"
+    else
+        # ZFS dataset sources (rpool/ROOT/...) are not block devices.  Record
+        # the imported pool that backs them so zpool checks stay pool-scoped.
+        pool="$(filesystem_pool_for_device "$device" 2>/dev/null || true)"
+        [[ -n "$pool" ]] || return 1
+        canonical="$pool"
+        fstype="zfs"
+        uuid="$(zpool list -H -o guid "$pool" 2>/dev/null | head -n1 || true)"
+    fi
+    existing="${FS_SCOPE_DEVICE_INDEX[$canonical]:-}"
+    if [[ -n "$existing" ]]; then
+        if [[ -z "${FS_SCOPE_MOUNTS[$existing]}" && -n "$mount_hint" ]]; then
+            FS_SCOPE_MOUNTS[$existing]="$mount_hint"
+        fi
+        return 0
+    fi
+    mountpoint="$(filesystem_mountpoint_for_device "$canonical" "$mount_hint")"
+    FS_SCOPE_DEVICE_INDEX[$canonical]=${#FS_SCOPE_DEVICES[@]}
+    FS_SCOPE_DEVICES+=("$canonical")
+    FS_SCOPE_MOUNTS+=("$mountpoint")
+    FS_SCOPE_FSTYPES+=("$fstype")
+    FS_SCOPE_UUIDS+=("${uuid:-none}")
+    FS_SCOPE_TOOLS+=("")
+}
+
+# Resolve where a device is currently mounted.  The target's own mount tree is
+# checked first so a repair target that reuses a host-visible device name can
+# never be confused with the running host; the live mount table is the
+# fallback for running-host maintenance.
+filesystem_mountpoint_for_device()
+{
+    local device="$1" hint="${2:-}" source mountpoint
+    # Running-host scope: TARGET_ROOT is "/" and the hint is a live mountpoint
+    # that is verified by the findmnt scan below.
+    if (( RUNNING_HOST_MODE == 1 )); then
+        hint=""
+    elif [[ -n "$hint" && -n "$TARGET_ROOT" ]] && mountpoint -q "$TARGET_ROOT$hint" 2>/dev/null; then
+        printf '%s\n' "$hint"
+        return 0
+    fi
+    while IFS=' ' read -r source mountpoint; do
+        [[ -n "$source" && -n "$mountpoint" ]] || continue
+        source="${source%%\[*}"
+        [[ "$(canonical_block "$source" 2>/dev/null || true)" == "$device" ]] || continue
+        # A live mount under the target's own temporary tree is the selected
+        # repair system, not the running host.
+        if [[ -n "$TARGET_ROOT" && "$mountpoint" == "$TARGET_ROOT/"* ]]; then
+            continue
+        fi
+        printf '%s\n' "$mountpoint"
+        return 0
+    done < <(findmnt -rn -o SOURCE,TARGET 2>/dev/null || true)
+    printf '\n'
+}
+
+# Release every helper-owned mount of one device before an offline repair.
+# Mounts stacked inside the target root are released as well when the root
+# device itself is being repaired, otherwise the root cannot be unmounted
+# cleanly.  Returns 0 when at least one mount was released, 1 when the device
+# was not mounted by this helper request, and 2 when a mount could not be
+# released.
+filesystem_release_mounts_for_device()
+{
+    local device="$1" idx mountpath source root_device released=0
+    [[ -n "$MOUNT_BASE" ]] || return 1
+    root_device="$(canonical_block "$ROOT_DEVICE" 2>/dev/null || true)"
+    for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
+        mountpath="${MOUNTS[$idx]:-}"
+        [[ -n "$mountpath" ]] || continue
+        mountpoint -q "$mountpath" 2>/dev/null || continue
+        source="$(findmnt -rn -o SOURCE --target "$mountpath" 2>/dev/null | head -n1 || true)"
+        source="${source%%\[*}"
+        if [[ "$(canonical_block "$source" 2>/dev/null || true)" != "$device" ]]; then
+            # Not the requested device: only release it when it is stacked
+            # inside the target root and the root device itself is repaired.
+            if [[ -z "$root_device" || "$device" != "$root_device" \
+                || ( "$mountpath" != "$MOUNT_BASE" && "$mountpath" != "$MOUNT_BASE/"* ) ]]; then
+                continue
+            fi
+        fi
+        if ! umount "$mountpath" 2>/dev/null && ! umount -l "$mountpath" 2>/dev/null; then
+            return 2
+        fi
+        released=1
+        unset 'MOUNTS[idx]'
+    done
+    MOUNTS=("${MOUNTS[@]}")
+    (( released == 1 ))
+}
+
+# Read-only inspection runs against unmounted devices so mount-sensitive
+# filesystem tools (for example btrfs check) still produce valid evidence.
+# Only helper-owned mounts are released.
+filesystem_release_all_mounts()
+{
+    local idx mountpath
+    for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
+        mountpath="${MOUNTS[$idx]:-}"
+        [[ -n "$mountpath" ]] || continue
+        if mountpoint -q "$mountpath" 2>/dev/null; then
+            umount "$mountpath" 2>/dev/null || umount -l "$mountpath" 2>/dev/null || true
+        fi
+        unset 'MOUNTS[idx]'
+    done
+    MOUNTS=("${MOUNTS[@]}")
+}
+
+filesystem_tool_timeout()
+{
+    local value="${BOOT_REPAIR_FS_TOOL_TIMEOUT:-1800}"
+    case "$value" in
+        ''|*[!0-9]*) value=1800 ;;
+    esac
+    (( value > 0 )) || value=1800
+    printf '%s\n' "$value"
+}
+
+# Reset the scope arrays and resolve the filesystems that make up the selected
+# scope (target root, /boot, ESP, /home or the live running-host equivalents).
+filesystem_scope_resolve()
+{
+    FS_SCOPE_DEVICES=()
+    FS_SCOPE_MOUNTS=()
+    FS_SCOPE_FSTYPES=()
+    FS_SCOPE_UUIDS=()
+    FS_SCOPE_TOOLS=()
+    FS_SCOPE_DEVICE_INDEX=()
+
+    if (( RUNNING_HOST_MODE == 1 )); then
+        filesystem_scope_resolve_host
+    else
+        filesystem_scope_resolve_target
+    fi
+}
+
+filesystem_scope_resolve_target()
+{
+    local root_device root_source spec fstype mp resolved pool
+    [[ -n "$TARGET_ROOT" && -d "$TARGET_ROOT" ]] || return 1
+
+    root_device="$(canonical_block "$ROOT_DEVICE" 2>/dev/null || true)"
+    if [[ -z "$root_device" ]]; then
+        # Fall back to the live mount backing the selected target root when the
+        # caller's root component no longer resolves to a block device.
+        root_source="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT" 2>/dev/null | head -n1 || true)"
+        root_source="${root_source%%\[*}"
+        [[ -n "$root_source" ]] && root_device="$(canonical_block "$root_source" 2>/dev/null || true)"
+    fi
+    if [[ -n "$root_device" ]]; then
+        filesystem_device_record "$root_device" ""
+    else
+        # A ZFS root is a dataset (rpool/ROOT/...), not a block device; the
+        # pool entry represents it for check/scrub purposes.
+        pool="$(filesystem_pool_for_device "$ROOT_DEVICE" 2>/dev/null || true)"
+        [[ -n "$pool" ]] || return 1
+        filesystem_device_record "$pool" ""
+    fi
+
+    while IFS=$'\t' read -r spec fstype mp; do
+        [[ -n "$spec" && -n "$mp" ]] || continue
+        case "$spec" in
+            /dev/*|UUID=*|PARTUUID=*|LABEL=*|PARTLABEL=*)
+                resolved="$(resolve_fstab_source "$spec")"
+                [[ -n "$resolved" ]] || continue
+                is_block_device "$resolved" || continue
+                resolved="$(canonical_block "$resolved" 2>/dev/null || true)"
+                [[ -n "$resolved" ]] || continue
+                filesystem_device_record "$resolved" "$mp" || true
+                ;;
+            *)
+                # ZFS datasets (pool/dataset) are recorded through their pool.
+                if [[ "$(filesystem_normalize_fstype "$fstype")" == "zfs" ]]; then
+                    filesystem_device_record "$spec" "$mp" || true
+                fi
+                ;;
+        esac
+    done < <(
+        awk '
+            /^[[:space:]]*#/ { next }
+            NF >= 3 && ($2 == "/boot" || $2 == "/boot/efi" || $2 == "/efi" || $2 == "/home") {
+                print $1 "\t" $3 "\t" $2
+            }
+        ' "$TARGET_ROOT/etc/fstab" 2>/dev/null
+    )
+    return 0
+}
+
+filesystem_scope_resolve_host()
+{
+    local mp source fstype
+    for mp in / /boot /boot/efi /efi /home; do
+        # A path can expose stacked mounts: systemd's automount unit publishes a
+        # synthetic autofs source (for example systemd-1) before the real
+        # filesystem, and findmnt --target lists every stack member.  Resolve
+        # each candidate and record the first real filesystem so the running
+        # host's ESP and a separate /boot are not lost behind the automount.
+        while IFS=' ' read -r source fstype; do
+            [[ -n "$source" ]] || continue
+            source="${source%%\[*}"
+            if [[ "$mp" == "/efi" ]]; then
+                case "${fstype,,}" in
+                    vfat|fat|fat16|fat32|msdos) ;;
+                    *) continue ;;
+                esac
+            fi
+            if is_block_device "$source"; then
+                filesystem_device_record "$source" "$mp" || true
+                break
+            elif [[ "$(filesystem_normalize_fstype "$fstype")" == "zfs" ]]; then
+                # ZFS datasets are not block devices; the pool entry represents
+                # them for zpool checks and scrubs.
+                filesystem_device_record "$source" "$mp" || true
+                break
+            fi
+        done < <(findmnt -rn -o SOURCE,FSTYPE --target "$mp" 2>/dev/null || true)
+    done
+    return 0
+}
+
+filesystem_scope_tools()
+{
+    local idx tool fstype
+    FS_SCOPE_TOOLS=()
+    for idx in "${!FS_SCOPE_DEVICES[@]}"; do
+        fstype="${FS_SCOPE_FSTYPES[$idx]}"
+        tool="$(filesystem_repair_tool "$fstype" 2>/dev/null || true)"
+        FS_SCOPE_TOOLS[$idx]="$tool"
+    done
+}
+
+filesystem_scope_contains_device()
+{
+    local device="$1" canonical idx pool
+    canonical="$(canonical_block "$device" 2>/dev/null || true)"
+    [[ -n "$canonical" ]] || canonical="$device"
+    idx="${FS_SCOPE_DEVICE_INDEX[$canonical]:-}"
+    if [[ -z "$idx" && "$canonical" != /dev/* ]]; then
+        # A ZFS dataset request maps to its pool's scope entry.
+        pool="$(filesystem_pool_for_device "$canonical" 2>/dev/null || true)"
+        [[ -n "$pool" ]] && idx="${FS_SCOPE_DEVICE_INDEX[$pool]:-}"
+    fi
+    [[ -n "$idx" ]] || return 1
+    printf '%s\n' "$idx"
+    return 0
+}
+
+# Resolve the imported ZFS pool that backs a device, a pool name or a dataset
+# source (rpool/ROOT/...).  Only imported pools are listed by `zpool list`.
+filesystem_pool_for_device()
+{
+    local device="$1" pool candidate
+    command -v zpool >/dev/null 2>&1 || return 1
+    if [[ "$device" != /dev/* && "$device" == */* ]]; then
+        candidate="${device%%/*}"
+        if zpool list -H -o name 2>/dev/null | grep -Fqx -- "$candidate"; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    fi
+    if [[ "$device" != /dev/* ]] && zpool list -H -o name 2>/dev/null | grep -Fqx -- "$device"; then
+        printf '%s\n' "$device"
+        return 0
+    fi
+    while IFS= read -r pool; do
+        [[ -n "$pool" ]] || continue
+        if zpool status -P "$pool" 2>/dev/null | awk -v dev="$device" '
+            { for (i = 1; i <= NF; i++) if ($i == dev) found = 1 }
+            END { exit(found ? 0 : 1) }'; then
+            printf '%s\n' "$pool"
+            return 0
+        fi
+    done < <(zpool list -H -o name 2>/dev/null || true)
+    return 1
+}
+
+filesystem_run_inspect_command()
+{
+    local tool="$1" device="$2" rc=0 output=""
+    shift 2
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        FS_INSPECT_OUTPUT=""
+        FS_INSPECT_RC=127
+        return 0
+    fi
+    local -a inspect_command=("$@")
+    if command -v timeout >/dev/null 2>&1; then
+        inspect_command=(timeout --foreground "$(filesystem_tool_timeout)" "${inspect_command[@]}")
+    fi
+    set +e
+    output="$("${inspect_command[@]}" 2>&1)"
+    rc=$?
+    set -e
+    FS_INSPECT_OUTPUT="$output"
+    FS_INSPECT_RC="$rc"
+    return 0
+}
+
+filesystem_run_repair_command()
+{
+    local -a repair_command=("$@")
+    if command -v timeout >/dev/null 2>&1; then
+        repair_command=(timeout --foreground "$(filesystem_tool_timeout)" "${repair_command[@]}")
+    fi
+    set +e
+    FS_REPAIR_OUTPUT="$("${repair_command[@]}" 2>&1)"
+    FS_REPAIR_RC=$?
+    set -e
+    printf '%s\n' "$FS_REPAIR_OUTPUT" | tee -a "$SESSION_LOG"
+    return 0
+}
+
+fs_inspect_scope()
+{
+    local idx device mountpoint fstype uuid tool tool_name tool_path pool
+    local output result summary_clean=0 summary_issues=0 summary_unsupported=0 summary_missing=0 summary_skipped=0
+
+    filesystem_scope_resolve || true
+    if (( ${#FS_SCOPE_DEVICES[@]} == 0 )); then
+        printf 'File system check summary: devices=0 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=0\n'
+        log "File system inspection found no resolvable scope filesystems (root, /boot, ESP and /home)." | tee -a "$SESSION_LOG"
+        return 0
+    fi
+    filesystem_scope_tools
+    if (( RUNNING_HOST_MODE == 0 )); then
+        # Read-only checks run against unmounted devices so mount-sensitive
+        # tools such as btrfs check report real evidence instead of refusing a
+        # helper-owned read-only mount.
+        filesystem_release_all_mounts
+    fi
+
+    for idx in "${!FS_SCOPE_DEVICES[@]}"; do
+        device="${FS_SCOPE_DEVICES[$idx]}"
+        fstype="${FS_SCOPE_FSTYPES[$idx]}"
+        uuid="${FS_SCOPE_UUIDS[$idx]}"
+        tool="${FS_SCOPE_TOOLS[$idx]}"
+        pool=""
+        # Recompute the live mount state: helper-owned mounts were released
+        # above, so a mount still present here is a real (host or foreign)
+        # mount that offline-only checks must not run against.
+        mountpoint="$(filesystem_mountpoint_for_device "$device" "${FS_SCOPE_MOUNTS[$idx]:-}")"
+
+        if ! filesystem_mode_field "$fstype" check tool >/dev/null 2>&1; then
+            printf 'File system check %s: %s uuid=%s mount=%s tool=none result=unsupported\n' \
+                "$device" "${fstype:-unknown}" "$uuid" "${mountpoint:-unmounted}"
+            ((summary_unsupported += 1))
+            continue
+        fi
+        if [[ -z "$tool" ]]; then
+            printf 'File system check %s: %s uuid=%s mount=%s tool=none result=tool-missing\n' \
+                "$device" "${fstype:-unknown}" "$uuid" "${mountpoint:-unmounted}"
+            ((summary_missing += 1))
+            continue
+        fi
+
+        tool_name="$(basename -- "$tool")"
+        tool_path="$(filesystem_repair_tool "$fstype" 2>/dev/null || true)"
+        if [[ -z "$tool_path" ]]; then
+            printf 'File system check %s: %s uuid=%s mount=%s tool=%s result=tool-missing\n' \
+                "$device" "${fstype:-unknown}" "$uuid" "${mountpoint:-unmounted}" "$tool_name"
+            ((summary_missing += 1))
+            continue
+        fi
+
+        # Offline-only check tools must never run against a mounted filesystem
+        # (XFS and Btrfs refuse outright; other tools can report stale state).
+        # The target's helper-owned mounts were released above, so a mount that
+        # is still present belongs to the running host or another tool.
+        if [[ -n "$mountpoint" ]] \
+            && [[ "$(filesystem_mode_field "$fstype" check offline 2>/dev/null || true)" == "yes" ]]; then
+            printf 'File system check %s: %s uuid=%s mount=%s tool=%s result=skipped\n' \
+                "$device" "${fstype:-unknown}" "$uuid" "$mountpoint" "$tool_name"
+            filesystem_detail_line "$device" "$tool_name" \
+                "not run: $device is mounted at $mountpoint; this check tool is offline-only"
+            ((summary_skipped += 1))
+            continue
+        fi
+
+        if [[ "$fstype" == "zfs" ]]; then
+            pool="$(filesystem_pool_for_device "$device" 2>/dev/null || true)"
+            if [[ -z "$pool" ]]; then
+                printf 'File system check %s: %s uuid=%s mount=%s tool=%s result=skipped\n' \
+                    "$device" "$fstype" "$uuid" "${mountpoint:-unmounted}" "$tool_name"
+                filesystem_detail_line "$device" "$tool_name" \
+                    "not run: no imported ZFS pool was identified for $device"
+                ((summary_skipped += 1))
+                continue
+            fi
+        fi
+
+        filesystem_inspect_arguments "$fstype" check "$device" "$mountpoint" "$pool" || {
+            printf 'File system check %s: %s uuid=%s mount=%s tool=none result=unsupported\n' \
+                "$device" "${fstype:-unknown}" "$uuid" "${mountpoint:-unmounted}"
+            ((summary_unsupported += 1))
+            continue
+        }
+        filesystem_run_inspect_command "$tool_path" "$device" "${FS_INSPECT_ARGUMENTS[@]}"
+        output="$FS_INSPECT_OUTPUT"
+        result="$(filesystem_result_classify "$fstype" check "$FS_INSPECT_RC" "$output")"
+        printf 'File system check %s: %s uuid=%s mount=%s tool=%s result=%s\n' \
+            "$device" "$fstype" "$uuid" "${mountpoint:-unmounted}" "$tool_name" "$result"
+        filesystem_detail_line "$device" "$tool_name" "$output"
+        if [[ "$result" == "clean" ]]; then
+            ((summary_clean += 1))
+        else
+            ((summary_issues += 1))
+        fi
+    done
+
+    summary="File system check summary: devices=${#FS_SCOPE_DEVICES[@]} clean=$summary_clean issues=$summary_issues unsupported=$summary_unsupported tool-missing=$summary_missing skipped=$summary_skipped"
+    printf '%s\n' "$summary"
+    log "$summary" | tee -a "$SESSION_LOG"
+    return 0
+}
+
+# fs-inspect entry point: prepare the scope read-only (target or running host),
+# resolve the root, /boot, ESP and /home filesystems and run each read-only
+# check tool.
+fs_inspect()
+{
+    local raw_disk="$1" raw_root="$2"
+    CURRENT_STAGE="file system inspection"
+
+    if (( RUNNING_HOST_MODE == 1 )); then
+        prepare_running_host "$raw_disk" "$raw_root" no no
+    else
+        prepare_target ro
+        mount_target_boot_entry "/boot" ro
+        mount_target_boot_entry "/boot/efi" ro
+        mount_target_boot_entry "/efi" ro
+    fi
+
+    log "File system inspection started (read-only; no repair tool is invoked)." | tee -a "$SESSION_LOG"
+    fs_inspect_scope
+    return 0
+}
+
+# fs-repair entry point: re-resolve the scope, prove the requested device
+# belongs to the selected disk, release helper-owned mounts for offline modes
+# and run the mode matrix's repair command with the documented exit map.
+fs_repair()
+{
+    local raw_disk="$1" raw_root="$2" requested_device="$3" requested_mode="$4"
+    local device canonical idx mountpoint fstype uuid tool_path tool_name rc=0 output
+    local offline online pool release_rc=1 status_rc=0 status_output
+
+    CURRENT_STAGE="file system repair"
+    [[ -n "$requested_device" ]] || fail "fs-repair requires a device to repair."
+    [[ -n "$requested_mode" ]] || fail "fs-repair requires a repair mode."
+
+    if (( RUNNING_HOST_MODE == 1 )); then
+        prepare_running_host "$raw_disk" "$raw_root" no no
+    else
+        prepare_target ro
+        mount_target_boot_entry "/boot" ro
+        mount_target_boot_entry "/boot/efi" ro
+        mount_target_boot_entry "/efi" ro
+    fi
+
+    canonical="$(canonical_block "$requested_device" 2>/dev/null || true)"
+    if [[ -z "$canonical" ]]; then
+        # Imported ZFS pools and datasets (for example rpool/ROOT/arch) are
+        # valid repair targets even though they are not block devices.  The
+        # pool name is the scope key and the unit of a zpool scrub.
+        pool="$(filesystem_pool_for_device "$requested_device" 2>/dev/null || true)"
+        [[ -n "$pool" ]] || fail "The requested repair device is not a block device: $requested_device"
+        canonical="$pool"
+    fi
+
+    filesystem_scope_resolve || true
+    idx="$(filesystem_scope_contains_device "$canonical" 2>/dev/null || true)"
+    [[ -n "$idx" ]] \
+        || fail "The requested device is not part of the resolved scope (root, /boot, ESP, /home): $canonical"
+
+    device="$canonical"
+    fstype="${FS_SCOPE_FSTYPES[$idx]:-}"
+    if [[ "$fstype" != "zfs" ]]; then
+        same_single_top_disk "$TARGET_DISK" "$device" \
+            || fail "The requested repair device is outside the selected scope's disk: $device"
+    fi
+    mountpoint="$(filesystem_mountpoint_for_device "$device" "${FS_SCOPE_MOUNTS[$idx]:-}")"
+    uuid="$(blkid -s UUID -o value "$device" 2>/dev/null | head -n1 || true)"
+    [[ -n "$uuid" ]] || uuid="none"
+
+    if ! filesystem_mode_field "$fstype" "$requested_mode" tool >/dev/null 2>&1; then
+        fail "Repair mode '$requested_mode' is not supported for filesystem '${fstype:-unknown}' on $device."
+    fi
+    tool_path="$(filesystem_repair_tool "$fstype" 2>/dev/null || true)"
+    [[ -n "$tool_path" ]] \
+        || fail "The filesystem check/repair tool for '${fstype:-unknown}' is not installed in the recovery environment."
+    tool_name="$(basename -- "$tool_path")"
+
+    offline="$(filesystem_mode_field "$fstype" "$requested_mode" offline)"
+    online="$(filesystem_mode_field "$fstype" "$requested_mode" online)"
+
+    if [[ "$offline" == "yes" ]]; then
+        if (( RUNNING_HOST_MODE == 0 )); then
+            filesystem_release_mounts_for_device "$device" && release_rc=0 || release_rc=$?
+        fi
+        if (( release_rc == 2 )); then
+            fail "Offline file system repair could not release the helper's read-only mount of $device. Unmount it manually and retry."
+        fi
+        # Recompute the live mount state after releasing helper-owned mounts.
+        mountpoint="$(filesystem_mountpoint_for_device "$device" "${FS_SCOPE_MOUNTS[$idx]:-}")"
+        if [[ -n "$mountpoint" ]]; then
+            fail "Offline file system repair refuses mounted filesystem $device (mounted at $mountpoint). Unmount it first or use an online mode."
+        fi
+        if (( release_rc == 0 )); then
+            log "Released the helper's read-only mount(s) of $device before offline repair." | tee -a "$SESSION_LOG"
+        fi
+    fi
+    # Online modes normally require a mountpoint, but a ZFS scrub only needs
+    # the pool to be imported; that is verified through the pool lookup below.
+    if [[ "$online" == "yes" && "$fstype" != "zfs" && -z "$mountpoint" ]]; then
+        fail "Online file system repair requires $device to be mounted first; no mountpoint was found."
+    fi
+
+    pool=""
+    if [[ "$fstype" == "zfs" ]]; then
+        pool="$(filesystem_pool_for_device "$device" 2>/dev/null || true)"
+        [[ -n "$pool" ]] || fail "The ZFS pool for $device could not be identified; refusing a scrub."
+    fi
+
+    filesystem_inspect_arguments "$fstype" "$requested_mode" "$device" "$mountpoint" "$pool" \
+        || fail "No repair command is defined for '$fstype:$requested_mode'."
+
+    if [[ "$fstype" == "btrfs" && "$requested_mode" == "repair" ]]; then
+        log "WARNING: btrfs check --repair is a last-resort operation that upstream documents as dangerous and can make a damaged filesystem worse. The caller must have explicit user confirmation and a backup." | tee -a "$SESSION_LOG"
+    fi
+    if [[ "$fstype" == "ntfs" ]]; then
+        log "NOTE: ntfsfix only clears the NTFS dirty state; Windows chkdsk /f is required for a real NTFS repair." | tee -a "$SESSION_LOG"
+    fi
+
+    log "REPAIR: $tool_name ($requested_mode) on $device (fstype=${fstype:-unknown}, uuid=$uuid, mount=${mountpoint:-unmounted})" | tee -a "$SESSION_LOG"
+    filesystem_run_repair_command "${FS_INSPECT_ARGUMENTS[@]}"
+    rc="$FS_REPAIR_RC"
+    output="$FS_REPAIR_OUTPUT"
+
+    # e2fsck: safe preen runs first.  The GUI already obtained explicit user
+    # confirmation for this repair, so a forced -y pass is attempted only when
+    # preen reports errors left uncorrected (exit code 4).
+    if [[ "$fstype" == ext2 || "$fstype" == ext3 || "$fstype" == ext4 ]] \
+        && [[ "$requested_mode" == "repair" ]] && (( rc == 4 )); then
+        log "e2fsck preen left uncorrected errors (exit code 4); running the confirmed forced repair pass." | tee -a "$SESSION_LOG"
+        filesystem_run_repair_command "$tool_name" -f -y "$device"
+        rc="$FS_REPAIR_RC"
+        output+=$'\n'"$FS_REPAIR_OUTPUT"
+    fi
+
+    # A zpool scrub only reports scrub completion; the authoritative error
+    # state comes from the pool status parsed afterward.
+    if [[ "$fstype" == "zfs" && "$requested_mode" == "scrub" ]]; then
+        filesystem_run_inspect_command "$tool_path" "$device" "$tool_name" status -v "$pool"
+        status_rc="$FS_INSPECT_RC"
+        status_output="$FS_INSPECT_OUTPUT"
+        printf '%s\n' "$status_output" | tee -a "$SESSION_LOG"
+        output+=$'\n'"$status_output"
+        (( rc == 0 && status_rc != 0 )) && rc="$status_rc"
+    fi
+
+    result="$(filesystem_result_classify "$fstype" "$requested_mode" "$rc" "$output")"
+    printf 'File system repair %s: %s uuid=%s mount=%s tool=%s mode=%s result=%s\n' \
+        "$device" "$fstype" "$uuid" "${mountpoint:-unmounted}" "$tool_name" "$requested_mode" "$result"
+    if (( rc == 124 || rc == 137 )); then
+        log "FAIL: file system repair ($requested_mode) timed out for $device (exit code $rc)." | tee -a "$SESSION_LOG" >&2
+        return 1
+    fi
+    case "$result" in
+        clean)
+            log "PASS: file system repair ($requested_mode) completed for $device with exit code 0." | tee -a "$SESSION_LOG"
+            if [[ "$requested_mode" == "check" ]]; then
+                # Only a read-only check command proves that nothing was
+                # written; repair modes may still update filesystem metadata
+                # (superblock timestamps, scrub statistics) even when the tool
+                # reports no errors.
+                repair_change_status filesystem "unchanged|read-only check reported no errors"
+            else
+                repair_change_status filesystem changed
+            fi
+            return 0
+            ;;
+        repaired)
+            if (( rc == 2 )); then
+                log "PASS: file system repair ($requested_mode) corrected errors on $device; a reboot is recommended before using the filesystem (exit code 2)." | tee -a "$SESSION_LOG"
+            else
+                log "PASS: file system repair ($requested_mode) corrected errors on $device (exit code $rc)." | tee -a "$SESSION_LOG"
+            fi
+            repair_change_status filesystem changed
+            return 0
+            ;;
+        *)
+            if [[ "$fstype" == "ntfs" ]]; then
+                log "FAIL: ntfsfix could not fully repair $device (exit code $rc); run Windows chkdsk /f for a real NTFS repair." | tee -a "$SESSION_LOG" >&2
+            else
+                log "FAIL: file system repair ($requested_mode) reported unresolved issues for $device (exit code $rc)." | tee -a "$SESSION_LOG" >&2
+            fi
+            return 1
+            ;;
+    esac
+}
+
+# One-line filesystem capability evidence for the resolved scope: which
+# supported filesystems were found and which check tools are installed.
+filesystem_capability_evidence()
+{
+    local idx tool tools="" fstype supported=0 available=0
+    filesystem_scope_resolve || true
+    if (( ${#FS_SCOPE_DEVICES[@]} == 0 )); then
+        printf 'scope filesystems unresolved'
+        return 0
+    fi
+    filesystem_scope_tools
+    for idx in "${!FS_SCOPE_DEVICES[@]}"; do
+        fstype="${FS_SCOPE_FSTYPES[$idx]}"
+        if ! filesystem_mode_field "$fstype" check tool >/dev/null 2>&1; then
+            continue
+        fi
+        supported=$((supported + 1))
+        tool="${FS_SCOPE_TOOLS[$idx]:-}"
+        [[ -n "$tool" ]] || continue
+        tools+="${tools:+, }$(basename -- "$tool")(${fstype:-unknown})"
+        available=$((available + 1))
+    done
+    if (( available > 0 )); then
+        printf 'scope filesystems resolved; tools: %s' "$tools"
+    elif (( supported == 0 )); then
+        printf 'scope filesystems resolved; no supported file system type for a read-only check'
+    else
+        printf 'scope filesystems resolved; no supported file system check tool installed'
+    fi
+}
+
+# Emit the gating contract consumed by MainWindow::repairToolAvailable(): one
+# `Repair tool <key>: available|unavailable|<reason>` line per key followed by
+# one `Repair capability evidence <key>: ...` line.  Read-only; fails closed
+# for every unsupported backend or missing prerequisite.
+diagnostic_repair_capabilities()
+{
+    local key family
+    [[ -n "$TARGET_DISTRO_FAMILY" ]] || profile_target_backends
+    family="${TARGET_DISTRO_FAMILY:-unknown}"
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub bootstack)
+    local -A reasons=()
+
+    for key in "${keys[@]}"; do
+        reasons[$key]=""
+    done
+
+    if [[ "$family" == debian ]]; then
+        if [[ -x "$TARGET_ROOT/usr/bin/dpkg" ]]; then
+            reasons[dpkg]="available"
+        else
+            reasons[dpkg]="dpkg is not installed in the target"
+        fi
+        if [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]]; then
+            reasons[aptupdate]="available"
+        else
+            reasons[aptupdate]="apt-get is not installed in the target"
+        fi
+        if [[ -x "$TARGET_ROOT/usr/bin/dpkg" && -x "$TARGET_ROOT/usr/bin/apt-get" ]]; then
+            reasons[fixbroken]="available"
+            reasons[upgrade]="available"
+        else
+            if [[ -x "$TARGET_ROOT/usr/bin/dpkg" ]]; then
+                reasons[fixbroken]="apt-get is not installed in the target"
+            else
+                reasons[fixbroken]="dpkg is not installed in the target"
+            fi
+            if [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]]; then
+                reasons[upgrade]="dpkg is not installed in the target"
+            else
+                reasons[upgrade]="apt-get is not installed in the target"
+            fi
+        fi
+        if [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
+            reasons[dkms]="available"
+        else
+            reasons[dkms]="DKMS is not installed in the target"
+        fi
+        if [[ -f "$TARGET_ROOT/usr/lib/systemd/system/graphical.target" || -f "$TARGET_ROOT/lib/systemd/system/graphical.target" ]]; then
+            reasons[display]="available"
+        else
+            reasons[display]="graphical.target is missing from the target"
+        fi
+        if [[ "$TARGET_INITRAMFS_BACKEND" == dracut ]]; then
+            # The Debian repair implementation only drives initramfs-tools, so
+            # a dracut backend can never be advertised as repairable here.
+            if ! target_has_executable /usr/bin/dracut /usr/sbin/dracut; then
+                reasons[initramfs]="initramfs backend is dracut but the dracut executable is missing from the target"
+            elif ! target_has_path /usr/lib/dracut; then
+                reasons[initramfs]="initramfs backend is dracut but /usr/lib/dracut is missing from the target"
+            else
+                reasons[initramfs]="initramfs backend is dracut, which the current Debian repair implementation does not handle"
+            fi
+        elif [[ -n "$TARGET_INITRAMFS_BACKEND" && "$TARGET_INITRAMFS_BACKEND" != initramfs-tools ]]; then
+            reasons[initramfs]="initramfs backend is $TARGET_INITRAMFS_BACKEND; the Debian repair implementation handles initramfs-tools only"
+        elif target_has_executable /usr/sbin/update-initramfs /usr/bin/update-initramfs \
+            && target_has_executable /usr/sbin/mkinitramfs /usr/bin/mkinitramfs; then
+            reasons[initramfs]="available"
+        else
+            reasons[initramfs]="update-initramfs/mkinitramfs are not installed in the target"
+        fi
+    elif [[ "$family" == arch ]]; then
+        if [[ ! -x "$TARGET_ROOT/usr/bin/pacman" && ! -x "$TARGET_ROOT/usr/bin/pacman-static" ]]; then
+            reasons[fixbroken]="pacman is not installed in the target"
+            reasons[upgrade]="pacman is not installed in the target"
+        elif [[ ! -f "$TARGET_ROOT/etc/pacman.conf" ]]; then
+            reasons[fixbroken]="The target has no /etc/pacman.conf; refusing a package transaction"
+            reasons[upgrade]="The target has no /etc/pacman.conf; refusing a package transaction"
+        elif [[ ! -d "$TARGET_ROOT/var/lib/pacman" ]]; then
+            reasons[fixbroken]="The target pacman database directory is missing"
+            reasons[upgrade]="The target pacman database directory is missing"
+        else
+            reasons[fixbroken]="available"
+            reasons[upgrade]="available"
+        fi
+        reasons[dpkg]="dpkg configuration is not available on Arch; use the Arch package transaction stages instead"
+        reasons[aptupdate]="Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction"
+        if [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
+            reasons[dkms]="available"
+            while IFS= read -r kver; do
+                [[ -n "$kver" ]] || continue
+                if ! target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                    reasons[dkms]="Arch DKMS preflight found no build tree for installed kernel $kver; install the matching headers and retry"
+                    break
+                fi
+            done < <(arch_kernel_versions)
+        else
+            reasons[dkms]="DKMS is not installed in the Arch target system"
+        fi
+        if [[ ! -f "$TARGET_ROOT/usr/lib/systemd/system/graphical.target" && ! -f "$TARGET_ROOT/lib/systemd/system/graphical.target" ]]; then
+            reasons[display]="graphical.target is missing from the Arch target system"
+        elif arch_display_manager_present; then
+            reasons[display]="available"
+        else
+            reasons[display]="No supported display manager is installed in the Arch target system"
+        fi
+        if [[ "$TARGET_INITRAMFS_BACKEND" != mkinitcpio ]]; then
+            reasons[initramfs]="mkinitcpio is not the selected initramfs backend for this target"
+        elif ! target_has_executable /usr/bin/mkinitcpio /usr/sbin/mkinitcpio; then
+            reasons[initramfs]="mkinitcpio is not installed in the target system"
+        elif [[ -z "$(arch_kernel_versions)" ]]; then
+            reasons[initramfs]="No installed kernel module directories were found for mkinitcpio"
+        else
+            reasons[initramfs]="available"
+        fi
+    fi
+
+    if [[ "$family" != debian && "$family" != arch ]]; then
+        for key in "${keys[@]}"; do
+            case "$key" in
+                validate|filesystem) continue ;;
+            esac
+            reasons[$key]="Modifying repairs require a supported Debian/Ubuntu or Arch backend"
+        done
+    fi
+
+    if [[ "${reasons[validate]}" == "" ]]; then
+        reasons[validate]="available"
+    fi
+
+    # File system repair is backend-independent: the selected scope's root,
+    # /boot, ESP and /home filesystems are inspected with the host's
+    # filesystem-specific check tools.  The stage is offered only when the
+    # scope resolves to at least one supported filesystem and a matching tool
+    # is actually installed.
+    if [[ "${reasons[filesystem]}" == "" ]]; then
+        filesystem_scope_resolve || true
+        if (( ${#FS_SCOPE_DEVICES[@]} == 0 )); then
+            reasons[filesystem]="The selected scope's root, /boot, ESP and /home filesystems could not be resolved"
+        else
+            filesystem_scope_tools >/dev/null
+            local fs_index fs_supported=0 fs_available=0
+            for fs_index in "${!FS_SCOPE_DEVICES[@]}"; do
+                if ! filesystem_mode_field "${FS_SCOPE_FSTYPES[$fs_index]}" check tool >/dev/null 2>&1; then
+                    continue
+                fi
+                fs_supported=$((fs_supported + 1))
+                if [[ -n "${FS_SCOPE_TOOLS[$fs_index]:-}" ]]; then
+                    fs_available=$((fs_available + 1))
+                fi
+            done
+            if (( fs_available > 0 )); then
+                reasons[filesystem]="available"
+            elif (( fs_supported == 0 )); then
+                reasons[filesystem]="The selected scope has no supported file system type for a read-only check"
+            else
+                reasons[filesystem]="No supported file system check tool is installed in the recovery environment"
+            fi
+        fi
+    fi
+    if [[ "${reasons[grub]}" == "" ]]; then
+        if [[ -x "$TARGET_ROOT/usr/sbin/grub-mkconfig" || -x "$TARGET_ROOT/usr/bin/grub-mkconfig" \
+            || -x "$TARGET_ROOT/usr/sbin/update-grub" || -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+            reasons[grub]="available"
+        else
+            reasons[grub]="Neither grub-mkconfig nor update-grub is installed in the target system"
+        fi
+    fi
+    if [[ "${reasons[efi]}" == "" && "${reasons[grub]}" == available ]]; then
+        if [[ "$family" == debian && "$TARGET_OS_ID" == tuxedo ]] \
+            && ! tuxedo_uki_builder_present; then
+            # TUXEDO OS boots through the vendor UKI; without the vendor
+            # builder the EFI stage cannot be repaired, so fail closed instead
+            # of falling back to a conventional GRUB install.
+            reasons[efi]="TUXEDO UKI builder create_boot_uki_base.sh is not installed in the target"
+        elif [[ -x "$TARGET_ROOT/usr/sbin/grub-install" || -x "$TARGET_ROOT/usr/bin/grub-install" ]]; then
+            if [[ "$family" == arch ]] && ! profile_esp_root >/dev/null 2>&1; then
+                reasons[efi]="No EFI System Partition was identified for the selected Arch target"
+            else
+                reasons[efi]="available"
+            fi
+        else
+            reasons[efi]="grub-install is not installed in the target system"
+        fi
+    fi
+    if [[ "${reasons[efi]}" == "" && "${reasons[grub]}" != available ]]; then
+        reasons[efi]="grub-mkconfig/update-grub is not installed in the target system"
+    fi
+    if [[ "${reasons[bootstack]}" == "" ]]; then
+        if [[ "$family" == arch ]]; then
+            if [[ "${reasons[initramfs]}" == available && "${reasons[grub]}" == available && "${reasons[efi]}" == available ]]; then
+                reasons[bootstack]="available"
+            else
+                reasons[bootstack]="Arch boot-stack reconciliation requires available initramfs, GRUB and EFI repair prerequisites"
+            fi
+        elif [[ "${reasons[initramfs]}" == available && "${reasons[grub]}" == available ]]; then
+            reasons[bootstack]="available"
+        else
+            reasons[bootstack]="Requires available initramfs and GRUB repair prerequisites"
+        fi
+    fi
+
+    echo "Repair capability probes (read-only, selected target):"
+    for key in "${keys[@]}"; do
+        if [[ "${reasons[$key]}" == "available" ]]; then
+            printf 'Repair tool %s: available\n' "$key"
+        else
+            printf 'Repair tool %s: unavailable|%s\n' "$key" "${reasons[$key]}"
+        fi
+    done
+    echo "Repair capability evidence (read-only):"
+    for key in "${keys[@]}"; do
+        printf 'Repair capability evidence %s: %s\n' "$key" "$(repair_capability_evidence "$key")"
+    done
+}
+
 diagnostic_boot()
 {
     local scope_label="target"
@@ -3076,6 +5004,216 @@ journal_current_boot_actionable()
     '
 }
 
+# Collapse consecutive near-identical journal lines into one line plus an
+# occurrence count.  Messages that differ only by numbers, hex values, IDs or a
+# trailing key/unit component share a signature; genuinely different messages
+# keep their own line.  Input order is preserved and the output is bounded by
+# the input, so noisy processes (for example an AppImage retrying one warning
+# per layer) cannot flood the diagnostics log.
+collapse_similar_journal_lines()
+{
+    awk '
+        function signature(line,    s) {
+            s = line
+            sub(/^[A-Z][a-z][a-z] [ 0-9][0-9] [0-9:]+ [^ ]+ /, "", s)
+            gsub(/\[[0-9]+\]/, "[]", s)
+            gsub(/0[xX][0-9a-fA-F]+/, "#", s)
+            gsub(/[0-9a-fA-F]{8,}/, "#", s)
+            gsub(/[0-9]+/, "#", s)
+            gsub(/\.[[:alnum:]_-]+$/, ".#", s)
+            return s
+        }
+        {
+            sig = signature($0)
+            if (NR > 1 && sig == previous_signature) {
+                run_count++
+                next
+            }
+            if (run_count > 1) printf "%s (%d similar entries)\n", previous_line, run_count
+            else if (run_count == 1) print previous_line
+            previous_line = $0
+            previous_signature = sig
+            run_count = 1
+        }
+        END {
+            if (run_count > 1) printf "%s (%d similar entries)\n", previous_line, run_count
+            else if (run_count == 1) print previous_line
+        }
+    '
+}
+
+# Restrict journal evidence to entries that can describe the boot path of the
+# selected system.  journalctl -o json is consumed as one object per line.
+# Application and user-session noise (AppImages, desktop applications, user
+# units) is excluded structurally rather than by matching a product name.
+# python3 is a package dependency and does the parsing; a single-pass awk
+# fallback keeps recovery hosts without python3 working.  Output is plain text
+# "<timestamp> <host> <identifier>: <message>" in journal order so the
+# downstream actionability and collapsing stages keep working unchanged.
+journal_boot_relevant_filter()
+{
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c '
+import json, sys, time
+
+BOOT_IDENTIFIERS = {
+    "systemd", "systemd-udevd", "udev", "kernel", "dracut", "mkinitcpio",
+    "cryptsetup", "systemd-cryptsetup", "lvm", "mdadm", "blkid",
+    "fsck", "mount", "umount", "grub", "os-prober", "plymouth", "tuxedo",
+}
+
+def boot_relevant(entry):
+    if entry.get("_SYSTEMD_USER_UNIT"):
+        return False
+    if entry.get("_TRANSPORT") == "kernel":
+        return True
+    unit = entry.get("_SYSTEMD_UNIT")
+    if isinstance(unit, str) and unit:
+        if unit.startswith("user@") and unit.endswith(".service"):
+            return False
+        if unit.endswith(".scope") and unit != "init.scope":
+            return False
+        return True
+    identifier = entry.get("SYSLOG_IDENTIFIER") or entry.get("_COMM") or ""
+    if not isinstance(identifier, str):
+        return False
+    return (identifier in BOOT_IDENTIFIERS
+            or identifier.startswith("fsck.")
+            or identifier.startswith("tuxedo"))
+
+def text_value(value):
+    if isinstance(value, str):
+        return value
+    if isinstance(value, list):
+        try:
+            return bytes(value).decode("utf-8", "replace")
+        except (TypeError, ValueError):
+            return ""
+    return ""
+
+MONTHS = ("Jan", "Feb", "Mar", "Apr", "May", "Jun",
+          "Jul", "Aug", "Sep", "Oct", "Nov", "Dec")
+
+def timestamp_prefix(entry):
+    stamp = entry.get("__REALTIME_TIMESTAMP")
+    if not stamp:
+        return ""
+    try:
+        local = time.localtime(int(stamp) / 1000000)
+    except (TypeError, ValueError, OverflowError, OSError):
+        return ""
+    return "%s %2d %02d:%02d:%02d " % (
+        MONTHS[local.tm_mon - 1], local.tm_mday,
+        local.tm_hour, local.tm_min, local.tm_sec)
+
+out = sys.stdout.buffer
+for raw in sys.stdin.buffer:
+    line = raw.rstrip(b"\n").decode("utf-8", "replace")
+    if not line.strip():
+        continue
+    try:
+        entry = json.loads(line)
+    except ValueError:
+        out.write(line.encode("utf-8", "replace") + b"\n")
+        continue
+    if not isinstance(entry, dict) or not boot_relevant(entry):
+        continue
+    identifier = entry.get("SYSLOG_IDENTIFIER") or entry.get("_COMM") \
+        or entry.get("_SYSTEMD_UNIT") or "journal"
+    if not isinstance(identifier, str) or not identifier:
+        identifier = "journal"
+    prefix = timestamp_prefix(entry)
+    hostname = entry.get("_HOSTNAME")
+    if prefix and isinstance(hostname, str) and hostname:
+        prefix += hostname + " "
+    message = text_value(entry.get("MESSAGE"))
+    out.write(("%s%s: %s\n" % (prefix, identifier, message)).encode("utf-8", "replace"))
+'
+        return 0
+    fi
+    awk '
+        function field_value(line, key,    marker, start, i, c, out, esc) {
+            marker = "\"" key "\":\""
+            start = index(line, marker)
+            if (start == 0) return ""
+            start += length(marker)
+            out = ""
+            esc = 0
+            for (i = start; i <= length(line); i++) {
+                c = substr(line, i, 1)
+                if (esc) {
+                    if (c == "n") out = out "\n"
+                    else if (c == "t") out = out "\t"
+                    else if (c == "r") out = out ""
+                    else if (c == "u") { out = out "?"; i += 4 }
+                    else out = out c
+                    esc = 0
+                } else if (c == "\\") {
+                    esc = 1
+                } else if (c == "\"") {
+                    break
+                } else {
+                    out = out c
+                }
+            }
+            return out
+        }
+        function field_present(line, key) {
+            return index(line, "\"" key "\":") > 0
+        }
+        function timestamp_prefix(us,    secs, days, rest, hh, mm, ss, z, era, doe, yoe, doy, mp, d, m) {
+            if (us !~ /^[0-9]+$/) return ""
+            secs = int(us / 1000000)
+            days = int(secs / 86400)
+            rest = secs - days * 86400
+            hh = int(rest / 3600)
+            mm = int((rest - hh * 3600) / 60)
+            ss = rest - hh * 3600 - mm * 60
+            z = days + 719468
+            era = int(z / 146097)
+            doe = z - era * 146097
+            yoe = int((doe - int(doe / 1460) + int(doe / 36524) - int(doe / 146096)) / 365)
+            doy = doe - (365 * yoe + int(yoe / 4) - int(yoe / 100))
+            mp = int((5 * doy + 2) / 153)
+            d = doy - int((153 * mp + 2) / 5) + 1
+            m = mp + (mp < 10 ? 3 : -9)
+            split("Jan Feb Mar Apr May Jun Jul Aug Sep Oct Nov Dec", month_names, " ")
+            return sprintf("%s %2d %02d:%02d:%02d ", month_names[m], d, hh, mm, ss)
+        }
+        BEGIN {
+            n = split("systemd systemd-udevd udev kernel dracut mkinitcpio cryptsetup systemd-cryptsetup lvm mdadm blkid fsck mount umount grub os-prober plymouth tuxedo", names, " ")
+            for (i = 1; i <= n; i++) allowed[names[i]] = 1
+        }
+        {
+            if ($0 !~ /^[[:space:]]*\{/) { print; next }
+            if (field_present($0, "_SYSTEMD_USER_UNIT")) next
+            if (index($0, "\"_TRANSPORT\":\"kernel\"") == 0) {
+                if (field_present($0, "_SYSTEMD_UNIT")) {
+                    unit = field_value($0, "_SYSTEMD_UNIT")
+                    if (unit ~ /^user@.*\.service$/) next
+                    if (unit ~ /\.scope$/ && unit != "init.scope") next
+                } else {
+                    ident = field_value($0, "SYSLOG_IDENTIFIER")
+                    if (ident == "") ident = field_value($0, "_COMM")
+                    if (!(ident in allowed) && ident !~ /^fsck\./ && ident !~ /^tuxedo/) next
+                }
+            }
+            msg = field_value($0, "MESSAGE")
+            ident = field_value($0, "SYSLOG_IDENTIFIER")
+            if (ident == "") ident = field_value($0, "_COMM")
+            if (ident == "") ident = field_value($0, "_SYSTEMD_UNIT")
+            if (ident == "") ident = "journal"
+            prefix = timestamp_prefix(field_value($0, "__REALTIME_TIMESTAMP"))
+            host = field_value($0, "_HOSTNAME")
+            if (prefix != "" && host != "") prefix = prefix host " "
+            print prefix ident ": " msg
+        }
+    '
+}
+
+# Describe the detected boot chain (firmware -> loader -> initramfs -> root)
+# and compare the UKI's LUKS declarations with the mounted root so the number
+# of expected unlock prompts is evidence, not a guess.
 diagnostic_boot_chain()
 {
     local uki="" esp_root=""
@@ -3274,11 +5412,13 @@ diagnostic_boot_evidence()
         # Restrict issue evidence to the most recent selected-system boot. Older boots
         # are retained in the boot-ID inventory below, but their resolved
         # failures should not drive a repair decision for the current boot.
-        journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1200 2>/dev/null \
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1200 2>/dev/null \
+            | journal_boot_relevant_filter \
             | journal_current_boot_actionable \
             | grep -Ei 'cryptsetup|systemd-cryptsetup|luks|passphrase|password|unlock|keyslot|dracut|initramfs' \
             | sed -E 's/(password|passphrase|passwd|key)[=:][[:space:]]*[^[:space:]]+/\1=[REDACTED]/Ig' \
-            | tail -260 || echo "No unlock-related ${scope_label} journal entries found."
+            | tail -260 \
+            | collapse_similar_journal_lines || echo "No unlock-related ${scope_label} journal entries found."
     else
         echo "No persistent target journal is available."
     fi
@@ -3287,10 +5427,12 @@ diagnostic_boot_evidence()
     echo "Boot-selection and kernel messages (${scope_label} journal):"
     if [[ -d "$journal_dir" ]] && command -v journalctl >/dev/null 2>&1; then
         echo "Journal scope: latest ${scope_label} boot (-b 0); older boot failures are omitted from inspection evidence."
-        journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1600 2>/dev/null \
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600 2>/dev/null \
+            | journal_boot_relevant_filter \
             | journal_current_boot_actionable \
             | grep -Ei 'kernel command line|BOOT_IMAGE|selected|default entry|menuentry|grub|systemd-boot|efiboot|efi|initramfs|mount.*(root|boot)|failed|timeout|dependency' \
-            | tail -360 || echo "No boot-selection messages found."
+            | tail -360 \
+            | collapse_similar_journal_lines || echo "No boot-selection messages found."
         echo
         echo "${scope_label^} journal boot IDs (if available):"
         journalctl --root="$TARGET_ROOT" --list-boots --no-pager 2>&1 | tail -40 || true
@@ -3566,16 +5708,19 @@ diagnostic_display()
     echo
     echo "Recent ${scope_label} display-manager boot evidence (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && [[ -d "$TARGET_ROOT/var/log/journal" ]]; then
-        # Keep the complete boot stream through the shutdown filter so the
-        # systemd-logind reboot marker remains visible.  A unit-scoped
+        # Keep the complete boot stream through the boot-relevant and shutdown
+        # filters so the systemd-logind reboot marker remains visible (it is a
+        # system unit, so the relevance filter retains it).  A unit-scoped
         # journalctl query omits that marker and would misclassify orderly
         # Display-manager teardown (SIGTERM/auth-helper exit) as a boot failure.
-        journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1200 2>&1 \
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1200 2>&1 \
+            | journal_boot_relevant_filter \
             | journal_current_boot_actionable \
             | grep -Ei 'sddm|gdm|lightdm|greetd|(^|[^[:alnum:]])ly([^[:alnum:]]|$)' \
             | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
             | grep -Eiv 'gkr-pam: unable to locate daemon control file|pam_kwallet5: open_session called without kwallet5_key' \
-            | tail -120 || true
+            | tail -120 \
+            | collapse_similar_journal_lines || true
     else
         echo "No persistent ${scope_label} journal is available."
     fi
@@ -3583,13 +5728,16 @@ diagnostic_display()
     echo
     echo "Recent ${scope_label} graphics/display errors (${scope_label} journal, latest boot):"
     if command -v journalctl >/dev/null 2>&1 && [[ -d "$TARGET_ROOT/var/log/journal" ]]; then
-        # Preserve the full stream until after shutdown filtering; priority
-        # queries do not include the reboot marker used by that filter.
-        journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 1600 2>/dev/null \
+        # Preserve the full stream until after boot-relevant and shutdown
+        # filtering; priority queries do not include the reboot marker used by
+        # that filter.
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600 2>/dev/null \
+            | journal_boot_relevant_filter \
             | journal_current_boot_actionable \
             | grep -Ei 'sddm|gdm|lightdm|greetd|(^|[^[:alnum:]])ly([^[:alnum:]]|$)|plasma|kwin|nvidia|NVRM|nouveau|drm|gpu|display' \
             | grep -iE 'warning|error|failed|failure|crash|signal|timeout|unable|denied|auth' \
-            | tail -160 || true
+            | tail -160 \
+            | collapse_similar_journal_lines || true
     else
         echo "No persistent ${scope_label} journal is available."
     fi
@@ -3609,14 +5757,18 @@ diagnostic_errors()
     fi
     echo "Recent ${scope_label} error-priority journal entries:"
     echo "Journal scope: latest ${scope_label} boot (-b 0), excluding intentional shutdown teardown."
-    journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 --no-pager 2>&1 \
-        | journal_current_boot_actionable || true
+    journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager 2>&1 \
+        | journal_boot_relevant_filter \
+        | journal_current_boot_actionable \
+        | collapse_similar_journal_lines || true
     echo
     echo "Recent failure-related ${scope_label} journal lines:"
-    journalctl --root="$TARGET_ROOT" -b 0 --no-pager -n 500 2>/dev/null \
+    journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 500 2>/dev/null \
+        | journal_boot_relevant_filter \
         | journal_current_boot_actionable \
         | grep -iE 'failed|failure|dependency failed|timed out' \
-        | tail -100 || true
+        | tail -100 \
+        | collapse_similar_journal_lines || true
 }
 
 diagnostic_usage()
@@ -3721,6 +5873,10 @@ run_one_diagnostic()
     echo "Scope: $scope"
     echo "Time: $(date --iso-8601=seconds 2>/dev/null || date)"
     echo
+    if (( REPORT_SHARED_PREAMBLE == 0 )); then
+        diagnostic_repair_capabilities
+        echo
+    fi
     case "$key" in
         environment) diagnostic_environment || rc=$? ;;
         backend)     diagnostic_backend_profile || rc=$? ;;
@@ -3749,7 +5905,7 @@ run_one_target_diagnostic()
 
 run_target_diagnostic()
 {
-    local requested="${1:-}" key overall=0
+    local requested="${1:-}" key
     [[ -n "$requested" ]] || fail "diagnose requires a diagnostic name or 'all'."
     (($# == 1)) || fail "diagnose accepts exactly one diagnostic name or 'all'."
 
@@ -3759,11 +5915,17 @@ run_target_diagnostic()
     mount_target_boot_entry "/efi" ro
 
     if [[ "$requested" == "all" || "$requested" == "report" ]]; then
+        # The capability preamble is shared by every section: emit it once at
+        # the top of the combined report and omit it from each section.
+        REPORT_SHARED_PREAMBLE=1
+        diagnostic_repair_capabilities || true
+        echo
         for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
-            run_one_target_diagnostic "$key" || overall=1
+            run_one_target_diagnostic "$key" || true
         done
+        REPORT_SHARED_PREAMBLE=0
     else
-        run_one_target_diagnostic "$requested" || overall=1
+        run_one_target_diagnostic "$requested" || true
     fi
 
     # Diagnostics are informational. Individual audit failures are retained in
@@ -3774,7 +5936,7 @@ run_target_diagnostic()
 
 run_host_diagnostic()
 {
-    local requested="${1:-}" key overall=0
+    local requested="${1:-}" key
     [[ -n "$requested" ]] || fail "host-diagnose requires a diagnostic name or 'all'."
     (($# == 1)) || fail "host-diagnose accepts exactly one diagnostic name or 'all'."
 
@@ -3783,16 +5945,25 @@ run_host_diagnostic()
     prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no no
     DIAGNOSTIC_SCOPE="Running Host"
     if [[ "$requested" == all || "$requested" == report ]]; then
+        # See run_target_diagnostic: the shared capability preamble is emitted
+        # once at the top of the combined running-host report.
+        REPORT_SHARED_PREAMBLE=1
+        diagnostic_repair_capabilities || true
+        echo
         for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
-            run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || overall=1
+            run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
         done
+        REPORT_SHARED_PREAMBLE=0
     else
-        run_one_diagnostic "$requested" "$DIAGNOSTIC_SCOPE" || overall=1
+        run_one_diagnostic "$requested" "$DIAGNOSTIC_SCOPE" || true
     fi
     DIAGNOSTIC_SCOPE="Repair Target"
     return 0
 }
 
+# ---------------------------------------------------------------------------
+# Guarded target configuration read/write
+# ---------------------------------------------------------------------------
 config_path_for_key()
 {
     case "${1:-}" in
@@ -3863,7 +6034,9 @@ run_target_config()
     printf 'The target was modified; rerun diagnostics before any repair action.\n'
 }
 
-
+# ---------------------------------------------------------------------------
+# Btrfs snapshot inspection and transactional rollback
+# ---------------------------------------------------------------------------
 snapshot_b64()
 {
     printf '%s' "$1" | base64 | tr -d '\n'
@@ -3881,6 +6054,8 @@ mount_snapshot_top()
     mount_recorded "$ROOT_DEVICE" "$SNAPSHOT_TOP" -o ro,subvolid=5
 }
 
+# Enumerate numeric Snapper/Btrfs snapshot directories below every top-level
+# @.snapshots directory, printing "<id>\t<absolute path>" in id order.
 snapshot_paths()
 {
     local base id snap
@@ -3918,6 +6093,8 @@ snapshot_xml_value()
     sed -n "s#.*<$tag>\\(.*\\)</$tag>.*#\\1#p" "$file" | head -n1
 }
 
+# Emit one base64-encoded SNAPSHOT protocol record per Snapper/Btrfs root
+# snapshot found under the top-level @.snapshots directory (read-only).
 list_snapshots()
 {
     local id snap info created type desc status ro_prop rel
@@ -4080,6 +6257,8 @@ snapshot_kernel_pair_audit()
     ((failures == 0))
 }
 
+# Print a read-only report for one snapshot: subvolume metadata, root
+# validation, kernel/initramfs pairing, fstab and crypttab contents.
 inspect_snapshot()
 {
     local requested="$1" snap info rel pretty
@@ -4169,9 +6348,11 @@ snapshot_separate_subvolumes()
     done < "$snap/etc/fstab"
 }
 
+# Validate one snapshot for a safe @ rollback and print the complete
+# transactional plan (read-only; emits the PLAN_OK=1 marker for the GUI).
 snapshot_rollback_plan()
 {
-    local requested="$1" snap current info pretty created root_id default_line default_id rel
+    local requested="$1" snap current info pretty created root_id default_line rel
     snap="$(snapshot_find_path "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the selected Btrfs filesystem."
     snapshot_root_valid "$snap" || fail "Snapshot $requested is not a valid Linux root snapshot (/etc/os-release and /etc/fstab are required)."
@@ -4186,7 +6367,6 @@ snapshot_rollback_plan()
     created="$(btrfs subvolume show "$snap" 2>/dev/null | sed -n 's/^[[:space:]]*Creation time:[[:space:]]*//p' | head -1)"
     root_id="$(btrfs_subvol_id "$current" || true)"
     default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
-    default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$default_line" | head -1)"
     rel="${snap#"$SNAPSHOT_TOP"/}"
 
     echo "========================================"
@@ -4225,6 +6405,9 @@ snapshot_rollback_plan()
     echo "PLAN_OK=1"
 }
 
+# Unmount every target mount except the Btrfs top-level (SNAPSHOT_TOP) before
+# the atomic @ name switch.  A busy mount aborts the rollback while the old
+# root is still the only active normal root; lazy detach is never used.
 snapshot_unmount_target_keep_top()
 {
     local idx path
@@ -4257,6 +6440,9 @@ snapshot_unmount_target_keep_top()
     return 0
 }
 
+# Mount the promoted @ subvolume read-write with its fstab subvolumes, boot
+# entries and chroot pseudo-filesystems so post-switch reconciliation runs
+# against the rolled-back root.
 snapshot_mount_promoted_root_rw()
 {
     ROOT_DEVICE="$(preferred_block_path "$ROOT_DEVICE" "$ROOT_CANONICAL")"
@@ -4298,6 +6484,9 @@ snapshot_verify_installed_kernels()
     ((failures == 0)) || fail "Promoted rollback root has kernel/module inconsistencies."
 }
 
+# Validate the promoted @ root (metadata, mapper/crypttab, kernels, dpkg
+# audit) and rebuild initramfs, TUXEDO UKI and GRUB against it.  Any failure
+# makes the caller restore the preserved pre-rollback root.
 snapshot_post_switch_reconcile()
 {
     local audit="" current
@@ -4331,6 +6520,10 @@ snapshot_post_switch_reconcile()
     log "PASS: promoted rollback root and boot stack validated." | tee -a "$SESSION_LOG"
 }
 
+# Recovery path for a failed rollback: detach the promoted mounts, rename the
+# failed candidate out of @, promote the preserved @rollback-before-* root back
+# to @, restore the previous Btrfs default subvolume and reconcile its boot
+# stack.  Returns non-zero when any step leaves the system without a safe root.
 snapshot_restore_preserved_root()
 {
     local top="$1" backup_name="$2" failed_name="$3" old_default_id="$4" current_id restore_rc=0
@@ -4388,10 +6581,14 @@ snapshot_restore_preserved_root()
     return 0
 }
 
+# Execute the transactional rollback: snapshot to a writable candidate,
+# preserve the current @ under @rollback-before-*, promote the candidate,
+# reconcile initramfs/UKI/GRUB and automatically restore the preserved root
+# when any critical post-switch stage fails.
 rollback_snapshot()
 {
     local requested="$1" snap current stamp candidate_name backup_name failed_name candidate_path
-    local old_default_line old_default_id candidate_id free_kb rc output pretty
+    local old_default_line old_default_id candidate_id rc output pretty
 
     snap="$(snapshot_find_path "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the selected Btrfs filesystem."
@@ -4505,6 +6702,8 @@ rollback_snapshot()
     log "ROLLBACK_RESULT=SUCCESS" | tee -a "$SESSION_LOG"
 }
 
+# snapshots dispatch: list|inspect|plan|rollback against the mounted top-level
+# Btrfs filesystem; validates the argument count per action.
 run_snapshots()
 {
     local action="${1:-}" requested="${2:-}"
@@ -4537,6 +6736,8 @@ run_snapshots()
     esac
 }
 
+# Execute one reviewed command as root inside a fresh target chroot with a
+# 300-second timeout; the command text is logged before it runs.
 run_chroot_shell()
 {
     local command="${1:-}"
@@ -4563,6 +6764,50 @@ run_chroot_shell()
     (( rc == 0 )) || fail "Chroot shell command failed (exit code $rc)."
 }
 
+# Execute one reviewed command directly on the running host through the
+# firmware-guarded private namespace (no chroot) with a 300-second timeout.
+run_host_shell()
+{
+    local raw_disk="${1:-}" raw_root="${2:-}" command="${3:-}"
+    (($# == 3)) || fail "host-shell requires a host disk, root component and command string."
+    [[ -n "$raw_disk" && -n "$raw_root" ]] || fail "host-shell requires a host disk and root component."
+    [[ -n "$command" ]] || fail "host-shell command cannot be empty."
+    need timeout
+    need unshare
+
+    CURRENT_STAGE="host shell"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$raw_disk" "$raw_root" no no
+    DIAGNOSTIC_SCOPE="Running Host"
+    prepare_host_command_guard
+
+    log "BEGIN: Running-host shell command" | tee -a "$SESSION_LOG"
+    log "Command: $command" | tee -a "$SESSION_LOG"
+    # The command runs directly in the live host root through the private
+    # firmware-variable namespace with a clean environment.  The timeout
+    # prevents an accidental foreground service from blocking the broker
+    # indefinitely while still allowing ordinary maintenance commands.
+    set +e
+    run_host_command_isolated timeout --foreground 300 /usr/bin/env \
+        HOME=/root \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive \
+        /bin/bash -lc "$command" 2>&1 | tee -a "$SESSION_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+    log "Running-host shell exit code: $rc" | tee -a "$SESSION_LOG"
+    if (( rc != 0 )); then
+        log "FAIL: Running-host shell command (exit code $rc)" | tee -a "$SESSION_LOG"
+        exit "$rc"
+    fi
+    log "PASS: Running-host shell command" | tee -a "$SESSION_LOG"
+}
+
+# ---------------------------------------------------------------------------
+# Read-only validation and repair stage ordering
+# ---------------------------------------------------------------------------
+# validate entry point: mount the target read-only, profile its backends and
+# log the complete validation summary; never writes.
 validate_target()
 {
     prepare_target ro
@@ -4589,8 +6834,11 @@ validate_target()
     log "  Supported modifying backend: $TARGET_REPAIR_BACKEND" | tee -a "$SESSION_LOG"
 
     log "Validation complete; no target files were changed." | tee -a "$SESSION_LOG"
+    repair_change_status validate "unchanged|validation is read-only"
 }
 
+# host-validate entry point: profile the live running host and log the
+# validation summary without mounting or modifying anything.
 validate_running_host()
 {
     CURRENT_STAGE="host validation"
@@ -4613,6 +6861,7 @@ validate_running_host()
     log "  ESP mount candidate: $TARGET_ESP_MOUNT" | tee -a "$SESSION_LOG"
     log "  Supported modifying backend: $TARGET_REPAIR_BACKEND" | tee -a "$SESSION_LOG"
     log "Running-host validation complete; no host files were changed." | tee -a "$SESSION_LOG"
+    repair_change_status validate "unchanged|validation is read-only"
 }
 
 validate_stage()
@@ -4640,7 +6889,32 @@ stage_rank()
     esac
 }
 
+# Repair stage arguments shared by repair and host-repair.  An explicit mode
+# hint such as --post-efi is a caller statement about work that already ran in
+# the same plan/session; the helper never infers it from the stage list.
+REPAIR_STAGES=()
+REPAIR_POST_EFI=false
+BOOT_STACK_POST_EFI=false
 
+parse_repair_arguments()
+{
+    REPAIR_STAGES=()
+    REPAIR_POST_EFI=false
+    local argument
+    for argument in "$@"; do
+        case "$argument" in
+            --post-efi) REPAIR_POST_EFI=true ;;
+            -*) fail "Unknown repair stage mode hint: $argument" ;;
+            *) REPAIR_STAGES+=("$argument") ;;
+        esac
+    done
+}
+
+# ---------------------------------------------------------------------------
+# EFI firmware inventory, bootloader repair and BootOrder reconciliation
+# ---------------------------------------------------------------------------
+# Derive a safe EFI bootloader directory ID: prefer an existing target-owned
+# vendor directory with GRUB/shim binaries, otherwise use the sanitized OS ID.
 detect_efi_bootloader_id()
 {
     local os_id existing_dir name lower esp_root
@@ -4689,6 +6963,8 @@ uefi_nvram_writable()
         | grep -Fxq rw
 }
 
+# Strict Debian-path ESP check: /boot/efi must be a mounted FAT partition that
+# belongs to the selected target disk.  Sets EFI_ESP_SOURCE/EFI_ESP_FSTYPE.
 validate_target_esp()
 {
     EFI_ESP_SOURCE=""
@@ -4713,6 +6989,8 @@ validate_target_esp()
     esac
 }
 
+# Resolve and validate the ESP at the profile-selected mount path (/boot/efi,
+# /boot or /efi) and require it to be a FAT partition of the selected disk.
 validate_selected_esp()
 {
     local mount_path source fstype
@@ -4778,10 +7056,17 @@ detect_mounted_esp()
     return 1
 }
 
+# Read-only vendor UKI builder check.  The builder path matches
+# validate_tuxedo_uki_target(), so capability evidence and the repair preflight
+# agree on what "TUXEDO UKI layout" requires.
+tuxedo_uki_builder_present()
+{
+    [[ -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]
+}
+
 is_tuxedo_uki_layout()
 {
-    [[ "$TARGET_OS_ID" == "tuxedo" ]] \
-        && [[ -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]
+    [[ "$TARGET_OS_ID" == "tuxedo" ]] && tuxedo_uki_builder_present
 }
 
 newest_tuxedo_kernel()
@@ -4803,21 +7088,6 @@ validate_tuxedo_uki_target()
         || fail "No installed TUXEDO kernel was found for UKI rebuild."
     [[ -d "$TARGET_ROOT/usr/lib/modules/$kver" || -d "$TARGET_ROOT/lib/modules/$kver" ]] \
         || fail "Newest TUXEDO kernel $kver has no matching modules directory in the target."
-}
-
-efi_entry_id_for_target_label()
-{
-    local label="$1" partuuid
-    command -v efibootmgr >/dev/null 2>&1 || return 1
-    partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
-    [[ -n "$partuuid" ]] || return 1
-
-    efibootmgr -v 2>/dev/null \
-        | grep -iF "$partuuid" \
-        | grep -F "$label" \
-        | { if [[ "$label" == "TUXEDO UKI" ]]; then grep -F 'TUX.EFI'; else cat; fi; } \
-        | sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]]+.*/\1/p' \
-        | head -1
 }
 
 # efibootmgr prints one Boot#### definition per line, followed by optional
@@ -5146,6 +7416,10 @@ efi_ensure_selected_wfai_entry()
     log "PASS: ${entry_name} firmware entry restored as Boot${ids[0]} on selected system ESP $esp." | tee -a "$SESSION_LOG"
 }
 
+# Remove duplicate or legacy firmware destinations for the selected ESP while
+# keeping exactly one entry per destination class (UKI, fallback, WFAI and
+# vendor loader).  Active/next entries and unknown device paths are never
+# removed; the final NVRAM state is re-read and verified from firmware.
 efi_prune_selected_duplicate_destinations()
 {
     local esp partuuid current_file line id loader label label_key basename key priority
@@ -5331,6 +7605,10 @@ efi_prune_selected_duplicate_destinations()
     log "PASS: selected ESP firmware destinations reconciled; removed Boot$removed_ids." | tee -a "$SESSION_LOG"
 }
 
+# Reorder BootOrder so each disk's entries are grouped by normal boot use
+# (host ESP first, then repair ESP, then foreign), with UKI before vendor
+# loader, fallback and WFAI.  Entries intentionally omitted from BootOrder and
+# all unknown paths are preserved exactly.
 efi_group_firmware_boot_order()
 {
     local current_file line id part loader basename role_key group rank seq current_order sorted_order candidate_file label_key
@@ -5420,6 +7698,9 @@ efi_group_firmware_boot_order()
     log "PASS: EFI BootOrder grouped by drive; all retained firmware entries remain present." | tee -a "$SESSION_LOG"
 }
 
+# Append the selected drive's model to firmware labels of selected-ESP entries
+# (through the root-owned label updater with per-entry backups) and restore a
+# missing iPXE/WebFAI recovery registration.  Host and foreign ESPs untouched.
 efi_annotate_selected_entries()
 {
     local esp partuuid model line id part loader role label new_label updater backup_dir backup
@@ -5616,6 +7897,10 @@ efi_find_entry_by_key()
     return 1
 }
 
+# Recreate one removed firmware entry from its captured efibootmgr definition.
+# Only ordinary EFI file-path entries are reconstructed; vendor-specific device
+# paths fail closed.  Prints the verified new Boot#### ID on stdout while all
+# diagnostics go to stderr so the caller can capture the ID safely.
 efi_create_entry_from_definition()
 {
     local line="$1" class="$2" partuuid label loader esp disk partnum current id resolved
@@ -5645,19 +7930,22 @@ efi_create_entry_from_definition()
         return 1
     }
     log "Restoring $class firmware entry '$label' for PARTUUID $partuuid (EFI path $loader)." | tee -a "$SESSION_LOG" >&2
+    # The caller captures this function's stdout as the restored Boot#### ID.
+    # Keep every diagnostic on stderr: efibootmgr warns on stderr when another
+    # entry already uses the label (the two-ESP rig has one `arch` entry per
+    # disk), and that warning must never be captured as the new ID.
     efibootmgr --create --disk "$disk" --part "$partnum" \
-        --label "$label" --loader "$loader" 2>&1 | tee -a "$SESSION_LOG" \
+        --label "$label" --loader "$loader" 2>&1 | tee -a "$SESSION_LOG" >&2 \
         || return 1
     current="$SESSION_DIR/efi-nvram-recreate.$partuuid"
     efibootmgr -v > "$current" 2>&1 || return 1
     id="$(efi_find_entry_by_key "$current" "$(efi_entry_key_line "$line")" || true)"
-    [[ -n "$id" ]] || {
-        log "ERROR: efibootmgr completed but restored entry '$label' could not be found by identity." | tee -a "$SESSION_LOG" >&2
+    [[ "$id" =~ ^[0-9A-Fa-f]{4}$ ]] || {
+        log "ERROR: efibootmgr completed but restored $class entry '$label' could not be verified by identity (got '${id:-empty}'); refusing to use an unverified firmware ID." | tee -a "$SESSION_LOG" >&2
         return 1
     }
     printf '%s\n' "$id"
 }
-
 
 efi_target_uki_entry_ids()
 {
@@ -5704,13 +7992,6 @@ efi_entry_ids_for_partuuid_role()
         id="$(efi_entry_id_line "$line")"
         [[ -n "$id" ]] && printf '%s\n' "${id^^}"
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' <<<"$nvram")
-}
-
-efi_host_tuxedo_uki_entry_ids()
-{
-    efi_set_inventory_esp_ids
-    [[ -n "$EFI_HOST_ESP_PARTUUID" ]] || return 1
-    efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID"
 }
 
 restore_missing_host_tuxedo_uki_entry()
@@ -5776,6 +8057,9 @@ restore_missing_host_tuxedo_uki_entry()
     log "PASS: host TUXEDO UKI firmware entry restored as Boot${ids[0]} on $host_esp." | tee -a "$SESSION_LOG"
 }
 
+# Compare the pre-repair firmware inventory with the current one, map every
+# pre-existing entry to its current identity and recreate entries a vendor tool
+# removed.  Writes an old-ID -> new-ID map file for BootOrder restoration.
 efi_reconcile_firmware_inventory()
 {
     local before="$1" map_file="$2" current_file line id old_id key class mapped definition current_line
@@ -5856,6 +8140,9 @@ efi_reconcile_firmware_inventory()
     efi_print_firmware_inventory "$current_file" | tee -a "$SESSION_LOG"
 }
 
+# Restore BootOrder and BootNext from the pre-repair capture through the
+# reconciled identity map, preserving pre-existing membership and appending
+# entries created during the repair (extra_id is placed last).
 efi_restore_reconciled_order()
 {
     local before="$1" map_file="$2" extra_id="${3:-}" old_order old_next mapped id current out_csv="" seen_csv="," mapped_csv="," next_mapped=""
@@ -5870,8 +8157,18 @@ efi_restore_reconciled_order()
             id="${id^^}"
             [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
             mapped="$(awk -F '\t' -v old="$id" '$1 == old {print $2; exit}' "$map_file" 2>/dev/null || true)"
-            [[ -n "$mapped" ]] || return 1
-            grep -Eq "^Boot${mapped}\*?[[:space:]]" <<<"$current" || return 1
+            [[ -n "$mapped" ]] || {
+                log "ERROR: no reconciled firmware identity for pre-existing EFI entry Boot$id; refusing to guess a BootOrder position." | tee -a "$SESSION_LOG" >&2
+                return 1
+            }
+            [[ "$mapped" =~ ^[0-9A-Fa-f]{4}$ ]] || {
+                log "ERROR: pre-existing EFI entry Boot$id mapped to invalid firmware ID '${mapped}'; refusing to restore a partially reconciled BootOrder." | tee -a "$SESSION_LOG" >&2
+                return 1
+            }
+            grep -Eq "^Boot${mapped}\*?[[:space:]]" <<<"$current" || {
+                log "ERROR: reconciled EFI entry Boot$mapped (from pre-existing Boot$id) is absent from firmware; refusing to restore BootOrder without it." | tee -a "$SESSION_LOG" >&2
+                return 1
+            }
             [[ "$seen_csv" == *",$mapped,"* ]] && continue
             seen_csv+="$mapped,"
             out_csv+="${out_csv:+,}$mapped"
@@ -5915,6 +8212,9 @@ efi_restore_reconciled_order()
     fi
 }
 
+# Return the selected ESP's single TUXEDO UKI firmware entry, creating and
+# verifying one when absent.  Prints the Boot#### ID on success; returns
+# non-zero when firmware is unwritable or the result cannot be verified.
 ensure_target_tuxedo_uki_entry()
 {
     local -a ids=()
@@ -6031,6 +8331,9 @@ EOF
     log "Vendor command completed successfully: $label" | tee -a "$SESSION_LOG"
 }
 
+# Rebuild the vendor TUXEDO UKI with the request-scoped NVRAM guard, reconcile
+# the complete firmware inventory around the suppressed vendor NVRAM calls and
+# verify the embedded kernel matches the newest installed one.
 rebuild_tuxedo_uki()
 {
     local kver new_uki="" uki tmp embedded old_uki_sha="" new_uki_sha=""
@@ -6123,6 +8426,8 @@ rebuild_tuxedo_uki()
     fi
 }
 
+# Decode the rebuilt UKI command line and fail unless it references the
+# promoted root UUID, the Btrfs @ subvolume and the target LUKS UUID.
 verify_tuxedo_uki_root_binding()
 {
     local uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" tmp cmdline root_uuid fstype backing luks_uuid
@@ -6160,6 +8465,9 @@ verify_tuxedo_uki_root_binding()
     log "PASS: TUXEDO UKI root/LUKS/subvolume binding verified." | tee -a "$SESSION_LOG"
 }
 
+# Conventional GRUB EFI preflight: validate the selected ESP, locate
+# grub-install and derive the bootloader ID.  Sets EFI_GRUB_INSTALL_PATH and
+# EFI_BOOTLOADER_ID; used again immediately before the write.
 validate_efi_bootloader_target()
 {
     EFI_GRUB_INSTALL_PATH=""
@@ -6180,11 +8488,36 @@ validate_efi_bootloader_target()
         || fail "Derived EFI bootloader ID contains unsupported characters: $EFI_BOOTLOADER_ID"
 }
 
+# Emit the EFI/UKI change status from the artifact fingerprint captured before
+# the repair started.  Shared by the TUXEDO UKI and conventional GRUB paths so
+# every EFI action reports exactly one status line.
+efi_repair_emit_change_status()
+{
+    local before="$1" after=""
+    if [[ -z "$before" ]]; then
+        repair_change_status efi changed
+        return 0
+    fi
+    after="$(efi_boot_artifact_fingerprint)"
+    if [[ "$before" == "$after" ]]; then
+        repair_change_status efi "unchanged|EFI boot artifacts and firmware entries are byte-identical"
+    else
+        repair_change_status efi changed
+    fi
+}
+
+# EFI stage entry point: rebuild the TUXEDO UKI when that layout is detected,
+# otherwise reinstall conventional GRUB EFI files (with a --no-nvram fallback),
+# reconcile firmware entries/BootOrder and emit the EFI change status.
 reinstall_efi_bootloader()
 {
     local nvram_mode efi_dir
-    local nvram_pre="" nvram_map=""
+    local nvram_pre="" nvram_map="" efi_before=""
     local -a install_args
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        efi_before="$(efi_boot_artifact_fingerprint)"
+    fi
 
     # Current encrypted TUXEDO Debian systems use a UKI primary boot path. Use
     # the vendor-supplied builder, but first run a read-mostly prerequisite
@@ -6195,6 +8528,7 @@ reinstall_efi_bootloader()
         preflight_tuxedo_uki
         rebuild_tuxedo_uki
         verify_tuxedo_uki_root_binding
+        efi_repair_emit_change_status "$efi_before"
         return 0
     fi
 
@@ -6278,8 +8612,12 @@ reinstall_efi_bootloader()
 
     log "PASS: EFI loader files verified under ${TARGET_ESP_MOUNT:-/boot/efi}/EFI/$EFI_BOOTLOADER_ID" | tee -a "$SESSION_LOG"
     log "EFI registration mode: $nvram_mode" | tee -a "$SESSION_LOG"
+    efi_repair_emit_change_status "$efi_before"
 }
 
+# Offline graphical-login repair: set graphical.target as default, enable the
+# detected display manager and (re)point display-manager.service at its unit.
+# The manager is never started inside the repair chroot.
 restore_display_manager()
 {
     local display_link default_link
@@ -6330,16 +8668,37 @@ restore_display_manager()
     log "$DISPLAY_MANAGER_LABEL was configured offline only; Boot Bitch intentionally did not start a graphical session inside the chroot." | tee -a "$SESSION_LOG"
 }
 
+# boot-stack stage: reconcile mapper/crypttab, initramfs, EFI/UKI and GRUB in
+# one run, each through its own guarded preflight.  With post_efi=true the
+# caller states the EFI/UKI stage already rebuilt and verified this layout, so
+# only mapper/crypttab and initramfs are reconciled here.  The change status is
+# aggregated from initramfs, EFI and GRUB artifact fingerprints.
 repair_boot_stack()
 {
+    local post_efi="${BOOT_STACK_POST_EFI:-false}"
+    local hash_available=false boot_changed=false
+    local initramfs_before="" initramfs_after="" efi_before="" efi_after=""
+    local grub_before="" grub_after=""
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        hash_available=true
+        initramfs_before="$(initramfs_image_fingerprint)"
+        efi_before="$(efi_boot_artifact_fingerprint)"
+        grub_before="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
+    fi
+
     log "SIMULATE/PREFLIGHT: complete boot-stack reconciliation" | tee -a "$SESSION_LOG"
     validate_mapper_crypttab
 
     # Each component performs its own trial/preflight, deterministic correction
     # pass and post-write verification. This keeps the compound operation from
-    # hiding which layer required correction.
+    # hiding which layer required correction.  With --post-efi the caller
+    # states that the EFI/UKI stage already rebuilt and verified this layout,
+    # including its GRUB follow-up, so those two components are not repeated.
     adaptive_initramfs_repair
-    if is_tuxedo_uki_layout; then
+    if [[ "$post_efi" == true ]]; then
+        log "SKIP: boot-stack EFI/UKI rebuild skipped because the EFI / UKI bootloader stage already rebuilt and verified this layout in the same run (--post-efi)." | tee -a "$SESSION_LOG"
+    elif is_tuxedo_uki_layout; then
         preflight_tuxedo_uki
         rebuild_tuxedo_uki
         verify_tuxedo_uki_root_binding
@@ -6349,13 +8708,41 @@ repair_boot_stack()
     else
         log "No TUXEDO UKI builder detected; preserving the distribution's existing EFI layout during boot-stack reconciliation." | tee -a "$SESSION_LOG"
     fi
-    adaptive_grub_repair
-    log "PASS: boot stack reconciliation completed after component simulations and verification." | tee -a "$SESSION_LOG"
+    if [[ "$post_efi" == true ]]; then
+        log "SKIP: boot-stack GRUB regeneration skipped because the EFI / UKI bootloader stage already regenerated the GRUB configuration in the same run (--post-efi)." | tee -a "$SESSION_LOG"
+    else
+        adaptive_grub_repair
+    fi
+    if [[ "$post_efi" == true ]]; then
+        log "PASS: boot stack reconciliation completed; EFI/UKI and GRUB were reused from the earlier EFI / UKI stage while mapper/crypttab and initramfs were reconciled." | tee -a "$SESSION_LOG"
+    else
+        log "PASS: boot stack reconciliation completed after component simulations and verification." | tee -a "$SESSION_LOG"
+    fi
+    # Aggregate the compound stage from its own artifact fingerprints so the
+    # status reflects every component even when one of them reported no change.
+    if [[ "$hash_available" != true ]]; then
+        boot_changed=true
+    else
+        initramfs_after="$(initramfs_image_fingerprint)"
+        efi_after="$(efi_boot_artifact_fingerprint)"
+        grub_after="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
+        [[ "$initramfs_before" == "$initramfs_after" ]] || boot_changed=true
+        [[ "$efi_before" == "$efi_after" ]] || boot_changed=true
+        [[ "$grub_before" == "$grub_after" ]] || boot_changed=true
+    fi
+    if [[ "$boot_changed" == true ]]; then
+        repair_change_status bootstack changed
+    else
+        repair_change_status bootstack "unchanged|initramfs, EFI/UKI and GRUB artifacts are byte-identical"
+    fi
 }
 
+# Move one existing EFI entry to the front of BootOrder while retaining every
+# other firmware entry (including valid entries absent from the old BootOrder)
+# and verify that firmware accepted the new order.
 efi_promote_entry_first()
 {
-    local wanted="${1^^}" current old_order id out_csv="" seen="," all_ids
+    local wanted="${1^^}" current old_order id out_csv="" seen_csv=","
     local -a ids=()
 
     current="$(efibootmgr -v 2>/dev/null || true)"
@@ -6364,15 +8751,15 @@ efi_promote_entry_first()
     old_order="$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)"
 
     out_csv="$wanted"
-    seen+=",$wanted,"
+    seen_csv+=",$wanted,"
     if [[ -n "$old_order" ]]; then
         IFS=',' read -ra ids <<< "$old_order"
         for id in "${ids[@]}"; do
             id="${id^^}"
             [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
             grep -Eq "^Boot${id}\\*?[[:space:]]" <<<"$current" || continue
-            [[ "$seen" == *",$id,"* ]] && continue
-            seen+=",$id,"
+            [[ "$seen_csv" == *",$id,"* ]] && continue
+            seen_csv+=",$id,"
             out_csv+=",$id"
         done
     fi
@@ -6382,8 +8769,8 @@ efi_promote_entry_first()
     while IFS= read -r id; do
         id="${id^^}"
         [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
-        [[ "$seen" == *",$id,"* ]] && continue
-        seen+=",$id,"
+        [[ "$seen_csv" == *",$id,"* ]] && continue
+        seen_csv+=",$id,"
         out_csv+=",$id"
     done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
 
@@ -6395,14 +8782,22 @@ efi_promote_entry_first()
     log "PASS: Boot$wanted is first in BootOrder; all other entries were retained." | tee -a "$SESSION_LOG"
 }
 
+# ---------------------------------------------------------------------------
+# Repair orchestration (target, native host and host default selection)
+# ---------------------------------------------------------------------------
+# host-repair entry point: validate stage order, run the native safety
+# preflights (identity, backend, package locks, EFI, command guard) and execute
+# every requested stage against the running host.
 run_host_repair()
 {
     local raw_disk="$1" raw_root="$2" stage previous_rank=0 current_rank
     local package_stage=false efi_requested=false grub_requested=false boot_stack_requested=false
     shift 2
-    (($# > 0)) || fail "host-repair requires at least one repair stage."
+    parse_repair_arguments "$@"
+    ((${#REPAIR_STAGES[@]} > 0)) || fail "host-repair requires at least one repair stage."
+    BOOT_STACK_POST_EFI="$REPAIR_POST_EFI"
 
-    for stage in "$@"; do
+    for stage in "${REPAIR_STAGES[@]}"; do
         validate_stage "$stage"
         current_rank="$(stage_rank "$stage")"
         (( current_rank >= previous_rank )) \
@@ -6424,7 +8819,7 @@ run_host_repair()
         fail "Native host repairs require a supported Debian/Ubuntu or Arch backend. Detected: $TARGET_PRETTY"
     fi
     if is_arch_family; then
-        for stage in "$@"; do
+        for stage in "${REPAIR_STAGES[@]}"; do
             case "$stage" in
                 dpkg-configure)
                     fail "dpkg configuration is not available on Arch; use the Arch package transaction stages instead." ;;
@@ -6465,16 +8860,16 @@ run_host_repair()
     }
     log "Native running-host repair preflight: PASS" | tee -a "$SESSION_LOG"
 
-    for stage in "$@"; do
+    for stage in "${REPAIR_STAGES[@]}"; do
         CURRENT_STAGE="$stage"
         case "$stage" in
-            dpkg-configure) run_chroot "Complete interrupted package configuration" dpkg --configure -a ;;
+            dpkg-configure) dpkg_configure_stage ;;
             fix-broken)
-                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies"; else adaptive_fix_broken; fi ;;
+                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies" fixbroken; else adaptive_fix_broken; fi ;;
             apt-update)
                 run_apt_update ;;
             apt-upgrade)
-                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages"; else adaptive_apt_upgrade; fi ;;
+                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade; else adaptive_apt_upgrade; fi ;;
             dkms) adaptive_dkms_repair ;;
             display-manager) adaptive_display_manager_repair ;;
             initramfs) adaptive_initramfs_repair ;;
@@ -6486,7 +8881,10 @@ run_host_repair()
 
     # Keep the same EFI follow-up behavior as target repair: a standalone EFI
     # repair regenerates the menu after the loader files have been updated.
-    if [[ "$efi_requested" == true && "$grub_requested" != true && "$boot_stack_requested" != true ]]; then
+    # With --post-efi the boot-stack stage reuses that EFI/UKI repair and skips
+    # its own GRUB regeneration, so the follow-up must still run here.
+    if [[ "$efi_requested" == true && "$grub_requested" != true \
+        && ( "$boot_stack_requested" != true || "$REPAIR_POST_EFI" == true ) ]]; then
         CURRENT_STAGE="grub (EFI follow-up)"
         log "EFI repair completed; regenerating the running host GRUB fallback configuration." | tee -a "$SESSION_LOG"
         adaptive_grub_repair
@@ -6496,6 +8894,9 @@ run_host_repair()
     log "All requested running-host repair stages completed successfully." | tee -a "$SESSION_LOG"
 }
 
+# host-default entry point: restore the running host's canonical EFI entry when
+# missing, promote it to the front of BootOrder and reconcile labels/duplicates
+# while proving the complete pre-change firmware state was preserved.
 run_host_default()
 {
     local raw_disk="$1" raw_root="$2" pre current partuuid role
@@ -6556,14 +8957,27 @@ run_host_default()
     efi_verify_selected_model_labels \
         || fail "Host EFI labels could not be verified after BootOrder maintenance."
     log "PASS: running host default EFI entry is Boot${ids[0]} on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
+    # The pre-change NVRAM capture is the proof: an identical firmware state
+    # after all reconciliation means BootOrder, labels and registrations
+    # already matched what the operation would have written.
+    if [[ -s "$pre" ]] && cmp -s "$pre" <(efibootmgr -v 2>/dev/null || true); then
+        repair_change_status host-default "unchanged|BootOrder, labels and registrations already correct"
+    else
+        repair_change_status host-default changed
+    fi
 }
 
+# repair entry point: enforce safe stage ordering, run every mandatory
+# read-only safety preflight (including EFI/UKI and boot-stack checks) before
+# promoting the target to read-write, then execute the requested stages.
 run_repair()
 {
     local efi_requested=false grub_requested=false boot_stack_requested=false previous_rank=0 current_rank stage
 
-    (($# > 0)) || fail "No repair stages were requested."
-    for stage in "$@"; do
+    parse_repair_arguments "$@"
+    ((${#REPAIR_STAGES[@]} > 0)) || fail "No repair stages were requested."
+    BOOT_STACK_POST_EFI="$REPAIR_POST_EFI"
+    for stage in "${REPAIR_STAGES[@]}"; do
         validate_stage "$stage"
         current_rank="$(stage_rank "$stage")"
         (( current_rank >= previous_rank )) || fail "Repair stages are out of safe dependency order: $stage must run after earlier stages."
@@ -6587,7 +9001,7 @@ run_repair()
         fail "Modifying repairs require a supported Debian/Ubuntu or Arch backend. Detected: $TARGET_PRETTY"
     fi
     if is_arch_family; then
-        for stage in "$@"; do
+        for stage in "${REPAIR_STAGES[@]}"; do
             case "$stage" in
                 dpkg-configure)
                     fail "dpkg configuration is not available on Arch; use the Arch package transaction stages instead." ;;
@@ -6625,20 +9039,20 @@ run_repair()
 
     log "Mandatory safety preflight: PASS" | tee -a "$SESSION_LOG"
 
-    for stage in "$@"; do
+    for stage in "${REPAIR_STAGES[@]}"; do
         CURRENT_STAGE="$stage"
         case "$stage" in
             dpkg-configure)
-                run_chroot "Complete interrupted package configuration" dpkg --configure -a
+                dpkg_configure_stage
                 ;;
             fix-broken)
-                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies"; else adaptive_fix_broken; fi
+                if is_arch_family; then adaptive_arch_pacman_repair "Repair Arch package dependencies" fixbroken; else adaptive_fix_broken; fi
                 ;;
             apt-update)
                 run_apt_update
                 ;;
             apt-upgrade)
-                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages"; else adaptive_apt_upgrade; fi
+                if is_arch_family; then adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade; else adaptive_apt_upgrade; fi
                 ;;
             dkms)
                 adaptive_dkms_repair
@@ -6663,7 +9077,10 @@ run_repair()
 
     # An individual EFI reinstall should leave a freshly generated GRUB menu.
     # When the caller already requested the GRUB stage, avoid running it twice.
-    if [[ "$efi_requested" == true && "$grub_requested" != true && "$boot_stack_requested" != true ]]; then
+    # With --post-efi the boot-stack stage reuses that EFI/UKI repair and skips
+    # its own GRUB regeneration, so the follow-up must still run here.
+    if [[ "$efi_requested" == true && "$grub_requested" != true \
+        && ( "$boot_stack_requested" != true || "$REPAIR_POST_EFI" == true ) ]]; then
         CURRENT_STAGE="grub (EFI follow-up)"
         log "EFI repair completed; simulating and regenerating the GRUB fallback configuration." | tee -a "$SESSION_LOG"
         adaptive_grub_repair
@@ -6673,6 +9090,9 @@ run_repair()
     log "All requested repair stages completed successfully." | tee -a "$SESSION_LOG"
 }
 
+# ---------------------------------------------------------------------------
+# Privileged session broker and command dispatch
+# ---------------------------------------------------------------------------
 session_protocol_error()
 {
     local request_id="$1"
@@ -6681,6 +9101,10 @@ session_protocol_error()
     printf 'DONE\t%s\t2\n' "$request_id"
 }
 
+# Long-lived pkexec broker: snapshot this helper into the root-owned state
+# directory, then read tab-separated BEGIN/ARG/SECRET/END requests and run each
+# whitelisted command through the authenticated copy, streaming OUT lines and
+# a final DONE line.  Secrets are only ever read from the request stream.
 session_server()
 {
     local tag request_id argc has_secret i field_tag field_id encoded decoded end_tag end_id
@@ -6771,8 +9195,8 @@ session_server()
         command="${fields[0]}"
         op_args=("${fields[@]:1}")
         case "$command" in
-            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy) ;;
-            host-validate|host-diagnose|host-repair|host-default) ;;
+            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair) ;;
+            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair) ;;
             *)
                 secret=""
                 session_protocol_error "$request_id" "Command is not permitted by the privileged-session broker: $command"
@@ -6821,6 +9245,9 @@ session_server()
     done
 }
 
+# Helper entry point: require root, validate the command's argument count and
+# dispatch to the single owning function.  Unknown or malformed commands print
+# usage and fail before any target is touched.
 main()
 {
     [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "This helper must run as root (normally through pkexec)."
@@ -6886,12 +9313,34 @@ main()
         repair)
             run_repair "$@"
             ;;
+        fs-inspect)
+            [[ $# -eq 0 ]] || fail "fs-inspect does not accept extra arguments."
+            fs_inspect "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        fs-repair)
+            [[ $# -eq 2 ]] || fail "fs-repair requires exactly one device and one repair mode."
+            fs_repair "$TARGET_DISK" "$ROOT_DEVICE" "$1" "$2"
+            ;;
+        host-fs-inspect)
+            [[ $# -eq 0 ]] || fail "host-fs-inspect does not accept extra arguments."
+            RUNNING_HOST_MODE=1
+            fs_inspect "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        host-fs-repair)
+            [[ $# -eq 2 ]] || fail "host-fs-repair requires exactly one device and one repair mode."
+            RUNNING_HOST_MODE=1
+            fs_repair "$TARGET_DISK" "$ROOT_DEVICE" "$1" "$2"
+            ;;
         host-repair)
             run_host_repair "$TARGET_DISK" "$ROOT_DEVICE" "$@"
             ;;
         host-default)
             [[ $# -eq 0 ]] || fail "host-default does not accept extra arguments."
             run_host_default "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        host-shell)
+            [[ $# -eq 1 ]] || fail "host-shell requires exactly one command string."
+            run_host_shell "$TARGET_DISK" "$ROOT_DEVICE" "$1"
             ;;
         copy-preview|copy)
             run_file_copy "$command" "$@"

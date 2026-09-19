@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Install build and runtime dependencies for the detected package-manager
+# family, then verify the environment with check-dev-env.sh.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 if [[ -r /etc/os-release ]]; then
@@ -53,18 +56,45 @@ if [[ "$family" == unknown ]]; then
     exit 2
 fi
 
+package_available()
+{
+    local package="$1"
+    case "$family" in
+        debian) apt-cache show "$package" >/dev/null 2>&1 ;;
+        arch) pacman -Si "$package" >/dev/null 2>&1 ;;
+        rpm) dnf -q list --available "$package" >/dev/null 2>&1 ;;
+        suse) zypper --non-interactive --quiet info "$package" >/dev/null 2>&1 ;;
+        *) return 1 ;;
+    esac
+}
+
+filesystem_optional_packages=(
+    exfatprogs ntfs-3g ntfsprogs f2fs-tools jfsutils reiserfsprogs zfsutils-linux
+)
+
+collect_filesystem_optional_packages()
+{
+    local package
+    for package in "${filesystem_optional_packages[@]}"; do
+        if package_available "$package"; then
+            optional_packages+=("$package")
+        fi
+    done
+}
+
+optional_packages=()
+
 case "$family" in
 debian)
     base_packages=(
         build-essential cmake ninja-build pkg-config qt6-base-dev qt6-svg-dev
         qt6-base-dev-tools extra-cmake-modules dpkg-dev desktop-file-utils
-        lintian pkexec util-linux mount rsync cryptsetup btrfs-progs systemd
-        efibootmgr binutils lvm2 mdadm
+        lintian pkexec util-linux mount rsync cryptsetup e2fsprogs dosfstools
+        btrfs-progs xfsprogs systemd efibootmgr binutils lvm2 mdadm
     )
 
     "${SUDO[@]}" apt-get update
 
-    optional_packages=()
     if apt-cache show libkf6auth-dev >/dev/null 2>&1; then
         optional_packages+=(libkf6auth-dev)
     fi
@@ -73,6 +103,7 @@ debian)
             optional_packages+=("$package")
         fi
     done
+    collect_filesystem_optional_packages
 
     "${SUDO[@]}" apt-get install --no-install-recommends -y "${base_packages[@]}" "${optional_packages[@]}"
     ;;
@@ -80,33 +111,37 @@ arch)
     # Never run -Sy alone. A full upgrade keeps the package database and
     # installed libraries in sync on Arch-family systems.
     base_packages=(
-    base-devel cmake ninja pkgconf qt6-base qt6-svg qt6-tools extra-cmake-modules
+        base-devel cmake ninja pkgconf qt6-base qt6-svg qt6-tools extra-cmake-modules
         desktop-file-utils appstream polkit util-linux rsync cryptsetup
-        btrfs-progs efibootmgr binutils python hicolor-icon-theme
-        lvm2 mdadm
+        e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils python
+        hicolor-icon-theme lvm2 mdadm
     )
     if [[ "${ID:-}" != artix && " ${ID_LIKE:-} " != *" artix "* ]]; then
         base_packages+=(systemd)
     fi
     "${SUDO[@]}" pacman -Syu --needed "${base_packages[@]}"
+    collect_filesystem_optional_packages
+    ((${#optional_packages[@]} > 0)) && "${SUDO[@]}" pacman -S --needed "${optional_packages[@]}"
     ;;
 rpm)
     base_packages=(
         gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
-        rsync cryptsetup btrfs-progs systemd efibootmgr binutils python3
-        hicolor-icon-theme lvm2 mdadm rpm-build
+        rsync cryptsetup e2fsprogs dosfstools btrfs-progs xfsprogs systemd
+        efibootmgr binutils python3 hicolor-icon-theme lvm2 mdadm rpm-build
     )
-    "${SUDO[@]}" dnf install -y "${base_packages[@]}"
+    collect_filesystem_optional_packages
+    "${SUDO[@]}" dnf install -y "${base_packages[@]}" "${optional_packages[@]}"
     ;;
 suse)
     base_packages=(
         gcc-c++ cmake ninja pkg-config libqt6-qtbase-devel libqt6svg6-dev
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
-        rsync cryptsetup btrfsprogs systemd efibootmgr binutils python3
-        hicolor-icon-theme lvm2 mdadm rpm-build
+        rsync cryptsetup e2fsprogs dosfstools btrfsprogs xfsprogs systemd
+        efibootmgr binutils python3 hicolor-icon-theme lvm2 mdadm rpm-build
     )
-    "${SUDO[@]}" zypper --non-interactive install --no-recommends "${base_packages[@]}"
+    collect_filesystem_optional_packages
+    "${SUDO[@]}" zypper --non-interactive install --no-recommends "${base_packages[@]}" "${optional_packages[@]}"
     ;;
 esac
 

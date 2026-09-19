@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Build the Arch package (makepkg) from a versioned copy of the working tree.
+# Must run as an unprivileged user on an Arch-family host.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-arch-package}"
 
@@ -63,8 +66,16 @@ arch=('x86_64')
 url='https://github.com/CaptainMorgan12/Boot_Bitch'
 license=('MIT')
 options=(!debug)
-depends=('qt6-base' 'qt6-svg' 'polkit' 'util-linux' 'cryptsetup' 'rsync' 'btrfs-progs' 'efibootmgr' 'binutils' 'python' 'hicolor-icon-theme')
+depends=('qt6-base' 'qt6-svg' 'polkit' 'util-linux' 'cryptsetup' 'rsync' 'e2fsprogs' 'dosfstools' 'btrfs-progs' 'xfsprogs' 'efibootmgr' 'binutils' 'python' 'hicolor-icon-theme')
+optdepends=('exfatprogs: exFAT file system check and repair (fsck.exfat)'
+            'ntfs-3g: NTFS mount and read-write support'
+            'ntfsprogs: NTFS file system check and dirty-state repair (ntfsfix)'
+            'f2fs-tools: F2FS file system repair (fsck.f2fs)'
+            'jfsutils: JFS file system check and repair (jfs_fsck)'
+            'reiserfsprogs: ReiserFS file system check and repair (reiserfsck)'
+            'zfsutils-linux: ZFS pool status and scrub (zpool)')
 makedepends=('cmake' 'ninja' 'gcc' 'pkgconf')
+install=boot-bitch.install
 source=("boot-bitch-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
@@ -82,6 +93,24 @@ package() {
 }
 PKGBUILD
 sed -i "s/__VERSION__/$VERSION/" "$BUILD_DIR/PKGBUILD"
+
+# Refresh the hicolor icon cache and the desktop-entry database after the
+# package transaction so launchers resolve org.bootrepair.BootRepair without
+# waiting for an unrelated cache refresh. Both tools are optional at runtime
+# (hicolor-icon-theme ships the directory, desktop-file-utils the database
+# tool), so failures are ignored and the hooks stay idempotent. makepkg embeds
+# this as .INSTALL only when the PKGBUILD references it through install=.
+cat > "$BUILD_DIR/boot-bitch.install" <<'INSTALL'
+post_install() {
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    update-desktop-database -q /usr/share/applications || true
+}
+
+post_upgrade() {
+    gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
+    update-desktop-database -q /usr/share/applications || true
+}
+INSTALL
 
 # makepkg itself does not modify the VM's package set unless --syncdeps is
 # explicitly requested. Keep package creation on the existing environment by

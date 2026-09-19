@@ -11,6 +11,10 @@ atlas_dir="$root_dir/resources/icons/atlas"
 map_icon() {
   local name="$1"
   case "$name" in
+    kernel) echo kernel ;;
+    initramfs|mkinitcpio) echo initramfs ;;
+    grub) echo grub ;;
+    distribution|distro) echo distribution ;;
     task-complete|dialog-ok-apply) echo check ;;
     system-run|tools-wizard) echo run ;;
     view-refresh) echo refresh ;;
@@ -28,7 +32,7 @@ map_icon() {
     filesystem-*|*btrfs*|*ext4*) echo filesystem ;;
     *configure*|*settings*|*preferences*|*repair*|*wizard*) echo gear ;;
     *terminal*) echo terminal ;;
-    *lock*|*encrypt*|*password*|*unlocked*) echo lock ;;
+    *lock*|*encrypt*|*password*) echo lock ;;
     *warning*|*error*|*report-bug*) echo warning ;;
     *display*|*video*) echo display ;;
     applications-development|*dkms*) echo development ;;
@@ -44,7 +48,7 @@ mapfile -t requested < <(grep -oE 'themedIcon\(QStringLiteral\("[^"]+"' "$source
   | sed -E 's/.*QStringLiteral\("([^"]+)"/\1/' | sort -u)
 # These icons are selected from data tables and therefore do not appear as
 # literal themedIcon() calls in the source scan above.
-requested+=(applications-development)
+requested+=(applications-development kernel initramfs grub distribution)
 mapfile -t requested < <(printf '%s\n' "${requested[@]}" | sort -u)
 failures=0
 printf '%-30s %-12s %s\n' "Requested icon" "Bundled atlas" "Status"

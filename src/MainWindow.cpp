@@ -27,12 +27,16 @@
 #include <QFont>
 #include <QFontMetrics>
 #include <QFormLayout>
+#include <QGridLayout>
 #include <QGroupBox>
 #include <QHBoxLayout>
 #include <QHeaderView>
 #include <QIcon>
 #include <QInputDialog>
 #include <QImage>
+#include <QPaintEvent>
+#include <QHash>
+#include <QLinearGradient>
 #include <QPainter>
 #include <QLabel>
 #include <QLineEdit>
@@ -42,7 +46,9 @@
 #include <QMessageBox>
 #include <QMouseEvent>
 #include <QPlainTextEdit>
+#include <QPointer>
 #include <QProcess>
+#include <QProgressBar>
 #include <QPushButton>
 #include <QRegularExpression>
 #include <QResizeEvent>
@@ -57,13 +63,18 @@
 #include <QStandardPaths>
 #include <QStorageInfo>
 #include <QStatusBar>
+#include <QStyleOptionButton>
+#include <QStylePainter>
+#include <QSyntaxHighlighter>
 #include <QTabBar>
 #include <QTabWidget>
 #include <QTableWidget>
 #include <QTableWidgetItem>
 #include <QTextOption>
 #include <QTextBlock>
+#include <QTextCharFormat>
 #include <QTextCursor>
+#include <QTextDocument>
 #include <QTextStream>
 #include <QTimer>
 #include <QToolButton>
@@ -74,6 +85,8 @@
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #endif
+
+// ---- File-local helpers -----------------------------------------------------
 
 namespace {
 enum AppTab {
@@ -93,6 +106,16 @@ struct DiagnosticSpec {
     const char *description;
     const char *icon;
 };
+
+// A single coalescing delay absorbs bursts of invalidations (for example the
+// stages of one repair) before the automatic read-only report is regenerated.
+constexpr int kEvidenceRefreshDelayMs = 1200;
+
+// Stable marker for a privileged helper response that ended without the
+// protocol DONE record (helper rejected the request, exited early, or the
+// response was truncated). Callers use it to distinguish a transport/protocol
+// failure from an ordinary non-zero command exit.
+const char kHelperProtocolIncompleteMarker[] = "did not return a protocol DONE record";
 
 class RepairProgressDialog final : public QDialog
 {
@@ -129,13 +152,296 @@ private:
     bool m_closeAllowed = false;
 };
 
+// Keeps the global busy indicator balanced for the complete lifetime of an
+// asynchronous operation, including every success, failure and cancel path.
+// The indicator is purely informational and never changes the operation.
+class BusyOperationScope
+{
+public:
+    BusyOperationScope(MainWindow *window, const QString &label)
+        : m_window(window)
+        , m_label(label)
+    {
+        if (m_window) {
+            m_window->beginBusyOperation(m_label);
+        }
+    }
+
+    ~BusyOperationScope()
+    {
+        if (m_window) {
+            m_window->endBusyOperation(m_label);
+        }
+    }
+
+    BusyOperationScope(const BusyOperationScope &) = delete;
+    BusyOperationScope &operator=(const BusyOperationScope &) = delete;
+
+private:
+    MainWindow *m_window = nullptr;
+    QString m_label;
+};
+
+// Marks the complete file system repair flow — the read-only check, the
+// device/mode selection and every selected device's sequential repair — as
+// owned by one operation. While the flag is set every repair entry point
+// refuses a second request with a clear message instead of queueing it behind
+// the running flow. The flag is cleared on every exit path, including
+// cancellation and failure.
+class FilesystemRepairFlowScope
+{
+public:
+    explicit FilesystemRepairFlowScope(bool &flag)
+        : m_flag(flag)
+    {
+        m_flag = true;
+    }
+
+    ~FilesystemRepairFlowScope()
+    {
+        m_flag = false;
+    }
+
+    FilesystemRepairFlowScope(const FilesystemRepairFlowScope &) = delete;
+    FilesystemRepairFlowScope &operator=(const FilesystemRepairFlowScope &) = delete;
+
+private:
+    bool &m_flag;
+};
+
+// The busy label is informational and may be wider than the compact header
+// slot reserved for it. Paint an elided form while text() still exposes the
+// complete label to accessibility, tooltips and tests.
+class ElidedLabel final : public QLabel
+{
+public:
+    explicit ElidedLabel(QWidget *parent = nullptr)
+        : QLabel(parent)
+    {
+        setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    }
+
+    QSize sizeHint() const override
+    {
+        const QSize base = QLabel::sizeHint();
+        return QSize(qMin(base.width(), 420), base.height());
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        return QSize(0, QLabel::minimumSizeHint().height());
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+        QPainter painter(this);
+        painter.setPen(palette().color(foregroundRole()));
+        const QString elided = fontMetrics().elidedText(text(), Qt::ElideRight, contentsRect().width());
+        painter.drawText(contentsRect(), static_cast<int>(alignment()), elided);
+    }
+};
+
+// The Full Repair plan row shares its width with the stage-count label. At the
+// minimum supported window width the two action buttons must shrink below
+// their content width instead of colliding. Paint an elided form while text()
+// keeps the complete label for accessibility, tooltips and tests.
+class ElidedPushButton final : public QPushButton
+{
+public:
+    explicit ElidedPushButton(QWidget *parent = nullptr)
+        : QPushButton(parent)
+    {
+    }
+
+    ElidedPushButton(const QIcon &icon, const QString &text, QWidget *parent = nullptr)
+        : QPushButton(icon, text, parent)
+    {
+    }
+
+    explicit ElidedPushButton(const QString &text, QWidget *parent = nullptr)
+        : QPushButton(text, parent)
+    {
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QPushButton::minimumSizeHint();
+        hint.setWidth(qMin(hint.width(), 64));
+        return hint;
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+        QStylePainter painter(this);
+        QStyleOptionButton option;
+        initStyleOption(&option);
+        option.text = fontMetrics().elidedText(text(), Qt::ElideRight, elidedTextWidth());
+        painter.drawControl(QStyle::CE_PushButton, option);
+    }
+
+private:
+    int elidedTextWidth() const
+    {
+        int available = contentsRect().width();
+        if (!icon().isNull()) {
+            const QSize extent = iconSize().isValid()
+                ? iconSize()
+                : QSize(style()->pixelMetric(QStyle::PM_ButtonIconSize),
+                        style()->pixelMetric(QStyle::PM_ButtonIconSize));
+            available -= extent.width() + 8;
+        }
+        return qMax(0, available - 8);
+    }
+};
+
+// Diagnostic log sections are tracked by (key, scope) so a newer result can
+// replace the previous section instead of accumulating duplicates. The
+// separator never appears in a key or scope label.
+QString diagnosticEntryIdentity(const QString &key, const QString &scope)
+{
+    return scope + QLatin1Char('\x1f') + key;
+}
+
+// Recurring one-line status entries share the diagnostic replacement model but
+// live in their own namespace so a status can never collide with a diagnostic
+// section or a repair block. The kind names the status and the optional scope
+// keeps entries that legitimately differ per host/target scope, disk/root or
+// diagnostic key apart.
+QString statusEntryIdentity(const QString &kind, const QString &scope = QString())
+{
+    return scope.isEmpty()
+        ? QStringLiteral("status\x1f%1").arg(kind)
+        : QStringLiteral("status\x1f%1\x1f%2").arg(kind, scope);
+}
+
+// Recognizes the framing written by appendDiagnosticLog. Other entries that
+// merely mention "Diagnostic:" (repair output, chroot transcripts) do not
+// carry a following "Scope:" metadata line and are deliberately ignored. This
+// avoids splitting potentially huge diagnostic sections into line lists.
+bool diagnosticEntryMetadata(const QString &entry, QString *key, QString *scope)
+{
+    const int keyPos = entry.indexOf(QStringLiteral("\nDiagnostic: "));
+    if (keyPos < 0) {
+        return false;
+    }
+    const int keyStart = keyPos + 13;
+    int keyEnd = entry.indexOf(QLatin1Char('\n'), keyStart);
+    if (keyEnd < 0) {
+        keyEnd = entry.size();
+    }
+    const int scopePos = entry.indexOf(QStringLiteral("\nScope: "), keyEnd);
+    if (scopePos < 0) {
+        return false;
+    }
+    const int scopeStart = scopePos + 8;
+    int scopeEnd = entry.indexOf(QLatin1Char('\n'), scopeStart);
+    if (scopeEnd < 0) {
+        scopeEnd = entry.size();
+    }
+    *key = entry.mid(keyStart, keyEnd - keyStart).trimmed();
+    *scope = entry.mid(scopeStart, scopeEnd - scopeStart).trimmed();
+    return !key->isEmpty() && !scope->isEmpty();
+}
+
+// The visible title of a framed diagnostic section, used by the @section
+// search so a term can select a section by name as well as by key.
+QString diagnosticEntryTitle(const QString &entry)
+{
+    const int titlePos = entry.indexOf(QStringLiteral("\nTitle: "));
+    if (titlePos < 0) {
+        return QString();
+    }
+    const int titleStart = titlePos + 8;
+    int titleEnd = entry.indexOf(QLatin1Char('\n'), titleStart);
+    if (titleEnd < 0) {
+        titleEnd = entry.size();
+    }
+    return entry.mid(titleStart, titleEnd - titleStart).trimmed();
+}
+
+// Every application-log entry starts with a "──────── CATEGORY ────────"
+// header written by appendLog() from the explicit operation kind chosen at
+// append time. The category text is a stable, one-to-one projection of that
+// kind and drives the Logs filter dropdown (Diagnostics / Repairs and the
+// diagnostic sections); it is never derived from the message body.
+QString logEntryCategory(const QString &entry)
+{
+    static const QString marker = QStringLiteral("────────");
+    if (!entry.startsWith(marker)) {
+        return QString();
+    }
+    const int end = entry.indexOf(marker, marker.size());
+    if (end < 0) {
+        return QString();
+    }
+    return entry.mid(marker.size(), end - marker.size()).trimmed();
+}
+
+QString logCategoryForKind(MainWindow::LogEntryKind kind)
+{
+    switch (kind) {
+    case MainWindow::LogEntryKind::Diagnostic:
+        return QStringLiteral("DIAGNOSTIC");
+    case MainWindow::LogEntryKind::Repair:
+        return QStringLiteral("REPAIR");
+    case MainWindow::LogEntryKind::Unlock:
+        return QStringLiteral("UNLOCK");
+    case MainWindow::LogEntryKind::Snapshot:
+        return QStringLiteral("SNAPSHOTS");
+    case MainWindow::LogEntryKind::FileCopy:
+        return QStringLiteral("FILE COPY");
+    case MainWindow::LogEntryKind::ChrootShell:
+        return QStringLiteral("CHROOT SHELL");
+    case MainWindow::LogEntryKind::HostShell:
+        return QStringLiteral("HOST SHELL");
+    case MainWindow::LogEntryKind::Application:
+        break;
+    }
+    return QStringLiteral("APPLICATION");
+}
+
+// Reads back the kind recorded in an entry's header. Entries loaded from a
+// session file keep the category written when they were appended, so filtering
+// behaves identically for the live register and prior sessions without
+// examining the message text. Unknown or legacy headers stay Application.
+MainWindow::LogEntryKind logEntryKind(const QString &entry)
+{
+    const QString category = logEntryCategory(entry);
+    if (category == QStringLiteral("DIAGNOSTIC")) {
+        return MainWindow::LogEntryKind::Diagnostic;
+    }
+    if (category == QStringLiteral("REPAIR")) {
+        return MainWindow::LogEntryKind::Repair;
+    }
+    if (category == QStringLiteral("UNLOCK")) {
+        return MainWindow::LogEntryKind::Unlock;
+    }
+    if (category == QStringLiteral("SNAPSHOTS")) {
+        return MainWindow::LogEntryKind::Snapshot;
+    }
+    if (category == QStringLiteral("FILE COPY")) {
+        return MainWindow::LogEntryKind::FileCopy;
+    }
+    if (category == QStringLiteral("CHROOT SHELL")) {
+        return MainWindow::LogEntryKind::ChrootShell;
+    }
+    if (category == QStringLiteral("HOST SHELL")) {
+        return MainWindow::LogEntryKind::HostShell;
+    }
+    return MainWindow::LogEntryKind::Application;
+}
+
 static const DiagnosticSpec diagnosticSpecs[] = {
     {"environment", "Environment validation", "Summarizes the selected system, protection state, mounted identity and inspection readiness.", "task-complete"},
-    {"backend", "Distribution and boot backend profile", "Identifies the distribution family, package manager, initramfs generator, bootloader, ESP location and current guarded repair capability.", "preferences-system"},
+    {"backend", "Distribution and boot backend profile", "Identifies the distribution family, package manager, initramfs generator, bootloader, ESP location and current guarded repair capability.", "distribution"},
     {"boot", "Boot diagnostics", "Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.", "system-run"},
     {"boot-evidence", "Boot evidence and selection history", "Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.", "dialog-information"},
-    {"kernel", "Kernel / initramfs", "Reviews kernel files and verifies matching initramfs images through a read-only inspection.", "preferences-system"},
-    {"grub", "GRUB configuration", "Reviews GRUB configuration and /etc/default/grub without changing boot files.", "preferences-system"},
+    {"kernel", "Kernel / initramfs", "Reviews kernel files and verifies matching initramfs images through a read-only inspection.", "kernel"},
+    {"grub", "GRUB configuration", "Reviews GRUB configuration and /etc/default/grub without changing boot files.", "grub"},
     {"uki", "EFI / UKI boot state", "Inspects the selected ESP, vendor or generic UKI images, systemd-boot loader files, embedded kernel/cmdline data and firmware entries with PARTUUID ownership classification.", "drive-removable-media"},
     {"display", "Graphical login / display manager", "Reviews graphical.target, the configured display manager (for example SDDM, GDM3, LightDM, or another systemd manager), installed desktop packages, and recent boot/journal evidence without starting the GUI.", "video-display"},
     {"errors", "Boot errors", "Reads recent error-priority entries from the running host or selected repair system's persistent journal when available.", "dialog-warning"},
@@ -146,6 +452,386 @@ static const DiagnosticSpec diagnosticSpecs[] = {
     {"luks", "LUKS / crypttab", "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.", "lock"},
     {"report", "Full diagnostic report", "Combines all read-only diagnostics for the selected scope in one privileged inspection session.", "document-preview"}
 };
+
+// Repair topics referenced by the log section filters. Each topic is keyed by
+// the stable repair-tool key and matched against the recorded repair entries
+// through the case-insensitive title fragments below. The entry title always
+// carries the tool's user-visible name, so one fragment list also covers the
+// start, completion and captured-output entries of a single repair cycle.
+struct RepairTopicSpec {
+    const char *key;
+    const char *titleFragments; // '|'-separated fragments
+};
+
+static const RepairTopicSpec repairTopicSpecs[] = {
+    {"validate", "Validate repair target|Validate running host"},
+    {"filesystem", "File system repair|File system check|Check File Systems"},
+    {"dpkg", "Complete package configuration|dpkg --configure"},
+    {"fixbroken", "Repair broken dependencies|fix-broken"},
+    {"aptupdate", "Refresh package metadata|apt-update"},
+    {"upgrade", "Upgrade installed packages|apt-upgrade"},
+    {"dkms", "DKMS"},
+    {"display", "graphical login manager|display manager|display-manager"},
+    {"initramfs", "initramfs"},
+    {"efi", "EFI / UKI|EFI bootloader|Make host default boot entry"},
+    {"grub", "GRUB"},
+    {"bootstack", "boot stack|boot-stack"}
+};
+
+// Single mapping for the Logs section filters: every diagnostic section key
+// pairs with the repair workflows that belong to it, so selecting the filter
+// shows both the captured evidence and what the related repair tools did.
+// Extend this table when a section gains another related workflow.
+struct LogSectionFilterSpec {
+    const char *sectionKey;
+    const char *repairTopics; // space-separated RepairTopicSpec keys
+};
+
+static const LogSectionFilterSpec logSectionFilterSpecs[] = {
+    {"environment", "dpkg fixbroken aptupdate upgrade"},
+    {"backend", "dpkg fixbroken aptupdate upgrade"},
+    {"boot", "bootstack grub efi"},
+    {"boot-evidence", "bootstack grub efi"},
+    {"kernel", "initramfs dkms"},
+    {"grub", "grub"},
+    {"uki", "efi"},
+    {"display", "display"},
+    {"errors", ""},
+    {"usage", ""},
+    {"fstab", "filesystem bootstack initramfs"},
+    {"btrfs", ""},
+    {"mapper", "initramfs bootstack"},
+    {"luks", "initramfs bootstack"},
+    {"report", "validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub bootstack"}
+};
+
+static QString logRepairTopicsForSection(const QString &sectionKey)
+{
+    for (const LogSectionFilterSpec &spec : logSectionFilterSpecs) {
+        if (sectionKey == QLatin1String(spec.sectionKey)) {
+            return QString::fromLatin1(spec.repairTopics);
+        }
+    }
+    return QString();
+}
+
+// Repair-workflow dropdown filters. A workflow filter is a repair-centric view
+// that names the repair topics it shows plus the diagnostic sections carrying
+// its evidence. The sections are shown whole exactly like a section filter:
+// the dedicated capture when it exists, otherwise the embedded section of a
+// combined report. This is what makes "File system repair" coherent instead of
+// a flat list of unrelated fragments.
+struct LogWorkflowFilterSpec {
+    const char *key;
+    const char *title;
+    const char *repairTopics; // space-separated RepairTopicSpec keys
+    const char *sections;     // space-separated diagnostic section keys
+};
+
+static const LogWorkflowFilterSpec logWorkflowFilterSpecs[] = {
+    // The file system check and repair share one workflow: the check is the
+    // read-only pre-stage of the repair, so both entry sets belong to the same
+    // filter together with the storage evidence they inspect or invalidate.
+    {"topic:filesystem", "File system repair", "filesystem", "environment usage btrfs fstab"}
+};
+
+static const LogWorkflowFilterSpec *logWorkflowFilterFor(const QString &key)
+{
+    for (const LogWorkflowFilterSpec &spec : logWorkflowFilterSpecs) {
+        if (key == QLatin1String(spec.key)) {
+            return &spec;
+        }
+    }
+    return nullptr;
+}
+
+// Single explicit invalidation table: the diagnostic sections whose cached
+// evidence each repair tool/stage makes stale. "all" is the combined-report
+// pseudo-section and means the complete set; an empty list means the action is
+// read-only and invalidates nothing. Every invalidation decision goes through
+// MainWindow::diagnosticSectionsForRepair(); no ad-hoc section lists exist
+// elsewhere. Unknown keys (including file copy, shell, snapshot, unlock and
+// target/scope changes) deliberately map to "all" (fail safe).
+//
+// toolKey (repair tool / helper stage)   invalidated diagnostic sections
+// ------------------------------------   ---------------------------------
+// validate                               (none: read-only)
+// filesystem                             environment usage btrfs
+// dpkg, dpkg-configure                   all
+// fixbroken, fix-broken                  all
+// aptupdate, apt-update                  all
+// upgrade, apt-upgrade                   all
+// dkms                                   kernel
+// display, display-manager               display
+// initramfs                              kernel
+// efi                                    uki grub boot-evidence
+// grub                                   grub
+// bootstack, boot-stack                  all
+// host-default                           all
+struct RepairDiagnosticSectionSpec {
+    const char *toolKey;
+    const char *sections; // space-separated; "all" means the complete set
+};
+
+static const RepairDiagnosticSectionSpec repairDiagnosticSectionSpecs[] = {
+    {"validate", ""},
+    // A file system repair changes filesystem metadata and free space; keep
+    // the capability evidence and the sections that describe the repaired
+    // storage. This is deliberately broader than the capability-only minimum.
+    {"filesystem", "environment usage btrfs"},
+    {"dpkg", "all"},
+    {"dpkg-configure", "all"},
+    {"fixbroken", "all"},
+    {"fix-broken", "all"},
+    {"aptupdate", "all"},
+    {"apt-update", "all"},
+    {"upgrade", "all"},
+    {"apt-upgrade", "all"},
+    {"dkms", "kernel"},
+    {"display", "display"},
+    {"display-manager", "display"},
+    {"initramfs", "kernel"},
+    // EFI / UKI repair reinstalls the loader, regenerates GRUB afterward and
+    // changes firmware entries, so all three boot sections are invalidated.
+    {"efi", "uki grub boot-evidence"},
+    {"grub", "grub"},
+    {"bootstack", "all"},
+    {"boot-stack", "all"},
+    {"host-default", "all"}
+};
+
+// The canonical section order used by the combined report, so partial
+// regenerations run in the same deterministic sequence.
+static QStringList orderedDiagnosticSectionKeys()
+{
+    QStringList keys;
+    for (const DiagnosticSpec &spec : diagnosticSpecs) {
+        const QString key = QString::fromLatin1(spec.key);
+        if (key != QStringLiteral("report")) {
+            keys.append(key);
+        }
+    }
+    return keys;
+}
+
+static QStringList orderedDiagnosticSections(const QStringList &sections)
+{
+    QStringList ordered;
+    for (const QString &key : orderedDiagnosticSectionKeys()) {
+        if (sections.contains(key)) {
+            ordered.append(key);
+        }
+    }
+    return ordered;
+}
+
+static bool repairEntryMatchesTopics(const QString &entry, const QSet<QString> &topics)
+{
+    if (topics.isEmpty()) {
+        return false;
+    }
+    for (const RepairTopicSpec &spec : repairTopicSpecs) {
+        if (!topics.contains(QString::fromLatin1(spec.key))) {
+            continue;
+        }
+        const QStringList fragments = QString::fromLatin1(spec.titleFragments)
+            .split(QLatin1Char('|'), Qt::SkipEmptyParts);
+        for (const QString &fragment : fragments) {
+            if (entry.contains(fragment, Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
+// The helper frames every diagnostic section and its title with this exact
+// divider. Section extraction relies on the framing to keep the captured
+// header and metadata intact.
+bool isDiagnosticSectionDivider(const QString &line)
+{
+    return line == QStringLiteral("========================================");
+}
+
+// Line index where the embedded section whose "Diagnostic:" header is at
+// diagnosticLine begins. Helper output frames the title between two dividers
+// directly above the header, while the GUI framing places the opening divider
+// directly above the header instead.
+int embeddedSectionStartLine(const QStringList &lines, int diagnosticLine)
+{
+    if (diagnosticLine >= 3
+        && isDiagnosticSectionDivider(lines.at(diagnosticLine - 1))
+        && !lines.at(diagnosticLine - 2).isEmpty()
+        && !isDiagnosticSectionDivider(lines.at(diagnosticLine - 2))
+        && isDiagnosticSectionDivider(lines.at(diagnosticLine - 3))) {
+        return diagnosticLine - 3;
+    }
+    if (diagnosticLine >= 1 && isDiagnosticSectionDivider(lines.at(diagnosticLine - 1))) {
+        return diagnosticLine - 1;
+    }
+    return diagnosticLine;
+}
+
+// Extracts the complete embedded sections of the requested keys from a
+// combined diagnostic entry (for example a Run All report). Each section is
+// returned with its header, metadata and framing exactly as captured, ending
+// where the next section's frame begins.
+QStringList extractEmbeddedDiagnosticSections(const QString &entry, const QSet<QString> &keys)
+{
+    if (keys.isEmpty()) {
+        return QStringList();
+    }
+    const QString headerPrefix = QStringLiteral("Diagnostic: ");
+    const QStringList lines = entry.split(QLatin1Char('\n'));
+    QList<int> headers;
+    for (int index = 0; index < lines.size(); ++index) {
+        if (lines.at(index).startsWith(headerPrefix)) {
+            headers.append(index);
+        }
+    }
+    QStringList sections;
+    for (int position = 0; position < headers.size(); ++position) {
+        const int header = headers.at(position);
+        const QString key = lines.at(header).mid(headerPrefix.size()).trimmed();
+        if (!keys.contains(key.toCaseFolded())) {
+            continue;
+        }
+        const int start = embeddedSectionStartLine(lines, header);
+        int end = position + 1 < headers.size()
+            ? embeddedSectionStartLine(lines, headers.at(position + 1))
+            : lines.size();
+        while (end > start && lines.at(end - 1).trimmed().isEmpty()) {
+            --end;
+        }
+        if (end > start) {
+            sections.append(lines.mid(start, end - start).join(QLatin1Char('\n')));
+        }
+    }
+    return sections;
+}
+
+// Single truth log reader: every action gate parses the cached diagnostic
+// evidence through this helper, so the `Repair tool <key>` protocol is
+// implemented once instead of being re-checked in each action. `hadEvidence`
+// reports whether a line for the key was present at all.
+static bool cachedRepairToolAvailable(const QMap<QString, QString> &cache, const QString &key,
+                                      QString *reason, bool *hadEvidence = nullptr)
+{
+    if (hadEvidence) {
+        *hadEvidence = false;
+    }
+    const QString prefix = QStringLiteral("Repair tool %1: ").arg(key);
+    bool available = false;
+    for (const QString &evidence : cache) {
+        for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+            if (!line.startsWith(prefix)) {
+                continue;
+            }
+            if (hadEvidence) {
+                *hadEvidence = true;
+            }
+            const QString state = line.mid(prefix.size()).trimmed();
+            if (state == QStringLiteral("available")) {
+                available = true;
+            } else if (state.startsWith(QStringLiteral("unavailable|"))) {
+                const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+                if (reason) {
+                    *reason = detail.isEmpty()
+                        ? QStringLiteral("Repair tool %1 is unavailable.").arg(key)
+                        : detail;
+                }
+                return false;
+            } else {
+                if (reason) {
+                    *reason = QStringLiteral("Repair tool %1 has unknown or unavailable diagnostic evidence.").arg(key);
+                }
+                return false;
+            }
+        }
+    }
+    if (!available) {
+        if (reason) {
+            *reason = QStringLiteral("No capability evidence for repair tool %1 in the selected scope. Run diagnostics first.").arg(key);
+        }
+        return false;
+    }
+    return true;
+}
+
+// A soft shadow gradient at the top and bottom edge of a scroll area hints
+// that more content is available in that direction; the overlay never takes
+// mouse input and repaints with the scroll position and viewport size.
+class ScrollFadeOverlay : public QWidget
+{
+public:
+    explicit ScrollFadeOverlay(QScrollArea *area)
+        : QWidget(area ? area->viewport() : nullptr), m_area(area)
+    {
+        setAttribute(Qt::WA_TransparentForMouseEvents);
+        setAttribute(Qt::WA_NoSystemBackground);
+        if (!m_area) {
+            return;
+        }
+        m_area->viewport()->installEventFilter(this);
+        if (QScrollBar *bar = m_area->verticalScrollBar()) {
+            connect(bar, &QScrollBar::valueChanged, this, qOverload<>(&QWidget::update));
+            connect(bar, &QScrollBar::rangeChanged, this, qOverload<>(&QWidget::update));
+        }
+        setGeometry(m_area->viewport()->rect());
+        raise();
+    }
+
+protected:
+    bool eventFilter(QObject *watched, QEvent *event) override
+    {
+        if (m_area && watched == m_area->viewport() && event->type() == QEvent::Resize) {
+            setGeometry(m_area->viewport()->rect());
+            raise();
+        }
+        return QWidget::eventFilter(watched, event);
+    }
+
+    void paintEvent(QPaintEvent *) override
+    {
+        if (!m_area) {
+            return;
+        }
+        QScrollBar *bar = m_area->verticalScrollBar();
+        if (!bar || bar->maximum() <= bar->minimum()) {
+            return;
+        }
+        constexpr int kFade = 30;
+        QPainter painter(this);
+        painter.setRenderHint(QPainter::Antialiasing);
+        const QColor shadow(0, 0, 0, 90);
+        const QColor clear(0, 0, 0, 0);
+        if (bar->value() < bar->maximum()) {
+            QLinearGradient gradient(0, height() - kFade, 0, height());
+            gradient.setColorAt(0.0, clear);
+            gradient.setColorAt(1.0, shadow);
+            painter.fillRect(QRect(0, height() - kFade, width(), kFade), gradient);
+            // A small chevron reinforces the fade on high-contrast themes.
+            QColor chevron = palette().color(QPalette::WindowText);
+            chevron.setAlpha(140);
+            painter.setPen(QPen(chevron, 1.6, Qt::SolidLine, Qt::RoundCap, Qt::RoundJoin));
+            const int cx = width() / 2;
+            const int cy = height() - kFade / 2;
+            painter.drawLine(QPointF(cx - 5, cy - 2), QPointF(cx, cy + 3));
+            painter.drawLine(QPointF(cx, cy + 3), QPointF(cx + 5, cy - 2));
+        }
+        if (bar->value() > bar->minimum()) {
+            QLinearGradient gradient(0, 0, 0, kFade);
+            gradient.setColorAt(0.0, shadow);
+            gradient.setColorAt(1.0, clear);
+            painter.fillRect(QRect(0, 0, width(), kFade), gradient);
+        }
+    }
+
+private:
+    QScrollArea *m_area = nullptr;
+};
+
+// ---- Icon helpers -----------------------------------------------------------
 
 QIcon terminalIcon(const QColor &foreground)
 {
@@ -324,7 +1010,15 @@ QIcon fallbackGlyphIcon(const QString &name, const QColor &foreground)
 QIcon bundledIcon(const QString &name)
 {
     QString atlasName = QStringLiteral("document");
-    if (name == QStringLiteral("task-complete") || name == QStringLiteral("dialog-ok-apply")) {
+    if (name == QStringLiteral("kernel")) {
+        atlasName = QStringLiteral("kernel");
+    } else if (name == QStringLiteral("initramfs") || name == QStringLiteral("mkinitcpio")) {
+        atlasName = QStringLiteral("initramfs");
+    } else if (name == QStringLiteral("grub")) {
+        atlasName = QStringLiteral("grub");
+    } else if (name == QStringLiteral("distribution") || name == QStringLiteral("distro")) {
+        atlasName = QStringLiteral("distribution");
+    } else if (name == QStringLiteral("task-complete") || name == QStringLiteral("dialog-ok-apply")) {
         atlasName = QStringLiteral("check");
     } else if (name == QStringLiteral("system-run") || name == QStringLiteral("tools-wizard")) {
         atlasName = QStringLiteral("run");
@@ -403,8 +1097,7 @@ QIcon themedIcon(const QString &name, const QIcon &fallback = QIcon())
     // Try common freedesktop aliases before drawing a fallback.  Themes often
     // ship a semantically equivalent name rather than every application
     // specific name used by Boot Bitch.
-    if (source.isNull() || name == QStringLiteral("preferences-system")
-        || name == QStringLiteral("dialog-information")) {
+    if (source.isNull()) {
         QStringList aliases;
         if (name == QStringLiteral("preferences-system")) aliases << QStringLiteral("applications-system") << QStringLiteral("preferences-desktop");
         else if (name == QStringLiteral("tools-report-bug")) aliases << QStringLiteral("dialog-warning") << QStringLiteral("applications-development");
@@ -607,6 +1300,48 @@ QLabel *subtleLabel(const QString &text)
     label->setWordWrap(true);
     label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
     return label;
+}
+
+// Dense button rows (Logs session controls, File Copy staging controls) must
+// stay shrinkable when the window is narrow. normalizeButtonSizing() gives
+// every push button a minimum width equal to its content, which makes Qt
+// position an over-constrained row at those minimums while still advancing
+// by smaller allocated widths, so neighbouring buttons visibly overlap.
+// Shrinkable buttons keep a small floor instead and let the row fit.
+void makeButtonShrinkable(QPushButton *button, int minimumWidth = 64)
+{
+    if (!button) {
+        return;
+    }
+    // normalizeButtonSizing() runs after page construction and would restore
+    // the full content minimum. Mark the button so that pass leaves it alone.
+    button->setProperty("bootRepairShrinkable", true);
+    button->setMinimumWidth(minimumWidth);
+    button->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed);
+}
+
+// Systems-tab action column: buttons that visually stack on a page's right
+// edge share one width (the widest content hint) and one height so their left
+// and right edges line up at every window width. The size is fixed rather
+// than a minimum so the buttons cannot drift apart when the window narrows;
+// runtime text that no longer fits is painted elided by ElidedPushButton.
+void standardizeButtonColumn(const QList<QPushButton *> &buttons)
+{
+    int columnWidth = 0;
+    int columnHeight = 0;
+    for (QPushButton *button : buttons) {
+        if (!button) {
+            continue;
+        }
+        columnWidth = qMax(columnWidth, button->sizeHint().width());
+        columnHeight = qMax(columnHeight, qMax(button->minimumHeight(), button->sizeHint().height()));
+    }
+    for (QPushButton *button : buttons) {
+        if (!button) {
+            continue;
+        }
+        button->setFixedSize(columnWidth, columnHeight);
+    }
 }
 
 QLabel *sectionTitle(const QString &text)
@@ -829,6 +1564,8 @@ void installCopyAction(QAbstractItemView *view)
     view->setContextMenuPolicy(Qt::ActionsContextMenu);
 }
 
+// ---- Device-tree inspection helpers -----------------------------------------
+
 bool treeContainsEncryptedNode(const DeviceNode &node)
 {
     if (node.encrypted) {
@@ -975,7 +1712,6 @@ const DeviceNode *firstEncryptedNode(const DeviceNode &node)
     return nullptr;
 }
 
-
 bool encryptedNodeHasUnlockedLinuxChild(const DeviceNode &node)
 {
     if (!node.encrypted) {
@@ -1105,14 +1841,590 @@ void collectCriticalMounts(const DeviceNode &node, QStringList &mounts)
         collectCriticalMounts(child, mounts);
     }
 }
+
+// ---- Shell command tokenization and apt retry rewriting ---------------------
+
+// One token of a shell command line. The source span is preserved exactly so a
+// rewrite can be spliced back into the original command without re-quoting;
+// value is the token with quotes removed for recognition only.
+struct ShellCommandToken {
+    QString value;
+    bool quoted = false;
+    QChar quote;
+    int start = 0;
+    int end = 0;
+};
+
+// Decodes one raw token into its unquoted value. A whole-token single or
+// double quoted string is recognized as quoted so a shell wrapper's script can
+// be re-wrapped with the same quoting. Anything ambiguous fails closed.
+bool decodeShellToken(const QString &raw, ShellCommandToken *token)
+{
+    token->value.clear();
+    token->quoted = false;
+    token->quote = QChar();
+
+    if (raw.isEmpty()) {
+        return false;
+    }
+
+    if (raw.size() >= 2 && raw.at(0) == QLatin1Char('\'')) {
+        if (raw.at(raw.size() - 1) != QLatin1Char('\'')
+            || raw.indexOf(QLatin1Char('\''), 1) != raw.size() - 1) {
+            return false;
+        }
+        token->value = raw.mid(1, raw.size() - 2);
+        token->quoted = true;
+        token->quote = QLatin1Char('\'');
+        return true;
+    }
+
+    if (raw.size() >= 2 && raw.at(0) == QLatin1Char('"')) {
+        QString value;
+        int index = 1;
+        while (index < raw.size()) {
+            const QChar ch = raw.at(index);
+            if (ch == QLatin1Char('\\')) {
+                if (index + 1 >= raw.size()) {
+                    return false;
+                }
+                const QChar escaped = raw.at(index + 1);
+                if (escaped == QLatin1Char('"') || escaped == QLatin1Char('\\')
+                    || escaped == QLatin1Char('$') || escaped == QLatin1Char('`')) {
+                    value += escaped;
+                } else {
+                    value += ch;
+                    value += escaped;
+                }
+                index += 2;
+                continue;
+            }
+            if (ch == QLatin1Char('"')) {
+                if (index != raw.size() - 1) {
+                    return false;
+                }
+                token->value = value;
+                token->quoted = true;
+                token->quote = QLatin1Char('"');
+                return true;
+            }
+            value += ch;
+            ++index;
+        }
+        return false;
+    }
+
+    QString value;
+    int index = 0;
+    while (index < raw.size()) {
+        const QChar ch = raw.at(index);
+        if (ch == QLatin1Char('\\')) {
+            if (index + 1 >= raw.size()) {
+                return false;
+            }
+            value += raw.at(index + 1);
+            index += 2;
+            continue;
+        }
+        if (ch == QLatin1Char('\'') || ch == QLatin1Char('"')) {
+            const QChar quote = ch;
+            const int closing = raw.indexOf(quote, index + 1);
+            if (closing < 0) {
+                return false;
+            }
+            value += raw.mid(index + 1, closing - index - 1);
+            index = closing + 1;
+            continue;
+        }
+        value += ch;
+        ++index;
+    }
+    token->value = value;
+    return true;
+}
+
+// Splits a command line into raw tokens without evaluating anything. A quote
+// never splits a token; an unterminated quote makes the whole command
+// unrecognizable so callers never rewrite a command they cannot re-splice.
+bool tokenizeShellCommand(const QString &command, QList<ShellCommandToken> *tokens)
+{
+    tokens->clear();
+    const int length = command.size();
+    int index = 0;
+    while (index < length) {
+        while (index < length && command.at(index).isSpace()) {
+            ++index;
+        }
+        if (index >= length) {
+            break;
+        }
+        ShellCommandToken token;
+        token.start = index;
+        bool inSingle = false;
+        bool inDouble = false;
+        while (index < length) {
+            const QChar ch = command.at(index);
+            if (inSingle) {
+                if (ch == QLatin1Char('\'')) {
+                    inSingle = false;
+                }
+                ++index;
+                continue;
+            }
+            if (inDouble) {
+                if (ch == QLatin1Char('\\')) {
+                    if (index + 1 >= length) {
+                        return false;
+                    }
+                    index += 2;
+                    continue;
+                }
+                if (ch == QLatin1Char('"')) {
+                    inDouble = false;
+                }
+                ++index;
+                continue;
+            }
+            if (ch == QLatin1Char('\\')) {
+                if (index + 1 >= length) {
+                    return false;
+                }
+                index += 2;
+                continue;
+            }
+            if (ch == QLatin1Char('\'')) {
+                inSingle = true;
+                ++index;
+                continue;
+            }
+            if (ch == QLatin1Char('"')) {
+                inDouble = true;
+                ++index;
+                continue;
+            }
+            if (ch.isSpace()) {
+                break;
+            }
+            ++index;
+        }
+        if (inSingle || inDouble) {
+            return false;
+        }
+        token.end = index;
+        if (!decodeShellToken(command.mid(token.start, token.end - token.start), &token)) {
+            return false;
+        }
+        tokens->append(token);
+    }
+    return true;
+}
+
+QString shellCommandBasename(const QString &value)
+{
+    const int slash = value.lastIndexOf(QLatin1Char('/'));
+    return slash >= 0 ? value.mid(slash + 1) : value;
+}
+
+bool isAptFamilyExecutable(const QString &value)
+{
+    const QString base = shellCommandBasename(value);
+    return base == QStringLiteral("apt")
+        || base == QStringLiteral("apt-get")
+        || base == QStringLiteral("aptitude");
+}
+
+bool isShellWrapperExecutable(const QString &value)
+{
+    const QString base = shellCommandBasename(value);
+    return base == QStringLiteral("sh") || base == QStringLiteral("bash")
+        || base == QStringLiteral("dash") || base == QStringLiteral("zsh")
+        || base == QStringLiteral("ksh") || base == QStringLiteral("mksh");
+}
+
+// Skips leading `sudo` options. Returns the index of the first non-option
+// token, or -1 when an option takes a separate value or is unknown: those
+// shapes are deliberately not rewritten.
+int skipSudoOptions(const QList<ShellCommandToken> &tokens, int index)
+{
+    static const QString valueLessShortFlags = QStringLiteral("nEHkKASbiesvVhl");
+    static const QSet<QString> valueLessLongFlags = {
+        QStringLiteral("--non-interactive"), QStringLiteral("--preserve-env"),
+        QStringLiteral("--set-home"), QStringLiteral("--login"), QStringLiteral("--shell"),
+        QStringLiteral("--stdin"), QStringLiteral("--askpass"), QStringLiteral("--reset-timestamp"),
+        QStringLiteral("--background"), QStringLiteral("--validate"), QStringLiteral("--help"),
+        QStringLiteral("--version"), QStringLiteral("--edit")
+    };
+    while (index < tokens.size()) {
+        const QString value = tokens.at(index).value;
+        if (value == QStringLiteral("--")) {
+            return index + 1;
+        }
+        if (value.startsWith(QStringLiteral("--"))) {
+            if (!value.contains(QLatin1Char('=')) && !valueLessLongFlags.contains(value)) {
+                return -1;
+            }
+            ++index;
+            continue;
+        }
+        if (value.startsWith(QLatin1Char('-')) && value.size() > 1) {
+            for (int i = 1; i < value.size(); ++i) {
+                if (!valueLessShortFlags.contains(value.at(i))) {
+                    return -1;
+                }
+            }
+            ++index;
+            continue;
+        }
+        return index;
+    }
+    return -1;
+}
+
+// Skips leading `env` options and VAR=value assignments. Returns the index of
+// the command token or -1 for an unrecognized/ambiguous shape.
+int skipEnvOptions(const QList<ShellCommandToken> &tokens, int index)
+{
+    static const QRegularExpression assignment(QStringLiteral("^[A-Za-z_][A-Za-z0-9_]*="));
+    while (index < tokens.size()) {
+        const QString value = tokens.at(index).value;
+        if (value == QStringLiteral("--")) {
+            return index + 1;
+        }
+        if (value == QStringLiteral("-i") || value == QStringLiteral("--ignore-environment")
+            || value == QStringLiteral("-0") || value == QStringLiteral("--null")
+            || value == QStringLiteral("--debug") || value == QStringLiteral("--help")
+            || value == QStringLiteral("--version")) {
+            ++index;
+            continue;
+        }
+        if (value == QStringLiteral("-u") || value == QStringLiteral("--unset")
+            || value == QStringLiteral("-C") || value == QStringLiteral("--chdir")
+            || value == QStringLiteral("-S") || value == QStringLiteral("--split-string")) {
+            if (index + 1 >= tokens.size()) {
+                return -1;
+            }
+            index += 2;
+            continue;
+        }
+        if (value.startsWith(QStringLiteral("--unset="))
+            || value.startsWith(QStringLiteral("--chdir="))
+            || value.startsWith(QStringLiteral("--split-string="))) {
+            ++index;
+            continue;
+        }
+        if (assignment.match(value).hasMatch()) {
+            ++index;
+            continue;
+        }
+        if (value.startsWith(QLatin1Char('-'))) {
+            return -1;
+        }
+        return index;
+    }
+    return -1;
+}
+
+// Skips an optional `nice` adjustment. Returns the index of the command token
+// or -1 for an unrecognized shape.
+int skipNiceOptions(const QList<ShellCommandToken> &tokens, int index)
+{
+    if (index >= tokens.size()) {
+        return -1;
+    }
+    const QString value = tokens.at(index).value;
+    if (value == QStringLiteral("--")) {
+        return index + 1;
+    }
+    if (value == QStringLiteral("-n") || value == QStringLiteral("--adjustment")) {
+        if (index + 1 >= tokens.size()) {
+            return -1;
+        }
+        bool ok = false;
+        tokens.at(index + 1).value.toInt(&ok);
+        return ok ? index + 2 : -1;
+    }
+    if (value.startsWith(QStringLiteral("--adjustment="))) {
+        bool ok = false;
+        value.mid(13).toInt(&ok);
+        return ok ? index + 1 : -1;
+    }
+    static const QRegularExpression shortAdjustment(QStringLiteral("^-\\d+$"));
+    if (shortAdjustment.match(value).hasMatch()) {
+        return index + 1;
+    }
+    if (value.startsWith(QLatin1Char('-'))) {
+        return -1;
+    }
+    return index;
+}
+
+// Finds the `-c`-style flag of a shell wrapper. Returns its token index or -1.
+int findShellScriptFlag(const QList<ShellCommandToken> &tokens, int index)
+{
+    while (index < tokens.size()) {
+        const QString value = tokens.at(index).value;
+        if (value == QStringLiteral("--")) {
+            return -1;
+        }
+        if (value == QStringLiteral("--command")) {
+            return index;
+        }
+        if (!value.startsWith(QLatin1Char('-'))) {
+            return -1;
+        }
+        if (!value.startsWith(QStringLiteral("--"))) {
+            bool valid = value.size() > 1;
+            bool hasCommand = false;
+            for (int i = 1; valid && i < value.size(); ++i) {
+                const QChar ch = value.at(i);
+                if (!ch.isLetter()) {
+                    valid = false;
+                    break;
+                }
+                if (ch == QLatin1Char('c')) {
+                    hasCommand = true;
+                }
+            }
+            if (valid && hasCommand) {
+                return index;
+            }
+        }
+        ++index;
+    }
+    return -1;
+}
+
+// Recursively rewrites one command. Prefixes (sudo/env/nice) and a single
+// level of sh/bash-style -c wrapper are recognized conservatively; the option
+// is spliced directly after the apt executable so the subcommand and every
+// remaining argument stay byte-for-byte unchanged. Returns an empty string
+// when the command is not a confidently recognized apt-family command.
+QString rewriteAptReleaseInfoChangeCommand(const QString &command, int depth)
+{
+    if (depth > 3) {
+        return QString();
+    }
+    QList<ShellCommandToken> tokens;
+    if (!tokenizeShellCommand(command, &tokens) || tokens.isEmpty()) {
+        return QString();
+    }
+
+    int index = 0;
+    while (index >= 0 && index < tokens.size()) {
+        const ShellCommandToken &token = tokens.at(index);
+        const QString base = shellCommandBasename(token.value);
+        if (base == QStringLiteral("sudo")) {
+            index = skipSudoOptions(tokens, index + 1);
+            continue;
+        }
+        if (base == QStringLiteral("env")) {
+            index = skipEnvOptions(tokens, index + 1);
+            continue;
+        }
+        if (base == QStringLiteral("nice")) {
+            index = skipNiceOptions(tokens, index + 1);
+            continue;
+        }
+        if (isShellWrapperExecutable(token.value)) {
+            const int flagIndex = findShellScriptFlag(tokens, index + 1);
+            if (flagIndex < 0 || flagIndex + 1 >= tokens.size()) {
+                return QString();
+            }
+            const ShellCommandToken &script = tokens.at(flagIndex + 1);
+            if (!script.quoted) {
+                return QString();
+            }
+            const QString rewrittenScript = rewriteAptReleaseInfoChangeCommand(script.value, depth + 1);
+            if (rewrittenScript.isEmpty() || rewrittenScript.contains(script.quote)) {
+                return QString();
+            }
+            return command.left(script.start) + script.quote + rewrittenScript
+                + script.quote + command.mid(script.end);
+        }
+        if (isAptFamilyExecutable(token.value)) {
+            return command.left(token.end)
+                + QStringLiteral(" -o Acquire::AllowReleaseInfoChange=true")
+                + command.mid(token.end);
+        }
+        return QString();
+    }
+    return QString();
+}
 } // namespace
+
+// ---- FilesystemRepairDialog -------------------------------------------------
+
+FilesystemRepairDialog::FilesystemRepairDialog(const QString &scopeLabel,
+                                               const QList<FilesystemCheckResult> &results,
+                                               const QList<QStringList> &modes,
+                                               QWidget *parent)
+    : QDialog(parent)
+    , m_results(results)
+{
+    setWindowTitle(QStringLiteral("Repair file system errors"));
+    resize(820, 480);
+    setMinimumSize(520, 360);
+
+    auto *layout = new QVBoxLayout(this);
+    layout->setContentsMargins(20, 16, 20, 16);
+    layout->setSpacing(10);
+
+    auto *heading = new QLabel(QStringLiteral(
+        "The read-only check found file system errors in the %1. "
+        "Select the devices to repair and the mode to use. "
+        "Each repair runs separately after the helper repeats its scope, mount-state and tool preflights.")
+        .arg(scopeLabel));
+    heading->setWordWrap(true);
+    layout->addWidget(heading);
+
+    auto *table = new QTableWidget(static_cast<int>(results.size()), 5, this);
+    m_table = table;
+    table->setObjectName(QStringLiteral("filesystemRepairTable"));
+    table->setHorizontalHeaderLabels({
+        QStringLiteral("Repair"), QStringLiteral("Device"),
+        QStringLiteral("File system"), QStringLiteral("Mode"),
+        QStringLiteral("Issue summary")
+    });
+    table->setSelectionMode(QAbstractItemView::NoSelection);
+    table->setEditTriggers(QAbstractItemView::NoEditTriggers);
+    table->setAlternatingRowColors(true);
+    table->setWordWrap(true);
+    table->setTextElideMode(Qt::ElideRight);
+    table->verticalHeader()->setVisible(false);
+    table->verticalHeader()->setSectionResizeMode(QHeaderView::ResizeToContents);
+    table->verticalHeader()->setMinimumSectionSize(qMax(24, table->fontMetrics().lineSpacing() + 10));
+    table->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
+    table->horizontalHeader()->setStretchLastSection(true);
+    table->setMinimumHeight(160);
+
+    for (int row = 0; row < results.size(); ++row) {
+        const FilesystemCheckResult &check = results.at(row);
+        auto *checkItem = new QTableWidgetItem;
+        checkItem->setFlags(Qt::ItemIsUserCheckable | Qt::ItemIsEnabled | Qt::ItemIsSelectable);
+        checkItem->setCheckState(Qt::Checked);
+        table->setItem(row, 0, checkItem);
+
+        auto *deviceItem = new QTableWidgetItem(check.device);
+        deviceItem->setToolTip(check.uuid.isEmpty()
+            ? check.device
+            : QStringLiteral("%1\nUUID: %2").arg(check.device, check.uuid));
+        table->setItem(row, 1, deviceItem);
+
+        const bool mounted = !check.mount.isEmpty() && check.mount != QStringLiteral("unmounted");
+        const QString filesystemLabel = check.fstype.isEmpty() ? QStringLiteral("unknown") : check.fstype;
+        auto *filesystemItem = new QTableWidgetItem(filesystemLabel);
+        filesystemItem->setToolTip(QStringLiteral("Device: %1\nFile system: %2\nMount: %3\nCheck tool: %4")
+            .arg(check.device, filesystemLabel,
+                 mounted ? check.mount : QStringLiteral("unmounted"),
+                 check.tool.isEmpty() ? QStringLiteral("unknown") : check.tool));
+        table->setItem(row, 2, filesystemItem);
+
+        auto *modeCombo = new QComboBox(table);
+        modeCombo->setObjectName(QStringLiteral("filesystemRepairModeCombo"));
+        modeCombo->setSizeAdjustPolicy(QComboBox::AdjustToMinimumContentsLengthWithIcon);
+        modeCombo->setSizePolicy(QSizePolicy::Minimum, QSizePolicy::Fixed);
+        modeCombo->setFixedHeight(qMax(modeCombo->sizeHint().height(),
+                                       table->fontMetrics().lineSpacing() + 10));
+        const QStringList availableModes = modes.value(row);
+        for (const QString &mode : availableModes) {
+            modeCombo->addItem(mode);
+        }
+        modeCombo->setCurrentIndex(0);
+        table->setCellWidget(row, 3, modeCombo);
+
+        const QString summary = check.detail.isEmpty()
+            ? QStringLiteral("The read-only check reported issues.")
+            : check.detail;
+        auto *summaryItem = new QTableWidgetItem(summary);
+        summaryItem->setToolTip(summary);
+        table->setItem(row, 4, summaryItem);
+    }
+    layout->addWidget(table, 1);
+
+    auto *footer = new QHBoxLayout;
+    auto *offlineNotice = new QLabel(QStringLiteral(
+        "Offline repair modes refuse mounted filesystems; btrfs scrub and zpool scrub are online modes and require a mounted filesystem. "
+        "btrfs check --repair asks for an extra backup warning before it runs."));
+    offlineNotice->setWordWrap(true);
+    footer->addWidget(offlineNotice, 1);
+    layout->addLayout(footer);
+
+    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Cancel, this);
+    m_repairButton = buttons->addButton(QStringLiteral("Run Selected Repairs"),
+                                        QDialogButtonBox::AcceptRole);
+    connect(buttons, &QDialogButtonBox::rejected, this, &QDialog::reject);
+    connect(buttons, &QDialogButtonBox::accepted, this, &QDialog::accept);
+    connect(table, &QTableWidget::itemChanged, this, [this](QTableWidgetItem *item) {
+        if (!item || item->column() != 0 || !m_table) {
+            return;
+        }
+        if (auto *combo = qobject_cast<QComboBox *>(m_table->cellWidget(item->row(), 3))) {
+            combo->setEnabled(item->checkState() == Qt::Checked);
+        }
+        updateRepairButtonState();
+    });
+    layout->addWidget(buttons);
+
+    updateRepairButtonState();
+}
+
+QList<FilesystemRepairDialog::Selection> FilesystemRepairDialog::selections() const
+{
+    QList<Selection> selections;
+    if (!m_table) {
+        return selections;
+    }
+    for (int row = 0; row < m_table->rowCount(); ++row) {
+        QTableWidgetItem *checkItem = m_table->item(row, 0);
+        if (!checkItem || checkItem->checkState() != Qt::Checked) {
+            continue;
+        }
+        auto *combo = qobject_cast<QComboBox *>(m_table->cellWidget(row, 3));
+        if (!combo || combo->currentIndex() < 0) {
+            continue;
+        }
+        Selection selection;
+        selection.device = m_results.at(row).device;
+        selection.mode = combo->currentText();
+        selections.append(selection);
+    }
+    return selections;
+}
+
+void FilesystemRepairDialog::updateRepairButtonState()
+{
+    if (!m_repairButton) {
+        return;
+    }
+    bool anyChecked = false;
+    if (m_table) {
+        for (int row = 0; row < m_table->rowCount(); ++row) {
+            QTableWidgetItem *item = m_table->item(row, 0);
+            if (item && item->checkState() == Qt::Checked) {
+                anyChecked = true;
+                break;
+            }
+        }
+    }
+    m_repairButton->setEnabled(anyChecked);
+}
+
+// ---- MainWindow: construction and lifecycle ---------------------------------
+
+// The process owns at most one active session file per run. It stays empty on
+// a fresh launch and is only set once a scope identification creates the file;
+// a second MainWindow constructed in the same process adopts it so both
+// windows continue the same run instead of starting or adopting a session.
+QString MainWindow::s_activeSessionPath;
 
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_scanner(new SystemScanner(this))
     , m_settings(new QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"), this))
 {
-    m_actionLogEntries = m_settings->value(QStringLiteral("actionRegister")).toStringList();
     setWindowTitle(QStringLiteral("Boot Bitch"));
     setWindowIcon(QApplication::windowIcon());
     setMinimumSize(480, 500);
@@ -1156,7 +2468,48 @@ MainWindow::MainWindow(QWidget *parent)
     headerLayout->addWidget(iconLabel);
     headerLayout->addLayout(titleColumn, 1);
     headerLayout->addWidget(modeBadge, 0, Qt::AlignTop);
-    mainLayout->addLayout(headerLayout);
+
+    // Compact global busy indicator for every asynchronous operation. It lives
+    // in a reserved slot on the right edge of the header, below the mode badge,
+    // so showing it never moves existing widgets or changes the window height:
+    // the slot retains its height while the indicator is hidden.
+    m_busyIndicator = new QWidget;
+    m_busyIndicator->setObjectName(QStringLiteral("busyIndicator"));
+    auto *busyLayout = new QHBoxLayout(m_busyIndicator);
+    busyLayout->setContentsMargins(0, 0, 0, 0);
+    busyLayout->setSpacing(8);
+    m_busyProgress = new QProgressBar;
+    m_busyProgress->setObjectName(QStringLiteral("busyProgress"));
+    m_busyProgress->setRange(0, 0);
+    m_busyProgress->setTextVisible(false);
+    m_busyProgress->setFixedHeight(8);
+    m_busyProgress->setMinimumWidth(110);
+    m_busyProgress->setMaximumWidth(150);
+    m_busyProgress->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+    m_busyProgress->setAccessibleName(QStringLiteral("Operation in progress"));
+    m_busyProgress->setToolTip(QStringLiteral("A Boot Bitch operation is running in the background."));
+    m_busyStatusLabel = new ElidedLabel;
+    m_busyStatusLabel->setObjectName(QStringLiteral("busyStatusLabel"));
+    m_busyStatusLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_busyStatusLabel->setToolTip(QStringLiteral("A Boot Bitch operation is running in the background."));
+    busyLayout->addWidget(m_busyProgress);
+    busyLayout->addWidget(m_busyStatusLabel, 1);
+    m_busyIndicator->setVisible(false);
+    QSizePolicy busyPolicy = m_busyIndicator->sizePolicy();
+    busyPolicy.setRetainSizeWhenHidden(true);
+    m_busyIndicator->setSizePolicy(busyPolicy);
+    m_busyIndicator->setFixedHeight(m_busyStatusLabel->sizeHint().height());
+
+    auto *busyRow = new QHBoxLayout;
+    busyRow->setContentsMargins(0, 0, 0, 0);
+    busyRow->addStretch(1);
+    busyRow->addWidget(m_busyIndicator);
+
+    auto *headerColumn = new QVBoxLayout;
+    headerColumn->setSpacing(4);
+    headerColumn->addLayout(headerLayout);
+    headerColumn->addLayout(busyRow);
+    mainLayout->addLayout(headerColumn);
 
     m_tabs = new QTabWidget;
     m_tabs->setDocumentMode(true);
@@ -1227,9 +2580,50 @@ MainWindow::MainWindow(QWidget *parent)
     setCentralWidget(central);
     enableSelectableLabels(central);
     normalizeButtonSizing();
+    // Dense Logs and File Copy button rows stay shrinkable so they cannot
+    // overlap at the minimum supported window width.
+    if (m_sessionLogPanel) {
+        const QList<QPushButton *> sessionButtons = m_sessionLogPanel->findChildren<QPushButton *>();
+        for (QPushButton *button : sessionButtons) {
+            makeButtonShrinkable(button);
+        }
+    }
+    if (m_fileCopySourceBox) {
+        const QList<QPushButton *> sourceButtons = m_fileCopySourceBox->findChildren<QPushButton *>();
+        for (QPushButton *button : sourceButtons) {
+            makeButtonShrinkable(button);
+        }
+    }
+    // Buttons whose label is replaced at runtime may need to elide when a
+    // narrow window compresses their row instead of forcing the row wider.
+    makeButtonShrinkable(m_unlockTargetButton, 96);
+    makeButtonShrinkable(m_runAllDiagnosticsButton);
+    makeButtonShrinkable(m_runDiagnosticButton);
+    makeButtonShrinkable(m_repairToolButton, 96);
+    makeButtonShrinkable(m_chrootShellRunButton);
+    // The Systems page presents its actions in one right-hand column: Refresh
+    // Devices above the host card's Details, Host Maintenance and Make Default
+    // buttons. Standardize the column after the global sizing pass so every
+    // member keeps one width and one height at every window width; the
+    // enter/exit maintenance labels are bounded by that shared width.
+    standardizeButtonColumn({m_refreshDevicesButton, m_hostDetailsButton,
+                             m_hostMaintenanceButton, m_hostDefaultButton});
     statusBar()->showMessage(QStringLiteral("Ready — guarded repair mode"));
 
+    // Hint that each page scrolls with a soft edge shadow whenever content
+    // continues below or above the viewport.
+    for (QScrollArea *area : findChildren<QScrollArea *>()) {
+        new ScrollFadeOverlay(area);
+    }
+
     loadSettings();
+    // A fresh launch starts with an empty live log; the newest prior session
+    // file is never adopted as the current session. Only a second window in
+    // this process continues the run's active file. Then enforce the retention
+    // bounds before this window writes anything of its own.
+    adoptActiveSessionLog();
+    pruneSessionLogs();
+    refreshSessionLogList();
     updateResponsiveLayout();
     refreshCapabilities();
     refreshDevices();
@@ -1237,11 +2631,15 @@ MainWindow::MainWindow(QWidget *parent)
     // selection, begin snapshot discovery after the first event loop turn so
     // Systems remains the initial responsive page.
     QTimer::singleShot(0, this, &MainWindow::scheduleSnapshotPreload);
+    // Plan rows wrap against the final viewport width, so measure the plan
+    // list once the first layout pass after show() has settled.
+    QTimer::singleShot(0, this, &MainWindow::updateFullRepairPlanHeight);
     appendLog(QStringLiteral("Boot Bitch %1 started in guarded repair mode.").arg(QCoreApplication::applicationVersion()));
 }
 
 MainWindow::~MainWindow()
 {
+    closeSessionLogFile();
     closePrivilegedSession();
 }
 
@@ -1256,8 +2654,50 @@ void MainWindow::resizeEvent(QResizeEvent *event)
 {
     QMainWindow::resizeEvent(event);
     updateResponsiveLayout();
+    // Wrapped plan rows change height with the viewport width; re-measure once
+    // the layout has settled instead of on every intermediate resize step.
+    QTimer::singleShot(0, this, &MainWindow::updateFullRepairPlanHeight);
     QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
 }
+
+void MainWindow::beginBusyOperation(const QString &label)
+{
+    m_activeBusyOperations.append(label);
+    updateBusyIndicator();
+}
+
+void MainWindow::endBusyOperation(const QString &label)
+{
+    // Remove one occurrence so overlapping operations that share a label stay
+    // balanced: the indicator hides only after the last matching operation.
+    const qsizetype index = m_activeBusyOperations.lastIndexOf(label);
+    if (index >= 0) {
+        m_activeBusyOperations.removeAt(index);
+    }
+    updateBusyIndicator();
+}
+
+void MainWindow::updateBusyIndicator()
+{
+    if (!m_busyIndicator) {
+        return;
+    }
+
+    const bool busy = !m_activeBusyOperations.isEmpty();
+    const QString label = busy ? m_activeBusyOperations.constLast() : QString();
+    if (m_busyStatusLabel) {
+        m_busyStatusLabel->setText(label);
+        // The visible text may be elided in the compact header slot; the
+        // tooltip always carries the complete operation label.
+        m_busyStatusLabel->setToolTip(label.isEmpty()
+            ? QStringLiteral("A Boot Bitch operation is running in the background.")
+            : label);
+    }
+    m_busyIndicator->setVisible(busy);
+    emit busyStateChanged(busy, label);
+}
+
+// ---- MainWindow: menu and page construction ---------------------------------
 
 void MainWindow::buildMenuBar()
 {
@@ -1327,13 +2767,19 @@ QWidget *MainWindow::buildSystemsPage()
     auto *layout = new QVBoxLayout(content);
     layout->setContentsMargins(0, 0, 6, 0);
     layout->setSpacing(8);
+    // Pin the page to the viewport width like the Diagnostics, Repair and
+    // Snapshots pages: the section frames fit the window and their own scroll
+    // areas (device tree, selected-drive details) scroll horizontally when
+    // their content is wider, instead of the whole page clipping at the edge.
+    content->setMinimumWidth(0);
+    content->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
 
     auto *topRow = new QHBoxLayout;
     topRow->addWidget(sectionTitle(QStringLiteral("Systems")));
     topRow->addWidget(contextHelpButton(page, QStringLiteral("Systems"),
         QStringLiteral("Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system.")));
     topRow->addStretch(1);
-    m_refreshDevicesButton = new QPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
+    m_refreshDevicesButton = new ElidedPushButton(themedIcon(QStringLiteral("view-refresh")), QStringLiteral("Refresh Devices"));
     connect(m_refreshDevicesButton, &QPushButton::clicked, this, &MainWindow::refreshDevices);
     topRow->addWidget(m_refreshDevicesButton, 0, Qt::AlignTop);
     layout->addLayout(topRow);
@@ -1343,9 +2789,19 @@ QWidget *MainWindow::buildSystemsPage()
     // maintenance path remains available.
     auto *hostBox = new QFrame;
     hostBox->setFrameShape(QFrame::StyledPanel);
-    auto *hostLayout = new QHBoxLayout(hostBox);
+    // The card reflows with the window: identity and actions side by side when
+    // wide, identity above the actions when narrow, so the running-system text
+    // keeps a readable width instead of wrapping into a sliver beside the
+    // buttons.
+    auto *hostLayout = new QBoxLayout(QBoxLayout::LeftToRight, hostBox);
+    m_hostCardLayout = hostLayout;
     hostLayout->setContentsMargins(10, 8, 10, 8);
     hostLayout->setSpacing(9);
+
+    auto *hostIdentity = new QWidget;
+    auto *identityLayout = new QHBoxLayout(hostIdentity);
+    identityLayout->setContentsMargins(0, 0, 0, 0);
+    identityLayout->setSpacing(9);
 
     auto *hostIcon = new QLabel;
     // Use the bundled protected-host shield so distro icon themes cannot
@@ -1355,7 +2811,7 @@ QWidget *MainWindow::buildSystemsPage()
     hostIcon->setPixmap(protectedIcon.pixmap(30, 30));
     hostIcon->setFixedSize(34, 34);
     hostIcon->setAlignment(Qt::AlignCenter);
-    hostLayout->addWidget(hostIcon, 0, Qt::AlignTop);
+    identityLayout->addWidget(hostIcon, 0, Qt::AlignTop);
 
     auto *hostText = new QVBoxLayout;
     hostText->setSpacing(2);
@@ -1367,46 +2823,65 @@ QWidget *MainWindow::buildSystemsPage()
     m_hostSystemLabel->setWordWrap(true);
     hostText->addWidget(m_hostSystemLabel);
 
+    // The protected-storage summary can be long (model, device, size,
+    // transport and critical mounts). Keep it wrapped so a narrow window
+    // grows the card instead of hiding the tail of the line; subtleLabel()
+    // already enables word wrap and these two labels share the pattern.
     m_hostStorageLabel = subtleLabel(QStringLiteral("Detecting protected storage…"));
-    m_hostStorageLabel->setWordWrap(false);
     m_hostStorageLabel->setMinimumWidth(0);
-    m_hostStorageLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_hostStorageLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     m_hostMountsLabel = subtleLabel(QStringLiteral(""));
-    m_hostMountsLabel->setWordWrap(false);
     m_hostMountsLabel->setMinimumWidth(0);
-    m_hostMountsLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Preferred);
+    m_hostMountsLabel->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
     hostText->addWidget(m_hostStorageLabel);
     hostText->addWidget(m_hostMountsLabel);
-    hostLayout->addLayout(hostText, 1);
+    identityLayout->addLayout(hostText, 1);
+    hostLayout->addWidget(hostIdentity, 1);
 
-    auto *protectedBadge = new QLabel(QStringLiteral("PROTECTED"));
-    QFont protectedFont = protectedBadge->font();
+    auto *hostActions = new QWidget;
+    // A grid (not a row) so the actions can wrap onto a second line when the
+    // window is narrow and every button stays visible.
+    auto *actionsLayout = new QGridLayout(hostActions);
+    m_hostActionsLayout = actionsLayout;
+    actionsLayout->setContentsMargins(0, 0, 0, 0);
+    actionsLayout->setHorizontalSpacing(9);
+    actionsLayout->setVerticalSpacing(6);
+
+    m_hostProtectedBadge = new QLabel(QStringLiteral("PROTECTED"));
+    QFont protectedFont = m_hostProtectedBadge->font();
     protectedFont.setBold(true);
-    protectedBadge->setFont(protectedFont);
-    protectedBadge->setFrameShape(QFrame::StyledPanel);
-    protectedBadge->setContentsMargins(8, 4, 8, 4);
-    protectedBadge->setToolTip(QStringLiteral("The running host remains protected from ordinary repair-target operations."));
-    hostLayout->addWidget(protectedBadge, 0, Qt::AlignTop);
+    m_hostProtectedBadge->setFont(protectedFont);
+    m_hostProtectedBadge->setFrameShape(QFrame::StyledPanel);
+    m_hostProtectedBadge->setContentsMargins(8, 4, 8, 4);
+    m_hostProtectedBadge->setToolTip(QStringLiteral("The running host remains protected from ordinary repair-target operations."));
+    actionsLayout->addWidget(m_hostProtectedBadge, 0, 0, Qt::AlignLeft | Qt::AlignTop);
 
     m_hostDetailsButton = new QPushButton(themedIcon(QStringLiteral("document-preview")), QStringLiteral("Details"));
     m_hostDetailsButton->setEnabled(false);
     m_hostDetailsButton->setToolTip(QStringLiteral("Show read-only details for the protected running host."));
     connect(m_hostDetailsButton, &QPushButton::clicked, this, &MainWindow::showHostDetails);
-    hostLayout->addWidget(m_hostDetailsButton, 0, Qt::AlignTop);
+    actionsLayout->addWidget(m_hostDetailsButton, 0, 1, Qt::AlignLeft | Qt::AlignTop);
 
-    m_hostMaintenanceButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Host Maintenance"));
+    m_hostMaintenanceButton = new ElidedPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Host Maintenance"));
     m_hostMaintenanceButton->setEnabled(false);
     m_hostMaintenanceButton->setToolTip(QStringLiteral(
-        "Select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+        "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
     connect(m_hostMaintenanceButton, &QPushButton::clicked, this, &MainWindow::selectHostForMaintenance);
-    hostLayout->addWidget(m_hostMaintenanceButton, 0, Qt::AlignTop);
+    actionsLayout->addWidget(m_hostMaintenanceButton, 0, 2, Qt::AlignLeft | Qt::AlignTop);
 
-    m_hostDefaultButton = new QPushButton(themedIcon(QStringLiteral("preferences-system")), QStringLiteral("Make Default"));
+    m_hostDefaultButton = new ElidedPushButton(themedIcon(QStringLiteral("preferences-system")), QStringLiteral("Make Default"));
     m_hostDefaultButton->setEnabled(false);
     m_hostDefaultButton->setToolTip(QStringLiteral(
         "Restore the host's uniquely identified TUXEDO UKI entry if needed, then place it first in BootOrder while preserving every other entry."));
     connect(m_hostDefaultButton, &QPushButton::clicked, this, &MainWindow::setHostDefaultBootEntry);
-    hostLayout->addWidget(m_hostDefaultButton, 0, Qt::AlignTop);
+    actionsLayout->addWidget(m_hostDefaultButton, 0, 3, Qt::AlignLeft | Qt::AlignTop);
+
+    hostLayout->addWidget(hostActions, 0);
+
+    // Refresh Devices sits above the host card in the same right-hand action
+    // column. Match the card's inner right inset so the stacked buttons share
+    // one right edge instead of being offset by the card frame and margin.
+    topRow->setContentsMargins(0, 0, hostBox->frameWidth() + hostLayout->contentsMargins().right(), 0);
 
     layout->addWidget(hostBox);
 
@@ -1465,13 +2940,31 @@ QWidget *MainWindow::buildSystemsPage()
     m_setTargetButton->setEnabled(false);
     connect(m_setTargetButton, &QPushButton::clicked, this, &MainWindow::setPreviewTarget);
 
-    m_unlockTargetButton = new QPushButton(themedIcon(QStringLiteral("object-unlocked")), QStringLiteral("Unlock"));
+    m_unlockTargetButton = new ElidedPushButton(themedIcon(QStringLiteral("object-unlocked")), QStringLiteral("Unlock"));
     m_unlockTargetButton->setEnabled(false);
     m_unlockTargetButton->setToolTip(QStringLiteral("Select a drive whose detected target is a locked LUKS volume."));
     connect(m_unlockTargetButton, &QPushButton::clicked, this, &MainWindow::unlockSelectedTarget);
 
     buttonRow->addWidget(m_setTargetButton);
     buttonRow->addWidget(m_unlockTargetButton);
+
+    // Non-modal affordance for a deferred Polkit request: the scope stays
+    // selected, but the user can establish the privileged session at any time
+    // instead of waiting for the next privileged action.
+    m_authorizationStatusLabel = new QLabel;
+    m_authorizationStatusLabel->setWordWrap(false);
+    m_authorizationStatusLabel->setVisible(false);
+    m_authorizationStatusLabel->setToolTip(QStringLiteral(
+        "Administrator authorization was deferred for the current scope. Diagnostics and repairs stay available; the next privileged action will request authorization again, or press Authorize to establish the session now."));
+    buttonRow->addWidget(m_authorizationStatusLabel, 0, Qt::AlignVCenter);
+
+    m_authorizeNowButton = new QPushButton(themedIcon(QStringLiteral("dialog-password")), QStringLiteral("Authorize"));
+    m_authorizeNowButton->setVisible(false);
+    m_authorizeNowButton->setToolTip(QStringLiteral(
+        "Establish the privileged Boot Bitch helper session for the current scope now instead of waiting for the next privileged action."));
+    connect(m_authorizeNowButton, &QPushButton::clicked, this, &MainWindow::authorizePrivilegedSessionNow);
+    buttonRow->addWidget(m_authorizeNowButton, 0, Qt::AlignVCenter);
+
     buttonRow->addStretch(1);
     m_systemTargetLabel = new QLabel(QStringLiteral("Committed target: none"));
     configureTargetSummaryLabel(m_systemTargetLabel);
@@ -1505,7 +2998,9 @@ QWidget *MainWindow::buildSystemsPage()
     auto *detailsScroll = new QScrollArea;
     detailsScroll->setWidgetResizable(true);
     detailsScroll->setFrameShape(QFrame::NoFrame);
-    detailsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    // Long unbreakable values (UUIDs, device paths) scroll inside the frame
+    // instead of forcing the Systems page wider than the window.
+    detailsScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAsNeeded);
     detailsScroll->setMinimumHeight(150);
 
     auto *detailsContent = new QWidget;
@@ -1559,6 +3054,7 @@ QWidget *MainWindow::buildSystemsPage()
 
     m_systemSplitter->addWidget(left);
     m_systemSplitter->addWidget(right);
+    m_systemSplitter->setHandleWidth(6);
     m_systemSplitter->setStretchFactor(0, 7);
     m_systemSplitter->setStretchFactor(1, 3);
     m_systemSplitter->setSizes({820, 320});
@@ -1592,7 +3088,9 @@ QWidget *MainWindow::buildDiagnosticsPage()
     m_diagnosticScopeCombo->setMinimumContentsLength(14);
     heading->addWidget(m_diagnosticScopeCombo);
 
-    m_runAllDiagnosticsButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run All"));
+    m_runAllDiagnosticsButton = new ElidedPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run All"));
+    m_runAllDiagnosticsButton->setToolTip(QStringLiteral(
+        "Run All — run every available read-only diagnostic for the current scope."));
     heading->addWidget(m_runAllDiagnosticsButton);
     m_targetConfigCombo = new QComboBox;
     m_targetConfigCombo->addItem(QStringLiteral("/etc/fstab"), QStringLiteral("fstab"));
@@ -1665,7 +3163,9 @@ QWidget *MainWindow::buildDiagnosticsPage()
     auto *runRow = new QHBoxLayout;
     runRow->setContentsMargins(0, 0, 0, 0);
     runRow->addStretch(1);
-    m_runDiagnosticButton = new QPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run Diagnostic"));
+    m_runDiagnosticButton = new ElidedPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Run Diagnostic"));
+    m_runDiagnosticButton->setToolTip(QStringLiteral(
+        "Run Diagnostic — run the selected read-only diagnostic for the current scope; cached results offer a re-run."));
     runRow->addWidget(m_runDiagnosticButton);
     detailLayout->addLayout(runRow);
 
@@ -1698,6 +3198,7 @@ QWidget *MainWindow::buildDiagnosticsPage()
 
     m_diagnosticSplitter->addWidget(listBox);
     m_diagnosticSplitter->addWidget(detailBox);
+    m_diagnosticSplitter->setHandleWidth(6);
     m_diagnosticSplitter->setStretchFactor(0, 2);
     m_diagnosticSplitter->setStretchFactor(1, 5);
     m_diagnosticSplitter->setSizes({280, 760});
@@ -1763,6 +3264,11 @@ QWidget *MainWindow::buildRepairPage()
         "Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.")));
 
     auto *planBox = new QGroupBox(QStringLiteral("Full Repair plan"));
+    m_fullRepairPlanBox = planBox;
+    // The plan frame follows its content so the individual-tools pane below it
+    // starts directly beneath the last plan row instead of after a gap, while
+    // the vertical splitter handle stays draggable to shrink the stage list.
+    planBox->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Preferred);
     auto *planLayout = new QVBoxLayout(planBox);
     // Keep the plan header, readiness hint and stage list close together so
     // the lower individual-tool pane retains useful space at compact sizes.
@@ -1783,9 +3289,14 @@ QWidget *MainWindow::buildRepairPage()
     m_fullRepairReadinessLabel->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
 
     planHeader->addStretch(1);
-    auto *configurePlan = new QPushButton(themedIcon(QStringLiteral("settings-configure")), QStringLiteral("Configure Plan…"));
-    configurePlan->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    configurePlan->setFixedWidth(configurePlan->sizeHint().width());
+    // The plan header shares one row with the stage-count label. Both action
+    // buttons stay shrinkable (with elided text and full-text tooltips) so the
+    // row never overlaps at the minimum supported window width.
+    auto *configurePlan = new ElidedPushButton;
+    configurePlan->setIcon(themedIcon(QStringLiteral("settings-configure")));
+    configurePlan->setText(QStringLiteral("Configure Plan…"));
+    configurePlan->setToolTip(QStringLiteral("Open Settings to choose which Full Repair stages are part of the plan."));
+    makeButtonShrinkable(configurePlan, 96);
     connect(configurePlan, &QPushButton::clicked, this, [this] {
         if (m_tabs) {
             m_tabs->setCurrentIndex(SettingsTab);
@@ -1793,15 +3304,15 @@ QWidget *MainWindow::buildRepairPage()
     });
     planHeader->addWidget(configurePlan);
 
-    m_runFullRepairButton = new QPushButton(themedIcon(QStringLiteral("tools-wizard")), QStringLiteral("Run Full Repair"));
-    m_runFullRepairButton->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
-    m_runFullRepairButton->setFixedWidth(m_runFullRepairButton->sizeHint().width());
+    m_runFullRepairButton = new ElidedPushButton;
+    m_runFullRepairButton->setIcon(themedIcon(QStringLiteral("tools-wizard")));
+    m_runFullRepairButton->setText(QStringLiteral("Run Full Repair"));
+    makeButtonShrinkable(m_runFullRepairButton, 96);
     m_runFullRepairButton->setEnabled(false);
     m_runFullRepairButton->setToolTip(QStringLiteral("Select a repair drive, or choose Host Maintenance on the protected running-host card."));
     planHeader->addWidget(m_runFullRepairButton);
-    // Keep the header and readiness message content-sized.  The vertical
-    // splitter may provide extra room, but it should remain below the plan
-    // rows rather than creating large gaps between these controls.
+    // Keep the header and readiness message content-sized: the plan frame is
+    // sized to these controls plus the plan rows, with no slack below them.
     planLayout->addLayout(planHeader, 0);
     planLayout->setAlignment(planHeader, Qt::AlignTop);
     planLayout->addWidget(m_fullRepairReadinessLabel, 0, Qt::AlignTop);
@@ -1812,19 +3323,26 @@ QWidget *MainWindow::buildRepairPage()
     m_fullRepairStageList->setAlternatingRowColors(true);
     m_fullRepairStageList->setWordWrap(true);
     m_fullRepairStageList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // The Full Repair plan has at most nine configured rows. Size it to its
-    // content and never introduce an inner vertical scrollbar; the Repair
-    // page owns scrolling when the whole page becomes too short.
+    // The Full Repair plan has at most nine configured rows. Height is
+    // recomputed from the visible row count by updateFullRepairPlanHeight():
+    // the list grows with its content up to a small row cap and scrolls past
+    // it instead of reserving a fixed oversized frame.
     m_fullRepairStageList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
-    m_fullRepairStageList->setMinimumHeight(115);
-    m_fullRepairStageList->setMaximumHeight(265);
-    m_fullRepairStageList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Fixed);
+    // Expanding vertically lets the splitter grow the list when the user
+    // drags the divider; the default and minimum heights come from
+    // updateFullRepairPlanHeight().
+    m_fullRepairStageList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
     planLayout->addWidget(m_fullRepairStageList, 0, Qt::AlignTop);
     planLayout->setAlignment(Qt::AlignTop);
 
+    // The handle between the Full Repair plan and the tools panes is
+    // deliberately draggable: pull it down to shrink the selected-stage list
+    // (down to two visible rows, then the list scrolls) or back up to the
+    // content height.
     m_repairVerticalSplitter = new QSplitter(Qt::Vertical);
     m_repairVerticalSplitter->setObjectName(QStringLiteral("repairVerticalSplitter"));
     m_repairVerticalSplitter->setChildrenCollapsible(false);
+    m_repairVerticalSplitter->setHandleWidth(6);
 
     m_repairSplitter = new QSplitter(Qt::Horizontal);
     m_repairSplitter->setChildrenCollapsible(false);
@@ -1858,15 +3376,16 @@ QWidget *MainWindow::buildRepairPage()
     };
     static const ToolSpec tools[] = {
         {"validate", "Validate environment", "task-complete"},
+        {"filesystem", "File system repair", "filesystem"},
         {"dpkg", "Complete package configuration", "dialog-ok-apply"},
         {"fixbroken", "Repair broken dependencies", "dialog-ok-apply"},
         {"aptupdate", "Refresh package metadata", "view-refresh"},
         {"upgrade", "Upgrade installed packages", "system-software-update"},
         {"dkms", "DKMS", "applications-development"},
         {"display", "Graphical login / display manager", "video-display"},
-        {"initramfs", "Initramfs", "view-refresh"},
+        {"initramfs", "Initramfs", "initramfs"},
         {"efi", "EFI / UKI bootloader", "drive-removable-media"},
-        {"grub", "GRUB configuration", "preferences-system"},
+        {"grub", "GRUB configuration", "grub"},
         {"bootstack", "Boot stack reconciliation", "system-run"}
     };
 
@@ -1913,7 +3432,7 @@ QWidget *MainWindow::buildRepairPage()
     auto *actionRow = new QHBoxLayout;
     actionRow->setContentsMargins(0, 0, 0, 0);
     actionRow->addStretch(1);
-    m_repairToolButton = new QPushButton(QStringLiteral("Run Tool"));
+    m_repairToolButton = new ElidedPushButton(QStringLiteral("Run Tool"));
     m_repairToolButton->setEnabled(false);
     m_repairToolButton->setToolTip(QStringLiteral("Select a repair drive, or choose Host Maintenance on the protected running-host card."));
     actionRow->addWidget(m_repairToolButton);
@@ -1921,14 +3440,25 @@ QWidget *MainWindow::buildRepairPage()
 
     m_repairSplitter->addWidget(toolBox);
     m_repairSplitter->addWidget(detailBox);
-    m_repairSplitter->setStretchFactor(0, 5);
-    m_repairSplitter->setStretchFactor(1, 6);
-    m_repairSplitter->setSizes({470, 560});
+    m_repairSplitter->setHandleWidth(6);
+    // The tools pane is the primary work area: give it roughly 62% of the
+    // default width so complete tool names are visible, and let the selected
+    // tool description use the remainder. QSplitter keeps this ratio while
+    // the window is resized and both panes stay user-adjustable.
+    m_repairSplitter->setStretchFactor(0, 3);
+    m_repairSplitter->setStretchFactor(1, 2);
+    m_repairSplitter->setSizes({650, 390});
     m_repairVerticalSplitter->addWidget(planBox);
     m_repairVerticalSplitter->addWidget(m_repairSplitter);
     m_repairVerticalSplitter->setStretchFactor(0, 0);
     m_repairVerticalSplitter->setStretchFactor(1, 1);
-    m_repairVerticalSplitter->setSizes({300, 620});
+    // The stage list defaults to its minimum height (a few visible rows) so
+    // the tools panes keep the slack; the handle is fully adjustable in both
+    // directions and updateFullRepairPlanHeight() re-applies the default only
+    // until the user moves the divider.
+    connect(m_repairVerticalSplitter, &QSplitter::splitterMoved, this, [this] {
+        m_repairPlanSplitterUserAdjusted = true;
+    });
     layout->addWidget(m_repairVerticalSplitter, 1);
 
     connect(m_repairToolTree, &QTreeWidget::itemSelectionChanged, this, &MainWindow::updateRepairToolDetails);
@@ -2026,16 +3556,24 @@ QWidget *MainWindow::buildSnapshotsPage()
     // Keep the inventory and its log/details pane independently resizable.
     // The initial table height is sized for roughly thirteen compact rows so
     // the details remain visible without making the snapshot list unwieldy.
+    // The complete section uses the same framed group-box container as the
+    // Diagnostics, Repair and Settings tabs.
+    auto *snapshotBox = new QGroupBox(QStringLiteral("Snapshot inventory"));
+    auto *snapshotBoxLayout = new QVBoxLayout(snapshotBox);
+    snapshotBoxLayout->setContentsMargins(8, 10, 8, 8);
+    snapshotBoxLayout->setSpacing(8);
+
     m_snapshotSplitter = new QSplitter(Qt::Vertical);
     m_snapshotSplitter->setObjectName(QStringLiteral("snapshotSplitter"));
     m_snapshotSplitter->setChildrenCollapsible(false);
     m_snapshotSplitter->addWidget(m_snapshotTable);
     m_snapshotSplitter->addWidget(m_snapshotDetails);
     const int rowHeight = qMax(24, fontMetrics().lineSpacing() + 10);
+    m_snapshotSplitter->setHandleWidth(6);
     m_snapshotSplitter->setStretchFactor(0, 1);
     m_snapshotSplitter->setStretchFactor(1, 1);
     m_snapshotSplitter->setSizes({13 * rowHeight + 32, 220});
-    layout->addWidget(m_snapshotSplitter, 1);
+    snapshotBoxLayout->addWidget(m_snapshotSplitter, 1);
 
     m_snapshotButtonLayout = new QBoxLayout(QBoxLayout::LeftToRight);
     m_snapshotButtonLayout->setContentsMargins(0, 0, 0, 0);
@@ -2065,7 +3603,8 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotButtonLayout->addWidget(m_snapshotInspectButton);
     m_snapshotButtonLayout->addWidget(m_snapshotRollbackButton);
     m_snapshotButtonLayout->addStretch(1);
-    layout->addLayout(m_snapshotButtonLayout);
+    snapshotBoxLayout->addLayout(m_snapshotButtonLayout);
+    layout->addWidget(snapshotBox, 1);
 
     scroll->setWidget(content);
     outerLayout->addWidget(scroll, 1);
@@ -2081,12 +3620,12 @@ QWidget *MainWindow::buildChrootShellPage()
     layout->setSpacing(12);
 
     auto *heading = new QHBoxLayout;
-    auto *title = new QLabel(QStringLiteral("Chroot shell"));
-    QFont titleFont = title->font();
+    m_chrootShellHeading = new QLabel(QStringLiteral("Chroot shell"));
+    QFont titleFont = m_chrootShellHeading->font();
     titleFont.setBold(true);
     titleFont.setPointSizeF(titleFont.pointSizeF() * 1.25);
-    title->setFont(titleFont);
-    heading->addWidget(title);
+    m_chrootShellHeading->setFont(titleFont);
+    heading->addWidget(m_chrootShellHeading);
     heading->addStretch();
     m_chrootShellTargetLabel = new QLabel(QStringLiteral("Target: none selected"));
     m_chrootShellTargetLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
@@ -2094,10 +3633,10 @@ QWidget *MainWindow::buildChrootShellPage()
     heading->addWidget(m_chrootShellTargetLabel);
     layout->addLayout(heading);
 
-    auto *notice = new QLabel(QStringLiteral(
+    m_chrootShellNotice = new QLabel(QStringLiteral(
         "Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot; output is kept in this window and in the application log."));
-    notice->setWordWrap(true);
-    layout->addWidget(notice);
+    m_chrootShellNotice->setWordWrap(true);
+    layout->addWidget(m_chrootShellNotice);
 
     auto *commandRow = new QHBoxLayout;
     m_chrootShellCommandEdit = new QLineEdit;
@@ -2105,7 +3644,8 @@ QWidget *MainWindow::buildChrootShellPage()
     m_chrootShellCommandEdit->setAccessibleName(QStringLiteral("Chroot shell command"));
     m_chrootShellCommandEdit->setClearButtonEnabled(true);
     commandRow->addWidget(m_chrootShellCommandEdit, 1);
-    m_chrootShellRunButton = new QPushButton(themedIcon(QStringLiteral("utilities-terminal")), QStringLiteral("Run Command"));
+    m_chrootShellRunButton = new ElidedPushButton(themedIcon(QStringLiteral("utilities-terminal")), QStringLiteral("Run Command"));
+    m_chrootShellRunButton->setEnabled(false);
     m_chrootShellRunButton->setToolTip(QStringLiteral("Execute the command inside the selected repair system as root."));
     commandRow->addWidget(m_chrootShellRunButton);
     layout->addLayout(commandRow);
@@ -2120,9 +3660,9 @@ QWidget *MainWindow::buildChrootShellPage()
     layout->addWidget(m_chrootShellOutput, 1);
 
     auto *footer = new QHBoxLayout;
-    auto *warning = new QLabel(QStringLiteral("Commands can modify the target system. Review each command before running it."));
-    warning->setWordWrap(true);
-    footer->addWidget(warning, 1);
+    m_chrootShellWarning = new QLabel(QStringLiteral("Commands can modify the target system. Review each command before running it."));
+    m_chrootShellWarning->setWordWrap(true);
+    footer->addWidget(m_chrootShellWarning, 1);
     auto *clear = new QPushButton(themedIcon(QStringLiteral("edit-clear")), QStringLiteral("Clear Output"));
     footer->addWidget(clear);
     layout->addLayout(footer);
@@ -2185,10 +3725,12 @@ QWidget *MainWindow::buildFileCopyPage()
     sourceLayout->addWidget(m_sourceList);
 
     auto *sourceButtons = new QHBoxLayout;
-    m_fileCopyAddFilesButton = new QPushButton(themedIcon(QStringLiteral("document-open")), QStringLiteral("Add Files…"));
-    m_fileCopyAddFolderButton = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Add Folder…"));
+    m_fileCopyAddFilesButton = new ElidedPushButton(themedIcon(QStringLiteral("document-open")), QStringLiteral("Add Files…"));
+    m_fileCopyAddFolderButton = new ElidedPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Add Folder…"));
     auto *remove = new QPushButton(themedIcon(QStringLiteral("list-remove")), QStringLiteral("Remove"));
+    remove->setToolTip(QStringLiteral("Remove the selected staged source entries from this list."));
     auto *clear = new QPushButton(QStringLiteral("Clear"));
+    clear->setToolTip(QStringLiteral("Clear every staged source entry from this list."));
     connect(m_fileCopyAddFilesButton, &QPushButton::clicked, this, &MainWindow::addSourceFiles);
     connect(m_fileCopyAddFolderButton, &QPushButton::clicked, this, &MainWindow::addSourceFolder);
     connect(remove, &QPushButton::clicked, this, &MainWindow::removeSelectedSources);
@@ -2205,7 +3747,7 @@ QWidget *MainWindow::buildFileCopyPage()
     auto *destinationLayout = new QHBoxLayout(m_fileCopyDestinationBox);
     m_destinationEdit = new QLineEdit;
     m_destinationEdit->setReadOnly(true);
-    m_fileCopyBrowseDestinationButton = new QPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Choose Path…"));
+    m_fileCopyBrowseDestinationButton = new ElidedPushButton(themedIcon(QStringLiteral("folder-open")), QStringLiteral("Choose Path…"));
     connect(m_fileCopyBrowseDestinationButton, &QPushButton::clicked, this, &MainWindow::browseFileCopyDestination);
     destinationLayout->addWidget(m_destinationEdit, 1);
     destinationLayout->addWidget(m_fileCopyBrowseDestinationButton);
@@ -2250,7 +3792,8 @@ QWidget *MainWindow::buildFileCopyPage()
         updateFileCopyDirection();
         const QString direction = m_fileCopyDirectionCombo && m_fileCopyDirectionCombo->currentIndex() == 1
             ? QStringLiteral("Repair → Host") : QStringLiteral("Host → Repair");
-        appendLog(QStringLiteral("File Copy direction changed to %1; staged paths were cleared to avoid mixing source/destination namespaces.").arg(direction));
+        appendLog(QStringLiteral("File Copy direction changed to %1; staged paths were cleared to avoid mixing source/destination namespaces.").arg(direction),
+                  QStringLiteral("INFO"), LogEntryKind::FileCopy);
     });
     updateFileCopyDirection();
 
@@ -2259,6 +3802,73 @@ QWidget *MainWindow::buildFileCopyPage()
 
     return page;
 }
+
+namespace {
+
+// The shared repair-result glyph colors. The same table drives the explicit
+// post-write coloring and the document highlighter so the three classes cannot
+// drift apart.
+const QList<QPair<QString, QTextCharFormat>> &repairResultSymbolFormats()
+{
+    static const QList<QPair<QString, QTextCharFormat>> formats = [] {
+        QTextCharFormat successFormat;
+        successFormat.setForeground(QColor(0x2e, 0xa0, 0x43));
+        QTextCharFormat failedFormat;
+        failedFormat.setForeground(QColor(0xc0, 0x39, 0x2b));
+        QTextCharFormat noRepairFormat;
+        noRepairFormat.setForeground(QColor(0x1f, 0x6f, 0xd6));
+        return QList<QPair<QString, QTextCharFormat>>{
+            {QStringLiteral("✓"), successFormat},
+            {QStringLiteral("✗"), failedFormat},
+            {QStringLiteral("▪"), noRepairFormat}
+        };
+    }();
+    return formats;
+}
+
+// The lines that carry a repair-result glyph: the aggregate "Full Repair
+// results:" line, the single-action "Repair result:" line, and the two-space
+// indented per-stage lines of the aggregate.
+bool isRepairResultLine(const QString &line)
+{
+    return line.contains(QStringLiteral("Repair result:"))
+        || line.contains(QStringLiteral("Full Repair results:"))
+        || line.startsWith(QStringLiteral("  ✓"))
+        || line.startsWith(QStringLiteral("  ✗"))
+        || line.startsWith(QStringLiteral("  ▪"));
+}
+
+// Document-level coloring for the repair-result glyphs. The highlighter is
+// attached to the log document, so every block is colored whenever it is
+// inserted or changed, no matter which refresh path (full rebuild, incremental
+// prepend, filter rebuild, section replacement or an adopted session log)
+// produced it. The document itself stays plain text: only the glyph ranges get
+// a foreground, so search, copy, Save As and the session file are unaffected.
+class RepairResultHighlighter final : public QSyntaxHighlighter
+{
+public:
+    explicit RepairResultHighlighter(QTextDocument *document)
+        : QSyntaxHighlighter(document)
+    {
+    }
+
+protected:
+    void highlightBlock(const QString &text) override
+    {
+        if (!isRepairResultLine(text)) {
+            return;
+        }
+        for (const auto &symbol : repairResultSymbolFormats()) {
+            int index = text.indexOf(symbol.first);
+            while (index >= 0) {
+                setFormat(index, static_cast<int>(symbol.first.size()), symbol.second);
+                index = text.indexOf(symbol.first, index + symbol.first.size());
+            }
+        }
+    }
+};
+
+} // namespace
 
 QWidget *MainWindow::buildLogsPage()
 {
@@ -2270,20 +3880,80 @@ QWidget *MainWindow::buildLogsPage()
     auto *top = new QHBoxLayout;
     top->addWidget(sectionTitle(QStringLiteral("Application log")));
     top->addWidget(contextHelpButton(page, QStringLiteral("Logs"),
-        QStringLiteral("Shows this application's session activity. Save a copy when you need to share troubleshooting details.")));
+        QStringLiteral("Shows this application's session activity. Session files are listed on the left; Save a copy when you need to share troubleshooting details.")));
     top->addStretch(1);
     auto *save = new QPushButton(themedIcon(QStringLiteral("document-save")), QStringLiteral("Save As…"));
     auto *clear = new QPushButton(QStringLiteral("Clear Register"));
     connect(save, &QPushButton::clicked, this, &MainWindow::saveLogAs);
     connect(clear, &QPushButton::clicked, this, [this] {
         m_actionLogEntries.clear();
-        if (m_settings) m_settings->setValue(QStringLiteral("actionRegister"), m_actionLogEntries);
+        m_diagnosticLogEntries.clear();
+        m_repairLogEntries.clear();
+        m_statusLogEntries.clear();
+        m_statusEntryIdentities.clear();
+        m_activeRepairSection.clear();
+        m_activeRepairEntries.clear();
+        m_pendingLogEntries.clear();
+        m_pendingEntryRemovals.clear();
+        m_renderedEntryRanges.clear();
+        m_logViewRendered = false;
         m_logView->clear();
         appendLog(QStringLiteral("Action register cleared. No persistent target logs were modified."));
+        // Clearing is an explicit user action: show the result immediately
+        // instead of waiting for the coalescing timer.
+        refreshLogView();
     });
     top->addWidget(save);
     top->addWidget(clear);
     layout->addLayout(top);
+
+    m_sessionLogSplitter = new QSplitter(Qt::Horizontal);
+    m_sessionLogSplitter->setObjectName(QStringLiteral("sessionLogSplitter"));
+    m_sessionLogSplitter->setChildrenCollapsible(false);
+
+    // The live session is always the first list entry so returning to the
+    // current log never requires reopening the newest file from disk.
+    m_sessionLogPanel = new QWidget;
+    auto *sessionLayout = new QVBoxLayout(m_sessionLogPanel);
+    sessionLayout->setContentsMargins(0, 0, 0, 0);
+    sessionLayout->setSpacing(6);
+    sessionLayout->addWidget(sectionTitle(QStringLiteral("Session logs")));
+    m_sessionLogList = new QListWidget;
+    m_sessionLogList->setObjectName(QStringLiteral("sessionLogList"));
+    // The selection frame starts compact and can shrink further; it must not
+    // squeeze the log view into a sliver on a narrow window.
+    m_sessionLogList->setMinimumWidth(120);
+    m_sessionLogList->setMinimumHeight(70);
+    sessionLayout->addWidget(m_sessionLogList, 1);
+    // Two compact rows keep the session controls inside the narrow selection
+    // frame. A single five-button row cannot fit once the frame is small.
+    auto *sessionButtons = new QGridLayout;
+    sessionButtons->setContentsMargins(0, 0, 0, 0);
+    sessionButtons->setHorizontalSpacing(6);
+    sessionButtons->setVerticalSpacing(6);
+    m_newSessionLogButton = new QPushButton(QStringLiteral("New Session Log"));
+    m_clearSessionLogButton = new QPushButton(QStringLiteral("Clear"));
+    m_clearSessionLogButton->setToolTip(QStringLiteral(
+        "Truncate the current session log and start it over with a cleared-by-user entry. Prior session files are never modified."));
+    m_deleteSessionLogButton = new QPushButton(QStringLiteral("Delete"));
+    m_deleteSessionLogButton->setEnabled(false);
+    m_refreshSessionLogsButton = new QPushButton(QStringLiteral("Refresh"));
+    m_addNoteButton = new QPushButton(QStringLiteral("Add Note"));
+    m_addNoteButton->setToolTip(QStringLiteral(
+        "Append a timestamped NOTE entry to the current session log."));
+    sessionButtons->addWidget(m_newSessionLogButton, 0, 0);
+    sessionButtons->addWidget(m_addNoteButton, 0, 1);
+    sessionButtons->addWidget(m_clearSessionLogButton, 1, 0);
+    sessionButtons->addWidget(m_deleteSessionLogButton, 1, 1);
+    sessionButtons->addWidget(m_refreshSessionLogsButton, 1, 2);
+    sessionButtons->addItem(new QSpacerItem(0, 0, QSizePolicy::Expanding, QSizePolicy::Minimum), 0, 3, 2, 1);
+    sessionLayout->addLayout(sessionButtons);
+    m_sessionLogSplitter->addWidget(m_sessionLogPanel);
+
+    m_sessionLogViewer = new QWidget;
+    auto *viewerLayout = new QVBoxLayout(m_sessionLogViewer);
+    viewerLayout->setContentsMargins(0, 0, 0, 0);
+    viewerLayout->setSpacing(6);
 
     auto *filterRow = new QHBoxLayout;
     auto *filterLabel = new QLabel(QStringLiteral("Search log:"));
@@ -2292,11 +3962,42 @@ QWidget *MainWindow::buildLogsPage()
     m_logSearchEdit->setClearButtonEnabled(true);
     m_logSearchEdit->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
     m_logSearchEdit->setMinimumHeight(36);
-    m_logSearchEdit->setPlaceholderText(QStringLiteral("Filter application log (fuzzy match)…"));
-    m_logSearchEdit->setToolTip(QStringLiteral("Type any characters to show matching application-log entries. Matching is case-insensitive and fuzzy."));
+    m_logSearchEdit->setPlaceholderText(QStringLiteral(
+        "Filter application log (fuzzy match; use @section, e.g. @errors, for whole diagnostic sections)…"));
+    m_logSearchEdit->setToolTip(QStringLiteral(
+        "Type any characters to show matching application-log entries. Matching is case-insensitive and fuzzy. "
+        "A term beginning with @ selects a complete diagnostic section by key or title (for example @errors, @boot or @all) "
+        "together with the repair entries related to that section; other terms keep the fuzzy line match and combine as AND."));
     filterRow->addWidget(filterLabel);
     filterRow->addWidget(m_logSearchEdit, 1);
-    layout->addLayout(filterRow);
+
+    m_logFilterCombo = new QComboBox;
+    m_logFilterCombo->setObjectName(QStringLiteral("logFilterCombo"));
+    m_logFilterCombo->addItem(QStringLiteral("All entries"), QStringLiteral("all"));
+    m_logFilterCombo->addItem(QStringLiteral("Diagnostics"), QStringLiteral("diagnostics"));
+    m_logFilterCombo->addItem(QStringLiteral("Repairs"), QStringLiteral("repairs"));
+    for (const LogWorkflowFilterSpec &spec : logWorkflowFilterSpecs) {
+        m_logFilterCombo->addItem(QString::fromLatin1(spec.title),
+                                  QString::fromLatin1(spec.key));
+    }
+    for (const DiagnosticSpec &spec : diagnosticSpecs) {
+        m_logFilterCombo->addItem(QString::fromLatin1(spec.title),
+                                  QStringLiteral("@%1").arg(QString::fromLatin1(spec.key)));
+    }
+    m_logFilterCombo->setToolTip(QStringLiteral(
+        "Filter the visible log by entry kind. Selecting a diagnostic section shows that complete section "
+        "plus the repair entries recorded for its related repair tools; a workflow filter such as "
+        "File system repair additionally shows the whole storage evidence sections it works on."));
+    filterRow->addWidget(m_logFilterCombo);
+    viewerLayout->addLayout(filterRow);
+
+    m_priorLogBanner = new QLabel;
+    m_priorLogBanner->setObjectName(QStringLiteral("priorLogBanner"));
+    m_priorLogBanner->setWordWrap(true);
+    m_priorLogBanner->setFrameShape(QFrame::StyledPanel);
+    m_priorLogBanner->setContentsMargins(8, 5, 8, 5);
+    m_priorLogBanner->setVisible(false);
+    viewerLayout->addWidget(m_priorLogBanner);
 
     m_logView = new QPlainTextEdit;
     m_logView->setReadOnly(true);
@@ -2308,9 +4009,34 @@ QWidget *MainWindow::buildLogsPage()
     QFont mono = QFont(QStringLiteral("monospace"));
     mono.setStyleHint(QFont::Monospace);
     m_logView->setFont(mono);
+    // The highlighter is parented to the log document, so the glyph colors are
+    // re-applied automatically on every document change instead of depending on
+    // a particular refresh path having called the explicit coloring helper.
+    new RepairResultHighlighter(m_logView->document());
+    viewerLayout->addWidget(m_logView, 1);
+
+    m_sessionLogSplitter->addWidget(m_sessionLogViewer);
+    m_sessionLogSplitter->setHandleWidth(6);
+    m_sessionLogSplitter->setStretchFactor(0, 0);
+    m_sessionLogSplitter->setStretchFactor(1, 1);
+    m_sessionLogSplitter->setSizes({280, 800});
+    layout->addWidget(m_sessionLogSplitter, 1);
+
     connect(m_logSearchEdit, &QLineEdit::textChanged, this, [this] { refreshLogView(); });
+    connect(m_logFilterCombo, qOverload<int>(&QComboBox::currentIndexChanged), this,
+            [this] { refreshLogView(); });
+    connect(m_sessionLogList, &QListWidget::currentItemChanged, this,
+            [this](QListWidgetItem *current, QListWidgetItem *) {
+                displaySessionLog(current ? current->data(Qt::UserRole).toString() : QString());
+            });
+    connect(m_newSessionLogButton, &QPushButton::clicked, this, &MainWindow::startNewSessionLog);
+    connect(m_clearSessionLogButton, &QPushButton::clicked, this, &MainWindow::clearCurrentSessionLog);
+    connect(m_addNoteButton, &QPushButton::clicked, this, &MainWindow::addSessionNote);
+    connect(m_deleteSessionLogButton, &QPushButton::clicked, this, &MainWindow::deleteSelectedSessionLog);
+    connect(m_refreshSessionLogsButton, &QPushButton::clicked, this, [this] { refreshSessionLogList(); });
+
     refreshLogView();
-    layout->addWidget(m_logView, 1);
+    refreshSessionLogList();
 
     return page;
 }
@@ -2350,6 +4076,11 @@ QWidget *MainWindow::buildSettingsPage()
 
     auto *repairBox = new QGroupBox(QStringLiteral("Full Repair plan"));
     auto *repairLayout = new QVBoxLayout(repairBox);
+    m_fullRepairFilesystem = new QCheckBox(QStringLiteral("Repair file system errors (read-only check first)"));
+    m_fullRepairFilesystem->setToolTip(QStringLiteral(
+        "Runs a read-only file system check for the root, /boot, ESP and /home filesystems, "
+        "then offers an explicit per-device repair for each filesystem that reports errors. "
+        "Offline repair tools refuse mounted filesystems; btrfs scrub and zpool scrub are online modes."));
     m_fullRepairDpkg = new QCheckBox(QStringLiteral("Complete interrupted package configuration"));
     m_fullRepairBrokenPackages = new QCheckBox(QStringLiteral("Repair broken package dependencies"));
     m_fullRepairAptUpdate = new QCheckBox(QStringLiteral("Refresh package metadata"));
@@ -2359,6 +4090,7 @@ QWidget *MainWindow::buildSettingsPage()
     m_fullRepairInitramfs = new QCheckBox(QStringLiteral("Rebuild initramfs after mapper/crypttab validation"));
     m_fullRepairEfi = new QCheckBox(QStringLiteral("Repair EFI / UKI boot path (explicit target ESP repair)"));
     m_fullRepairGrub = new QCheckBox(QStringLiteral("Update GRUB configuration"));
+    repairLayout->addWidget(m_fullRepairFilesystem);
     repairLayout->addWidget(m_fullRepairDpkg);
     repairLayout->addWidget(m_fullRepairBrokenPackages);
     repairLayout->addWidget(m_fullRepairAptUpdate);
@@ -2369,6 +4101,15 @@ QWidget *MainWindow::buildSettingsPage()
     repairLayout->addWidget(m_fullRepairEfi);
     repairLayout->addWidget(m_fullRepairGrub);
     layout->addWidget(repairBox);
+
+    auto *diagnosticsBox = new QGroupBox(QStringLiteral("Diagnostics"));
+    auto *diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
+    m_autoRefreshDiagnostics = new QCheckBox(QStringLiteral("Automatically regenerate read-only diagnostics after repairs or target changes"));
+    m_autoRefreshDiagnostics->setToolTip(QStringLiteral(
+        "Regenerates the cached read-only diagnostics for the current Diagnostics scope after a repair, target change, or other evidence invalidation. "
+        "The refresh runs only inside an already authorized administrator session; it never triggers a new Polkit prompt."));
+    diagnosticsLayout->addWidget(m_autoRefreshDiagnostics);
+    layout->addWidget(diagnosticsBox);
 
     auto *safetyBox = new QGroupBox(QStringLiteral("Mandatory safety controls"));
     auto *safetyLayout = new QVBoxLayout(safetyBox);
@@ -2462,12 +4203,24 @@ QWidget *MainWindow::buildSettingsPage()
     connect(m_showEncrypted, &QCheckBox::toggled, this, refilterDevices);
 
     const QList<QCheckBox *> repairToggles = {
+        m_fullRepairFilesystem,
         m_fullRepairDpkg, m_fullRepairBrokenPackages, m_fullRepairAptUpdate,
         m_fullRepairUpgrade, m_fullRepairDkms, m_fullRepairDisplayManager, m_fullRepairInitramfs, m_fullRepairEfi, m_fullRepairGrub
     };
     for (QCheckBox *check : repairToggles) {
         connect(check, &QCheckBox::toggled, this, &MainWindow::updateFullRepairSummary);
     }
+
+    connect(m_autoRefreshDiagnostics, &QCheckBox::toggled, this, [this](bool enabled) {
+        if (!enabled) {
+            m_evidenceRefreshPending = false;
+            if (m_evidenceRefreshTimer) {
+                m_evidenceRefreshTimer->stop();
+            }
+            return;
+        }
+        scheduleEvidenceRefresh(QStringLiteral("automatic diagnostics regeneration enabled"));
+    });
 
     scroll->setWidget(content);
     outerLayout->addWidget(scroll, 1);
@@ -2489,7 +4242,9 @@ void MainWindow::loadSettings()
     m_showNonLinux->setChecked(m_settings->value(QStringLiteral("devices/showNonLinux"), true).toBool());
     m_showRemovable->setChecked(m_settings->value(QStringLiteral("devices/showRemovable"), true).toBool());
     m_showEncrypted->setChecked(m_settings->value(QStringLiteral("devices/showEncrypted"), true).toBool());
+    m_autoRefreshDiagnostics->setChecked(m_settings->value(QStringLiteral("diagnostics/autoRefreshStale"), true).toBool());
 
+    m_fullRepairFilesystem->setChecked(m_settings->value(QStringLiteral("repair/filesystem"), true).toBool());
     m_fullRepairDpkg->setChecked(m_settings->value(QStringLiteral("repair/dpkgConfigure"), true).toBool());
     m_fullRepairBrokenPackages->setChecked(m_settings->value(QStringLiteral("repair/fixBroken"), true).toBool());
     m_fullRepairAptUpdate->setChecked(m_settings->value(QStringLiteral("repair/refreshMetadata"), true).toBool());
@@ -2520,9 +4275,12 @@ void MainWindow::loadSettings()
     if (!repairSplitterState.isEmpty() && m_repairSplitter) {
         m_repairSplitter->restoreState(repairSplitterState);
     }
-    const QByteArray repairVerticalSplitterState = m_settings->value(QStringLiteral("repair/verticalSplitterStateV1")).toByteArray();
+    const QByteArray repairVerticalSplitterState = m_settings->value(QStringLiteral("repair/verticalSplitterStateV2")).toByteArray();
     if (!repairVerticalSplitterState.isEmpty() && m_repairVerticalSplitter) {
         m_repairVerticalSplitter->restoreState(repairVerticalSplitterState);
+        // A restored position is the user's own choice: keep it instead of
+        // re-applying the minimum default when the plan changes.
+        m_repairPlanSplitterUserAdjusted = true;
     }
 
     const QByteArray diagnosticSplitterState = m_settings->value(QStringLiteral("diagnostics/splitterStateV1")).toByteArray();
@@ -2545,6 +4303,8 @@ void MainWindow::saveSettings()
     m_settings->setValue(QStringLiteral("devices/showNonLinux"), m_showNonLinux->isChecked());
     m_settings->setValue(QStringLiteral("devices/showRemovable"), m_showRemovable->isChecked());
     m_settings->setValue(QStringLiteral("devices/showEncrypted"), m_showEncrypted->isChecked());
+    m_settings->setValue(QStringLiteral("diagnostics/autoRefreshStale"), m_autoRefreshDiagnostics->isChecked());
+    m_settings->setValue(QStringLiteral("repair/filesystem"), m_fullRepairFilesystem->isChecked());
     m_settings->setValue(QStringLiteral("repair/dpkgConfigure"), m_fullRepairDpkg->isChecked());
     m_settings->setValue(QStringLiteral("repair/fixBroken"), m_fullRepairBrokenPackages->isChecked());
     m_settings->setValue(QStringLiteral("repair/refreshMetadata"), m_fullRepairAptUpdate->isChecked());
@@ -2566,7 +4326,7 @@ void MainWindow::saveSettings()
         m_settings->setValue(QStringLiteral("repair/splitterStateV3"), m_repairSplitter->saveState());
     }
     if (m_repairVerticalSplitter) {
-        m_settings->setValue(QStringLiteral("repair/verticalSplitterStateV1"), m_repairVerticalSplitter->saveState());
+        m_settings->setValue(QStringLiteral("repair/verticalSplitterStateV2"), m_repairVerticalSplitter->saveState());
     }
     if (m_diagnosticSplitter) {
         m_settings->setValue(QStringLiteral("diagnostics/splitterStateV1"), m_diagnosticSplitter->saveState());
@@ -2578,6 +4338,11 @@ void MainWindow::saveSettings()
     m_settings->sync();
 }
 
+// ---- MainWindow: device discovery and target selection ----------------------
+
+// Scans block devices through SystemScanner and repopulates the Systems page.
+// The scan itself is read-only; its recurring summary lines are recorded as
+// tracked status entries so a refresh replaces them instead of stacking copies.
 void MainWindow::refreshDevices()
 {
     statusBar()->showMessage(QStringLiteral("Scanning block devices…"));
@@ -2598,12 +4363,39 @@ void MainWindow::refreshDevices()
 
     m_lastDevices = devices;
     populateDeviceTree(m_lastDevices);
+    // The scan summary lines are status, not history: every refresh replaces
+    // the previous scan summary instead of stacking one per repair cycle.
     for (const QString &line : diagnostics) {
-        appendLog(line);
+        if (line == QStringLiteral("lsblk scan completed successfully.")) {
+            appendStatusLog(statusEntryIdentity(QStringLiteral("scan-lsblk")), line);
+        } else if (line.startsWith(QStringLiteral("Discovered "))
+                   && line.endsWith(QStringLiteral(" top-level physical disk(s)."))) {
+            appendStatusLog(statusEntryIdentity(QStringLiteral("scan-discovered")), line);
+        } else {
+            appendLog(line);
+        }
     }
+    QString hostIdentity = m_hostPrimaryPath.isEmpty() ? QStringLiteral("unresolved") : m_hostPrimaryPath;
+    if (!m_hostPrimaryComponentPath.isEmpty()) {
+        hostIdentity += QStringLiteral(" (%1)").arg(m_hostPrimaryComponentPath);
+    }
+    const QString helperPath = repairHelperPath();
+    appendStatusLog(statusEntryIdentity(QStringLiteral("launch-detection")),
+                    QStringLiteral("Launch detection: %1 device(s) scanned; protected running host %2; repair target %3; privileged helper %4; pkexec %5.")
+        .arg(devices.size())
+        .arg(hostIdentity)
+        .arg(m_previewTargetPath.isEmpty() ? QStringLiteral("not selected") : m_previewTargetPath)
+        .arg(helperPath.isEmpty() ? QStringLiteral("not found") : helperPath)
+        .arg(QStandardPaths::findExecutable(QStringLiteral("pkexec")).isEmpty() ? QStringLiteral("unavailable") : QStringLiteral("available")));
     statusBar()->showMessage(QStringLiteral("Device scan complete — discovery did not modify storage"), 4000);
+    // A refresh can resolve or change the protected host identity that backs
+    // an active maintenance scope; keep the session marker in step.
+    updateSessionScope();
 }
 
+// Applies the Settings filters, ranks candidates by repair likelihood and
+// renders the device tree. The protected running-host disk is never a
+// candidate; the committed target highlight and control states are reapplied.
 void MainWindow::populateDeviceTree(const QList<DeviceNode> &devices)
 {
     m_deviceTree->clear();
@@ -2746,7 +4538,9 @@ void MainWindow::updateHostSystemSummary(const QList<DeviceNode> &devices)
     m_hostMountsLabel->setVisible(false);
     m_hostDetailsButton->setEnabled(!m_hostPrimaryPath.isEmpty());
     m_hostMaintenanceButton->setEnabled(!m_hostPrimaryPath.isEmpty() && !m_hostPrimaryComponentPath.isEmpty());
-    m_hostDefaultButton->setEnabled(!m_hostPrimaryPath.isEmpty() && !m_hostPrimaryComponentPath.isEmpty());
+    // Make Default follows the same single truth log as the repair tools:
+    // host identity plus the cached running-host EFI/UKI capability evidence.
+    updateHostDefaultButtonState();
 }
 
 void MainWindow::addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node)
@@ -2887,6 +4681,15 @@ void MainWindow::selectHostForMaintenance()
         }
         appendLog(QStringLiteral("Running-host maintenance deselected; ordinary repair-target mode restored."));
         updateTargetLabels();
+        updateSessionScope();
+        updateAuthorizationAffordance();
+        // Put the committed repair target back in the details panel, or clear
+        // it when no target is committed.
+        if (!m_previewTargetPath.isEmpty() && m_deviceIndex.contains(m_previewTargetPath)) {
+            showDeviceDetails(m_deviceIndex.value(m_previewTargetPath), true);
+        } else if (m_deviceTree) {
+            m_deviceTree->clearSelection();
+        }
         return;
     }
 
@@ -2906,7 +4709,7 @@ void MainWindow::selectHostForMaintenance()
     if (m_hostMaintenanceButton) {
         m_hostMaintenanceButton->setText(QStringLiteral("Exit Host Maintenance"));
         m_hostMaintenanceButton->setToolTip(QStringLiteral(
-            "Leave running-host maintenance and return to ordinary repair-target mode."));
+            "Exit Host Maintenance — leave running-host maintenance and return to ordinary repair-target mode."));
     }
     if (m_diagnosticScopeCombo) {
         m_diagnosticScopeCombo->setCurrentIndex(1);
@@ -2915,12 +4718,28 @@ void MainWindow::selectHostForMaintenance()
         "Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; snapshots, shell and file-copy workflows remain separate tools.")
                   .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
     updateTargetLabels();
+    updateSessionScope();
+    // Host Maintenance commits the running host as the active scope, so show
+    // the protected host drive in the selected-drive details panel right away
+    // instead of leaving the previous selection or placeholders.
+    showHostDetails();
+    // Schedule the automatic read-only host diagnostics as soon as the host
+    // scope is committed. The run itself waits for administrator
+    // authorization and then executes asynchronously (no modal dialog); a
+    // privileged request started while it is running is refused with a clear
+    // message instead of queueing behind it.
+    scheduleEvidenceRefresh(QStringLiteral("running-host maintenance selected"));
+    // Ask for the privileged session as soon as the host scope is committed so
+    // diagnostics and repairs reuse one Polkit prompt. The request is deferred
+    // to the next event-loop turn, never blocks the scope switch, and is never
+    // repeated automatically for the same scope after a cancellation.
+    requestPrivilegedSessionForScope(QStringLiteral("host:%1").arg(m_hostPrimaryPath));
 }
 
 void MainWindow::setHostDefaultBootEntry()
 {
     QString reason;
-    if (!hostBootTargetReady(&reason)) {
+    if (!hostDefaultBootReady(&reason)) {
         QMessageBox::warning(this, QStringLiteral("Host default unavailable"), reason);
         return;
     }
@@ -2939,20 +4758,43 @@ void MainWindow::setHostDefaultBootEntry()
         return;
     }
 
+    const QString repairSection = repairLogSectionIdentity(QStringLiteral("host-default"));
+    beginRepairLogSection(repairSection);
     appendLog(QStringLiteral("Starting privileged host default EFI operation on %1 (%2).")
-                  .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+                  .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
     bool succeeded = false;
     const QString output = runPrivilegedRequest(
         QStringLiteral("Make host default boot entry"),
         {QStringLiteral("host-default"), m_hostPrimaryPath, m_hostPrimaryComponentPath},
-        QByteArray(), &succeeded);
+        QByteArray(), &succeeded, true, LogEntryKind::Repair);
     const QString detail = output.trimmed().isEmpty()
         ? QStringLiteral("The privileged helper returned no diagnostic output.")
         : output.trimmed();
     appendLog(QStringLiteral("Host default EFI output\nDiagnostic: Make host default boot entry\n%1").arg(detail),
-              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
-    m_hostDiagnosticCache.clear();
-    m_hostDiagnosticTimes.clear();
+              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), LogEntryKind::Repair);
+    // Categorize the operation exactly like the other repair actions; the
+    // helper-proven unchanged case is the no-repair-needed category.
+    const RepairResultCategory result = categorizeRepairResult(
+        succeeded, {QStringLiteral("host-default")}, output);
+    appendRepairResultSummary(result,
+                              result == RepairResultCategory::Failed
+                                  ? shortRepairFailureReason(output)
+                                  : QString(),
+                              LogEntryKind::Repair, QStringLiteral("host-default"));
+    finishRepairLogSection(repairSection);
+    // The host default entry changes firmware state, so the complete cached
+    // running-host diagnostic set is invalidated. A helper-proven unchanged
+    // operation keeps the cached evidence and schedules no regeneration.
+    const bool unchanged = result == RepairResultCategory::NoRepairNeeded;
+    if (unchanged) {
+        appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                        QStringLiteral("No system changes were detected; cached diagnostics remain valid."),
+                        QStringLiteral("INFO"), LogEntryKind::Repair);
+    } else {
+        clearHostDiagnosticCache();
+        scheduleEvidenceRefresh(QStringLiteral("running-host default boot entry changed"));
+    }
     if (succeeded) {
         QMessageBox::information(
             this,
@@ -3079,7 +4921,7 @@ void MainWindow::setPreviewTarget()
         if (m_hostMaintenanceButton) {
             m_hostMaintenanceButton->setText(QStringLiteral("Host Maintenance"));
             m_hostMaintenanceButton->setToolTip(QStringLiteral(
-                "Select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+                "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
         }
         appendLog(QStringLiteral("Repair target selection ended running-host maintenance mode."));
     }
@@ -3100,8 +4942,12 @@ void MainWindow::setPreviewTarget()
         return;
     }
     m_previewTargetPath = disk.path;
-    m_previewTargetComponentPath = preferred ? preferred->path : QString();
-    m_targetDiagnosticsNeedRegeneration = false;
+    // preferred is guaranteed non-null and non-empty by the gate above.
+    m_previewTargetComponentPath = preferred->path;
+    // Selecting a repair drive (or re-confirming it) is a scope change: every
+    // cached target diagnostic belongs to the previous selection and the
+    // complete set is regenerated automatically.
+    invalidateAllTargetDiagnostics();
     updateTargetLabels();
 
     QString message = QStringLiteral("Repair drive selected: %1").arg(disk.path);
@@ -3111,9 +4957,25 @@ void MainWindow::setPreviewTarget()
     message += QStringLiteral(". No mount or repair action was performed.");
     appendLog(message);
     statusBar()->showMessage(QStringLiteral("Repair drive selected: %1").arg(disk.path), 4000);
+    updateSessionScope();
     scheduleSnapshotPreload();
+    scheduleEvidenceRefresh(QStringLiteral("repair target selection changed"));
+    // A committed target is already a decrypted, Linux-capable root: a locked
+    // LUKS container can never reach this point because the candidate checks
+    // above reject it. Request the session once here so later diagnostics and
+    // repairs reuse the same authorization.
+    if (preferred && !preferred->encrypted
+        && preferred->fileSystem.compare(QStringLiteral("crypto_LUKS"), Qt::CaseInsensitive) != 0) {
+        requestPrivilegedSessionForScope(QStringLiteral("target:%1").arg(m_previewTargetPath));
+    }
 }
 
+// ---- MainWindow: privileged helper session ----------------------------------
+
+// Returns true when a usable privileged helper session exists, launching one
+// pkexec/Polkit conversation when needed. Concurrent callers coalesce onto the
+// single in-flight authorization request instead of opening a second prompt;
+// the GUI itself never gains privileges.
 bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
 {
     auto setError = [errorMessage](const QString &text) {
@@ -3122,14 +4984,101 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         }
     };
 
-    if (m_privilegedSession
-        && m_privilegedSessionReady
-        && m_privilegedSession->state() != QProcess::NotRunning) {
+    const auto sessionUsable = [this] {
+        // The UI-test seam grants the session without a QProcess, so a ready
+        // flag alone is sufficient when no process exists.
+        return m_privilegedSessionReady
+            && (!m_privilegedSession || m_privilegedSession->state() != QProcess::NotRunning);
+    };
+
+    if (sessionUsable()) {
+        m_authorizationDeferredScope.clear();
+        updateAuthorizationAffordance();
         setError(QString());
         return true;
     }
 
+    // At most one authorization conversation may exist at a time. A deferred
+    // scope request or another caller that is already waiting for Polkit owns
+    // the single prompt; concurrent callers (for example a pending automatic
+    // evidence refresh that reaches the helper at the same time) coalesce onto
+    // that request instead of launching a second pkexec dialog. The wait ends
+    // as soon as the shared request publishes its outcome.
+    if (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight) {
+        while (!sessionUsable() && !m_privilegedSessionRequestFailed
+               && (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight)) {
+            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        }
+        if (sessionUsable()) {
+            m_authorizationDeferredScope.clear();
+            updateAuthorizationAffordance();
+            setError(QString());
+            return true;
+        }
+        setError(QStringLiteral("Administrator authorization session was not established."));
+        return false;
+    }
+
+    // This call now owns the single authorization request for its duration.
+    struct InFlightReset {
+        explicit InFlightReset(bool *target) : flag(target) { *flag = true; }
+        ~InFlightReset() { *flag = false; }
+        bool *flag;
+    } inFlightReset(&m_privilegedSessionRequestInFlight);
+
+    BusyOperationScope busy(this, QStringLiteral("Requesting administrator authorization"));
+
+#ifdef BOOT_REPAIR_UI_TEST
+    // The production authorization path launches pkexec and waits for a real
+    // Polkit conversation, which cannot complete in a headless UI test. Mirror
+    // the offscreen diagnostics seam: count the request, honor the test's
+    // granted/cancelled outcome, and never spawn a privileged process. This
+    // branch is compiled only into boot-repair-ui-tests.
+    if (m_privilegedSessionReady) {
+        m_authorizationDeferredScope.clear();
+        updateAuthorizationAffordance();
+        setError(QString());
+        return true;
+    }
+    ++m_privilegedSessionRequestCount;
+    if (m_uiTestPrivilegedSessionDelayMs > 0) {
+        // Hold the request "in flight" while its outcome stays unknown so
+        // tests can exercise concurrent callers and verify that they coalesce
+        // onto this single request. The outcome is published from inside the
+        // loop, exactly like a real Polkit conversation resolving.
+        QEventLoop delayLoop;
+        QTimer::singleShot(m_uiTestPrivilegedSessionDelayMs, this, [this, &delayLoop] {
+            if (m_uiTestPrivilegedSessionGranted) {
+                m_privilegedSessionReady = true;
+            } else {
+                m_privilegedSessionRequestFailed = true;
+            }
+            delayLoop.quit();
+        });
+        delayLoop.exec();
+    }
+    if (m_uiTestPrivilegedSessionGranted) {
+        m_privilegedSessionReady = true;
+        m_authorizationDeferredScope.clear();
+        if (m_lockAuthorizationAction) {
+            m_lockAuthorizationAction->setEnabled(true);
+        }
+        appendStatusLog(statusEntryIdentity(QStringLiteral("authorization-established")),
+                        QStringLiteral("Administrator authorization session established. The GUI remains unprivileged."));
+        statusBar()->showMessage(QStringLiteral("Administrator authorization active for this Boot Bitch window"), 5000);
+        // The deferred automatic diagnostics refresh becomes schedulable now
+        // that the session is active.
+        handlePrivilegedSessionEstablished();
+        updateAuthorizationAffordance();
+        setError(QString());
+        return true;
+    }
+    setError(QStringLiteral("Administrator authorization session was not established."));
+    return false;
+#else
+
     closePrivilegedSession();
+    m_privilegedSessionRequestFailed = false;
 
     const QString helper = repairHelperPath();
     if (helper.isEmpty()) {
@@ -3175,9 +5124,18 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         const bool wasReady = m_privilegedSessionReady;
         if (m_privilegedSession == session) {
             m_privilegedSessionReady = false;
+            if (!wasReady) {
+                // The request ended before it ever became usable (cancelled or
+                // failed to start). Publish the outcome so coalescing callers
+                // stop waiting even though the wait loop may still be running.
+                m_privilegedSessionRequestFailed = true;
+            }
             if (m_lockAuthorizationAction) {
                 m_lockAuthorizationAction->setEnabled(false);
             }
+        }
+        if (!wasReady && m_privilegedSessionWaitLoop) {
+            m_privilegedSessionWaitLoop->quit();
         }
         if (wasReady) {
             appendLog(QStringLiteral("Administrator authorization session ended (helper exit code %1). The next privileged action will request authorization again.")
@@ -3185,104 +5143,205 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         }
     });
 
-    RepairProgressDialog dialog(this);
-    dialog.setWindowTitle(QStringLiteral("Authorize Boot Bitch session"));
-    dialog.resize(650, 300);
-    dialog.setModal(true);
-
-    auto *layout = new QVBoxLayout(&dialog);
-    auto *status = new QLabel(QStringLiteral(
-        "Administrator authorization is required once for this Boot Bitch window. "
-        "The GUI remains unprivileged; a narrow root helper stays available only until you lock the session or close Boot Bitch."));
-    status->setWordWrap(true);
-    layout->addWidget(status);
-
-    auto *output = new QPlainTextEdit;
-    output->setReadOnly(true);
-    output->setLineWrapMode(QPlainTextEdit::WidgetWidth);
-    output->setMaximumBlockCount(200);
-    QFont mono(QStringLiteral("monospace"));
-    mono.setStyleHint(QFont::Monospace);
-    output->setFont(mono);
-    layout->addWidget(output, 1);
-
-    auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
-    QPushButton *closeButton = buttons->button(QDialogButtonBox::Close);
-    closeButton->setEnabled(false);
-    layout->addWidget(buttons);
-    connect(buttons, &QDialogButtonBox::rejected, &dialog, &RepairProgressDialog::reject);
-
     QByteArray startupBuffer;
-    bool startupFailed = false;
 
-    connect(session, &QProcess::readyReadStandardOutput, &dialog,
-            [this, session, &startupBuffer, status, output, closeButton, &dialog] {
-        startupBuffer += session->readAllStandardOutput();
-        while (true) {
-            const qsizetype newline = startupBuffer.indexOf('\n');
-            if (newline < 0) {
-                break;
-            }
-            QByteArray line = startupBuffer.left(newline);
-            startupBuffer.remove(0, newline + 1);
-            if (line.endsWith('\r')) {
-                line.chop(1);
-            }
+    // The authorization wait is a plain event loop with no application-side
+    // window: the pkexec/Polkit prompt is the only authorization UI. The
+    // session QProcess handlers end the wait as soon as the outcome is known,
+    // and the safety timer guarantees the loop cannot hang forever.
+    QEventLoop waitLoop;
+    QTimer safetyTimer;
+    safetyTimer.setSingleShot(true);
+    safetyTimer.setInterval(300000);
+    connect(&safetyTimer, &QTimer::timeout, &waitLoop, &QEventLoop::quit);
 
-            if (line == QByteArrayLiteral("SESSION_READY\t1")) {
-                m_privilegedSessionReady = true;
-                if (m_lockAuthorizationAction) {
-                    m_lockAuthorizationAction->setEnabled(true);
+    const QMetaObject::Connection startupReadConnection = connect(
+        session, &QProcess::readyReadStandardOutput, this,
+        [this, session, &startupBuffer] {
+            startupBuffer += session->readAllStandardOutput();
+            while (true) {
+                const qsizetype newline = startupBuffer.indexOf('\n');
+                if (newline < 0) {
+                    break;
                 }
-                status->setText(QStringLiteral(
-                    "Administrator authorization is active for this Boot Bitch window. "
-                    "Further diagnostics, validation, file-copy and repair actions will reuse this helper session without another Polkit prompt."));
-                closeButton->setEnabled(true);
-                dialog.setCloseAllowed(true);
-                appendLog(QStringLiteral("Administrator authorization session established. The GUI remains unprivileged."));
-                statusBar()->showMessage(QStringLiteral("Administrator authorization active for this Boot Bitch window"), 5000);
-                QTimer::singleShot(0, &dialog, [&dialog] { dialog.accept(); });
-                continue;
+                QByteArray line = startupBuffer.left(newline);
+                startupBuffer.remove(0, newline + 1);
+                if (line.endsWith('\r')) {
+                    line.chop(1);
+                }
+
+                if (line == QByteArrayLiteral("SESSION_READY\t1")) {
+                    m_privilegedSessionReady = true;
+                    if (m_lockAuthorizationAction) {
+                        m_lockAuthorizationAction->setEnabled(true);
+                    }
+                    appendStatusLog(statusEntryIdentity(QStringLiteral("authorization-established")),
+                                    QStringLiteral("Administrator authorization session established. The GUI remains unprivileged."));
+                    statusBar()->showMessage(QStringLiteral("Administrator authorization active for this Boot Bitch window"), 5000);
+                    // A deferred automatic diagnostics refresh must not trigger
+                    // its own Polkit prompt; it becomes schedulable now that
+                    // the session is active.
+                    handlePrivilegedSessionEstablished();
+                    updateAuthorizationAffordance();
+                    if (m_privilegedSessionWaitLoop) {
+                        m_privilegedSessionWaitLoop->quit();
+                    }
+                    continue;
+                }
+
+                if (!line.isEmpty()) {
+                    appendLog(QStringLiteral("Authorization session: %1")
+                                  .arg(QString::fromLocal8Bit(line)));
+                }
             }
+        });
 
-            if (!line.isEmpty()) {
-                output->appendPlainText(QString::fromLocal8Bit(line));
-            }
+    connect(session, &QProcess::errorOccurred, this, [this](QProcess::ProcessError) {
+        if (!m_privilegedSessionWaitLoop) {
+            return;
         }
+        m_privilegedSessionRequestFailed = true;
+        m_privilegedSessionWaitLoop->quit();
     });
 
-    connect(session, &QProcess::errorOccurred, &dialog,
-            [status, closeButton, &dialog, &startupFailed](QProcess::ProcessError) {
-        startupFailed = true;
-        status->setText(QStringLiteral("Unable to start the privileged Boot Bitch session."));
-        closeButton->setEnabled(true);
-        dialog.setCloseAllowed(true);
-    });
-
-    connect(session, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &dialog,
-            [status, closeButton, &dialog, &startupFailed, this](int exitCode, QProcess::ExitStatus) {
-        if (!m_privilegedSessionReady) {
-            startupFailed = true;
-            status->setText(QStringLiteral(
-                "Administrator authorization was cancelled or the privileged helper exited before the session became ready (exit code %1).")
-                                .arg(exitCode));
-            closeButton->setEnabled(true);
-            dialog.setCloseAllowed(true);
-        }
-    });
-
+    m_privilegedSessionWaitLoop = &waitLoop;
+    safetyTimer.start();
     session->start(program, processArguments);
-    dialog.exec();
+    ++m_privilegedSessionRequestCount;
+    // A synchronous FailedToStart already published its outcome; only wait
+    // while the authorization is still undecided.
+    if (!m_privilegedSessionRequestFailed && !m_privilegedSessionReady) {
+        waitLoop.exec();
+    }
+    safetyTimer.stop();
+    m_privilegedSessionWaitLoop = nullptr;
+    // Only the startup protocol belongs to this wait; per-request output is
+    // consumed by runPrivilegedRequest() once the session is in use.
+    disconnect(startupReadConnection);
 
-    if (startupFailed || !m_privilegedSessionReady
+    if (m_privilegedSessionRequestFailed || !m_privilegedSessionReady
         || !m_privilegedSession || m_privilegedSession->state() == QProcess::NotRunning) {
+        m_privilegedSessionRequestFailed = true;
         setError(QStringLiteral("Administrator authorization session was not established."));
         closePrivilegedSession();
         return false;
     }
 
+    m_authorizationDeferredScope.clear();
+    updateAuthorizationAffordance();
     setError(QString());
     return true;
+#endif
+}
+
+void MainWindow::requestPrivilegedSessionForScope(const QString &scopeKey)
+{
+    if (scopeKey.isEmpty()) {
+        return;
+    }
+    if (m_privilegedSessionReady) {
+        // A session is already active; never prompt again.
+        updateAuthorizationAffordance();
+        return;
+    }
+    if (m_authorizationScopeRequested == scopeKey) {
+        // This scope already asked for authorization. A cancelled request is
+        // not retried automatically; the Authorize affordance stays visible.
+        updateAuthorizationAffordance();
+        return;
+    }
+
+    m_authorizationScopeRequested = scopeKey;
+    m_authorizationRequestInFlight = true;
+    updateAuthorizationAffordance();
+
+    // Defer to the next event-loop turn so the scope switch completes and the
+    // window repaints before the authorization dialog opens. This reuses the
+    // exact ensurePrivilegedSession() path that repairs use, so an established
+    // session is reused by every later diagnostics and repair action.
+    QTimer::singleShot(0, this, [this, scopeKey] {
+        m_authorizationRequestInFlight = false;
+        if (m_privilegedSessionReady || m_authorizationScopeRequested != scopeKey) {
+            updateAuthorizationAffordance();
+            return;
+        }
+        QString error;
+        if (ensurePrivilegedSession(&error)) {
+            m_authorizationDeferredScope.clear();
+            updateAuthorizationAffordance();
+            return;
+        }
+        m_authorizationDeferredScope = scopeKey;
+        appendStatusLog(statusEntryIdentity(QStringLiteral("authorization-deferred")),
+                        QStringLiteral("Administrator authorization was deferred; the next privileged action will request it again."));
+        updateAuthorizationAffordance();
+    });
+}
+
+void MainWindow::authorizePrivilegedSessionNow()
+{
+    if (m_privilegedSessionReady) {
+        updateAuthorizationAffordance();
+        return;
+    }
+
+    // An explicit user action may always request authorization again, even
+    // after a cancellation for the same scope.
+    m_authorizationScopeRequested = currentPrivilegedScopeKey();
+    QString error;
+    if (ensurePrivilegedSession(&error)) {
+        m_authorizationDeferredScope.clear();
+    } else {
+        m_authorizationDeferredScope = m_authorizationScopeRequested;
+        appendStatusLog(statusEntryIdentity(QStringLiteral("authorization-deferred")),
+                        QStringLiteral("Administrator authorization was deferred; the next privileged action will request it again."));
+    }
+    updateAuthorizationAffordance();
+}
+
+QString MainWindow::currentPrivilegedScopeKey() const
+{
+    if (m_hostMaintenanceMode && !m_hostPrimaryPath.isEmpty()) {
+        return QStringLiteral("host:%1").arg(m_hostPrimaryPath);
+    }
+    if (!m_previewTargetPath.isEmpty()) {
+        return QStringLiteral("target:%1").arg(m_previewTargetPath);
+    }
+    return QString();
+}
+
+void MainWindow::updateAuthorizationAffordance()
+{
+    if (!m_authorizationStatusLabel || !m_authorizeNowButton) {
+        return;
+    }
+
+    if (m_privilegedSessionReady) {
+        m_authorizationStatusLabel->setVisible(false);
+        m_authorizeNowButton->setVisible(false);
+        return;
+    }
+
+    const bool deferredForCurrentScope = !m_authorizationDeferredScope.isEmpty()
+        && m_authorizationDeferredScope == currentPrivilegedScopeKey();
+    if (deferredForCurrentScope) {
+        m_authorizationStatusLabel->setText(QStringLiteral(
+            "Administrator authorization deferred — diagnostics will regenerate after you authorize."));
+        m_authorizationStatusLabel->setVisible(true);
+        m_authorizeNowButton->setVisible(true);
+        m_authorizeNowButton->setEnabled(true);
+        return;
+    }
+
+    if (m_authorizationRequestInFlight) {
+        m_authorizationStatusLabel->setText(QStringLiteral("Requesting administrator authorization…"));
+        m_authorizationStatusLabel->setVisible(true);
+        m_authorizeNowButton->setVisible(false);
+        return;
+    }
+
+    m_authorizationStatusLabel->setVisible(false);
+    m_authorizeNowButton->setVisible(false);
 }
 
 void MainWindow::closePrivilegedSession()
@@ -3324,11 +5383,17 @@ void MainWindow::closePrivilegedSession()
     session->deleteLater();
 }
 
+// Sends one request over the line-oriented privileged session and returns the
+// captured helper output. Waits for any active request first, so the helper
+// answers exactly one request at a time. A missing protocol DONE record is
+// reported as a transport failure rather than a successful command.
 QString MainWindow::runPrivilegedRequest(const QString &title,
                                          const QStringList &arguments,
                                          QByteArray secret,
                                          bool *succeeded,
-                                         bool showProgressDialog)
+                                         bool showProgressDialog,
+                                         LogEntryKind kind,
+                                         const QString &statusIdentity)
 {
     if (succeeded) {
         *succeeded = false;
@@ -3345,9 +5410,36 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         }
     }
 
+    // The helper session answers one request at a time. Wait centrally for any
+    // active request (for example the automatic diagnostics run) to finish
+    // before sending this one, so no caller needs its own concurrency check
+    // and no empty modal dialog can sit behind a busy helper. The event loop
+    // keeps the window responsive while waiting.
+    if (m_privilegedOperationActive) {
+        BusyOperationScope waiting(this, QStringLiteral("Waiting for the running operation"));
+        statusBar()->showMessage(QStringLiteral("Waiting for the running privileged operation to finish…"));
+        appendLog(QStringLiteral("Privileged request '%1' is waiting for the running operation to finish.").arg(title),
+                  QStringLiteral("INFO"), kind);
+        QEventLoop waitLoop;
+        QTimer poll;
+        poll.setInterval(50);
+        connect(&poll, &QTimer::timeout, &waitLoop, [this, &waitLoop] {
+            if (!m_privilegedOperationActive) {
+                waitLoop.quit();
+            }
+        });
+        poll.start();
+        if (m_privilegedOperationActive) {
+            waitLoop.exec();
+        }
+        poll.stop();
+    }
+
+    BusyOperationScope busy(this, title);
+
     QString authorizationError;
     if (!ensurePrivilegedSession(&authorizationError)) {
-        if (!authorizationError.isEmpty()) {
+        if (!authorizationError.isEmpty() && !m_evidenceRefreshInProgress) {
             QMessageBox::warning(this, QStringLiteral("Authorization unavailable"), authorizationError);
         }
         secret.fill('\0');
@@ -3355,7 +5447,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         return QStringLiteral("ERROR: %1\n").arg(authorizationError);
     }
 
-    QProcess *session = m_privilegedSession;
+    QPointer<QProcess> session = m_privilegedSession;
     if (!session || session->state() == QProcess::NotRunning) {
         secret.fill('\0');
         secret.clear();
@@ -3398,9 +5490,14 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     bool requestSucceeded = false;
     int requestExitCode = -1;
 
-    connect(session, &QProcess::readyReadStandardOutput, &dialog,
-            [session, requestId, &wireBuffer, &captured, &requestDone, &requestSucceeded,
-             &requestExitCode, output, status, closeButton, &dialog] {
+    // Parse every complete protocol line currently buffered. Called from
+    // readyReadStandardOutput and again after the request finishes so a
+    // helper that writes DONE immediately before exiting is never
+    // misclassified as truncated.
+    auto consumeSessionOutput = [&] {
+        if (!session) {
+            return;
+        }
         wireBuffer += session->readAllStandardOutput();
         while (true) {
             const qsizetype newline = wireBuffer.indexOf('\n');
@@ -3456,7 +5553,9 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 continue;
             }
         }
-    });
+    };
+
+    connect(session, &QProcess::readyReadStandardOutput, &dialog, consumeSessionOutput);
 
     connect(session, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &dialog,
             [status, closeButton, &dialog, &requestDone](int, QProcess::ExitStatus) {
@@ -3501,6 +5600,9 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     endRecord.clear();
     session->waitForBytesWritten(1000);
 
+    // The automatic evidence refresh must never nest inside a privileged
+    // request; mark the helper busy for the duration of the request.
+    m_privilegedOperationActive = true;
     if (showProgressDialog) {
         dialog.exec();
     } else {
@@ -3522,18 +5624,60 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         }
         pollTimer.stop();
     }
+    m_privilegedOperationActive = false;
+
+    // Drain any output the helper wrote immediately before exiting: Qt may
+    // deliver the final buffered bytes after the process is reported as
+    // finished, and a complete DONE record must not look truncated.
+    if (!requestDone) {
+        consumeSessionOutput();
+    }
+
+    if (!requestDone) {
+        // The helper rejected the request, exited early, or the response was
+        // truncated. Never assume a DONE record: report a clear transport
+        // error and treat the request as failed.
+        const QString protocolError = QStringLiteral(
+            "ERROR: The privileged helper did not return a protocol DONE record for this request; the response was rejected, truncated, or the helper exited before completing it. The request is treated as failed.");
+        if (!captured.contains(QString::fromLatin1(kHelperProtocolIncompleteMarker))) {
+            if (!captured.isEmpty() && !captured.endsWith(QLatin1Char('\n'))) {
+                captured += QLatin1Char('\n');
+            }
+            captured += protocolError;
+            captured += QLatin1Char('\n');
+        }
+        appendLog(QStringLiteral("%1: the privileged helper did not return a protocol DONE record; treating the request as failed.").arg(title),
+                  QStringLiteral("ERROR"), kind);
+    }
 
     if (succeeded) {
         *succeeded = requestDone && requestSucceeded;
     }
-    appendLog(QStringLiteral("%1 finished with exit code %2 (%3).")
-                  .arg(title)
-                  .arg(requestExitCode)
-                  .arg(requestDone && requestSucceeded ? QStringLiteral("success") : QStringLiteral("error")),
-              requestDone && requestSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    const QString completion = QStringLiteral("%1 finished with exit code %2 (%3).")
+        .arg(title)
+        .arg(requestExitCode)
+        .arg(requestDone && requestSucceeded ? QStringLiteral("success") : QStringLiteral("error"));
+    const QString completionLevel = requestDone && requestSucceeded
+        ? QStringLiteral("INFO")
+        : QStringLiteral("ERROR");
+    // Diagnostic requests name a stable identity so the automatic regeneration
+    // cycle updates one completion entry per scope/disk/key instead of
+    // appending one per run. Unlock, snapshot, file-copy and repair requests
+    // pass no identity and keep append-only records.
+    if (statusIdentity.isEmpty()) {
+        appendLog(completion, completionLevel, kind);
+    } else {
+        appendStatusLog(statusIdentity, completion, completionLevel, kind);
+    }
     return captured;
 }
 
+// ---- MainWindow: LUKS unlock ------------------------------------------------
+
+// Unlocks the selected drive's locked LUKS component through the privileged
+// helper. The passphrase travels only over the helper pipe (never in command
+// arguments or logs) and a rejected passphrase offers a retry without
+// re-authorizing the session.
 void MainWindow::unlockSelectedTarget()
 {
     const QList<QTreeWidgetItem *> selected = m_deviceTree ? m_deviceTree->selectedItems() : QList<QTreeWidgetItem *>();
@@ -3601,6 +5745,8 @@ void MainWindow::unlockSelectedTarget()
     if (confirm.exec() != QMessageBox::Yes) {
         return;
     }
+
+    BusyOperationScope busy(this, QStringLiteral("Unlocking %1").arg(preferred->path));
 
     QString authorizationError;
     if (!ensurePrivilegedSession(&authorizationError)) {
@@ -3701,12 +5847,14 @@ void MainWindow::unlockSelectedTarget()
         passphrase.clear();
 
         appendLog(QStringLiteral("Starting privileged LUKS unlock for %1 on %2. Passphrase is not logged.")
-                      .arg(preferred->path, disk.path));
+                      .arg(preferred->path, disk.path),
+                  QStringLiteral("INFO"), LogEntryKind::Unlock);
         const QString unlockOutput = runPrivilegedRequest(QStringLiteral("Unlock LUKS target"),
                                                            {QStringLiteral("unlock"), disk.path, preferred->path},
                                                            secret,
                                                            &processSucceeded,
-                                                           false);
+                                                           false,
+                                                           LogEntryKind::Unlock);
         secret.fill('\0');
         secret.clear();
 
@@ -3727,7 +5875,7 @@ void MainWindow::unlockSelectedTarget()
 
         if (!processSucceeded && unlockOutput.contains(QStringLiteral("UNLOCK_AUTH_FAILED=1"))) {
             appendLog(QStringLiteral("LUKS passphrase was not accepted for %1; offering retry without re-authorizing the administrator session.")
-                          .arg(disk.path), QStringLiteral("WARNING"));
+                          .arg(disk.path), QStringLiteral("WARNING"), LogEntryKind::Unlock);
             QMessageBox retry(this);
             retry.setIcon(QMessageBox::Warning);
             retry.setWindowTitle(QStringLiteral("Passphrase not accepted"));
@@ -3742,12 +5890,14 @@ void MainWindow::unlockSelectedTarget()
         }
 
         if (!processSucceeded) {
-            appendLog(QStringLiteral("LUKS unlock did not complete for %1.").arg(disk.path), QStringLiteral("ERROR"));
+            appendLog(QStringLiteral("LUKS unlock did not complete for %1.").arg(disk.path),
+                      QStringLiteral("ERROR"), LogEntryKind::Unlock);
             return;
         }
     }
 
-    appendLog(QStringLiteral("LUKS volume unlocked for %1; refreshing device topology.").arg(disk.path));
+    appendLog(QStringLiteral("LUKS volume unlocked for %1; refreshing device topology.").arg(disk.path),
+              QStringLiteral("INFO"), LogEntryKind::Unlock);
     refreshDevices();
 
     for (int i = 0; m_deviceTree && i < m_deviceTree->topLevelItemCount(); ++i) {
@@ -3758,15 +5908,22 @@ void MainWindow::unlockSelectedTarget()
         }
     }
 
+    if (m_previewTargetPath == diskPath) {
+        // Unlocking the committed target changes its mapper/topology identity:
+        // the complete target diagnostic set is invalidated.
+        invalidateAllTargetDiagnostics();
+    }
     if (m_previewTargetPath == diskPath && m_deviceIndex.contains(diskPath)) {
         const DeviceNode refreshedDisk = m_deviceIndex.value(diskPath);
         const DeviceNode *refreshedPreferred = preferredRepairNode(refreshedDisk);
         m_previewTargetComponentPath = refreshedPreferred ? refreshedPreferred->path : QString();
         updateTargetLabels();
+        updateSessionScope();
     }
 
     statusBar()->showMessage(QStringLiteral("Encrypted target unlocked — select or reselect the repair target"), 6000);
     scheduleSnapshotPreload();
+    scheduleEvidenceRefresh(QStringLiteral("encrypted target unlocked"));
 }
 
 void MainWindow::updateTargetLabels()
@@ -3797,6 +5954,16 @@ void MainWindow::updateTargetLabels()
         label->setToolTip(tooltip);
     }
 
+    if (m_chrootShellTargetLabel) {
+        if (m_hostMaintenanceMode) {
+            m_chrootShellTargetLabel->setText(QStringLiteral("Running Host: %1").arg(
+                m_hostPrimaryPath.isEmpty() ? QStringLiteral("unresolved") : m_hostPrimaryPath));
+            m_chrootShellTargetLabel->setToolTip(QStringLiteral(
+                "Running host selected for the Host Shell: %1\nRoot component: %2")
+                .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+        }
+    }
+
     if (m_systemTargetLabel) {
         QString committedSummary = m_previewTargetPath;
         if (!m_previewTargetPath.isEmpty() && m_deviceIndex.contains(m_previewTargetPath)) {
@@ -3820,9 +5987,10 @@ void MainWindow::updateTargetLabels()
     updateCommittedTargetVisual();
     updateFileCopyDirection();
     updateSnapshotControls();
+    updateChrootShellMode();
     if (m_chrootShellRunButton) {
         QString shellReason;
-        m_chrootShellRunButton->setEnabled(repairTargetReady(&shellReason));
+        m_chrootShellRunButton->setEnabled(shellCommandReady(&shellReason));
     }
 
     if (m_diagnosticScopeCombo && !m_previewTargetPath.isEmpty()) {
@@ -3831,7 +5999,6 @@ void MainWindow::updateTargetLabels()
     updateFullRepairSummary();
     updateDiagnosticDetails();
 }
-
 
 void MainWindow::updateCommittedTargetVisual()
 {
@@ -3866,7 +6033,7 @@ void MainWindow::updateCommittedTargetVisual()
 
         if (committed) {
             item->setToolTip(1, QStringLiteral(
-                "Committed repair target. Clicking another row changes only the inspection highlight; repair actions continue to target %1 until Select Target is pressed on another physical drive.\\n%2")
+                "Committed repair target. Clicking another row changes only the inspection highlight; repair actions continue to target %1 until Select Target is pressed on another physical drive.\n%2")
                 .arg(path, originalStatus));
         } else {
             item->setToolTip(1, originalStatus);
@@ -3874,6 +6041,7 @@ void MainWindow::updateCommittedTargetVisual()
     }
 }
 
+// ---- MainWindow: Btrfs snapshots --------------------------------------------
 
 void MainWindow::clearSnapshotResults()
 {
@@ -3959,15 +6127,19 @@ void MainWindow::loadSnapshots()
         return;
     }
 
+    BusyOperationScope busy(this, QStringLiteral("Loading Btrfs snapshots"));
+
     bool succeeded = false;
     appendLog(QStringLiteral("Loading Btrfs snapshots read-only for %1 (%2).")
-                  .arg(m_previewTargetPath, m_previewTargetComponentPath));
+                  .arg(m_previewTargetPath, m_previewTargetComponentPath),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
         QStringLiteral("Load Btrfs snapshots"),
         {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath, QStringLiteral("list")},
         QByteArray(),
         &succeeded,
-        false);
+        false,
+        LogEntryKind::Snapshot);
 
     if (!succeeded) {
         if (m_snapshotDetails) {
@@ -3975,7 +6147,8 @@ void MainWindow::loadSnapshots()
                 ? QStringLiteral("Snapshot inventory failed. See Logs for details.")
                 : output);
         }
-        appendLog(QStringLiteral("Btrfs snapshot inventory failed."), QStringLiteral("ERROR"));
+        appendLog(QStringLiteral("Btrfs snapshot inventory failed."), QStringLiteral("ERROR"),
+                  LogEntryKind::Snapshot);
         updateSnapshotControls();
         return;
     }
@@ -4058,7 +6231,8 @@ void MainWindow::loadSnapshots()
                   .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
             : QStringLiteral("No Snapper-style Btrfs root snapshots were found on the selected target. The scan was read-only."));
     }
-    appendLog(QStringLiteral("Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.").arg(count));
+    appendLog(QStringLiteral("Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.").arg(count),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
     updateSnapshotControls();
 }
 
@@ -4096,21 +6270,25 @@ void MainWindow::inspectSelectedSnapshot()
         return;
     }
 
+    BusyOperationScope busy(this, QStringLiteral("Inspecting snapshot %1").arg(snapshotId));
+
     bool succeeded = false;
-    appendLog(QStringLiteral("Inspecting Btrfs snapshot %1 read-only.").arg(snapshotId));
+    appendLog(QStringLiteral("Inspecting Btrfs snapshot %1 read-only.").arg(snapshotId),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
         QStringLiteral("Inspect Btrfs snapshot %1").arg(snapshotId),
         {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath,
          QStringLiteral("inspect"), snapshotId},
         QByteArray(),
         &succeeded,
-        false);
+        false,
+        LogEntryKind::Snapshot);
 
     const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     m_snapshotDetails->setPlainText(QStringLiteral("Captured: %1\n\n%2").arg(stamp, output));
     appendLog(QStringLiteral("Snapshot %1 read-only inspection %2.")
                   .arg(snapshotId, succeeded ? QStringLiteral("completed") : QStringLiteral("failed")),
-              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), LogEntryKind::Snapshot);
 }
 
 void MainWindow::rollbackSelectedSnapshot()
@@ -4128,20 +6306,25 @@ void MainWindow::rollbackSelectedSnapshot()
         return;
     }
 
+    BusyOperationScope busy(this, QStringLiteral("Rolling back snapshot %1").arg(snapshotId));
+
     bool planSucceeded = false;
-    appendLog(QStringLiteral("Preparing read-only transactional rollback plan for Btrfs snapshot %1.").arg(snapshotId));
+    appendLog(QStringLiteral("Preparing read-only transactional rollback plan for Btrfs snapshot %1.").arg(snapshotId),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
     const QString plan = runPrivilegedRequest(
         QStringLiteral("Preflight snapshot rollback %1").arg(snapshotId),
         {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath,
          QStringLiteral("plan"), snapshotId},
         QByteArray(),
-        &planSucceeded);
+        &planSucceeded,
+        true,
+        LogEntryKind::Snapshot);
 
     const QString captured = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     m_snapshotDetails->setPlainText(QStringLiteral("Rollback preflight captured: %1\n\n%2").arg(captured, plan));
     if (!planSucceeded || !plan.contains(QStringLiteral("PLAN_OK=1"))) {
         appendLog(QStringLiteral("Snapshot %1 rollback preflight failed; no target data was changed.").arg(snapshotId),
-                  QStringLiteral("ERROR"));
+                  QStringLiteral("ERROR"), LogEntryKind::Snapshot);
         QMessageBox::warning(this, QStringLiteral("Rollback preflight failed"),
                              QStringLiteral("The selected snapshot did not pass the transactional rollback preflight. No rollback was performed.\n\nReview the Snapshots details pane and Logs."));
         return;
@@ -4161,7 +6344,8 @@ void MainWindow::rollbackSelectedSnapshot()
     warning.setDefaultButton(QMessageBox::Cancel);
     warning.button(QMessageBox::Yes)->setText(QStringLiteral("Continue to Confirmation"));
     if (warning.exec() != QMessageBox::Yes) {
-        appendLog(QStringLiteral("Snapshot rollback cancelled after preflight; no target data was changed."));
+        appendLog(QStringLiteral("Snapshot rollback cancelled after preflight; no target data was changed."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
         return;
     }
 
@@ -4174,26 +6358,28 @@ void MainWindow::rollbackSelectedSnapshot()
         QString(),
         &ok).trimmed();
     if (!ok || typed != QStringLiteral("ROLLBACK")) {
-        appendLog(QStringLiteral("Snapshot rollback cancelled because the confirmation text did not match ROLLBACK."));
+        appendLog(QStringLiteral("Snapshot rollback cancelled because the confirmation text did not match ROLLBACK."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
         return;
     }
 
     bool succeeded = false;
     appendLog(QStringLiteral("Starting transactional Btrfs rollback to snapshot %1 on committed target %2.")
                   .arg(snapshotId, m_previewTargetPath),
-              QStringLiteral("WARNING"));
+              QStringLiteral("WARNING"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
         QStringLiteral("Roll back to Btrfs snapshot %1").arg(snapshotId),
         {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath,
          QStringLiteral("rollback"), snapshotId},
         QByteArray(),
-        &succeeded);
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot);
 
     const QString finished = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
     m_snapshotDetails->setPlainText(QStringLiteral("Rollback finished: %1\n\n%2").arg(finished, output));
     if (succeeded && output.contains(QStringLiteral("ROLLBACK_RESULT=SUCCESS"))) {
-        clearTargetDiagnosticCache();
-        m_targetDiagnosticsNeedRegeneration = true;
+        invalidateAllTargetDiagnostics();
         updateFullRepairSummary();
         if (m_snapshotTable) {
             m_snapshotTable->setRowCount(0);
@@ -4202,15 +6388,16 @@ void MainWindow::rollbackSelectedSnapshot()
         m_snapshotDetails->setPlainText(QStringLiteral("Rollback completed: %1\n\n%2\n\nSnapshot inventory was cleared because the active root changed. Choose Load Snapshots to refresh it.")
                                             .arg(finished, output));
         appendLog(QStringLiteral("STALE DIAGNOSTICS: snapshot %1 rollback changed the active root; snapshot inventory and cached diagnostics were invalidated. Regenerate diagnostics before the next repair.")
-                      .arg(snapshotId));
+                      .arg(snapshotId),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
         refreshDevices();
         updateSnapshotControls();
+        scheduleEvidenceRefresh(QStringLiteral("snapshot rollback completed"));
         QMessageBox::information(this, QStringLiteral("Snapshot rollback complete"),
                                  QStringLiteral("Snapshot %1 was promoted to a writable @ root and the boot stack passed reconciliation.\n\nThe previous @ was retained under a timestamped @rollback-before-* name. Reboot using the normal boot path when ready.")
                                      .arg(snapshotId));
     } else {
-        clearTargetDiagnosticCache();
-        m_targetDiagnosticsNeedRegeneration = true;
+        invalidateAllTargetDiagnostics();
         updateFullRepairSummary();
         if (m_snapshotTable) {
             m_snapshotTable->setRowCount(0);
@@ -4220,13 +6407,16 @@ void MainWindow::rollbackSelectedSnapshot()
                                             .arg(finished, output));
         appendLog(QStringLiteral("STALE DIAGNOSTICS: snapshot %1 rollback did not complete; cached diagnostics and snapshots were invalidated. Regenerate diagnostics and review the operation output before the next repair or reboot.")
                       .arg(snapshotId),
-                  QStringLiteral("ERROR"));
+                  QStringLiteral("ERROR"), LogEntryKind::Snapshot);
         refreshDevices();
         updateSnapshotControls();
+        scheduleEvidenceRefresh(QStringLiteral("snapshot rollback failed"));
         QMessageBox::critical(this, QStringLiteral("Snapshot rollback failed"),
                               QStringLiteral("The rollback did not complete successfully. Do not reboot until you review the Snapshots output and Logs. The helper attempts to restore the preserved @ automatically when post-switch validation fails."));
     }
 }
+
+// ---- MainWindow: File Copy --------------------------------------------------
 
 void MainWindow::updateFileCopyDirection()
 {
@@ -4303,7 +6493,8 @@ void MainWindow::browseFileCopyDestination()
         if (!path.isEmpty()) {
             m_destinationEdit->setText(path);
             m_destinationEdit->setToolTip(path);
-            appendLog(QStringLiteral("Staged Repair → Host destination: %1. No copy occurred.").arg(path));
+            appendLog(QStringLiteral("Staged Repair → Host destination: %1. No copy occurred.").arg(path),
+                      QStringLiteral("INFO"), LogEntryKind::FileCopy);
             updateFileCopyControls();
         }
         return;
@@ -4453,7 +6644,7 @@ void MainWindow::browseFileCopyDestination()
             const QString output = runPrivilegedRequest(
                 QStringLiteral("Browse repaired-system folders"),
                 {QStringLiteral("browse-target"), m_previewTargetPath, m_previewTargetComponentPath, candidate},
-                QByteArray(), &succeeded, false);
+                QByteArray(), &succeeded, false, LogEntryKind::FileCopy);
             if (!succeeded) {
                 browserStatus->setText(QStringLiteral("Unable to read this repaired-system folder. Review Logs for the helper error."));
                 pathLoaded = false;
@@ -4551,7 +6742,8 @@ void MainWindow::browseFileCopyDestination()
 
     m_destinationEdit->setText(cleaned);
     m_destinationEdit->setToolTip(cleaned);
-    appendLog(QStringLiteral("Staged Host → Repair destination: %1. No copy occurred.").arg(cleaned));
+    appendLog(QStringLiteral("Staged Host → Repair destination: %1. No copy occurred.").arg(cleaned),
+              QStringLiteral("INFO"), LogEntryKind::FileCopy);
     updateFileCopyControls();
 }
 
@@ -4580,7 +6772,8 @@ void MainWindow::addSourceFiles()
             auto *item = new QListWidgetItem(cleaned, m_sourceList);
             item->setToolTip(cleaned);
         }
-        appendLog(QStringLiteral("Added repaired-system file path to the Repair → Host staging list: %1. No copy occurred.").arg(cleaned));
+        appendLog(QStringLiteral("Added repaired-system file path to the Repair → Host staging list: %1. No copy occurred.").arg(cleaned),
+                  QStringLiteral("INFO"), LogEntryKind::FileCopy);
         updateFileCopyControls();
         return;
     }
@@ -4593,7 +6786,8 @@ void MainWindow::addSourceFiles()
         }
     }
     if (!paths.isEmpty()) {
-        appendLog(QStringLiteral("Added %1 host file(s) to the Host → Repair staging list. No copy occurred.").arg(paths.size()));
+        appendLog(QStringLiteral("Added %1 host file(s) to the Host → Repair staging list. No copy occurred.").arg(paths.size()),
+                  QStringLiteral("INFO"), LogEntryKind::FileCopy);
         updateFileCopyControls();
     }
 }
@@ -4623,7 +6817,8 @@ void MainWindow::addSourceFolder()
             auto *item = new QListWidgetItem(cleaned, m_sourceList);
             item->setToolTip(cleaned);
         }
-        appendLog(QStringLiteral("Added repaired-system folder path to the Repair → Host staging list: %1. No copy occurred.").arg(cleaned));
+        appendLog(QStringLiteral("Added repaired-system folder path to the Repair → Host staging list: %1. No copy occurred.").arg(cleaned),
+                  QStringLiteral("INFO"), LogEntryKind::FileCopy);
         updateFileCopyControls();
         return;
     }
@@ -4632,7 +6827,8 @@ void MainWindow::addSourceFolder()
     if (!path.isEmpty() && m_sourceList->findItems(path, Qt::MatchExactly).isEmpty()) {
         auto *item = new QListWidgetItem(path, m_sourceList);
         item->setToolTip(path);
-        appendLog(QStringLiteral("Added host folder to the Host → Repair staging list: %1. No copy occurred.").arg(path));
+        appendLog(QStringLiteral("Added host folder to the Host → Repair staging list: %1. No copy occurred.").arg(path),
+                  QStringLiteral("INFO"), LogEntryKind::FileCopy);
         updateFileCopyControls();
     }
 }
@@ -4697,11 +6893,115 @@ bool MainWindow::fileCopyReady(QString *reason) const
     return true;
 }
 
+// ---- MainWindow: chroot and host shell --------------------------------------
+
 void MainWindow::clearChrootShellOutput()
 {
     if (m_chrootShellOutput) {
         m_chrootShellOutput->clear();
     }
+}
+
+bool MainWindow::shellCommandReady(QString *reason) const
+{
+    // The Run button and the command field's returnPressed handler share this
+    // single gate so an unavailable shell can never be invoked by either path.
+    return m_hostMaintenanceMode ? hostMaintenanceReady(reason) : repairTargetReady(reason);
+}
+
+void MainWindow::updateChrootShellMode()
+{
+    const bool hostMode = m_hostMaintenanceMode;
+
+    if (m_chrootShellHeading) {
+        m_chrootShellHeading->setText(hostMode
+            ? QStringLiteral("Host shell") : QStringLiteral("Chroot shell"));
+    }
+    if (m_chrootShellNotice) {
+        m_chrootShellNotice->setText(hostMode
+            ? QStringLiteral("Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system; output is kept in this window and in the application log.")
+            : QStringLiteral("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot; output is kept in this window and in the application log."));
+    }
+    if (m_chrootShellCommandEdit) {
+        m_chrootShellCommandEdit->setPlaceholderText(hostMode
+            ? QStringLiteral("Command to run on the running host, for example: apt update")
+            : QStringLiteral("Command, for example: apt update or update-grub"));
+        m_chrootShellCommandEdit->setAccessibleName(hostMode
+            ? QStringLiteral("Host shell command") : QStringLiteral("Chroot shell command"));
+    }
+    if (m_chrootShellRunButton) {
+        m_chrootShellRunButton->setText(hostMode
+            ? QStringLiteral("Run on Host") : QStringLiteral("Run Command"));
+        m_chrootShellRunButton->setToolTip(hostMode
+            ? QStringLiteral("Execute a command on the running host as root.")
+            : QStringLiteral("Execute the command inside the selected repair system as root."));
+    }
+    if (m_chrootShellWarning) {
+        m_chrootShellWarning->setText(hostMode
+            ? QStringLiteral("Commands can modify the running host. Review each command before running it.")
+            : QStringLiteral("Commands can modify the target system. Review each command before running it."));
+    }
+
+    if (m_tabs && m_tabs->count() > ChrootShellTab) {
+        // Keep the tab label consistent with the responsive layout: the full
+        // label only fits at the wide breakpoint used by updateResponsiveLayout.
+        const int availableWidth = centralWidget() ? centralWidget()->width() : width();
+        const QString label = availableWidth < 820
+            ? QStringLiteral("Shell")
+            : (hostMode ? QStringLiteral("Host Shell") : QStringLiteral("Chroot Shell"));
+        m_tabs->setTabText(ChrootShellTab, label);
+        m_tabs->setTabToolTip(ChrootShellTab, hostMode
+            ? QStringLiteral("Execute a command on the running host as root.")
+            : QStringLiteral("Execute a command inside the selected repair system as root."));
+    }
+}
+
+bool MainWindow::outputHasAptReleaseInfoChange(const QString &output)
+{
+    // The exact error class apt emits when a repository's InRelease metadata
+    // changed Origin/Label/Suite/Codename/Version. Case-insensitive because
+    // apt and GUI transcripts may differ in capitalization.
+    static const QRegularExpression pattern(
+        QStringLiteral("changed its '(?:Origin|Label|Suite|Codename|Version)' value"),
+        QRegularExpression::CaseInsensitiveOption);
+    return output.contains(pattern);
+}
+
+QStringList MainWindow::aptReleaseInfoChangedRepositories(const QString &output)
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("Repository\\s+'([^']*)'\\s+changed its\\s+'(?:Origin|Label|Suite|Codename|Version)'\\s+value"),
+        QRegularExpression::CaseInsensitiveOption);
+    QStringList repositories;
+    QRegularExpressionMatchIterator iterator = pattern.globalMatch(output);
+    while (iterator.hasNext()) {
+        const QString repository = iterator.next().captured(1).trimmed();
+        if (!repository.isEmpty() && !repositories.contains(repository)) {
+            repositories.append(repository);
+        }
+    }
+    return repositories;
+}
+
+QString MainWindow::aptReleaseInfoChangeDetails(const QString &output)
+{
+    static const QRegularExpression pattern(
+        QStringLiteral("Repository\\s+'([^']*)'\\s+changed its\\s+'(Origin|Label|Suite|Codename|Version)'\\s+value\\s+from\\s+'([^']*)'\\s+to\\s+'([^']*)'"),
+        QRegularExpression::CaseInsensitiveOption);
+    QStringList details;
+    QRegularExpressionMatchIterator iterator = pattern.globalMatch(output);
+    while (iterator.hasNext()) {
+        const QRegularExpressionMatch match = iterator.next();
+        details.append(QStringLiteral("• %1: %2 changed from '%3' to '%4'")
+                           .arg(match.captured(1), match.captured(2),
+                                match.captured(3), match.captured(4)));
+    }
+    return details.join(QLatin1Char('\n'));
+}
+
+QString MainWindow::aptReleaseInfoChangeRetryCommand(const QString &command)
+{
+    return rewriteAptReleaseInfoChangeCommand(command, 0);
 }
 
 void MainWindow::runChrootShellCommand()
@@ -4713,35 +7013,131 @@ void MainWindow::runChrootShellCommand()
     if (command.isEmpty()) {
         return;
     }
+
+    const bool hostMode = m_hostMaintenanceMode;
+    const QString unavailableTitle = hostMode
+        ? QStringLiteral("Host shell unavailable")
+        : QStringLiteral("Chroot shell unavailable");
     QString reason;
-    if (!repairTargetReady(&reason)) {
-        QMessageBox::warning(this, QStringLiteral("Chroot shell unavailable"), reason);
+    if (!shellCommandReady(&reason)) {
+        QMessageBox::warning(this, unavailableTitle, reason);
         return;
     }
-    m_chrootShellOutput->appendPlainText(QStringLiteral("$ %1").arg(command));
-    m_chrootShellOutput->appendPlainText(QStringLiteral("[running…]"));
-    bool succeeded = false;
-    const QString output = runPrivilegedRequest(
-        QStringLiteral("Chroot shell"),
-        {QStringLiteral("shell"), m_previewTargetPath, m_previewTargetComponentPath, command},
-        QByteArray(), &succeeded, false);
-    if (!output.isEmpty()) {
-        m_chrootShellOutput->appendPlainText(output.trimmed());
+
+    // Never dispatch a request with an incomplete identity. The readiness gate
+    // already enforces this, but a future mode change must not be able to send
+    // an empty disk/root to the helper (which would reject it with a truncated
+    // response rather than a useful error).
+    const QString diskPath = hostMode ? m_hostPrimaryPath : m_previewTargetPath;
+    const QString componentPath = hostMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath;
+    if (diskPath.isEmpty() || componentPath.isEmpty()) {
+        const QString error = hostMode
+            ? QStringLiteral("The running-host identity is unresolved; no host shell command was sent.")
+            : QStringLiteral("The repair target identity is incomplete; no chroot shell command was sent.");
+        appendLog(error, QStringLiteral("ERROR"),
+                  hostMode ? LogEntryKind::HostShell : LogEntryKind::ChrootShell);
+        QMessageBox::warning(this, unavailableTitle, error);
+        return;
     }
-    m_chrootShellOutput->appendPlainText(succeeded ? QStringLiteral("[exit 0]") : QStringLiteral("[command failed]"));
-    const QString shellDetail = output.trimmed().isEmpty()
-        ? QStringLiteral("(no command output)")
-        : output.trimmed();
-    appendLog(QStringLiteral("Chroot shell output\nDiagnostic: %1\n%2")
-                  .arg(command, shellDetail),
-              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
-    appendLog(QStringLiteral("Chroot shell command %1: %2")
-                  .arg(succeeded ? QStringLiteral("completed") : QStringLiteral("failed"), command),
-              succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+
+    BusyOperationScope busy(this, hostMode
+        ? QStringLiteral("Running host shell command")
+        : QStringLiteral("Running chroot shell command"));
+
+    const LogEntryKind shellKind = hostMode ? LogEntryKind::HostShell : LogEntryKind::ChrootShell;
+    const QString shellTitle = hostMode ? QStringLiteral("Host shell") : QStringLiteral("Chroot shell");
+    const QString helperCommand = hostMode ? QStringLiteral("host-shell") : QStringLiteral("shell");
+
+    // One shell attempt. Both the original command and an accepted
+    // release-info-change retry keep the complete pane and log transcript of
+    // the existing shell flow, so no failure is silently overwritten.
+    auto runAttempt = [&](const QString &attemptCommand, bool *attemptSucceeded) {
+        m_chrootShellOutput->appendPlainText(QStringLiteral("$ %1").arg(attemptCommand));
+        m_chrootShellOutput->appendPlainText(QStringLiteral("[running…]"));
+        bool attemptOk = false;
+        const QString attemptOutput = runPrivilegedRequest(
+            shellTitle,
+            {helperCommand, diskPath, componentPath, attemptCommand},
+            QByteArray(), &attemptOk, false, shellKind);
+        if (!attemptOutput.isEmpty()) {
+            m_chrootShellOutput->appendPlainText(attemptOutput.trimmed());
+        }
+        m_chrootShellOutput->appendPlainText(attemptOk ? QStringLiteral("[exit 0]") : QStringLiteral("[command failed]"));
+        const QString shellDetail = attemptOutput.trimmed().isEmpty()
+            ? QStringLiteral("(no command output)")
+            : attemptOutput.trimmed();
+        appendLog(QStringLiteral("%1 output\nDiagnostic: %2\n%3")
+                      .arg(shellTitle, attemptCommand, shellDetail),
+                  attemptOk ? QStringLiteral("INFO") : QStringLiteral("ERROR"), shellKind);
+        appendLog(QStringLiteral("%1 command %2: %3")
+                      .arg(shellTitle,
+                           attemptOk ? QStringLiteral("completed") : QStringLiteral("failed"), attemptCommand),
+                  attemptOk ? QStringLiteral("INFO") : QStringLiteral("ERROR"), shellKind);
+        *attemptSucceeded = attemptOk;
+        return attemptOutput;
+    };
+
+    bool succeeded = false;
+    QString output = runAttempt(command, &succeeded);
+
+    // A repository release metadata change must not be a dead end. When apt
+    // refused the change and the command is a confidently recognized apt-family
+    // command, offer one retry with Acquire::AllowReleaseInfoChange=true; the
+    // option is confined to this retry and no signature, key or package check
+    // is relaxed. A declined prompt keeps the original failure untouched.
+    const QString retryCommand = succeeded ? QString() : aptReleaseInfoChangeRetryCommand(command);
+    if (!retryCommand.isEmpty() && outputHasAptReleaseInfoChange(output)) {
+        const QStringList repositories = aptReleaseInfoChangedRepositories(output);
+        const QString repositoryLabel = repositories.isEmpty()
+            ? QStringLiteral("the affected repository")
+            : repositories.join(QStringLiteral(", "));
+        const QString details = aptReleaseInfoChangeDetails(output);
+
+        QMessageBox confirm(this);
+        confirm.setIcon(QMessageBox::Warning);
+        confirm.setWindowTitle(QStringLiteral("Repository metadata changed"));
+        confirm.setText(QStringLiteral("The repository changed its release metadata:\n%1")
+                            .arg(repositoryLabel));
+        QString informative = details;
+        if (!informative.isEmpty()) {
+            informative += QStringLiteral("\n\n");
+        }
+        informative += QStringLiteral(
+            "The package manager refused the change. Allowing it re-runs the command once with "
+            "Acquire::AllowReleaseInfoChange=true; the change is accepted for this retry only. "
+            "Signature, key and package verification remain enforced.\n\nRetry command:\n%1")
+            .arg(retryCommand);
+        confirm.setInformativeText(informative);
+        confirm.setStandardButtons(QMessageBox::No | QMessageBox::Yes);
+        confirm.setDefaultButton(QMessageBox::No);
+        confirm.button(QMessageBox::Yes)->setText(QStringLiteral("Allow and Retry"));
+        if (confirm.exec() == QMessageBox::Yes) {
+            appendLog(QStringLiteral("%1 repository metadata change accepted for %2; retrying once with Acquire::AllowReleaseInfoChange=true: %3")
+                          .arg(shellTitle, repositoryLabel, retryCommand),
+                      QStringLiteral("WARNING"), shellKind);
+            output = runAttempt(retryCommand, &succeeded);
+        } else {
+            appendLog(QStringLiteral("%1 repository metadata change for %2 was not accepted; the original failure stands.")
+                          .arg(shellTitle, repositoryLabel),
+                      QStringLiteral("WARNING"), shellKind);
+        }
+    }
+
+    if (output.contains(QString::fromLatin1(kHelperProtocolIncompleteMarker))) {
+        // A rejected or truncated helper response is not a normal command
+        // failure: surface it explicitly instead of silently assuming the
+        // command completed.
+        QMessageBox::warning(
+            this,
+            hostMode ? QStringLiteral("Host shell response incomplete") : QStringLiteral("Chroot shell response incomplete"),
+            QStringLiteral("The privileged helper did not return a complete response for this command. The request was treated as failed; review the output and Logs before retrying."));
+    }
+
     // Most shell commands are arbitrary and therefore conservatively stale
-    // all target evidence. An apt update that only reports failed fetches did
-    // not receive repository data; keep the prior evidence in that one
-    // explicitly recognized no-change case.
+    // the active scope's evidence. An apt update that only reports failed
+    // fetches did not receive repository data; keep the prior evidence in that
+    // one explicitly recognized no-change case. The check uses the command the
+    // user asked for, not the retry form with the injected option.
     const QString foldedOutput = output.toCaseFolded();
     const QString foldedCommand = command.toCaseFolded();
     const bool aptRefreshNoChange = QRegularExpression(QStringLiteral("^(sudo\\s+)?apt(-get)?\\s+update$")).match(foldedCommand).hasMatch()
@@ -4749,14 +7145,18 @@ void MainWindow::runChrootShellCommand()
             || foldedOutput.contains(QStringLiteral("failed to fetch"))
             || foldedOutput.contains(QStringLiteral("temporary failure resolving")));
     if (aptRefreshNoChange) {
-        appendLog(QStringLiteral("Chroot shell apt update received no repository data; cached diagnostics remain usable."),
-                  QStringLiteral("WARNING"));
+        appendLog(hostMode
+                      ? QStringLiteral("Host shell apt update received no repository data; cached host diagnostics remain usable.")
+                      : QStringLiteral("Chroot shell apt update received no repository data; cached diagnostics remain usable."),
+                  QStringLiteral("WARNING"), shellKind);
     } else {
-        m_targetDiagnosticsNeedRegeneration = true;
-        clearTargetDiagnosticCache();
-        updateFullRepairSummary();
-        appendLog(QStringLiteral("STALE DIAGNOSTICS: chroot shell command may have changed target files. Regenerate diagnostics before the next repair."),
-                  QStringLiteral("WARNING"));
+        // Arbitrary shell commands are deliberately broad: the invalidation
+        // mapping sends the shell key to the complete diagnostic set.
+        invalidateDiagnosticsForRepair({QStringLiteral("shell")}, false,
+                                       hostMode
+                                           ? QStringLiteral("host shell command changed running-host files")
+                                           : QStringLiteral("chroot shell command changed target files"),
+                                       shellKind);
     }
     m_chrootShellCommandEdit->clear();
     m_chrootShellOutput->moveCursor(QTextCursor::End);
@@ -4775,6 +7175,8 @@ void MainWindow::runFileCopyPreview()
     const QString ownership = m_ownershipCombo && m_ownershipCombo->currentIndex() == 1
         ? QStringLiteral("preserve") : QStringLiteral("smart");
 
+    BusyOperationScope busy(this, QStringLiteral("Previewing file copy"));
+
     QStringList arguments = {QStringLiteral("copy-preview"), m_previewTargetPath, m_previewTargetComponentPath,
                              direction, ownership, QStringLiteral("normal"), m_destinationEdit->text().trimmed()};
     for (int row = 0; row < m_sourceList->count(); ++row) {
@@ -4782,8 +7184,9 @@ void MainWindow::runFileCopyPreview()
     }
 
     appendLog(QStringLiteral("Starting File Copy preview (%1).").arg(repairToHost
-        ? QStringLiteral("Repair → Host") : QStringLiteral("Host → Repair")));
-    runRepairHelper(QStringLiteral("Preview File Copy"), arguments);
+        ? QStringLiteral("Repair → Host") : QStringLiteral("Host → Repair")),
+              QStringLiteral("INFO"), LogEntryKind::FileCopy);
+    runRepairHelper(QStringLiteral("Preview File Copy"), arguments, LogEntryKind::FileCopy);
 }
 
 void MainWindow::runFileCopy()
@@ -4847,6 +7250,8 @@ void MainWindow::runFileCopy()
         return;
     }
 
+    BusyOperationScope busy(this, QStringLiteral("Copying files"));
+
     const QString direction = repairToHost ? QStringLiteral("repair-to-host") : QStringLiteral("host-to-repair");
     const QString ownership = m_ownershipCombo && m_ownershipCombo->currentIndex() == 1
         ? QStringLiteral("preserve") : QStringLiteral("smart");
@@ -4858,9 +7263,12 @@ void MainWindow::runFileCopy()
         arguments << m_sourceList->item(row)->text();
     }
 
-    appendLog(QStringLiteral("Starting verified File Copy (%1) to %2.").arg(directionLabel, destination));
-    runRepairHelper(QStringLiteral("File Copy — %1").arg(directionLabel), arguments);
+    appendLog(QStringLiteral("Starting verified File Copy (%1) to %2.").arg(directionLabel, destination),
+              QStringLiteral("INFO"), LogEntryKind::FileCopy);
+    runRepairHelper(QStringLiteral("File Copy — %1").arg(directionLabel), arguments, LogEntryKind::FileCopy);
 }
+
+// ---- MainWindow: host capabilities and diagnostics --------------------------
 
 void MainWindow::refreshCapabilities()
 {
@@ -4894,7 +7302,8 @@ void MainWindow::refreshCapabilities()
 
     QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
 
-    appendLog(QStringLiteral("Host capability scan refreshed. Missing optional tools disable only the related future feature."));
+    appendStatusLog(statusEntryIdentity(QStringLiteral("capability-scan")),
+                    QStringLiteral("Host capability scan refreshed. Missing optional tools disable only the related future feature."));
 }
 
 void MainWindow::resizeCapabilityRows()
@@ -4979,21 +7388,25 @@ void MainWindow::updateDiagnosticDetails()
     const bool targetScope = m_diagnosticScopeCombo->currentIndex() == 0;
     const QString targetIdentity = currentTargetDiagnosticCacheIdentity();
     if (targetScope && m_targetDiagnosticCacheIdentity != targetIdentity) {
-        m_targetDiagnosticCache.clear();
-        m_targetDiagnosticTimes.clear();
-        m_targetDiagnosticCacheIdentity = targetIdentity;
+        // A changed target identity invalidates the cached evidence and every
+        // scoped invalidation marker; the complete set will be regenerated.
+        clearTargetDiagnosticCache();
         // A changed filesystem identity invalidates repair evidence as well
         // as the Results pane; keep every repair control in sync immediately.
         updateFullRepairSummary();
+        scheduleEvidenceRefresh(QStringLiteral("target diagnostic identity changed"));
     }
 
     const QMap<QString, QString> &cache = targetScope ? m_targetDiagnosticCache : m_hostDiagnosticCache;
     const QMap<QString, QDateTime> &times = targetScope ? m_targetDiagnosticTimes : m_hostDiagnosticTimes;
     const QString cached = cache.value(key);
     const QDateTime cachedAt = times.value(key);
+    const bool sectionInvalidated = targetScope
+        ? (m_targetDiagnosticsNeedRegeneration || m_targetDiagnosticsStaleSections.contains(key))
+        : m_hostDiagnosticsStaleSections.contains(key);
     if (m_diagnosticResults) {
-        m_diagnosticResults->setPlainText(cached.isEmpty() && targetScope && m_targetDiagnosticsNeedRegeneration
-            ? QStringLiteral("Target state changed after a repair action. Please re-run the %1 diagnostic before reviewing or running this repair action.")
+        m_diagnosticResults->setPlainText(cached.isEmpty() && sectionInvalidated
+            ? QStringLiteral("The selected system changed after a repair action. Please re-run the %1 diagnostic before reviewing or running this repair action.")
                   .arg(m_diagnosticTitle->text())
             : cached);
     }
@@ -5031,19 +7444,24 @@ void MainWindow::updateDiagnosticDetails()
         m_runDiagnosticButton->setText(QStringLiteral("Re-run Diagnostic"));
     } else {
         if (targetScope) {
-            m_diagnosticAvailability->setText(m_targetDiagnosticsNeedRegeneration
+            m_diagnosticAvailability->setText(sectionInvalidated
                 ? QStringLiteral("Please re-run this diagnostic after the last repair or target configuration change.")
                 : (m_privilegedSessionReady
                     ? QStringLiteral("Available — read-only selected repair-system inspection; administrator authorization is already active for this Boot Bitch window.")
                     : QStringLiteral("Available — read-only selected repair-system inspection; the first root action will request administrator authorization.")));
         } else {
-            m_diagnosticAvailability->setText(QStringLiteral("Available — protected running host"));
+            m_diagnosticAvailability->setText(sectionInvalidated
+                ? QStringLiteral("Please re-run this diagnostic after the last repair action.")
+                : QStringLiteral("Available — protected running host"));
         }
         m_runDiagnosticButton->setText(QStringLiteral("Run Diagnostic"));
     }
     m_runDiagnosticButton->setEnabled(true);
 }
 
+// Builds the unprivileged preview text for one diagnostic. The privileged
+// helper produces the authoritative captured output; this in-process formatter
+// feeds the UI-test seam and the sections that are safe to render locally.
 QString MainWindow::diagnosticResultForKey(const QString &key) const
 {
     const bool targetScope = m_diagnosticScopeCombo && m_diagnosticScopeCombo->currentIndex() == 0;
@@ -5278,6 +7696,70 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
     return output;
 }
 
+QString MainWindow::diagnosticRequestTitle(bool hostScope, const QString &key) const
+{
+    if (hostScope) {
+        return key == QStringLiteral("all") || key == QStringLiteral("report")
+            ? QStringLiteral("Run running-host diagnostics")
+            : QStringLiteral("Read-only running-host diagnostic");
+    }
+    return key == QStringLiteral("all")
+        ? QStringLiteral("Run All target diagnostics")
+        : QStringLiteral("Read-only target diagnostic");
+}
+
+QString MainWindow::diagnosticStartStatusIdentity(bool hostScope, const QString &key) const
+{
+    // The start line names the scope, disk, root and key, so all of them are
+    // part of the identity.
+    return statusEntryIdentity(
+        QStringLiteral("diagnostic-start"),
+        QStringLiteral("%1|%2|%3|%4")
+            .arg(hostScope ? QStringLiteral("running-host") : QStringLiteral("target"),
+                 hostScope ? m_hostPrimaryPath : m_previewTargetPath,
+                 hostScope ? m_hostPrimaryComponentPath : m_previewTargetComponentPath,
+                 key));
+}
+
+QString MainWindow::diagnosticCompletionStatusIdentity(bool hostScope, const QString &key) const
+{
+    // The completion line names the scope word and key only; the disk/root is
+    // intentionally not part of the text, so it is not part of the identity.
+    return statusEntryIdentity(
+        QStringLiteral("diagnostic-complete"),
+        QStringLiteral("%1|%2")
+            .arg(hostScope ? QStringLiteral("running-host") : QStringLiteral("target"), key));
+}
+
+QString MainWindow::diagnosticRequestStatusIdentity(bool hostScope, const QString &key) const
+{
+    // The request completion line names only the request title.
+    return statusEntryIdentity(QStringLiteral("diagnostic-request"),
+                               diagnosticRequestTitle(hostScope, key));
+}
+
+void MainWindow::appendDiagnosticRunStartStatus(bool hostScope, const QString &key)
+{
+    const QString scopeWord = hostScope ? QStringLiteral("running-host") : QStringLiteral("target");
+    appendStatusLog(diagnosticStartStatusIdentity(hostScope, key),
+                    QStringLiteral("Starting read-only %1 diagnostic '%2' on %3 (%4).")
+                        .arg(scopeWord, key,
+                             hostScope ? m_hostPrimaryPath : m_previewTargetPath,
+                             hostScope ? m_hostPrimaryComponentPath : m_previewTargetComponentPath),
+                    QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+}
+
+void MainWindow::appendDiagnosticRunCompletionStatus(bool hostScope, const QString &key, bool succeeded)
+{
+    const QString scopeWord = hostScope ? QStringLiteral("running-host") : QStringLiteral("target");
+    appendStatusLog(diagnosticCompletionStatusIdentity(hostScope, key),
+                    QStringLiteral("Read-only %1 diagnostic '%2' %3.")
+                        .arg(scopeWord, key,
+                             succeeded ? QStringLiteral("completed") : QStringLiteral("failed")),
+                    succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"),
+                    LogEntryKind::Diagnostic);
+}
+
 QString MainWindow::runTargetDiagnosticHelper(const QString &key, bool *succeeded,
                                                 bool showProgressDialog)
 {
@@ -5285,27 +7767,52 @@ QString MainWindow::runTargetDiagnosticHelper(const QString &key, bool *succeede
         *succeeded = false;
     }
 
+#ifdef BOOT_REPAIR_UI_TEST
+    Q_UNUSED(showProgressDialog);
+    // The production target diagnostic path uses the privileged helper so it
+    // can mount the selected system read-only. A headless UI test cannot
+    // complete a Polkit conversation. Use the same in-process read-only
+    // formatter that the Running Host UI-test path uses so automatic and
+    // manual Run All remain fully exercisable offscreen. This branch is
+    // compiled only into boot-repair-ui-tests.
+    const QString diagnosticKey = key == QStringLiteral("all")
+        ? QStringLiteral("report")
+        : key;
+    appendDiagnosticRunStartStatus(false, key);
+    // Mirror the production request's completion line so the headless suite
+    // observes the same stable status entries the privileged path writes.
+    appendStatusLog(diagnosticRequestStatusIdentity(false, key),
+                    QStringLiteral("%1 finished with exit code 0 (success).")
+                        .arg(diagnosticRequestTitle(false, key)),
+                    QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    const QString captured = diagnosticResultForKey(diagnosticKey);
+    if (succeeded) {
+        *succeeded = !captured.trimmed().isEmpty();
+    }
+    appendDiagnosticRunCompletionStatus(false, key, succeeded && *succeeded);
+    return captured;
+#else
     QString reason;
     if (!repairTargetReady(&reason)) {
-        QMessageBox::warning(this, QStringLiteral("Target diagnostic unavailable"), reason);
+        if (!m_evidenceRefreshInProgress) {
+            QMessageBox::warning(this, QStringLiteral("Target diagnostic unavailable"), reason);
+        }
         return QStringLiteral("ERROR: %1\n").arg(reason);
     }
 
-    appendLog(QStringLiteral("Starting read-only target diagnostic '%1' on %2 (%3).")
-                  .arg(key, m_previewTargetPath, m_previewTargetComponentPath));
+    appendDiagnosticRunStartStatus(false, key);
     const QString captured = runPrivilegedRequest(
-        key == QStringLiteral("all")
-            ? QStringLiteral("Run All target diagnostics")
-            : QStringLiteral("Read-only target diagnostic"),
+        diagnosticRequestTitle(false, key),
         {QStringLiteral("diagnose"), m_previewTargetPath, m_previewTargetComponentPath, key},
         QByteArray(),
         succeeded,
-        showProgressDialog);
+        showProgressDialog,
+        LogEntryKind::Diagnostic,
+        diagnosticRequestStatusIdentity(false, key));
 
-    appendLog(QStringLiteral("Read-only target diagnostic '%1' %2.")
-                  .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
-              (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    appendDiagnosticRunCompletionStatus(false, key, succeeded && *succeeded);
     return captured;
+#endif
 }
 
 QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
@@ -5327,34 +7834,37 @@ QString MainWindow::runHostDiagnosticHelper(const QString &key, bool *succeeded,
     const QString diagnosticKey = key == QStringLiteral("all")
         ? QStringLiteral("report")
         : key;
+    appendDiagnosticRunStartStatus(true, key);
+    // Mirror the production request's completion line so the headless suite
+    // observes the same stable status entries the privileged path writes.
+    appendStatusLog(diagnosticRequestStatusIdentity(true, key),
+                    QStringLiteral("%1 finished with exit code 0 (success).")
+                        .arg(diagnosticRequestTitle(true, key)),
+                    QStringLiteral("INFO"), LogEntryKind::Diagnostic);
     const QString captured = diagnosticResultForKey(diagnosticKey);
     if (succeeded) {
         *succeeded = !captured.trimmed().isEmpty();
     }
-    appendLog(QStringLiteral("Read-only running-host diagnostic '%1' %2 (UI test backend).")
-                  .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
-              (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    appendDiagnosticRunCompletionStatus(true, key, succeeded && *succeeded);
     return captured;
 #else
 
     QString reason;
     if (!hostBootTargetReady(&reason)) {
-        QMessageBox::warning(this, QStringLiteral("Host diagnostic unavailable"), reason);
+        if (!m_evidenceRefreshInProgress) {
+            QMessageBox::warning(this, QStringLiteral("Host diagnostic unavailable"), reason);
+        }
         return QStringLiteral("ERROR: %1\n").arg(reason);
     }
 
-    appendLog(QStringLiteral("Starting read-only running-host diagnostic '%1' on %2 (%3).")
-                  .arg(key, m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    appendDiagnosticRunStartStatus(true, key);
     const QString captured = runPrivilegedRequest(
-        key == QStringLiteral("all") || key == QStringLiteral("report")
-            ? QStringLiteral("Run running-host diagnostics")
-            : QStringLiteral("Read-only running-host diagnostic"),
+        diagnosticRequestTitle(true, key),
         {QStringLiteral("host-diagnose"), m_hostPrimaryPath, m_hostPrimaryComponentPath, key},
-        QByteArray(), succeeded, showProgressDialog);
+        QByteArray(), succeeded, showProgressDialog, LogEntryKind::Diagnostic,
+        diagnosticRequestStatusIdentity(true, key));
 
-    appendLog(QStringLiteral("Read-only running-host diagnostic '%1' %2.")
-                  .arg(key, (succeeded && *succeeded) ? QStringLiteral("completed") : QStringLiteral("failed")),
-              (succeeded && *succeeded) ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    appendDiagnosticRunCompletionStatus(true, key, succeeded && *succeeded);
     return captured;
 #endif
 }
@@ -5374,16 +7884,20 @@ void MainWindow::clearTargetDiagnosticCache()
 {
     m_targetDiagnosticCache.clear();
     m_targetDiagnosticTimes.clear();
+    m_targetDiagnosticsStaleSections.clear();
     m_targetDiagnosticCacheIdentity = currentTargetDiagnosticCacheIdentity();
 }
 
-void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
+// Shared bundle parsing for the host and target diagnostic caches: stores the
+// full report and splits out each per-diagnostic section around the stable
+// divider/marker format. Callers clear their scope cache before calling this.
+static void cacheDiagnosticBundle(QMap<QString, QString> &cache,
+                                  QMap<QString, QDateTime> &times,
+                                  const QString &bundle)
 {
-    m_hostDiagnosticCache.clear();
-    m_hostDiagnosticTimes.clear();
     const QDateTime capturedAt = QDateTime::currentDateTime();
-    m_hostDiagnosticCache.insert(QStringLiteral("report"), bundle.trimmed());
-    m_hostDiagnosticTimes.insert(QStringLiteral("report"), capturedAt);
+    cache.insert(QStringLiteral("report"), bundle.trimmed());
+    times.insert(QStringLiteral("report"), capturedAt);
 
     const QString divider = QStringLiteral("========================================\n");
     for (const DiagnosticSpec &spec : diagnosticSpecs) {
@@ -5391,11 +7905,13 @@ void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
         if (key == QStringLiteral("report")) {
             continue;
         }
+
         const QString marker = QStringLiteral("Diagnostic: %1\n").arg(key);
         const int markerPos = bundle.indexOf(marker);
         if (markerPos < 0) {
             continue;
         }
+
         int sectionStart = bundle.lastIndexOf(divider, markerPos);
         if (sectionStart >= 0) {
             const int priorDivider = bundle.lastIndexOf(divider, sectionStart - 1);
@@ -5405,19 +7921,26 @@ void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
         } else {
             sectionStart = markerPos;
         }
+
         int sectionEnd = bundle.indexOf(divider, markerPos + marker.size());
         if (sectionEnd < 0) {
             sectionEnd = bundle.size();
         }
         const QString section = bundle.mid(sectionStart, sectionEnd - sectionStart).trimmed();
         if (!section.isEmpty()) {
-            m_hostDiagnosticCache.insert(key, section);
-            m_hostDiagnosticTimes.insert(key, capturedAt);
+            cache.insert(key, section);
+            times.insert(key, capturedAt);
         }
     }
 }
 
-bool MainWindow::targetDiagnosticEvidenceReady(QString *reason) const
+void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
+{
+    clearHostDiagnosticCache();
+    cacheDiagnosticBundle(m_hostDiagnosticCache, m_hostDiagnosticTimes, bundle);
+}
+
+bool MainWindow::currentDiagnosticScopeReady(QString *reason) const
 {
     auto setReason = [reason](const QString &text) {
         if (reason) {
@@ -5425,46 +7948,179 @@ bool MainWindow::targetDiagnosticEvidenceReady(QString *reason) const
         }
     };
 
-    if (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()) {
-        setReason(QStringLiteral("Select a repair target in Systems first."));
+    const bool targetScope = !m_diagnosticScopeCombo || m_diagnosticScopeCombo->currentIndex() == 0;
+    if (targetScope) {
+        if (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()
+            || !m_deviceIndex.contains(m_previewTargetPath)
+            || !m_deviceIndex.contains(m_previewTargetComponentPath)) {
+            setReason(QStringLiteral("No repair target is ready for diagnostics."));
+            return false;
+        }
+        setReason(QStringLiteral("The selected repair target is ready for diagnostics."));
+        return true;
+    }
+
+    if (m_hostPrimaryPath.isEmpty() || m_hostPrimaryComponentPath.isEmpty()
+        || !m_deviceIndex.contains(m_hostPrimaryPath)
+        || !m_deviceIndex.contains(m_hostPrimaryComponentPath)) {
+        setReason(QStringLiteral("The running host is not resolved for diagnostics."));
         return false;
     }
-    if (m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
-        setReason(QStringLiteral("Run All diagnostics for the selected target before starting a repair."));
-        return false;
-    }
-    if (m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
-        setReason(m_targetDiagnosticsNeedRegeneration
-            ? QStringLiteral("Target state changed after the last diagnostic or repair action. Please regenerate diagnostics in Diagnostics → Repair Target → Run All before starting another repair.")
-            : QStringLiteral("Run All diagnostics for the selected target before starting a repair."));
+    setReason(QStringLiteral("The running host is ready for diagnostics."));
+    return true;
+}
+
+bool MainWindow::currentScopeEvidenceStale(QString *reason) const
+{
+    auto setReason = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+    };
+
+    const bool targetScope = !m_diagnosticScopeCombo || m_diagnosticScopeCombo->currentIndex() == 0;
+    if (targetScope) {
+        if (m_targetDiagnosticsNeedRegeneration) {
+            setReason(QStringLiteral("Target diagnostics were invalidated by a repair or target change."));
+            return true;
+        }
+        if (!m_targetDiagnosticsStaleSections.isEmpty()) {
+            setReason(QStringLiteral("Target diagnostic sections were invalidated by a repair action and await regeneration."));
+            return true;
+        }
+        if (m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+            setReason(QStringLiteral("No cached diagnostics belong to the selected target."));
+            return true;
+        }
+        if (m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
+            setReason(QStringLiteral("No cached diagnostics exist for the selected target."));
+            return true;
+        }
         return false;
     }
 
-    setReason(QStringLiteral("Read-only diagnostics are cached for this target."));
+    if (!m_hostDiagnosticsStaleSections.isEmpty()) {
+        setReason(QStringLiteral("Running-host diagnostic sections were invalidated by a repair action and await regeneration."));
+        return true;
+    }
+    if (m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
+        setReason(QStringLiteral("No cached running-host diagnostics exist."));
+        return true;
+    }
+    return false;
+}
+
+bool MainWindow::shouldScheduleEvidenceRefresh(QString *reason) const
+{
+    auto reject = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+        return false;
+    };
+
+    if (!m_autoRefreshDiagnostics || !m_autoRefreshDiagnostics->isChecked()) {
+        return reject(QStringLiteral("Automatic diagnostics regeneration is disabled in Settings."));
+    }
+    if (m_evidenceRefreshInProgress || m_diagnosticsRunInProgress || m_privilegedOperationActive) {
+        return reject(QStringLiteral("A diagnostic or repair operation is already in progress."));
+    }
+
+    QString scopeReason;
+    if (!currentDiagnosticScopeReady(&scopeReason)) {
+        return reject(scopeReason);
+    }
+
+    QString evidenceReason;
+    if (!currentScopeEvidenceStale(&evidenceReason)) {
+        return reject(QStringLiteral("Current-scope diagnostic evidence is fresh."));
+    }
+    if (reason) {
+        *reason = evidenceReason;
+    }
     return true;
+}
+
+bool MainWindow::repairToolAvailable(const QString &key, QString *reason) const
+{
+    auto reject = [reason](const QString &text) {
+        if (reason) *reason = text;
+        return false;
+    };
+    const QStringList keys = {
+        QStringLiteral("validate"), QStringLiteral("filesystem"), QStringLiteral("dpkg"),
+        QStringLiteral("fixbroken"), QStringLiteral("aptupdate"), QStringLiteral("upgrade"),
+        QStringLiteral("dkms"), QStringLiteral("display"), QStringLiteral("initramfs"),
+        QStringLiteral("efi"), QStringLiteral("grub"), QStringLiteral("bootstack")
+    };
+    if (!keys.contains(key)) {
+        return reject(QStringLiteral("Unknown repair tool: %1.").arg(key));
+    }
+    if (!m_hostMaintenanceMode) {
+        if (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()) {
+            return reject(QStringLiteral("Select a repair target in Systems first."));
+        }
+        if (m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+            return reject(QStringLiteral("Diagnostic evidence belongs to a different target. Run diagnostics for the selected target."));
+        }
+    }
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    bool hadEvidence = false;
+    if (!cachedRepairToolAvailable(cache, key, reason, &hadEvidence)) {
+        if (!hadEvidence && !m_hostMaintenanceMode
+            && (m_targetDiagnosticsNeedRegeneration || !m_targetDiagnosticsStaleSections.isEmpty())) {
+            return reject(QStringLiteral("Target state changed after the last diagnostic or repair action. Please regenerate diagnostics before starting another repair."));
+        }
+        return false;
+    }
+    if (reason) *reason = QStringLiteral("Repair tool %1 is available in the selected scope's cached diagnostics.").arg(key);
+    return true;
+}
+
+bool MainWindow::hostDefaultBootReady(QString *reason) const
+{
+    if (!hostBootTargetReady(reason)) {
+        return false;
+    }
+    // The cached running-host diagnostics are the single source of truth for
+    // the host default boot entry: the EFI/UKI repair capability must be
+    // available before the operation is offered.
+    bool hadEvidence = false;
+    if (!cachedRepairToolAvailable(m_hostDiagnosticCache, QStringLiteral("efi"), reason, &hadEvidence)) {
+        if (!hadEvidence && reason) {
+            *reason = QStringLiteral("Run read-only running-host diagnostics before restoring the host default boot entry.");
+        }
+        return false;
+    }
+    if (reason) {
+        *reason = QStringLiteral("The running host is ready to restore its default EFI boot entry.");
+    }
+    return true;
+}
+
+void MainWindow::updateHostDefaultButtonState()
+{
+    if (!m_hostDefaultButton) {
+        return;
+    }
+    QString reason;
+    const bool ready = hostDefaultBootReady(&reason);
+    m_hostDefaultButton->setEnabled(ready);
+    m_hostDefaultButton->setToolTip(ready
+        ? QStringLiteral("Restore and select the running host's default EFI boot entry.")
+        : reason);
 }
 
 bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *reason) const
 {
+    if (!repairToolAvailable(toolKey, reason)) {
+        return false;
+    }
     auto setReason = [reason](const QString &text) {
         if (reason) {
             *reason = text;
         }
     };
-
-    if (m_hostMaintenanceMode) {
-        QString hostReason;
-        if (!hostBootTargetReady(&hostReason)) {
-            setReason(hostReason);
-            return false;
-        }
-        if (m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
-            setReason(QStringLiteral("Run All diagnostics for the protected running host before starting this maintenance action."));
-            return false;
-        }
-        setReason(QStringLiteral("Required read-only running-host diagnostics are cached for this maintenance action."));
-        return true;
-    }
 
     QString diagnosticKey = QStringLiteral("report");
     if (toolKey == QStringLiteral("validate")) diagnosticKey = QStringLiteral("environment");
@@ -5479,6 +8135,23 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
         diagnosticKey = QStringLiteral("environment");
     }
 
+    if (m_hostMaintenanceMode) {
+        QString hostReason;
+        if (!hostBootTargetReady(&hostReason)) {
+            setReason(hostReason);
+            return false;
+        }
+        if (m_hostDiagnosticCache.value(diagnosticKey).trimmed().isEmpty()) {
+            const QString diagnosticName = diagnosticKey == QStringLiteral("grub")
+                ? QStringLiteral("GRUB configuration")
+                : diagnosticKey;
+            setReason(QStringLiteral("Run the %1 diagnostic for the protected running host before starting this maintenance action.").arg(diagnosticName));
+            return false;
+        }
+        setReason(QStringLiteral("Required read-only running-host diagnostics are cached for this maintenance action."));
+        return true;
+    }
+
     if (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()) {
         setReason(QStringLiteral("Select a repair target in Systems first."));
         return false;
@@ -5491,7 +8164,9 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
         const QString diagnosticName = diagnosticKey == QStringLiteral("grub")
             ? QStringLiteral("GRUB configuration")
             : diagnosticKey;
-        setReason(m_targetDiagnosticsNeedRegeneration
+        const bool invalidated = m_targetDiagnosticsNeedRegeneration
+            || m_targetDiagnosticsStaleSections.contains(diagnosticKey);
+        setReason(invalidated
             ? QStringLiteral("Target state changed after the last diagnostic or repair action. Run the %1 diagnostic for this target before starting this repair.").arg(diagnosticName)
             : QStringLiteral("Run the %1 diagnostic for this target before starting this repair.").arg(diagnosticName));
         return false;
@@ -5500,46 +8175,648 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
     return true;
 }
 
+QString MainWindow::diagnosticSectionTitle(const QString &key) const
+{
+    for (const DiagnosticSpec &spec : diagnosticSpecs) {
+        if (key == QLatin1String(spec.key)) {
+            return QString::fromLatin1(spec.title);
+        }
+    }
+    return key;
+}
+
+QStringList MainWindow::diagnosticSectionsForRepair(const QString &toolKey) const
+{
+    for (const RepairDiagnosticSectionSpec &spec : repairDiagnosticSectionSpecs) {
+        if (toolKey == QLatin1String(spec.toolKey)) {
+            return QString::fromLatin1(spec.sections).split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        }
+    }
+    // Unknown or deliberately broad actions (file copy, shell commands,
+    // snapshot rollback, unlock, config writes, target/scope changes, the Full
+    // Repair plan key and any future tool) invalidate the complete set.
+    return {QStringLiteral("all")};
+}
+
+// The helper stage names and the capability/UI keys differ only for the
+// package, display and boot-stack stages. Keeping one normalization point
+// guarantees the change-status protocol is matched against the same key the
+// invalidation table uses.
+QString MainWindow::repairToolKeyForStage(const QString &stage)
+{
+    static const QMap<QString, QString> stageToTool = {
+        {QStringLiteral("dpkg-configure"), QStringLiteral("dpkg")},
+        {QStringLiteral("fix-broken"), QStringLiteral("fixbroken")},
+        {QStringLiteral("apt-update"), QStringLiteral("aptupdate")},
+        {QStringLiteral("apt-upgrade"), QStringLiteral("upgrade")},
+        {QStringLiteral("display-manager"), QStringLiteral("display")},
+        {QStringLiteral("boot-stack"), QStringLiteral("bootstack")}
+    };
+    return stageToTool.value(stage, stage);
+}
+
+// Reads every stable change-status line from a helper transcript. A later line
+// for the same key does not override an earlier "changed": any evidence of a
+// write keeps the key invalidating (fail safe).
+QMap<QString, QString> MainWindow::parseRepairChangeStatuses(const QString &output)
+{
+    static const QRegularExpression statusRe(
+        QStringLiteral("^Repair change status ([A-Za-z0-9._-]+): (.+)$"));
+    QMap<QString, QString> statuses;
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (const QString &rawLine : lines) {
+        const QRegularExpressionMatch match = statusRe.match(rawLine.trimmed());
+        if (!match.hasMatch()) {
+            continue;
+        }
+        const QString key = match.captured(1);
+        const QString state = match.captured(2).trimmed();
+        const auto existing = statuses.constFind(key);
+        if (existing != statuses.constEnd()
+            && !repairChangeStatusIsUnchanged(existing.value())
+            && repairChangeStatusIsUnchanged(state)) {
+            continue;
+        }
+        statuses.insert(key, state);
+    }
+    return statuses;
+}
+
+bool MainWindow::repairChangeStatusIsUnchanged(const QString &status)
+{
+    return status == QStringLiteral("unchanged")
+        || status.startsWith(QStringLiteral("unchanged|"));
+}
+
+QStringList MainWindow::invalidatingRepairToolKeys(const QStringList &requestedKeys,
+                                                   const QString &output)
+{
+    const QMap<QString, QString> statuses = parseRepairChangeStatuses(output);
+    QStringList keys;
+    for (const QString &requested : requestedKeys) {
+        const QString toolKey = repairToolKeyForStage(requested);
+        const auto status = statuses.constFind(toolKey);
+        // A requested action without a proven-unchanged status invalidates its
+        // mapped sections (fail safe).
+        if (status != statuses.constEnd() && repairChangeStatusIsUnchanged(status.value())) {
+            continue;
+        }
+        if (!keys.contains(toolKey)) {
+            keys.append(toolKey);
+        }
+    }
+    for (auto it = statuses.constBegin(); it != statuses.constEnd(); ++it) {
+        if (repairChangeStatusIsUnchanged(it.value()) || keys.contains(it.key())) {
+            continue;
+        }
+        keys.append(it.key());
+    }
+    return keys;
+}
+
+// The single repair-result categorization. It is deliberately derived from the
+// same evidence and the same fail-safe default as the cached-evidence
+// invalidation decision: an empty invalidating-key list is a proven no-op (or
+// a read-only preflight with nothing to do), a non-empty list means the helper
+// changed the system or could not prove otherwise.
+MainWindow::RepairResultCategory MainWindow::categorizeRepairResult(bool processSucceeded,
+                                                                    const QStringList &requestedKeys,
+                                                                    const QString &output)
+{
+    if (!processSucceeded) {
+        return RepairResultCategory::Failed;
+    }
+    if (invalidatingRepairToolKeys(requestedKeys, output).isEmpty()) {
+        return RepairResultCategory::NoRepairNeeded;
+    }
+    return RepairResultCategory::Success;
+}
+
+QString MainWindow::shortRepairFailureReason(const QString &output)
+{
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+        const QString line = it->trimmed();
+        if (line.startsWith(QStringLiteral("ERROR:"), Qt::CaseInsensitive)) {
+            return line.mid(6).trimmed();
+        }
+    }
+    for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+        const QString line = it->trimmed();
+        if (line.contains(QStringLiteral("fail"), Qt::CaseInsensitive)) {
+            constexpr int kMaximumReasonLength = 120;
+            if (line.size() > kMaximumReasonLength) {
+                return line.left(kMaximumReasonLength - 1) + QChar(0x2026);
+            }
+            return line;
+        }
+    }
+    return QStringLiteral("the privileged helper reported a failure");
+}
+
+QString MainWindow::repairFailureStageKey(const QString &output)
+{
+    static const QRegularExpression stageRe(
+        QStringLiteral("ERROR: stage '([^']+)' failed:"),
+        QRegularExpression::CaseInsensitiveOption);
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    QString stage;
+    for (const QString &line : lines) {
+        const QRegularExpressionMatch match = stageRe.match(line);
+        if (match.hasMatch()) {
+            // Keep the last named stage: the helper may retry internally and
+            // only the final failure line describes where the plan stopped.
+            stage = match.captured(1).trimmed();
+        }
+    }
+    if (stage.isEmpty()) {
+        return QString();
+    }
+    // Decorated labels ("grub (EFI follow-up)") belong to their base stage.
+    const int decoration = stage.indexOf(QStringLiteral(" ("));
+    if (decoration > 0) {
+        stage = stage.left(decoration);
+    }
+    return repairToolKeyForStage(stage);
+}
+
+namespace {
+
+// One per-tool repair-result vocabulary. Every phrase is action-accurate: a
+// metadata refresh is not a repair, an initramfs regeneration is a rebuild,
+// and so on. The same table drives the single-action summary and the plan
+// stage lines, so the two can never drift. The empty key is the generic
+// fallback for unknown or future tools.
+struct RepairResultPhrases {
+    QString changed;
+    QString unchanged;
+    QString failed;
+    QString skipped;
+    QString notRun;
+};
+
+RepairResultPhrases repairResultPhrases(const QString &toolKey)
+{
+    static const QMap<QString, RepairResultPhrases> vocabulary = {
+        {QStringLiteral("aptupdate"), {
+            QStringLiteral("package metadata refreshed — changes were applied"),
+            QStringLiteral("package metadata already current — no changes"),
+            QStringLiteral("package metadata refresh failed"),
+            QStringLiteral("package metadata refresh not checked"),
+            QStringLiteral("package metadata refresh did not run")}},
+        {QStringLiteral("dpkg"), {
+            QStringLiteral("package configuration completed — changes were applied"),
+            QStringLiteral("nothing to configure"),
+            QStringLiteral("package configuration failed"),
+            QStringLiteral("package configuration not checked"),
+            QStringLiteral("package configuration did not run")}},
+        {QStringLiteral("fixbroken"), {
+            QStringLiteral("broken dependencies repaired — changes were applied"),
+            QStringLiteral("no broken dependencies"),
+            QStringLiteral("broken dependency repair failed"),
+            QStringLiteral("broken dependency repair not checked"),
+            QStringLiteral("broken dependency repair did not run")}},
+        {QStringLiteral("upgrade"), {
+            QStringLiteral("packages upgraded — changes were applied"),
+            QStringLiteral("no packages to upgrade"),
+            QStringLiteral("package upgrade failed"),
+            QStringLiteral("package upgrade not checked"),
+            QStringLiteral("package upgrade did not run")}},
+        {QStringLiteral("dkms"), {
+            QStringLiteral("DKMS modules rebuilt — changes were applied"),
+            QStringLiteral("DKMS modules already current — no changes"),
+            QStringLiteral("DKMS rebuild failed"),
+            QStringLiteral("DKMS rebuild not checked"),
+            QStringLiteral("DKMS rebuild did not run")}},
+        {QStringLiteral("display"), {
+            QStringLiteral("display manager repaired — changes were applied"),
+            QStringLiteral("display manager already correct — no changes"),
+            QStringLiteral("display manager repair failed"),
+            QStringLiteral("display manager repair not checked"),
+            QStringLiteral("display manager repair did not run")}},
+        {QStringLiteral("initramfs"), {
+            QStringLiteral("initramfs rebuilt — images regenerated"),
+            QStringLiteral("initramfs already current — no changes"),
+            QStringLiteral("initramfs rebuild failed"),
+            QStringLiteral("initramfs rebuild not checked"),
+            QStringLiteral("initramfs rebuild did not run")}},
+        {QStringLiteral("efi"), {
+            QStringLiteral("EFI boot path repaired — changes were applied"),
+            QStringLiteral("EFI boot path already correct — no changes"),
+            QStringLiteral("EFI boot path repair failed"),
+            QStringLiteral("EFI boot path repair not checked"),
+            QStringLiteral("EFI boot path repair did not run")}},
+        {QStringLiteral("grub"), {
+            QStringLiteral("GRUB configuration regenerated — changes were applied"),
+            QStringLiteral("GRUB configuration already current — no changes"),
+            QStringLiteral("GRUB regeneration failed"),
+            QStringLiteral("GRUB regeneration not checked"),
+            QStringLiteral("GRUB regeneration did not run")}},
+        {QStringLiteral("filesystem"), {
+            QStringLiteral("file system repaired — changes were applied"),
+            QStringLiteral("no file system errors found — no changes"),
+            QStringLiteral("file system repair failed"),
+            QStringLiteral("not all filesystems were checked"),
+            QStringLiteral("file system repair did not run")}},
+        {QStringLiteral("bootstack"), {
+            QStringLiteral("boot stack reconciled — changes were applied"),
+            QStringLiteral("boot stack already current — no changes"),
+            QStringLiteral("boot stack repair failed"),
+            QStringLiteral("boot stack not checked"),
+            QStringLiteral("boot stack repair did not run")}},
+        {QStringLiteral("validate"), {
+            QStringLiteral("validation completed — changes were applied"),
+            QStringLiteral("validation is read-only — no changes"),
+            QStringLiteral("validation failed"),
+            QStringLiteral("validation not checked"),
+            QStringLiteral("validation did not run")}},
+        {QStringLiteral("host-default"), {
+            QStringLiteral("host boot default updated — changes were applied"),
+            QStringLiteral("host boot default already correct — no changes"),
+            QStringLiteral("host boot default update failed"),
+            QStringLiteral("host boot default not checked"),
+            QStringLiteral("host boot default update did not run")}},
+        {QString(), {
+            QStringLiteral("repair successful — changes were applied"),
+            QStringLiteral("no repair needed — no changes were detected"),
+            QStringLiteral("repair failed"),
+            QStringLiteral("not checked — no repair was attempted"),
+            QStringLiteral("repair did not run")}}
+    };
+    return vocabulary.value(toolKey, vocabulary.value(QString()));
+}
+
+// The helper's proven-unchanged status is "unchanged|<reason>"; the reason is
+// the audit evidence that explains why the stage could safely skip its write.
+QString repairChangeStatusReason(const QString &status)
+{
+    const int separator = status.indexOf(QLatin1Char('|'));
+    return separator < 0 ? QString() : status.mid(separator + 1).trimmed();
+}
+
+} // namespace
+
+// ---- MainWindow: repair-result categorization -------------------------------
+
+QString MainWindow::repairResultSymbol(RepairResultCategory category)
+{
+    switch (category) {
+    case RepairResultCategory::Success:
+        return QStringLiteral("✓");
+    case RepairResultCategory::Failed:
+        return QStringLiteral("✗");
+    case RepairResultCategory::NoRepairNeeded:
+    case RepairResultCategory::Skipped:
+    case RepairResultCategory::NotRun:
+        return QStringLiteral("▪");
+    }
+    return QStringLiteral("▪");
+}
+
+QString MainWindow::repairResultSummary(RepairResultCategory category, const QString &toolKey,
+                                        const QString &reason)
+{
+    const RepairResultPhrases phrases = repairResultPhrases(toolKey);
+    QString phrase;
+    switch (category) {
+    case RepairResultCategory::Success:
+        phrase = phrases.changed;
+        break;
+    case RepairResultCategory::Failed:
+        phrase = phrases.failed;
+        break;
+    case RepairResultCategory::NoRepairNeeded:
+        phrase = phrases.unchanged;
+        break;
+    case RepairResultCategory::Skipped:
+        phrase = phrases.skipped;
+        break;
+    case RepairResultCategory::NotRun:
+        phrase = phrases.notRun;
+        break;
+    }
+    QString summary = QStringLiteral("Repair result: %1 %2")
+        .arg(repairResultSymbol(category), phrase);
+    if (category == RepairResultCategory::Failed) {
+        summary += QStringLiteral(" — %1")
+            .arg(reason.isEmpty() ? QStringLiteral("the privileged helper reported a failure") : reason);
+    }
+    return summary;
+}
+
+QString MainWindow::repairResultStageLine(const RepairStageResult &stage)
+{
+    const QString name = stage.toolKey.isEmpty() ? QStringLiteral("unknown") : stage.toolKey;
+    const RepairResultPhrases phrases = repairResultPhrases(stage.toolKey);
+    QString phrase;
+    switch (stage.category) {
+    case RepairResultCategory::Success:
+        phrase = phrases.changed;
+        break;
+    case RepairResultCategory::Failed:
+        phrase = phrases.failed;
+        break;
+    case RepairResultCategory::NoRepairNeeded:
+        phrase = phrases.unchanged;
+        break;
+    case RepairResultCategory::Skipped:
+        phrase = phrases.skipped;
+        break;
+    case RepairResultCategory::NotRun:
+        phrase = phrases.notRun;
+        break;
+    }
+    QString line = QStringLiteral("  %1 %2 — %3")
+        .arg(repairResultSymbol(stage.category), name, phrase);
+    if (stage.category == RepairResultCategory::Failed && !stage.reason.isEmpty()) {
+        line += QStringLiteral(" — %1").arg(stage.reason);
+    }
+    if (!stage.detail.isEmpty()) {
+        line += QStringLiteral(" — %1").arg(stage.detail);
+    }
+    return line;
+}
+
+QString MainWindow::fullRepairPlanSummary(const QList<RepairStageResult> &stages)
+{
+    int successful = 0;
+    int failed = 0;
+    int noRepairNeeded = 0;
+    int skipped = 0;
+    int notRun = 0;
+    for (const RepairStageResult &stage : stages) {
+        switch (stage.category) {
+        case RepairResultCategory::Success:
+            ++successful;
+            break;
+        case RepairResultCategory::Failed:
+            ++failed;
+            break;
+        case RepairResultCategory::NoRepairNeeded:
+            ++noRepairNeeded;
+            break;
+        case RepairResultCategory::Skipped:
+            ++skipped;
+            break;
+        case RepairResultCategory::NotRun:
+            ++notRun;
+            break;
+        }
+    }
+    QString summary = QStringLiteral("Full Repair results: ✓ %1 successful · ✗ %2 failed · ▪ %3 no repair needed")
+        .arg(successful)
+        .arg(failed)
+        .arg(noRepairNeeded);
+    if (skipped > 0) {
+        // Name the skipped stage(s) so the aggregate points at the stage line
+        // that carries the affected device list; the per-stage line remains
+        // the authoritative audit record and is always rendered directly
+        // below the aggregate.
+        QStringList skippedStages;
+        for (const RepairStageResult &stage : stages) {
+            if (stage.category == RepairResultCategory::Skipped) {
+                skippedStages.append(stage.toolKey.isEmpty() ? QStringLiteral("unknown") : stage.toolKey);
+            }
+        }
+        const QString stageReference = skippedStages.size() == 1
+            ? QStringLiteral("see the %1 stage line").arg(skippedStages.first())
+            : QStringLiteral("see the stage lines for %1").arg(skippedStages.join(QStringLiteral(", ")));
+        summary += QStringLiteral(" · ▪ %1 not checked — %2").arg(skipped).arg(stageReference);
+    }
+    if (notRun > 0) {
+        // Stages the plan never reached are reported as not run, never as
+        // failed: the failing stage already owns the failure reason and these
+        // stages were simply stopped by it.
+        QStringList notRunStages;
+        for (const RepairStageResult &stage : stages) {
+            if (stage.category == RepairResultCategory::NotRun) {
+                notRunStages.append(stage.toolKey.isEmpty() ? QStringLiteral("unknown") : stage.toolKey);
+            }
+        }
+        const QString stageReference = notRunStages.size() == 1
+            ? QStringLiteral("see the %1 stage line").arg(notRunStages.first())
+            : QStringLiteral("see the stage lines for %1").arg(notRunStages.join(QStringLiteral(", ")));
+        summary += QStringLiteral(" · ▪ %1 not run — %2").arg(notRun).arg(stageReference);
+    }
+    if (failed > 0) {
+        summary += QStringLiteral(" — review the failed stages in Logs.");
+    } else if (successful == 0 && notRun > 0) {
+        summary += QStringLiteral(" — the plan stopped before any stage completed.");
+    } else if (successful == 0 && skipped > 0) {
+        summary += QStringLiteral(" — no changes were applied; some checks were skipped.");
+    } else if (successful == 0 && noRepairNeeded > 0) {
+        summary += QStringLiteral(" — no repair was needed; cached diagnostics remain valid.");
+    } else {
+        summary += QStringLiteral(" — changes were applied.");
+    }
+    QStringList lines;
+    lines.reserve(stages.size() + 1);
+    lines.append(summary);
+    for (const RepairStageResult &stage : stages) {
+        lines.append(repairResultStageLine(stage));
+    }
+    return lines.join(QLatin1Char('\n'));
+}
+
+void MainWindow::recordPlanStageResult(const QString &toolKey, RepairResultCategory category,
+                                       const QString &reason, const QString &detail)
+{
+    if (!m_fullRepairPlanInProgress) {
+        return;
+    }
+    RepairStageResult stage;
+    stage.toolKey = toolKey;
+    stage.category = category;
+    stage.reason = reason;
+    stage.detail = detail;
+    m_fullRepairPlanStageResults.append(stage);
+}
+
+void MainWindow::appendRepairResultSummary(RepairResultCategory category, const QString &reason,
+                                           LogEntryKind kind, const QString &toolKey)
+{
+    appendLog(repairResultSummary(category, toolKey, reason),
+              category == RepairResultCategory::Failed ? QStringLiteral("ERROR") : QStringLiteral("INFO"),
+              kind);
+}
+
+bool MainWindow::diagnosticsInvalidationPending() const
+{
+    if (m_hostMaintenanceMode) {
+        return !m_hostDiagnosticsStaleSections.isEmpty();
+    }
+    return m_targetDiagnosticsNeedRegeneration
+        || !m_targetDiagnosticsStaleSections.isEmpty();
+}
+
+void MainWindow::clearHostDiagnosticCache()
+{
+    m_hostDiagnosticCache.clear();
+    m_hostDiagnosticTimes.clear();
+    m_hostDiagnosticsStaleSections.clear();
+}
+
+void MainWindow::invalidateAllTargetDiagnostics()
+{
+    clearTargetDiagnosticCache();
+    m_targetDiagnosticsNeedRegeneration = true;
+}
+
+void MainWindow::invalidateAllActiveScopeDiagnostics()
+{
+    if (m_hostMaintenanceMode) {
+        clearHostDiagnosticCache();
+    } else {
+        invalidateAllTargetDiagnostics();
+    }
+}
+
+void MainWindow::markDiagnosticSectionsStale(bool hostScope, const QStringList &sections)
+{
+    auto &cache = hostScope ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    auto &times = hostScope ? m_hostDiagnosticTimes : m_targetDiagnosticTimes;
+    auto &stale = hostScope ? m_hostDiagnosticsStaleSections : m_targetDiagnosticsStaleSections;
+    for (const QString &section : orderedDiagnosticSections(sections)) {
+        cache.remove(section);
+        times.remove(section);
+        stale.insert(section);
+    }
+}
+
+void MainWindow::invalidateDiagnosticsForRepair(const QStringList &toolKeys, bool failed,
+                                                const QString &reason, LogEntryKind kind)
+{
+    QSet<QString> sectionSet;
+    bool full = failed;
+    if (!full) {
+        for (const QString &toolKey : toolKeys) {
+            const QStringList mapped = diagnosticSectionsForRepair(toolKey);
+            if (mapped.contains(QStringLiteral("all"))) {
+                full = true;
+                break;
+            }
+            for (const QString &section : mapped) {
+                sectionSet.insert(section);
+            }
+        }
+    }
+    const QStringList sections = orderedDiagnosticSections(sectionSet.values());
+    if (full) {
+        invalidateAllActiveScopeDiagnostics();
+    } else if (!sections.isEmpty()) {
+        markDiagnosticSectionsStale(m_hostMaintenanceMode, sections);
+    } else {
+        // Read-only action: no cached evidence changed.
+        return;
+    }
+
+    updateFullRepairSummary();
+    updateDiagnosticDetails();
+    const QString message = full
+        ? (failed
+            ? QStringLiteral("STALE DIAGNOSTICS: repair failed after a modifying action. Regenerate diagnostics before the next repair.")
+            : QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Regenerate diagnostics before the next repair."))
+        : QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.")
+              .arg(sections.join(QStringLiteral(", ")));
+    appendStatusLog(statusEntryIdentity(failed ? QStringLiteral("stale-repair-failed")
+                                               : QStringLiteral("stale-repair-modified")),
+                    message, failed ? QStringLiteral("ERROR") : QStringLiteral("INFO"), kind);
+    scheduleEvidenceRefresh(reason);
+}
+
+void MainWindow::accumulatePlanInvalidation(const QStringList &toolKeys, bool failed)
+{
+    // Every stage proved unchanged: the plan owns no invalidation and must not
+    // schedule the end-of-plan regeneration.
+    if (!failed && toolKeys.isEmpty()) {
+        return;
+    }
+    m_fullRepairPlanModified = true;
+    if (failed) {
+        // A failed stage may have left more than its mapped sections in an
+        // unknown state; fall back to the complete set (fail safe).
+        m_fullRepairPlanRequiresFullInvalidation = true;
+        m_fullRepairPlanInvalidatedSections.clear();
+        return;
+    }
+    for (const QString &toolKey : toolKeys) {
+        const QStringList mapped = diagnosticSectionsForRepair(toolKey);
+        if (mapped.contains(QStringLiteral("all"))) {
+            m_fullRepairPlanRequiresFullInvalidation = true;
+            m_fullRepairPlanInvalidatedSections.clear();
+            return;
+        }
+        for (const QString &section : mapped) {
+            m_fullRepairPlanInvalidatedSections.insert(section);
+        }
+    }
+}
+
+void MainWindow::runDiagnosticSections(const QStringList &sections)
+{
+    if (!m_diagnosticResults || sections.isEmpty()) {
+        return;
+    }
+    const bool targetScope = !m_diagnosticScopeCombo || m_diagnosticScopeCombo->currentIndex() == 0;
+    const QStringList ordered = orderedDiagnosticSections(sections);
+    if (ordered.isEmpty()) {
+        return;
+    }
+
+    BusyOperationScope busy(this, targetScope
+        ? QStringLiteral("Regenerating target diagnostics")
+        : QStringLiteral("Regenerating running-host diagnostics"));
+
+    m_diagnosticsRunInProgress = true;
+    if (m_runAllDiagnosticsButton) {
+        m_runAllDiagnosticsButton->setText(QStringLiteral("Running…"));
+    }
+
+    for (const QString &key : ordered) {
+        bool ok = false;
+        const QString captured = targetScope
+            ? runTargetDiagnosticHelper(key, &ok)
+            : runHostDiagnosticHelper(key, &ok);
+        if (!ok || captured.trimmed().isEmpty()) {
+            // A failed section stays stale and keeps its repair tool gated
+            // until a later regeneration succeeds.
+            continue;
+        }
+        const QDateTime capturedAt = QDateTime::currentDateTime();
+        if (targetScope) {
+            m_targetDiagnosticCache.insert(key, captured);
+            m_targetDiagnosticTimes.insert(key, capturedAt);
+            m_targetDiagnosticsStaleSections.remove(key);
+        } else {
+            m_hostDiagnosticCache.insert(key, captured);
+            m_hostDiagnosticTimes.insert(key, capturedAt);
+            m_hostDiagnosticsStaleSections.remove(key);
+        }
+        appendDiagnosticLog(key, diagnosticSectionTitle(key),
+                            targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
+                            captured, ok);
+        appendLog(QStringLiteral("%1 diagnostic run: %2")
+                      .arg(targetScope ? QStringLiteral("Target") : QStringLiteral("Host"),
+                           diagnosticSectionTitle(key)),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    }
+
+    if (m_runAllDiagnosticsButton) {
+        m_runAllDiagnosticsButton->setText(QStringLiteral("Run All"));
+    }
+    m_diagnosticsRunInProgress = false;
+    updateDiagnosticDetails();
+    updateFullRepairSummary();
+    if (m_runAllDiagnosticsQueued) {
+        m_runAllDiagnosticsQueued = false;
+        QTimer::singleShot(0, this, &MainWindow::runAllDiagnostics);
+    }
+}
+
 void MainWindow::cacheTargetDiagnosticBundle(const QString &bundle)
 {
     clearTargetDiagnosticCache();
-    const QDateTime capturedAt = QDateTime::currentDateTime();
-    m_targetDiagnosticCache.insert(QStringLiteral("report"), bundle.trimmed());
-    m_targetDiagnosticTimes.insert(QStringLiteral("report"), capturedAt);
-
-    const QString divider = QStringLiteral("========================================\n");
-    for (const DiagnosticSpec &spec : diagnosticSpecs) {
-        const QString key = QString::fromLatin1(spec.key);
-        if (key == QStringLiteral("report")) {
-            continue;
-        }
-
-        const QString marker = QStringLiteral("Diagnostic: %1\n").arg(key);
-        const int markerPos = bundle.indexOf(marker);
-        if (markerPos < 0) {
-            continue;
-        }
-
-        int sectionStart = bundle.lastIndexOf(divider, markerPos);
-        if (sectionStart >= 0) {
-            const int priorDivider = bundle.lastIndexOf(divider, sectionStart - 1);
-            if (priorDivider >= 0) {
-                sectionStart = priorDivider;
-            }
-        } else {
-            sectionStart = markerPos;
-        }
-
-        int sectionEnd = bundle.indexOf(divider, markerPos + marker.size());
-        if (sectionEnd < 0) {
-            sectionEnd = bundle.size();
-        }
-        const QString section = bundle.mid(sectionStart, sectionEnd - sectionStart).trimmed();
-        if (!section.isEmpty()) {
-            m_targetDiagnosticCache.insert(key, section);
-            m_targetDiagnosticTimes.insert(key, capturedAt);
-        }
-    }
+    cacheDiagnosticBundle(m_targetDiagnosticCache, m_targetDiagnosticTimes, bundle);
 }
 
 void MainWindow::runSelectedDiagnostic()
@@ -5560,12 +8837,14 @@ void MainWindow::runSelectedDiagnostic()
     if (targetScope) {
         clearTargetDiagnosticCache();
     } else {
-        m_hostDiagnosticCache.clear();
-        m_hostDiagnosticTimes.clear();
+        clearHostDiagnosticCache();
     }
     m_diagnosticResults->clear();
     m_copyDiagnosticButton->setEnabled(false);
     m_saveDiagnosticButton->setEnabled(false);
+
+    BusyOperationScope busy(this, QStringLiteral("Running diagnostic: %1").arg(item->text()));
+
     bool ok = true;
     const QString result = targetScope
         ? runTargetDiagnosticHelper(key, &ok)
@@ -5604,7 +8883,13 @@ void MainWindow::runSelectedDiagnostic()
                        targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
                        result, ok);
     appendLog(QStringLiteral("%1 diagnostic run: %2").arg(targetScope ? QStringLiteral("Target") : QStringLiteral("Host"), item->text()),
-              ok ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+              ok ? QStringLiteral("INFO") : QStringLiteral("ERROR"), LogEntryKind::Diagnostic);
+
+    // An individual run can defer a queued manual Run All.
+    if (m_runAllDiagnosticsQueued) {
+        m_runAllDiagnosticsQueued = false;
+        QTimer::singleShot(0, this, &MainWindow::runAllDiagnostics);
+    }
 }
 
 void MainWindow::editTargetConfig()
@@ -5670,10 +8955,13 @@ void MainWindow::editTargetConfig()
         QMessageBox::warning(this, QStringLiteral("Configuration write failed"), writeOutput.trimmed());
         return;
     }
-    clearTargetDiagnosticCache();
-    m_targetDiagnosticsNeedRegeneration = true;
+    // A target configuration write can change mount, initramfs and boot
+    // behavior, so the complete target diagnostic set is invalidated.
+    invalidateAllTargetDiagnostics();
     updateFullRepairSummary();
-    appendLog(QStringLiteral("STALE DIAGNOSTICS: target configuration edited: %1. Regenerate diagnostics before the next repair.").arg(displayPath));
+    appendLog(QStringLiteral("STALE DIAGNOSTICS: target configuration edited: %1. Regenerate diagnostics before the next repair.").arg(displayPath),
+              QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    scheduleEvidenceRefresh(QStringLiteral("target configuration edited"));
     QString followUp;
     if (key == QStringLiteral("grub-defaults") || key == QStringLiteral("grub-config")) {
         followUp = QStringLiteral("Run the GRUB configuration repair stage (or Full Repair with GRUB enabled), then rerun diagnostics before any further repair.");
@@ -5692,19 +8980,45 @@ void MainWindow::runAllDiagnostics()
     if (!m_diagnosticResults) {
         return;
     }
+    // Manual Run All is always honoured: while the automatic full report is
+    // already running the click is satisfied by it, and while an individual
+    // diagnostic is running the full report is queued behind it instead of
+    // being dropped.
+    if (m_diagnosticsRunInProgress) {
+        if (m_evidenceRefreshInProgress) {
+            statusBar()->showMessage(QStringLiteral(
+                "The full diagnostic report is already running; results appear when it completes."), 4000);
+        } else if (!m_runAllDiagnosticsQueued) {
+            m_runAllDiagnosticsQueued = true;
+            statusBar()->showMessage(QStringLiteral(
+                "Full diagnostics will run after the current diagnostic finishes."), 4000);
+        }
+        return;
+    }
+    m_runAllDiagnosticsQueued = false;
 
     if (m_diagnosticScopeCombo && m_diagnosticScopeCombo->currentIndex() == 0 && m_previewTargetPath.isEmpty()) {
-        QMessageBox::information(this, QStringLiteral("No repair target selected"),
-                                 QStringLiteral("Select a repair target in Systems or switch Diagnostics to Running Host."));
+        // An automatic refresh never raises a modal dialog; it simply leaves
+        // the existing stale-evidence guidance in place.
+        if (!m_evidenceRefreshInProgress) {
+            QMessageBox::information(this, QStringLiteral("No repair target selected"),
+                                     QStringLiteral("Select a repair target in Systems or switch Diagnostics to Running Host."));
+        }
         return;
     }
 
+    BusyOperationScope busy(this, m_evidenceRefreshInProgress
+        ? QStringLiteral("Regenerating diagnostics automatically")
+        : QStringLiteral("Running all diagnostics"));
+
+    m_diagnosticsRunInProgress = true;
     const bool targetScope = m_diagnosticScopeCombo && m_diagnosticScopeCombo->currentIndex() == 0;
     QString combined;
     bool ok = true;
 
     if (m_runAllDiagnosticsButton) {
-        m_runAllDiagnosticsButton->setEnabled(false);
+        // Keep the button clickable: a click during a run is answered with a
+        // status message (or queues the full report) instead of being blocked.
         m_runAllDiagnosticsButton->setText(QStringLiteral("Running…"));
     }
 
@@ -5713,8 +9027,7 @@ void MainWindow::runAllDiagnostics()
     if (targetScope) {
         clearTargetDiagnosticCache();
     } else {
-        m_hostDiagnosticCache.clear();
-        m_hostDiagnosticTimes.clear();
+        clearHostDiagnosticCache();
     }
     m_diagnosticResults->clear();
     m_copyDiagnosticButton->setEnabled(false);
@@ -5743,8 +9056,10 @@ void MainWindow::runAllDiagnostics()
     // after a successful full report so switching tabs is not required to
     // expose the newly cached evidence.
     updateFullRepairSummary();
-    appendLog(QStringLiteral("Starting all available read-only diagnostics (%1 scope).")
-                  .arg(targetScope ? QStringLiteral("Target") : QStringLiteral("Host")));
+    const QString scopeWord = targetScope ? QStringLiteral("Target") : QStringLiteral("Host");
+    appendStatusLog(statusEntryIdentity(QStringLiteral("run-all-start"), scopeWord),
+                    QStringLiteral("Starting all available read-only diagnostics (%1 scope).").arg(scopeWord),
+                    QStringLiteral("INFO"), LogEntryKind::Diagnostic);
     appendDiagnosticLog(QStringLiteral("report"), QStringLiteral("Full diagnostic report"),
                         targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
                         combined, ok);
@@ -5762,14 +9077,135 @@ void MainWindow::runAllDiagnostics()
         }
     }
 
-    appendLog(ok
-                  ? QStringLiteral("All available read-only diagnostic summaries generated and cached by diagnostic.")
-                  : QStringLiteral("Run All diagnostics failed; failed output was not cached as successful diagnostic data."),
-              ok ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+    appendStatusLog(statusEntryIdentity(QStringLiteral("run-all-complete")),
+                    ok
+                        ? QStringLiteral("All available read-only diagnostic summaries generated and cached by diagnostic.")
+                        : QStringLiteral("Run All diagnostics failed; failed output was not cached as successful diagnostic data."),
+                    ok ? QStringLiteral("INFO") : QStringLiteral("ERROR"), LogEntryKind::Diagnostic);
     if (m_runAllDiagnosticsButton) {
-        m_runAllDiagnosticsButton->setEnabled(true);
         m_runAllDiagnosticsButton->setText(QStringLiteral("Run All"));
     }
+    m_diagnosticsRunInProgress = false;
+    if (m_runAllDiagnosticsQueued) {
+        m_runAllDiagnosticsQueued = false;
+        QTimer::singleShot(0, this, &MainWindow::runAllDiagnostics);
+    }
+}
+
+void MainWindow::scheduleEvidenceRefresh(const QString &reason)
+{
+    if (!shouldScheduleEvidenceRefresh()) {
+        return;
+    }
+
+    if (!m_privilegedSessionReady) {
+        // Automatic refresh must never raise its own Polkit prompt. Remember
+        // the request and let the established-session hook schedule it.
+        if (!m_evidenceRefreshPending) {
+            m_evidenceRefreshPending = true;
+            appendStatusLog(statusEntryIdentity(QStringLiteral("auto-refresh-pending"), reason),
+                            QStringLiteral("Automatic read-only diagnostics regeneration is pending until administrator authorization is active (%1).").arg(reason),
+                            QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+        }
+        return;
+    }
+
+    if (!m_evidenceRefreshTimer) {
+        m_evidenceRefreshTimer = new QTimer(this);
+        m_evidenceRefreshTimer->setSingleShot(true);
+        connect(m_evidenceRefreshTimer, &QTimer::timeout, this, &MainWindow::runScheduledEvidenceRefresh);
+    }
+
+    m_evidenceRefreshPending = false;
+    m_evidenceRefreshReason = reason;
+    if (!m_evidenceRefreshTimer->isActive()) {
+        appendStatusLog(statusEntryIdentity(QStringLiteral("auto-refresh-scheduled"), reason),
+                        QStringLiteral("Automatic read-only diagnostics regeneration scheduled after %1.").arg(reason),
+                        QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    }
+    // Restarting the single-shot timer coalesces bursts of invalidations into
+    // one run; the timer callback re-checks scope and evidence freshness.
+    m_evidenceRefreshTimer->start(kEvidenceRefreshDelayMs);
+}
+
+void MainWindow::handlePrivilegedSessionEstablished()
+{
+    if (!m_evidenceRefreshPending) {
+        return;
+    }
+    if (!m_autoRefreshDiagnostics || !m_autoRefreshDiagnostics->isChecked()) {
+        m_evidenceRefreshPending = false;
+        return;
+    }
+    if (!currentDiagnosticScopeReady()) {
+        // Keep the request pending until a scope becomes available.
+        return;
+    }
+    m_evidenceRefreshPending = false;
+    scheduleEvidenceRefresh(QStringLiteral("administrator authorization became active"));
+}
+
+void MainWindow::runScheduledEvidenceRefresh()
+{
+    if (m_evidenceRefreshInProgress || m_diagnosticsRunInProgress || m_privilegedOperationActive) {
+        // A manual run or privileged operation currently owns the helper.
+        // Keep the refresh queued instead of nesting or dropping it.
+        if (m_evidenceRefreshTimer) {
+            m_evidenceRefreshTimer->start(kEvidenceRefreshDelayMs);
+        }
+        return;
+    }
+    if (!shouldScheduleEvidenceRefresh()) {
+        m_evidenceRefreshReason.clear();
+        return;
+    }
+    if (!m_privilegedSessionReady) {
+        m_evidenceRefreshPending = true;
+        m_evidenceRefreshReason.clear();
+        return;
+    }
+
+    BusyOperationScope busy(this, QStringLiteral("Regenerating diagnostics"));
+
+    m_evidenceRefreshInProgress = true;
+    const QString reason = m_evidenceRefreshReason;
+    m_evidenceRefreshReason.clear();
+    appendStatusLog(statusEntryIdentity(QStringLiteral("auto-refresh-running"), reason),
+                    QStringLiteral("Automatically regenerating read-only diagnostics (%1).")
+                        .arg(reason.isEmpty() ? QStringLiteral("stale evidence") : reason),
+                    QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+    statusBar()->showMessage(QStringLiteral("Regenerating read-only diagnostics…"));
+
+    // A complete invalidation regenerates the combined report; a scoped
+    // invalidation regenerates exactly the mapped sections, sequentially in
+    // the same privileged session. The mapping table decides which case
+    // applies; the executor never invents its own section list.
+    const bool targetScope = !m_diagnosticScopeCombo || m_diagnosticScopeCombo->currentIndex() == 0;
+    const bool fullRefresh = targetScope
+        ? (m_targetDiagnosticsNeedRegeneration
+            || m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty())
+        : m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty();
+    if (fullRefresh) {
+        runAllDiagnostics();
+    } else {
+        const QStringList sections = targetScope
+            ? m_targetDiagnosticsStaleSections.values()
+            : m_hostDiagnosticsStaleSections.values();
+        runDiagnosticSections(sections);
+    }
+
+    const bool regenerated = !currentScopeEvidenceStale();
+    statusBar()->showMessage(regenerated
+        ? QStringLiteral("Read-only diagnostics regenerated automatically.")
+        : QStringLiteral("Automatic diagnostics regeneration did not complete; repair actions remain disabled until diagnostics are regenerated."),
+        6000);
+    appendStatusLog(statusEntryIdentity(QStringLiteral("auto-refresh-complete")),
+                    regenerated
+                        ? QStringLiteral("Automatic read-only diagnostics regeneration completed.")
+                        : QStringLiteral("Automatic read-only diagnostics regeneration failed; cached evidence remains stale."),
+                    regenerated ? QStringLiteral("INFO") : QStringLiteral("WARNING"),
+                    LogEntryKind::Diagnostic);
+    m_evidenceRefreshInProgress = false;
 }
 
 void MainWindow::copyDiagnosticResults()
@@ -5781,7 +9217,8 @@ void MainWindow::copyDiagnosticResults()
     if (!text.isEmpty()) {
         QApplication::clipboard()->setText(text);
         statusBar()->showMessage(QStringLiteral("Diagnostic results copied"), 2500);
-        appendLog(QStringLiteral("Diagnostic results copied to the clipboard."));
+        appendLog(QStringLiteral("Diagnostic results copied to the clipboard."),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
     }
 }
 
@@ -5812,6 +9249,8 @@ void MainWindow::saveDiagnosticResults()
     statusBar()->showMessage(QStringLiteral("Diagnostics saved to %1").arg(path), 5000);
 }
 
+// ---- MainWindow: session logs -----------------------------------------------
+
 void MainWindow::saveLogAs()
 {
     const QString defaultPath = QDir::homePath() + QStringLiteral("/boot-repair.log");
@@ -5828,40 +9267,770 @@ void MainWindow::saveLogAs()
 
     QTextStream stream(&file);
     // Export the complete register even when the Logs tab is filtered.
-    stream << m_actionLogEntries.join(QLatin1Char('\n'));
+    const QStringList &entries = m_viewingPriorLog ? m_viewedLogEntries : m_actionLogEntries;
+    stream << entries.join(QLatin1Char('\n'));
     statusBar()->showMessage(QStringLiteral("Log saved to %1").arg(path), 5000);
 }
 
-void MainWindow::appendLog(const QString &message, const QString &level)
+QString MainWindow::sessionLogDirectory() const
 {
+    const QByteArray override = qgetenv("BOOT_REPAIR_LOG_DIR");
+    if (!override.isEmpty()) {
+        return QString::fromLocal8Bit(override);
+    }
+    return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/logs");
+}
+
+QStringList MainWindow::sessionLogFiles() const
+{
+    QDir directory(sessionLogDirectory());
+    if (!directory.exists()) {
+        return {};
+    }
+    QStringList names = directory.entryList({QStringLiteral("session-*.log")}, QDir::Files, QDir::Name);
+    std::reverse(names.begin(), names.end());
+    QStringList paths;
+    paths.reserve(names.size());
+    for (const QString &name : names) {
+        paths.append(directory.absoluteFilePath(name));
+    }
+    return paths;
+}
+
+QString MainWindow::sessionLogScopeSummary(const QString &path) const
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+    // Only the leading SCOPE block is relevant; never read a whole large log
+    // just to build a one-line list label.
+    const QString head = QString::fromUtf8(file.read(128 * 1024));
+    const QStringList lines = head.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        const int marker = line.indexOf(QStringLiteral("[SCOPE] "));
+        if (marker < 0) {
+            continue;
+        }
+        const QStringList segments = line.mid(marker + 8).split(QStringLiteral(" | "));
+        if (segments.isEmpty()) {
+            return QString();
+        }
+        QString summary = segments.first().trimmed();
+        for (const QString &segment : segments) {
+            if (segment.startsWith(QStringLiteral("Disk: "))) {
+                const QString disk = segment.mid(6).trimmed();
+                if (!disk.isEmpty() && disk != QStringLiteral("—")) {
+                    summary += QStringLiteral(" · %1").arg(disk);
+                }
+                break;
+            }
+        }
+        return summary;
+    }
+    return QString();
+}
+
+QString MainWindow::sessionLogGenerationTime(const QString &path) const
+{
+    const QFileInfo info(path);
+    const QString base = info.completeBaseName();
+    const QString stamp = base.startsWith(QStringLiteral("session-")) ? base.mid(8) : base;
+    QDateTime generated = QDateTime::fromString(stamp, QStringLiteral("yyyyMMdd-HHmmss"));
+    if (!generated.isValid()) {
+        // Duplicate-name files (session-<stamp>-2.log) and hand-copied logs
+        // keep the file's own timestamp so the label is still meaningful.
+        generated = info.lastModified();
+    }
+    return generated.isValid() ? generated.toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")) : stamp;
+}
+
+QString MainWindow::sessionLogLabel(const QString &path) const
+{
+    const QString readable = sessionLogGenerationTime(path);
+    const QString scope = sessionLogScopeSummary(path);
+    return scope.isEmpty() ? readable : QStringLiteral("%1 — %2").arg(readable, scope);
+}
+
+QString MainWindow::detectedDistributionFamily() const
+{
+    if (!m_hostMaintenanceMode && m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+        return QString();
+    }
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    for (const QString &evidence : cache) {
+        for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+            const QString trimmed = line.trimmed();
+            if (trimmed.startsWith(QStringLiteral("Distribution family:"), Qt::CaseInsensitive)) {
+                return trimmed.section(QLatin1Char(':'), 1).trimmed();
+            }
+        }
+    }
+    return QString();
+}
+
+// Adopts the process-wide active session file (a second window continuing the
+// same run) and loads its entries into the live register. A missing or
+// unreadable file clears the process-wide path so the next scope
+// identification starts a fresh session instead.
+bool MainWindow::adoptActiveSessionLog()
+{
+    if (s_activeSessionPath.isEmpty()) {
+        return false;
+    }
+    if (!QFileInfo::exists(s_activeSessionPath)) {
+        // The file backing this process's active session is gone (for example
+        // a throwaway test directory was removed). A later scope
+        // identification starts a fresh session instead of resurrecting it.
+        s_activeSessionPath.clear();
+        return false;
+    }
+    QFile reader(s_activeSessionPath);
+    if (!reader.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        s_activeSessionPath.clear();
+        return false;
+    }
+    const QString text = QString::fromUtf8(reader.readAll());
+    reader.close();
+    auto *file = new QFile(s_activeSessionPath);
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Text | QIODevice::Append)) {
+        delete file;
+        s_activeSessionPath.clear();
+        return false;
+    }
+    m_sessionLogFile = file;
+    m_sessionLogPath = s_activeSessionPath;
+    // The live register keeps the newest entry first, matching appendLog();
+    // the file itself stays append-only in chronological order.
+    m_actionLogEntries = parseSessionLogEntries(text);
+    std::reverse(m_actionLogEntries.begin(), m_actionLogEntries.end());
+    // The restored scope belongs to the run, not to this window, until the
+    // window identifies or re-confirms it itself.
+    m_sessionScopeIdentifiedHere = false;
+    restoreSessionScopeFromLog(text);
+    // Restored status entries stay genuine history; only entries appended by
+    // this window are tracked for in-place replacement.
+    m_statusLogEntries.clear();
+    m_statusEntryIdentities.clear();
+    rebuildDiagnosticLogIndex();
+    // The live register was replaced wholesale; the next refresh must rebuild
+    // the view instead of applying the deferred incremental edits.
+    m_logViewRendered = false;
+    return true;
+}
+
+void MainWindow::restoreSessionScopeFromLog(const QString &logText)
+{
+    const QStringList lines = logText.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        const int marker = line.indexOf(QStringLiteral("[SCOPE] "));
+        if (marker < 0) {
+            continue;
+        }
+        const QStringList segments = line.mid(marker + 8).split(QStringLiteral(" | "));
+        if (segments.isEmpty()) {
+            continue;
+        }
+        const QString label = segments.first().trimmed();
+        if (label.isEmpty() || label == QStringLiteral("No scope")) {
+            m_sessionScopeKey.clear();
+            m_sessionScopeLabel.clear();
+            m_sessionScopeDisk.clear();
+            continue;
+        }
+        QString disk;
+        QString root;
+        for (const QString &segment : segments) {
+            if (segment.startsWith(QStringLiteral("Disk: "))) {
+                disk = segment.mid(6).trimmed();
+            } else if (segment.startsWith(QStringLiteral("Root: "))) {
+                root = segment.mid(6).trimmed();
+            }
+        }
+        if (disk == QStringLiteral("—")) {
+            disk.clear();
+        }
+        if (root == QStringLiteral("—")) {
+            root.clear();
+        }
+        m_sessionScopeKey = QStringLiteral("%1|%2|%3").arg(label, disk, root);
+        m_sessionScopeLabel = label;
+        m_sessionScopeDisk = disk;
+    }
+}
+
+// Resolves the active host/target scope, creates the session file on the first
+// usable scope, writes a SCOPE marker when the scope changes and records
+// "No scope" when a previously identified scope is lost.
+void MainWindow::updateSessionScope()
+{
+    QString label;
+    QString disk;
+    QString component;
+    if (m_hostMaintenanceMode && !m_hostPrimaryPath.isEmpty()) {
+        label = QStringLiteral("Running Host");
+        disk = m_hostPrimaryPath;
+        component = m_hostPrimaryComponentPath;
+    } else if (!m_previewTargetPath.isEmpty() && !m_previewTargetComponentPath.isEmpty()) {
+        // A locked LUKS container is not a usable repair scope. Wait until the
+        // decrypted Linux root is resolved and committed before opening a file.
+        const DeviceNode componentNode = m_deviceIndex.value(m_previewTargetComponentPath);
+        if (!componentNode.path.isEmpty() && !componentNode.encrypted
+            && (componentNode.linuxCapableFileSystem || componentNode.installedLinux)) {
+            label = QStringLiteral("Repair Target");
+            disk = m_previewTargetPath;
+            component = m_previewTargetComponentPath;
+        }
+    }
+
+    if (label.isEmpty()) {
+        if (m_sessionLogFile && m_sessionScopeIdentifiedHere && !m_sessionScopeKey.isEmpty()) {
+            appendSessionScopeMarker(QStringLiteral("No scope"), QString(), QString(), QString());
+            m_sessionScopeKey.clear();
+            m_sessionScopeLabel.clear();
+            m_sessionScopeDisk.clear();
+            refreshSessionLogList();
+        }
+        return;
+    }
+
+    const QString key = QStringLiteral("%1|%2|%3").arg(label, disk, component);
+    if (key == m_sessionScopeKey) {
+        // Re-confirming the restored scope marks it as this window's own, so a
+        // later scope loss is recorded as "No scope" in the shared file.
+        m_sessionScopeIdentifiedHere = true;
+        return;
+    }
+    const QString family = detectedDistributionFamily();
+    if (!m_sessionLogFile) {
+        createSessionLogFile(label, disk, component, family);
+    } else {
+        appendSessionScopeMarker(label, disk, component, family);
+    }
+    m_sessionScopeKey = key;
+    m_sessionScopeLabel = label;
+    m_sessionScopeDisk = disk;
+    m_sessionScopeIdentifiedHere = true;
+    refreshSessionLogList();
+}
+
+void MainWindow::createSessionLogFile(const QString &scopeLabel, const QString &disk,
+                                      const QString &component, const QString &family)
+{
+    if (m_sessionLogFile) {
+        return;
+    }
+    // A second window in the same process shares this run's active session
+    // file instead of creating another one for the same scope.
+    if (adoptActiveSessionLog()) {
+        appendSessionScopeMarker(scopeLabel, disk, component, family);
+        flushPendingSessionEntries();
+        return;
+    }
+    const QString directory = sessionLogDirectory();
+    if (!QDir().mkpath(directory)) {
+        return; // The in-memory log keeps working without a file.
+    }
+    const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
+    QString path = QDir(directory).filePath(QStringLiteral("session-%1.log").arg(stamp));
+    int suffix = 2;
+    while (QFile::exists(path)) {
+        path = QDir(directory).filePath(QStringLiteral("session-%1-%2.log").arg(stamp).arg(suffix++));
+    }
+    auto *file = new QFile(path);
+    if (!file->open(QIODevice::WriteOnly | QIODevice::Text)) {
+        delete file;
+        return;
+    }
+    m_sessionLogFile = file;
+    m_sessionLogPath = path;
+    s_activeSessionPath = path;
+    appendSessionScopeMarker(scopeLabel, disk, component, family);
+    appendLog(QStringLiteral("Session log %1 generated %2")
+                  .arg(QFileInfo(path).fileName(),
+                       QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
+    flushPendingSessionEntries();
+}
+
+void MainWindow::appendSessionScopeMarker(const QString &scopeLabel, const QString &disk,
+                                          const QString &component, const QString &family)
+{
+    if (!m_sessionLogFile) {
+        return;
+    }
     const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
-    QString category = QStringLiteral("APPLICATION");
-    const QString folded = message.toCaseFolded();
-    if (folded.contains(QStringLiteral("chroot shell"))) category = QStringLiteral("CHROOT SHELL");
-    else if (folded.contains(QStringLiteral("repair output")) || folded.contains(QStringLiteral("repair")) || folded.contains(QStringLiteral("grub"))
-             || folded.contains(QStringLiteral("initramfs")) || folded.contains(QStringLiteral("sddm"))) category = QStringLiteral("REPAIR");
-    else if (folded.contains(QStringLiteral("diagnostic"))) category = QStringLiteral("DIAGNOSTIC");
-    else if (folded.contains(QStringLiteral("unlock")) || folded.contains(QStringLiteral("luks"))) category = QStringLiteral("UNLOCK");
-    else if (folded.contains(QStringLiteral("file copy")) || folded.contains(QStringLiteral("copied"))) category = QStringLiteral("FILE COPY");
-    else if (folded.contains(QStringLiteral("snapshot")) || folded.contains(QStringLiteral("btrfs"))) category = QStringLiteral("SNAPSHOTS");
-    const QString entry = QStringLiteral("──────── %1 ────────\n[%2] [%3] %4")
-        .arg(category, timestamp, level, message);
-    // Keep the newest event at the front so the Logs tab opens directly on
-    // the most recent repair, diagnostic, or shell transcript.
-    m_actionLogEntries.prepend(entry);
-    while (m_actionLogEntries.size() > 5000) m_actionLogEntries.removeLast();
-    if (m_settings) { m_settings->setValue(QStringLiteral("actionRegister"), m_actionLogEntries); m_settings->sync(); }
+    const QString entry = QStringLiteral(
+        "──────── SCOPE ────────\n"
+        "[%1] [SCOPE] %2 | Disk: %3 | Root: %4 | OS: %5")
+        .arg(timestamp, scopeLabel,
+             disk.isEmpty() ? QStringLiteral("—") : disk,
+             component.isEmpty() ? QStringLiteral("—") : component,
+             family.isEmpty() ? QStringLiteral("unknown") : family);
+    writeSessionLogEntry(entry);
+}
+
+void MainWindow::writeSessionLogEntry(const QString &entry)
+{
+    if (!m_sessionLogFile) {
+        m_pendingSessionEntries.append(entry);
+        return;
+    }
+    m_sessionLogFile->write(entry.toUtf8());
+    m_sessionLogFile->write("\n");
+    m_sessionLogFile->flush();
+}
+
+void MainWindow::flushPendingSessionEntries()
+{
+    if (!m_sessionLogFile) {
+        return;
+    }
+    for (const QString &entry : m_pendingSessionEntries) {
+        m_sessionLogFile->write(entry.toUtf8());
+        m_sessionLogFile->write("\n");
+    }
+    m_pendingSessionEntries.clear();
+    m_sessionLogFile->flush();
+}
+
+void MainWindow::closeSessionLogFile()
+{
+    if (!m_sessionLogFile) {
+        return;
+    }
+    m_sessionLogFile->close();
+    delete m_sessionLogFile;
+    m_sessionLogFile = nullptr;
+}
+
+void MainWindow::refreshSessionLogList()
+{
+    if (!m_sessionLogList) {
+        return;
+    }
+    const QString wanted = m_viewingPriorLog ? m_viewedLogPath : QString();
+    {
+        QSignalBlocker blocker(m_sessionLogList);
+        m_sessionLogList->clear();
+        QString liveLabel = QStringLiteral("Current session");
+        if (m_sessionLogPath.isEmpty()) {
+            // A fresh launch owns no session file until a scope is identified;
+            // the previous run's file is only ever listed as a prior session.
+            liveLabel = QStringLiteral("Current session — not started");
+        } else if (!m_sessionScopeLabel.isEmpty()) {
+            liveLabel += QStringLiteral(" — %1").arg(m_sessionScopeLabel);
+            if (!m_sessionScopeDisk.isEmpty()) {
+                liveLabel += QStringLiteral(" · %1").arg(m_sessionScopeDisk);
+            }
+        }
+        auto *liveItem = new QListWidgetItem(liveLabel, m_sessionLogList);
+        liveItem->setData(Qt::UserRole, QString());
+        liveItem->setToolTip(QStringLiteral(
+            "Entries from this window. A fresh launch starts empty; a session file is created once a running-host or repair-target scope is identified."));
+        for (const QString &path : sessionLogFiles()) {
+            if ((!m_sessionLogPath.isEmpty() && path == m_sessionLogPath)
+                || (!s_activeSessionPath.isEmpty() && path == s_activeSessionPath)) {
+                continue;
+            }
+            auto *item = new QListWidgetItem(sessionLogLabel(path), m_sessionLogList);
+            item->setData(Qt::UserRole, path);
+            item->setToolTip(path);
+        }
+        int row = 0;
+        if (!wanted.isEmpty()) {
+            for (int index = 0; index < m_sessionLogList->count(); ++index) {
+                if (m_sessionLogList->item(index)->data(Qt::UserRole).toString() == wanted) {
+                    row = index;
+                    break;
+                }
+            }
+        }
+        m_sessionLogList->setCurrentRow(row);
+    }
+    displaySessionLog(wanted);
+}
+
+void MainWindow::displaySessionLog(const QString &path)
+{
+    bool prior = !path.isEmpty() && path != m_sessionLogPath
+        && (s_activeSessionPath.isEmpty() || path != s_activeSessionPath);
+    if (prior) {
+        QFile file(path);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            prior = false;
+        } else {
+            m_viewedLogEntries = parseSessionLogEntries(QString::fromUtf8(file.readAll()));
+            m_viewedLogPath = path;
+        }
+    }
+    m_viewingPriorLog = prior;
+    if (!prior) {
+        m_viewedLogEntries.clear();
+        m_viewedLogPath.clear();
+    }
+    if (m_priorLogBanner) {
+        if (prior) {
+            m_priorLogBanner->setText(QStringLiteral("Viewing prior session log %1 — generated %2 — read only")
+                                          .arg(QFileInfo(path).fileName(), sessionLogGenerationTime(path)));
+            m_priorLogBanner->setVisible(true);
+        } else {
+            m_priorLogBanner->setVisible(false);
+        }
+    }
+    if (m_deleteSessionLogButton) {
+        m_deleteSessionLogButton->setEnabled(prior);
+    }
     refreshLogView();
 }
 
+void MainWindow::startNewSessionLog()
+{
+    closeSessionLogFile();
+    m_sessionLogPath.clear();
+    // The closed file becomes a prior session; this process no longer owns an
+    // active session until the next scope identification creates one.
+    s_activeSessionPath.clear();
+    m_pendingSessionEntries.clear();
+    m_sessionScopeKey.clear();
+    m_sessionScopeLabel.clear();
+    m_sessionScopeDisk.clear();
+    m_sessionScopeIdentifiedHere = false;
+    appendLog(QStringLiteral("Started a new session log; earlier files remain available in the session list."));
+    updateSessionScope();
+    refreshSessionLogList();
+    if (m_sessionLogList) {
+        m_sessionLogList->setCurrentRow(0);
+    }
+    displaySessionLog(QString());
+}
+
+void MainWindow::clearCurrentSessionLog()
+{
+    const bool hasFile = m_sessionLogFile != nullptr && !m_sessionLogPath.isEmpty();
+    const QString fileName = hasFile ? QFileInfo(m_sessionLogPath).fileName() : QString();
+    const QString question = hasFile
+        ? QStringLiteral("Clear the current session log %1? The active file is truncated and cannot be restored. Prior session files are not touched.").arg(fileName)
+        : QStringLiteral("No session log file exists yet because no scope has been identified. Clear the in-memory entries only?");
+    if (QMessageBox::question(this, QStringLiteral("Clear session log"), question,
+                              QMessageBox::Cancel | QMessageBox::Yes,
+                              QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+
+    if (hasFile) {
+        if (!m_sessionLogFile->resize(0)) {
+            QMessageBox::warning(this, QStringLiteral("Clear session log"),
+                                 QStringLiteral("Unable to truncate %1.").arg(fileName));
+            return;
+        }
+        m_sessionLogFile->seek(0);
+    }
+    m_actionLogEntries.clear();
+    m_diagnosticLogEntries.clear();
+    m_repairLogEntries.clear();
+    m_statusLogEntries.clear();
+    m_statusEntryIdentities.clear();
+    m_activeRepairSection.clear();
+    m_activeRepairEntries.clear();
+    m_pendingLogEntries.clear();
+    m_pendingEntryRemovals.clear();
+    m_renderedEntryRanges.clear();
+    m_logViewRendered = false;
+    m_pendingSessionEntries.clear();
+    if (!hasFile) {
+        appendLog(QStringLiteral("Session log clear requested, but no session file exists yet; in-memory entries were cleared."));
+    } else {
+        appendLog(QStringLiteral("Session log cleared by user at %1")
+                      .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"))));
+    }
+    // Clearing is an explicit user action: show the result immediately instead
+    // of waiting for the coalescing timer.
+    refreshLogView();
+    if (hasFile) {
+        refreshSessionLogList();
+    }
+}
+
+void MainWindow::addSessionNote()
+{
+    bool accepted = false;
+    const QString note = QInputDialog::getText(this, QStringLiteral("Add Note"),
+                                               QStringLiteral("Note:"),
+                                               QLineEdit::Normal, QString(), &accepted);
+    if (!accepted) {
+        return;
+    }
+    const QString trimmed = note.trimmed();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    appendLog(QStringLiteral("NOTE: %1").arg(trimmed));
+}
+
+void MainWindow::deleteSelectedSessionLog()
+{
+    if (!m_sessionLogList) {
+        return;
+    }
+    QListWidgetItem *item = m_sessionLogList->currentItem();
+    if (!item) {
+        return;
+    }
+    const QString path = item->data(Qt::UserRole).toString();
+    if (path.isEmpty() || path == m_sessionLogPath || path == s_activeSessionPath) {
+        return;
+    }
+    const QFileInfo info(path);
+    if (!info.fileName().startsWith(QStringLiteral("session-"))
+        || !info.fileName().endsWith(QStringLiteral(".log"))) {
+        return;
+    }
+    const QString canonicalDirectory = QFileInfo(sessionLogDirectory()).canonicalFilePath();
+    const QString canonicalPath = info.canonicalFilePath();
+    if (canonicalDirectory.isEmpty() || canonicalPath.isEmpty()
+        || !canonicalPath.startsWith(canonicalDirectory + QLatin1Char('/'))) {
+        return;
+    }
+    if (QMessageBox::question(this, QStringLiteral("Delete session log"),
+                              QStringLiteral("Delete %1 permanently? This cannot be undone.").arg(info.fileName()),
+                              QMessageBox::Cancel | QMessageBox::Yes,
+                              QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+    if (!QFile::remove(canonicalPath)) {
+        QMessageBox::warning(this, QStringLiteral("Delete session log"),
+                             QStringLiteral("Unable to delete %1.").arg(info.fileName()));
+        return;
+    }
+    appendLog(QStringLiteral("Deleted prior session log %1.").arg(info.fileName()));
+    if (m_viewingPriorLog && m_viewedLogPath == path) {
+        m_viewingPriorLog = false;
+        m_viewedLogPath.clear();
+        m_viewedLogEntries.clear();
+        if (m_priorLogBanner) {
+            m_priorLogBanner->setVisible(false);
+        }
+    }
+    refreshSessionLogList();
+}
+
+void MainWindow::pruneSessionLogs()
+{
+    const QStringList files = sessionLogFiles();
+    if (files.isEmpty()) {
+        return;
+    }
+    constexpr int maxFiles = 20;
+    constexpr qint64 maxBytes = 10 * 1024 * 1024;
+    qint64 totalBytes = 0;
+    int kept = 0;
+    bool overLimit = false;
+    QStringList removed;
+    for (const QString &path : files) {
+        if ((!m_sessionLogPath.isEmpty() && path == m_sessionLogPath)
+            || (!s_activeSessionPath.isEmpty() && path == s_activeSessionPath)) {
+            continue;
+        }
+        const qint64 size = QFileInfo(path).size();
+        if (!overLimit && kept < maxFiles && totalBytes + size <= maxBytes) {
+            ++kept;
+            totalBytes += size;
+            continue;
+        }
+        overLimit = true;
+        if (QFile::remove(path)) {
+            removed.append(QFileInfo(path).fileName());
+        }
+    }
+    if (!removed.isEmpty()) {
+        appendLog(QStringLiteral("Session log retention removed %1 older file(s); at most 20 files / 10 MB are kept.")
+                      .arg(removed.size()));
+    }
+}
+
+// Splits a session file into entries on the "──────── CATEGORY ────────"
+// headers, discarding the blank separator lines between entries.
+QStringList MainWindow::parseSessionLogEntries(const QString &text)
+{
+    QStringList entries;
+    QStringList current;
+    const QStringList lines = text.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        if (line.startsWith(QStringLiteral("────────")) && !current.isEmpty()) {
+            entries.append(current.join(QLatin1Char('\n')));
+            current.clear();
+        }
+        if (!current.isEmpty() || !line.trimmed().isEmpty()) {
+            current.append(line);
+        }
+    }
+    if (!current.isEmpty()) {
+        entries.append(current.join(QLatin1Char('\n')));
+    }
+    return entries;
+}
+
+// ---- MainWindow: log register and view --------------------------------------
+
+void MainWindow::appendLog(const QString &message, const QString &level, LogEntryKind kind)
+{
+    const QString timestamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    // The kind is supplied by the caller and only projected to the display
+    // category here; the message text never influences classification.
+    const QString category = logCategoryForKind(kind);
+    const QString entry = QStringLiteral("──────── %1 ────────\n[%2] [%3] %4")
+        .arg(category, timestamp, level, message);
+    // Keep the newest event at the front so the Logs tab opens directly on
+    // the most recent repair, diagnostic, or shell transcript. The session
+    // file is append-only and is not capped; the UI model keeps its 5000 cap.
+    m_actionLogEntries.prepend(entry);
+    // While a repair section is being captured, every entry appended by that
+    // repair cycle (start notice, privileged completion line, captured output
+    // and any failure notice) joins the section's replacement group.
+    if (!m_activeRepairSection.isEmpty()) {
+        m_activeRepairEntries.append(entry);
+    }
+    m_pendingLogEntries.append(entry);
+    while (m_actionLogEntries.size() > 5000) {
+        m_actionLogEntries.removeLast();
+        // A trimmed tail cannot be removed incrementally without locating the
+        // oldest rendered block; force the next refresh to rebuild fully.
+        m_logModelTrimmed = true;
+    }
+    writeSessionLogEntry(entry);
+    scheduleLogRefresh();
+}
+
+void MainWindow::appendStatusLog(const QString &identity, const QString &message,
+                                 const QString &level, LogEntryKind kind)
+{
+    // Replace the previous entry for this identity. The session file stays
+    // append-only, so the on-disk history keeps every occurrence while the
+    // live register keeps exactly the newest one.
+    const auto previous = m_statusLogEntries.constFind(identity);
+    if (previous != m_statusLogEntries.constEnd()) {
+        const QString previousEntry = previous.value();
+        const int index = m_actionLogEntries.indexOf(previousEntry);
+        if (index >= 0) {
+            m_actionLogEntries.removeAt(index);
+        }
+        const int activeIndex = m_activeRepairEntries.lastIndexOf(previousEntry);
+        if (activeIndex >= 0) {
+            m_activeRepairEntries.removeAt(activeIndex);
+        }
+        // An entry that was only queued for rendering is dropped from the
+        // queue; one already present in the document is queued for block
+        // removal, exactly like a replaced diagnostic section.
+        const int pendingIndex = m_pendingLogEntries.lastIndexOf(previousEntry);
+        if (pendingIndex >= 0) {
+            m_pendingLogEntries.removeAt(pendingIndex);
+        }
+        if (m_renderedEntryRanges.contains(identity)) {
+            m_pendingEntryRemovals.insert(identity);
+        }
+        m_statusEntryIdentities.remove(previousEntry);
+        m_statusLogEntries.erase(previous);
+    }
+    appendLog(message, level, kind);
+    const QString entry = m_actionLogEntries.constFirst();
+    m_statusLogEntries.insert(identity, entry);
+    m_statusEntryIdentities.insert(entry, identity);
+}
+
+// The identity under which a rendered entry is tracked for replacement, or an
+// empty string for append-only history. Diagnostic sections carry their
+// (key, scope) framing; status entries are matched through the identity map
+// because the message body alone does not name the status kind.
+QString MainWindow::trackedEntryIdentity(const QString &entry) const
+{
+    QString key;
+    QString scope;
+    if (diagnosticEntryMetadata(entry, &key, &scope)) {
+        return diagnosticEntryIdentity(key, scope);
+    }
+    const auto it = m_statusEntryIdentities.constFind(entry);
+    return it == m_statusEntryIdentities.constEnd() ? QString() : it.value();
+}
+
+void MainWindow::scheduleLogRefresh()
+{
+    if (!m_logView) {
+        return;
+    }
+    if (!m_logRefreshTimer) {
+        // A single coalescing delay absorbs bursts of appends (diagnostics can
+        // add many large entries in one operation) into one view refresh so
+        // the event loop is not saturated while work is running.
+        m_logRefreshTimer = new QTimer(this);
+        m_logRefreshTimer->setSingleShot(true);
+        m_logRefreshTimer->setInterval(100);
+        connect(m_logRefreshTimer, &QTimer::timeout, this, &MainWindow::refreshLogView);
+    }
+    m_logRefreshTimer->start();
+}
+
+// Colors the repair-result symbols in place with character formats only. The
+// document stays plain text: setPlainText()/insertText() write the same bytes
+// and only the ✓/✗/▪ glyphs of summary lines receive a foreground color, so
+// search, filters, copy, Save As and the session file are unaffected.
+void MainWindow::applyRepairResultColoring(const QString &text, int documentOffset)
+{
+    if (!m_logView || text.isEmpty()) {
+        return;
+    }
+    QTextDocument *document = m_logView->document();
+    if (!document) {
+        return;
+    }
+    const auto colorSymbols = [&](int lineStart, const QString &line) {
+        for (const auto &symbol : repairResultSymbolFormats()) {
+            int index = line.indexOf(symbol.first);
+            while (index >= 0) {
+                QTextCursor cursor(document);
+                cursor.setPosition(documentOffset + lineStart + index);
+                cursor.setPosition(documentOffset + lineStart + index + symbol.first.size(),
+                                   QTextCursor::KeepAnchor);
+                cursor.mergeCharFormat(symbol.second);
+                index = line.indexOf(symbol.first, index + symbol.first.size());
+            }
+        }
+    };
+
+    int lineStart = 0;
+    while (lineStart <= text.size()) {
+        int lineEnd = text.indexOf(QLatin1Char('\n'), lineStart);
+        if (lineEnd < 0) {
+            lineEnd = text.size();
+        }
+        const QString line = text.mid(lineStart, lineEnd - lineStart);
+        if (isRepairResultLine(line)) {
+            colorSymbols(lineStart, line);
+        }
+        if (lineEnd >= text.size()) {
+            break;
+        }
+        lineStart = lineEnd + 1;
+    }
+}
+
+// Renders the live register or the selected prior session into the log view.
+// While the live register is shown unfiltered, deferred edits are applied
+// incrementally; every other case (filter, search, prior log, cap trim) falls
+// back to a full rebuild.
 void MainWindow::refreshLogView()
 {
     if (!m_logView) {
         return;
     }
+    if (m_logRefreshTimer) {
+        m_logRefreshTimer->stop();
+    }
+    ++m_logRefreshCount;
 
     QScrollBar *scrollBar = m_logView->verticalScrollBar();
     const bool wasAtTop = !scrollBar || scrollBar->value() <= 2;
+    QSet<QString> staleSections = m_targetDiagnosticsStaleSections;
+    staleSections.unite(m_hostDiagnosticsStaleSections);
     const auto markStaleEntries = [this] {
         QList<QTextEdit::ExtraSelection> selections;
         QTextCharFormat staleFormat;
@@ -5872,16 +10041,30 @@ void MainWindow::refreshLogView()
         // contrast in either appearance.
         staleFormat.setForeground(palette().color(QPalette::Text));
         QList<QTextBlock> entryBlocks;
+        const auto entryDiagnosticKey = [](const QString &text) {
+            const QRegularExpression header(QStringLiteral("(?:^|\\n)Diagnostic: ([A-Za-z0-9_-]+)\\n"));
+            const QRegularExpressionMatch match = header.match(text);
+            return match.hasMatch() ? match.captured(1) : QString();
+        };
         const auto flushEntry = [&] {
             if (entryBlocks.isEmpty()) return;
             QString entryText;
             for (const QTextBlock &entryBlock : entryBlocks) {
                 entryText += entryBlock.text() + QLatin1Char('\n');
             }
+            const QString entryKey = entryDiagnosticKey(entryText);
+            const bool targetStaleSection = !m_targetDiagnosticsStaleSections.isEmpty()
+                && entryText.contains(QStringLiteral("Scope: Repair Target"), Qt::CaseInsensitive)
+                && m_targetDiagnosticsStaleSections.contains(entryKey);
+            const bool hostStaleSection = !m_hostDiagnosticsStaleSections.isEmpty()
+                && entryText.contains(QStringLiteral("Scope: Running Host"), Qt::CaseInsensitive)
+                && m_hostDiagnosticsStaleSections.contains(entryKey);
             const bool stale = entryText.contains(QStringLiteral("STALE DIAGNOSTICS"), Qt::CaseInsensitive)
                 || (m_targetDiagnosticsNeedRegeneration
                     && entryText.contains(QStringLiteral("Diagnostic:"), Qt::CaseInsensitive)
-                    && entryText.contains(QStringLiteral("Scope: Repair Target"), Qt::CaseInsensitive));
+                    && entryText.contains(QStringLiteral("Scope: Repair Target"), Qt::CaseInsensitive))
+                || targetStaleSection
+                || hostStaleSection;
             if (stale) {
                 for (const QTextBlock &entryBlock : entryBlocks) {
                     QTextEdit::ExtraSelection selection;
@@ -5903,10 +10086,144 @@ void MainWindow::refreshLogView()
         m_logView->setExtraSelections(selections);
     };
 
+    // Search and display operate on whichever log is open: the live register
+    // or the prior session file selected in the session list.
+    const QStringList &sourceEntries = m_viewingPriorLog ? m_viewedLogEntries : m_actionLogEntries;
     const QString query = m_logSearchEdit ? m_logSearchEdit->text().trimmed().toCaseFolded() : QString();
-    if (query.isEmpty()) {
-        m_logView->setPlainText(m_actionLogEntries.join(QLatin1Char('\n')));
+    const QString filterKey = m_logFilterCombo
+        ? m_logFilterCombo->currentData().toString()
+        : QStringLiteral("all");
+
+    const bool liveUnfiltered = !m_viewingPriorLog && query.isEmpty()
+        && filterKey == QStringLiteral("all");
+    const bool previousWasLiveUnfiltered = m_logViewRendered && !m_renderedPriorLog
+        && m_renderedLogQuery.isEmpty() && m_renderedLogFilter == QStringLiteral("all");
+
+    // Incremental path: while the live register is shown unfiltered, apply the
+    // deferred edits locally instead of rebuilding the whole document. New
+    // entries are prepended with a QTextCursor at the document start; replaced
+    // diagnostic sections remove their old block range first. A cap trim, log
+    // switch or search change falls back to a full rebuild.
+    if (liveUnfiltered && previousWasLiveUnfiltered && !m_logModelTrimmed) {
+        if (!m_pendingEntryRemovals.isEmpty()) {
+            QTextDocument *document = m_logView->document();
+            for (const QString &identity : m_pendingEntryRemovals) {
+                const auto rangeIt = m_renderedEntryRanges.find(identity);
+                if (rangeIt == m_renderedEntryRanges.end()) {
+                    continue;
+                }
+                const int rangeStart = rangeIt->first;
+                const int rangeEnd = rangeIt->second;
+                const int documentLength = document->characterCount() - 1;
+                // Remove the section together with one adjacent separator so
+                // no empty entry is left behind.
+                const bool lastEntry = rangeEnd >= documentLength;
+                const int removalStart = lastEntry ? qMax(0, rangeStart - 1) : rangeStart;
+                const int removalEnd = lastEntry ? rangeEnd : rangeEnd + 1;
+                m_renderedEntryRanges.erase(rangeIt);
+                if (removalEnd <= removalStart) {
+                    continue;
+                }
+                QTextCursor cursor(document);
+                cursor.setPosition(removalStart);
+                cursor.setPosition(removalEnd, QTextCursor::KeepAnchor);
+                cursor.removeSelectedText();
+                const int removedCount = removalEnd - removalStart;
+                for (auto shiftIt = m_renderedEntryRanges.begin();
+                     shiftIt != m_renderedEntryRanges.end(); ) {
+                    if (shiftIt->first >= removalEnd) {
+                        shiftIt->first -= removedCount;
+                        shiftIt->second -= removedCount;
+                        ++shiftIt;
+                    } else if (shiftIt->second > removalStart) {
+                        // Whole-entry ranges cannot partially overlap; drop
+                        // the entry defensively rather than keep a stale one.
+                        shiftIt = m_renderedEntryRanges.erase(shiftIt);
+                    } else {
+                        ++shiftIt;
+                    }
+                }
+            }
+            m_pendingEntryRemovals.clear();
+        }
+
+        if (!m_pendingLogEntries.isEmpty()) {
+            // Pending entries are recorded in append order; the document keeps
+            // the newest entry first.
+            QStringList newestFirst;
+            newestFirst.reserve(m_pendingLogEntries.size());
+            for (auto it = m_pendingLogEntries.crbegin(); it != m_pendingLogEntries.crend(); ++it) {
+                newestFirst.append(*it);
+            }
+            const bool documentEmpty = m_logView->document()->isEmpty();
+            const QString inserted = newestFirst.join(QLatin1Char('\n'))
+                + (documentEmpty ? QString() : QStringLiteral("\n"));
+            QTextCursor cursor(m_logView->document());
+            cursor.movePosition(QTextCursor::Start);
+            cursor.insertText(inserted);
+            applyRepairResultColoring(inserted);
+            for (auto rangeIt = m_renderedEntryRanges.begin();
+                 rangeIt != m_renderedEntryRanges.end(); ++rangeIt) {
+                rangeIt->first += inserted.size();
+                rangeIt->second += inserted.size();
+            }
+            int offset = 0;
+            for (const QString &entry : newestFirst) {
+                const QString entryIdentity = trackedEntryIdentity(entry);
+                if (!entryIdentity.isEmpty()) {
+                    const int entrySize = static_cast<int>(entry.size());
+                    m_renderedEntryRanges.insert(
+                        entryIdentity, qMakePair(offset, offset + entrySize));
+                }
+                offset += static_cast<int>(entry.size()) + 1;
+            }
+            m_pendingLogEntries.clear();
+        }
+
+        // Stale highlighting is only recomputed when its input changes or on
+        // a full rebuild, never on every incremental append.
+        if (!m_staleHighlightValid
+            || m_staleHighlightFlag != m_targetDiagnosticsNeedRegeneration
+            || m_staleHighlightSections != staleSections) {
+            markStaleEntries();
+            m_staleHighlightFlag = m_targetDiagnosticsNeedRegeneration;
+            m_staleHighlightSections = staleSections;
+            m_staleHighlightValid = true;
+        }
+        if (wasAtTop && scrollBar) {
+            scrollBar->setValue(0);
+        }
+        return;
+    }
+
+    if (query.isEmpty() && filterKey == QStringLiteral("all")) {
+        const QString rebuilt = sourceEntries.join(QLatin1Char('\n'));
+        m_logView->setPlainText(rebuilt);
+        applyRepairResultColoring(rebuilt);
         markStaleEntries();
+        m_staleHighlightFlag = m_targetDiagnosticsNeedRegeneration;
+        m_staleHighlightSections = staleSections;
+        m_staleHighlightValid = true;
+        m_renderedLogQuery.clear();
+        m_renderedLogFilter = filterKey;
+        m_renderedPriorLog = m_viewingPriorLog;
+        m_logViewRendered = true;
+        m_logModelTrimmed = false;
+        m_pendingLogEntries.clear();
+        m_pendingEntryRemovals.clear();
+        m_renderedEntryRanges.clear();
+        if (!m_viewingPriorLog) {
+            int offset = 0;
+            for (const QString &entry : sourceEntries) {
+                const QString entryIdentity = trackedEntryIdentity(entry);
+                if (!entryIdentity.isEmpty()) {
+                    const int entrySize = static_cast<int>(entry.size());
+                    m_renderedEntryRanges.insert(
+                        entryIdentity, qMakePair(offset, offset + entrySize));
+                }
+                offset += static_cast<int>(entry.size()) + 1;
+            }
+        }
         if (wasAtTop && scrollBar) {
             scrollBar->setValue(0);
         }
@@ -5917,12 +10234,40 @@ void MainWindow::refreshLogView()
     // Keeping the subsequence within one token makes fuzzy searches forgiving
     // of punctuation (for example, "intrmfs" still finds "initramfs") while
     // preventing unrelated long entries from matching characters scattered
-    // across timestamps, messages, and line breaks.
+    // across timestamps, messages, and line breaks. A term beginning with '@'
+    // is not fuzzy: it selects complete diagnostic sections by key or title.
     const QStringList terms = query.split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
-    const auto matchesTerms = [&terms](const QString &text) {
+    QStringList fuzzyTerms;
+    QStringList sectionTerms;
+    for (const QString &term : terms) {
+        if (term.startsWith(QLatin1Char('@')) && term.size() > 1) {
+            sectionTerms.append(term.mid(1));
+        } else {
+            fuzzyTerms.append(term);
+        }
+    }
+    // Selecting a diagnostic section in the filter dropdown behaves exactly
+    // like the matching @section search term.
+    if (filterKey.startsWith(QLatin1Char('@')) && filterKey.size() > 1) {
+        sectionTerms.append(filterKey.mid(1));
+    }
+
+    // A repair-workflow filter (for example File system repair) selects a set
+    // of diagnostic sections plus the repair topics of that workflow; it is
+    // resolved through the single logWorkflowFilterSpecs table above.
+    const LogWorkflowFilterSpec *workflowFilter = logWorkflowFilterFor(filterKey);
+    const QStringList workflowSections = workflowFilter
+        ? QString::fromLatin1(workflowFilter->sections).split(QLatin1Char(' '), Qt::SkipEmptyParts)
+        : QStringList();
+    const bool sectionsSelected = !sectionTerms.isEmpty() || !workflowSections.isEmpty();
+
+    const auto matchesTerms = [&fuzzyTerms](const QString &text) {
+        if (fuzzyTerms.isEmpty()) {
+            return true;
+        }
         const QStringList tokens = text.toCaseFolded().split(
             QRegularExpression(QStringLiteral("[^\\p{L}\\p{N}]+")), Qt::SkipEmptyParts);
-        for (const QString &term : terms) {
+        for (const QString &term : fuzzyTerms) {
             bool termMatched = false;
             for (const QString &token : tokens) {
                 if (token.contains(term)) {
@@ -5951,19 +10296,137 @@ void MainWindow::refreshLogView()
         return true;
     };
 
-    QStringList visible;
-    visible.reserve(m_actionLogEntries.size());
-    for (const QString &entry : m_actionLogEntries) {
-        const QStringList lines = entry.split(QLatin1Char('\n'));
-        const bool diagnosticEntry = entry.contains(QStringLiteral("\nDiagnostic: "))
-            || entry.contains(QStringLiteral("] Diagnostic: "));
-        if (!diagnosticEntry) {
-            if (matchesTerms(entry)) {
-                visible.append(entry);
-            }
-            continue;
+    const auto sectionMatches = [&sectionTerms](const QString &key, const QString &title) {
+        if (sectionTerms.isEmpty()) {
+            return true;
         }
+        for (const QString &section : sectionTerms) {
+            if (section == QStringLiteral("all")) {
+                return true;
+            }
+            if (key.compare(section, Qt::CaseInsensitive) == 0) {
+                return true;
+            }
+            if (!title.isEmpty() && title.contains(section, Qt::CaseInsensitive)) {
+                return true;
+            }
+        }
+        return false;
+    };
 
+    const auto workflowHasSection = [&workflowSections](const QString &key) {
+        for (const QString &section : workflowSections) {
+            if (key.compare(section, Qt::CaseInsensitive) == 0) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // True when the entry's diagnostic section belongs to the current filter.
+    // Without a section filter every diagnostic entry is shown (whole or as an
+    // excerpt); otherwise a section must match the @section terms, the
+    // workflow's section set, or both.
+    const auto sectionSelected = [&](const QString &key, const QString &title) {
+        if (!sectionsSelected) {
+            return true;
+        }
+        if (!sectionTerms.isEmpty() && sectionMatches(key, title)) {
+            return true;
+        }
+        return !workflowSections.isEmpty() && workflowHasSection(key);
+    };
+
+    const auto categoryMatches = [&filterKey](const QString &entry) {
+        if (filterKey.isEmpty() || filterKey == QStringLiteral("all")
+            || filterKey.startsWith(QLatin1Char('@'))) {
+            return true;
+        }
+        const LogEntryKind kind = logEntryKind(entry);
+        if (filterKey == QStringLiteral("diagnostics")) {
+            return kind == LogEntryKind::Diagnostic;
+        }
+        if (filterKey == QStringLiteral("repairs")) {
+            return kind == LogEntryKind::Repair;
+        }
+        if (logWorkflowFilterFor(filterKey)) {
+            // A workflow filter shows its diagnostic evidence and its repair
+            // entries; unrelated kinds stay hidden.
+            return kind == LogEntryKind::Diagnostic || kind == LogEntryKind::Repair;
+        }
+        return true;
+    };
+
+    // Expand every selected section (dropdown filter or @section term) into
+    // the repair topics that belong to it. The topics are resolved through
+    // the single logSectionFilterSpecs table above.
+    QSet<QString> selectedRepairTopics;
+    if (!sectionTerms.isEmpty()) {
+        for (const DiagnosticSpec &spec : diagnosticSpecs) {
+            if (!sectionMatches(QString::fromLatin1(spec.key), QString::fromLatin1(spec.title))) {
+                continue;
+            }
+            const QStringList topics = logRepairTopicsForSection(QString::fromLatin1(spec.key))
+                .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+            for (const QString &topic : topics) {
+                selectedRepairTopics.insert(topic);
+            }
+        }
+    }
+    if (workflowFilter) {
+        const QStringList topics = QString::fromLatin1(workflowFilter->repairTopics)
+            .split(QLatin1Char(' '), Qt::SkipEmptyParts);
+        for (const QString &topic : topics) {
+            selectedRepairTopics.insert(topic);
+        }
+    }
+
+    // A section can be captured both as a dedicated framed entry and embedded
+    // inside a combined Run All report. A dedicated entry wins: embedded
+    // sections are only extracted for keys that have none in the current
+    // view, so selecting a section never shows the same capture twice.
+    QSet<QString> dedicatedSectionKeys;
+    QSet<QString> extractionKeys;
+    if (sectionsSelected) {
+        for (const QString &entry : sourceEntries) {
+            if (!categoryMatches(entry)) {
+                continue;
+            }
+            QString entryKey;
+            QString entryScope;
+            if (diagnosticEntryMetadata(entry, &entryKey, &entryScope)
+                && sectionSelected(entryKey, diagnosticEntryTitle(entry))) {
+                dedicatedSectionKeys.insert(entryKey.toCaseFolded());
+            }
+        }
+        for (const DiagnosticSpec &spec : diagnosticSpecs) {
+            const QString key = QString::fromLatin1(spec.key);
+            if (!sectionSelected(key, QString::fromLatin1(spec.title))) {
+                continue;
+            }
+            if (!dedicatedSectionKeys.contains(key.toCaseFolded())) {
+                extractionKeys.insert(key.toCaseFolded());
+            }
+        }
+    }
+
+    QStringList visible;
+    visible.reserve(sourceEntries.size());
+
+    // Combined reports and other diagnostic captures embed the per-key
+    // sections. Show the selected embedded sections whole, exactly as they
+    // were captured, and apply the remaining search terms as AND.
+    const auto appendExtractedSections = [&](const QString &entry) {
+        const QStringList sections = extractEmbeddedDiagnosticSections(entry, extractionKeys);
+        for (const QString &section : sections) {
+            if (fuzzyTerms.isEmpty() || matchesTerms(section)) {
+                visible.append(section);
+            }
+        }
+    };
+
+    const auto appendDiagnosticExcerpt = [&](const QString &entry) {
+        const QStringList lines = entry.split(QLatin1Char('\n'));
         // Diagnostic entries can contain thousands of lines. Show the
         // framing metadata and only matching lines, so a search for
         // “initramfs” does not reproduce the whole report or unrelated
@@ -5987,7 +10450,7 @@ void MainWindow::refreshLogView()
             }
         }
         if (matches.isEmpty()) {
-            continue;
+            return;
         }
 
         QSet<int> included;
@@ -6001,8 +10464,60 @@ void MainWindow::refreshLogView()
         for (int index = 0; index <= headerEnd; ++index) {
             included.insert(index);
         }
-        for (const int match : matches) {
-            included.insert(match);
+
+        // A combined report embeds the per-key sections. Showing only the
+        // matching lines would produce a flat list of fragments whose section
+        // is no longer identifiable. Keep the excerpt coherent: matches before
+        // the first embedded section (the shared capability preamble) stay as
+        // they are, and every embedded section that contains matches is shown
+        // with its title frame and metadata once above its matching lines.
+        QList<int> embeddedHeaders;
+        for (int index = headerEnd + 1; index < lines.size(); ++index) {
+            if (lines.at(index).startsWith(QStringLiteral("Diagnostic: "))) {
+                embeddedHeaders.append(index);
+            }
+        }
+
+        if (embeddedHeaders.isEmpty()) {
+            for (const int match : matches) {
+                included.insert(match);
+            }
+        } else {
+            const int firstEmbeddedStart =
+                embeddedSectionStartLine(lines, embeddedHeaders.constFirst());
+            for (const int match : matches) {
+                if (match < firstEmbeddedStart) {
+                    included.insert(match);
+                }
+            }
+            for (int position = 0; position < embeddedHeaders.size(); ++position) {
+                const int header = embeddedHeaders.at(position);
+                const int start = embeddedSectionStartLine(lines, header);
+                const int end = position + 1 < embeddedHeaders.size()
+                    ? embeddedSectionStartLine(lines, embeddedHeaders.at(position + 1))
+                    : lines.size();
+                // The section metadata is the "Diagnostic:" line and the
+                // contiguous header lines that follow it (Scope, Time, ...),
+                // ending at the blank line before the body.
+                int metadataEnd = header;
+                while (metadataEnd + 1 < end
+                       && !lines.at(metadataEnd + 1).trimmed().isEmpty()) {
+                    ++metadataEnd;
+                }
+                bool sectionMatched = false;
+                for (const int match : matches) {
+                    if (match < start || match >= end) {
+                        continue;
+                    }
+                    if (!sectionMatched) {
+                        for (int index = start; index <= metadataEnd; ++index) {
+                            included.insert(index);
+                        }
+                        sectionMatched = true;
+                    }
+                    included.insert(match);
+                }
+            }
         }
 
         QStringList excerpt;
@@ -6014,10 +10529,91 @@ void MainWindow::refreshLogView()
         if (!excerpt.isEmpty()) {
             visible.append(excerpt.join(QLatin1Char('\n')));
         }
+    };
+
+    for (const QString &entry : sourceEntries) {
+        if (!categoryMatches(entry)) {
+            continue;
+        }
+
+        QString entryKey;
+        QString entryScope;
+        if (diagnosticEntryMetadata(entry, &entryKey, &entryScope)) {
+            if (!sectionSelected(entryKey, diagnosticEntryTitle(entry))) {
+                // A combined report is one framed entry whose key does not
+                // match the selected section; its embedded per-key sections
+                // are extracted instead.
+                if (sectionsSelected) {
+                    appendExtractedSections(entry);
+                }
+                continue;
+            }
+
+            // A selected section (or a pure dropdown filter) shows the
+            // complete section. Fuzzy terms combine as AND: the section must
+            // still match every term somewhere before it is shown whole.
+            if (fuzzyTerms.isEmpty() || sectionsSelected) {
+                if (matchesTerms(entry)) {
+                    visible.append(entry);
+                }
+                continue;
+            }
+            appendDiagnosticExcerpt(entry);
+            continue;
+        }
+
+        // Repair entries record a "Diagnostic: <title>" line without the
+        // framed section metadata. A selected section includes the repair
+        // entries of its related topics; without a selected section they keep
+        // the legacy whole-entry or excerpt matching.
+        const bool legacyDiagnosticLike = entry.contains(QStringLiteral("\nDiagnostic: "))
+            || entry.contains(QStringLiteral("] Diagnostic: "));
+        if (!sectionsSelected) {
+            if (fuzzyTerms.isEmpty() || !legacyDiagnosticLike) {
+                if (matchesTerms(entry)) {
+                    visible.append(entry);
+                }
+            } else {
+                appendDiagnosticExcerpt(entry);
+            }
+            continue;
+        }
+        if (logEntryKind(entry) == LogEntryKind::Diagnostic) {
+            // A diagnostic entry without the framed metadata can still carry
+            // an embedded combined report.
+            appendExtractedSections(entry);
+            continue;
+        }
+        if (logEntryKind(entry) != LogEntryKind::Repair
+            || !repairEntryMatchesTopics(entry, selectedRepairTopics)) {
+            continue;
+        }
+        if (matchesTerms(entry)) {
+            visible.append(entry);
+        }
     }
 
-    m_logView->setPlainText(visible.join(QLatin1Char('\n')));
+    // A filter that matches nothing must still show a clear notice instead of
+    // an empty document.
+    if (visible.isEmpty()) {
+        visible.append(QStringLiteral("(no matching entries for this filter)"));
+    }
+
+    const QString filtered = visible.join(QLatin1Char('\n'));
+    m_logView->setPlainText(filtered);
+    applyRepairResultColoring(filtered);
     markStaleEntries();
+    m_staleHighlightFlag = m_targetDiagnosticsNeedRegeneration;
+    m_staleHighlightSections = staleSections;
+    m_staleHighlightValid = true;
+    m_renderedLogQuery = query;
+    m_renderedLogFilter = filterKey;
+    m_renderedPriorLog = m_viewingPriorLog;
+    m_logViewRendered = true;
+    m_logModelTrimmed = false;
+    m_pendingLogEntries.clear();
+    m_pendingEntryRemovals.clear();
+    m_renderedEntryRanges.clear();
     if (wasAtTop && scrollBar) {
         scrollBar->setValue(0);
     }
@@ -6059,7 +10655,151 @@ void MainWindow::appendDiagnosticLog(const QString &key, const QString &title,
         .arg(command)
         .arg(succeeded ? QStringLiteral("completed") : QStringLiteral("failed"))
         .arg(output);
-    appendLog(section, succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+
+    // A newer result supersedes the previous section for the same (key,
+    // scope). Run All additionally supersedes every per-key section it
+    // regenerates for the same scope, so a fresh report never leaves stale
+    // per-key duplicates behind. Non-diagnostic entries are never touched.
+    const QString identity = diagnosticEntryIdentity(key, scope);
+    const auto removeTrackedEntry = [this](const QString &trackedIdentity) {
+        const auto it = m_diagnosticLogEntries.find(trackedIdentity);
+        if (it == m_diagnosticLogEntries.end()) {
+            return;
+        }
+        const QString removedEntry = it.value();
+        const int index = m_actionLogEntries.indexOf(removedEntry);
+        if (index >= 0) {
+            m_actionLogEntries.removeAt(index);
+        }
+        // Keep the deferred incremental view update in sync: an entry that was
+        // only queued for rendering is dropped from the queue, while one
+        // already present in the document is queued for block removal.
+        const int pendingIndex = m_pendingLogEntries.lastIndexOf(removedEntry);
+        if (pendingIndex >= 0) {
+            m_pendingLogEntries.removeAt(pendingIndex);
+        }
+        if (m_renderedEntryRanges.contains(trackedIdentity)) {
+            m_pendingEntryRemovals.insert(trackedIdentity);
+        }
+        m_diagnosticLogEntries.erase(it);
+    };
+    if (key == QStringLiteral("report")) {
+        const QString scopePrefix = scope + QLatin1Char('\x1f');
+        const QStringList trackedIdentities = m_diagnosticLogEntries.keys();
+        for (const QString &trackedIdentity : trackedIdentities) {
+            if (trackedIdentity.startsWith(scopePrefix)) {
+                removeTrackedEntry(trackedIdentity);
+            }
+        }
+    } else {
+        removeTrackedEntry(identity);
+    }
+
+    appendLog(section, succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"),
+              LogEntryKind::Diagnostic);
+    m_diagnosticLogEntries.insert(identity, m_actionLogEntries.constFirst());
+}
+
+// The active host/target scope as used by repair sections and scope-sensitive
+// status entries. The running host, each repair target and each filesystem
+// device stay separate while the same scope re-run replaces.
+QString MainWindow::currentLogScopeKey() const
+{
+    return m_hostMaintenanceMode
+        ? QStringLiteral("host:%1:%2").arg(m_hostPrimaryPath, m_hostPrimaryComponentPath)
+        : QStringLiteral("target:%1:%2").arg(m_previewTargetPath, m_previewTargetComponentPath);
+}
+
+// Repair sections live in their own namespace (the "repair" field) so a repair
+// key can never collide with a diagnostic section of the same name; the scope
+// keeps the running host, each repair target and each filesystem device/mode
+// separate while the same tool/stage re-run on the same scope replaces.
+QString MainWindow::repairLogSectionIdentity(const QString &key) const
+{
+    return QStringLiteral("repair\x1f%1\x1f%2").arg(currentLogScopeKey(), key);
+}
+
+void MainWindow::beginRepairLogSection(const QString &section)
+{
+    m_activeRepairSection = section;
+    m_activeRepairEntries.clear();
+}
+
+void MainWindow::finishRepairLogSection(const QString &section)
+{
+    if (m_activeRepairSection != section) {
+        return;
+    }
+    const QStringList newEntries = m_activeRepairEntries;
+    m_activeRepairSection.clear();
+    m_activeRepairEntries.clear();
+    if (newEntries.isEmpty()) {
+        return;
+    }
+
+    // Drop the previous block for the same tool/stage and scope. A repair
+    // cycle's entries are appended back to back, so the old block is a
+    // contiguous run in the newest-first register. The search starts after the
+    // new entries (identical same-second entries must not remove the fresh
+    // copy) and requires the whole run to match in order, so an identical
+    // output entry from a different scope cannot be removed by mistake.
+    const auto previous = m_repairLogEntries.constFind(section);
+    if (previous != m_repairLogEntries.constEnd() && !previous->isEmpty()) {
+        const int count = previous->size();
+        for (int index = newEntries.size();
+             index + count <= m_actionLogEntries.size(); ++index) {
+            bool matches = true;
+            for (int offset = 0; offset < count; ++offset) {
+                if (m_actionLogEntries.at(index + offset)
+                    != previous->at(count - 1 - offset)) {
+                    matches = false;
+                    break;
+                }
+            }
+            if (!matches) {
+                continue;
+            }
+            for (int offset = 0; offset < count; ++offset) {
+                m_actionLogEntries.removeAt(index);
+            }
+            break;
+        }
+    }
+    m_repairLogEntries.insert(section, newEntries);
+
+    // The model changed outside the incremental renderer's view of the
+    // document, so the next refresh rebuilds from the register. The updated
+    // block keeps the newest-first position it was appended at, matching the
+    // diagnostic replacement ordering.
+    m_pendingLogEntries.clear();
+    m_pendingEntryRemovals.clear();
+    m_renderedEntryRanges.clear();
+    m_logViewRendered = false;
+    scheduleLogRefresh();
+}
+
+void MainWindow::rebuildDiagnosticLogIndex()
+{
+    // Reconstruct the (key, scope) index for the live register, for example
+    // after loading a session file. Older duplicate diagnostic sections from
+    // previous runs are collapsed to the newest result so the replacement
+    // model holds across restarts as well.
+    m_diagnosticLogEntries.clear();
+    for (int index = 0; index < m_actionLogEntries.size(); ) {
+        QString key;
+        QString scope;
+        if (!diagnosticEntryMetadata(m_actionLogEntries.at(index), &key, &scope)) {
+            ++index;
+            continue;
+        }
+        const QString identity = diagnosticEntryIdentity(key, scope);
+        if (m_diagnosticLogEntries.contains(identity)) {
+            m_actionLogEntries.removeAt(index);
+            continue;
+        }
+        m_diagnosticLogEntries.insert(identity, m_actionLogEntries.at(index));
+        ++index;
+    }
 }
 
 void MainWindow::showUsageHelp()
@@ -6090,6 +10830,54 @@ void MainWindow::showAboutDialog()
                            .arg(QCoreApplication::applicationVersion()));
 }
 
+// ---- MainWindow: responsive layout ------------------------------------------
+
+// Every splitter pane keeps at least a fifth of the splitter's current size so
+// dragging left/right or up/down can never hide a pane behind its neighbour.
+// The pixel minimum scales with the window instead of a fixed row count; each
+// pane's original minimum stays as its floor.
+static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1)
+{
+    if (!splitter) {
+        return;
+    }
+    static QHash<const QWidget *, QSize> baseMinimums;
+    constexpr int kMinimumPercent = 20;
+    const bool horizontal = splitter->orientation() == Qt::Horizontal;
+    const int total = horizontal ? splitter->width() : splitter->height();
+    if (total <= 0) {
+        return;
+    }
+    const int minimum = qMax(48, total * kMinimumPercent / 100);
+    for (int index = 0; index < splitter->count(); ++index) {
+        if (index == skipIndex) {
+            continue;
+        }
+        QWidget *pane = splitter->widget(index);
+        if (!pane) {
+            continue;
+        }
+        if (!baseMinimums.contains(pane)) {
+            baseMinimums.insert(pane, QSize(pane->minimumWidth(), pane->minimumHeight()));
+        }
+        const QSize base = baseMinimums.value(pane);
+        if (horizontal) {
+            const int wanted = qMax(base.width(), minimum);
+            if (pane->minimumWidth() != wanted) {
+                pane->setMinimumWidth(wanted);
+            }
+        } else {
+            const int wanted = qMax(base.height(), minimum);
+            if (pane->minimumHeight() != wanted) {
+                pane->setMinimumHeight(wanted);
+            }
+        }
+    }
+}
+
+// Reflows every page and splitter for the current window width: responsive tab
+// labels, splitter orientations and pane minimums, and the running-host card
+// layout. Called from resizeEvent() and after construction.
 void MainWindow::updateResponsiveLayout()
 {
     const int availableWidth = centralWidget() ? centralWidget()->width() : width();
@@ -6097,6 +10885,7 @@ void MainWindow::updateResponsiveLayout()
     const bool narrowDiagnostics = availableWidth < 820;
     const bool narrowRepair = availableWidth < 820;
     const bool narrowSnapshots = availableWidth < 700;
+    const bool narrowLogs = availableWidth < 820;
 
     if (m_tabs && m_tabs->count() >= 8) {
         QStringList labels;
@@ -6113,6 +10902,9 @@ void MainWindow::updateResponsiveLayout()
         for (int i = 0; i < labels.size() && i < m_tabs->count(); ++i) {
             m_tabs->setTabText(i, labels.at(i));
         }
+        // The Shell tab follows the active scope (Host Shell vs Chroot Shell)
+        // at the wide breakpoint; re-apply it after the responsive labels.
+        updateChrootShellMode();
     }
 
     if (m_systemSplitter) {
@@ -6137,6 +10929,50 @@ void MainWindow::updateResponsiveLayout()
                 m_systemSplitter->setSizes({820, 320});
             }
         }
+    }
+
+    if (m_hostCardLayout) {
+        // Stack the running-system identity above its actions on narrow
+        // windows so the OS/storage text keeps the full card width instead of
+        // wrapping word by word beside the buttons.
+        const QBoxLayout::Direction desired = narrowSystems
+            ? QBoxLayout::TopToBottom
+            : QBoxLayout::LeftToRight;
+        if (m_hostCardLayout->direction() != desired) {
+            m_hostCardLayout->setDirection(desired);
+        }
+    }
+
+    if (m_hostActionsLayout && m_hostProtectedBadge && m_hostDetailsButton
+        && m_hostMaintenanceButton && m_hostDefaultButton
+        && m_hostActionsStacked != narrowSystems) {
+        // Narrow: badge and Details on the first action row, the maintenance
+        // actions on the second, both rows right-anchored to the card's
+        // trailing edge (a leading stretch column absorbs the slack) so the
+        // buttons keep the same furthest-right anchor instead of sitting at
+        // fixed positions. Wide: one action row beside the identity.
+        auto place = [this](QWidget *widget, int row, int column) {
+            m_hostActionsLayout->removeWidget(widget);
+            m_hostActionsLayout->addWidget(widget, row, column, Qt::AlignRight | Qt::AlignTop);
+        };
+        if (narrowSystems) {
+            m_hostActionsLayout->setColumnStretch(0, 1);
+            m_hostActionsLayout->setColumnStretch(1, 0);
+            m_hostActionsLayout->setColumnStretch(2, 0);
+            place(m_hostProtectedBadge, 0, 1);
+            place(m_hostDetailsButton, 0, 2);
+            place(m_hostMaintenanceButton, 1, 1);
+            place(m_hostDefaultButton, 1, 2);
+        } else {
+            m_hostActionsLayout->setColumnStretch(0, 0);
+            m_hostActionsLayout->setColumnStretch(1, 0);
+            m_hostActionsLayout->setColumnStretch(2, 0);
+            place(m_hostProtectedBadge, 0, 0);
+            place(m_hostDetailsButton, 0, 1);
+            place(m_hostMaintenanceButton, 0, 2);
+            place(m_hostDefaultButton, 0, 3);
+        }
+        m_hostActionsStacked = narrowSystems;
     }
 
     if (m_diagnosticSplitter) {
@@ -6179,10 +11015,10 @@ void MainWindow::updateResponsiveLayout()
             }
         } else {
             m_repairSplitter->setMinimumHeight(270);
-            m_repairSplitter->setStretchFactor(0, 5);
-            m_repairSplitter->setStretchFactor(1, 6);
+            m_repairSplitter->setStretchFactor(0, 3);
+            m_repairSplitter->setStretchFactor(1, 2);
             if (changed) {
-                m_repairSplitter->setSizes({470, 560});
+                m_repairSplitter->setSizes({650, 390});
             }
         }
     }
@@ -6204,8 +11040,107 @@ void MainWindow::updateResponsiveLayout()
             m_snapshotRollbackButton->setSizePolicy(policy);
         }
     }
+
+    if (m_sessionLogSplitter && m_sessionLogPanel && m_sessionLogViewer) {
+        const Qt::Orientation desired = narrowLogs ? Qt::Vertical : Qt::Horizontal;
+        const bool changed = m_sessionLogSplitter->orientation() != desired;
+        if (changed) {
+            m_sessionLogSplitter->setOrientation(desired);
+            // Narrow windows stack the log view above the session selection
+            // frame so the log stays readable; wider windows keep the
+            // selection frame on the left. insertWidget() moves the existing
+            // widgets, so the frames stay visible and non-collapsible.
+            if (desired == Qt::Vertical) {
+                m_sessionLogSplitter->insertWidget(0, m_sessionLogViewer);
+                m_sessionLogSplitter->insertWidget(1, m_sessionLogPanel);
+            } else {
+                m_sessionLogSplitter->insertWidget(0, m_sessionLogPanel);
+                m_sessionLogSplitter->insertWidget(1, m_sessionLogViewer);
+            }
+        }
+        if (desired == Qt::Vertical) {
+            m_sessionLogSplitter->setStretchFactor(0, 1);
+            m_sessionLogSplitter->setStretchFactor(1, 0);
+            if (changed) {
+                m_sessionLogSplitter->setSizes({260, 160});
+            }
+        } else {
+            m_sessionLogSplitter->setStretchFactor(0, 0);
+            m_sessionLogSplitter->setStretchFactor(1, 1);
+            if (changed) {
+                m_sessionLogSplitter->setSizes({280, 800});
+            }
+        }
+    }
+
+    // Relative pane minimums for every splitter: each pane keeps at least a
+    // fifth of the current splitter size, so dragging in any direction never
+    // hides a pane. The tools pane of the Repair splitter keeps its explicit
+    // minimum height instead.
+    applyFractionalPaneMinimum(m_systemSplitter);
+    applyFractionalPaneMinimum(m_diagnosticSplitter);
+    applyFractionalPaneMinimum(m_repairSplitter);
+    applyFractionalPaneMinimum(m_snapshotSplitter);
+    applyFractionalPaneMinimum(m_sessionLogSplitter);
+    applyFractionalPaneMinimum(m_repairVerticalSplitter, 1);
 }
 
+void MainWindow::updateFullRepairPlanHeight()
+{
+    if (!m_fullRepairStageList) {
+        return;
+    }
+
+    // The plan list keeps a few stage rows visible at minimum; the vertical
+    // splitter owns the current height, so the divider can grow the list up to
+    // its content or shrink it back to this minimum and the list scrolls past
+    // whatever does not fit.
+    constexpr int kMinVisibleRows = 3;
+
+    const int rowCount = m_fullRepairStageList->count();
+    const int fallbackRowHeight = qMax(28, m_fullRepairStageList->fontMetrics().lineSpacing() + 12);
+    int rowHeight = 0;
+    for (int row = 0; row < rowCount; ++row) {
+        rowHeight = qMax(rowHeight, m_fullRepairStageList->sizeHintForRow(row));
+    }
+    if (rowHeight <= 0) {
+        rowHeight = fallbackRowHeight;
+    }
+
+    // A word-wrapped QLabel reports a size hint measured at a much narrower
+    // width than it is actually given, which would keep the plan frame taller
+    // than its content. Pin the readiness hint to its real wrapped height at
+    // the current width so the frame stays content-sized.
+    if (m_fullRepairReadinessLabel && m_fullRepairReadinessLabel->width() > 0) {
+        const int readinessHeight = m_fullRepairReadinessLabel->heightForWidth(
+            m_fullRepairReadinessLabel->width());
+        if (readinessHeight > 0 && m_fullRepairReadinessLabel->minimumHeight() != readinessHeight) {
+            m_fullRepairReadinessLabel->setFixedHeight(readinessHeight);
+        }
+    }
+
+    const int frame = m_fullRepairStageList->frameWidth() * 2;
+    const QMargins margins = m_fullRepairStageList->contentsMargins();
+    const int minimumHeight = kMinVisibleRows * rowHeight + frame + margins.top() + margins.bottom();
+    if (m_fullRepairStageList->minimumHeight() != minimumHeight) {
+        m_fullRepairStageList->setMinimumHeight(minimumHeight);
+    }
+
+    // Until the user moves the divider, start the plan pane at its minimum so
+    // the tools panes keep the slack; afterwards the splitter position wins
+    // and no height is forced on the list.
+    if (!m_repairPlanSplitterUserAdjusted && m_repairVerticalSplitter && m_fullRepairPlanBox) {
+        const int planMinimum = m_fullRepairPlanBox->minimumSizeHint().height();
+        if (planMinimum > 0) {
+            m_repairVerticalSplitter->setSizes({planMinimum, 100000});
+        }
+    }
+}
+
+// Rebuilds the Full Repair plan list and every repair control from the current
+// Settings selection and the cached diagnostic evidence. This is the single
+// place where plan stages, individual tools and the Run Full Repair gate are
+// refreshed after a selection, evidence or scope change.
 void MainWindow::updateFullRepairSummary()
 {
     if (!m_fullRepairDpkg || !m_fullRepairStageList || !m_fullRepairCountLabel) {
@@ -6222,22 +11157,27 @@ void MainWindow::updateFullRepairSummary()
     };
 
     const QList<StageEntry> stageEntries = {
+        {m_fullRepairFilesystem, QStringLiteral("Repair file system errors"), QStringLiteral("filesystem"), QStringLiteral("filesystem")},
         {m_fullRepairDpkg, QStringLiteral("Complete interrupted package configuration"), QStringLiteral("dialog-ok-apply"), QStringLiteral("dpkg")},
         {m_fullRepairBrokenPackages, QStringLiteral("Repair broken package dependencies"), QStringLiteral("dialog-ok-apply"), QStringLiteral("fixbroken")},
         {m_fullRepairAptUpdate, QStringLiteral("Refresh package metadata"), QStringLiteral("view-refresh"), QStringLiteral("aptupdate")},
         {m_fullRepairUpgrade, QStringLiteral("Upgrade installed packages"), QStringLiteral("system-software-update"), QStringLiteral("upgrade")},
         {m_fullRepairDkms, QStringLiteral("Rebuild DKMS modules"), QStringLiteral("applications-development"), QStringLiteral("dkms")},
         {m_fullRepairDisplayManager, QStringLiteral("Restore detected graphical login manager"), QStringLiteral("video-display"), QStringLiteral("display")},
-        {m_fullRepairInitramfs, QStringLiteral("Rebuild initramfs after mapper/crypttab validation"), QStringLiteral("view-refresh"), QStringLiteral("initramfs")},
+        {m_fullRepairInitramfs, QStringLiteral("Rebuild initramfs after mapper/crypttab validation"), QStringLiteral("initramfs"), QStringLiteral("initramfs")},
         {m_fullRepairEfi, QStringLiteral("Reinstall EFI bootloader"), QStringLiteral("drive-removable-media"), QStringLiteral("efi")},
-        {m_fullRepairGrub, QStringLiteral("Update GRUB configuration"), QStringLiteral("preferences-system"), QStringLiteral("grub")}
+        {m_fullRepairGrub, QStringLiteral("Update GRUB configuration"), QStringLiteral("grub"), QStringLiteral("grub")}
     };
 
     m_fullRepairStageList->clear();
     int selectedCount = 0;
+    QString excludedReason;
 
     for (const StageEntry &entry : stageEntries) {
-        if (!entry.check || !entry.check->isChecked()) {
+        if (!entry.check || !entry.check->isChecked()) continue;
+        QString availabilityReason;
+        if (!repairToolAvailable(entry.diagnosticKey, &availabilityReason) || !entry.check->isEnabled()) {
+            if (excludedReason.isEmpty()) excludedReason = availabilityReason;
             continue;
         }
         ++selectedCount;
@@ -6245,7 +11185,6 @@ void MainWindow::updateFullRepairSummary()
         auto *item = new QListWidgetItem(themedIcon(entry.icon), orderedTitle, m_fullRepairStageList);
         item->setToolTip(QStringLiteral("Execution order %1: %2").arg(selectedCount).arg(entry.title));
     }
-
 
     if (selectedCount == 0) {
         m_fullRepairCountLabel->setText(QStringLiteral("No stages selected"));
@@ -6259,11 +11198,7 @@ void MainWindow::updateFullRepairSummary()
             : QStringLiteral("%1 stages selected").arg(selectedCount));
     }
 
-    const int planRows = qBound(2, selectedCount > 0 ? selectedCount : 1, 9);
-    const int planRowHeight = qMax(28, m_fullRepairStageList->fontMetrics().lineSpacing() + 12);
-    // Keep the plan compact enough to leave room for the individual tools;
-    // additional stages remain available through the list's own scrollbar.
-    m_fullRepairStageList->setFixedHeight(qMin(6 * planRowHeight + 8, planRows * planRowHeight + 8));
+    updateFullRepairPlanHeight();
 
     if (m_runFullRepairButton) {
         QString reason;
@@ -6274,7 +11209,8 @@ void MainWindow::updateFullRepairSummary()
         bool diagnosticsReady = targetReady;
         if (diagnosticsReady) {
             for (const StageEntry &entry : stageEntries) {
-                if (!entry.check || !entry.check->isChecked()) continue;
+                if (!entry.check || !entry.check->isEnabled() || !entry.check->isChecked()
+                    || !repairToolAvailable(entry.diagnosticKey)) continue;
                 QString stageReason;
                 if (!repairEvidenceReadyForTool(entry.diagnosticKey, &stageReason)) {
                     diagnosticsReady = false;
@@ -6287,12 +11223,14 @@ void MainWindow::updateFullRepairSummary()
         if (m_fullRepairReadinessLabel) {
             QString readiness;
             if (selectedCount == 0) {
-                readiness = QStringLiteral("No repair stages are selected. Use Configure Plan… to choose the stages Full Repair will run.");
+                readiness = excludedReason.isEmpty()
+                    ? QStringLiteral("No repair stages are selected. Use Configure Plan… to choose the stages Full Repair will run.")
+                    : QStringLiteral("No selected stages are available. %1").arg(excludedReason);
             } else if (!targetReady) {
                 readiness = reason;
             } else if (!diagnosticsReady) {
                 readiness = diagnosticReason;
-                if (m_targetDiagnosticsNeedRegeneration
+                if (diagnosticsInvalidationPending()
                     && !readiness.contains(QStringLiteral("regenerate diagnostics"), Qt::CaseInsensitive)) {
                     readiness += QStringLiteral(" Please regenerate diagnostics before starting another repair.");
                 }
@@ -6302,7 +11240,8 @@ void MainWindow::updateFullRepairSummary()
             m_fullRepairReadinessLabel->setText(readiness);
         }
         if (selectedCount == 0) {
-            m_runFullRepairButton->setToolTip(QStringLiteral("No Full Repair stages are selected."));
+            m_runFullRepairButton->setToolTip(excludedReason.isEmpty()
+                ? QStringLiteral("No Full Repair stages are selected.") : excludedReason);
         } else if (!targetReady) {
             m_runFullRepairButton->setToolTip(reason);
         } else if (!diagnosticsReady) {
@@ -6320,13 +11259,15 @@ void MainWindow::updateFullRepairSummary()
             QString status;
 
             auto planStatus = [](QCheckBox *check) {
-                return check && check->isChecked()
+                return check && check->isEnabled() && check->isChecked()
                     ? QStringLiteral("Enabled in Settings")
                     : QStringLiteral("Disabled in Settings");
             };
 
             if (key == QStringLiteral("validate")) {
                 status = QStringLiteral("Always preflight");
+            } else if (key == QStringLiteral("filesystem")) {
+                status = planStatus(m_fullRepairFilesystem);
             } else if (key == QStringLiteral("dpkg")) {
                 status = planStatus(m_fullRepairDpkg);
             } else if (key == QStringLiteral("fixbroken")) {
@@ -6349,10 +11290,18 @@ void MainWindow::updateFullRepairSummary()
                 status = QStringLiteral("Manual recovery tool");
             }
 
+            QString availabilityReason;
+            if (!repairToolAvailable(key, &availabilityReason)) {
+                status = QStringLiteral("Unavailable: %1").arg(availabilityReason);
+            }
             item->setText(1, status);
             item->setToolTip(1, status);
         }
     }
+
+    // Host diagnostics refresh the same evidence the host default entry gate
+    // reads, so re-evaluate that action from the single truth log here.
+    updateHostDefaultButtonState();
 
     updateRepairToolDetails();
 }
@@ -6437,7 +11386,7 @@ void MainWindow::updateRepairToolDetails()
         description = QStringLiteral(
             "Rebuild initramfs images for the running host or selected repair system only after mapper and crypttab consistency checks pass. The helper uses update-initramfs on Debian/Ubuntu and transaction-specific mkinitcpio trials on Arch.");
         buttonText = QStringLiteral("Rebuild Initramfs");
-        iconName = QStringLiteral("view-refresh");
+        iconName = QStringLiteral("initramfs");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("EFI / UKI bootloader");
@@ -6451,12 +11400,28 @@ void MainWindow::updateRepairToolDetails()
         description = QStringLiteral(
             "Regenerate the running host or selected repair system's GRUB menu/configuration after the mandatory safety preflight. Debian/Ubuntu uses update-grub and Arch uses grub-mkconfig with an isolated trial output. This does not reinstall EFI loader files; use EFI / UKI bootloader when the firmware loader itself needs repair.");
         buttonText = QStringLiteral("Regenerate GRUB");
-        iconName = QStringLiteral("preferences-system");
+        iconName = QStringLiteral("grub");
+        planText = QStringLiteral("Full Repair plan: %1").arg(plan);
+    } else if (key == QStringLiteral("filesystem")) {
+        title = QStringLiteral("File system repair");
+        description = QStringLiteral(
+            "Run a read-only file system check for the selected system's root, /boot, ESP and /home filesystems, "
+            "then repair only the devices that report errors. "
+            "ext2/3/4 uses e2fsck, XFS xfs_repair, Btrfs check/rescue/scrub, FAT fsck.fat, exFAT fsck.exfat, "
+            "NTFS ntfsfix (limited Linux-side repair; Windows chkdsk is still required), F2FS fsck.f2fs (repair only, "
+            "no read-only check), JFS jfs_fsck, ReiserFS reiserfsck and ZFS zpool. "
+            "Offline tools refuse mounted filesystems; btrfs scrub and zpool scrub are online modes, and "
+            "btrfs check --repair requires a separate backup confirmation because upstream flags it as dangerous. "
+            "The running host root is never repaired offline, and unsupported filesystems are reported rather than guessed about. "
+            "This maps directly to Settings → Repair file system errors (read-only check first).");
+        buttonText = QStringLiteral("Check File Systems");
+        iconName = QStringLiteral("filesystem");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Boot stack reconciliation");
         description = QStringLiteral(
             "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, or use the detected Arch EFI/GRUB path, reconcile one canonical EFI destination per purpose, and regenerate the GRUB fallback. "
+            "When the EFI / UKI bootloader repair already ran for the same system in this session, this action reuses it: the second UKI rebuild and the duplicate GRUB regeneration are skipped and logged, while mapper/crypttab validation and initramfs reconciliation still run. "
             "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or unrelated ESP entries.");
         buttonText = QStringLiteral("Reconcile Boot Stack");
         iconName = QStringLiteral("system-run");
@@ -6471,11 +11436,11 @@ void MainWindow::updateRepairToolDetails()
 
     m_repairToolTitle->setText(title);
     m_repairToolDescription->setText(description);
-    m_repairToolPlanStatus->setText(planText);
     m_repairToolButton->setText(buttonText);
     m_repairToolButton->setIcon(themedIcon(iconName));
+    // The tool name changes with the selection; the button is shrinkable and
+    // paints an elided label instead of widening the detail panel.
     const QSize buttonHint = m_repairToolButton->sizeHint();
-    m_repairToolButton->setMinimumWidth(buttonHint.width());
     m_repairToolButton->setMinimumHeight(qMax(buttonHint.height(), fontMetrics().height() + 14));
     QString reason;
     const bool targetReady = m_hostMaintenanceMode
@@ -6489,6 +11454,10 @@ void MainWindow::updateRepairToolDetails()
         &diagnosticReason);
     m_repairToolButton->setEnabled(targetReady && diagnosticsReady);
     QString displayedPlanStatus = planText;
+    if (key == QStringLiteral("bootstack") && efiRepairReuseAvailable()) {
+        displayedPlanStatus += QStringLiteral(
+            "\nReuse: the EFI / UKI repair from this session will be reused (second UKI rebuild and duplicate GRUB regeneration skipped).");
+    }
     if (!targetReady || !diagnosticsReady) {
         displayedPlanStatus += QStringLiteral("\nUnavailable: ")
             + (!targetReady ? reason : diagnosticReason);
@@ -6498,8 +11467,12 @@ void MainWindow::updateRepairToolDetails()
         ? reason
         : (!diagnosticsReady
             ? diagnosticReason
-            : QStringLiteral("Run this guarded repair action using the cached read-only diagnostic evidence. A confirmation is shown first.")));
+            : (key == QStringLiteral("bootstack") && efiRepairReuseAvailable()
+                ? QStringLiteral("Reuses the EFI / UKI repair from this session: the second UKI rebuild and duplicate GRUB regeneration are skipped. Mapper/crypttab validation and initramfs reconciliation still run.")
+                : QStringLiteral("Run this guarded repair action using the cached read-only diagnostic evidence. A confirmation is shown first."))));
 }
+
+// ---- MainWindow: repair gating and execution --------------------------------
 
 QString MainWindow::repairHelperPath() const
 {
@@ -6538,37 +11511,47 @@ QString MainWindow::repairHelperPath() const
 QStringList MainWindow::selectedRepairStages() const
 {
     QStringList stages;
-    if (m_fullRepairDpkg && m_fullRepairDpkg->isChecked()) stages << QStringLiteral("dpkg-configure");
-    if (m_fullRepairBrokenPackages && m_fullRepairBrokenPackages->isChecked()) stages << QStringLiteral("fix-broken");
-    if (m_fullRepairAptUpdate && m_fullRepairAptUpdate->isChecked()) stages << QStringLiteral("apt-update");
-    if (m_fullRepairUpgrade && m_fullRepairUpgrade->isChecked()) stages << QStringLiteral("apt-upgrade");
-    if (m_fullRepairDkms && m_fullRepairDkms->isChecked()) stages << QStringLiteral("dkms");
-    if (m_fullRepairDisplayManager && m_fullRepairDisplayManager->isChecked()) stages << QStringLiteral("display-manager");
-    if (m_fullRepairInitramfs && m_fullRepairInitramfs->isChecked()) stages << QStringLiteral("initramfs");
-    if (m_fullRepairEfi && m_fullRepairEfi->isChecked()) stages << QStringLiteral("efi");
-    if (m_fullRepairGrub && m_fullRepairGrub->isChecked()) stages << QStringLiteral("grub");
+    auto selected = [this](QCheckBox *check, const QString &key) {
+        return check && check->isEnabled() && check->isChecked() && repairToolAvailable(key);
+    };
+    if (selected(m_fullRepairFilesystem, QStringLiteral("filesystem"))) stages << QStringLiteral("filesystem");
+    if (selected(m_fullRepairDpkg, QStringLiteral("dpkg"))) stages << QStringLiteral("dpkg-configure");
+    if (selected(m_fullRepairBrokenPackages, QStringLiteral("fixbroken"))) stages << QStringLiteral("fix-broken");
+    if (selected(m_fullRepairAptUpdate, QStringLiteral("aptupdate"))) stages << QStringLiteral("apt-update");
+    if (selected(m_fullRepairUpgrade, QStringLiteral("upgrade"))) stages << QStringLiteral("apt-upgrade");
+    if (selected(m_fullRepairDkms, QStringLiteral("dkms"))) stages << QStringLiteral("dkms");
+    if (selected(m_fullRepairDisplayManager, QStringLiteral("display"))) stages << QStringLiteral("display-manager");
+    if (selected(m_fullRepairInitramfs, QStringLiteral("initramfs"))) stages << QStringLiteral("initramfs");
+    if (selected(m_fullRepairEfi, QStringLiteral("efi"))) stages << QStringLiteral("efi");
+    if (selected(m_fullRepairGrub, QStringLiteral("grub"))) stages << QStringLiteral("grub");
     return stages;
 }
 
 void MainWindow::updateRepairScopeControls()
 {
-    const QList<QCheckBox *> allStages = {
-        m_fullRepairDpkg, m_fullRepairBrokenPackages, m_fullRepairAptUpdate,
-        m_fullRepairUpgrade, m_fullRepairDkms, m_fullRepairDisplayManager,
-        m_fullRepairInitramfs, m_fullRepairEfi, m_fullRepairGrub
+    const QList<QPair<QCheckBox *, QString>> allStages = {
+        {m_fullRepairFilesystem, QStringLiteral("filesystem")},
+        {m_fullRepairDpkg, QStringLiteral("dpkg")},
+        {m_fullRepairBrokenPackages, QStringLiteral("fixbroken")},
+        {m_fullRepairAptUpdate, QStringLiteral("aptupdate")},
+        {m_fullRepairUpgrade, QStringLiteral("upgrade")},
+        {m_fullRepairDkms, QStringLiteral("dkms")},
+        {m_fullRepairDisplayManager, QStringLiteral("display")},
+        {m_fullRepairInitramfs, QStringLiteral("initramfs")},
+        {m_fullRepairEfi, QStringLiteral("efi")},
+        {m_fullRepairGrub, QStringLiteral("grub")}
     };
-    for (QCheckBox *check : allStages) {
-        if (!check) {
-            continue;
-        }
-        check->setEnabled(true);
-        check->setToolTip(m_hostMaintenanceMode
-            ? QStringLiteral("Allowed for the explicitly selected running host. The helper repeats host identity, mount, package-lock and boot preservation checks.")
-            : QString());
+    for (const auto &stage : allStages) {
+        if (!stage.first) continue;
+        QString reason;
+        const bool available = repairToolAvailable(stage.second, &reason);
+        stage.first->setToolTip(reason);
+        stage.first->setEnabled(available);
     }
     const QString evidence = m_hostMaintenanceMode
-        ? m_hostDiagnosticCache.value(QStringLiteral("backend"))
-        : m_targetDiagnosticCache.value(QStringLiteral("backend"));
+        ? m_hostDiagnosticCache.values().join(QLatin1Char('\n'))
+        : (m_targetDiagnosticCacheIdentity == currentTargetDiagnosticCacheIdentity()
+            ? m_targetDiagnosticCache.values().join(QLatin1Char('\n')) : QString());
     const bool archBackend = evidence.contains(QStringLiteral("Distribution family: arch"), Qt::CaseInsensitive)
         || evidence.contains(QStringLiteral("Package manager backend: pacman"), Qt::CaseInsensitive);
     if (archBackend) {
@@ -6581,9 +11564,6 @@ void MainWindow::updateRepairScopeControls()
         }
         if (m_fullRepairUpgrade) {
             m_fullRepairUpgrade->setText(QStringLiteral("Upgrade Arch packages (full pacman transaction)"));
-        }
-        for (QCheckBox *check : {m_fullRepairDpkg, m_fullRepairAptUpdate}) {
-            if (check) { check->setChecked(false); check->setEnabled(false); }
         }
     } else {
         if (m_fullRepairBrokenPackages) {
@@ -6715,8 +11695,18 @@ bool MainWindow::confirmRepairAction(const QString &title, const QStringList &op
     return box.exec() == QMessageBox::Yes;
 }
 
-void MainWindow::runRepairHelper(const QString &title, const QStringList &arguments)
+// Runs one repair action through the privileged helper and records the result.
+// A Repair-kind action is captured as one replaceable log section, categorized
+// from the helper's change-status evidence and, when it modified the system,
+// invalidates the mapped cached diagnostics (deferred to the plan's single
+// end-of-plan pass while a Full Repair plan is in progress).
+void MainWindow::runRepairHelper(const QString &title, const QStringList &arguments, LogEntryKind kind,
+                                 const QString &sectionKey)
 {
+    if (kind == LogEntryKind::Repair && repairBlockedByFilesystemFlow(title)) {
+        return;
+    }
+
     QString reason;
     const bool hostMode = m_hostMaintenanceMode;
     if (!(hostMode ? hostMaintenanceReady(&reason) : repairTargetReady(&reason))) {
@@ -6724,13 +11714,58 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         return;
     }
 
+    BusyOperationScope busy(this, title);
+
+    // A repair action is one replaceable section: its start notice, the
+    // privileged completion line and the captured helper output are replaced
+    // together when the same tool/stage runs again for the same scope. File
+    // Copy and other kinds keep append-only history because each of those
+    // operations is a distinct record rather than a repeat of one stage.
+    // Repair stages only; explicit mode hints such as --post-efi are not part
+    // of the section identity.
+    QStringList requestedStages;
+    if (!arguments.isEmpty()
+        && (arguments.first() == QStringLiteral("repair")
+            || arguments.first() == QStringLiteral("host-repair"))
+        && arguments.size() > 3) {
+        for (const QString &argument : arguments.mid(3)) {
+            if (!argument.startsWith(QStringLiteral("--"))) {
+                requestedStages.append(argument);
+            }
+        }
+    }
+    QString repairKey = sectionKey;
+    if (repairKey.isEmpty()) {
+        if (!requestedStages.isEmpty()) {
+            repairKey = requestedStages.join(QLatin1Char('+'));
+        } else {
+            repairKey = title;
+        }
+    }
+    // The single mapping table decides which cached diagnostics this action
+    // invalidates. Unknown modifying workflows (including file copy) map to the
+    // complete set through diagnosticSectionsForRepair().
+    QStringList invalidationKeys = requestedStages;
+    if (invalidationKeys.isEmpty()) {
+        invalidationKeys = {sectionKey.isEmpty() ? QStringLiteral("unknown") : sectionKey};
+    }
+    const QString repairSection = kind == LogEntryKind::Repair
+        ? repairLogSectionIdentity(repairKey)
+        : QString();
+    if (!repairSection.isEmpty()) {
+        beginRepairLogSection(repairSection);
+    }
+
     const QString diskPath = hostMode ? m_hostPrimaryPath : m_previewTargetPath;
     const QString componentPath = hostMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath;
     appendLog(QStringLiteral("Starting privileged action: %1 on %2 (%3).")
-                  .arg(title, diskPath, componentPath));
+                  .arg(title, diskPath, componentPath),
+              QStringLiteral("INFO"), kind);
 
     const bool targetModified = !arguments.isEmpty()
         && (arguments.first() == QStringLiteral("repair")
+            || arguments.first() == QStringLiteral("fs-repair")
+            || arguments.first() == QStringLiteral("host-fs-repair")
             || (arguments.first() == QStringLiteral("copy")
                 && arguments.value(3) == QStringLiteral("host-to-repair")));
     bool processSucceeded = false;
@@ -6740,8 +11775,14 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         helperArguments[0] = QStringLiteral("host-repair");
         helperArguments[1] = m_hostPrimaryPath;
         helperArguments[2] = m_hostPrimaryComponentPath;
+    } else if (hostMode && !helperArguments.isEmpty()
+        && helperArguments.first() == QStringLiteral("fs-repair")) {
+        helperArguments[0] = QStringLiteral("host-fs-repair");
+        helperArguments[1] = m_hostPrimaryPath;
+        helperArguments[2] = m_hostPrimaryComponentPath;
     }
-    const QString helperOutput = runPrivilegedRequest(title, helperArguments, QByteArray(), &processSucceeded);
+    const QString helperOutput = runPrivilegedRequest(title, helperArguments, QByteArray(), &processSucceeded,
+                                                      true, kind);
 
     // Persist the helper transcript in the action register. The progress
     // dialog is transient, while Logs must retain the complete stage output
@@ -6750,23 +11791,148 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         ? QStringLiteral("The privileged helper returned no diagnostic output.")
         : helperOutput.trimmed();
     appendLog(QStringLiteral("Repair output\nDiagnostic: %1\n%2").arg(title, detail),
-              processSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"));
+              processSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), kind);
+    // Categorize the action and record the summary inside the replaceable
+    // section (newest entry, so it renders above the captured output). A Full
+    // Repair request reports one aggregate summary plus one line per stage;
+    // every other repair reports its own single result line.
+    if (kind == LogEntryKind::Repair && !repairSection.isEmpty()) {
+        if (m_fullRepairPlanInProgress && repairKey == QStringLiteral("full-repair")) {
+            const QMap<QString, QString> statuses = parseRepairChangeStatuses(helperOutput);
+            const QString failureReason = processSucceeded
+                ? QString()
+                : shortRepairFailureReason(helperOutput);
+            // The helper names the stage it stopped in. Stages that completed
+            // before it keep their own change status; only the named stage is
+            // failed; requested stages after it never ran at all.
+            const QString failedStageKey = processSucceeded
+                ? QString()
+                : repairFailureStageKey(helperOutput);
+            QList<RepairStageResult> stageResults = m_fullRepairPlanStageResults;
+            QStringList coveredKeys;
+            for (const RepairStageResult &recorded : stageResults) {
+                coveredKeys.append(recorded.toolKey);
+            }
+            bool failureAttributed = false;
+            for (const QString &requested : requestedStages) {
+                const QString toolKey = repairToolKeyForStage(requested);
+                if (coveredKeys.contains(toolKey)) {
+                    continue;
+                }
+                const auto status = statuses.constFind(toolKey);
+                RepairStageResult stage;
+                stage.toolKey = toolKey;
+                if (status != statuses.constEnd()) {
+                    if (repairChangeStatusIsUnchanged(status.value())) {
+                        stage.category = RepairResultCategory::NoRepairNeeded;
+                        // Surface the helper's proven-unchanged evidence so the
+                        // user can audit why the stage skipped its write.
+                        stage.detail = repairChangeStatusReason(status.value());
+                    } else {
+                        stage.category = RepairResultCategory::Success;
+                    }
+                } else if (!processSucceeded
+                           && !failureAttributed
+                           && (failedStageKey.isEmpty() || toolKey == failedStageKey)) {
+                    // The named failing stage (or, when the helper failed
+                    // before naming one, the first uncompleted stage) owns the
+                    // failure reason.
+                    stage.category = RepairResultCategory::Failed;
+                    stage.reason = failureReason;
+                    failureAttributed = true;
+                } else if (!processSucceeded) {
+                    // A requested stage without a completed status after the
+                    // failure never ran; it is not a failure of its own.
+                    stage.category = RepairResultCategory::NotRun;
+                } else {
+                    // A missing status keeps the same fail-safe default as the
+                    // invalidation decision: the stage is reported successful.
+                    stage.category = RepairResultCategory::Success;
+                }
+                stageResults.append(stage);
+                coveredKeys.append(toolKey);
+            }
+            // A failure can belong to a stage the plan did not request
+            // directly (for example the GRUB follow-up of an EFI repair) or to
+            // the mandatory preflight. Keep that failure visible even when no
+            // requested stage matched it.
+            if (!processSucceeded && !failureAttributed && !failedStageKey.isEmpty()
+                && !coveredKeys.contains(failedStageKey)) {
+                RepairStageResult stage;
+                stage.toolKey = failedStageKey;
+                stage.category = RepairResultCategory::Failed;
+                stage.reason = failureReason;
+                stageResults.append(stage);
+                coveredKeys.append(failedStageKey);
+                failureAttributed = true;
+            }
+            // The helper can report additional changed keys that were not
+            // requested (for example the GRUB follow-up of an EFI repair).
+            for (auto it = statuses.constBegin(); it != statuses.constEnd(); ++it) {
+                if (coveredKeys.contains(it.key())) {
+                    continue;
+                }
+                RepairStageResult stage;
+                stage.toolKey = it.key();
+                const bool unchanged = repairChangeStatusIsUnchanged(it.value());
+                stage.category = unchanged
+                    ? RepairResultCategory::NoRepairNeeded
+                    : RepairResultCategory::Success;
+                if (unchanged) {
+                    stage.detail = repairChangeStatusReason(it.value());
+                }
+                stageResults.append(stage);
+                coveredKeys.append(it.key());
+            }
+            if (!stageResults.isEmpty()) {
+                appendLog(fullRepairPlanSummary(stageResults),
+                          processSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), kind);
+                m_fullRepairPlanSummaryLogged = true;
+            }
+            m_fullRepairPlanStageResults = stageResults;
+        } else {
+            const RepairResultCategory category =
+                categorizeRepairResult(processSucceeded, invalidationKeys, helperOutput);
+            // Individual tool runs dispatch exactly one stage; the vocabulary
+            // then labels the single-action summary with the same phrase the
+            // plan stage line uses. Read-only section actions (validate) fall
+            // back to their section key.
+            QString toolKey;
+            if (requestedStages.size() == 1) {
+                toolKey = repairToolKeyForStage(requestedStages.first());
+            } else if (requestedStages.isEmpty() && !sectionKey.isEmpty()) {
+                toolKey = repairToolKeyForStage(sectionKey);
+            }
+            appendRepairResultSummary(category,
+                                      category == RepairResultCategory::Failed
+                                          ? shortRepairFailureReason(helperOutput)
+                                          : QString(),
+                                      kind, toolKey);
+        }
+    }
+    if (!repairSection.isEmpty()) {
+        finishRepairLogSection(repairSection);
+    }
 
     if (!processSucceeded) {
         if (targetModified) {
-            // A failed modifying workflow may have completed an earlier stage
-            // before stopping. Treat its evidence as stale until a fresh
-            // diagnostic proves the resulting state in the active scope.
-            if (hostMode) {
-                m_hostDiagnosticCache.clear();
-                m_hostDiagnosticTimes.clear();
+            if (m_fullRepairPlanInProgress) {
+                // The plan owns the single post-plan invalidation and
+                // regeneration; a failed stage accumulates the complete set so
+                // the plan regenerates once after its last stage.
+                accumulatePlanInvalidation(invalidationKeys, /*failed=*/true);
             } else {
-                clearTargetDiagnosticCache();
-                m_targetDiagnosticsNeedRegeneration = true;
+                // A failed modifying workflow may have completed an earlier stage
+                // before stopping. A failure forces the complete set (fail safe)
+                // until a fresh diagnostic proves the resulting state.
+                invalidateDiagnosticsForRepair(invalidationKeys, /*failed=*/true,
+                                               QStringLiteral("modifying repair failed"), kind);
             }
-            updateFullRepairSummary();
-            appendLog(QStringLiteral("STALE DIAGNOSTICS: repair failed after a modifying action. Regenerate diagnostics before the next repair."),
-                      QStringLiteral("ERROR"));
+            // A failed modifying action may have left the boot artifacts in an
+            // unknown state; never let Reconcile boot stack reuse a repair
+            // claim that this failure could have invalidated.
+            m_efiBootloaderRepaired = false;
+            m_efiBootloaderRepairedScope.clear();
         }
         QMessageBox::critical(this, QStringLiteral("%1 failed").arg(title),
                               QStringLiteral("The repair action failed. Review the captured helper output in Logs for the failing stage and its reason."));
@@ -6774,29 +11940,67 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
 
     if (processSucceeded) {
         if (targetModified) {
-            if (hostMode) {
-                m_hostDiagnosticCache.clear();
-                m_hostDiagnosticTimes.clear();
+            // Evidence-driven invalidation: only actions the helper proved
+            // changed invalidate their mapped sections. A missing or malformed
+            // status line keeps the fail-safe changed behavior.
+            const QStringList invalidatingKeys =
+                invalidatingRepairToolKeys(invalidationKeys, helperOutput);
+            if (m_fullRepairPlanInProgress) {
+                // The plan defers its single invalidation to
+                // finishFullRepairPlan(); accumulate only the changed stages.
+                m_fullRepairPlanModifyingStageRan = true;
+                accumulatePlanInvalidation(invalidatingKeys, /*failed=*/false);
+            } else if (invalidatingKeys.isEmpty()) {
+                appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                                QStringLiteral("No system changes were detected; cached diagnostics remain valid."),
+                                QStringLiteral("INFO"), kind);
             } else {
-                clearTargetDiagnosticCache();
-                m_targetDiagnosticsNeedRegeneration = true;
+                // The repair action may have been launched while the Repair tab
+                // was visible. invalidateDiagnosticsForRepair() refreshes both
+                // aggregate and individual controls and schedules the one
+                // coalesced regeneration for this operation.
+                invalidateDiagnosticsForRepair(invalidatingKeys, /*failed=*/false,
+                                               QStringLiteral("modifying repair completed"), kind);
             }
-            appendLog(QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Regenerate diagnostics before the next repair."));
+            // Reconcile boot stack reuses this repair: the EFI / UKI stage
+            // rebuilt and verified the boot artifacts, and a later GRUB-only
+            // regeneration does not touch them. Any other modifying stage may
+            // have changed kernels or initramfs, so the reuse claim is dropped.
+            if (requestedStages.contains(QStringLiteral("efi"))) {
+                m_efiBootloaderRepaired = true;
+                m_efiBootloaderRepairedScope = currentPrivilegedScopeKey();
+            } else if (!requestedStages.contains(QStringLiteral("grub"))) {
+                m_efiBootloaderRepaired = false;
+                m_efiBootloaderRepairedScope.clear();
+            }
         }
         refreshDevices();
-        if (targetModified) {
-            updateDiagnosticDetails();
-            // The repair action may have been launched while the Repair tab
-            // was visible. Refresh both aggregate and individual controls so
-            // no button can retain an enabled state backed by now-stale
-            // evidence; the readiness text explains the required rerun.
-            updateFullRepairSummary();
-        }
     }
+}
+
+// Refuses a second repair request while the file system check/repair flow owns
+// the privileged session. The running flow is intentionally synchronous and
+// can last for hours (large fsck runs, multiple devices); the request must be
+// refused instead of queued behind it.
+bool MainWindow::repairBlockedByFilesystemFlow(const QString &actionTitle)
+{
+    if (!m_filesystemRepairFlowActive) {
+        return false;
+    }
+    const QString message = QStringLiteral(
+        "A file system check and repair is already running. Wait for it to finish before starting another repair; this request was not queued.");
+    appendLog(QStringLiteral("%1 refused: %2").arg(actionTitle, message),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
+    QMessageBox::warning(this, QStringLiteral("File system repair in progress"), message);
+    return true;
 }
 
 void MainWindow::runSelectedRepairTool()
 {
+    if (repairBlockedByFilesystemFlow(QStringLiteral("Run Tool"))) {
+        return;
+    }
+
     QTreeWidgetItem *item = m_repairToolTree ? m_repairToolTree->currentItem() : nullptr;
     if (!item) {
         return;
@@ -6808,14 +12012,24 @@ void MainWindow::runSelectedRepairTool()
         QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"), diagnosticReason);
         return;
     }
+    if (!repairToolAvailable(key, &diagnosticReason)) {
+        QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"), diagnosticReason);
+        return;
+    }
     if (key == QStringLiteral("validate")) {
         if (m_hostMaintenanceMode) {
             runRepairHelper(QStringLiteral("Validate running host"),
-                            {QStringLiteral("host-validate"), m_hostPrimaryPath, m_hostPrimaryComponentPath});
+                            {QStringLiteral("host-validate"), m_hostPrimaryPath, m_hostPrimaryComponentPath},
+                            LogEntryKind::Repair, QStringLiteral("validate"));
             return;
         }
         runRepairHelper(QStringLiteral("Validate repair target"),
-                        {QStringLiteral("validate"), m_previewTargetPath, m_previewTargetComponentPath});
+                        {QStringLiteral("validate"), m_previewTargetPath, m_previewTargetComponentPath},
+                        LogEntryKind::Repair, QStringLiteral("validate"));
+        return;
+    }
+    if (key == QStringLiteral("filesystem")) {
+        runFilesystemRepairFlow(/*partOfFullRepair=*/false);
         return;
     }
 
@@ -6867,10 +12081,20 @@ void MainWindow::runSelectedRepairTool()
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Reconcile boot stack");
         stages = {QStringLiteral("boot-stack")};
+        const bool reuseEfiRepair = efiRepairReuseAvailable();
+        if (reuseEfiRepair) {
+            // Explicit hint: the EFI / UKI stage already rebuilt and verified
+            // the boot artifacts in this session, so the helper must not
+            // repeat that work or the GRUB regeneration it performed.
+            stages.append(QStringLiteral("--post-efi"));
+        }
         operations = {QStringLiteral("Validate mapper/crypttab against the %1").arg(selectedSystemLabel),
                       QStringLiteral("Trial-build and rebuild initramfs for installed kernels"),
                       QStringLiteral("Rebuild the TUXEDO UKI or detected Arch EFI path when supported, removing only duplicate EFI destinations"),
                       QStringLiteral("Regenerate the GRUB fallback configuration")};
+        if (reuseEfiRepair) {
+            operations.prepend(QStringLiteral("Reuse the EFI / UKI bootloader repair already completed for this %1: skip the second UKI rebuild and the duplicate GRUB regeneration").arg(selectedSystemLabel));
+        }
     } else {
         QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"),
                              QStringLiteral("No repair workflow is registered for the selected tool."));
@@ -6882,7 +12106,8 @@ void MainWindow::runSelectedRepairTool()
         : m_targetDiagnosticCache.value(QStringLiteral("report"));
     appendLog(QStringLiteral("Using cached read-only diagnostic evidence for %1 (%2 bytes).")
                   .arg(title)
-                  .arg(evidence.toUtf8().size()));
+                  .arg(evidence.toUtf8().size()),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
     operations.prepend(QStringLiteral("Read-only diagnostics completed; review the full evidence in Logs before confirming repair."));
 
     if (!confirmRepairAction(title, operations)) {
@@ -6891,32 +12116,31 @@ void MainWindow::runSelectedRepairTool()
 
     QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath, m_previewTargetComponentPath};
     arguments.append(stages);
-    runRepairHelper(title, arguments);
+    runRepairHelper(title, arguments, LogEntryKind::Repair, key);
 }
 
+// Executes the selected Full Repair stages as one plan. The file system
+// pre-stage runs first (inspect, then per-device repair); the remaining stages
+// run in one helper request and the plan performs a single invalidation and
+// evidence regeneration at the end.
 void MainWindow::runFullRepair()
 {
+    if (repairBlockedByFilesystemFlow(QStringLiteral("Run Full Repair"))) {
+        return;
+    }
+
     const QStringList stages = selectedRepairStages();
     if (stages.isEmpty()) {
         QMessageBox::information(this, QStringLiteral("Full Repair"), QStringLiteral("No Full Repair stages are selected."));
         return;
     }
 
-    QString diagnosticReason;
-    if (m_hostMaintenanceMode) {
-        QString hostReason;
-        if (!hostMaintenanceReady(&hostReason)) {
-            QMessageBox::warning(this, QStringLiteral("Host maintenance unavailable"), hostReason);
+    for (const QString &stage : stages) {
+        QString diagnosticReason;
+        if (!repairEvidenceReadyForTool(repairToolKeyForStage(stage), &diagnosticReason)) {
+            QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"), diagnosticReason);
             return;
         }
-        if (m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty()) {
-            QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"),
-                                 QStringLiteral("Run All diagnostics for the protected running host before starting maintenance."));
-            return;
-        }
-    } else if (!targetDiagnosticEvidenceReady(&diagnosticReason)) {
-        QMessageBox::warning(this, QStringLiteral("Repair diagnostics required"), diagnosticReason);
-        return;
     }
 
     QStringList operations;
@@ -6924,7 +12148,8 @@ void MainWindow::runFullRepair()
         ? QStringLiteral("running host")
         : QStringLiteral("selected repair system");
     for (const QString &stage : stages) {
-        if (stage == QStringLiteral("dpkg-configure")) operations << QStringLiteral("Complete interrupted package configuration");
+        if (stage == QStringLiteral("filesystem")) operations << QStringLiteral("Run the read-only file system check, then repair the selected devices");
+        else if (stage == QStringLiteral("dpkg-configure")) operations << QStringLiteral("Complete interrupted package configuration");
         else if (stage == QStringLiteral("fix-broken")) operations << QStringLiteral("Repair broken APT dependencies");
         else if (stage == QStringLiteral("apt-update")) operations << QStringLiteral("Refresh APT package metadata");
         else if (stage == QStringLiteral("apt-upgrade")) operations << QStringLiteral("Simulate APT first, then choose a safe upgrade/full-upgrade/dist-upgrade transaction");
@@ -6939,17 +12164,582 @@ void MainWindow::runFullRepair()
         ? m_hostDiagnosticCache.value(QStringLiteral("report"))
         : m_targetDiagnosticCache.value(QStringLiteral("report"));
     appendLog(QStringLiteral("Using cached read-only diagnostic evidence for Full Repair (%1 bytes).")
-                  .arg(evidence.toUtf8().size()));
+                  .arg(evidence.toUtf8().size()),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
     operations.prepend(QStringLiteral("Read-only diagnostics completed; review the full evidence in Logs before confirming repair."));
 
     if (!confirmRepairAction(QStringLiteral("Run Full Repair"), operations)) {
         return;
     }
 
+    // From here on the complete plan owns the repair session: stages keep the
+    // evidence they were approved with, no per-stage STALE notice or refresh
+    // is emitted, and finishFullRepairPlan() invalidates and regenerates once
+    // after the last stage (including aborted and failed plans).
+    m_fullRepairPlanInProgress = true;
+    m_fullRepairPlanModified = false;
+    m_fullRepairPlanModifyingStageRan = false;
+    m_fullRepairPlanInvalidatedSections.clear();
+    m_fullRepairPlanRequiresFullInvalidation = false;
+    m_fullRepairPlanStageResults.clear();
+    m_fullRepairPlanSummaryLogged = false;
+
+    // File system repair is inspect-first: the read-only fs-inspect run and the
+    // per-device confirmation happen before the remaining stages execute.  The
+    // stage list sent to the helper excludes it because fs-repair is a
+    // separate helper command with its own device/mode arguments.  If the user
+    // declines the file system repair, the remaining package/boot stages must
+    // not run after a cancellation.
+    QStringList helperStages = stages;
+    if (helperStages.removeAll(QStringLiteral("filesystem")) > 0) {
+        if (!runFilesystemRepairFlow(/*partOfFullRepair=*/true)) {
+            finishFullRepairPlan();
+            return;
+        }
+    }
+    if (helperStages.isEmpty()) {
+        finishFullRepairPlan();
+        return;
+    }
+
     QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath, m_previewTargetComponentPath};
-    arguments.append(stages);
-    runRepairHelper(QStringLiteral("Full Repair"), arguments);
+    arguments.append(helperStages);
+    // Both boot stages in one plan: the boot-stack reconciliation reuses the
+    // EFI / UKI repair that already ran earlier in the same plan.
+    if (helperStages.contains(QStringLiteral("efi"))
+        && helperStages.contains(QStringLiteral("boot-stack"))) {
+        arguments.append(QStringLiteral("--post-efi"));
+    }
+    runRepairHelper(QStringLiteral("Full Repair"), arguments, LogEntryKind::Repair,
+                    QStringLiteral("full-repair"));
+    finishFullRepairPlan();
 }
+
+void MainWindow::finishFullRepairPlan()
+{
+    if (!m_fullRepairPlanInProgress) {
+        return;
+    }
+    m_fullRepairPlanInProgress = false;
+    const bool modifyingStageRan = m_fullRepairPlanModifyingStageRan;
+    m_fullRepairPlanModifyingStageRan = false;
+    // A plan that never reached the Full Repair helper section (for example a
+    // file-system-only plan) still gets its aggregate summary here. The helper
+    // path already wrote it inside the section.
+    if (!m_fullRepairPlanSummaryLogged && !m_fullRepairPlanStageResults.isEmpty()) {
+        bool planFailed = false;
+        for (const RepairStageResult &stage : m_fullRepairPlanStageResults) {
+            if (stage.category == RepairResultCategory::Failed) {
+                planFailed = true;
+                break;
+            }
+        }
+        appendLog(fullRepairPlanSummary(m_fullRepairPlanStageResults),
+                  planFailed ? QStringLiteral("ERROR") : QStringLiteral("INFO"),
+                  LogEntryKind::Repair);
+    }
+    m_fullRepairPlanStageResults.clear();
+    m_fullRepairPlanSummaryLogged = false;
+    if (!m_fullRepairPlanModified) {
+        m_fullRepairPlanInvalidatedSections.clear();
+        m_fullRepairPlanRequiresFullInvalidation = false;
+        if (modifyingStageRan) {
+            // Every modifying stage proved unchanged: no section is stale and
+            // the end-of-plan regeneration is skipped entirely.
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            QStringLiteral("No system changes were detected; cached diagnostics remain valid."),
+                            QStringLiteral("INFO"), LogEntryKind::Repair);
+        }
+        return;
+    }
+    // One invalidation and one regeneration for the complete plan: apply the
+    // accumulated union of the stages' mapped sections, or the complete set
+    // when any stage was broad or failed. The between-run stale gate stays
+    // intact: the next manual tool run sees the invalidated evidence until this
+    // regeneration completes.
+    const QStringList planSections = orderedDiagnosticSections(m_fullRepairPlanInvalidatedSections.values());
+    const bool fullInvalidation = m_fullRepairPlanRequiresFullInvalidation || planSections.isEmpty();
+    m_fullRepairPlanInvalidatedSections.clear();
+    m_fullRepairPlanRequiresFullInvalidation = false;
+    if (fullInvalidation) {
+        invalidateAllActiveScopeDiagnostics();
+    } else {
+        markDiagnosticSectionsStale(m_hostMaintenanceMode, planSections);
+    }
+    refreshDevices();
+    updateDiagnosticDetails();
+    updateFullRepairSummary();
+    appendStatusLog(statusEntryIdentity(QStringLiteral("stale-repair-modified")),
+                    fullInvalidation
+                        ? QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Regenerate diagnostics before the next repair.")
+                        : QStringLiteral("STALE DIAGNOSTICS: selected system was modified by repair action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.")
+                              .arg(planSections.join(QStringLiteral(", "))),
+                    QStringLiteral("INFO"), LogEntryKind::Repair);
+    scheduleEvidenceRefresh(QStringLiteral("Full Repair plan completed"));
+}
+
+bool MainWindow::efiRepairReuseAvailable() const
+{
+    return m_efiBootloaderRepaired
+        && !m_efiBootloaderRepairedScope.isEmpty()
+        && m_efiBootloaderRepairedScope == currentPrivilegedScopeKey();
+}
+
+// ---- MainWindow: file system check and repair flow --------------------------
+
+QList<FilesystemCheckResult> MainWindow::parseFilesystemCheckOutput(const QString &output)
+{
+    QList<FilesystemCheckResult> results;
+    QMap<QString, int> indexByDevice;
+    const QRegularExpression checkRe(QStringLiteral(
+        "^File system check (\\S+): (\\S+) uuid=(\\S+) mount=(\\S+) tool=(\\S+) result=(\\S+)\\s*$"));
+    const QRegularExpression detailRe(QStringLiteral(
+        "^File system check detail (\\S+): tool=(\\S+) output=(.*)$"));
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (const QString &line : lines) {
+        const QRegularExpressionMatch checkMatch = checkRe.match(line);
+        if (checkMatch.hasMatch()) {
+            FilesystemCheckResult result;
+            result.device = checkMatch.captured(1);
+            result.fstype = checkMatch.captured(2);
+            result.uuid = checkMatch.captured(3);
+            result.mount = checkMatch.captured(4);
+            result.tool = checkMatch.captured(5);
+            result.result = checkMatch.captured(6);
+            indexByDevice.insert(result.device, results.size());
+            results.append(result);
+            continue;
+        }
+        const QRegularExpressionMatch detailMatch = detailRe.match(line);
+        if (detailMatch.hasMatch()) {
+            const auto index = indexByDevice.constFind(detailMatch.captured(1));
+            if (index != indexByDevice.constEnd()) {
+                results[index.value()].detail = detailMatch.captured(3);
+            }
+        }
+    }
+    return results;
+}
+
+QString MainWindow::filesystemCheckDetail(const QList<FilesystemCheckResult> &results)
+{
+    if (results.isEmpty()) {
+        return QStringLiteral("no scope filesystems were resolved");
+    }
+    int clean = 0;
+    int issues = 0;
+    int skipped = 0;
+    int unavailable = 0;
+    QStringList skippedDevices;
+    QStringList unavailableDevices;
+    for (const FilesystemCheckResult &result : results) {
+        if (result.result == QStringLiteral("skipped")) {
+            ++skipped;
+            skippedDevices.append(QStringLiteral("%1 %2").arg(result.device, result.fstype));
+        } else if (result.result == QStringLiteral("unsupported")
+                   || result.result == QStringLiteral("tool-missing")) {
+            ++unavailable;
+            unavailableDevices.append(QStringLiteral("%1 %2").arg(result.device, result.fstype));
+        } else if (result.result == QStringLiteral("clean")) {
+            ++clean;
+        } else {
+            ++issues;
+        }
+    }
+    QStringList parts;
+    if (issues > 0) {
+        parts.append(QStringLiteral("%1 file system(s) with issues").arg(issues));
+    }
+    if (skipped > 0) {
+        parts.append(QStringLiteral("%1 skipped (mounted, offline-only check): %2")
+                         .arg(skipped)
+                         .arg(skippedDevices.join(QStringLiteral(", "))));
+    }
+    if (unavailable > 0) {
+        parts.append(QStringLiteral("%1 not checked (unsupported or no installed check tool): %2")
+                         .arg(unavailable)
+                         .arg(unavailableDevices.join(QStringLiteral(", "))));
+    }
+    if (parts.isEmpty()) {
+        parts.append(QStringLiteral("%1 checked clean").arg(clean));
+    }
+    return parts.join(QStringLiteral("; "));
+}
+
+QStringList MainWindow::filesystemRepairModes(const QString &fstype, bool mounted)
+{
+    // The preferred (safest complete) repair mode is listed first so the
+    // confirmation dialog defaults to it.  The helper independently validates
+    // the requested mode and refuses unsupported or mounted-device cases.
+    // This list is the presentation mirror of the helper's
+    // filesystem_mode_field() matrix; scripts/test-filesystem-repair-contract.sh
+    // asserts the two cannot drift.
+    const QString fs = fstype.toLower();
+    if (fs == QStringLiteral("btrfs")) {
+        if (mounted) {
+            // Offline btrfs check/repair must never run against a mounted
+            // filesystem; a mounted btrfs filesystem is repaired online by
+            // scrub or inspected with the read-only check.
+            return {QStringLiteral("scrub"), QStringLiteral("check")};
+        }
+        return {QStringLiteral("repair"), QStringLiteral("rescue"), QStringLiteral("scrub"), QStringLiteral("check")};
+    }
+    if (fs == QStringLiteral("zfs")) {
+        return {QStringLiteral("scrub"), QStringLiteral("check")};
+    }
+    if (fs == QStringLiteral("f2fs")) {
+        // fsck.f2fs has no read-only check mode and its exit status is not
+        // trustworthy, so f2fs is never inspected and is repair-only.
+        return mounted ? QStringList{} : QStringList{QStringLiteral("repair")};
+    }
+    if (mounted) {
+        return {QStringLiteral("check")};
+    }
+    return {QStringLiteral("repair"), QStringLiteral("check")};
+}
+
+QString MainWindow::runFilesystemInspect(bool partOfFullRepair)
+{
+    const bool hostMode = m_hostMaintenanceMode;
+    QString reason;
+    if (!(hostMode ? hostMaintenanceReady(&reason) : repairTargetReady(&reason))) {
+        if (!m_evidenceRefreshInProgress) {
+            QMessageBox::warning(this, QStringLiteral("File system check unavailable"), reason);
+        }
+        return QString();
+    }
+
+    const QString diskPath = hostMode ? m_hostPrimaryPath : m_previewTargetPath;
+    const QString componentPath = hostMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath;
+    // A standalone check gets its own replaceable section identity: re-running
+    // it replaces the previous standalone block, but it can never remove the
+    // Full Repair pre-stage block from the live register (and vice versa).
+    const QString repairSection = repairLogSectionIdentity(
+        partOfFullRepair ? QStringLiteral("filesystem-inspect")
+                         : QStringLiteral("filesystem-inspect:manual"));
+    beginRepairLogSection(repairSection);
+    appendLog(partOfFullRepair
+                  ? QStringLiteral("Starting read-only file system check (Full Repair pre-stage) on %1 (%2).")
+                        .arg(diskPath, componentPath)
+                  : QStringLiteral("Starting manual read-only file system check (standalone, not part of a Full Repair plan) on %1 (%2).")
+                        .arg(diskPath, componentPath),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
+
+    bool processSucceeded = false;
+    const QString output = runPrivilegedRequest(
+        partOfFullRepair ? QStringLiteral("Check File Systems (Full Repair pre-stage)")
+                         : QStringLiteral("Check File Systems (manual)"),
+        {hostMode ? QStringLiteral("host-fs-inspect") : QStringLiteral("fs-inspect"),
+         diskPath, componentPath},
+        QByteArray(), &processSucceeded, false, LogEntryKind::Repair);
+
+    const QString detail = output.trimmed().isEmpty()
+        ? QStringLiteral("The privileged helper returned no file system check output.")
+        : output.trimmed();
+    appendLog(QStringLiteral("File system check output\n%1").arg(detail),
+              processSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"),
+              LogEntryKind::Repair);
+    finishRepairLogSection(repairSection);
+    if (!processSucceeded) {
+        QMessageBox::critical(this, QStringLiteral("File system check failed"),
+                              QStringLiteral("The read-only file system check failed. Review the captured helper output in Logs for the reason."));
+        return QString();
+    }
+    return output;
+}
+
+// Inspects the scope's filesystems read-only, asks the user to select which
+// reported issues to repair and in which filesystem-specific mode, then runs
+// the selected repairs sequentially. Every repair only ever runs for a device
+// the inspection reported as needing one; btrfs check --repair additionally
+// requires the dedicated backup warning. Returns true when at least one repair
+// completed successfully.
+bool MainWindow::runFilesystemRepairFlow(bool partOfFullRepair)
+{
+    QString availabilityReason;
+    if (!repairToolAvailable(QStringLiteral("filesystem"), &availabilityReason)) {
+        QMessageBox::warning(this, QStringLiteral("File system repair unavailable"), availabilityReason);
+        return false;
+    }
+
+    // The complete flow — read-only check, device/mode selection and every
+    // selected device's sequential repair — owns one busy scope and one flow
+    // guard. The busy indicator therefore stays visible between requests
+    // (including while the selection/confirmation dialogs are up) and only
+    // hides after the last device completes or the flow is cancelled/fails.
+    // While the guard is set every repair entry point refuses a second
+    // request with a clear message instead of queueing it.
+    FilesystemRepairFlowScope flowScope(m_filesystemRepairFlowActive);
+    BusyOperationScope busy(this, partOfFullRepair
+        ? QStringLiteral("Checking and repairing file systems (Full Repair)")
+        : QStringLiteral("Checking and repairing file systems"));
+
+    const QString scopeLabel = m_hostMaintenanceMode
+        ? QStringLiteral("running host")
+        : QStringLiteral("selected repair system");
+    const QString inspectOutput = runFilesystemInspect(partOfFullRepair);
+    if (inspectOutput.trimmed().isEmpty()) {
+        return false;
+    }
+
+    const QList<FilesystemCheckResult> results = parseFilesystemCheckOutput(inspectOutput);
+    QList<FilesystemCheckResult> repairCandidates;
+    QList<QStringList> candidateModes;
+    int issueCount = 0;
+    int unmountedOnlineOnlyCount = 0;
+    int skippedCount = 0;
+    int unavailableCount = 0;
+    for (const FilesystemCheckResult &result : results) {
+        // A skipped or unsupported device is not evidence of a clean
+        // filesystem; it must never feed the "no errors were detected" path.
+        if (result.result == QStringLiteral("skipped")) {
+            ++skippedCount;
+            continue;
+        }
+        if (result.result == QStringLiteral("unsupported") || result.result == QStringLiteral("tool-missing")) {
+            ++unavailableCount;
+            continue;
+        }
+        if (!result.needsRepair()) {
+            continue;
+        }
+        ++issueCount;
+        const bool mounted = result.mount != QStringLiteral("unmounted");
+        const QStringList modes = filesystemRepairModes(result.fstype, mounted);
+        // A mounted non-btrfs filesystem has no safe repair mode here: the
+        // only offline tool must not run against a mounted filesystem and no
+        // online repair exists for that filesystem.
+        const bool hasRepairMode = std::any_of(modes.cbegin(), modes.cend(),
+            [](const QString &mode) { return mode != QStringLiteral("check"); });
+        if (!hasRepairMode) {
+            ++unmountedOnlineOnlyCount;
+            continue;
+        }
+        repairCandidates.append(result);
+        candidateModes.append(modes);
+    }
+
+    if (issueCount == 0) {
+        QStringList limitations;
+        if (skippedCount > 0) {
+            limitations << QStringLiteral("%1 mounted filesystem(s) were skipped because their check tools are offline-only")
+                               .arg(skippedCount);
+        }
+        if (unavailableCount > 0) {
+            limitations << QStringLiteral("%1 filesystem(s) are unsupported or have no installed check tool")
+                               .arg(unavailableCount);
+        }
+        const QString message = limitations.isEmpty()
+            ? QStringLiteral("No file system errors were detected on the %1's root, /boot, ESP or /home filesystems. No repair was run.")
+                  .arg(scopeLabel)
+            : QStringLiteral("No repairable file system errors were detected on the %1's root, /boot, ESP or /home filesystems, but %2. No repair was run.")
+                  .arg(scopeLabel, limitations.join(QStringLiteral("; ")));
+        // Inside a Full Repair plan the read-only result is recorded in the
+        // pre-stage log and the aggregate plan summary; a modal notice would
+        // block the plan for a result that ran no repair. A standalone manual
+        // Check File Systems run keeps the dialog.
+        appendLog(message, QStringLiteral("INFO"), LogEntryKind::Repair);
+        if (!partOfFullRepair) {
+            QMessageBox::information(this, QStringLiteral("File system repair"), message);
+        }
+        // The inspection is read-only and no repair command ran: the cached
+        // diagnostics remain valid and nothing needs regeneration. Inside a
+        // Full Repair plan the intermediate status is suppressed: later plan
+        // stages may still change the system, and the plan's single end-of-plan
+        // notice owns the register entry.
+        if (!m_fullRepairPlanInProgress) {
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            QStringLiteral("No system changes were detected; cached diagnostics remain valid."),
+                            QStringLiteral("INFO"), LogEntryKind::Repair);
+        }
+        // A skipped or unsupported filesystem is not evidence of a clean
+        // filesystem: the stage is reported as not checked, never as
+        // no-repair-needed, and the aggregate counts it in its own category.
+        const bool notChecked = skippedCount > 0 || unavailableCount > 0 || results.isEmpty();
+        recordPlanStageResult(QStringLiteral("filesystem"),
+                              notChecked ? RepairResultCategory::Skipped
+                                         : RepairResultCategory::NoRepairNeeded,
+                              QString(), filesystemCheckDetail(results));
+        return true;
+    }
+
+    if (repairCandidates.isEmpty()) {
+        const QString message = QStringLiteral("The read-only check found issues on %1 mounted filesystem(s) that have no safe repair mode from this environment. "
+                                               "Unmount the filesystem and check again, or repair it from a live system that is not using it.")
+                                    .arg(unmountedOnlineOnlyCount);
+        // The stage cannot proceed: the notice is shown in every mode, plan or
+        // standalone, so the user knows why the flow is ending instead of
+        // having to infer it from the aggregate summary.
+        appendLog(message, QStringLiteral("INFO"), LogEntryKind::Repair);
+        QMessageBox::information(this, QStringLiteral("File system repair"), message);
+        // Issues were found that could not be repaired: the failed category,
+        // recorded as a standalone result because no repair section ran.
+        const QString failureReason =
+            QStringLiteral("file system issues were found but no safe repair mode is available");
+        appendRepairResultSummary(RepairResultCategory::Failed, failureReason,
+                                  LogEntryKind::Repair, QStringLiteral("filesystem"));
+        recordPlanStageResult(QStringLiteral("filesystem"), RepairResultCategory::Failed,
+                              failureReason, filesystemCheckDetail(results));
+        return false;
+    }
+
+    FilesystemRepairDialog dialog(scopeLabel, repairCandidates, candidateModes, this);
+    if (dialog.exec() != QDialog::Accepted) {
+        appendLog(QStringLiteral("File system repair cancelled before any repair was run."),
+                  QStringLiteral("INFO"), LogEntryKind::Repair);
+        return false;
+    }
+
+    const QList<FilesystemRepairDialog::Selection> selections = dialog.selections();
+    if (selections.isEmpty()) {
+        return false;
+    }
+
+    QStringList operations;
+    for (const FilesystemRepairDialog::Selection &selection : selections) {
+        operations << QStringLiteral("Run %1 repair on %2").arg(selection.mode, selection.device);
+    }
+    if (!confirmRepairAction(QStringLiteral("Repair file system errors"), operations)) {
+        return false;
+    }
+
+    // btrfs check --repair is flagged as dangerous upstream: it can make a
+    // damaged filesystem worse.  It must never run from the generic
+    // confirmation alone, so a dedicated backup warning is required first.
+    QStringList btrfsRepairDevices;
+    for (const FilesystemRepairDialog::Selection &selection : selections) {
+        for (const FilesystemCheckResult &candidate : repairCandidates) {
+            if (candidate.device == selection.device
+                && candidate.fstype.compare(QStringLiteral("btrfs"), Qt::CaseInsensitive) == 0
+                && selection.mode == QStringLiteral("repair")) {
+                btrfsRepairDevices.append(selection.device);
+                break;
+            }
+        }
+    }
+    if (!btrfsRepairDevices.isEmpty()) {
+        QMessageBox box(this);
+        box.setIcon(QMessageBox::Critical);
+        box.setWindowTitle(QStringLiteral("Dangerous Btrfs repair"));
+        box.setText(QStringLiteral("btrfs check --repair is a last-resort tool"));
+        box.setInformativeText(QStringLiteral(
+            "Upstream Btrfs documentation warns that check --repair can make a damaged filesystem worse and can lose data. "
+            "Back up everything you can reach first. Prefer a scrub, a rescue, or a fresh backup/restore when either is possible.\n\n"
+            "Run btrfs check --repair on:\n%1").arg(btrfsRepairDevices.join(QStringLiteral("\n"))));
+        box.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
+        box.setDefaultButton(QMessageBox::Cancel);
+        box.button(QMessageBox::Yes)->setText(QStringLiteral("Run dangerous Btrfs repair"));
+        if (box.exec() != QMessageBox::Yes) {
+            appendLog(QStringLiteral("Btrfs check --repair cancelled at the extra danger confirmation."),
+                      QStringLiteral("INFO"), LogEntryKind::Repair);
+            return false;
+        }
+    }
+
+    bool anyRepairAttempted = false;
+    bool anyRepairCompleted = false;
+    bool anyRepairFailed = false;
+    bool anyRepairChanged = false;
+    bool anyRepairStatusMissing = false;
+    for (const FilesystemRepairDialog::Selection &selection : selections) {
+        // One replaceable block per device and mode: re-repairing the same
+        // filesystem replaces its previous block while a different device or
+        // mode stays separate. A standalone run lives in its own namespace so
+        // it can never overwrite the Full Repair pre-stage's repair block.
+        const QString repairSection = repairLogSectionIdentity(
+            partOfFullRepair
+                ? QStringLiteral("filesystem-repair:%1:%2").arg(selection.device, selection.mode)
+                : QStringLiteral("filesystem-repair:manual:%1:%2").arg(selection.device, selection.mode));
+        beginRepairLogSection(repairSection);
+        const QStringList arguments = {
+            m_hostMaintenanceMode ? QStringLiteral("host-fs-repair") : QStringLiteral("fs-repair"),
+            m_hostMaintenanceMode ? m_hostPrimaryPath : m_previewTargetPath,
+            m_hostMaintenanceMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath,
+            selection.device,
+            selection.mode
+        };
+        bool succeeded = false;
+        anyRepairAttempted = true;
+        const QString output = runPrivilegedRequest(
+            partOfFullRepair
+                ? QStringLiteral("File system repair (%1)").arg(selection.mode)
+                : QStringLiteral("File system repair (%1, manual)").arg(selection.mode),
+            arguments, QByteArray(), &succeeded, false, LogEntryKind::Repair);
+        const QString detail = output.trimmed().isEmpty()
+            ? QStringLiteral("The privileged helper returned no repair output.")
+            : output.trimmed();
+        appendLog(QStringLiteral("File system repair output for %1 (%2)\n%3")
+                      .arg(selection.device, selection.mode, detail),
+                  succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"),
+                  LogEntryKind::Repair);
+        const RepairResultCategory category = categorizeRepairResult(
+            succeeded, {QStringLiteral("filesystem")}, output);
+        appendRepairResultSummary(category,
+                                  category == RepairResultCategory::Failed
+                                      ? shortRepairFailureReason(output)
+                                      : QString(),
+                                  LogEntryKind::Repair, QStringLiteral("filesystem"));
+        finishRepairLogSection(repairSection);
+        if (succeeded) {
+            anyRepairCompleted = true;
+            const QMap<QString, QString> statuses = parseRepairChangeStatuses(output);
+            const auto status = statuses.constFind(QStringLiteral("filesystem"));
+            if (status == statuses.constEnd()) {
+                // No proven-unchanged status: fail safe.
+                anyRepairStatusMissing = true;
+            } else if (!repairChangeStatusIsUnchanged(status.value())) {
+                anyRepairChanged = true;
+            }
+        } else {
+            anyRepairFailed = true;
+        }
+    }
+
+    // A real failure must be visible, not only logged: during a plan the
+    // aggregate line is written after the flow ends, so without this notice
+    // the stage would end silently. A standalone manual run keeps its
+    // existing log-only behavior.
+    if (anyRepairFailed && partOfFullRepair) {
+        QMessageBox::critical(this, QStringLiteral("File system repair failed"),
+                              QStringLiteral("One or more file system repairs failed. Review the captured helper output in Logs for the failing device and its reason."));
+    }
+
+    if (anyRepairAttempted) {
+        // The single mapping table decides the invalidated sections; a failed
+        // repair forces the complete set (fail safe). Only file system repairs
+        // the helper proved changed invalidate cached evidence.
+        const bool filesystemChanged = anyRepairFailed || anyRepairChanged || anyRepairStatusMissing;
+        recordPlanStageResult(QStringLiteral("filesystem"),
+                              anyRepairFailed
+                                  ? RepairResultCategory::Failed
+                                  : (filesystemChanged ? RepairResultCategory::Success
+                                                       : RepairResultCategory::NoRepairNeeded),
+                              anyRepairFailed
+                                  ? QStringLiteral("the privileged helper reported a failure")
+                                  : QString(),
+                              filesystemCheckDetail(results));
+        if (m_fullRepairPlanInProgress) {
+            // A plan owns the single post-plan invalidation; accumulate the
+            // file system mapping into the plan union.
+            m_fullRepairPlanModifyingStageRan = true;
+            if (filesystemChanged) {
+                accumulatePlanInvalidation({QStringLiteral("filesystem")}, anyRepairFailed);
+            }
+        } else if (filesystemChanged) {
+            refreshDevices();
+            invalidateDiagnosticsForRepair({QStringLiteral("filesystem")}, anyRepairFailed,
+                                           QStringLiteral("file system repair completed"),
+                                           LogEntryKind::Repair);
+        } else if (!m_fullRepairPlanInProgress) {
+            appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
+                            QStringLiteral("No system changes were detected; cached diagnostics remain valid."),
+                            QStringLiteral("INFO"), LogEntryKind::Repair);
+        }
+    }
+    return anyRepairCompleted;
+}
+
+// ---- MainWindow: layout and device presentation helpers ---------------------
 
 void MainWindow::setLogWrapEnabled(bool enabled)
 {
@@ -7031,10 +12821,17 @@ void MainWindow::updateDeviceTreeHeight()
     m_deviceTree->setVerticalScrollBarPolicy(visibleRows > 8 ? Qt::ScrollBarAsNeeded : Qt::ScrollBarAlwaysOff);
 }
 
+// Gives every push button a consistent minimum size from its content hint.
+// Buttons explicitly marked shrinkable by makeButtonShrinkable() are skipped.
 void MainWindow::normalizeButtonSizing()
 {
     const QList<QPushButton *> pushButtons = findChildren<QPushButton *>();
     for (QPushButton *button : pushButtons) {
+        // Dense rows explicitly opted into shrinking keep their smaller
+        // floor and Preferred policy so they cannot overlap when narrow.
+        if (button->property("bootRepairShrinkable").toBool()) {
+            continue;
+        }
         const QSize hint = button->minimumSizeHint().expandedTo(button->sizeHint());
         button->setMinimumHeight(qMax(hint.height(), fontMetrics().height() + 14));
         button->setMinimumWidth(hint.width());
@@ -7056,6 +12853,9 @@ void MainWindow::normalizeButtonSizing()
     }
 }
 
+// Applies the Settings "show" filters to one top-level disk. A disk is kept
+// when it passes every enabled filter; an encrypted disk stays visible while
+// "show encrypted" is enabled even if no Linux candidate is visible yet.
 bool MainWindow::devicePassesTopLevelFilters(const DeviceNode &device) const
 {
     const bool removableOrUsb = device.removable
@@ -7092,20 +12892,6 @@ QString MainWindow::combinedModel(const DeviceNode &node)
         parts.append(node.label);
     }
     return parts.join(QLatin1Char(' ')).simplified();
-}
-
-QString MainWindow::deviceKind(const DeviceNode &node)
-{
-    if (node.protectedDevice) {
-        return QStringLiteral("Protected current system");
-    }
-    if (node.encrypted) {
-        return QStringLiteral("Encrypted volume");
-    }
-    if (node.type == QStringLiteral("disk")) {
-        return QStringLiteral("Physical disk");
-    }
-    return node.type;
 }
 
 QIcon MainWindow::iconForDevice(const DeviceNode &node)

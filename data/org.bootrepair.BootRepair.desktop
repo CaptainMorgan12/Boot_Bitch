@@ -10,3 +10,4 @@ Terminal=false
 Categories=System;
 Keywords=boot;repair;recovery;linux;grub;btrfs;luks;disk;
 StartupNotify=true
+StartupWMClass=BootRepair

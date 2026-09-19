@@ -25,5 +25,9 @@
     <file alias="atlas/install.svg">icons/atlas/install.svg</file>
     <file alias="atlas/update.svg">icons/atlas/update.svg</file>
     <file alias="atlas/development.svg">icons/atlas/development.svg</file>
+    <file alias="atlas/kernel.svg">icons/atlas/kernel.svg</file>
+    <file alias="atlas/initramfs.svg">icons/atlas/initramfs.svg</file>
+    <file alias="atlas/grub.svg">icons/atlas/grub.svg</file>
+    <file alias="atlas/distribution.svg">icons/atlas/distribution.svg</file>
   </qresource>
 </RCC>

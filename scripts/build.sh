@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Configure, build and stage-validate Boot Bitch without installing it; create
+# a .deb too when running on a Debian-family host with the packaging tools.
+#
+# Environment: BUILD_DIR (default build-release), BUILD_TYPE (Release), JOBS.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"

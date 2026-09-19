@@ -2,8 +2,8 @@
 
 #include <QApplication>
 #include <QCoreApplication>
-#include <QIcon>
 #include <QDir>
+#include <QIcon>
 
 int main(int argc, char *argv[])
 {

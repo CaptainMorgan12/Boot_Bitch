@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.23
+    VERSION 0.2.24
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -27,11 +27,14 @@ find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
 include(CTest)
 find_package(Qt6 REQUIRED COMPONENTS Test)
 
-# KDE KAuth remains optional. When present we link it
-# so the same source tree validates the future privilege-integration dependency
-# without making KDE mandatory on non-Plasma desktops.
+# KDE KAuth remains optional. When present it is linked so the same source tree
+# validates the future privilege-integration dependency without making KDE
+# mandatory on non-Plasma desktops.
 find_package(KF6Auth QUIET NO_MODULE)
 
+# -----------------------------------------------------------------------------
+# Application target
+# -----------------------------------------------------------------------------
 add_executable(boot-repair
     src/main.cpp
     src/MainWindow.cpp
@@ -67,6 +70,9 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
     target_compile_options(boot-repair PRIVATE -Wall -Wextra -Wpedantic)
 endif()
 
+# -----------------------------------------------------------------------------
+# Install rules
+# -----------------------------------------------------------------------------
 install(TARGETS boot-repair
     RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR}
 )
@@ -108,6 +114,9 @@ install(FILES data/copyright
     DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-repair
 )
 
+# -----------------------------------------------------------------------------
+# Compressed documentation
+# -----------------------------------------------------------------------------
 # Build reproducible compressed documentation when gzip is available. This is
 # standard on Debian-family packaging hosts, but remains optional for portable
 # source builds on other systems.
@@ -134,7 +143,6 @@ else()
     message(STATUS "gzip not found: compressed changelog/man page will not be installed")
 endif()
 
-
 # -----------------------------------------------------------------------------
 # Debian package support (CPack)
 # -----------------------------------------------------------------------------
@@ -154,10 +162,21 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 # Optional platform-theme integrations make Qt controls and dialogs blend
 # into GNOME without overriding KDE's native Qt theme.
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-platformtheme, qgnomeplatform-qt6")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, libqt6svg6, hicolor-icon-theme")
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, libqt6svg6, hicolor-icon-theme")
+set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "exfatprogs, ntfs-3g, f2fs-tools, jfsutils, reiserfsprogs, zfsutils-linux")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
 set(CPACK_DEBIAN_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\n It provides protected discovery and read-only diagnostics for the running\n host or a selected repair system. The privileged backend supports guarded\n Debian/Ubuntu-family maintenance and repair-system recovery, plus guarded\n Arch package, initramfs, GRUB and conventional EFI stages after their\n transaction-specific preflights. It also provides LUKS unlock and verified\n bidirectional file recovery/copy.")
+# Software centers import the desktop entry into their AppStream view. The
+# packaged entry references the installed icon by absolute path so AppStream
+# records a local icon: Discover 6.7.x on KIconThemes 6.28 cannot resolve stock
+# theme icons (AppStreamUtils::kIconLoaderHasIcon compares icon names against
+# KIconLoader::queryIcons(), which returns file paths). Source installs and the
+# AppImage keep the themed icon name and are not rewritten.
+set(CPACK_PRE_BUILD_SCRIPTS "${CMAKE_CURRENT_SOURCE_DIR}/scripts/cpack-rewrite-desktop-icon.cmake")
+# Refresh the GTK icon cache right after installation so GTK-based software
+# centers and file managers see the packaged hicolor icons immediately.
+set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/postinst")
 
 # CPack can also produce an RPM for Fedora, openSUSE and other RPM-based
 # systems.  Keep these requirements separate from the Debian dependency names;
@@ -167,7 +186,7 @@ set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_RPM_PACKAGE_RELEASE "1")
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
-set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, btrfs-progs, efibootmgr, binutils, python3, hicolor-icon-theme")
+set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, hicolor-icon-theme")
 set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
 
 # TGZ is a package-manager-neutral staging artifact for Arch, SUSE variants,
@@ -225,6 +244,8 @@ add_test(NAME boot-repair-display-manager-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-manager-contract.sh)
 add_test(NAME boot-repair-backend-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-backend-profile-contract.sh)
+add_test(NAME boot-repair-filesystem-repair-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-filesystem-repair-contract.sh)
 add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract

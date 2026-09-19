@@ -8,6 +8,9 @@
 #include <QTextStream>
 
 namespace {
+// Resolves a command through the normal PATH search and then through the
+// standard system directories, which are not always present in PATH when the
+// application is started from an AppImage or a desktop launcher.
 QString findExecutablePortable(const QString &command)
 {
     QString path = QStandardPaths::findExecutable(command);
@@ -109,6 +112,9 @@ bool isSuseLike(const QString &id, const QMap<QString, QString> &values)
 }
 } // namespace
 
+// Probes the fixed requirement table in declaration order and returns one
+// Capability per entry, with the resolved executable path and the distribution
+// package that provides the command.
 QList<Capability> CapabilityChecker::scanHost()
 {
     struct Requirement {
@@ -164,6 +170,8 @@ QList<Capability> CapabilityChecker::scanHost()
     return capabilities;
 }
 
+// PRETTY_NAME from /etc/os-release, with a stable fallback when the file is
+// missing or unreadable.
 QString CapabilityChecker::distributionLabel()
 {
     const QMap<QString, QString> values = readOsRelease();
@@ -171,6 +179,7 @@ QString CapabilityChecker::distributionLabel()
     return prettyName.isEmpty() ? QStringLiteral("Unknown Linux distribution") : prettyName;
 }
 
+// Human-readable package-manager family for the running host.
 QString CapabilityChecker::packageManagerLabel()
 {
     const QMap<QString, QString> values = readOsRelease();
@@ -190,6 +199,8 @@ QString CapabilityChecker::packageManagerLabel()
     return QStringLiteral("Unknown / unsupported automatic mapping");
 }
 
+// Normalized distribution-family key ("arch", "debian", "fedora", "opensuse")
+// used by packageForCommand(), or the raw ID/ID_LIKE value when unrecognized.
 QString CapabilityChecker::distributionId()
 {
     const QMap<QString, QString> values = readOsRelease();
@@ -210,10 +221,14 @@ QString CapabilityChecker::distributionId()
         return id;
     }
 
-    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
     return like.isEmpty() ? QStringLiteral("unknown") : like.first();
 }
 
+// Best-effort mapping from a probed command to the package that provides it in
+// the given distribution family. Unknown commands return a family-appropriate
+// placeholder instead of an empty string.
 QString CapabilityChecker::packageForCommand(const QString &command, const QString &distributionId)
 {
     const bool debian = distributionId == QStringLiteral("debian")

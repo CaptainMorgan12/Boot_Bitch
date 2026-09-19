@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Inspect, extract and validate a built .deb without installing it.
+#
+# Usage: test-deb.sh [path/to/package.deb]
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-deb}"
 DEB="${1:-}"
@@ -13,14 +17,16 @@ need()
     }
 }
 
-for cmd in dpkg-deb find mktemp
- do
+for cmd in dpkg-deb find mktemp; do
     need "$cmd"
- done
+done
 
 if [[ -z "$DEB" ]]
 then
-    DEB="$(find "$BUILD_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort | tail -1)"
+    if [[ -d "$BUILD_DIR" ]]
+    then
+        DEB="$(find "$BUILD_DIR" -maxdepth 1 -type f -name '*.deb' -print | sort | tail -1)"
+    fi
 fi
 
 [[ -n "$DEB" && -f "$DEB" ]] || {
@@ -72,9 +78,9 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
     }
 done
 
-grep -q '^Icon=org.bootrepair.BootRepair$' \
+grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootrepair.BootRepair.png$' \
     "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop" || {
-        echo "FAIL: desktop entry does not reference packaged icon name." >&2
+        echo "FAIL: desktop entry does not reference the installed icon path." >&2
         exit 1
     }
 
