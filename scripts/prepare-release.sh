@@ -141,8 +141,8 @@ derive_previous_tag()
     for file in "$ROOT_DIR"/docs/release-notes-*.md; do
         [[ -f "$file" ]] && files+=("$file")
     done
-    tag="$(grep -hoE 'compare/v[0-9]+\.[0-9]+\.[0-9]+\.\.\.' "${files[@]}" 2>/dev/null \
-        | sed -E 's#^compare/##; s#\.\.\.$##' | sort -V | tail -n1 || true)"
+    tag="$(grep -hoE 'compare/v[0-9]+\.[0-9]+\.[0-9]+\.\.\.v[0-9]+\.[0-9]+\.[0-9]+' "${files[@]}" 2>/dev/null \
+        | sed -E 's#^compare/##; s#\.\.\.#\n#' | sort -Vu | tail -n1 || true)"
     if [[ -z "$tag" ]] && git -C "$ROOT_DIR" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
         tag="$(git -C "$ROOT_DIR" tag --list 'v[0-9]*.[0-9]*.[0-9]*' | sort -V | tail -n1 || true)"
     fi
@@ -205,6 +205,10 @@ else
 fi
 
 mapfile -t BULLETS < <(printf '%s\n' "$BODY" | extract_bullets)
+if (( CHANGELOG_CHANGED )) && (( ${#BULLETS[@]} == 1 )) \
+        && [[ "${BULLETS[0]}" == "(no unreleased changes yet)" ]]; then
+    fail "CHANGELOG.md '## Unreleased' still has only the placeholder; add the $VERSION changes before preparing it."
+fi
 (( ${#BULLETS[@]} > 0 )) || fail \
     "CHANGELOG.md $SOURCE_DESCRIPTION has no '- ' entries for $VERSION; add the release changes before preparing it."
 
