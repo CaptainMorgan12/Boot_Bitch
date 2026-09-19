@@ -1,6 +1,9 @@
 #!/usr/bin/env bash
 set -u
 
+# Report missing build/runtime tools; exits non-zero when a required tool is
+# absent. Installs nothing.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 failures=0
 optional_missing=0

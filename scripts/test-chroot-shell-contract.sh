@@ -14,6 +14,21 @@ grep -q 'shell            Execute one reviewed command' "$HELPER"
 grep -q 'unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|' "$HELPER"
 grep -q '^        shell)' "$HELPER"
 grep -q 'run_chroot_shell "\$1"' "$HELPER"
+
+# Host Maintenance mode uses a separate guarded host-shell path.  It must
+# validate the running host identity and activate the host command guard, and
+# must never be routed through the target chroot runner.
+grep -q '^  \$PROGRAM_NAME host-shell' "$HELPER"
+grep -q 'host-validate|host-diagnose|host-repair|host-default|host-shell' "$HELPER"
+grep -q '^        host-shell)' "$HELPER"
+host_shell_body="$(sed -n '/^run_host_shell()/,/^}/p' "$HELPER")"
+[[ -n "$host_shell_body" ]] || { echo 'FAIL: run_host_shell is missing' >&2; exit 1; }
+grep -q 'prepare_running_host' <<<"$host_shell_body"
+grep -q 'prepare_host_command_guard' <<<"$host_shell_body"
+if grep -q 'chroot' <<<"$host_shell_body"; then
+    echo 'FAIL: host-shell must not enter a chroot' >&2
+    exit 1
+fi
 grep -q '^mount_target_resolver()' "$HELPER"
 grep -q 'mount_target_resolver' "$HELPER"
 # Repairs begin with a read-only preflight and only then promote the target to

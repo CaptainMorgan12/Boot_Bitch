@@ -1,6 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Build the portable AppImage with linuxdeploy/linuxdeploy-plugin-qt, falling
+# back to appimagetool-only packaging when those tools are not available.
+#
+# Overrides: BUILD_DIR, BUILD_TYPE, JOBS, ARCH, OUTPUT, APPIMAGETOOL,
+#            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-appimage}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
@@ -28,6 +34,17 @@ if [[ -z "$APPIMAGE_RUNTIME_FILE" && -f "$ROOT_DIR/Development/tools/runtime-x86
 fi
 APPIMAGETOOL="${APPIMAGETOOL:-appimagetool}"
 
+run_tool()
+{
+    local tool="$1"
+    shift
+    if [[ "$tool" == *.AppImage ]]; then
+        "$tool" --appimage-extract-and-run "$@"
+    else
+        "$tool" "$@"
+    fi
+}
+
 run_appimagetool()
 {
     local tool="$1"
@@ -43,17 +60,6 @@ need()
         echo "Missing required build command: $1" >&2
         exit 1
     }
-}
-
-run_tool()
-{
-    local tool="$1"
-    shift
-    if [[ "$tool" == *.AppImage ]]; then
-        "$tool" --appimage-extract-and-run "$@"
-    else
-        "$tool" "$@"
-    fi
 }
 
 for cmd in cmake ninja c++; do
@@ -127,6 +133,12 @@ PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*
 OUTPUT="${OUTPUT:-$ROOT_DIR/build-release/boot-repair_${BUILD_VERSION:-$PROJECT_VERSION}_${ARCH}.AppImage}"
 mkdir -p -- "$(dirname -- "$OUTPUT")"
 
+runtime_args=()
+if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
+    [[ -f "$APPIMAGE_RUNTIME_FILE" ]] || { echo "AppImage runtime file not found: $APPIMAGE_RUNTIME_FILE" >&2; exit 1; }
+    runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
+fi
+
 if (( USE_LINUXDEPLOY )); then
     # First let linuxdeploy populate the AppDir and bundle Qt. We invoke
     # appimagetool ourselves so APPIMAGE_RUNTIME_FILE can be supplied on hosts
@@ -153,18 +165,8 @@ PLUGIN_WRAPPER
         --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
         --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
         --plugin qt)
-    runtime_args=()
-    if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
-        [[ -f "$APPIMAGE_RUNTIME_FILE" ]] || { echo "AppImage runtime file not found: $APPIMAGE_RUNTIME_FILE" >&2; exit 1; }
-        runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
-    fi
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
 else
-    runtime_args=()
-    if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
-        [[ -f "$APPIMAGE_RUNTIME_FILE" ]] || { echo "AppImage runtime file not found: $APPIMAGE_RUNTIME_FILE" >&2; exit 1; }
-        runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
-    fi
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
 fi
 [[ -s "$OUTPUT" ]] || {

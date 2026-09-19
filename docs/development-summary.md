@@ -1,5 +1,15 @@
 # Boot Bitch development summary
 
+## 0.2.24 validation snapshot — 2026-09-16
+
+- Local TUXEDO/Debian Release build completed in `build-release`; CTest passed all 7 tests, and the Debian package plus AppImage were generated.
+- Arch VM package workflow completed from the shared source bundle: old `boot-bitch` removed, Arch package rebuilt as `boot-bitch-0.2.24-1`, and the new package installed with `pacman -U`.
+- Removed the stale `/usr/local/bin/boot-repair` source install that shadowed the packaged `/usr/bin/boot-repair` application-menu entry. The uninstall workflow now removes that legacy application-owned path.
+- Bundled semantic icons render across the Arch/XFCE VM after adding the `qt6-svg` runtime dependency; the protected host card uses the bundled green shield/check icon.
+- Arch Host Maintenance exposes guarded package repair and upgrade through full `pacman -Syu` transactions, plus the supported initramfs, EFI/GRUB, DKMS and display-manager stages.
+- Debian/TUXEDO GRUB preflight now uses isolated `grub-mkconfig` output whenever available, avoiding false “no Linux boot entry” failures from `update-grub` progress text.
+- Release capture is `/home/amiga/Projects/Boot_Bitch-github`; no GitHub push is part of the test cycle.
+
 Boot Bitch 0.2.15 is the first public release after the 0.1–0.2 development series. Versions before 0.2.15 were development iterations and are retained as historical notes rather than public releases. Earlier versions were hardware and workflow candidates; this summary groups the changes by capability for readers who do not need the full version-by-version changelog.
 
 ## Recovery foundation

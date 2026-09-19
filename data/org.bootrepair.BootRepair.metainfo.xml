@@ -5,18 +5,15 @@
   <developer id="org.bootrepair">
     <name>CaptainMorgan12</name>
   </developer>
-  <!-- Legacy field retained for software centers that do not yet read the
-       structured developer element. -->
-  <developer_name>CaptainMorgan12</developer_name>
   <summary>Inspect Linux systems and repair boot configuration</summary>
   <url type="homepage">https://github.com/CaptainMorgan12/Boot_Bitch</url>
   <url type="bugtracker">https://github.com/CaptainMorgan12/Boot_Bitch/issues</url>
   <description>
     <p>
       Boot Bitch diagnoses Linux boot environments and performs guarded
-      maintenance of the explicitly selected running host or recovery operations
-      on a selected repair system. It supports encrypted
-      LUKS volumes, Btrfs subvolumes, GRUB, initramfs, EFI/UKI boot paths and
+      maintenance of the explicitly selected running host or recovery
+      operations on a selected repair system. It supports encrypted LUKS
+      volumes, Btrfs subvolumes, GRUB, initramfs, EFI/UKI boot paths and
       graphical login configuration.
     </p>
     <p>
@@ -25,7 +22,45 @@
     </p>
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
+  <screenshots>
+    <screenshot type="default">
+      <caption>Systems: choose the protected running host or a detected repair target</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/01-systems-target-selection.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Read-only diagnostics report for the selected scope</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/02-diagnostics-report.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Full Repair plan with per-stage gating from cached diagnostics</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/03-repair-confirmation.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Verified file recovery and copy with a guarded destination path</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Session log with scoped diagnostics and colored repair summaries</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/07-application-log.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Settings for repair stages, diagnostics refresh and session logs</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/08-settings.png</image>
+    </screenshot>
+  </screenshots>
   <releases>
+    <release version="0.2.24" date="2026-09-18">
+      <description>
+        <p>Repair-engine, boot-stack and app-store packaging release:</p>
+        <ul>
+          <li>Read-only-first file system repair tool and Full Repair stage for the root, /boot, ESP and /home filesystems, with confirmed per-device repair modes after issues are found.</li>
+          <li>Evidence-driven scoped diagnostics regeneration: unchanged repairs keep the cache valid, changed repairs refresh only the affected sections, and a Full Repair plan regenerates once at the end.</li>
+          <li>Colored, action-accurate repair result summaries (successful, failed, no repair needed) with a per-stage Full Repair aggregate.</li>
+          <li>Boot-stack and EFI fixes: conventional GRUB repair no longer corrupts the captured firmware ID when host and repair ESPs share labels, and a failed plan marks only the failing stage.</li>
+          <li>App-store packaging: portable bundled icon atlas with the Qt SVG runtime dependency, filesystem check tool dependencies, and installed AppStream metadata with screenshots for GNOME Software and KDE Discover.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.23" date="2026-09-15">
       <description><p>Cumulative release with guarded host maintenance, repair-system folder browsing, verified EFI labels, per-drive destination grouping and boot-chain diagnostics.</p></description>
     </release>
@@ -61,6 +96,7 @@
   <provides>
     <binary>boot-repair</binary>
   </provides>
+  <pkgname>boot-repair</pkgname>
   <icon type="stock">org.bootrepair.BootRepair</icon>
   <categories>
     <category>System</category>

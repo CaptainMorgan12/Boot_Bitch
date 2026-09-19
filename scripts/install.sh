@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Install Boot Bitch, preferring a native package found under the local build
+# directories and falling back to --source (the CMake install).
+#
+# Arguments: --dry-run|--simulate, --source
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 SOURCE_MODE=0
 DRY_RUN=0
@@ -37,6 +42,46 @@ fi
 if [[ -n "${BOOT_REPAIR_PACKAGE_FAMILY:-}" ]]; then
     host_family="$BOOT_REPAIR_PACKAGE_FAMILY"
 fi
+
+filesystem_check_tool_available()
+{
+    local tool="$1" path
+    for path in /usr/sbin /usr/bin /sbin /bin; do
+        [[ -x "$path/$tool" ]] && return 0
+    done
+    command -v "$tool" >/dev/null 2>&1
+}
+
+report_filesystem_check_tools()
+{
+    local entry tool filesystems
+    local -a missing_tools=() missing_filesystems=()
+    for entry in \
+        "e2fsck:ext2/ext3/ext4" \
+        "fsck.fat:fat" \
+        "btrfs:btrfs" \
+        "xfs_repair:xfs" \
+        "fsck.exfat:exfat" \
+        "ntfsfix:ntfs" \
+        "fsck.f2fs:f2fs" \
+        "jfs_fsck:jfs" \
+        "reiserfsck:reiserfs" \
+        "zpool:zfs"; do
+        tool="${entry%%:*}"
+        filesystems="${entry#*:}"
+        if ! filesystem_check_tool_available "$tool"; then
+            missing_tools+=("$tool")
+            missing_filesystems+=("$filesystems")
+        fi
+    done
+    if ((${#missing_tools[@]} > 0)); then
+        echo "WARNING: Missing file system check tools: ${missing_tools[*]}"
+        echo "WARNING: File systems that cannot be checked without them: ${missing_filesystems[*]}"
+        echo "         Install the matching packages for your distribution, for example: e2fsprogs, dosfstools, btrfs-progs, xfsprogs, exfatprogs, ntfs-3g, f2fs-tools, jfsutils, reiserfsprogs, zfsutils-linux"
+    fi
+}
+
+report_filesystem_check_tools
 
 find_one()
 {

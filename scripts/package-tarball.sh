@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Build the CPack TGZ binary install-tree archive for this host distribution.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-tarball}"
 
@@ -8,13 +10,6 @@ command -v cpack >/dev/null 2>&1 || {
     echo "Missing required packaging command: cpack (provided by CMake)." >&2
     exit 1
 }
-
-BUILD_DIR_REAL="$(realpath -m -- "$BUILD_DIR")"
-ROOT_DIR_REAL="$(realpath -m -- "$ROOT_DIR")"
-if [[ -z "$BUILD_DIR_REAL" || "$BUILD_DIR_REAL" == / || "$BUILD_DIR_REAL" == "$ROOT_DIR_REAL" ]]; then
-    echo "Refusing to remove unsafe build directory: $BUILD_DIR" >&2
-    exit 1
-fi
 
 BUILD_TYPE=Release BUILD_DIR="$BUILD_DIR" "$ROOT_DIR/scripts/build.sh"
 

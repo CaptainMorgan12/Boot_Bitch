@@ -1,8 +1,12 @@
 #pragma once
 
-#include <QString>
 #include <QList>
+#include <QString>
 
+// One host capability probe: the feature it represents, the command that must
+// be present, the distribution package that provides it and where it is needed
+// (host, repair target or both). Commands are located with a portable PATH
+// fallback so AppImage and minimal hosts behave consistently.
 struct Capability
 {
     QString feature;
@@ -15,6 +19,8 @@ struct Capability
     bool optional = true;
 };
 
+// Read-only inventory of the tools the running host and the repair workflows
+// need. The scan never executes a probed command; it only locates it on disk.
 class CapabilityChecker
 {
 public:

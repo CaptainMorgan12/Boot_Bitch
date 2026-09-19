@@ -6,7 +6,6 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
-#include <QRegularExpression>
 #include <QTextStream>
 
 namespace {
@@ -51,6 +50,8 @@ QStringList jsonMountPoints(const QJsonObject &object)
     return result;
 }
 
+// Reads PRETTY_NAME from the os-release file of a mounted root, so a repair
+// target is named the same way the running host is.
 QString prettyNameFromOsRelease(const QString &root)
 {
     QString path;
@@ -102,8 +103,11 @@ QList<DeviceNode> SystemScanner::scan(QString *errorMessage, QStringList *diagno
     QProcess process;
     QString lsblkPath;
     for (const QString &candidate : {QStringLiteral("/usr/bin/lsblk"), QStringLiteral("/bin/lsblk")}) {
-        QFileInfo info(candidate);
-        if (info.isFile() && info.isExecutable()) { lsblkPath = candidate; break; }
+        const QFileInfo info(candidate);
+        if (info.isFile() && info.isExecutable()) {
+            lsblkPath = candidate;
+            break;
+        }
     }
     if (lsblkPath.isEmpty()) {
         if (errorMessage) *errorMessage = QStringLiteral("Unable to locate the trusted lsblk executable.");
@@ -187,6 +191,7 @@ QList<DeviceNode> SystemScanner::scan(QString *errorMessage, QStringList *diagno
     return devices;
 }
 
+// Recursively converts one lsblk JSON object (and its children) into a node.
 DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
 {
     DeviceNode node;
@@ -288,6 +293,8 @@ void SystemScanner::classifyTree(DeviceNode &node) const
     }
 }
 
+// Marks every node of a tree as protected once any node backs the running
+// system, so children cannot be offered as repair targets.
 void SystemScanner::applyProtection(DeviceNode &node, bool protectedTree) const
 {
     node.protectedDevice = protectedTree;
@@ -296,6 +303,7 @@ void SystemScanner::applyProtection(DeviceNode &node, bool protectedTree) const
     }
 }
 
+// True when any node in the tree is mounted at a protected mount point.
 bool SystemScanner::treeBacksRunningSystem(const DeviceNode &node) const
 {
     for (const QString &mountPoint : node.mountPoints) {
@@ -313,6 +321,7 @@ bool SystemScanner::treeBacksRunningSystem(const DeviceNode &node) const
     return false;
 }
 
+// True when any node in the tree is a detected Linux installation.
 bool SystemScanner::treeContainsInstalledLinux(const DeviceNode &node) const
 {
     if (node.installedLinux || !detectMountedLinuxName(node.mountPoints).isEmpty()) {
@@ -326,6 +335,7 @@ bool SystemScanner::treeContainsInstalledLinux(const DeviceNode &node) const
     return false;
 }
 
+// True when any node in the tree is a LUKS-encrypted volume.
 bool SystemScanner::treeContainsEncryptedVolume(const DeviceNode &node) const
 {
     if (node.encrypted || node.fileSystem.compare(QStringLiteral("crypto_LUKS"), Qt::CaseInsensitive) == 0) {
@@ -355,6 +365,7 @@ bool SystemScanner::isLinuxCapableFileSystem(const QString &fileSystem)
     return types.contains(fileSystem, Qt::CaseInsensitive);
 }
 
+// Returns the first mount point's os-release PRETTY_NAME, if readable.
 QString SystemScanner::detectMountedLinuxName(const QStringList &mountPoints)
 {
     for (const QString &mountPoint : mountPoints) {

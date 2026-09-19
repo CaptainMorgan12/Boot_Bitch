@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.23 — maintenance release
+# Boot Bitch 0.2.24 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.23 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.24 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and cross-desktop packaging prepared for public distribution. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -54,7 +54,7 @@ unlock → root → login. The report compares the root LUKS identity and marks
 whether an interactive unlock is expected once, so an EFI repair does not add
 another decryption prompt.
 
-Still intentionally constrained in 0.2.23:
+Still intentionally constrained in 0.2.24:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
@@ -99,10 +99,10 @@ These anonymized screenshots show Boot Bitch 0.2.15 running in an Ubuntu recover
 
 ![Settings](docs/screenshots/08-settings.png)
 
-## 0.2.23 refinements
+## 0.2.24 refinements
 
 This release includes the local 0.2.21 and 0.2.22 iterations below. The previous
-GitHub release was 0.2.20; see the [cumulative release notes](docs/release-notes-0.2.23.md).
+GitHub release was 0.2.20; see the [cumulative release notes](docs/release-notes-0.2.24.md).
 
 - Maintain one canonical UKI, firmware fallback, and WebFAI destination per
   maintained ESP, removing only safely identified duplicate routes such as a
@@ -549,8 +549,8 @@ The script creates a clean Release build, stages the complete CMake install
 under an AppDir, validates the executable and privileged helper, lets
 `linuxdeploy` bundle Qt/shared-library dependencies, and invokes
 `appimagetool`. It does not install anything on the host. Run the artifact with
-`chmod +x build-release/boot-repair_0.2.23_x86_64.AppImage` followed by
-`./build-release/boot-repair_0.2.23_x86_64.AppImage`. If only `appimagetool`
+`chmod +x build-release/boot-repair_0.2.24_x86_64.AppImage` followed by
+`./build-release/boot-repair_0.2.24_x86_64.AppImage`. If only `appimagetool`
 is available, the script creates a diagnostic AppImage and warns that it uses
 the host's Qt libraries; do not publish that fallback as a portable release.
 
@@ -607,8 +607,10 @@ Contains live device-display preferences, the Full Repair plan, mandatory safety
 Boot Bitch checks capabilities independently. Examples include `lsblk`, `blkid`, `findmnt`, `cryptsetup`, `btrfs`, `rsync`, `chroot`, `efibootmgr`, `grub-install`, `update-grub`/`grub-mkconfig`, `update-initramfs`/`mkinitcpio`/`dracut`, `bootctl`, `dkms`, optional LVM tools, and `mdadm`. The backend profile records which package manager and boot tools the inspected system actually provides, so an Arch or RPM system is not mistaken for a Debian target.
 
 Missing optional tools disable the related action. Modifying repair execution
-is currently limited to supported Debian/Ubuntu-family systems in either
-scope. Missing host tools are never installed silently.
+supports supported Debian/Ubuntu-family and Arch-family systems in either
+scope when backend and transaction-specific preflights pass. Arch uses a full
+sandboxed pacman transaction and never runs standalone APT/dpkg stages.
+Missing host tools are never installed silently.
 
 ## License
 

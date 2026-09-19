@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Remove Boot Bitch, using the native package manager when it is installed as a
+# package and otherwise the manifest recorded by install.sh --source.
+#
+# Override the manifest path with INSTALL_MANIFEST=/absolute/path.
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
 run_privileged()
@@ -28,6 +33,13 @@ remove_legacy_source_install()
         /usr/local/libexec/boot-repair/boot-repair-efi-label.py \
         /usr/local/share/applications/org.bootrepair.BootRepair.desktop
     run_privileged sh -c 'find /usr/local/share/icons/hicolor -path "*/apps/org.bootrepair.BootRepair.png" -type f -delete 2>/dev/null || true'
+    # A stale /usr/local icon cache keeps pointing at the deleted PNGs and
+    # makes launchers fall back to a generic icon; drop it so the theme is
+    # rescanned, and remove the legacy metainfo/desktop database entry.
+    run_privileged rm -f -- \
+        /usr/local/share/metainfo/org.bootrepair.BootRepair.metainfo.xml \
+        /usr/local/share/icons/hicolor/icon-theme.cache
+    run_privileged sh -c 'update-desktop-database -q /usr/local/share/applications 2>/dev/null || true'
 }
 
 if command -v dpkg-query >/dev/null 2>&1 \
