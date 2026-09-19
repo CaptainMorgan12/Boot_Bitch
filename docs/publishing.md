@@ -69,10 +69,10 @@ UI contract checks have passed. The tested
 artifacts are kept in the local release workspace and are intentionally not
 copied into the source tree.
 
-Publish one cumulative 0.2.24 release from the previous GitHub release,
-0.2.23. The 0.2.21 and 0.2.22 changelog entries describe local testing
-iterations that were published in 0.2.23 and are included here. Keep their
-commits in the source history.
+Publish the 0.2.24 maintenance release from the previous GitHub release,
+0.2.23. The release notes describe only the changes made since 0.2.23; the
+local 0.2.21 and 0.2.22 iterations were published in 0.2.23 and remain
+documented there. Keep their commits in the source history.
 
 ```bash
 cd /home/amiga/Projects/Boot_Bitch-github

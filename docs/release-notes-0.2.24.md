@@ -1,26 +1,38 @@
 # Boot Bitch 0.2.24
 
-Boot Bitch 0.2.24 rolls up the local 0.2.21 and 0.2.22 iterations, the published
-0.2.23 release, and the final 0.2.24 fixes into one cumulative release after
-GitHub's 0.2.23. It adds guarded running-host maintenance, repair-system folder
-browsing, and verified EFI destination and label maintenance.
+Boot Bitch 0.2.24 is a maintenance release with the changes made since the
+published 0.2.23 release.
 
-- Run the complete read-only diagnostic set for either the protected Running
-  Host or a selected repair system, and run the supported maintenance stages
-  in either scope after the matching safety checks.
-- Restore a missing host TUXEDO UKI registration and make it the default while
-  preserving unrelated ESP entries, BootOrder and BootNext state.
-- Browse Host → Repair destinations through temporary read-only mounts of the
-  selected repair filesystem, with a compact resizable folder browser and a
-  guarded virtual-path recheck before copying.
-- Retain one UKI, fallback and WebFAI destination per maintained ESP while
-  removing only verified duplicate routes.
-- Group each drive's entries in BootOrder by primary use and attach the drive
-  model to labels without repeating existing model text.
-- Distinguish TUXEDO Debian-base UKI boot from TUXEDO Ubuntu/GRUB boot and
-  record the expected root-LUKS unlock handoff in read-only boot evidence.
-- Change existing EFI entry labels only after validating their EFI variable's
-  selected-ESP PARTUUID and loader, then reading the variable back.
+Released 2026-09-16.
+
+- Bundle the semantic icon atlas as the deterministic UI source across desktop
+  themes and add the Qt SVG runtime dependency required by Arch and other
+  minimal installations. The atlas gains dedicated monochrome kernel,
+  initramfs, GRUB and distribution icons (GRUB and the penguin adapted from the
+  TUXEDO OS KDE/Breeze theme; kernel and initramfs drawn in the atlas line-art
+  style), and is now authoritative: the repair tools, Full Repair stages and
+  diagnostic sections no longer fall back to placeholder or off-theme icons
+  from the active desktop theme.
+- Add Arch host-maintenance package repair and upgrade stages through
+  transaction-specific preflights and guarded apply paths for full pacman
+  package transactions, mkinitcpio, conventional GRUB and EFI. Repository and
+  download errors, removals, unresolved dependencies, standalone APT/dpkg
+  operations and unknown layouts stay explicitly gated.
+- Remove stale `/usr/local` source installs during package uninstall so
+  application-menu launches resolve the current packaged binary.
+- Fix Debian/TUXEDO GRUB preflight to inspect an isolated `grub-mkconfig`
+  output rather than `update-grub` progress text.
+- Restore the protected-host shield/check as a bundled green status icon.
+- Add a read-only distribution and boot backend profiler for the running host
+  and selected repair target. Debian/APT and Arch/pacman families are detected
+  separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
+  mount and kernel naming evidence.
+- Add a backend-profile contract test and portable kernel/initramfs pairing
+  diagnostics for Arch-style `vmlinuz-linux` and `initramfs-*.img` files.
+- Make build dependency setup and installation package-manager aware for
+  APT/dpkg, pacman, DNF/RPM and zypper/RPM hosts. Add native Arch, RPM and
+  package-manager-neutral TGZ workflows while keeping `.deb` generation
+  explicitly Debian-family.
 - Show brief completion notices and visible diagnostic prerequisites for
   disabled repair actions, with full output retained in Results and Logs.
 - Gate every repair tool and Full Repair stage on the selected scope's
@@ -32,25 +44,30 @@ browsing, and verified EFI destination and label maintenance.
   those stages need them. Every decision is recorded with supporting evidence
   in the combined diagnostic log, alongside the GUI's launch-time device,
   protected-host and helper detection.
-- One canonical session log per run, with scope markers for the protected
-  host and each selected repair target, visible timestamps, prior-session
-  viewing, clear and add-note actions, and automatic retention.
-- Stale read-only diagnostics are regenerated automatically after repairs or
-  target changes once a privileged session exists, so available repair
-  actions stay enabled without a manual Run All (Settings toggle, default
-  on; never prompts for authorization by itself).
 - Arch: a full sandboxed pacman transaction that recovers from individual
   mirror download failures now completes with a warning instead of a false
   refusal; repository, signature, integrity, dependency and transaction errors
   still refuse.
 - An idle PackageKit daemon no longer blocks host package repairs; active
   apt/dpkg/pacman processes and held package-manager locks still do.
+- Detect the target initramfs generator from what is actually installed
+  (initramfs-tools, dracut, mkinitcpio) instead of a stray binary, and require
+  the TUXEDO UKI builder for that layout's EFI repair.
 - Administrator authorization is requested once when a scope is selected and
   reused for diagnostics and repairs; a cancelled prompt leaves a visible
   Authorize action. A global busy indicator covers diagnostics, repairs,
   snapshots, unlock, copy, shell and authorization.
 - Journal evidence only keeps boot-relevant system entries and collapses
   near-identical lines, so the combined log stays actionable.
+- Re-running diagnostics refreshes only the affected diagnostic sections in
+  the application log; repair, snapshot and other entries are preserved. Log
+  rendering is coalesced and incremental so automatic regeneration no longer
+  causes UI lag, and the busy indicator sits in a reserved header slot so it
+  cannot shift the layout.
+- Logs and File Copy layouts adapt to narrow windows: the session-log frame
+  defaults smaller and moves below the log view when space is tight, File Copy
+  buttons shrink instead of overlapping, and drive summary text wraps instead
+  of clipping.
 - Host Maintenance provides a guarded Host Shell (bash on the running host with
   firmware write isolation) instead of a chroot shell, fixing a crash when the
   shell was invoked from host maintenance.
@@ -67,14 +84,26 @@ browsing, and verified EFI destination and label maintenance.
   repairs), never render empty, and the Individual Repair Tools pane defaults
   wider. Vendor apt release-metadata changes are accepted with a warning and
   one Acquire::AllowReleaseInfoChange retry; all other apt errors stay strict.
+- Each application launch starts a fresh session log: the live view begins
+  empty and a new timestamped session file is created when a scope is
+  identified, while a second window in the same process reuses the active
+  session file. One canonical session log per run carries scope markers for the
+  protected host and each selected repair target, visible timestamps, a
+  prior-session list with read-only viewing, clear and add-note actions, and
+  automatic retention.
+- Stale read-only diagnostics are regenerated automatically after repairs or
+  target changes once a privileged session exists, so available repair
+  actions stay enabled without a manual Run All (Settings toggle, default
+  on; never prompts for authorization by itself).
 - Code review pass: fixed the committed-target tooltip newline, removed the
   dead update-grub preflight fallback, consolidated duplicate diagnostic
   cache helpers and Full Repair stage gating, plus dead-pattern and
   ShellCheck cleanups with no behavior changes.
-- Software centers now show the app correctly: six screenshots, the current
-  0.2.24 release, the installed size and the Boot Bitch logo (package
-  association plus icon-cache refreshes; a packaged icon-path workaround for
-  Discover's stock-icon bug).
+- Software centers now show the app correctly: the installed AppStream
+  component ships six remote screenshots, links the component to the
+  `boot-repair` package for GNOME Software and KDE Discover, reports the
+  installed size and the Boot Bitch logo, and refreshes the icon cache (plus a
+  packaged icon-path workaround for Discover's stock-icon bug).
 - File system check tools are now package dependencies (common tools hard,
   the rest recommended/optional), dev/VM setups install them all, install.sh
   warns about missing tools, and no-op pacman transactions report unchanged.
@@ -122,26 +151,7 @@ browsing, and verified EFI destination and label maintenance.
   pane; the Full Repair plan list starts at a few rows and is fully
   splitter-adjustable. Selecting Host Maintenance fills the Selected drive
   details panel with the running host drive.
-- The bundled icon atlas gains dedicated monochrome kernel, initramfs, GRUB
-  and distribution icons (GRUB and the penguin adapted from the TUXEDO OS
-  KDE/Breeze theme; kernel and initramfs drawn in the atlas line-art style),
-  and the atlas is now authoritative: the repair tools, Full Repair stages
-  and diagnostic sections no longer fall back to placeholder or off-theme
-  icons from the active desktop theme.
-
-The README now distinguishes desktop widget styling from the bundled semantic
-icon atlas and documents both Running Host and selected repair-system scopes.
 
 The Debian package and AppImage are built locally from the complete source tree.
 
 [Full source diff: v0.2.23...v0.2.24](https://github.com/CaptainMorgan12/Boot_Bitch/compare/v0.2.23...v0.2.24).
-
-
-## 0.2.24 additions
-
-- Portable bundled icon atlas with the Qt SVG runtime dependency.
-- Arch host-maintenance package repair and upgrade stages using full pacman transactions.
-- Legacy source-install cleanup and isolated Debian/TUXEDO GRUB preflight generation.
-- App-store metadata: the installed AppStream component now ships remote
-  screenshots, links the component to the `boot-repair` package for GNOME
-  Software and KDE Discover, and reports the current 0.2.24 release notes.
