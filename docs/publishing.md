@@ -70,8 +70,9 @@ artifacts are kept in the local release workspace and are intentionally not
 copied into the source tree.
 
 Publish one cumulative 0.2.24 release from the previous GitHub release,
-0.2.20. The 0.2.21 and 0.2.22 changelog entries describe local testing
-iterations included in this release. Keep their commits in the source history.
+0.2.23. The 0.2.21 and 0.2.22 changelog entries describe local testing
+iterations that were published in 0.2.23 and are included here. Keep their
+commits in the source history.
 
 ```bash
 cd /home/amiga/Projects/Boot_Bitch-github
@@ -98,11 +99,15 @@ release notes, using asset basenames so downloaded files can be verified with
 ## Build and attach an AppImage
 
 AppImages are generated locally because `linuxdeploy` and `appimagetool` are
-separate upstream release utilities. Install
+separate upstream release utilities. `scripts/build.sh` runs the AppImage step
+automatically as part of the standard release build when the tools are
+available, so `build-release/` contains both the `.deb` and the versioned
+AppImage. Install
 [`linuxdeploy`](https://github.com/linuxdeploy/linuxdeploy/releases), its
 `linuxdeploy-plugin-qt`, and
-[`appimagetool`](https://github.com/AppImage/appimagetool/releases), place
-both executables on `PATH`, and run this from the source tree:
+[`appimagetool`](https://github.com/AppImage/appimagetool/releases), make all
+three available on `PATH`, and run this from the source tree to build only the
+AppImage:
 
 ```bash
 ./scripts/build-appimage.sh

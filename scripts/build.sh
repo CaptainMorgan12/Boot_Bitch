@@ -2,9 +2,13 @@
 set -euo pipefail
 
 # Configure, build and stage-validate Boot Bitch without installing it; create
-# a .deb too when running on a Debian-family host with the packaging tools.
+# a .deb too when running on a Debian-family host with the packaging tools and
+# the versioned AppImage when the AppImage tools are available.
 #
-# Environment: BUILD_DIR (default build-release), BUILD_TYPE (Release), JOBS.
+# Environment: BUILD_DIR (default build-release), BUILD_TYPE (Release), JOBS,
+#              ARCH (default x86_64), APPIMAGETOOL/LINUXDEPLOY/
+#              LINUXDEPLOY_PLUGIN_QT/APPIMAGE_RUNTIME_FILE (passed through to
+#              build-appimage.sh).
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
@@ -30,6 +34,22 @@ need()
         echo "Missing required build command: $1" >&2
         exit 1
     }
+}
+
+# The AppImage is part of the standard release build. build-appimage.sh owns
+# the tool discovery (including Development/tools) and the linuxdeploy/plugin
+# fallback behavior; this check only decides whether the step can run at all.
+# An explicit APPIMAGETOOL override is always passed through so a bad path is
+# reported by the dedicated script instead of being silently skipped.
+appimagetool_available()
+{
+    if [[ -n "${APPIMAGETOOL:-}" ]]; then
+        return 0
+    fi
+    if [[ -x "$ROOT_DIR/Development/tools/appimagetool-x86_64.AppImage" ]]; then
+        return 0
+    fi
+    command -v appimagetool >/dev/null 2>&1
 }
 
 for cmd in cmake ninja c++
@@ -174,6 +194,44 @@ else
         echo "Non-Debian build host detected; .deb generation was skipped by policy."
         echo "Use package-arch.sh, package-rpm.sh, package-tarball.sh, or install.sh --source."
     fi
+fi
+
+# Build the portable AppImage in the same release run. The dedicated script
+# gets a private build directory so it cannot disturb this build tree or the
+# generated .deb. Missing tooling is a warning; a failing build with tooling
+# present stays a hard error.
+if appimagetool_available
+then
+    PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
+        "$ROOT_DIR/CMakeLists.txt" | head -1)"
+    [[ -n "$PROJECT_VERSION" ]] || {
+        echo "Unable to determine the project version from CMakeLists.txt." >&2
+        exit 1
+    }
+    APPIMAGE_ARCH="${ARCH:-x86_64}"
+    APPIMAGE_OUTPUT="$BUILD_DIR/boot-repair_${PROJECT_VERSION}_${APPIMAGE_ARCH}.AppImage"
+
+    echo
+    echo "Building the AppImage..."
+    BUILD_DIR="$BUILD_DIR/appimage" \
+    BUILD_TYPE="$BUILD_TYPE" \
+    JOBS="$JOBS" \
+    OUTPUT="$APPIMAGE_OUTPUT" \
+    "$ROOT_DIR/scripts/build-appimage.sh"
+
+    [[ -s "$APPIMAGE_OUTPUT" ]] || {
+        echo "AppImage build completed but produced no artifact: $APPIMAGE_OUTPUT" >&2
+        exit 1
+    }
+
+    echo
+    echo "AppImage created:"
+    echo "  $APPIMAGE_OUTPUT"
+else
+    echo
+    echo "WARN: AppImage tooling was not found; skipping the AppImage." >&2
+    echo "      Install appimagetool or place it in Development/tools/ to build it." >&2
+    echo "      The application build and .deb are still valid."
 fi
 
 echo
