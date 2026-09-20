@@ -94,20 +94,65 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 ## 0.2.25 refinements
 
 Boot Bitch 0.2.25 is a maintenance release with the changes made since the
-published 0.2.24 release. See the [0.2.25 release notes](docs/release-notes-0.2.25.md).
+published 0.2.24 release. The primary changes are the new RPM and APK release
+artifacts and the Alpine, Arch, and Fedora distribution support; the remaining
+refinements are listed below. See the [0.2.25 release notes](docs/release-notes-0.2.25.md).
 
-- Add a read-only distribution and boot backend profiler for the running host
-  and selected repair target. Debian/APT and Arch/pacman families are detected
-  separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
-  mount and kernel naming evidence.
+- Add native RPM packaging and tooling: `scripts/package-rpm.sh` builds the
+  CPack RPM with family-specific dependency names and
+  `scripts/rpm-postinst.sh` as its POSIX `/bin/sh` scriptlet, and
+  `scripts/test-rpm.sh` inspects, extracts and validates the artifact without
+  installing it.
+- Add Alpine packaging and tooling: `scripts/package-alpine.sh` builds the
+  signed `boot-bitch-<version>-r0.apk` with abuild and runs the project tests
+  in its `check()` phase, and `scripts/test-apk.sh` validates the artifact
+  metadata, dependencies, signature and installed file set without installing
+  it.
+- Add a Fedora/RPM-family repair backend from the same read-only probe
+  evidence as the other families: guarded dnf5 package transactions
+  (`rpm -Va` + `dnf reinstall` fix-broken, a `dnf makecache` metadata stage
+  and one simulated `dnf upgrade`), dracut initramfs rebuilds with
+  kernel/image pairing, trial builds and `lsinitrd` verification, GRUB2
+  configuration regeneration (`grub2-mkconfig --no-grubenv-update` with BLS
+  and menuentry preservation) plus a guarded GRUB2 bootloader reinstall on
+  BIOS when the boot-code probe finds the MBR or BIOS boot partition broken,
+  boot-stack reconciliation over dracut + GRUB2, and the systemd GDM display
+  path with Fedora naming (`/etc/gdm/custom.conf`). Journald logging and the
+  13 capability keys are unchanged; every Fedora label and gate derives from
+  the helper's probe evidence, never from the distribution ID.
+- Add an Alpine/apk repair backend alongside Debian/APT and Arch/pacman:
+  read-only profile and capability evidence, simulation-first `apk fix` and
+  `apk upgrade` transactions, and targeted missing-package-file repair driven
+  by `apk audit --system` plus `apk info --who-owns`. The new `extlinux`
+  capability key gates the Alpine extlinux stage and the existing capability
+  keys are unchanged; EFI/UKI stages remain Debian/Arch-only.
+- Add Alpine repair stages: `mkinitfs` initramfs rebuilds with kernel/flavor
+  pairing, config-only extlinux regeneration through a guarded
+  `update-extlinux` with entry preservation and rollback, and OpenRC
+  display-manager runlevel restore that never starts a graphical session
+  inside the target chroot. Alpine Host Maintenance uses the same guards
+  through the running apk/OpenRC.
 - Add transaction-specific Arch repair preflights and guarded apply paths for
   full pacman package transactions, mkinitcpio, conventional GRUB and EFI.
   Conventional EFI repair restores one verified vendor-loader firmware entry
   when a guarded grub-install leaves only files on the ESP.
   Repository/download errors, removals, unresolved dependencies, standalone
   APT/dpkg operations and unknown layouts stay explicitly gated.
+- Add a read-only distribution and boot backend profiler for the running host
+  and selected repair target. Debian/APT and Arch/pacman families are detected
+  separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
+  mount and kernel naming evidence.
 - Add a backend-profile contract test and portable kernel/initramfs pairing
   diagnostics for Arch-style `vmlinuz-linux` and `initramfs-*.img` files.
+- Add Alpine VM validation: provision the QEMU guest agent once in the guest,
+  then `local-refresh.sh --alpine-vm` provisions the unprivileged abuild user,
+  builds the signed package through `guest-exec` and copies it back while
+  asserting the guest keeps running from its own disk.
+- Add Fedora VM validation (a single domain with a protected running host and
+  a disposable target disk, virtiofs share, SELinux permissive for the guest
+  agent, BIOS) and build the Fedora 44 RPM in the guest; the artifact is
+  validated by `scripts/test-rpm.sh` without installing it and synced into the
+  0.2.25 release capture.
 - Make build dependency setup and installation package-manager aware for
   APT/dpkg, pacman, DNF/RPM and zypper/RPM hosts. Add native Arch, RPM and
   package-manager-neutral TGZ workflows while keeping `.deb` generation
@@ -305,28 +350,6 @@ published 0.2.24 release. See the [0.2.25 release notes](docs/release-notes-0.2.
   placeholder icons from the active desktop theme, so the GRUB and
   Kernel/initramfs sections, the Initramfs and GRUB tools, and the
   Distribution and boot backend profile match the theme on every desktop.
-- Add an Alpine/apk repair backend alongside Debian/APT and Arch/pacman:
-  read-only profile and capability evidence, simulation-first `apk fix` and
-  `apk upgrade` transactions, and targeted missing-package-file repair driven
-  by `apk audit --system` plus `apk info --who-owns`. The new `extlinux`
-  capability key gates the Alpine extlinux stage and the existing capability
-  keys are unchanged; EFI/UKI stages remain Debian/Arch-only.
-- Add Alpine repair stages: `mkinitfs` initramfs rebuilds with kernel/flavor
-  pairing, config-only extlinux regeneration through a guarded
-  `update-extlinux` with entry preservation and rollback, and OpenRC
-  display-manager runlevel restore that never starts a graphical session
-  inside the target chroot. Alpine Host Maintenance uses the same guards
-  through the running apk/OpenRC.
-- Add native RPM packaging and tooling: `scripts/package-rpm.sh` builds the
-  CPack RPM with family-specific dependency names and
-  `scripts/rpm-postinst.sh` as its POSIX `/bin/sh` scriptlet, and
-  `scripts/test-rpm.sh` inspects, extracts and validates the artifact without
-  installing it.
-- Add Alpine packaging and tooling: `scripts/package-alpine.sh` builds the
-  signed `boot-bitch-<version>-r0.apk` with abuild and runs the project tests
-  in its `check()` phase, and `scripts/test-apk.sh` validates the artifact
-  metadata, dependencies, signature and installed file set without installing
-  it.
 - Add release-preparation tooling: `scripts/prepare-release.sh` promotes the
   Unreleased changelog entries into a dated version section, generates the
   scoped per-version release notes and inserts the new README refinements
@@ -334,27 +357,6 @@ published 0.2.24 release. See the [0.2.25 release notes](docs/release-notes-0.2.
   the publishing invariants read-only, and `scripts/local-refresh.sh` syncs
   the canonical tree to the local staging mirror without committing or
   pushing.
-- Add Alpine VM validation: provision the QEMU guest agent once in the guest,
-  then `local-refresh.sh --alpine-vm` provisions the unprivileged abuild user,
-  builds the signed package through `guest-exec` and copies it back while
-  asserting the guest keeps running from its own disk.
-- Add a Fedora/RPM-family repair backend from the same read-only probe
-  evidence as the other families: guarded dnf5 package transactions
-  (`rpm -Va` + `dnf reinstall` fix-broken, a `dnf makecache` metadata stage
-  and one simulated `dnf upgrade`), dracut initramfs rebuilds with
-  kernel/image pairing, trial builds and `lsinitrd` verification, GRUB2
-  configuration regeneration (`grub2-mkconfig --no-grubenv-update` with BLS
-  and menuentry preservation) plus a guarded GRUB2 bootloader reinstall on
-  BIOS when the boot-code probe finds the MBR or BIOS boot partition broken,
-  boot-stack reconciliation over dracut + GRUB2, and the systemd GDM display
-  path with Fedora naming (`/etc/gdm/custom.conf`). Journald logging and the
-  13 capability keys are unchanged; every Fedora label and gate derives from
-  the helper's probe evidence, never from the distribution ID.
-- Add Fedora VM validation (a single domain with a protected running host and
-  a disposable target disk, virtiofs share, SELinux permissive for the guest
-  agent, BIOS) and build the Fedora 44 RPM in the guest; the artifact is
-  validated by `scripts/test-rpm.sh` without installing it and synced into the
-  0.2.25 release capture.
 - Surface the real Polkit/pkexec authorization failure in the GUI (for example
   a missing or unregistered authentication agent) instead of only the generic
   cancellation text, and mirror the full authorization output into the session
