@@ -36,7 +36,7 @@ for check_tool in e2fsck fsck.fat btrfs xfs_repair fsck.exfat ntfsfix fsck.f2fs 
 done
 
 # The capability key is present and keeps every existing key unchanged.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub bootstack)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack)' "$HELPER"
 grep -Fq 'File system check %s: %s uuid=%s mount=%s tool=%s result=%s' "$HELPER"
 grep -Fq 'File system check detail %s: tool=%s output=%s' "$HELPER"
 grep -Fq 'File system check summary: devices=0 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=0' "$HELPER"
@@ -446,12 +446,12 @@ grep -Fqx 'Repair capability evidence filesystem: scope filesystems unresolved' 
     || { echo "FAIL: missing unresolved filesystem evidence" >&2; exit 1; }
 grep -Fqx 'Repair tool validate: available' <<<"$cap_unresolved" \
     || { echo "FAIL: existing capability keys changed" >&2; exit 1; }
-for cap_key in dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub bootstack; do
+for cap_key in dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
     grep -Eq "^Repair tool $cap_key: " <<<"$cap_unresolved" \
         || { echo "FAIL: existing capability key missing: $cap_key" >&2; exit 1; }
 done
-[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 12 ]] \
-    || { echo "FAIL: expected 12 capability keys" >&2; exit 1; }
+[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 13 ]] \
+    || { echo "FAIL: expected 13 capability keys" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Part 2: fs-inspect resolves the target scope read-only and reports evidence.
@@ -1055,13 +1055,168 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report emitted duplicate capability preambles' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
     || { echo 'FAIL: combined report emitted duplicate capability evidence headers' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 12 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 13 ]] \
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
-[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 12 ]] \
+[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 13 ]] \
     || { echo 'FAIL: combined report lost capability evidence lines' >&2; exit 1; }
 [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 14 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 9: target root-component confirmation fallback. When the committed
+# component does not expose /etc/os-release, the helper probes the other
+# Linux-capable partitions of the same disk, largest first, and adopts the
+# first with os-release evidence; without a qualifying candidate it fails
+# with every candidate named.
+# ---------------------------------------------------------------------------
+grep -q '^is_linux_root_fstype()' "$HELPER"
+grep -q '^target_root_candidates()' "$HELPER"
+grep -q '^component_has_os_release()' "$HELPER"
+grep -q '^resolve_target_root_component()' "$HELPER"
+grep -Fq 'lsblk -P -b -p -o NAME,FSTYPE,SIZE,TYPE,LABEL,PARTLABEL' "$HELPER"
+grep -q 'resolve_target_root_component "\$TARGET_DISK" "\$ROOT_CANONICAL"' "$HELPER"
+grep -Fq 'Root component fallback: selected component' "$HELPER"
+grep -Fq 'does not contain /etc/os-release and no other Linux-capable partition' "$HELPER"
+
+# The Linux-capable type set mirrors the GUI's preferredRepairNode() rule and
+# never admits swap, ESP vfat, LUKS, ntfs/exfat or an empty type.
+fstype_probe="$(run_harness '
+for fstype in ext2 ext3 ext4 xfs btrfs f2fs; do
+    is_linux_root_fstype "$fstype" || { echo "REJECTED:$fstype"; exit 1; }
+done
+for fstype in swap vfat fat fat32 crypto_LUKS ntfs exfat ""; do
+    if is_linux_root_fstype "$fstype"; then echo "ACCEPTED:${fstype:-empty}"; exit 1; fi
+done
+echo FSTYPE_SET_OK
+')"
+grep -Fqx 'FSTYPE_SET_OK' <<<"$fstype_probe" \
+    || { echo 'FAIL: the Linux-capable filesystem type set changed' >&2; printf '%s\n' "$fstype_probe" >&2; exit 1; }
+
+# Candidate enumeration: the disk itself, swap, ESP vfat, LUKS and mounted
+# partitions are excluded; equal-size candidates keep a deterministic
+# root-label tie-break. The fake lsblk answers the -P record query and the
+# per-device MOUNTPOINTS query.
+candidates="$(run_harness '
+lsblk() {
+    if [[ "$*" == *MOUNTPOINTS* ]]; then
+        case "${!#}" in
+            /dev/test-disk6) printf "/mnt/data\n" ;;
+            *) printf "\n" ;;
+        esac
+        return 0
+    fi
+    printf "%s\n" \
+        "NAME=\"/dev/test-disk\" FSTYPE=\"\" SIZE=\"21474836480\" TYPE=\"disk\" LABEL=\"\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk1\" FSTYPE=\"ext4\" SIZE=\"314572800\" TYPE=\"part\" LABEL=\"\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk2\" FSTYPE=\"swap\" SIZE=\"4134535168\" TYPE=\"part\" LABEL=\"\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk3\" FSTYPE=\"ext4\" SIZE=\"17024679936\" TYPE=\"part\" LABEL=\"root\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk4\" FSTYPE=\"vfat\" SIZE=\"536870912\" TYPE=\"part\" LABEL=\"EFI\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk5\" FSTYPE=\"crypto_LUKS\" SIZE=\"8589934592\" TYPE=\"part\" LABEL=\"\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk6\" FSTYPE=\"ext4\" SIZE=\"1073741824\" TYPE=\"part\" LABEL=\"data\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk7\" FSTYPE=\"xfs\" SIZE=\"314572800\" TYPE=\"part\" LABEL=\"boot\" PARTLABEL=\"\""
+}
+target_root_candidates /dev/test-disk /dev/test-disk1
+')"
+expected_candidates="$(printf '17024679936\t2\t/dev/test-disk3\text4\n314572800\t-1\t/dev/test-disk7\txfs')"
+if [[ "$candidates" != "$expected_candidates" ]]; then
+    echo 'FAIL: target root candidate enumeration changed' >&2
+    diff <(printf '%s\n' "$expected_candidates") <(printf '%s\n' "$candidates") >&2 || true
+    exit 1
+fi
+
+# Largest first, first with os-release evidence wins; the selected component
+# is excluded and the probe order is recorded.
+probe_log="$sandbox/fallback-probes.txt"
+: > "$probe_log"
+resolved="$(run_harness '
+lsblk() {
+    if [[ "$*" == *MOUNTPOINTS* ]]; then
+        printf "\n"
+        return 0
+    fi
+    printf "%s\n" \
+        "NAME=\"/dev/test-disk1\" FSTYPE=\"ext4\" SIZE=\"314572800\" TYPE=\"part\" LABEL=\"\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk3\" FSTYPE=\"ext4\" SIZE=\"17024679936\" TYPE=\"part\" LABEL=\"root\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk7\" FSTYPE=\"xfs\" SIZE=\"314572800\" TYPE=\"part\" LABEL=\"boot\" PARTLABEL=\"\""
+}
+component_has_os_release() {
+    printf "%s\n" "$1" >> "'"$probe_log"'"
+    [[ "$1" == /dev/test-disk7 ]]
+}
+resolve_target_root_component /dev/test-disk /dev/test-disk1
+')"
+[[ "$resolved" == /dev/test-disk7 ]] \
+    || { echo "FAIL: fallback did not select the first candidate with os-release evidence: $resolved" >&2; exit 1; }
+[[ "$(cat "$probe_log")" == $'/dev/test-disk3\n/dev/test-disk7' ]] \
+    || { echo 'FAIL: fallback did not probe largest first' >&2; cat "$probe_log" >&2; exit 1; }
+
+# No candidate qualifies: the resolver fails and names every candidate so the
+# refusal lists what was probed.
+if no_candidate="$(run_harness '
+lsblk() {
+    if [[ "$*" == *MOUNTPOINTS* ]]; then
+        printf "\n"
+        return 0
+    fi
+    printf "%s\n" \
+        "NAME=\"/dev/test-disk3\" FSTYPE=\"ext4\" SIZE=\"17024679936\" TYPE=\"part\" LABEL=\"root\" PARTLABEL=\"\"" \
+        "NAME=\"/dev/test-disk7\" FSTYPE=\"xfs\" SIZE=\"314572800\" TYPE=\"part\" LABEL=\"boot\" PARTLABEL=\"\""
+}
+component_has_os_release() { return 1; }
+resolve_target_root_component /dev/test-disk /dev/test-disk1
+' 2>&1)"; then
+    echo 'FAIL: the fallback resolver accepted a disk with no qualifying candidate' >&2
+    exit 1
+fi
+grep -Fq '/dev/test-disk3 (ext4), /dev/test-disk7 (xfs)' <<<"$no_candidate" \
+    || { echo 'FAIL: the no-candidate failure does not list the probed candidates' >&2; printf '%s\n' "$no_candidate" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 10: a non-Btrfs target reports the snapshot inventory as informational
+# (exit code 0 with a stable marker), never as a failed snapshot operation.
+# Inspect/plan/rollback stay explicit errors because they name a concrete
+# Btrfs operation.
+# ---------------------------------------------------------------------------
+grep -Fq 'SNAPSHOT_INVENTORY_NOT_APPLICABLE=1' "$HELPER"
+grep -Fq 'Snapshot inventory is not applicable: the selected target filesystem is %s, not Btrfs.' "$HELPER"
+
+snapshot_info="$(run_harness '
+prepare_target() {
+    ROOT_CANONICAL=/dev/test-root
+    SESSION_LOG="'"$sandbox"'/snapshot-session.log"
+    : > "$SESSION_LOG"
+}
+lsblk() { printf "ext4\n"; }
+need() {
+    if [[ "$1" == btrfs ]]; then return 1; fi
+    command -v "$1" >/dev/null 2>&1
+}
+run_snapshots list
+')"
+grep -Fq 'SNAPSHOT_INVENTORY_NOT_APPLICABLE=1' <<<"$snapshot_info" \
+    || { echo 'FAIL: non-Btrfs snapshot inventory did not emit the informational marker' >&2; printf '%s\n' "$snapshot_info" >&2; exit 1; }
+grep -Fq 'Snapshot inventory is not applicable: the selected target filesystem is ext4, not Btrfs.' <<<"$snapshot_info" \
+    || { echo 'FAIL: non-Btrfs snapshot inventory did not name the detected filesystem' >&2; exit 1; }
+if grep -q 'Required host command not found: btrfs' <<<"$snapshot_info"; then
+    echo 'FAIL: the non-Btrfs list path must not require btrfs-progs' >&2
+    exit 1
+fi
+
+if snapshot_inspect="$(run_harness '
+prepare_target() {
+    ROOT_CANONICAL=/dev/test-root
+    SESSION_LOG="'"$sandbox"'/snapshot-session.log"
+    : > "$SESSION_LOG"
+}
+lsblk() { printf "ext4\n"; }
+run_snapshots inspect 1
+' 2>&1)"; then
+    echo 'FAIL: non-Btrfs snapshot inspect must fail explicitly' >&2
+    exit 1
+fi
+grep -Fq 'Snapshot inspection requires a Btrfs repair root; detected ext4.' <<<"$snapshot_inspect" \
+    || { echo 'FAIL: non-Btrfs snapshot inspect refusal reason changed' >&2; printf '%s\n' "$snapshot_inspect" >&2; exit 1; }
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

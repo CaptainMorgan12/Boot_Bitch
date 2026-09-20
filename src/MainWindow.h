@@ -13,6 +13,9 @@
 #include <QMap>
 #include <QSet>
 #include <QStringList>
+#include <QTableWidgetItem>
+#include <QTreeWidgetItem>
+#include <QVariant>
 
 class QAction;
 class QBoxLayout;
@@ -28,7 +31,6 @@ class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
 class QProcess;
-class QProgressBar;
 class QPushButton;
 class QResizeEvent;
 class QSettings;
@@ -39,6 +41,48 @@ class QTimer;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolButton;
+
+// Numeric-aware sort support shared by every sortable table and tree in the
+// window. Formatted text stays in Qt::DisplayRole; a dedicated role carries the
+// underlying number, date or rank so a size/count/date column orders by its
+// real value instead of its formatted string. Items without a key fall back to
+// a natural-order text comparison, so /dev/sda2 sorts before /dev/sda10.
+constexpr int BootRepairSortKeyRole = Qt::UserRole + 64;
+
+// QTableWidgetItem with numeric-aware sorting: an optional explicit sort key
+// (number, QDateTime or rank) wins over the formatted display text.
+class SortableTableItem final : public QTableWidgetItem
+{
+public:
+    explicit SortableTableItem(const QString &text = QString(),
+                               const QVariant &sortKey = QVariant());
+    bool operator<(const QTableWidgetItem &other) const override;
+};
+
+// QTreeWidgetItem with numeric-aware per-column sorting. The comparison uses
+// the tree's current sort column, so top-level drives and their partitions are
+// each ordered by the clicked column while the item identity (and therefore
+// selection and expansion state) is preserved.
+class SortableTreeWidgetItem final : public QTreeWidgetItem
+{
+public:
+    using QTreeWidgetItem::QTreeWidgetItem;
+    bool operator<(const QTreeWidgetItem &other) const override;
+};
+
+// One parsed "SNAPSHOT\t..." helper record. loadSnapshots() parses the
+// read-only helper protocol into these rows and populateSnapshotTable()
+// renders them into the Snapshots inventory. The type is shared with the UI
+// tests so the production row population and its numeric/date sort keys can be
+// exercised without a privileged helper.
+struct SnapshotInventoryRow {
+    QString id;
+    QString created;
+    QString type;
+    QString description;
+    QString status;
+    QString relativePath;
+};
 
 // One parsed "File system check <device>: ..." helper evidence line.  It is
 // shared with the repair confirmation dialog, so it lives at namespace scope
@@ -82,6 +126,42 @@ private:
     QList<FilesystemCheckResult> m_results;
 };
 
+// Custom-painted indeterminate busy indicator. A QProgressBar with range 0,0
+// delegates its animation to the platform style, which renders as a static
+// solid bar on some distributions (for example Fedora/Adwaita) and as animated
+// stripes on others. This widget paints its own palette-derived segmented
+// marquee instead, so the busy state looks and animates identically on every
+// distribution and theme. The animation runs only while the widget is visible
+// and the owner says the busy state is active.
+class BusyIndicatorWidget final : public QWidget
+{
+    Q_OBJECT
+
+public:
+    explicit BusyIndicatorWidget(QWidget *parent = nullptr);
+
+    // True while the marquee timer is running. The UI tests use this to pin
+    // that the indicator starts and stops with the busy state; the painted
+    // animation itself is deliberately not pixel-tested.
+    bool isAnimating() const;
+    qreal animationPhase() const;
+
+    // Starts or stops the marquee. A hidden widget never animates, so showing
+    // the owner again resumes a pending busy state.
+    void setAnimating(bool animating);
+
+protected:
+    void paintEvent(QPaintEvent *event) override;
+    void showEvent(QShowEvent *event) override;
+    void hideEvent(QHideEvent *event) override;
+    void changeEvent(QEvent *event) override;
+
+private:
+    QTimer *m_animationTimer = nullptr;
+    qreal m_phase = 0.0;
+    bool m_shouldAnimate = false;
+};
+
 class MainWindow final : public QMainWindow
 {
     Q_OBJECT
@@ -113,11 +193,18 @@ public:
     void beginBusyOperation(const QString &label);
     void endBusyOperation(const QString &label);
 
+    // Parses a portal Read/SettingChanged value into a scheme. Handles the
+    // GNOME string values ("prefer-dark"/"prefer-light") and the extra variant
+    // layer GNOME's Settings portal wraps around them. Public so the UI suite
+    // can pin the parsing independently of a running portal.
+    static Qt::ColorScheme colorSchemeFromPortalValue(const QVariant &value);
+
 signals:
     void busyStateChanged(bool busy, const QString &label);
 
 protected:
     void closeEvent(QCloseEvent *event) override;
+    bool eventFilter(QObject *watched, QEvent *event) override;
     void resizeEvent(QResizeEvent *event) override;
 
 private:
@@ -148,6 +235,10 @@ private:
     void updateDeviceDetails();
     void showHostDetails();
     void selectHostForMaintenance();
+    // Leaves explicit running-host maintenance through the single shared path
+    // (button state, scope labels, session scope, authorization affordance).
+    // Returns true when maintenance was active and has now been deselected.
+    bool exitHostMaintenanceMode();
     void setHostDefaultBootEntry();
     void showDeviceDetails(const DeviceNode &disk, bool allowRepairTarget, const DeviceNode *inspectedNode = nullptr);
     void setPreviewTarget();
@@ -171,6 +262,16 @@ private:
     void clearSnapshotResults();
     void scheduleSnapshotPreload();
     void loadSnapshots();
+    // Target + resolved component identity of the Btrfs inventory a preload or
+    // request serves. Empty when no repair target is committed.
+    QString snapshotScopeKey() const;
+    // Renders parsed snapshot rows into the inventory with numeric/date sort
+    // keys and re-applies the active (or default Created-descending) sort.
+    void populateSnapshotTable(const QList<SnapshotInventoryRow> &rows);
+    // A non-Btrfs repair target has no Btrfs snapshot inventory. This is an
+    // informational outcome: the Snapshots page states the applicability and
+    // nothing is recorded at ERROR level.
+    void showSnapshotInventoryNotApplicable(const QString &fileSystem);
     void inspectSelectedSnapshot();
     void rollbackSelectedSnapshot();
     void runChrootShellCommand();
@@ -224,6 +325,27 @@ private:
     QString sessionLogScopeSummary(const QString &path) const;
     QString sessionLogGenerationTime(const QString &path) const;
     QString detectedDistributionFamily() const;
+    // Backend detection parsed from the cached read-only diagnostics.  Stage
+    // labels and Settings text derive from these detected backends, never from
+    // the distribution family.
+    QString currentScopeEvidence() const;
+    QStringList detectedPackageManagers() const;
+    QString detectedServiceManager() const;
+    QString detectedInitramfsBackend() const;
+    QString detectedBootloaderBackend() const;
+    // True when the cached evidence names the guarded rpm/dnf package backend
+    // (Fedora/RPM family).  The package stage labels use the Fedora wording
+    // only for a single detected manager; mixed-manager targets keep the
+    // generic wording.
+    bool detectedRpmBackend() const;
+    // True when the detected GRUB backend uses Fedora's grub2 tooling and
+    // paths (grub2-mkconfig, /boot/grub2, grub2-editenv) rather than the
+    // Debian/Arch grub-* names.
+    bool detectedGrub2Backend() const;
+    // Name of the detected graphical login manager ("GDM", "GDM3", "SDDM",
+    // ...) parsed from the cached display evidence; empty when the evidence
+    // names no specific manager.
+    QString detectedDisplayManagerName() const;
     bool adoptActiveSessionLog();
     void restoreSessionScopeFromLog(const QString &logText);
     void flushPendingSessionEntries();
@@ -245,6 +367,11 @@ private:
     void appendDiagnosticLog(const QString &key, const QString &title,
                              const QString &scope, const QString &result,
                              bool succeeded);
+    // Adopts the component named by the helper's "Root component fallback"
+    // evidence when a privileged target diagnostic had to move away from the
+    // committed component. Keeps the committed target, later requests and the
+    // log on the one resolved system.
+    bool reconcileResolvedTargetComponent(const QString &output);
     void rebuildDiagnosticLogIndex();
     // Replaceable repair sections. repairLogSectionIdentity() namespaces a
     // repair tool/stage key with the active host/target scope so the same tool
@@ -261,6 +388,15 @@ private:
     // ---- Diagnostics and evidence gating -------------------------------------
 
     void updateDiagnosticDetails();
+    // Diagnostics follow the Systems page: the protected Running Host while
+    // Host Maintenance is active, otherwise the committed Repair Target. The
+    // scope is derived, never independently selectable, so the cached results
+    // and the run actions can never disagree with Systems.
+    bool diagnosticHostScope() const;
+    // Single actionable refusal for a running-host diagnostic request outside
+    // the explicit host-maintenance scope. Returns true while host maintenance
+    // is active; otherwise fills reason with the user-facing instruction.
+    bool hostDiagnosticScopeAllowed(QString *reason = nullptr) const;
     void runSelectedDiagnostic();
     void runAllDiagnostics();
     void copyDiagnosticResults();
@@ -281,6 +417,11 @@ private:
     void scheduleEvidenceRefresh(const QString &reason);
     void handlePrivilegedSessionEstablished();
     void runScheduledEvidenceRefresh();
+    // Runs the work that arrived while a privileged request owned the gate:
+    // one deferred Btrfs snapshot preload and at most one coalesced automatic
+    // diagnostics regeneration for the current scope. Both were refused as
+    // requests while the gate was held; neither is queued on the gate.
+    void runDeferredPrivilegedWork();
 
     // ---- Privileged session and authorization --------------------------------
 
@@ -326,7 +467,38 @@ private:
     static QStringList filesystemRepairModes(const QString &fstype, bool mounted);
     QString runFilesystemInspect(bool partOfFullRepair);
     bool runFilesystemRepairFlow(bool partOfFullRepair = false);
-    QString repairHelperPath() const;
+    // Runs the read-only fs-inspect/host-fs-inspect helper command as the
+    // dedicated "File systems" diagnostic. Shares the diagnostic status and
+    // caching contract with every other diagnostic; the result is the helper's
+    // per-device "File system check ..." evidence.
+    QString runFilesystemDiagnostic(bool hostScope, bool *succeeded = nullptr,
+                                    bool showProgressDialog = false);
+    // Splits the helper's shared capability preamble out of one diagnostic
+    // result. The preamble carries the `Repair tool <key>` gating contract and
+    // is cached under the dedicated capability key so it can never leak into
+    // the diagnostic result itself (fstab stays purely fstab); body receives
+    // the diagnostic-only output.
+    static void splitDiagnosticCapabilityPreamble(const QString &captured,
+                                                  QString *body,
+                                                  QString *preamble);
+    // Ordered privileged-helper resolution candidates for one application
+    // directory, each with the reason it would be chosen. Installed layouts
+    // (/usr/bin, /usr/local/bin) prefer the libexec helper; build/portable
+    // layouts prefer the helper beside or above the executable. Exposed for
+    // the UI regression tests so the resolution order can be asserted without
+    // touching the host.
+    struct HelperPathCandidate {
+        QString path;
+        QString reason;
+    };
+    static QList<HelperPathCandidate> repairHelperCandidates(const QString &appDir,
+                                                             const QByteArray &explicitOverride);
+    // Resolves the privileged helper: explicit override first, then the
+    // ordered candidates; resolution names the chosen reason.
+    static QString resolveRepairHelperPath(const QString &appDir,
+                                           const QByteArray &explicitOverride,
+                                           QString *resolution = nullptr);
+    QString repairHelperPath(QString *resolution = nullptr) const;
     QStringList selectedRepairStages() const;
     bool repairTargetReady(QString *reason = nullptr) const;
     bool hostBootTargetReady(QString *reason = nullptr) const;
@@ -393,10 +565,14 @@ private:
     // phrase comes from the shared per-tool vocabulary table so the
     // single-action summary and the plan stage lines can never drift; an empty
     // toolKey selects the generic fallback. The reason is only used for the
-    // failed form.
+    // failed form; the detail (the helper's proven-unchanged reason or the
+    // held-back/skipped package-manager feedback appended to a change status)
+    // is appended for the non-failed forms so kept-back package names stay
+    // visible in the result summary.
     static QString repairResultSummary(RepairResultCategory category,
                                        const QString &toolKey = QString(),
-                                       const QString &reason = QString());
+                                       const QString &reason = QString(),
+                                       const QString &detail = QString());
     static QString repairResultSymbol(RepairResultCategory category);
     static QString repairResultStageLine(const RepairStageResult &stage);
     // Short, single-line failure reason extracted from the helper transcript
@@ -422,7 +598,8 @@ private:
                                const QString &detail = QString());
     void appendRepairResultSummary(RepairResultCategory category, const QString &reason,
                                    LogEntryKind kind,
-                                   const QString &toolKey = QString());
+                                   const QString &toolKey = QString(),
+                                   const QString &detail = QString());
     // Colors the ✓/✗/▪ symbols of repair-result summary lines in the log view
     // with character formats only (the document stays plain text). text is the
     // just-written content and documentOffset its start position in the
@@ -454,6 +631,60 @@ private:
 
     // ---- Presentation and responsive layout ----------------------------------
 
+    // Where the applied desktop scheme came from. The source is logged with
+    // the scheme so the runtime resolution stays diagnosable: Qt auto-loads
+    // the GTK3 platform theme on GNOME and that theme reports Adwaita's light
+    // scheme even in a prefer-dark session, so the portal/gsettings evidence
+    // is what actually decides.
+    enum class ColorSchemeSource {
+        TestOverride,
+        Platform,
+        Portal,
+        GSettings,
+        Palette
+    };
+
+    // Applies the resolved desktop color scheme to the application palette
+    // whenever the current palette does not match it, so a GNOME/Fedora dark
+    // desktop can never render the app light. Reacts to
+    // QStyleHints::colorSchemeChanged at runtime and re-renders every
+    // palette-derived custom color (log text/selection, stale highlighting,
+    // repair-result glyphs, committed-target highlight, scroll fades).
+    void applyColorScheme();
+    void updateThemeDependentColors();
+    // Coalesces a deferred scheme re-resolution into one event-loop turn.
+    void scheduleColorSchemeRefresh();
+    // Re-resolves the scheme after startup: the platform palette can be
+    // replaced after the first paint and the portal reply can arrive late, so
+    // every deferred check re-applies the best evidence.
+    void refreshColorScheme();
+    // Resolves the desktop scheme through the XDG portal before the first
+    // paint (short synchronous timeout) and subscribes to SettingChanged so a
+    // runtime GNOME appearance switch is picked up even when the platform
+    // theme emits no ThemeChange.
+    void queryPortalColorScheme();
+    void requestPortalColorScheme(const QString &settingsNamespace, const QString &key);
+    // Read-only gsettings fallback used when the portal is unreachable or
+    // answers nothing. Never runs on the offscreen/minimal test platform.
+    void queryGsettingsColorScheme();
+    // One application-log + stderr line per scheme/source change.
+    void logColorSchemeResolution(Qt::ColorScheme scheme, ColorSchemeSource source);
+    static Qt::ColorScheme effectiveColorScheme();
+    Qt::ColorScheme resolvedColorScheme(ColorSchemeSource *source = nullptr) const;
+    // Test-only override so the offscreen suite can exercise both schemes
+    // deterministically. Unknown means "use the desktop scheme".
+    static void setColorSchemeOverrideForTests(Qt::ColorScheme scheme);
+    static Qt::ColorScheme colorSchemeOverrideForTests();
+    static Qt::ColorScheme s_colorSchemeOverride;
+
+private slots:
+    // Portal SettingChanged hook. The signal carries (namespace, key, value)
+    // but this slot intentionally takes no arguments: the value is re-read
+    // through the normal portal path so the parsing and fallback chain stay in
+    // one place. Any settings change is rare enough to re-check on.
+    void portalSettingsChanged();
+
+private:
     void updateBusyIndicator();
     void updateResponsiveLayout();
     void updateFullRepairSummary();
@@ -516,13 +747,30 @@ private:
     QString m_renderedLogFilter;
     bool m_renderedPriorLog = false;
 
+    // Desktop color scheme resolution state. Desktop evidence (the XDG portal,
+    // then the GNOME gsettings value) wins over QStyleHints when they
+    // disagree, because the GTK3 platform theme Qt auto-loads on GNOME reports
+    // Adwaita light in a dark session. The last applied scheme plus the
+    // coalescing/reentrancy guards keep the deferred re-checks from
+    // re-rendering or re-applying a palette that already matches.
+    Qt::ColorScheme m_portalColorScheme = Qt::ColorScheme::Unknown;
+    Qt::ColorScheme m_gsettingsColorScheme = Qt::ColorScheme::Unknown;
+    Qt::ColorScheme m_lastAppliedColorScheme = Qt::ColorScheme::Unknown;
+    // Last "scheme|source" pair written to the application log, so repeated
+    // palette events do not spam the register with identical lines.
+    QString m_lastLoggedColorScheme;
+    bool m_portalColorSchemeQueryStarted = false;
+    bool m_gsettingsColorSchemeQueryStarted = false;
+    bool m_colorSchemeRefreshScheduled = false;
+    bool m_applyingColorScheme = false;
+
     QTabWidget *m_tabs = nullptr;
     QToolButton *m_tabScrollLeftButton = nullptr;
     QToolButton *m_tabScrollRightButton = nullptr;
     QAction *m_wrapLogsAction = nullptr;
     QAction *m_lockAuthorizationAction = nullptr;
     QWidget *m_busyIndicator = nullptr;
-    QProgressBar *m_busyProgress = nullptr;
+    BusyIndicatorWidget *m_busyProgress = nullptr;
     QLabel *m_busyStatusLabel = nullptr;
     QStringList m_activeBusyOperations;
 
@@ -578,15 +826,21 @@ private:
 
     QSplitter *m_diagnosticSplitter = nullptr;
     QListWidget *m_diagnosticList = nullptr;
-    QComboBox *m_diagnosticScopeCombo = nullptr;
+    // Standard top-right scope line shared with the other tabs. Diagnostics
+    // follow the Systems page: the protected Running Host while Host
+    // Maintenance is active, otherwise the committed Repair Target. There is
+    // deliberately no independent scope selector.
+    QLabel *m_diagnosticScopeLabel = nullptr;
     QLabel *m_diagnosticTitle = nullptr;
     QLabel *m_diagnosticDescription = nullptr;
     QLabel *m_diagnosticAvailability = nullptr;
+    QLabel *m_diagnosticResultsTitle = nullptr;
     QPlainTextEdit *m_diagnosticResults = nullptr;
     QPushButton *m_runDiagnosticButton = nullptr;
     QPushButton *m_runAllDiagnosticsButton = nullptr;
     QPushButton *m_copyDiagnosticButton = nullptr;
     QPushButton *m_saveDiagnosticButton = nullptr;
+    QLabel *m_targetConfigLabel = nullptr;
     QComboBox *m_targetConfigCombo = nullptr;
     QPushButton *m_editTargetConfigButton = nullptr;
 
@@ -612,6 +866,18 @@ private:
     QPushButton *m_snapshotInspectButton = nullptr;
     QPushButton *m_snapshotRollbackButton = nullptr;
     bool m_snapshotPreloadScheduled = false;
+    // Btrfs inventory dedupe. m_snapshotScopeGeneration is bumped on every
+    // target/scope change (see updateSnapshotControls()); a completed
+    // automatic preload records the generation it served in
+    // m_snapshotLoadedGeneration, so re-scheduling within the same scope is a
+    // no-op while a scope change still gets exactly one load. The in-flight
+    // request identity deduplicates re-entrant requests for the same
+    // target+component. The generation starts at 1 so an unloaded scope can
+    // never compare equal to the zero-initialized loaded generation.
+    quint64 m_snapshotScopeGeneration = 1;
+    quint64 m_snapshotLoadedGeneration = 0;
+    bool m_snapshotInventoryInFlight = false;
+    QString m_snapshotRequestScopeKey;
     QLabel *m_fileCopyHeading = nullptr;
     QComboBox *m_fileCopyDirectionCombo = nullptr;
     QGroupBox *m_fileCopySourceBox = nullptr;
@@ -676,6 +942,7 @@ private:
     QCheckBox *m_fullRepairInitramfs = nullptr;
     QCheckBox *m_fullRepairEfi = nullptr;
     QCheckBox *m_fullRepairGrub = nullptr;
+    QCheckBox *m_fullRepairExtlinux = nullptr;
 
     QList<DeviceNode> m_lastDevices;
     QMap<QString, DeviceNode> m_deviceIndex;
@@ -693,12 +960,39 @@ private:
     QString m_targetDiagnosticCacheIdentity;
 
     QTimer *m_evidenceRefreshTimer = nullptr;
+    // Coalescing delay for automatic evidence regeneration. Production keeps
+    // the 1200 ms default; the UI regression tests shorten it so the
+    // no-second-run assertions do not have to wait out the full delay.
+    int m_evidenceRefreshDelayMs = 1200;
     QString m_evidenceRefreshReason;
     bool m_evidenceRefreshPending = false;
     bool m_evidenceRefreshInProgress = false;
     bool m_diagnosticsRunInProgress = false;
     bool m_runAllDiagnosticsQueued = false;
     bool m_privilegedOperationActive = false;
+    // Scope identity (the request's disk-path argument) of the request that
+    // owns the gate above; empty when no request is active. A request that
+    // finds the gate held is re-entrant by definition and must never block on
+    // it; a request for a different disk is dropped as superseded instead.
+    QString m_privilegedOperationScopeKey;
+    // Title of the request that owns the gate, used in refusal log lines.
+    QString m_privilegedOperationTitle;
+    // Bounded safety net for a privileged request: after this many
+    // milliseconds the wait is aborted, the unresponsive helper session is
+    // closed and the request is reported as failed, so the UI can never stay
+    // busy indefinitely. The default is deliberately generous (two hours) so
+    // a legitimate long package/repair transaction is never aborted; the UI
+    // regression tests shorten it.
+    int m_privilegedRequestTimeoutMs = 2 * 60 * 60 * 1000;
+    // Set when a Btrfs snapshot preload was requested while the gate was
+    // held. The gate release re-runs it once for the then-current target; the
+    // request itself is never queued on the gate.
+    bool m_snapshotPreloadDeferred = false;
+    // Set when a scope change invalidated diagnostics while the gate was
+    // held. The gate release schedules exactly one coalesced regeneration for
+    // the then-current scope instead of dropping the invalidation.
+    bool m_scopeChangeRefreshPending = false;
+    QString m_scopeChangeRefreshReason;
     // True while runFullRepair() owns the complete plan. Modifying stages keep
     // the evidence they were approved with and do not schedule their own
     // regeneration; finishFullRepairPlan() invalidates and regenerates once
@@ -759,4 +1053,8 @@ private:
     // Test-only hold time that keeps the UI-test authorization request
     // "in flight" so concurrency/coalescing can be exercised offscreen.
     int m_uiTestPrivilegedSessionDelayMs = 0;
+    // Test-only per-key diagnostic result overrides so the offscreen suite can
+    // inject realistic helper output (including the shared capability
+    // preamble) without a privileged session.
+    QMap<QString, QString> m_uiTestDiagnosticResults;
 };

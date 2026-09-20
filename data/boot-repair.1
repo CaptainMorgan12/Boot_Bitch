@@ -1,4 +1,4 @@
-.TH BOOT-REPAIR 1 "September 2026" "Boot Bitch 0.2.24" "User Commands"
+.TH BOOT-REPAIR 1 "September 2026" "Boot Bitch 0.2.25" "User Commands"
 .SH NAME
 boot-repair \- graphical Linux recovery and guarded boot-repair utility
 .SH SYNOPSIS
@@ -38,10 +38,14 @@ example EFI repair). The Repair page states the condition and the diagnostic to
 run. Read-only inspection and a failed command that reports no target change do
 not invalidate diagnostic evidence.
 .SH REPAIR SUPPORT
-Version 0.2.24 supports Debian, Ubuntu, and compatible systems for guarded
+Version 0.2.25 supports Debian, Ubuntu, and compatible systems for guarded
 package repair, DKMS, adaptive package upgrades, initramfs, GRUB, distribution-
 aware EFI/UKI recovery, boot-stack reconciliation, and transactional Btrfs
-root rollback on supported layouts. Graphical-login recovery examines the
+root rollback on supported layouts. Arch-family targets use guarded pacman
+transactions, mkinitcpio, conventional EFI and GRUB paths when their
+transaction preflights pass. Alpine targets use simulation-first apk
+transactions, mkinitfs initramfs rebuilds, config-only extlinux regeneration
+and OpenRC display-manager runlevel restore. Graphical-login recovery examines the
 target default target, display-manager.service, installed packages and units,
 and recent boot evidence. It restores an unambiguous configured or last-boot
 manager such as SDDM, GDM3, LightDM, greetd, ly, or a custom systemd unit. A

@@ -26,11 +26,13 @@ if [[ -r /etc/os-release ]]; then
     case "${ID:-}" in
         debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) host_family=debian ;;
         arch|manjaro|endeavouros|garuda|artix) host_family=arch ;;
+        alpine) host_family=alpine ;;
         fedora|rhel|rocky|almalinux) host_family=rpm ;;
         opensuse*|suse|sles) host_family=suse ;;
         *)
             [[ " ${ID_LIKE:-} " == *" debian "* || " ${ID_LIKE:-} " == *" ubuntu "* ]] && host_family=debian
             [[ " ${ID_LIKE:-} " == *" arch "* ]] && host_family=arch
+            [[ " ${ID_LIKE:-} " == *" alpine "* ]] && host_family=alpine
             [[ " ${ID_LIKE:-} " == *" fedora "* || " ${ID_LIKE:-} " == *" rhel "* ]] && host_family=rpm
             [[ " ${ID_LIKE:-} " == *" suse "* ]] && host_family=suse
             ;;
@@ -91,10 +93,22 @@ find_one()
         | sort -V | tail -1
 }
 
+# abuild nests its output under the repository name (repo/<repo>/x86_64), so
+# the .apk sits deeper than the native packages of the other families.
+find_apk()
+{
+    local pattern="$1"
+    find "$ROOT_DIR/build-alpine" "$ROOT_DIR/build-release" "$ROOT_DIR/Development" \
+        -maxdepth 5 -type f -name "$pattern" -print 2>/dev/null \
+        | sort -V | tail -1
+}
+
 DEB="$(find_one 'boot-repair_*.deb' || true)"
 RPM="$(find_one 'boot-bitch-*.rpm' || true)"
 [[ -n "$RPM" ]] || RPM="$(find_one 'boot-repair-*.rpm' || true)"
 ARCH_PACKAGE="$(find_one 'boot-bitch-*.pkg.tar.*' || true)"
+APK_PACKAGE="$(find_apk 'boot-bitch-*.apk' || true)"
+[[ -n "$APK_PACKAGE" ]] || APK_PACKAGE="$(find_apk 'boot-repair-*.apk' || true)"
 
 PACKAGE_KIND=""
 PACKAGE_PATH=""
@@ -105,6 +119,9 @@ case "$host_family" in
     arch)
         [[ -n "$ARCH_PACKAGE" ]] && PACKAGE_KIND=arch && PACKAGE_PATH="$ARCH_PACKAGE"
         ;;
+    alpine)
+        [[ -n "$APK_PACKAGE" ]] && PACKAGE_KIND=apk && PACKAGE_PATH="$APK_PACKAGE"
+        ;;
     rpm|suse)
         [[ -n "$RPM" ]] && PACKAGE_KIND=rpm && PACKAGE_PATH="$RPM"
         ;;
@@ -112,6 +129,7 @@ case "$host_family" in
         if [[ -n "$DEB" ]]; then PACKAGE_KIND=deb; PACKAGE_PATH="$DEB"
         elif [[ -n "$RPM" ]]; then PACKAGE_KIND=rpm; PACKAGE_PATH="$RPM"
         elif [[ -n "$ARCH_PACKAGE" ]]; then PACKAGE_KIND=arch; PACKAGE_PATH="$ARCH_PACKAGE"
+        elif [[ -n "$APK_PACKAGE" ]]; then PACKAGE_KIND=apk; PACKAGE_PATH="$APK_PACKAGE"
         fi
         ;;
 esac
@@ -158,6 +176,14 @@ if (( ! SOURCE_MODE )) && [[ -n "$PACKAGE_PATH" && -f "$PACKAGE_PATH" ]]; then
                 echo "pacman is unavailable; package filename is $PACKAGE_PATH"
             fi
             ;;
+        apk)
+            if command -v tar >/dev/null 2>&1; then
+                # apk has no local-file metadata query; .PKGINFO is canonical.
+                tar -xOf "$PACKAGE_PATH" .PKGINFO 2>/dev/null | sed -n '/^pkgname = /p;/^pkgver = /p;/^arch = /p;/^license = /p;/^depend = /p'
+            else
+                echo "tar is unavailable to read .PKGINFO; package filename is $PACKAGE_PATH"
+            fi
+            ;;
     esac
     echo
 
@@ -188,6 +214,10 @@ if (( ! SOURCE_MODE )) && [[ -n "$PACKAGE_PATH" && -f "$PACKAGE_PATH" ]]; then
             arch)
                 echo "pacman local-package dependency simulation is not run by this script."
                 echo "No files were changed; installation would run: pacman -U $PACKAGE_PATH"
+                ;;
+            apk)
+                echo "apk local-package dependency simulation is not run by this script."
+                echo "No files were changed; installation would run: apk add --allow-untrusted $PACKAGE_PATH"
                 ;;
         esac
         exit 0
@@ -225,6 +255,19 @@ EOT
             fi
             ;;
         arch) run_privileged pacman -U "$PACKAGE_PATH" ;;
+        apk)
+            command -v apk >/dev/null 2>&1 || {
+                echo "apk is required to install this Alpine package." >&2
+                exit 1
+            }
+            # Alpine has no signed repository for this package, so the local
+            # file is only installable with --allow-untrusted unless the
+            # matching abuild public key was copied into /etc/apk/keys first.
+            echo "Installing the local Alpine package with --allow-untrusted."
+            echo "To trust it instead, copy the build user's public key first:"
+            echo "  sudo cp ~/.abuild/*.rsa.pub /etc/apk/keys/"
+            run_privileged apk add --allow-untrusted "$PACKAGE_PATH"
+            ;;
     esac
     exit $?
 fi
@@ -235,6 +278,7 @@ if (( ! SOURCE_MODE )); then
     echo "  ./scripts/package-deb.sh   # Debian/Ubuntu/TUXEDO" >&2
     echo "  ./scripts/package-arch.sh  # Arch/Manjaro/EndeavourOS" >&2
     echo "  ./scripts/package-rpm.sh   # Fedora/RHEL/openSUSE" >&2
+    echo "  ./scripts/package-alpine.sh  # Alpine (run inside an Alpine environment)" >&2
     echo "  ./scripts/install.sh --source  # any supported Linux desktop" >&2
     exit 1
 fi

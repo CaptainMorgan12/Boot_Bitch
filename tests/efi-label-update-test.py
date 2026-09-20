@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
-PART = "189e3161-293a-40c6-a6d1-3c6bbb277bc4"
+PART = "11111111-2222-3333-4444-555555555555"
 GUID = uuid.UUID(PART).bytes_le
 VARIABLE = "Boot0008-8be4df61-93ca-11d2-aa0d-00e098032b8c"
 
@@ -45,7 +45,7 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
             "--loader",
             r"\EFI\BOOT\BOOTX64.EFI",
             "--label",
-            "UEFI OS WD Blue SN5100 4TB",
+            "UEFI OS Example NVMe 1TB",
             "--backup",
             str(backup),
         ],
@@ -54,6 +54,6 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
     )
     updated = variable.read_bytes()
     assert updated != original
-    assert "UEFI OS WD Blue SN5100 4TB".encode("utf-16-le") in updated
+    assert "UEFI OS Example NVMe 1TB".encode("utf-16-le") in updated
     assert backup.read_bytes() == original
 print("PASS: EFI label updater preserves and verifies EFI_LOAD_OPTION destinations")

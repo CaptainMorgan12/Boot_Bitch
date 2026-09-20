@@ -150,8 +150,7 @@ echo
 read -r -p "Type UNINSTALL to remove exactly these files: " confirm
 [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
 
-mkdir -p -- "$ROOT_DIR/Development"
-REMOVE_SCRIPT="$(mktemp "$ROOT_DIR/Development/boot-repair-uninstall.XXXXXX")"
+REMOVE_SCRIPT="$(mktemp "${TMPDIR:-/tmp}/boot-repair-uninstall.XXXXXX")"
 trap 'rm -f "$REMOVE_SCRIPT"' EXIT
 
 {

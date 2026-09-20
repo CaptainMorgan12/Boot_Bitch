@@ -1,0 +1,7 @@
+## 0.2.22 refinements
+
+- Decode the helper's directory records correctly so the repair destination
+  browser displays the selected system's folders.
+- Make the browser compact by default and freely resizable, with further
+  layout corrections included in 0.2.23.
+

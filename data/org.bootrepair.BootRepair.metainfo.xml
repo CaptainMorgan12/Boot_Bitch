@@ -24,20 +24,12 @@
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <screenshots>
     <screenshot type="default">
-      <caption>Systems: choose the protected running host or a detected repair target</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/01-systems-target-selection.png</image>
-    </screenshot>
-    <screenshot>
       <caption>Read-only diagnostics report for the selected scope</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/02-diagnostics-report.png</image>
     </screenshot>
     <screenshot>
       <caption>Full Repair plan with per-stage gating from cached diagnostics</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/03-repair-confirmation.png</image>
-    </screenshot>
-    <screenshot>
-      <caption>Verified file recovery and copy with a guarded destination path</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
     </screenshot>
     <screenshot>
       <caption>Session log with scoped diagnostics and colored repair summaries</caption>
@@ -49,6 +41,18 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.25" date="2026-09-19">
+      <description>
+        <p>Alpine backend, multi-format packaging and release-tooling release:</p>
+        <ul>
+          <li>Alpine/apk repair backend: simulation-first apk fix and apk upgrade transactions, targeted missing-package-file repair, mkinitfs initramfs rebuilds, config-only extlinux regeneration and OpenRC display-manager restore, gated by the new extlinux capability key.</li>
+          <li>Native RPM and Alpine packaging: package-rpm.sh with test-rpm.sh, and package-alpine.sh with test-apk.sh, build and validate artifacts without installing them.</li>
+          <li>Release tooling: prepare-release.sh and verify-release.sh keep every per-version release note scoped and every README refinements section permanent, and local-refresh.sh syncs the staging mirror without committing or pushing.</li>
+          <li>Alpine VM validation: provision the QEMU guest agent once in the guest and local-refresh.sh --alpine-vm builds the signed package in the guest.</li>
+          <li>Authorization failures surface the real pkexec/Polkit cause instead of only the generic cancellation text.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.24" date="2026-09-18">
       <description>
         <p>Repair-engine, boot-stack and app-store packaging release:</p>

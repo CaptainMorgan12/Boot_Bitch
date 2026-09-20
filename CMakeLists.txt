@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.24
+    VERSION 0.2.25
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -32,6 +32,19 @@ find_package(Qt6 REQUIRED COMPONENTS Test)
 # mandatory on non-Plasma desktops.
 find_package(KF6Auth QUIET NO_MODULE)
 
+# QtDBus remains optional. When present it enables the XDG desktop portal
+# fallback that resolves the desktop color scheme on GNOME sessions whose Qt
+# platform theme never exposes it (for example a Fedora/GNOME dark desktop at
+# startup). Without QtDBus the deferred platform re-check still runs.
+find_package(Qt6 QUIET COMPONENTS DBus)
+if(TARGET Qt6::DBus)
+    set(BOOT_REPAIR_QT_DBUS_LIBRARY Qt6::DBus)
+    set(BOOT_REPAIR_QT_DBUS_DEFINITIONS BOOT_REPAIR_HAVE_DBUS=1)
+else()
+    set(BOOT_REPAIR_QT_DBUS_LIBRARY)
+    set(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
+endif()
+
 # -----------------------------------------------------------------------------
 # Application target
 # -----------------------------------------------------------------------------
@@ -51,7 +64,12 @@ target_link_libraries(boot-repair
         Qt6::Core
         Qt6::Gui
         Qt6::Widgets
+        ${BOOT_REPAIR_QT_DBUS_LIBRARY}
 )
+
+if(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
+    target_compile_definitions(boot-repair PRIVATE ${BOOT_REPAIR_QT_DBUS_DEFINITIONS})
+endif()
 
 if(KF6Auth_FOUND)
     target_link_libraries(boot-repair PRIVATE KF6::AuthCore)
@@ -181,12 +199,37 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/post
 # CPack can also produce an RPM for Fedora, openSUSE and other RPM-based
 # systems.  Keep these requirements separate from the Debian dependency names;
 # rpmbuild resolves the shared Qt libraries from the generated ELF metadata.
+# The per-family Qt SVG package name (qt6-qtsvg on Fedora/RHEL, libQt6Svg6 on
+# openSUSE) is added by scripts/package-rpm.sh because it differs per target.
+set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CaptainMorgan12/Boot_Bitch")
 set(CPACK_RPM_PACKAGE_NAME "boot-bitch")
 set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_RPM_PACKAGE_RELEASE "1")
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")
 set(CPACK_RPM_PACKAGE_GROUP "Applications/System")
+set(CPACK_RPM_PACKAGE_SUMMARY "${PROJECT_DESCRIPTION}")
+# Same paragraph as the Debian description, without Debian's leading-space
+# continuation markers (RPM keeps the newlines as written).
+set(CPACK_RPM_PACKAGE_DESCRIPTION "Boot Bitch is a graphical Linux recovery and boot-repair utility.\nIt provides protected discovery and read-only diagnostics for the running\nhost or a selected repair system. The privileged backend supports guarded\nDebian/Ubuntu-family maintenance and repair-system recovery, plus guarded\nArch package, initramfs, GRUB and conventional EFI stages after their\ntransaction-specific preflights. It also provides LUKS unlock and verified\nbidirectional file recovery/copy.")
 set(CPACK_RPM_PACKAGE_REQUIRES "polkit, util-linux, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, hicolor-icon-theme")
+# Installed files (privileged helper, desktop entry, AppStream metadata) embed
+# absolute /usr paths, so both package formats stay non-relocatable.
+set(CPACK_PACKAGE_RELOCATABLE FALSE)
+set(CPACK_RPM_PACKAGE_RELOCATABLE FALSE)
+# rpmbuild requires a %changelog section. Generate it at configure time from
+# the project version so a version bump cannot leave a stale entry behind.
+string(TIMESTAMP BOOT_REPAIR_RPM_CHANGELOG_DATE "%a %b %d %Y" UTC)
+file(WRITE "${CMAKE_CURRENT_BINARY_DIR}/rpm-changelog"
+    "* ${BOOT_REPAIR_RPM_CHANGELOG_DATE} ${CPACK_PACKAGE_CONTACT} - ${PROJECT_VERSION}-${CPACK_RPM_PACKAGE_RELEASE}\n"
+    "- Boot Bitch ${PROJECT_VERSION} release\n"
+)
+set(CPACK_RPM_CHANGELOG_FILE "${CMAKE_CURRENT_BINARY_DIR}/rpm-changelog")
+# Refresh the GTK icon cache and desktop database after install/upgrade; RPM
+# runs the scriptlet with /bin/sh.
+set(CPACK_RPM_POST_INSTALL_SCRIPT_FILE "${CMAKE_CURRENT_SOURCE_DIR}/scripts/rpm-postinst.sh")
+# /usr/libexec is owned by the base filesystem package on RPM distributions;
+# this package must not claim it.
+set(CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/libexec")
 set(CPACK_RPM_FILE_NAME RPM-DEFAULT)
 
 # TGZ is a package-manager-neutral staging artifact for Arch, SUSE variants,
@@ -218,7 +261,12 @@ target_link_libraries(boot-repair-ui-tests
         Qt6::Gui
         Qt6::Widgets
         Qt6::Test
+        ${BOOT_REPAIR_QT_DBUS_LIBRARY}
 )
+
+if(BOOT_REPAIR_QT_DBUS_DEFINITIONS)
+    target_compile_definitions(boot-repair-ui-tests PRIVATE ${BOOT_REPAIR_QT_DBUS_DEFINITIONS})
+endif()
 
 target_include_directories(boot-repair-ui-tests PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/src)
 
@@ -250,8 +298,51 @@ add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-release-preparation-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-release-preparation-contract.sh)
+add_test(NAME boot-repair-published-immutability-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-published-release-immutability-contract.sh)
+add_test(NAME boot-repair-agent-safety-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-agent-safety-contract.sh)
+add_test(NAME boot-repair-repo-hygiene-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-repo-hygiene-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
 
 add_test(NAME boot-repair-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
+
+# -----------------------------------------------------------------------------
+# Test tiers (scripts/dev-check.sh drives these)
+# -----------------------------------------------------------------------------
+# Label map:
+#   fast      - quick shell/contract gate, run per change (`ctest -L fast`)
+#   ui        - MainWindow regression suite, run only when UI/UX changed
+#   slow      - long-running contract test, run at checkpoints (`--full`)
+#   packaging - packaging-profile contract; known trap: fails while a built
+#               package sits in the local release capture (AGENTS.md)
+#   release   - release-preparation and published-immutability contracts
+# A test may carry more than one label; `ctest -L fast` is the default quick
+# gate and must stay fast (the backend-profile contract runs in the slow tier).
+set_tests_properties(boot-repair-chroot-shell-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-display-manager-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-filesystem-repair-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-icon-atlas-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-efi-label-update
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-backend-profile-contract
+    PROPERTIES LABELS "slow")
+set_tests_properties(boot-repair-ui-read-only
+    PROPERTIES LABELS "ui")
+set_tests_properties(boot-repair-packaging-profile-contract
+    PROPERTIES LABELS "packaging")
+set_tests_properties(boot-repair-release-preparation-contract
+    PROPERTIES LABELS "fast;release")
+set_tests_properties(boot-repair-published-immutability-contract
+    PROPERTIES LABELS "fast;release")
+set_tests_properties(boot-repair-agent-safety-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-repo-hygiene-contract
+    PROPERTIES LABELS "fast")

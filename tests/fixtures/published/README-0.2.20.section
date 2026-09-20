@@ -1,0 +1,8 @@
+## 0.2.20 refinements
+
+- Bundle the semantic Qt/KDE icon atlas for tabs, diagnostics, repair stages
+  and actions. Use usable host-theme icons or freedesktop aliases first,
+  then bundled artwork and native high-contrast fallbacks.
+- Add filesystem-aware device icons and reject solid theme placeholders so
+  controls remain readable when the host icon theme is incomplete.
+

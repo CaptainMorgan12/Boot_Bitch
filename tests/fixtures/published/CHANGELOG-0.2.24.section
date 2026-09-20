@@ -1,0 +1,8 @@
+## 0.2.24 — 2026-09-16
+
+- Bundle the semantic icon atlas as the deterministic UI source across desktop themes and add the Qt SVG runtime dependency required by Arch and other minimal installations.
+- Add Arch host-maintenance package repair and upgrade stages through guarded full pacman transactions; standalone APT/dpkg stages remain unavailable on Arch.
+- Remove stale `/usr/local` source installs during package uninstall so application-menu launches resolve the current packaged binary.
+- Fix Debian/TUXEDO GRUB preflight to inspect an isolated `grub-mkconfig` output rather than `update-grub` progress text.
+- Restore the protected-host shield/check as a bundled green status icon.
+

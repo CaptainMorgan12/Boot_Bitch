@@ -6,7 +6,7 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
-for script in setup-dev-deps.sh check-dev-env.sh build.sh package-deb.sh package-rpm.sh package-arch.sh package-tarball.sh install.sh; do
+for script in setup-dev-deps.sh check-dev-env.sh build.sh package-deb.sh package-rpm.sh test-rpm.sh package-arch.sh package-tarball.sh install.sh; do
     [[ -x "$ROOT_DIR/scripts/$script" ]] || {
         echo "FAIL: packaging script is not executable: $script" >&2
         exit 1
@@ -33,6 +33,29 @@ grep -q 'CPACK_DEBIAN_PACKAGE_RECOMMENDS "exfatprogs, ntfs-3g, f2fs-tools, jfsut
     "$ROOT_DIR/CMakeLists.txt"
 grep -q 'CPACK_RPM_PACKAGE_REQUIRES' "$ROOT_DIR/CMakeLists.txt"
 grep -q 'e2fsprogs, dosfstools, .*xfsprogs' "$ROOT_DIR/scripts/package-rpm.sh"
+
+# RPM metadata: URL/summary/description, non-relocatable layout, a generated
+# changelog, the post-install cache-refresh scriptlet and the /usr/libexec
+# ownership exception used by RPM distributions.
+grep -q 'CPACK_PACKAGE_HOMEPAGE_URL' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'github.com/CaptainMorgan12/Boot_Bitch' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_PACKAGE_SUMMARY.*PROJECT_DESCRIPTION' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_PACKAGE_DESCRIPTION' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_PACKAGE_RELOCATABLE FALSE' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_PACKAGE_RELOCATABLE FALSE' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_CHANGELOG_FILE' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'rpm-changelog' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_POST_INSTALL_SCRIPT_FILE.*scripts/rpm-postinst.sh' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'CPACK_RPM_EXCLUDE_FROM_AUTO_FILELIST_ADDITION "/usr/libexec"' "$ROOT_DIR/CMakeLists.txt"
+grep -q 'RPM-DEFAULT' "$ROOT_DIR/CMakeLists.txt"
+
+# The RPM wrapper keeps the family-specific dependency names (btrfs-progs vs
+# btrfsprogs, Qt SVG runtime) and always passes the complete requirement list
+# to CPack.
+grep -q 'btrfsprogs' "$ROOT_DIR/scripts/package-rpm.sh"
+grep -q 'qt6-qtsvg' "$ROOT_DIR/scripts/package-rpm.sh"
+grep -q 'libQt6Svg6' "$ROOT_DIR/scripts/package-rpm.sh"
+grep -q 'CPACK_RPM_PACKAGE_REQUIRES=' "$ROOT_DIR/scripts/package-rpm.sh"
 
 # AppStream metadata and the desktop entry must stay in sync with the packaged
 # application: software centers need remote screenshots, the current release
@@ -61,6 +84,21 @@ grep -q 'CPACK_PRE_BUILD_SCRIPTS.*cpack-rewrite-desktop-icon.cmake' "$ROOT_DIR/C
 grep -q 'CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA.*scripts/postinst' "$ROOT_DIR/CMakeLists.txt"
 grep -q 'gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor' "$ROOT_DIR/scripts/postinst"
 
+# The RPM post-install scriptlet is executed by /bin/sh, so it must stay
+# POSIX and refresh both the icon cache and the desktop database.
+[[ -x "$ROOT_DIR/scripts/rpm-postinst.sh" ]] || {
+    echo 'FAIL: RPM post-install scriptlet is not executable.' >&2
+    exit 1
+}
+sh -n "$ROOT_DIR/scripts/rpm-postinst.sh"
+grep -q '^#!/bin/sh$' "$ROOT_DIR/scripts/rpm-postinst.sh"
+grep -q 'gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor' "$ROOT_DIR/scripts/rpm-postinst.sh"
+grep -q 'update-desktop-database -q /usr/share/applications' "$ROOT_DIR/scripts/rpm-postinst.sh"
+if grep -q '\[\[' "$ROOT_DIR/scripts/rpm-postinst.sh"; then
+    echo 'FAIL: RPM post-install scriptlet contains a bash-only [[ test.' >&2
+    exit 1
+fi
+
 rewrite_dir="$(mktemp -d)"
 trap 'rm -rf "$rewrite_dir"' EXIT
 mkdir -p "$rewrite_dir/usr/share/applications"
@@ -84,9 +122,32 @@ grep -q 'f2fs-tools: F2FS file system repair' "$ROOT_DIR/scripts/package-arch.sh
 grep -q 'jfsutils: JFS file system check and repair' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'reiserfsprogs: ReiserFS file system check and repair' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'zfsutils-linux: ZFS pool status and scrub' "$ROOT_DIR/scripts/package-arch.sh"
+
+# Alpine APKBUILD metadata: the elogind Polkit build is required because the
+# plain polkit package pulls the ConsoleKit libraries and cannot register a
+# session authentication agent (pkexec then falls back to a textual agent and
+# fails without a controlling terminal). The helper also uses GNU coreutils and
+# findutils at runtime, and a session Polkit agent is documented as an optional
+# dependency because pkexec cannot show an authorization prompt without one.
+grep -q "depends='qt6-qtbase qt6-qtsvg polkit-elogind coreutils findutils" \
+    "$ROOT_DIR/scripts/package-alpine.sh"
+grep -q 'xfce-polkit: .*authentication agent.*pkexec' "$ROOT_DIR/scripts/package-alpine.sh"
+grep -q 'polkit-gnome' "$ROOT_DIR/scripts/package-alpine.sh"
 grep -q 'host_is_debian' "$ROOT_DIR/scripts/build.sh"
 grep -q 'Debian-family packaging hosts' "$ROOT_DIR/scripts/package-deb.sh"
 grep -q 'cpack -G RPM' "$ROOT_DIR/scripts/package-rpm.sh"
+grep -q 'test-rpm.sh' "$ROOT_DIR/scripts/package-rpm.sh"
+
+# The RPM validation script inspects, extracts and lints the artifact without
+# installing it.
+grep -q 'rpm -qpi' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'rpm -qpl' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'rpm -qpR' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'rpm2cpio' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'rpmkeys -K' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'rpmlint' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'python3 -m py_compile' "$ROOT_DIR/scripts/test-rpm.sh"
+grep -q 'sudo apt install rpm rpmlint' "$ROOT_DIR/scripts/test-rpm.sh"
 grep -q 'makepkg' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'options=(!debug)' "$ROOT_DIR/scripts/package-arch.sh"
 # The generated PKGBUILD references an install script that refreshes the

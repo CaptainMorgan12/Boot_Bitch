@@ -1,0 +1,13 @@
+## 0.2.21 refinements
+
+- Extend read-only diagnostics and guarded repairs to the explicitly selected
+  Running Host while preserving the protected-host checks for ordinary repair
+  targets.
+- Restore a missing host TUXEDO UKI entry and maintain host, selected-repair,
+  and foreign ESP entries without losing their BootOrder or BootNext state.
+- Make Host → Repair destination browsing use temporary read-only mounts of
+  the selected repair filesystem, so its folder tree cannot be confused with
+  the host's folders.
+- Add drive-model annotation to selected-ESP vendor labels, with verified
+  writes and duplicate-destination maintenance completed in 0.2.23.
+

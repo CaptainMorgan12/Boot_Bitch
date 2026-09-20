@@ -2,6 +2,41 @@
 
 ## Unreleased
 
+- Make test-VM installs a hard workflow contract: after each major
+  fix/implementation batch the test VMs (Fedora, Alpine BIOS/EFI) are rebuilt
+  and installed so the user can test, while host packages are built and synced
+  but never installed on the host. `AGENTS.md` and `docs/testing.md` document
+  the rule and `scripts/test-agent-safety-contract.sh` (ctest `fast`) freezes
+  its exact wording.
+- Include `AGENTS.md` in the Alpine and Arch source archives so the packaged
+  test suite can run the agent-safety contract from the unpacked tree.
+- Add `scripts/test-agent-safety-contract.sh` and the `fast`-labeled
+  `boot-repair-agent-safety-contract` ctest: it fails when a script installs
+  the `boot-repair`/`boot-bitch` package on the host (the user
+  installs packages; development dependencies stay allowed), invokes
+  `local-refresh.sh --install`, or invokes a screenshot tool from `scripts/`
+  or `tests/`, and it freezes both hard rules in `AGENTS.md`.
+- Add `scripts/dev-check.sh`, the test-only per-change gate: it configures and
+  builds only when sources changed, runs the fast ctest tier and prints a
+  compact summary. It never builds a package, installs anything or touches a
+  VM; `--ui` adds the UI suite only when UI/UX changed and `--full` runs every
+  local test except the packaging-profile contract (the documented
+  built-package trap).
+- Add ctest tiers (`fast`, `ui`, `slow`, `packaging`, `release`) and document
+  the iteration/checkpoint workflow in `AGENTS.md`, `docs/publishing.md` and
+  `docs/testing.md`. Host installs,
+  package builds and VM validation move to checkpoints or release approval.
+- Consolidate the MainWindow regression suite from 161 to 148 cases by merging
+  overlapping fixture setups (no coverage removed) and add a test seam for the
+  automatic evidence-refresh delay, cutting the UI tier from ~49 s to ~31 s.
+- Extend the repository-hygiene contract to personal account/host names, VM
+  guest credentials, concrete UUIDs, disk vendor/model/serial text, MAC
+  addresses, private IPv4 addresses, non-standard ports and SSH key material,
+  with documented synthetic-fixture allowlists, and remove the two screenshots
+  that showed a maintainer home path and a disk UUID.
+
+## 0.2.25 — 2026-09-19
+
 - Add a read-only distribution and boot backend profiler for the running host
   and selected repair target. Debian/APT and Arch/pacman families are detected
   separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
@@ -101,7 +136,7 @@
   redundant packaging checks and ShellCheck false positives without changing
   behavior.
 - Software-center packaging: the AppStream metainfo now ships six remote
-  screenshots, a current 0.2.24 release entry, a `<pkgname>` package
+  screenshots, the current release entry, a `<pkgname>` package
   association (so Discover lists the installed app and GNOME Software shows
   the installed size), and the deprecated developer_name tag is gone. The
   Debian package refreshes the hicolor icon cache via a postinst and the Arch
@@ -212,6 +247,61 @@
   placeholder icons from the active desktop theme, so the GRUB and
   Kernel/initramfs sections, the Initramfs and GRUB tools, and the
   Distribution and boot backend profile match the theme on every desktop.
+- Add an Alpine/apk repair backend alongside Debian/APT and Arch/pacman:
+  read-only profile and capability evidence, simulation-first `apk fix` and
+  `apk upgrade` transactions, and targeted missing-package-file repair driven
+  by `apk audit --system` plus `apk info --who-owns`. The new `extlinux`
+  capability key gates the Alpine extlinux stage and the existing capability
+  keys are unchanged; EFI/UKI stages remain Debian/Arch-only.
+- Add Alpine repair stages: `mkinitfs` initramfs rebuilds with kernel/flavor
+  pairing, config-only extlinux regeneration through a guarded
+  `update-extlinux` with entry preservation and rollback, and OpenRC
+  display-manager runlevel restore that never starts a graphical session
+  inside the target chroot. Alpine Host Maintenance uses the same guards
+  through the running apk/OpenRC.
+- Add native RPM packaging and tooling: `scripts/package-rpm.sh` builds the
+  CPack RPM with family-specific dependency names and
+  `scripts/rpm-postinst.sh` as its POSIX `/bin/sh` scriptlet, and
+  `scripts/test-rpm.sh` inspects, extracts and validates the artifact without
+  installing it.
+- Add Alpine packaging and tooling: `scripts/package-alpine.sh` builds the
+  signed `boot-bitch-<version>-r0.apk` with abuild and runs the project tests
+  in its `check()` phase, and `scripts/test-apk.sh` validates the artifact
+  metadata, dependencies, signature and installed file set without installing
+  it.
+- Add release-preparation tooling: `scripts/prepare-release.sh` promotes the
+  Unreleased changelog entries into a dated version section, generates the
+  scoped per-version release notes and inserts the new README refinements
+  section without touching earlier ones; `scripts/verify-release.sh` checks
+  the publishing invariants read-only, and `scripts/local-refresh.sh` syncs
+  the canonical tree to the local staging mirror without committing or
+  pushing.
+- Add Alpine VM validation: provision the QEMU guest agent once in the guest,
+  then `local-refresh.sh --alpine-vm` provisions the unprivileged abuild user,
+  builds the signed package through `guest-exec`
+  and copies it back while asserting the guest keeps running from its own
+  disk.
+- Add a Fedora/RPM-family repair backend from the same read-only probe
+  evidence as the other families: guarded dnf5 package transactions
+  (`rpm -Va` + `dnf reinstall` fix-broken, a `dnf makecache` metadata stage
+  and one simulated `dnf upgrade`), dracut initramfs rebuilds with
+  kernel/image pairing, trial builds and `lsinitrd` verification, GRUB2
+  configuration regeneration (`grub2-mkconfig --no-grubenv-update` with BLS
+  and menuentry preservation) plus a guarded GRUB2 bootloader reinstall on
+  BIOS when the boot-code probe finds the MBR or BIOS boot partition broken,
+  boot-stack reconciliation over dracut + GRUB2, and the systemd GDM display
+  path with Fedora naming (`/etc/gdm/custom.conf`). Journald logging and the
+  13 capability keys are unchanged; every Fedora label and gate derives from
+  the helper's probe evidence, never from the distribution ID.
+- Add Fedora VM validation (a single domain with a protected running host and
+  a disposable target disk, virtiofs share, SELinux permissive for the guest
+  agent, BIOS) and build the Fedora 44 RPM in the guest; the artifact is
+  validated by `scripts/test-rpm.sh` without installing it and synced into the
+  0.2.25 release capture.
+- Surface the real Polkit/pkexec authorization failure in the GUI (for
+  example a missing or unregistered authentication agent) instead of only the
+  generic cancellation text, and mirror the full authorization output into
+  the session log.
 
 ## 0.2.24 — 2026-09-16
 

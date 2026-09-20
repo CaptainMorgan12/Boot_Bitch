@@ -2,6 +2,7 @@
 
 #include <QFile>
 #include <QFileInfo>
+#include <QHash>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -82,6 +83,32 @@ QString prettyNameFromOsRelease(const QString &root)
 
     return QString();
 }
+
+// Read-only test seams: the UI regression test points the scanner at a fake
+// lsblk binary and a synthetic udev database so the unprivileged Alpine scan
+// path is reproducible off-device. Production builds always use the trusted
+// system lsblk and /run/udev/data.
+QString lsblkBinaryOverride()
+{
+#ifdef BOOT_REPAIR_UI_TEST
+    const QByteArray overridePath = qgetenv("BOOT_REPAIR_LSBLK");
+    if (!overridePath.isEmpty()) {
+        return QString::fromLocal8Bit(overridePath);
+    }
+#endif
+    return QString();
+}
+
+QString udevDataDirectoryOverride()
+{
+#ifdef BOOT_REPAIR_UI_TEST
+    const QByteArray overridePath = qgetenv("BOOT_REPAIR_UDEV_DATA_DIR");
+    if (!overridePath.isEmpty()) {
+        return QString::fromLocal8Bit(overridePath);
+    }
+#endif
+    return QString();
+}
 } // namespace
 
 SystemScanner::SystemScanner(QObject *parent)
@@ -93,20 +120,28 @@ QList<DeviceNode> SystemScanner::scan(QString *errorMessage, QStringList *diagno
 {
     const QStringList columns = {
         QStringLiteral("NAME"), QStringLiteral("KNAME"), QStringLiteral("PATH"), QStringLiteral("TYPE"),
-        QStringLiteral("SIZE"), QStringLiteral("FSTYPE"), QStringLiteral("FSVER"), QStringLiteral("LABEL"),
-        QStringLiteral("PARTLABEL"), QStringLiteral("UUID"), QStringLiteral("PARTUUID"),
+        QStringLiteral("MAJ:MIN"), QStringLiteral("SIZE"), QStringLiteral("FSTYPE"), QStringLiteral("FSVER"),
+        QStringLiteral("LABEL"), QStringLiteral("PARTLABEL"), QStringLiteral("UUID"), QStringLiteral("PARTUUID"),
         QStringLiteral("MOUNTPOINTS"), QStringLiteral("MODEL"), QStringLiteral("SERIAL"),
         QStringLiteral("VENDOR"), QStringLiteral("TRAN"), QStringLiteral("RM"), QStringLiteral("RO"),
         QStringLiteral("PKNAME")
     };
 
     QProcess process;
-    QString lsblkPath;
-    for (const QString &candidate : {QStringLiteral("/usr/bin/lsblk"), QStringLiteral("/bin/lsblk")}) {
-        const QFileInfo info(candidate);
-        if (info.isFile() && info.isExecutable()) {
-            lsblkPath = candidate;
-            break;
+    QString lsblkPath = lsblkBinaryOverride();
+    if (!lsblkPath.isEmpty()) {
+        const QFileInfo overrideInfo(lsblkPath);
+        if (!overrideInfo.isFile() || !overrideInfo.isExecutable()) {
+            lsblkPath.clear();
+        }
+    }
+    if (lsblkPath.isEmpty()) {
+        for (const QString &candidate : {QStringLiteral("/usr/bin/lsblk"), QStringLiteral("/bin/lsblk")}) {
+            const QFileInfo info(candidate);
+            if (info.isFile() && info.isExecutable()) {
+                lsblkPath = candidate;
+                break;
+            }
         }
     }
     if (lsblkPath.isEmpty()) {
@@ -191,6 +226,77 @@ QList<DeviceNode> SystemScanner::scan(QString *errorMessage, QStringList *diagno
     return devices;
 }
 
+// Fills a node's missing filesystem metadata from the world-readable udev
+// database. This mirrors what a libudev-linked lsblk reports for an
+// unprivileged user: lsblk opens the block device to probe it and falls back
+// to the udev database when that fails, but Alpine's musl util-linux build has
+// no libudev support at all. The database entry contains the ID_FS_* and
+// ID_PART_ENTRY_* properties the kernel/udev already discovered at boot, so
+// this stays a read-only inspection with no new privileges.
+void SystemScanner::applyUdevFilesystemEvidence(DeviceNode &node, const QString &deviceNumber,
+                                                const QString &udevDataDir)
+{
+    if (deviceNumber.isEmpty() || !node.fileSystem.isEmpty()) {
+        return;
+    }
+
+    QString directory = udevDataDir;
+    if (directory.isEmpty()) {
+        directory = udevDataDirectoryOverride();
+    }
+    if (directory.isEmpty()) {
+        directory = QStringLiteral("/run/udev/data");
+    }
+
+    QFile file(directory + QStringLiteral("/b") + deviceNumber);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return;
+    }
+
+    QHash<QString, QString> properties;
+    QTextStream stream(&file);
+    while (!stream.atEnd()) {
+        const QString line = stream.readLine();
+        if (!line.startsWith(QStringLiteral("E:"))) {
+            continue;
+        }
+        const qsizetype separator = line.indexOf(QLatin1Char('='));
+        if (separator <= 2) {
+            continue;
+        }
+        properties.insert(line.mid(2, separator - 2), line.mid(separator + 1));
+    }
+
+    // udev stores a plain property when the value needs no escaping and an
+    // _ENC variant otherwise; accept either.
+    auto property = [&properties](const QString &key) {
+        const QString direct = properties.value(key);
+        return direct.isEmpty() ? properties.value(key + QStringLiteral("_ENC")) : direct;
+    };
+
+    const QString fileSystem = property(QStringLiteral("ID_FS_TYPE"));
+    if (fileSystem.isEmpty()) {
+        return;
+    }
+
+    node.fileSystem = fileSystem;
+    if (node.fileSystemVersion.isEmpty()) {
+        node.fileSystemVersion = property(QStringLiteral("ID_FS_VERSION"));
+    }
+    if (node.label.isEmpty()) {
+        node.label = property(QStringLiteral("ID_FS_LABEL"));
+    }
+    if (node.uuid.isEmpty()) {
+        node.uuid = property(QStringLiteral("ID_FS_UUID"));
+    }
+    if (node.partLabel.isEmpty()) {
+        node.partLabel = property(QStringLiteral("ID_PART_ENTRY_NAME"));
+    }
+    if (node.partUuid.isEmpty()) {
+        node.partUuid = property(QStringLiteral("ID_PART_ENTRY_UUID"));
+    }
+}
+
 // Recursively converts one lsblk JSON object (and its children) into a node.
 DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
 {
@@ -220,6 +326,13 @@ DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
     } else if (sizeValue.isString()) {
         node.sizeBytes = sizeValue.toString().toULongLong();
     }
+
+    // lsblk reports filesystem metadata only when it can probe the device or
+    // read the udev database itself. Alpine's musl util-linux build is not
+    // linked against libudev and an unprivileged user cannot open block
+    // devices, so fill missing evidence from the world-readable udev database
+    // before the tree is classified.
+    applyUdevFilesystemEvidence(node, jsonString(object, "maj:min"));
 
     const QJsonArray children = object.value(QStringLiteral("children")).toArray();
     for (const QJsonValue &child : children) {

@@ -24,6 +24,7 @@ family=unknown
 case "${ID:-}" in
     debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) family=debian ;;
     arch|manjaro|endeavouros|garuda|artix) family=arch ;;
+    alpine) family=alpine ;;
     fedora|rhel|rocky|almalinux) family=rpm ;;
     opensuse*|suse|sles) family=suse ;;
     *)
@@ -31,6 +32,8 @@ case "${ID:-}" in
             family=debian
         elif [[ " ${ID_LIKE:-} " == *" arch "* ]]; then
             family=arch
+        elif [[ " ${ID_LIKE:-} " == *" alpine "* ]]; then
+            family=alpine
         elif [[ " ${ID_LIKE:-} " == *" fedora "* || " ${ID_LIKE:-} " == *" rhel "* ]]; then
             family=rpm
         elif [[ " ${ID_LIKE:-} " == *" suse "* ]]; then
@@ -43,6 +46,8 @@ if [[ "$family" == debian && -z "$(command -v apt-get || true)" ]]; then
     family=unknown
 elif [[ "$family" == arch && -z "$(command -v pacman || true)" ]]; then
     family=unknown
+elif [[ "$family" == alpine && -z "$(command -v apk || true)" ]]; then
+    family=unknown
 elif [[ "$family" == rpm && -z "$(command -v dnf || true)" ]]; then
     family=unknown
 elif [[ "$family" == suse && -z "$(command -v zypper || true)" ]]; then
@@ -51,7 +56,7 @@ fi
 
 if [[ "$family" == unknown ]]; then
     echo "Unable to select a supported package-manager profile for this build host." >&2
-    echo "Supported setup profiles: APT/dpkg, pacman, DNF/RPM, and zypper/RPM." >&2
+    echo "Supported setup profiles: APT/dpkg, pacman, DNF/RPM, zypper/RPM and apk." >&2
     echo "Install the packages listed in README.md, then run: $ROOT_DIR/scripts/check-dev-env.sh" >&2
     exit 2
 fi
@@ -62,6 +67,7 @@ package_available()
     case "$family" in
         debian) apt-cache show "$package" >/dev/null 2>&1 ;;
         arch) pacman -Si "$package" >/dev/null 2>&1 ;;
+        alpine) apk search --exact --quiet "$package" 2>/dev/null | grep -q . ;;
         rpm) dnf -q list --available "$package" >/dev/null 2>&1 ;;
         suse) zypper --non-interactive --quiet info "$package" >/dev/null 2>&1 ;;
         *) return 1 ;;
@@ -123,6 +129,23 @@ arch)
     collect_filesystem_optional_packages
     ((${#optional_packages[@]} > 0)) && "${SUDO[@]}" pacman -S --needed "${optional_packages[@]}"
     ;;
+alpine)
+    base_packages=(
+        alpine-sdk doas bash coreutils findutils python3 gzip tar
+        cmake samurai gcc g++ pkgconf
+        qt6-qtbase-dev qt6-qtsvg-dev
+        desktop-file-utils util-linux rsync cryptsetup
+        e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils
+        hicolor-icon-theme polkit
+    )
+    "${SUDO[@]}" apk add --no-cache "${base_packages[@]}"
+    collect_filesystem_optional_packages
+    # Alpine names the ZFS userspace tools simply 'zfs'; zpool lives there.
+    if package_available zfs; then
+        optional_packages+=(zfs)
+    fi
+    ((${#optional_packages[@]} > 0)) && "${SUDO[@]}" apk add --no-cache "${optional_packages[@]}"
+    ;;
 rpm)
     base_packages=(
         gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
@@ -144,6 +167,14 @@ suse)
     "${SUDO[@]}" zypper --non-interactive install --no-recommends "${base_packages[@]}" "${optional_packages[@]}"
     ;;
 esac
+
+if [[ "$family" == alpine ]]; then
+    printf '\nAlpine packaging note: generate the abuild signing key once as the build user:\n'
+    printf '  abuild-keygen -a -i -n\n'
+    printf 'The build user must also belong to the abuild group (addgroup <user> abuild,\n'
+    printf 'then start a new session), and the recipe must run inside an Alpine environment.\n'
+    printf 'Then run ./scripts/package-alpine.sh.\n'
+fi
 
 printf '\nDependencies installed. Verifying environment...\n\n'
 "$ROOT_DIR/scripts/check-dev-env.sh"

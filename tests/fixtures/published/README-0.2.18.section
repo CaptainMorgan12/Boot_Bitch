@@ -1,0 +1,8 @@
+## 0.2.18 refinements
+
+- Keep snapshot and host-capability table rows compact under GNOME/GTK styles;
+  only wrapped text receives additional height.
+- Tint monochrome theme glyphs to the active readable text color in dark
+  palettes while preserving colored status artwork.
+- Update GitHub Actions checkout to the Node.js 24-compatible `actions/checkout@v5`.
+

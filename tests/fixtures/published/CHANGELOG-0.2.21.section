@@ -1,0 +1,24 @@
+## 0.2.21 — 2026-09-14
+
+- Protect multi-disk EFI state during TUXEDO UKI and conventional GRUB EFI
+  rebuilds. The vendor helper's global `TUXEDO UKI` delete/create calls are
+  isolated, every firmware entry is classified as host, selected repair target,
+  foreign, or unknown, and stable PARTUUID/label/loader identities restore
+  entries even when firmware reuses a Boot#### number. Host and unrelated-drive
+  entries keep their relative order; vendor-specific paths are refused rather
+  than guessed. BootOrder and BootNext are reconciled after the repair.
+- Guard GRUB regeneration against dropping existing menu entries. A generated
+  configuration that omits a previously present Linux entry is rejected and a
+  post-write mismatch is rolled back to the known-good configuration.
+- Restore a missing running-host TUXEDO UKI registration before resolving the
+  selected-system entry, and annotate only the selected ESP's decoded firmware
+  labels with its distribution/model identity. Existing model text is not
+  duplicated; a present `iPXE.efi` loader without a matching entry receives a
+  uniquely named `WFAI <model>` registration on TUXEDO systems (or `iPXE
+  <model>` on another distribution) on that ESP.
+- Make Host → Repair File Copy destination browsing target-aware. The chooser
+  requests each directory listing through a temporary read-only target mount,
+  instead of opening a host `QFileDialog` that could be mistaken for the
+  repaired system's folder tree; a new destination can still be entered as an
+  absolute virtual path and is validated again by the guarded copy.
+

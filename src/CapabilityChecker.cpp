@@ -37,10 +37,22 @@ QString findExecutablePortable(const QString &command)
     return QString();
 }
 
+// The running host's os-release. BOOT_REPAIR_OS_RELEASE is a read-only test
+// seam used by the UI regression test to simulate another distribution; normal
+// launches always read /etc/os-release.
+QString osReleasePath()
+{
+    const QByteArray overridePath = qgetenv("BOOT_REPAIR_OS_RELEASE");
+    if (!overridePath.isEmpty()) {
+        return QString::fromLocal8Bit(overridePath);
+    }
+    return QStringLiteral("/etc/os-release");
+}
+
 QMap<QString, QString> readOsRelease()
 {
     QMap<QString, QString> values;
-    QFile file(QStringLiteral("/etc/os-release"));
+    QFile file(osReleasePath());
     if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return values;
     }
@@ -74,6 +86,16 @@ bool isArchLike(const QString &id, const QMap<QString, QString> &values)
     const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
         QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
     return like.contains(QStringLiteral("arch"));
+}
+
+bool isAlpineLike(const QString &id, const QMap<QString, QString> &values)
+{
+    if (id == QStringLiteral("alpine")) {
+        return true;
+    }
+    const QStringList like = values.value(QStringLiteral("ID_LIKE")).toLower().split(
+        QRegularExpression(QStringLiteral("\\s+")), Qt::SkipEmptyParts);
+    return like.contains(QStringLiteral("alpine"));
 }
 
 bool isDebianLike(const QString &id, const QMap<QString, QString> &values)
@@ -193,14 +215,18 @@ QString CapabilityChecker::packageManagerLabel()
     if (isArchLike(id, values)) {
         return QStringLiteral("pacman");
     }
+    if (isAlpineLike(id, values)) {
+        return QStringLiteral("apk / OpenRC");
+    }
     if (isSuseLike(id, values)) {
         return QStringLiteral("zypper / RPM");
     }
     return QStringLiteral("Unknown / unsupported automatic mapping");
 }
 
-// Normalized distribution-family key ("arch", "debian", "fedora", "opensuse")
-// used by packageForCommand(), or the raw ID/ID_LIKE value when unrecognized.
+// Normalized distribution-family key ("arch", "debian", "fedora", "alpine",
+// "opensuse") used by packageForCommand(), or the raw ID/ID_LIKE value when
+// unrecognized.
 QString CapabilityChecker::distributionId()
 {
     const QMap<QString, QString> values = readOsRelease();
@@ -214,6 +240,9 @@ QString CapabilityChecker::distributionId()
         }
         if (isFedoraLike(id, values)) {
             return QStringLiteral("fedora");
+        }
+        if (isAlpineLike(id, values)) {
+            return QStringLiteral("alpine");
         }
         if (isSuseLike(id, values)) {
             return QStringLiteral("opensuse");
@@ -308,6 +337,35 @@ QString CapabilityChecker::packageForCommand(const QString &command, const QStri
             {QStringLiteral("lsinitrd"), QStringLiteral("dracut")},
             {QStringLiteral("bootctl"), QStringLiteral("systemd")},
             {QStringLiteral("pacman"), QStringLiteral("pacman")},
+            {QStringLiteral("dkms"), QStringLiteral("dkms")},
+            {QStringLiteral("lvs"), QStringLiteral("lvm2")},
+            {QStringLiteral("mdadm"), QStringLiteral("mdadm")}
+        };
+        return packages.value(command, QStringLiteral("Distribution-specific"));
+    }
+
+    if (distributionId == QStringLiteral("alpine")) {
+        static const QMap<QString, QString> packages = {
+            {QStringLiteral("lsblk"), QStringLiteral("util-linux")},
+            {QStringLiteral("blkid"), QStringLiteral("util-linux")},
+            {QStringLiteral("findmnt"), QStringLiteral("util-linux")},
+            {QStringLiteral("cryptsetup"), QStringLiteral("cryptsetup")},
+            {QStringLiteral("btrfs"), QStringLiteral("btrfs-progs")},
+            {QStringLiteral("rsync"), QStringLiteral("rsync")},
+            {QStringLiteral("chroot"), QStringLiteral("coreutils")},
+            {QStringLiteral("systemctl"), QStringLiteral("Not available on Alpine")},
+            {QStringLiteral("efibootmgr"), QStringLiteral("efibootmgr")},
+            {QStringLiteral("objcopy"), QStringLiteral("binutils")},
+            {QStringLiteral("grub-install"), QStringLiteral("grub")},
+            {QStringLiteral("update-grub"), QStringLiteral("Not available on Alpine")},
+            {QStringLiteral("grub-mkconfig"), QStringLiteral("grub")},
+            {QStringLiteral("update-initramfs"), QStringLiteral("Not available on Alpine")},
+            {QStringLiteral("mkinitcpio"), QStringLiteral("mkinitfs")},
+            {QStringLiteral("dracut"), QStringLiteral("dracut")},
+            {QStringLiteral("lsinitcpio"), QStringLiteral("Not available on Alpine")},
+            {QStringLiteral("lsinitrd"), QStringLiteral("dracut")},
+            {QStringLiteral("bootctl"), QStringLiteral("Not available on Alpine")},
+            {QStringLiteral("pacman"), QStringLiteral("Not available on Alpine")},
             {QStringLiteral("dkms"), QStringLiteral("dkms")},
             {QStringLiteral("lvs"), QStringLiteral("lvm2")},
             {QStringLiteral("mdadm"), QStringLiteral("mdadm")}

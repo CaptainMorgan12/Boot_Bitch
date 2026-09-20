@@ -57,6 +57,16 @@ public:
     // Joins a node's mount points for display, or an em dash when unmounted.
     static QString mountPointsText(const DeviceNode &node);
 
+    // Fills a node's missing filesystem metadata from the world-readable udev
+    // database (ID_FS_* / ID_PART_ENTRY_* properties). lsblk only reports these
+    // values itself when it can probe the block device or is linked against
+    // libudev; the Alpine util-linux build has neither, so an unprivileged
+    // scan would otherwise report every unmounted filesystem as unknown.
+    // deviceNumber is the kernel MAJ:MIN string; udevDataDir overrides the
+    // default /run/udev/data (read-only test seam).
+    static void applyUdevFilesystemEvidence(DeviceNode &node, const QString &deviceNumber,
+                                            const QString &udevDataDir = QString());
+
 private:
     DeviceNode parseNode(const QJsonObject &object) const;
     void classifyTree(DeviceNode &node) const;

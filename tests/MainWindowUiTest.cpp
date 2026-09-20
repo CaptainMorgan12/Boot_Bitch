@@ -13,6 +13,7 @@
 #include <QDialogButtonBox>
 #include <QDir>
 #include <QFile>
+#include <QGuiApplication>
 #include <QInputDialog>
 #include <QLayout>
 #include <QFileDialog>
@@ -22,6 +23,8 @@
 #include <QLineEdit>
 #include <QLabel>
 #include <QMessageBox>
+#include <QMetaType>
+#include <QPalette>
 #include <QPlainTextEdit>
 #include <QProcess>
 #include <QProgressBar>
@@ -32,6 +35,7 @@
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStyleHints>
 #include <QTabWidget>
 #include <QTabBar>
 #include <QTableWidget>
@@ -45,7 +49,42 @@
 #include <QToolButton>
 #include <QtTest>
 
+#ifdef BOOT_REPAIR_HAVE_DBUS
+#include <QDBusVariant>
+#endif
+
+#include <algorithm>
+
 namespace {
+// Restores an environment variable on scope exit. A failing QVERIFY returns
+// early from the test function, so the fixture must be undone by a destructor
+// instead of a trailing statement.
+class ScopedEnvironmentVariable
+{
+public:
+    ScopedEnvironmentVariable(const char *name, const QByteArray &value)
+        : m_name(name)
+        , m_hadValue(qEnvironmentVariableIsSet(name))
+        , m_original(qgetenv(name))
+    {
+        qputenv(m_name.constData(), value);
+    }
+
+    ~ScopedEnvironmentVariable()
+    {
+        if (m_hadValue) {
+            qputenv(m_name.constData(), m_original);
+        } else {
+            qunsetenv(m_name.constData());
+        }
+    }
+
+private:
+    QByteArray m_name;
+    bool m_hadValue = false;
+    QByteArray m_original;
+};
+
 QPushButton *buttonWithText(MainWindow &window, const QString &text)
 {
     for (QPushButton *button : window.findChildren<QPushButton *>()) {
@@ -54,6 +93,197 @@ QPushButton *buttonWithText(MainWindow &window, const QString &text)
         }
     }
     return nullptr;
+}
+
+// Page section titles are created inline by the page builders (only the File
+// Copy title is a member). Find the direct child label carrying the exact
+// title text so the header-row geometry can be asserted without new members.
+QLabel *directChildLabelWithText(QWidget *parent, const QString &text)
+{
+    if (!parent) {
+        return nullptr;
+    }
+    const QList<QLabel *> labels =
+        parent->findChildren<QLabel *>(QString(), Qt::FindDirectChildrenOnly);
+    for (QLabel *label : labels) {
+        if (label->text() == text) {
+            return label;
+        }
+    }
+    return nullptr;
+}
+
+// Synthetic unprivileged-scan fixture mirroring an Alpine BIOS target:
+// /dev/test-vdb with a 300 MiB ext4 /boot partition, a swap partition and a
+// 15.9 GiB ext4 root. The fake lsblk deliberately reports every FSTYPE as
+// null (Alpine's musl util-linux build cannot probe block devices as an
+// unprivileged user and is not linked against libudev), while the synthetic
+// /run/udev/data entries carry the real ID_FS_* evidence. The scanner
+// udev-fallback test and the Systems UI regression tests share this fixture so
+// they all exercise the same device layout.
+struct UnprivilegedVdbFixture {
+    QString lsblkPath;
+    QString udevDir;
+    QString diskPath = QStringLiteral("/dev/test-vdb");
+    QString bootPath = QStringLiteral("/dev/test-vdb1");
+    QString swapPath = QStringLiteral("/dev/test-vdb2");
+    QString rootPath = QStringLiteral("/dev/test-vdb3");
+    QString bootUuid = QStringLiteral("11111111-2222-3333-4444-555555555555");
+    QString rootUuid = QStringLiteral("66666666-7777-8888-9999-000000000000");
+    QString rootPartUuid = QStringLiteral("11111111-22");
+};
+
+// Writes the fake lsblk and the udev database below rootDir. Returns an empty
+// string on success; otherwise the path of the first step that failed.
+QString writeUnprivilegedVdbFixture(const QString &rootDir, UnprivilegedVdbFixture *fixture)
+{
+    if (!fixture) {
+        return QStringLiteral("missing fixture output");
+    }
+
+    fixture->lsblkPath = QDir(rootDir).filePath(QStringLiteral("lsblk"));
+    QFile lsblk(fixture->lsblkPath);
+    if (!lsblk.open(QIODevice::WriteOnly | QIODevice::Text)) {
+        return fixture->lsblkPath;
+    }
+    lsblk.write(R"LSBLK(#!/bin/sh
+cat <<'JSON'
+{
+   "blockdevices": [
+      {
+         "name": "vdb",
+         "kname": "vdb",
+         "path": "/dev/test-vdb",
+         "maj:min": "253:16",
+         "type": "disk",
+         "size": 21474836480,
+         "fstype": null,
+         "mountpoints": [],
+         "tran": "virtio",
+         "vendor": "0x1af4",
+         "children": [
+            {
+               "name": "vdb1",
+               "kname": "vdb1",
+               "path": "/dev/test-vdb1",
+               "maj:min": "253:17",
+               "type": "part",
+               "size": 314572800,
+               "fstype": null,
+               "mountpoints": []
+            },
+            {
+               "name": "vdb2",
+               "kname": "vdb2",
+               "path": "/dev/test-vdb2",
+               "maj:min": "253:18",
+               "type": "part",
+               "size": 4134535168,
+               "fstype": null,
+               "mountpoints": []
+            },
+            {
+               "name": "vdb3",
+               "kname": "vdb3",
+               "path": "/dev/test-vdb3",
+               "maj:min": "253:19",
+               "type": "part",
+               "size": 17024679936,
+               "fstype": null,
+               "mountpoints": []
+            }
+         ]
+      }
+   ]
+}
+JSON
+)LSBLK");
+    lsblk.close();
+    if (!QFile::setPermissions(fixture->lsblkPath,
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+            | QFileDevice::ReadGroup | QFileDevice::ExeGroup
+            | QFileDevice::ReadOther | QFileDevice::ExeOther)) {
+        return fixture->lsblkPath;
+    }
+
+    fixture->udevDir = QDir(rootDir).filePath(QStringLiteral("udev-data"));
+    if (!QDir().mkpath(fixture->udevDir)) {
+        return fixture->udevDir;
+    }
+    const auto writeUdevEntry = [fixture](const QString &deviceNumber, const QString &type,
+                                          const QString &uuid, const QString &partUuid) {
+        QFile entry(fixture->udevDir + QStringLiteral("/b") + deviceNumber);
+        if (!entry.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return false;
+        }
+        QTextStream stream(&entry);
+        stream << "E:ID_FS_TYPE=" << type << '\n';
+        stream << "E:ID_FS_USAGE=filesystem\n";
+        if (!uuid.isEmpty()) {
+            stream << "E:ID_FS_UUID=" << uuid << '\n';
+        }
+        if (!partUuid.isEmpty()) {
+            stream << "E:ID_PART_ENTRY_UUID=" << partUuid << '\n';
+        }
+        return true;
+    };
+    if (!writeUdevEntry(QStringLiteral("253:17"), QStringLiteral("ext4"), fixture->bootUuid, QString())) {
+        return fixture->udevDir;
+    }
+    if (!writeUdevEntry(QStringLiteral("253:18"), QStringLiteral("swap"), QString(), QString())) {
+        return fixture->udevDir;
+    }
+    if (!writeUdevEntry(QStringLiteral("253:19"), QStringLiteral("ext4"),
+                        fixture->rootUuid, fixture->rootPartUuid)) {
+        return fixture->udevDir;
+    }
+    return QString();
+}
+
+// Finds the real top-level row a device scan rendered for diskPath.
+QTreeWidgetItem *deviceTreeTopLevelItem(MainWindow &window, const QString &diskPath)
+{
+    for (int row = 0; row < window.m_deviceTree->topLevelItemCount(); ++row) {
+        QTreeWidgetItem *item = window.m_deviceTree->topLevelItem(row);
+        if (item && item->data(0, Qt::UserRole).toString() == diskPath) {
+            return item;
+        }
+    }
+    return nullptr;
+}
+
+// Finds a rendered partition/mapper row by device path. The device tree sorts
+// partitions within their drive, so tests must not rely on child order.
+QTreeWidgetItem *deviceTreeChildItem(QTreeWidgetItem *parent, const QString &devicePath)
+{
+    if (!parent) {
+        return nullptr;
+    }
+    for (int row = 0; row < parent->childCount(); ++row) {
+        QTreeWidgetItem *item = parent->child(row);
+        if (item && item->data(0, Qt::UserRole).toString() == devicePath) {
+            return item;
+        }
+    }
+    return nullptr;
+}
+
+// Clicks a header section like a user. With sorting enabled the header updates
+// its sort indicator and the view applies the new order.
+QPoint headerSectionCenter(QHeaderView *header, int section)
+{
+    return QPoint(header->sectionViewportPosition(section) + header->sectionSize(section) / 2,
+                  header->height() / 2);
+}
+
+// Selects a rendered device row exactly like a user click and lets the
+// selection handler update the details panel.
+void selectDeviceTreeItem(MainWindow &window, QTreeWidgetItem *item)
+{
+    window.m_deviceTree->clearSelection();
+    window.m_deviceTree->setCurrentItem(item);
+    item->setSelected(true);
+    QCoreApplication::processEvents();
 }
 
 // Reusable alignment check for a stack of action buttons that share one
@@ -206,6 +436,18 @@ void prepareRepairScope(MainWindow &window, bool host = false)
     }
 }
 
+// Enters the explicit running-host maintenance scope the way the real UI does.
+// The Diagnostics scope is derived from the Systems state, so setting Host
+// Maintenance active is what switches diagnostics to Running Host. Tests that
+// exercise host diagnostics must establish this state first; the production
+// transitions are exercised separately through the real
+// selectHostForMaintenance()/exitHostMaintenanceMode() handlers.
+void enterHostDiagnosticScope(MainWindow &window)
+{
+    window.m_hostMaintenanceMode = true;
+    window.updateTargetLabels();
+}
+
 QTreeWidgetItem *repairItem(MainWindow &window, const QString &key)
 {
     for (int row = 0; row < window.m_repairToolTree->topLevelItemCount(); ++row) {
@@ -232,18 +474,25 @@ QTreeWidgetItem *selectTopLevelDisk(MainWindow &window, const QString &diskPath)
 QString capabilityEvidence(bool arch, bool dkms)
 {
     return QStringLiteral("Distribution family: %1\n"
+                          "Package manager backend: %2\n"
+                          "Package manager backends: %2\n"
+                          "Service manager: systemd\n"
+                          "Initramfs backend: %3\n"
+                          "Bootloader backend: grub\n"
                           "Repair tool validate: available\n"
-                          "Repair tool dpkg: %2\n"
+                          "Repair tool dpkg: %4\n"
                           "Repair tool fixbroken: available\n"
-                          "Repair tool aptupdate: %3\n"
+                          "Repair tool aptupdate: %5\n"
                           "Repair tool upgrade: available\n"
-                          "Repair tool dkms: %4\n"
+                          "Repair tool dkms: %6\n"
                           "Repair tool display: unavailable|No display manager installed\n"
                           "Repair tool initramfs: available\n"
                           "Repair tool efi: available\n"
                           "Repair tool grub: available\n"
                           "Repair tool bootstack: available\n")
         .arg(arch ? QStringLiteral("arch") : QStringLiteral("debian"),
+             arch ? QStringLiteral("pacman") : QStringLiteral("apt/dpkg"),
+             arch ? QStringLiteral("mkinitcpio") : QStringLiteral("initramfs-tools"),
              arch ? QStringLiteral("unavailable|Arch has no dpkg database") : QStringLiteral("available"),
              arch ? QStringLiteral("unavailable|Arch refuses metadata-only transactions") : QStringLiteral("available"),
              dkms ? QStringLiteral("available") : QStringLiteral("unavailable|DKMS is not installed"));
@@ -259,6 +508,122 @@ QString capabilityEvidenceWithDisplay(bool arch, bool dkms)
     return evidence;
 }
 
+// Alpine capability evidence in the shape the helper emits for an apk/OpenRC/
+// mkinitfs/extlinux target: the guarded package, display, initramfs, GRUB and
+// extlinux stages carry their own available/unavailable line, while dpkg and
+// the standalone metadata refresh stay unavailable by policy. dkms, grub and
+// extlinux availability follow their installed-state evidence exactly like
+// every other tool.
+QString capabilityEvidenceAlpine(bool dkms, bool grub, bool extlinux)
+{
+    return QStringLiteral("Distribution family: alpine\n"
+                          "Package manager backend: apk\n"
+                          "Package manager backends: apk\n"
+                          "Service manager: OpenRC\n"
+                          "Display manager backend: OpenRC\n"
+                          "Initramfs backend: mkinitfs\n"
+                          "Bootloader backend: syslinux/extlinux\n"
+                          "Repair tool validate: available\n"
+                          "Repair tool filesystem: available\n"
+                          "Repair tool dpkg: unavailable|Alpine uses apk; no dpkg configuration step\n"
+                          "Repair tool fixbroken: available\n"
+                          "Repair tool aptupdate: unavailable|Alpine has no standalone metadata refresh; apk upgrade refreshes the index\n"
+                          "Repair tool upgrade: available\n"
+                          "Repair tool dkms: %1\n"
+                          "Repair tool display: available\n"
+                          "Repair tool initramfs: available\n"
+                          "Repair tool efi: unavailable|syslinux/extlinux (BIOS) boot detected; no EFI boot path is available\n"
+                          "Repair tool grub: %2\n"
+                          "Repair tool extlinux: %3\n"
+                          "Repair tool bootstack: available\n")
+        .arg(dkms ? QStringLiteral("available") : QStringLiteral("unavailable|DKMS is not installed"),
+             grub ? QStringLiteral("available") : QStringLiteral("unavailable|grub-mkconfig is not installed"),
+             extlinux ? QStringLiteral("available") : QStringLiteral("unavailable|update-extlinux is not installed"));
+}
+
+// Alpine UEFI GRUB capability evidence: the same apk/OpenRC/mkinitfs backend
+// set with a GRUB UEFI bootloader. The helper reports efi and grub from the
+// detected GRUB EFI prerequisites; both follow their capability lines exactly.
+QString capabilityEvidenceAlpineUefi(bool efi, bool grub)
+{
+    return QStringLiteral("Distribution family: alpine\n"
+                          "Package manager backend: apk\n"
+                          "Package manager backends: apk\n"
+                          "Service manager: OpenRC\n"
+                          "Display manager backend: OpenRC\n"
+                          "Initramfs backend: mkinitfs\n"
+                          "Bootloader backend: grub\n"
+                          "Repair tool validate: available\n"
+                          "Repair tool filesystem: available\n"
+                          "Repair tool dpkg: unavailable|Alpine uses apk; no dpkg configuration step\n"
+                          "Repair tool fixbroken: available\n"
+                          "Repair tool aptupdate: unavailable|Alpine has no standalone metadata refresh; apk upgrade refreshes the index\n"
+                          "Repair tool upgrade: available\n"
+                          "Repair tool dkms: available\n"
+                          "Repair tool display: available\n"
+                          "Repair tool initramfs: available\n"
+                          "Repair tool efi: %1\n"
+                          "Repair tool grub: %2\n"
+                          "Repair tool extlinux: available\n"
+                          "Repair tool bootstack: available\n")
+        .arg(efi ? QStringLiteral("available")
+                 : QStringLiteral("unavailable|no EFI System Partition candidate on the selected disk"),
+             grub ? QStringLiteral("available")
+                  : QStringLiteral("unavailable|Neither grub-mkconfig nor update-grub is installed in the target system"));
+}
+
+// Fedora/RPM capability evidence in the shape the helper emits for a
+// dnf/dracut/GRUB2/GDM target: the guarded rpm backend reports dnf-backed
+// package stages, dracut initramfs, Fedora GRUB2 tooling/paths and the
+// systemd GDM path, while dpkg and the BIOS EFI stage stay unavailable with
+// probe-based reasons.  The package, initramfs, GRUB and display lines follow
+// their own availability flags exactly like every other backend.
+QString capabilityEvidenceFedora(bool packages, bool dracut, bool grub2, bool display)
+{
+    return QStringLiteral(
+               "Distribution family: fedora\n"
+               "Package manager backend: rpm\n"
+               "Package manager backends: rpm\n"
+               "Service manager: systemd\n"
+               "Display manager backend: systemd\n"
+               "Initramfs backend: dracut\n"
+               "Initramfs backends: dracut\n"
+               "Bootloader backend: grub\n"
+               "Logging backend: journald\n"
+               "Repair capability evidence display: graphical.target present; display manager unit gdm.service\n"
+               "Repair capability evidence grub: grub2-mkconfig present; /boot/grub2/grub.cfg present; grubenv present\n"
+               "Repair capability evidence initramfs: initramfs backend: dracut; dracut executable and /usr/lib/dracut present; kernels: 6.19.10-300.fc44.x86_64\n"
+               "Repair capability evidence fixbroken: rpm executable present; /usr/lib/sysimage/rpm present; dnf5 present; 3 enabled repositories\n"
+               "Repair tool validate: available\n"
+               "Repair tool filesystem: available\n"
+               "Repair tool dpkg: unavailable|Fedora uses rpm/dnf; dpkg configuration is not available\n"
+               "Repair tool fixbroken: %1\n"
+               "Repair tool aptupdate: %2\n"
+               "Repair tool upgrade: %3\n"
+               "Repair tool dkms: unavailable|the rpm DKMS header correction (kernel-devel/akmods) is not implemented\n"
+               "Repair tool display: %4\n"
+               "Repair tool initramfs: %5\n"
+               "Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available\n"
+               "Repair tool grub: %6\n"
+               "Repair tool extlinux: unavailable|syslinux/extlinux is not installed in the target system\n"
+               "Repair tool bootstack: %7\n")
+        .arg(packages ? QStringLiteral("available")
+                      : QStringLiteral("unavailable|rpm and dnf5 are not installed in the target system"),
+             packages ? QStringLiteral("available")
+                      : QStringLiteral("unavailable|dnf5 is not installed in the target system"),
+             packages ? QStringLiteral("available")
+                      : QStringLiteral("unavailable|dnf5 is not installed in the target system"),
+             display ? QStringLiteral("available")
+                     : QStringLiteral("unavailable|No display manager was found"),
+             dracut ? QStringLiteral("available")
+                    : QStringLiteral("unavailable|dracut is not installed in the target system"),
+             grub2 ? QStringLiteral("available")
+                   : QStringLiteral("unavailable|grub2-mkconfig is not installed in the target"),
+             dracut && grub2
+                 ? QStringLiteral("available")
+                 : QStringLiteral("unavailable|dracut and GRUB2 are required for boot-stack reconciliation"));
+}
+
 void cacheRepairEvidence(MainWindow &window, const QString &evidence)
 {
     // Injected evidence is fresh by definition: clear the scoped invalidation
@@ -270,7 +635,7 @@ void cacheRepairEvidence(MainWindow &window, const QString &evidence)
     cache.clear();
     for (const QString &key : {QStringLiteral("report"), QStringLiteral("environment"),
                               QStringLiteral("kernel"), QStringLiteral("grub"), QStringLiteral("uki"),
-                              QStringLiteral("display")}) {
+                              QStringLiteral("display"), QStringLiteral("boot")}) {
         cache.insert(key, QStringLiteral("Diagnostic: %1\n%2").arg(key, evidence));
     }
 }
@@ -281,7 +646,6 @@ void prepareFilesystemPlan(MainWindow &window)
 {
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(false);
     QString evidence = capabilityEvidence(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
@@ -305,7 +669,6 @@ void prepareFilesystemPlan(MainWindow &window)
 void prepareStaleTargetScope(MainWindow &window)
 {
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_targetDiagnosticCache.clear();
     window.m_targetDiagnosticTimes.clear();
     window.m_targetDiagnosticCacheIdentity = window.currentTargetDiagnosticCacheIdentity();
@@ -360,6 +723,46 @@ public:
 private:
     QPalette m_original;
 };
+
+// Applies a deterministic desktop color scheme through the production test
+// seam (the same code path the platform's colorSchemeChanged signal uses) and
+// restores the previous application palette on scope exit.
+class ScopedColorSchemeOverride
+{
+public:
+    explicit ScopedColorSchemeOverride(Qt::ColorScheme scheme)
+        : m_originalPalette(QApplication::palette())
+    {
+        MainWindow::setColorSchemeOverrideForTests(scheme);
+    }
+
+    ~ScopedColorSchemeOverride()
+    {
+        MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Unknown);
+        QApplication::setPalette(m_originalPalette);
+    }
+
+private:
+    QPalette m_originalPalette;
+};
+
+// Foreground color a rendered repair-result glyph carries in the log document.
+QColor repairGlyphColor(MainWindow &window, const QString &glyph)
+{
+    const QTextDocument *document = window.m_logView->document();
+    for (QTextBlock block = document->begin(); block.isValid(); block = block.next()) {
+        if (!block.text().contains(QStringLiteral("Repair result:"))) {
+            continue;
+        }
+        for (QTextBlock::iterator it = block.begin(); !it.atEnd(); ++it) {
+            const QTextFragment fragment = it.fragment();
+            if (fragment.text().contains(glyph)) {
+                return fragment.charFormat().foreground().color();
+            }
+        }
+    }
+    return QColor();
+}
 
 // Pixel-level verification of the repair-result glyph colors. The log viewport
 // is grabbed with QWidget::grab and every summary/stage glyph's painted
@@ -492,6 +895,10 @@ QList<QStringList> capturedHelperRequests(const QString &capturePath)
 //   success   - one OUT line followed by DONE with exit code 0
 //   aptfail   - a failed-fetch OUT line followed by DONE with exit code 100
 //   truncated - one OUT line and an exit with no DONE record at all
+//   prompt    - a delayed interactive-prompt abort with the helper's
+//               non-interactive hint, followed by DONE with exit code 1
+//   aptupgrade - the helper's distribution-disabled apt-upgrade mapping line
+//               and a successful full-upgrade retry, followed by DONE 0
 // The process is parented to the window so MainWindow owns its lifetime.
 QProcess *startFakePrivilegedSession(MainWindow &window, const QString &capturePath,
                                      const QString &mode)
@@ -505,6 +912,11 @@ QProcess *startFakePrivilegedSession(MainWindow &window, const QString &captureP
         "  success) printf 'OUT\\t%s\\tmock host command output\\n' \"$id\"; printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "  aptfail) printf 'OUT\\t%s\\tTemporary failure resolving archive.example\\n' \"$id\"; printf 'DONE\\t%s\\t100\\n' \"$id\"; exit 100 ;;\n"
         "  truncated) printf 'OUT\\t%s\\tpartial helper output\\n' \"$id\"; exit 7 ;;\n"
+        "  prompt) sleep 0.3; printf 'OUT\\t%s\\tIs this ok [y/N]: \\n' \"$id\"; "
+        "printf 'OUT\\t%s\\tBoot Bitch: the command asked an interactive question; re-run it with the non-interactive flag, for example dnf update -y, apt-get -y upgrade or pacman --noconfirm -Syu.\\n' \"$id\"; "
+        "printf 'DONE\\t%s\\t1\\n' \"$id\"; exit 1 ;;\n"
+        "  aptupgrade) printf 'OUT\\t%s\\t[12:00:00] apt upgrade is disabled by this distribution; running '\\''apt full-upgrade'\\'' instead\\n' \"$id\"; "
+        "printf 'OUT\\t%s\\tmock full-upgrade completed\\n' \"$id\"; printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "esac\n"
         "exit 9\n")
         .arg(capturePath, mode);
@@ -718,6 +1130,81 @@ done
     window.m_privilegedSession = session;
     window.m_privilegedSessionReady = true;
     return session;
+}
+
+// Persistent fake privileged session for the rapid scope-switching and
+// safety-timeout regressions. It records every request like the other fakes
+// and answers a snapshot inventory request only after delaySeconds, so a test
+// can switch the active scope (or wedge the helper) while the read-only
+// inventory request still owns the privileged gate.
+QProcess *startSlowSnapshotFakePrivilegedSession(MainWindow &window, const QString &capturePath,
+                                                 const QString &delaySeconds)
+{
+    auto *session = new QProcess(&window);
+    QString script = QStringLiteral(R"SCRIPT(
+capture="$1"
+delay="$2"
+while IFS= read -r line; do
+  tag="${line%%$'\t'*}"
+  [ "$tag" = "BEGIN" ] || continue
+  rest="${line#*$'\t'}"
+  id="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  count="${rest%%$'\t'*}"
+  printf '%s\n' "$line" >> "$capture"
+  args=""
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    IFS= read -r argline
+    printf '%s\n' "$argline" >> "$capture"
+    payload="${argline##*$'\t'}"
+    args="$args $(printf '%s' "$payload" | base64 -d)"
+    i=$((i+1))
+  done
+  IFS= read -r endline
+  printf '%s\n' "$endline" >> "$capture"
+  case "$args" in
+    *snapshots*)
+      sleep "$delay"
+      printf 'OUT\t%s\tSNAPSHOT\t1\tMQ==\tMjAyNi0wOS0yMCAxMjowMDowMA==\tc2luZ2xl\tdGVzdCBzbmFwc2hvdA==\tTGludXggcm9vdCBzbmFwc2hvdA==\tQC8uc25hcHNob3RzLzEvc25hcHNob3Q=\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *)
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+  esac
+done
+)SCRIPT");
+    session->start(QStringLiteral("/bin/bash"),
+                   {QStringLiteral("-c"), script, QStringLiteral("fake-slow-snapshot-session"),
+                    capturePath, delaySeconds});
+    if (!session->waitForStarted(5000)) {
+        delete session;
+        return nullptr;
+    }
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = true;
+    return session;
+}
+
+// Builds one eligible Btrfs repair-target disk (and its root component) in the
+// synthetic device index used by the scope-switching regressions.
+void installSyntheticBtrfsTarget(MainWindow &window, const QString &diskPath, const QString &rootPath)
+{
+    DeviceNode root;
+    root.path = rootPath;
+    root.type = QStringLiteral("part");
+    root.fileSystem = QStringLiteral("btrfs");
+    root.linuxCapableFileSystem = true;
+    root.installedLinux = true;
+    root.sizeBytes = 16ll * 1024 * 1024 * 1024;
+    DeviceNode disk;
+    disk.path = diskPath;
+    disk.type = QStringLiteral("disk");
+    disk.sizeBytes = 20ll * 1024 * 1024 * 1024;
+    disk.children.append(root);
+    window.m_deviceIndex.insert(disk.path, disk);
+    window.m_deviceIndex.insert(root.path, root);
 }
 
 // Persistent fake privileged session for repair-section tests. It serves every
@@ -983,9 +1470,11 @@ QString combinedReportEntry(const QString &scope, const QStringList &sections)
         .arg(scope, sections.join(QLatin1Char('\n')));
 }
 
-// The scheduler's coalescing delay is 1200 ms; wait long enough that a second
-// (unwanted) run would have fired before asserting that none did.
-constexpr int kNoSecondRunWaitMs = 1500;
+// The scheduler's coalescing delay is 1200 ms; tests that observe a real
+// automatic run shorten it through MainWindow::m_evidenceRefreshDelayMs and
+// wait long enough that a second (unwanted) run would have fired.
+constexpr int kEvidenceRefreshTestDelayMs = 50;
+constexpr int kNoSecondRunWaitMs = 250;
 
 // Route every test window's session files into a throwaway directory so real
 // user logs under AppDataLocation are never touched.
@@ -1121,6 +1610,7 @@ public:
                     continue;
                 }
                 appeared = true;
+                title = box->windowTitle();
                 text = box->text();
                 informativeText = box->informativeText();
                 m_timer->stop();
@@ -1151,6 +1641,7 @@ public:
     }
 
     bool appeared = false;
+    QString title;
     QString text;
     QString informativeText;
 
@@ -1230,6 +1721,8 @@ private slots:
     void snapshotsSectionUsesFramedContainer();
     void unlockStatusPanelIsReadOnlyAndScoped();
     void individualDiagnosticEnablesMatchingRepair();
+    void cachedDiagnosticLabelIsCompactAndRerunSharesResultsHeader();
+    void individualDiagnosticCachePersistsAcrossSelection();
     void filesystemRepairToolRowIsGatedByCapabilityEvidence();
     void fullRepairFilesystemStageIsFirstWhenEnabled();
     void fullRepairFilesystemCheckboxExistsAndPersists();
@@ -1237,7 +1730,7 @@ private slots:
     void filesystemRepairDialogRowsTrackWrappedSummary();
     void filesystemRepairFlowInspectsConfirmsAndRepairs();
     void filesystemRepairFlowUsesHostCommandsInHostMode();
-    void skippedFilesystemInspectionIsNotReportedAsClean();
+    void fullRepairSkippedFilesystemPreStageIsNotCountedAsClean();
     void btrfsRepairRequiresExtraDangerConfirmation();
     void fullRepairUsesFreshEvidenceForSelectedStage();
     void fullRepairPlanSchedulesSingleEvidenceRegeneration();
@@ -1252,10 +1745,12 @@ private slots:
     void logSectionFilterShowsRelatedRepairsAndDiagnosticSection();
     void logSectionFilterWithoutMatchesShowsNotice();
     void logSectionFilterSearchMatchesOnlyFilteredSubset();
-    void logSectionFilterExtractsEmbeddedReportSections();
-    void logSectionFilterWithoutEmbeddedSectionShowsNotice();
+    void logSectionFilterExtractsEmbeddedReportSectionsAndShowsNotice();
     void logSectionFilterExtractsEmbeddedSectionsFromPriorSession();
     void logWorkflowFilesystemFilterShowsCheckRepairAndEvidence();
+    void logWorkflowFilesystemFilterShowsFileCopyOperations();
+    void logWorkflowPackageFilterShowsPackageStagesAndKeepsFilesystemSeparate();
+    void logWorkflowPackageFilterExtractsCombinedReportSections();
     void logSearchFileTermKeepsEmbeddedSectionsCoherent();
     void logViewShowsNewestEntriesFirst();
     void rapidLogAppendsCoalesceIntoOneRefresh();
@@ -1269,12 +1764,20 @@ private slots:
     void runAllReplacesPriorReportAndPerKeySections();
     void incrementalLogViewMatchesFullRebuild();
     void nonLinuxTargetIsRejectedSafely();
+    void selectTargetStaysEnabledForEligibleHostMaintenanceCandidate();
+    void unprivilegedScanUdevEvidenceEnablesSelectTarget();
+    void tableFilesystemColumnShowsUdevEnrichedFilesystem();
+    void preferredRepairNodeResolvesVdbRootAndCommittedTarget();
+    void targetDiagnosticFallbackUpdatesCommittedComponent();
+    void hostMaintenanceSelectionAndReselectionRestoreRepairScope();
+    void rapidScopeSwitchingDuringSnapshotPreloadDoesNotDeadlock();
+    void privilegedRequestSafetyTimeoutAbortsWedgedHelper();
+    void nonBtrfsTargetSnapshotInventoryIsInformational();
     void guardedWriteActionsStayDisabledWithoutTarget();
     void exportDialogsCanBeCancelledReadOnly();
     void actionRegisterPersistsAcrossWindows();
     void freshLaunchDoesNotAdoptNewestPriorSession();
-    void sessionLogDefersUntilScopeIdentified();
-    void sessionLogAppendsAfterCreation();
+    void sessionLogDefersUntilScopeIdentifiedThenAppends();
     void sessionLogScopeMarkersTrackTarget();
     void priorSessionLogsAreListedAndReadOnly();
     void activeSessionFileCannotBeDeleted();
@@ -1283,51 +1786,60 @@ private slots:
     void clearTruncatesOnlyActiveSessionLog();
     void clearWithoutSessionFileClearsMemoryOnly();
     void addNoteAppendsTimestampedEntry();
-    void sessionLogRetentionPrunesOldFiles();
-    void retentionKeepsActiveSessionFile();
+    void sessionLogRetentionPrunesOldFilesAndKeepsActive();
     void scopeSwitchingRejectsStaleTargetEvidence();
     void missingCapabilityEvidenceFailsClosed();
     void archIndividualDpkgAndAptUpdateStayDisabled();
     void archDkmsAvailableGatesDkmsTool();
     void debianDpkgToolAllowedAndArchRefused();
+    void alpineDetectionLabelsAndCapabilityGating();
+    void alpineExtlinuxToolRowIsGatedByCapabilityEvidence();
+    void alpineFullRepairPlanIncludesExtlinuxStage();
+    void alpineUefiEfiGrubRepairIsOfferedAndLabelled();
+    void fedoraDetectionLabelsAndCapabilityGating();
+    void fedoraUpgradeStageIncludedWhenEnabledAndGateRefreshesImmediately();
+    void themeFollowsDesktopColorScheme();
+    void themeDetectsDarkSchemeAfterStartup();
+    void portalColorSchemeParsing();
+    void filesystemDiagnosticUsesFsInspectAndKeepsFstabPure();
+    void hostDiagnosticsRequireHostMaintenanceScope();
+    void snapshotPreloadIsDeduplicatedAcrossScopeTransitions();
+    void helperPathResolutionPrefersInstalledUnlessOverridden();
+    void stageLabelsTrackBackendFamilyWithoutLeaking();
+    void mixedPackageManagerLabelsStayGeneric();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
     void autoRefreshSettingDefaultsOnAndPersists();
     void autoRefreshDecisionRespectsSettingScopeAndEvidence();
-    void autoRefreshSettingOffPreventsScheduledRun();
-    void autoRefreshWithoutSessionStaysPending();
-    void autoRefreshSessionEstablishedRunsOnce();
-    void autoRefreshCoalescesRapidInvalidations();
-    void autoRefreshMultiStageRepairCoalescesToOneRun();
-    void autoRefreshManualRunAllDoesNotDoubleRun();
+    void autoRefreshStaysIdleWithoutSessionOrSetting();
+    void autoRefreshSessionEstablishedRunsOnceAndCoalescesBursts();
+    void autoRefreshCoalescesPlanAndManualRuns();
     void diagnosticSectionMappingTable();
     void scopedRepairRegeneratesOnlyMappedSections();
     void packageStageRepairRegeneratesCompleteSet();
-    void fullRepairPlanRegeneratesSectionUnionOnce();
+    void fullRepairPlanRegeneratesOnlyChangedSectionsOnce();
     void repairUnchangedKeepsCachedEvidence();
-    void repairChangedInvalidatesMappedSections();
-    void missingRepairChangeStatusInvalidates();
+    void repairChangeStatusInvalidatesMappedSectionsOrFailsSafe();
     void repairFailedResultSummaryAndInvalidation();
     void repairResultSummarySymbolsAreColored();
     void repairResultSummaryGlyphsRenderColored();
     void repairResultSummaryColorsSurviveFilterAndAppend();
     void repairResultSummaryColorsSurviveSectionReplacementAndPriorLog();
     void repairPlanSummaryVocabularyIsActionAccurate();
+    void repairResultSummaryShowsHeldBackPackages();
     void fullRepairFilesystemPreStageIsOrderedBeforePlanSummary();
-    void fullRepairCleanFilesystemPreStageDoesNotClaimUnchanged();
-    void fullRepairSkippedFilesystemPreStageIsNotCountedAsNoRepairNeeded();
+    void fullRepairCleanFilesystemPreStageIsLogOnlyAndDoesNotClaimUnchanged();
     void fullRepairIssuesFilesystemPreStageShowsSelectionDialog();
     void fullRepairNoSafeRepairModeFilesystemPreStageShowsDialog();
     void fullRepairRepairFailureShowsDialogAndClearsBusy();
     void filesystemRepairFlowBlocksSecondRepairAndKeepsBusy();
     void filesystemRepairCancelClearsBusyAndFlowGuard();
     void manualFilesystemCheckIsDistinguishableFromPlanPreStage();
-    void fullRepairCleanFilesystemPreStageIsLogOnly();
     void fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged();
-    void fullRepairPlanRegeneratesOnlyChangedStages();
     void fullRepairPlanFailureAttributesOnlyFailingStage();
     void repairTargetSelectionRegeneratesCompleteSet();
     void hostMaintenanceRequestsPrivilegedSessionOnce();
     void concurrentAuthorizationRequestsCoalesce();
+    void authorizationFailureSurfacesPolkitAgentHint();
     void repairTargetConfirmationRequestsPrivilegedSessionOnce();
     void activePrivilegedSessionIsNotRequestedAgain();
     void authorizationCancelKeepsScopeWithoutReprompting();
@@ -1335,16 +1847,18 @@ private slots:
     void pendingAutoRefreshRunsAfterScopeAuthorization();
     void logKindsSeparateStartupAndDiagnosticLines();
     void busyIndicatorTracksOverlappingOperations();
+    void busyIndicatorUsesCustomAnimatedIndicator();
     void busyIndicatorCoversDiagnosticsAndFailedOperations();
     void busyIndicatorDoesNotShiftLayout();
     void logsTabReorientsWithWindowWidth();
     void fileCopyButtonsDoNotOverlapAtMinimumWidth();
     void hostDriveSummaryWrapsAtMinimumWidth();
     void hostShellModeLabelsAndEnablement();
-    void hostShellDispatchesHostShellCommand();
-    void hostShellAptUpdateWithoutRepositoryDataKeepsHostEvidence();
-    void hostShellTruncatedResponseFailsSafely();
+    void hostShellDispatchesAndHandlesFailureModes();
+    void shellAptUpgradePolicyRetryLineIsRendered();
+    void privilegedRefusalNamesNextStep();
     void targetShellDispatchStillUsesShell();
+    void chrootShellInteractivePromptHintAndBusyCoverage();
     void shellReadinessGateIsSharedByButtonAndReturnPressed();
     void chrootShellReleaseInfoChangeRetryOnAccept();
     void chrootShellReleaseInfoChangeRetryDeclinedKeepsFailure();
@@ -1352,6 +1866,18 @@ private slots:
     void aptReleaseInfoChangeCommandShapes();
     void systemsTabActionButtonsShareColumn();
     void stateTogglingButtonsElideAtMinimumWidth();
+    void sortableDeviceTreeSortsDrivesAndPartitions();
+    void deviceTreeSortIndicatorSurvivesLegacyHeaderState();
+    void sortableSnapshotTableUsesNumericAndDateKeys();
+    void sortableRepairToolTreeKeepsWorkflowDefaultAndSorts();
+    void sortableCapabilityTableDefaultsToFeature();
+    void repairToolActionButtonStaysPinnedToPanelHeader();
+    void snapshotActionsStayAboveInventory();
+    void fileCopyHeaderActionsShareTitleRow();
+    void diagnosticsHeaderRunAllFollowsScopeLabel();
+    void scopeLabelHeadersStayOnTitleRow();
+    void responsivePageHeadersWrapActionsAtMinimumWidth();
+    void scopeLabelWrapsToTwoLinesBesideActions();
 };
 
 void MainWindowUiTest::initTestCase()
@@ -1461,10 +1987,13 @@ void MainWindowUiTest::hostDiagnosticAndActionRegister()
     window.show();
     QTest::qWait(100);
 
-    QVERIFY(window.m_diagnosticScopeCombo);
+    QVERIFY(window.m_diagnosticScopeLabel);
     QVERIFY(window.m_diagnosticList);
     QVERIFY(window.m_diagnosticResults);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege or writes.
+    prepareRepairScope(window, true);
+    enterHostDiagnosticScope(window);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(),
+             QStringLiteral("Host maintenance: /dev/test-host"));
     QVERIFY(window.m_diagnosticList->count() > 0);
     bool hasBootEvidence = false;
     for (int row = 0; row < window.m_diagnosticList->count(); ++row) {
@@ -1500,11 +2029,11 @@ void MainWindowUiTest::diagnosticOutputIsMirroredToMainLog()
     window.show();
     QTest::qWait(100);
 
-    QVERIFY(window.m_diagnosticScopeCombo);
+    QVERIFY(window.m_diagnosticScopeLabel);
     QVERIFY(window.m_diagnosticList);
     QVERIFY(window.m_diagnosticResults);
     QVERIFY(window.m_logView);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege or writes.
+    enterHostDiagnosticScope(window);
 
     // Select a deterministic individual diagnostic so the test checks that
     // its complete captured output is copied to the application log, rather
@@ -1557,7 +2086,7 @@ void MainWindowUiTest::narrowRepairAndFileCopyScrollAreasStayStable()
 
     const QList<QPair<QString, int>> pages = {
         {QStringLiteral("repairPageScroll"), 2},
-        {QStringLiteral("fileCopyPageScroll"), 4}
+        {QStringLiteral("fileCopyPageScroll"), 5}
     };
     for (const auto &page : pages) {
         window.m_tabs->setCurrentIndex(page.second);
@@ -2013,6 +2542,168 @@ void MainWindowUiTest::individualDiagnosticEnablesMatchingRepair()
              "A fresh matching target diagnostic must enable its individual repair action");
 }
 
+void MainWindowUiTest::cachedDiagnosticLabelIsCompactAndRerunSharesResultsHeader()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_tabs->setCurrentIndex(1); // Diagnostics
+
+    prepareRepairScope(window);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    const QDateTime capturedAt = QDateTime::fromString(QStringLiteral("2026-09-19 20:32:29"),
+                                                       QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    QVERIFY(capturedAt.isValid());
+    window.m_targetDiagnosticTimes.insert(QStringLiteral("grub"), capturedAt);
+
+    int grubRow = -1;
+    for (int row = 0; row < window.m_diagnosticList->count(); ++row) {
+        if (window.m_diagnosticList->item(row)->data(Qt::UserRole).toString() == QStringLiteral("grub")) {
+            grubRow = row;
+            break;
+        }
+    }
+    QVERIFY(grubRow >= 0);
+    window.m_diagnosticList->setCurrentRow(grubRow);
+    window.updateDiagnosticDetails();
+
+    // The visible label is only the capture timestamp; the scope and
+    // freshness explanation survives in the hover tooltip.
+    QCOMPARE(window.m_diagnosticAvailability->text(), QStringLiteral("Cached: 2026-09-19 20:32:29 result"));
+    QVERIFY2(window.m_diagnosticAvailability->toolTip().contains(
+                 QStringLiteral("read-only selected repair-system result")),
+             "the compact label must keep the scope explanation in its tooltip");
+    QVERIFY2(window.m_diagnosticAvailability->toolTip().contains(
+                 QStringLiteral("use Re-run only for fresh data")),
+             "the compact label must keep the freshness guidance in its tooltip");
+    QCOMPARE(window.m_runDiagnosticButton->text(), QStringLiteral("Re-run Diagnostic"));
+    QVERIFY(window.m_runDiagnosticButton->isEnabled());
+    QVERIFY(!window.m_diagnosticResults->toPlainText().isEmpty());
+
+    // The run/re-run action shares the Results heading row: same vertical
+    // center as the heading, to its right and flush with the results pane.
+    QVERIFY(window.m_diagnosticResultsTitle);
+    const auto headingCenter = [&window] {
+        return window.m_diagnosticResultsTitle->mapTo(
+            &window, window.m_diagnosticResultsTitle->rect().center());
+    };
+    const auto buttonCenter = [&window] {
+        return window.m_runDiagnosticButton->mapTo(
+            &window, window.m_runDiagnosticButton->rect().center());
+    };
+    const int buttonRight = window.m_runDiagnosticButton->mapTo(
+        &window, QPoint(window.m_runDiagnosticButton->width(), 0)).x();
+    const int resultsRight = window.m_diagnosticResults->mapTo(
+        &window, QPoint(window.m_diagnosticResults->width(), 0)).x();
+    const int buttonBottom = window.m_runDiagnosticButton->mapTo(
+        &window, QPoint(0, window.m_runDiagnosticButton->height())).y();
+    const int resultsTop = window.m_diagnosticResults->mapTo(&window, QPoint(0, 0)).y();
+
+    QVERIFY2(qAbs(headingCenter().y() - buttonCenter().y()) <= 2,
+             qPrintable(QStringLiteral("Results heading center y=%1, run button center y=%2")
+                 .arg(headingCenter().y()).arg(buttonCenter().y())));
+    QVERIFY2(buttonCenter().x() > headingCenter().x(),
+             "the run/re-run button must sit to the right of the Results heading");
+    QVERIFY2(qAbs(buttonRight - resultsRight) <= 2,
+             qPrintable(QStringLiteral("run button right=%1, results pane right=%2")
+                 .arg(buttonRight).arg(resultsRight)));
+    QVERIFY2(buttonBottom <= resultsTop,
+             "the run/re-run button must stay above the results text area");
+
+    // The standalone run row is gone: the heading row follows the availability
+    // line by just the layout spacing, so the action cannot float between the
+    // cached line and the results box again.
+    const int availabilityBottom = window.m_diagnosticAvailability->mapTo(
+        &window, QPoint(0, window.m_diagnosticAvailability->height())).y();
+    const int headingTop = window.m_diagnosticResultsTitle->mapTo(&window, QPoint(0, 0)).y();
+    QVERIFY2(headingTop - availabilityBottom <= 16,
+             qPrintable(QStringLiteral("availability line bottom=%1, Results heading top=%2")
+                 .arg(availabilityBottom).arg(headingTop)));
+    QVERIFY2(window.m_diagnosticResults->height()
+                 > window.m_runDiagnosticButton->height() + window.m_diagnosticResultsTitle->height(),
+             "the results text area must keep the space freed by the removed run row");
+
+    // The same row geometry must survive the smallest supported window: no
+    // overlap with the results pane and a usable results height.
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    const QRect smallHeading = window.m_diagnosticResultsTitle->geometry();
+    const QRect smallButton = window.m_runDiagnosticButton->geometry();
+    const QRect smallResults = window.m_diagnosticResults->geometry();
+    QVERIFY2(smallHeading.top() <= smallButton.bottom()
+                 && smallButton.top() <= smallHeading.bottom(),
+             qPrintable(QStringLiteral("minimum size: heading rect %1,%2 %3x%4, button rect %5,%6 %7x%8")
+                 .arg(smallHeading.x()).arg(smallHeading.y())
+                 .arg(smallHeading.width()).arg(smallHeading.height())
+                 .arg(smallButton.x()).arg(smallButton.y())
+                 .arg(smallButton.width()).arg(smallButton.height())));
+    QVERIFY2(smallButton.left() > smallHeading.left(),
+             "the run/re-run button must stay right of the Results heading at minimum size");
+    QVERIFY2(smallButton.bottom() <= smallResults.top(),
+             qPrintable(QStringLiteral("minimum size: run button bottom=%1, results pane top=%2")
+                 .arg(smallButton.bottom()).arg(smallResults.top())));
+    QVERIFY2(window.m_diagnosticResultsTitle->parentWidget()
+                 && window.m_diagnosticResultsTitle->parentWidget()->rect().contains(smallButton),
+             "the run/re-run button must stay inside the selected-diagnostic frame at minimum size");
+    QVERIFY2(window.m_diagnosticResults->height() > 0,
+             "the results text area must keep a visible height at minimum size");
+}
+
+// Every individual diagnostic keeps its own cached result and timestamp for
+// the active scope: selecting another diagnostic and returning must show the
+// previous output again without re-running anything. Only an explicit scope
+// change, repair invalidation or a fresh run of that section replaces it.
+void MainWindowUiTest::individualDiagnosticCachePersistsAcrossSelection()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    window.m_tabs->setCurrentIndex(1); // Diagnostics
+
+    prepareRepairScope(window);
+
+    const int fstabRow = diagnosticRow(window, QStringLiteral("fstab"));
+    const int usageRow = diagnosticRow(window, QStringLiteral("usage"));
+    QVERIFY2(fstabRow >= 0, "the fstab diagnostic must exist");
+    QVERIFY2(usageRow >= 0, "the Disk usage diagnostic must exist");
+
+    // Run A (fstab) through the UI-test diagnostics backend.
+    window.m_diagnosticList->setCurrentRow(fstabRow);
+    window.runSelectedDiagnostic();
+    const QString fstabResult = window.m_targetDiagnosticCache.value(QStringLiteral("fstab"));
+    QVERIFY2(!fstabResult.isEmpty(), "running fstab must cache its result");
+    const QDateTime fstabCapturedAt = window.m_targetDiagnosticTimes.value(QStringLiteral("fstab"));
+    QVERIFY2(fstabCapturedAt.isValid(), "running fstab must record its capture timestamp");
+    QCOMPARE(window.m_diagnosticResults->toPlainText(), fstabResult);
+
+    // Select and run B (Disk usage): the cached fstab evidence and timestamp
+    // must survive both the selection and another diagnostic's run.
+    window.m_diagnosticList->setCurrentRow(usageRow);
+    window.runSelectedDiagnostic();
+    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("usage")).isEmpty(),
+             "running Disk usage must cache its own result");
+    QVERIFY2(window.m_targetDiagnosticCache.contains(QStringLiteral("fstab")),
+             "running another diagnostic must not clear fstab's cached result");
+    QCOMPARE(window.m_targetDiagnosticTimes.value(QStringLiteral("fstab")), fstabCapturedAt);
+
+    // Select A again: its cached result and timestamp are still shown.
+    window.m_diagnosticList->setCurrentRow(fstabRow);
+    QCOMPARE(window.m_diagnosticResults->toPlainText(), fstabResult);
+    QCOMPARE(window.m_targetDiagnosticTimes.value(QStringLiteral("fstab")), fstabCapturedAt);
+    QVERIFY2(window.m_diagnosticAvailability->text().contains(QStringLiteral("Cached")),
+             qPrintable(window.m_diagnosticAvailability->text()));
+    QCOMPARE(window.m_runDiagnosticButton->text(), QStringLiteral("Re-run Diagnostic"));
+    QVERIFY(window.m_runDiagnosticButton->isEnabled());
+    QVERIFY(window.m_copyDiagnosticButton->isEnabled());
+}
+
 void MainWindowUiTest::filesystemRepairToolRowIsGatedByCapabilityEvidence()
 {
     MainWindow window;
@@ -2342,26 +3033,11 @@ void MainWindowUiTest::filesystemRepairFlowInspectsConfirmsAndRepairs()
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
+    prepareFilesystemPlan(window);
 
     // Run the stage through Full Repair itself so the plan entry, the
     // inspect/confirm/repair flow and the helper commands are exercised as one
     // user action.
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    window.updateFullRepairSummary();
     QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("filesystem")});
 
     QTemporaryDir requestDir;
@@ -2525,30 +3201,14 @@ void MainWindowUiTest::filesystemRepairFlowUsesHostCommandsInHostMode()
              "host maintenance must not send the target repair command");
 }
 
-void MainWindowUiTest::skippedFilesystemInspectionIsNotReportedAsClean()
+void MainWindowUiTest::fullRepairSkippedFilesystemPreStageIsNotCountedAsClean()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    window.updateFullRepairSummary();
+    prepareFilesystemPlan(window);
     QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("filesystem")});
 
     QTemporaryDir requestDir;
@@ -2594,7 +3254,55 @@ void MainWindowUiTest::skippedFilesystemInspectionIsNotReportedAsClean()
              "the read-only inspection must still have run");
     QVERIFY2(!requests.contains(QStringLiteral("fs-repair")),
              "a skipped inspection must not offer or run a repair");
+
+    // --- merged from fullRepairSkippedFilesystemPreStageIsNotCountedAsNoRepairNeeded() ---
+    {
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareFilesystemPlan(window);
+        QVERIFY(window.m_fullRepairDpkg);
+        window.m_fullRepairDpkg->setChecked(true);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.selectedRepairStages(),
+                 QStringList({QStringLiteral("filesystem"), QStringLiteral("dpkg-configure")}));
+
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("plan-fs-skipped-requests.log"));
+        QProcess *session = startFilesystemFakePrivilegedSession(window, capturePath,
+                                                                 QStringLiteral("ext4"), /*issue=*/false);
+        QVERIFY2(session, "the scripted privileged session must start");
+        QVERIFY(window.m_privilegedSessionReady);
+
+        closeRepairProgressDialogWhenDone(&window);
+        // The skipped pre-stage is log-only inside the plan: only the plan
+        // confirmation remains modal.
+        acceptNextMessageBoxes(&window, 1, QMessageBox::Yes);
+
+        window.runFullRepair();
+
+        QVERIFY2(!window.m_fullRepairPlanInProgress, "the plan must finish");
+        const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QVERIFY2(log.contains(QStringLiteral(
+                     "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 0 no repair needed · "
+                     "▪ 1 not checked — see the filesystem stage line — changes were applied.")),
+                 "the aggregate must count the skipped filesystem in its own category "
+                 "and reference the stage line that lists the skipped device");
+        QVERIFY2(!log.contains(QStringLiteral("▪ 1 no repair needed")),
+                 "a skipped filesystem must never be counted as no-repair-needed");
+        QVERIFY2(log.contains(QStringLiteral(
+                     "  ▪ filesystem — not all filesystems were checked — "
+                     "1 skipped (mounted, offline-only check): /dev/test-root ext4")),
+                 "the skipped filesystem and its device must be auditable in the summary");
+        QVERIFY2(log.contains(QStringLiteral("  ✓ dpkg — package configuration completed — changes were applied")),
+                 "the remaining plan stages must still run and be auditable");
+    }
 }
+
 
 void MainWindowUiTest::btrfsRepairRequiresExtraDangerConfirmation()
 {
@@ -2603,23 +3311,7 @@ void MainWindowUiTest::btrfsRepairRequiresExtraDangerConfirmation()
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    window.updateFullRepairSummary();
+    prepareFilesystemPlan(window);
     QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("filesystem")});
 
     QTemporaryDir requestDir;
@@ -2758,6 +3450,54 @@ void MainWindowUiTest::fullRepairPlanSchedulesSingleEvidenceRegeneration()
     MainWindow window;
     window.show();
     QTest::qWait(50);
+    // finishFullRepairPlan() rescans devices before scheduling the single
+    // end-of-plan regeneration. Point the UI-test scanner at a fake lsblk that
+    // still exposes the committed target so the target-scope readiness gate
+    // holds after the refresh, exactly like a production rescan of the real
+    // repair drive.
+    QTemporaryDir scanDir;
+    QVERIFY(scanDir.isValid());
+    const QString lsblkPath = scanDir.filePath(QStringLiteral("lsblk"));
+    {
+        QFile lsblk(lsblkPath);
+        QVERIFY(lsblk.open(QIODevice::WriteOnly | QIODevice::Text));
+        lsblk.write(R"LSBLK(#!/bin/sh
+cat <<'JSON'
+{
+   "blockdevices": [
+      {
+         "name": "test-system",
+         "kname": "test-system",
+         "path": "/dev/test-system",
+         "maj:min": "253:0",
+         "type": "disk",
+         "size": 21474836480,
+         "fstype": null,
+         "mountpoints": [],
+         "children": [
+            {
+               "name": "test-root",
+               "kname": "test-root",
+               "path": "/dev/test-root",
+               "maj:min": "253:1",
+               "type": "part",
+               "size": 17024679936,
+               "fstype": "ext4",
+               "mountpoints": []
+            }
+         ]
+      }
+   ]
+}
+JSON
+)LSBLK");
+        lsblk.close();
+        QVERIFY(QFile::setPermissions(lsblkPath,
+                QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+                | QFileDevice::ReadGroup | QFileDevice::ExeGroup
+                | QFileDevice::ReadOther | QFileDevice::ExeOther));
+    }
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", lsblkPath.toLocal8Bit());
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
     window.m_autoRefreshDiagnostics->setChecked(true);
@@ -3088,7 +3828,7 @@ void MainWindowUiTest::logSectionSearchShowsWholeDiagnosticSection()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const int errorsRow = diagnosticRow(window, QStringLiteral("errors"));
     const int environmentRow = diagnosticRow(window, QStringLiteral("environment"));
@@ -3132,7 +3872,7 @@ void MainWindowUiTest::logFilterDropdownFiltersDiagnosticsRepairsAndSections()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const int errorsRow = diagnosticRow(window, QStringLiteral("errors"));
     const int environmentRow = diagnosticRow(window, QStringLiteral("environment"));
@@ -3199,7 +3939,7 @@ void MainWindowUiTest::logFilterTracksHostDkmsRepairCycleAndDiagnosticsRegenerat
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
     // This test regenerates diagnostics explicitly; the automatic refresh is
     // exercised elsewhere and would otherwise run concurrently.
     window.m_autoRefreshDiagnostics->setChecked(false);
@@ -3222,7 +3962,6 @@ void MainWindowUiTest::logFilterTracksHostDkmsRepairCycleAndDiagnosticsRegenerat
     // The repair's device refresh replaced the synthetic host identity; restore
     // it before the explicit diagnostics regeneration.
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
     window.runAllDiagnostics();
     flushLogRefresh(window);
     QCOMPARE(diagnosticSectionCount(window, QStringLiteral("report")), 1);
@@ -3327,7 +4066,7 @@ void MainWindowUiTest::logSectionFilterShowsRelatedRepairsAndDiagnosticSection()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const QString kernelSection = QStringLiteral(
         "========================================\n"
@@ -3436,7 +4175,7 @@ void MainWindowUiTest::logSectionFilterWithoutMatchesShowsNotice()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     window.appendLog(QStringLiteral("Repair output\nDiagnostic: Rebuild initramfs\nNOTICE_TEST_REPAIR_MARKER"),
                      QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
@@ -3471,7 +4210,7 @@ void MainWindowUiTest::logSectionFilterSearchMatchesOnlyFilteredSubset()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const QString kernelSection = QStringLiteral(
         "========================================\n"
@@ -3509,14 +4248,14 @@ void MainWindowUiTest::logSectionFilterSearchMatchesOnlyFilteredSubset()
              "matching entries outside the selected section must stay hidden");
 }
 
-void MainWindowUiTest::logSectionFilterExtractsEmbeddedReportSections()
+void MainWindowUiTest::logSectionFilterExtractsEmbeddedReportSectionsAndShowsNotice()
 {
     MainWindow window;
     window.show();
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     // One Run All report entry embedding the per-key sections, exactly as the
     // privileged helper captures them inside the combined report.
@@ -3580,38 +4319,38 @@ void MainWindowUiTest::logSectionFilterExtractsEmbeddedReportSections()
     QVERIFY2(visible.contains(QStringLiteral("(no matching entries for this filter)")),
              "an unmatched search inside the section filter must show the notice");
     window.m_logSearchEdit->clear();
-}
 
-void MainWindowUiTest::logSectionFilterWithoutEmbeddedSectionShowsNotice()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    window.m_snapshotPreloadScheduled = true;
-    prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    // --- merged from logSectionFilterWithoutEmbeddedSectionShowsNotice() ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, true);
+        enterHostDiagnosticScope(window);
 
-    // A combined report that simply never captured the grub section.
-    window.appendLog(combinedReportEntry(QStringLiteral("Running Host"),
-        {embeddedReportSection(QStringLiteral("environment"), QStringLiteral("Environment validation"),
-                               QStringLiteral("Running Host"), QStringLiteral("ENVONLYTOKEN inspection ready")),
-         embeddedReportSection(QStringLiteral("kernel"), QStringLiteral("Kernel / initramfs"),
-                               QStringLiteral("Running Host"), QStringLiteral("KERNELONLYTOKEN vmlinuz present"))}),
-        QStringLiteral("INFO"), MainWindow::LogEntryKind::Diagnostic);
-    flushLogRefresh(window);
+        // A combined report that simply never captured the grub section.
+        window.appendLog(combinedReportEntry(QStringLiteral("Running Host"),
+            {embeddedReportSection(QStringLiteral("environment"), QStringLiteral("Environment validation"),
+                                   QStringLiteral("Running Host"), QStringLiteral("ENVONLYTOKEN inspection ready")),
+             embeddedReportSection(QStringLiteral("kernel"), QStringLiteral("Kernel / initramfs"),
+                                   QStringLiteral("Running Host"), QStringLiteral("KERNELONLYTOKEN vmlinuz present"))}),
+            QStringLiteral("INFO"), MainWindow::LogEntryKind::Diagnostic);
+        flushLogRefresh(window);
 
-    const int grubIndex = window.m_logFilterCombo->findText(QStringLiteral("GRUB configuration"));
-    QVERIFY(grubIndex >= 0);
-    window.m_logFilterCombo->setCurrentIndex(grubIndex);
-    const QString visible = window.m_logView->toPlainText();
-    QVERIFY2(visible.contains(QStringLiteral("(no matching entries for this filter)")),
-             "a report without a grub section must show the notice");
-    QVERIFY2(!visible.contains(QStringLiteral("Diagnostic: grub")),
-             "no grub section exists to show");
-    QVERIFY2(!visible.contains(QStringLiteral("ENVONLYTOKEN")),
-             "unrelated embedded sections must stay hidden");
-    QVERIFY2(!visible.contains(QStringLiteral("KERNELONLYTOKEN")),
-             "unrelated embedded sections must stay hidden");
+        const int grubIndex = window.m_logFilterCombo->findText(QStringLiteral("GRUB configuration"));
+        QVERIFY(grubIndex >= 0);
+        window.m_logFilterCombo->setCurrentIndex(grubIndex);
+        const QString visible = window.m_logView->toPlainText();
+        QVERIFY2(visible.contains(QStringLiteral("(no matching entries for this filter)")),
+                 "a report without a grub section must show the notice");
+        QVERIFY2(!visible.contains(QStringLiteral("Diagnostic: grub")),
+                 "no grub section exists to show");
+        QVERIFY2(!visible.contains(QStringLiteral("ENVONLYTOKEN")),
+                 "unrelated embedded sections must stay hidden");
+        QVERIFY2(!visible.contains(QStringLiteral("KERNELONLYTOKEN")),
+                 "unrelated embedded sections must stay hidden");
+    }
 }
 
 void MainWindowUiTest::logSectionFilterExtractsEmbeddedSectionsFromPriorSession()
@@ -3624,7 +4363,7 @@ void MainWindowUiTest::logSectionFilterExtractsEmbeddedSectionsFromPriorSession(
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const QString priorPath = logDir.path() + QStringLiteral("/session-20260101-000000.log");
     {
@@ -3674,7 +4413,7 @@ void MainWindowUiTest::logWorkflowFilesystemFilterShowsCheckRepairAndEvidence()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const QString capabilityPreamble = QStringLiteral(
         "Repair capability probes (read-only, selected target):\n"
@@ -3750,6 +4489,242 @@ void MainWindowUiTest::logWorkflowFilesystemFilterShowsCheckRepairAndEvidence()
         window.m_logFilterCombo->findData(QStringLiteral("all")));
 }
 
+// Host→target and target→host file-copy operations are tagged FileCopy
+// entries. They must be visible under the "File system repair" workflow
+// filter (the copy is part of repairing the system's filesystems) and under a
+// dedicated "File copy" filter, while unrelated section filters keep hiding
+// them and the file system check/repair entries keep their own filter.
+void MainWindowUiTest::logWorkflowFilesystemFilterShowsFileCopyOperations()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, true);
+    enterHostDiagnosticScope(window);
+
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Check File Systems\nFS_COPY_UNRELATED_CHECK e2fsck clean"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: File Copy — Host → Repair\nFS_COPY_HOST_TO_TARGET copied"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::FileCopy);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: File Copy — Repair → Host\nFS_COPY_TARGET_TO_HOST copied"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::FileCopy);
+    window.appendLog(QStringLiteral("Staged Host → Repair destination: /mnt/recovery. No copy occurred."),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::FileCopy);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Rebuild initramfs\nFS_COPY_UNRELATED_INITRAMFS rebuilt"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    flushLogRefresh(window);
+
+    // The dedicated File copy filter exists and shows both copy directions
+    // plus the staging notice, without leaking check/repair or kernel entries.
+    const int fileCopyIndex = window.m_logFilterCombo->findData(QStringLiteral("topic:filecopy"));
+    QVERIFY(fileCopyIndex >= 0);
+    QCOMPARE(window.m_logFilterCombo->itemText(fileCopyIndex), QStringLiteral("File copy"));
+    window.m_logFilterCombo->setCurrentIndex(fileCopyIndex);
+    QString visible = window.m_logView->toPlainText();
+    QVERIFY2(visible.contains(QStringLiteral("FS_COPY_HOST_TO_TARGET")),
+             "the dedicated filter must show the host-to-target copy");
+    QVERIFY2(visible.contains(QStringLiteral("FS_COPY_TARGET_TO_HOST")),
+             "the dedicated filter must show the target-to-host copy");
+    QVERIFY2(visible.contains(QStringLiteral("Staged Host → Repair destination")),
+             "the dedicated filter must show the staging notice");
+    QVERIFY2(!visible.contains(QStringLiteral("FS_COPY_UNRELATED_CHECK")),
+             "the dedicated filter must hide file system check entries");
+    QVERIFY2(!visible.contains(QStringLiteral("FS_COPY_UNRELATED_INITRAMFS")),
+             "the dedicated filter must hide unrelated repair entries");
+
+    // The File system repair workflow includes the copy operations and keeps
+    // its check/repair entries.
+    const int filesystemIndex = window.m_logFilterCombo->findData(QStringLiteral("topic:filesystem"));
+    QVERIFY(filesystemIndex >= 0);
+    window.m_logFilterCombo->setCurrentIndex(filesystemIndex);
+    visible = window.m_logView->toPlainText();
+    QVERIFY2(visible.contains(QStringLiteral("FS_COPY_HOST_TO_TARGET")),
+             "File system repair must show the host-to-target copy");
+    QVERIFY2(visible.contains(QStringLiteral("FS_COPY_TARGET_TO_HOST")),
+             "File system repair must show the target-to-host copy");
+    QVERIFY2(visible.contains(QStringLiteral("FS_COPY_UNRELATED_CHECK")),
+             "File system repair must keep the file system check entry");
+    QVERIFY2(!visible.contains(QStringLiteral("FS_COPY_UNRELATED_INITRAMFS")),
+             "File system repair must keep hiding unrelated repair entries");
+
+    // An unrelated section filter still hides the copy entries.
+    window.m_logFilterCombo->setCurrentIndex(
+        window.m_logFilterCombo->findData(QStringLiteral("@kernel")));
+    const QString kernelVisible = window.m_logView->toPlainText();
+    QVERIFY2(!kernelVisible.contains(QStringLiteral("FS_COPY_HOST_TO_TARGET")),
+             "the kernel section filter must hide host-to-target copies");
+    QVERIFY2(!kernelVisible.contains(QStringLiteral("FS_COPY_TARGET_TO_HOST")),
+             "the kernel section filter must hide target-to-host copies");
+    QVERIFY2(kernelVisible.contains(QStringLiteral("FS_COPY_UNRELATED_INITRAMFS")),
+             "the kernel section filter must keep its initramfs repair");
+    window.m_logFilterCombo->setCurrentIndex(
+        window.m_logFilterCombo->findData(QStringLiteral("all")));
+}
+
+// The "Package repair" workflow filter shows the package-stage entries
+// (dependency repair, interrupted package configuration, metadata refresh,
+// upgrades and DKMS) plus the helper's package-backend BEGIN/SKIP and
+// held-back/skipped feedback lines, and it sits directly after "File system
+// repair" in the dropdown. The file system check/repair workflow keeps
+// showing only its own entries, so package stages never leak into it.
+void MainWindowUiTest::logWorkflowPackageFilterShowsPackageStagesAndKeepsFilesystemSeparate()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, true);
+    enterHostDiagnosticScope(window);
+
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Check File Systems\nPKG_FS_CHECK_MARKER e2fsck clean"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: File system repair (repair)\nPKG_FS_REPAIR_MARKER repaired"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Repair broken dependencies\nPKG_FIXBROKEN_MARKER dependencies repaired"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Complete package configuration\nPKG_DPKG_MARKER configuration completed"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Refresh package metadata\nPKG_APTUPDATE_MARKER metadata refreshed"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Upgrade installed packages\n"
+                                    "BEGIN: package backend apt/dpkg (apt-upgrade)\n"
+                                    "Package kept back: firmware-mediatek\n"
+                                    "PKG_UPGRADE_MARKER upgraded"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: DKMS\nPKG_DKMS_MARKER modules rebuilt"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    // A combined Full Repair entry carries the package backends' BEGIN/SKIP
+    // and feedback lines for a stage whose name matches no stage topic
+    // (dpkg-configure); only the packagefeedback topic can capture it.
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Full Repair\n"
+                                    "BEGIN: package backend apt/dpkg (dpkg-configure)\n"
+                                    "SKIP: package backend rpm is not runnable for stage 'dpkg-configure': dnf5 is not installed\n"
+                                    "Package manager feedback: apt/dpkg: 1 package kept back: firmware-mediatek\n"
+                                    "PKG_FULLREPAIR_MARKER"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Regenerate GRUB configuration\nPKG_GRUB_MARKER regenerated"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    flushLogRefresh(window);
+
+    const int filesystemIndex = window.m_logFilterCombo->findData(QStringLiteral("topic:filesystem"));
+    const int packageIndex = window.m_logFilterCombo->findData(QStringLiteral("topic:package"));
+    QVERIFY(filesystemIndex >= 0);
+    QVERIFY(packageIndex >= 0);
+    QCOMPARE(window.m_logFilterCombo->itemText(packageIndex), QStringLiteral("Package repair"));
+    QCOMPARE(packageIndex, filesystemIndex + 1);
+
+    window.m_logFilterCombo->setCurrentIndex(packageIndex);
+    const QString packageVisible = window.m_logView->toPlainText();
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_FIXBROKEN_MARKER")),
+             "the dependency repair entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_DPKG_MARKER")),
+             "the interrupted package configuration entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_APTUPDATE_MARKER")),
+             "the metadata refresh entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_UPGRADE_MARKER")),
+             "the package upgrade entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("Package kept back: firmware-mediatek")),
+             "the held-back feedback line must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_DKMS_MARKER")),
+             "the DKMS rebuild entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("PKG_FULLREPAIR_MARKER")),
+             "the combined Full Repair entry must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("BEGIN: package backend apt/dpkg (dpkg-configure)")),
+             "the package-backend BEGIN line must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("SKIP: package backend rpm is not runnable for stage 'dpkg-configure'")),
+             "the package-backend SKIP line must be shown");
+    QVERIFY2(packageVisible.contains(QStringLiteral("Package manager feedback: apt/dpkg: 1 package kept back")),
+             "the package-manager feedback line must be shown");
+    QVERIFY2(!packageVisible.contains(QStringLiteral("PKG_FS_CHECK_MARKER")),
+             "the file system check must stay out of the package workflow");
+    QVERIFY2(!packageVisible.contains(QStringLiteral("PKG_FS_REPAIR_MARKER")),
+             "the file system repair must stay out of the package workflow");
+    QVERIFY2(!packageVisible.contains(QStringLiteral("PKG_GRUB_MARKER")),
+             "unrelated GRUB repairs must stay hidden");
+    QVERIFY2(!packageVisible.contains(QStringLiteral("(no matching entries for this filter)")),
+             "the package workflow filter must not fall back to the empty notice");
+
+    window.m_logFilterCombo->setCurrentIndex(filesystemIndex);
+    const QString filesystemVisible = window.m_logView->toPlainText();
+    QVERIFY2(filesystemVisible.contains(QStringLiteral("PKG_FS_CHECK_MARKER")),
+             "File system repair must keep the file system check entry");
+    QVERIFY2(filesystemVisible.contains(QStringLiteral("PKG_FS_REPAIR_MARKER")),
+             "File system repair must keep the file system repair entry");
+    for (const QString &marker : {QStringLiteral("PKG_FIXBROKEN_MARKER"), QStringLiteral("PKG_DPKG_MARKER"),
+                                  QStringLiteral("PKG_APTUPDATE_MARKER"), QStringLiteral("PKG_UPGRADE_MARKER"),
+                                  QStringLiteral("PKG_DKMS_MARKER"), QStringLiteral("PKG_FULLREPAIR_MARKER"),
+                                  QStringLiteral("PKG_GRUB_MARKER")}) {
+        QVERIFY2(!filesystemVisible.contains(marker),
+                 qPrintable(QStringLiteral("File system repair must hide %1").arg(marker)));
+    }
+    window.m_logFilterCombo->setCurrentIndex(
+        window.m_logFilterCombo->findData(QStringLiteral("all")));
+}
+
+// Selecting the "Package repair" workflow filter extracts the environment and
+// backend sections embedded in a combined Run All report (the evidence that
+// names the detected package managers) whole, keeps unrelated embedded
+// sections hidden, and includes package repair entries while hiding file
+// system repairs.
+void MainWindowUiTest::logWorkflowPackageFilterExtractsCombinedReportSections()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, true);
+    enterHostDiagnosticScope(window);
+
+    const QString capabilityPreamble = QStringLiteral(
+        "Repair capability probes (read-only, selected target):\n"
+        "Repair tool fixbroken: available\n"
+        "Repair tool aptupdate: available\n"
+        "Repair capability evidence (read-only):\n"
+        "Repair capability evidence fixbroken: apt/dpkg present\n");
+    window.appendLog(combinedReportEntry(QStringLiteral("Running Host"),
+        {capabilityPreamble
+             + embeddedReportSection(QStringLiteral("environment"), QStringLiteral("Environment validation"),
+                                     QStringLiteral("Running Host"),
+                                     QStringLiteral("PKG_ENV_MARKER Package manager: apt/dpkg")),
+         embeddedReportSection(QStringLiteral("backend"), QStringLiteral("Distribution and boot backend profile"),
+                               QStringLiteral("Running Host"),
+                               QStringLiteral("PKG_BACKEND_MARKER Package manager backends: apt/dpkg")),
+         embeddedReportSection(QStringLiteral("usage"), QStringLiteral("Disk usage"),
+                               QStringLiteral("Running Host"), QStringLiteral("PKG_USAGE_MARKER filesystem usage")),
+         embeddedReportSection(QStringLiteral("kernel"), QStringLiteral("Kernel / initramfs"),
+                               QStringLiteral("Running Host"), QStringLiteral("PKG_KERNEL_MARKER vmlinuz present"))}),
+        QStringLiteral("INFO"), MainWindow::LogEntryKind::Diagnostic);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Upgrade installed packages\nPKG_COMBINED_UPGRADE_MARKER upgraded"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair output\nDiagnostic: Check File Systems\nPKG_COMBINED_FS_MARKER e2fsck clean"),
+                     QStringLiteral("INFO"), MainWindow::LogEntryKind::Repair);
+    flushLogRefresh(window);
+
+    const int packageIndex = window.m_logFilterCombo->findData(QStringLiteral("topic:package"));
+    QVERIFY(packageIndex >= 0);
+    window.m_logFilterCombo->setCurrentIndex(packageIndex);
+    const QString visible = window.m_logView->toPlainText();
+    QVERIFY2(visible.contains(QStringLiteral("Diagnostic: environment")),
+             "the embedded environment section must be selected");
+    QVERIFY2(visible.contains(QStringLiteral("PKG_ENV_MARKER")),
+             "the complete environment section body must be shown");
+    QVERIFY2(visible.contains(QStringLiteral("Diagnostic: backend")),
+             "the embedded backend section must be selected");
+    QVERIFY2(visible.contains(QStringLiteral("PKG_BACKEND_MARKER")),
+             "the complete backend section body must be shown");
+    QVERIFY2(visible.contains(QStringLiteral("PKG_COMBINED_UPGRADE_MARKER")),
+             "the package repair entry must be included");
+    QVERIFY2(!visible.contains(QStringLiteral("PKG_USAGE_MARKER")),
+             "unrelated embedded sections must stay hidden");
+    QVERIFY2(!visible.contains(QStringLiteral("PKG_KERNEL_MARKER")),
+             "unrelated embedded sections must stay hidden");
+    QVERIFY2(!visible.contains(QStringLiteral("PKG_COMBINED_FS_MARKER")),
+             "file system repairs must stay hidden");
+    QVERIFY2(!visible.contains(QStringLiteral("(no matching entries for this filter)")),
+             "the package workflow filter must not fall back to the empty notice");
+}
+
 // A fuzzy search for a term shared by many sections ("file") must not flatten
 // the report into single lines without context: every matched embedded section
 // keeps its title frame and metadata above its matching lines, and the shared
@@ -3762,7 +4737,7 @@ void MainWindowUiTest::logSearchFileTermKeepsEmbeddedSectionsCoherent()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
 
     const QString capabilityPreamble = QStringLiteral(
         "Repair capability probes (read-only, selected target):\n"
@@ -3888,7 +4863,7 @@ void MainWindowUiTest::diagnosticRerunReplacesSectionOnly()
     const QString repairMarker = QStringLiteral("UI_TEST_REPAIR_OUTPUT_KEEP");
     window.appendLog(QStringLiteral("Repair output\n%1").arg(repairMarker));
 
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
     const int environmentRow = diagnosticRow(window, QStringLiteral("environment"));
     QVERIFY(environmentRow >= 0);
     window.m_diagnosticList->setCurrentRow(environmentRow);
@@ -4173,7 +5148,6 @@ void MainWindowUiTest::recurringStatusEntriesReplaceAcrossRepairCycles()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareStaleTargetScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     // Identify the synthetic target scope so this run owns a session file; the
     // file must keep the append-only history the live register dedupes.
     window.updateSessionScope();
@@ -4204,7 +5178,6 @@ void MainWindowUiTest::recurringStatusEntriesReplaceAcrossRepairCycles()
         // target identity. Restore it before the run and before scheduling the
         // automatic regeneration a successful modifying repair requests.
         prepareRepairScope(window);
-        window.m_diagnosticScopeCombo->setCurrentIndex(0);
         closeRepairProgressDialogWhenDone(&window);
         window.runRepairHelper(QStringLiteral("Rebuild DKMS"),
                                {QStringLiteral("repair"), window.m_previewTargetPath,
@@ -4212,7 +5185,6 @@ void MainWindowUiTest::recurringStatusEntriesReplaceAcrossRepairCycles()
                                MainWindow::LogEntryKind::Repair, QStringLiteral("dkms"));
         QCoreApplication::processEvents();
         prepareRepairScope(window);
-        window.m_diagnosticScopeCombo->setCurrentIndex(0);
         window.scheduleEvidenceRefresh(QStringLiteral("modifying repair completed"));
         QVERIFY(window.m_evidenceRefreshTimer);
         QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
@@ -4398,16 +5370,13 @@ void MainWindowUiTest::recurringStatusEntriesStaySeparatePerScopeAndDisk()
     // Manual Run All for two target disks and the host keeps the diagnostic
     // start entries separate per disk and per scope.
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.runAllDiagnostics();
     prepareRepairScope(window);
     window.m_previewTargetPath = QStringLiteral("/dev/test-system2");
     window.m_previewTargetComponentPath = QStringLiteral("/dev/test-root2");
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.runAllDiagnostics();
     prepareRepairScope(window, true);
     window.m_hostMaintenanceMode = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
     window.runAllDiagnostics();
     flushLogRefresh(window);
 
@@ -4433,7 +5402,7 @@ void MainWindowUiTest::runAllReplacesPriorReportAndPerKeySections()
     window.show();
     QTest::qWait(50);
 
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
     const int environmentRow = diagnosticRow(window, QStringLiteral("environment"));
     QVERIFY(environmentRow >= 0);
     window.m_diagnosticList->setCurrentRow(environmentRow);
@@ -4478,7 +5447,7 @@ void MainWindowUiTest::incrementalLogViewMatchesFullRebuild()
     window.show();
     QTest::qWait(50);
 
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
     const int environmentRow = diagnosticRow(window, QStringLiteral("environment"));
     const int grubRow = diagnosticRow(window, QStringLiteral("grub"));
     QVERIFY(environmentRow >= 0);
@@ -4550,6 +5519,627 @@ void MainWindowUiTest::nonLinuxTargetIsRejectedSafely()
     window.m_previewTargetComponentPath.clear();
 }
 
+void MainWindowUiTest::selectTargetStaysEnabledForEligibleHostMaintenanceCandidate()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    // Protected running host selected for explicit maintenance (host mode
+    // state: /dev/vda protected, Host Maintenance active).
+    prepareRepairScope(window, true);
+    QVERIFY(window.m_hostMaintenanceMode);
+
+    // Eligible repair candidate on another physical drive with a visible Linux
+    // root (host mode state: /dev/vdb3 ext4).
+    DeviceNode component;
+    component.path = QStringLiteral("/dev/test-target-root");
+    component.type = QStringLiteral("part");
+    component.fileSystem = QStringLiteral("ext4");
+    component.linuxCapableFileSystem = true;
+    DeviceNode disk;
+    disk.path = QStringLiteral("/dev/test-target");
+    disk.type = QStringLiteral("disk");
+    disk.children.append(component);
+    window.m_deviceIndex.insert(disk.path, disk);
+    window.m_deviceIndex.insert(component.path, component);
+
+    selectTopLevelDisk(window, disk.path);
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             qPrintable(QStringLiteral("Select Target must be enabled for an eligible candidate "
+                                       "while host maintenance is active (tooltip: %1)")
+                            .arg(window.m_setTargetButton->toolTip())));
+}
+
+void MainWindowUiTest::unprivilegedScanUdevEvidenceEnablesSelectTarget()
+{
+    // Reproduces the Alpine BIOS failure: the GUI runs as an unprivileged
+    // user, Alpine's util-linux lsblk is built without libudev and cannot
+    // probe block devices, so it reports every FSTYPE as empty even though
+    // udev already identified ext4/swap on the target drive. The scanner must
+    // fall back to the world-readable udev database and classify the drive as
+    // an eligible Linux candidate.
+    QTemporaryDir fakeRoot;
+    QVERIFY(fakeRoot.isValid());
+    UnprivilegedVdbFixture fixture;
+    const QString fixtureError = writeUnprivilegedVdbFixture(fakeRoot.path(), &fixture);
+    QVERIFY2(fixtureError.isEmpty(), qPrintable(fixtureError));
+
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", fixture.lsblkPath.toLocal8Bit());
+    ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", fixture.udevDir.toLocal8Bit());
+
+    SystemScanner scanner;
+    QString error;
+    const QList<DeviceNode> devices = scanner.scan(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(devices.size(), 1);
+    const DeviceNode disk = devices.first();
+    QCOMPARE(disk.path, fixture.diskPath);
+    QCOMPARE(disk.children.size(), 3);
+    QCOMPARE(disk.children.at(0).fileSystem, QStringLiteral("ext4"));
+    QCOMPARE(disk.children.at(0).uuid, fixture.bootUuid);
+    QCOMPARE(disk.children.at(1).fileSystem, QStringLiteral("swap"));
+    QCOMPARE(disk.children.at(2).fileSystem, QStringLiteral("ext4"));
+    QCOMPARE(disk.children.at(2).uuid, fixture.rootUuid);
+    QCOMPARE(disk.children.at(2).partUuid, fixture.rootPartUuid);
+    QVERIFY2(disk.children.at(2).linuxCapableFileSystem,
+             "the udev evidence must classify the ext4 partition as Linux-capable");
+
+    // Now drive the real Systems selection while host maintenance is active:
+    // the eligible target drive must enable Select Target.
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, true);
+    window.m_deviceIndex.insert(disk.path, disk);
+    for (const DeviceNode &child : disk.children) {
+        window.m_deviceIndex.insert(child.path, child);
+    }
+    selectTopLevelDisk(window, disk.path);
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             qPrintable(QStringLiteral("Select Target must be enabled for the eligible target "
+                                       "(tooltip: %1)").arg(window.m_setTargetButton->toolTip())));
+}
+
+void MainWindowUiTest::tableFilesystemColumnShowsUdevEnrichedFilesystem()
+{
+    // Alpine BIOS systems: the unprivileged scan learns ext4/swap only from
+    // the world-readable udev database, but the top-level /dev/vdb candidate
+    // row must show the detected filesystem exactly like the details panel
+    // instead of staying blank while the details name ext4.
+    QTemporaryDir fakeRoot;
+    QVERIFY(fakeRoot.isValid());
+    UnprivilegedVdbFixture fixture;
+    const QString fixtureError = writeUnprivilegedVdbFixture(fakeRoot.path(), &fixture);
+    QVERIFY2(fixtureError.isEmpty(), qPrintable(fixtureError));
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", fixture.lsblkPath.toLocal8Bit());
+    ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", fixture.udevDir.toLocal8Bit());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    QTreeWidgetItem *diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY2(diskItem, "the scanned /dev/test-vdb drive row must be rendered");
+    QCOMPARE(diskItem->childCount(), 3);
+    // Partitions sort within their drive, so resolve them by device path.
+    QTreeWidgetItem *bootItem = deviceTreeChildItem(diskItem, fixture.bootPath);
+    QTreeWidgetItem *swapItem = deviceTreeChildItem(diskItem, fixture.swapPath);
+    QTreeWidgetItem *rootItem = deviceTreeChildItem(diskItem, fixture.rootPath);
+    QVERIFY2(bootItem && swapItem && rootItem, "all three partition rows must be rendered");
+    QCOMPARE(bootItem->text(4), QStringLiteral("ext4"));
+    QCOMPARE(swapItem->text(4), QStringLiteral("swap"));
+    QCOMPARE(rootItem->text(4), QStringLiteral("ext4"));
+    QVERIFY2(diskItem->text(4) != QStringLiteral("—"),
+             qPrintable(QStringLiteral("the /dev/test-vdb filesystem cell stayed blank; "
+                                       "details report %1")
+                            .arg(window.m_detailFilesystem->text())));
+    QCOMPARE(diskItem->text(4), QStringLiteral("ext4"));
+
+    // The rendered cell must agree with the details panel for the same row.
+    selectDeviceTreeItem(window, diskItem);
+    QCOMPARE(window.m_detailFilesystem->text(), diskItem->text(4));
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+
+    // A Refresh Devices rebuild keeps the enriched value.
+    window.refreshDevices();
+    diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    QCOMPARE(diskItem->text(4), QStringLiteral("ext4"));
+
+    // Inspecting a partition and returning to the drive keeps the drive cell
+    // and its details consistent.
+    selectDeviceTreeItem(window, deviceTreeChildItem(diskItem, fixture.bootPath));
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+    diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    selectDeviceTreeItem(window, diskItem);
+    QCOMPARE(diskItem->text(4), QStringLiteral("ext4"));
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+}
+
+void MainWindowUiTest::preferredRepairNodeResolvesVdbRootAndCommittedTarget()
+{
+    // 300 MiB ext4 /boot + swap + 15.9 GiB ext4 root: the unprivileged
+    // preferred component must be the largest Linux-capable partition
+    // (/dev/test-vdb3), never the first ext4 match (/dev/test-vdb1) and never
+    // the swap partition. The committed-target line must name that component,
+    // not only the physical disk.
+    QTemporaryDir fakeRoot;
+    QVERIFY(fakeRoot.isValid());
+    UnprivilegedVdbFixture fixture;
+    const QString fixtureError = writeUnprivilegedVdbFixture(fakeRoot.path(), &fixture);
+    QVERIFY2(fixtureError.isEmpty(), qPrintable(fixtureError));
+    // Committing a target opens a session log; keep it inside this test's
+    // throwaway directory so the process-wide active-session state cannot leak
+    // into the later session-log tests.
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", fixture.lsblkPath.toLocal8Bit());
+    ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", fixture.udevDir.toLocal8Bit());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_uiTestPrivilegedSessionGranted = false;
+
+    QTreeWidgetItem *diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    selectDeviceTreeItem(window, diskItem);
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             qPrintable(QStringLiteral("Select Target must be enabled for the eligible target "
+                                       "(tooltip: %1)").arg(window.m_setTargetButton->toolTip())));
+    QCOMPARE(window.m_detailResolvedTarget->text(), fixture.rootPath);
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+    QCOMPARE(window.m_detailUuid->text(), fixture.rootUuid);
+
+    window.m_setTargetButton->click();
+    QCOMPARE(window.m_previewTargetPath, fixture.diskPath);
+    QCOMPARE(window.m_previewTargetComponentPath, fixture.rootPath);
+    const QString committed = window.m_systemTargetLabel->text();
+    QVERIFY2(committed.contains(fixture.rootPath),
+             qPrintable(QStringLiteral("the committed-target line must name the resolved "
+                                       "component: %1").arg(committed)));
+    QVERIFY2(!committed.contains(QStringLiteral("vdb1")),
+             qPrintable(QStringLiteral("the committed-target line must not name the /boot "
+                                       "partition: %1").arg(committed)));
+    QVERIFY2(committed.contains(QStringLiteral("0x1af4")),
+             qPrintable(QStringLiteral("the committed-target line must keep the drive model: %1")
+                            .arg(committed)));
+}
+
+void MainWindowUiTest::hostMaintenanceSelectionAndReselectionRestoreRepairScope()
+{
+    // The reported flow: commit /dev/vdb, enter Host Maintenance, then select
+    // the same row again and press Select Target. Re-selection must restore an
+    // enabled Select Target, the resolved /dev/vdb3 details and the committed
+    // target line instead of leaving stale host-maintenance state behind.
+    QTemporaryDir fakeRoot;
+    QVERIFY(fakeRoot.isValid());
+    UnprivilegedVdbFixture fixture;
+    const QString fixtureError = writeUnprivilegedVdbFixture(fakeRoot.path(), &fixture);
+    QVERIFY2(fixtureError.isEmpty(), qPrintable(fixtureError));
+    // Both the first commit and host maintenance open a session log; keep it
+    // inside this test's throwaway directory so the process-wide active-session
+    // state cannot leak into the later session-log tests.
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", fixture.lsblkPath.toLocal8Bit());
+    ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", fixture.udevDir.toLocal8Bit());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_uiTestPrivilegedSessionGranted = false;
+
+    // First commit exactly like the user: select /dev/test-vdb, press Select
+    // Target (the privileged prompt is deferred by the UI-test seam).
+    QTreeWidgetItem *diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    selectDeviceTreeItem(window, diskItem);
+    QVERIFY(window.m_setTargetButton->isEnabled());
+    window.m_setTargetButton->click();
+    QCOMPARE(window.m_previewTargetPath, fixture.diskPath);
+    QCOMPARE(window.m_previewTargetComponentPath, fixture.rootPath);
+    QVERIFY(window.m_systemTargetLabel->text().contains(fixture.rootPath));
+    QVERIFY(!window.m_hostMaintenanceMode);
+
+    // Enter Host Maintenance through the real handler. The protected running
+    // host tree is injected because the test host has no real protected disk.
+    prepareRepairScope(window, true);
+    window.m_hostMaintenanceMode = false;
+    window.updateHostSystemSummary({window.m_deviceIndex.value(QStringLiteral("/dev/test-host"))});
+    window.selectHostForMaintenance();
+    QVERIFY(window.m_hostMaintenanceMode);
+    QVERIFY(window.m_previewTargetPath.isEmpty());
+    QVERIFY(window.m_previewTargetComponentPath.isEmpty());
+    QVERIFY(window.m_systemTargetLabel->text().contains(QStringLiteral("Host maintenance")));
+
+    // Re-selecting the same physical row must re-enable Select Target, show
+    // the resolved root details again and re-commit the same component.
+    diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    QCOMPARE(diskItem->text(4), QStringLiteral("ext4"));
+    selectDeviceTreeItem(window, diskItem);
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             qPrintable(QStringLiteral("Select Target must be enabled after host maintenance "
+                                       "(tooltip: %1)").arg(window.m_setTargetButton->toolTip())));
+    QCOMPARE(window.m_detailResolvedTarget->text(), fixture.rootPath);
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+
+    window.m_setTargetButton->click();
+    QVERIFY2(!window.m_hostMaintenanceMode,
+             "committing a repair target must end host-maintenance mode");
+    QCOMPARE(window.m_previewTargetPath, fixture.diskPath);
+    QCOMPARE(window.m_previewTargetComponentPath, fixture.rootPath);
+    QVERIFY(window.m_systemTargetLabel->text().contains(fixture.rootPath));
+    QVERIFY(!window.m_systemTargetLabel->text().contains(QStringLiteral("vdb1")));
+    QCOMPARE(window.m_detailResolvedTarget->text(), fixture.rootPath);
+    QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             "Select Target must stay enabled for the committed eligible target");
+    diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+    QVERIFY(diskItem);
+    QVERIFY2(diskItem->text(1).contains(QStringLiteral("SELECTED TARGET")),
+             qPrintable(QStringLiteral("the re-committed row must stay visibly marked: %1")
+                            .arg(diskItem->text(1))));
+
+    // --- merged from hostMaintenanceTargetSelectionRestoresRepairScope() ---
+    {
+        // Never adopt the previous phase's session file.
+        MainWindow::s_activeSessionPath.clear();
+
+        // The reported flow: Host Maintenance is active and the user selects an
+        // eligible repair drive and presses Select Target. The selection must
+        // leave host maintenance through the shared deselect path and commit the
+        // target in one gesture, with the host card, diagnostics scope, session
+        // scope and plan all back on the ordinary repair-target mode.
+        QTemporaryDir fakeRoot;
+        QVERIFY(fakeRoot.isValid());
+        UnprivilegedVdbFixture fixture;
+        const QString fixtureError = writeUnprivilegedVdbFixture(fakeRoot.path(), &fixture);
+        QVERIFY2(fixtureError.isEmpty(), qPrintable(fixtureError));
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
+        ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", fixture.lsblkPath.toLocal8Bit());
+        ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", fixture.udevDir.toLocal8Bit());
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        window.m_uiTestPrivilegedSessionGranted = false;
+
+        // Enter Host Maintenance through the real handler (the protected running
+        // host tree is injected because the test host has no real protected disk).
+        prepareRepairScope(window, true);
+        window.m_hostMaintenanceMode = false;
+        window.updateHostSystemSummary({window.m_deviceIndex.value(QStringLiteral("/dev/test-host"))});
+        window.selectHostForMaintenance();
+        QVERIFY(window.m_hostMaintenanceMode);
+        QCOMPARE(window.m_hostMaintenanceButton->text(), QStringLiteral("Exit Host Maintenance"));
+        QCOMPARE(window.m_diagnosticScopeLabel->text(),
+                 QStringLiteral("Host maintenance: /dev/test-host"));
+        QCOMPARE(window.m_sessionScopeLabel, QStringLiteral("Running Host"));
+
+        // Select the eligible /dev/vdb target row while host maintenance is
+        // active. Select Target must be enabled and the details must resolve the
+        // real root component.
+        QTreeWidgetItem *diskItem = deviceTreeTopLevelItem(window, fixture.diskPath);
+        QVERIFY(diskItem);
+        selectDeviceTreeItem(window, diskItem);
+        QVERIFY2(window.m_setTargetButton->isEnabled(),
+                 qPrintable(QStringLiteral("Select Target must be enabled while host maintenance "
+                                           "is active (tooltip: %1)")
+                                .arg(window.m_setTargetButton->toolTip())));
+        QCOMPARE(window.m_detailResolvedTarget->text(), fixture.rootPath);
+        QCOMPARE(window.m_detailFilesystem->text(), QStringLiteral("ext4"));
+
+        window.m_setTargetButton->click();
+
+        // One gesture: host maintenance is cleanly off and the target is committed.
+        QVERIFY2(!window.m_hostMaintenanceMode,
+                 "Select Target must automatically deselect host maintenance");
+        QCOMPARE(window.m_hostMaintenanceButton->text(), QStringLiteral("Host Maintenance"));
+        QVERIFY2(window.m_hostMaintenanceButton->toolTip().contains(
+                     QStringLiteral("select the running host for deliberate guarded maintenance")),
+                 qPrintable(QStringLiteral("the host card tooltip must return to its maintenance "
+                                           "meaning: %1").arg(window.m_hostMaintenanceButton->toolTip())));
+        QCOMPARE(window.m_previewTargetPath, fixture.diskPath);
+        QCOMPARE(window.m_previewTargetComponentPath, fixture.rootPath);
+        QCOMPARE(window.m_diagnosticScopeLabel->text(),
+                 QStringLiteral("Target: %1").arg(fixture.diskPath));
+        QCOMPARE(window.m_sessionScopeLabel, QStringLiteral("Repair Target"));
+        QVERIFY(window.m_systemTargetLabel->text().contains(fixture.rootPath));
+        QVERIFY2(!window.m_systemTargetLabel->text().contains(QStringLiteral("Host maintenance")),
+                 qPrintable(QStringLiteral("the committed-target line must leave host maintenance: %1")
+                                .arg(window.m_systemTargetLabel->text())));
+
+        const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QVERIFY2(log.contains(QStringLiteral(
+                     "Running-host maintenance deselected; ordinary repair-target mode restored.")),
+                 "the shared host-maintenance deselection log line must be recorded");
+        QVERIFY2(log.contains(QStringLiteral("best detected system component: %1").arg(fixture.rootPath)),
+                 qPrintable(QStringLiteral("the selection log must name the resolved component: %1")
+                                .arg(log)));
+    }
+}
+
+// Regression: rapidly switching between Host Maintenance and repair targets
+// while a privileged request is in flight used to leave the UI permanently
+// busy ("Waiting for the running operation"). The re-entrant snapshot preload
+// waited in a nested event loop for the active request's busy flag, but the
+// active request could not clear the flag until that nested handler returned:
+// a mutual wait. The gate must now refuse or defer every re-entrant request
+// and always release the busy state.
+void MainWindowUiTest::rapidScopeSwitchingDuringSnapshotPreloadDoesNotDeadlock()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // Synthetic protected running host plus two eligible Btrfs repair targets.
+    prepareRepairScope(window, true);
+    window.m_hostMaintenanceMode = false;
+    window.updateHostSystemSummary({window.m_deviceIndex.value(QStringLiteral("/dev/test-host"))});
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-a"),
+                                QStringLiteral("/dev/test-target-a1"));
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-b"),
+                                QStringLiteral("/dev/test-target-b1"));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("rapid-scope-snapshot.log"));
+    QVERIFY2(startSlowSnapshotFakePrivilegedSession(window, capturePath, QStringLiteral("0.8")),
+             "the scripted privileged session must start");
+    QVERIFY(window.m_privilegedSessionReady);
+
+    // Commit target A. Its preload dispatches on the next event-loop turn and
+    // then owns the gate for the scripted delay.
+    selectTopLevelDisk(window, QStringLiteral("/dev/test-target-a"));
+    window.setPreviewTarget();
+    QCOMPARE(window.m_previewTargetPath, QStringLiteral("/dev/test-target-a"));
+
+    // Rapid host/target transitions while the request is in flight. The
+    // transitions run from a timer, so they are dispatched inside the active
+    // request's event loop exactly like user clicks are; the preloads they
+    // schedule used to wait in a nested event loop and deadlock.
+    bool transitionsDone = false;
+    bool gateHeldDuringTransition = false;
+    bool snapshotBusyDuringTransition = false;
+    QTimer transitions;
+    transitions.setSingleShot(true);
+    transitions.setInterval(100);
+    QObject::connect(&transitions, &QTimer::timeout, &window, [&] {
+        gateHeldDuringTransition = window.m_privilegedOperationActive;
+        snapshotBusyDuringTransition = window.m_activeBusyOperations.contains(
+            QStringLiteral("Loading Btrfs snapshots"));
+        window.selectHostForMaintenance();
+        selectTopLevelDisk(window, QStringLiteral("/dev/test-target-b"));
+        window.setPreviewTarget();
+        window.selectHostForMaintenance();
+        selectTopLevelDisk(window, QStringLiteral("/dev/test-target-a"));
+        window.setPreviewTarget();
+        transitionsDone = true;
+    });
+    transitions.start();
+
+    // Fail fast instead of the 5-minute QtTest watchdog if the gate deadlocks:
+    // timers keep firing inside a nested wait loop, so this aborts the test
+    // process even when the test's own event loop can no longer return.
+    QTimer deadlockGuard;
+    deadlockGuard.setSingleShot(true);
+    deadlockGuard.setInterval(15000);
+    QObject::connect(&deadlockGuard, &QTimer::timeout, [] {
+        qFatal("rapid scope switching deadlocked the privileged request gate");
+    });
+    deadlockGuard.start();
+
+    QTRY_VERIFY_WITH_TIMEOUT(transitionsDone && !window.m_privilegedOperationActive
+                                 && window.m_activeBusyOperations.isEmpty(),
+                             8000);
+    deadlockGuard.stop();
+
+    QVERIFY2(gateHeldDuringTransition,
+             "the scope transitions must arrive while the snapshot request owns the gate");
+    QVERIFY2(snapshotBusyDuringTransition,
+             "the snapshot request must be the busy operation during the transitions");
+    QVERIFY2(window.m_busyIndicator->isHidden(),
+             "the busy indicator must clear after the request completes");
+    QVERIFY2(!window.m_hostMaintenanceMode,
+             "the final transition must restore the repair-target scope");
+    QCOMPARE(window.m_previewTargetPath, QStringLiteral("/dev/test-target-a"));
+
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(!log.contains(QStringLiteral("is waiting for the running operation to finish")),
+             "a re-entrant request must never queue on the busy gate");
+    QVERIFY2(log.contains(QStringLiteral("is deferred until the running privileged operation finishes")),
+             qPrintable(QStringLiteral("the deferred snapshot preload must be recorded: %1").arg(log)));
+
+    // Rapid switching must not accumulate snapshot loads: the in-flight load
+    // already matches the final target, so the deferred retry is satisfied
+    // without a second request.
+    const QList<QStringList> requests = capturedHelperRequests(capturePath);
+    int snapshotRequests = 0;
+    for (const QStringList &request : requests) {
+        if (!request.isEmpty() && request.first() == QStringLiteral("snapshots")) {
+            ++snapshotRequests;
+        }
+    }
+    QCOMPARE(snapshotRequests, 1);
+    QVERIFY2(window.m_snapshotTable->rowCount() == 1,
+             "the in-flight inventory must populate the final target's table");
+}
+
+// The bounded safety net: a helper that never answers a request must not keep
+// the UI busy forever. The watchdog aborts the wait with a clear log line,
+// closes the unresponsive session and releases the gate.
+void MainWindowUiTest::privilegedRequestSafetyTimeoutAbortsWedgedHelper()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    window.m_privilegedRequestTimeoutMs = 300;
+
+    // Commit a synthetic Btrfs target directly so no preload is scheduled;
+    // this test calls loadSnapshots() itself.
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-a"),
+                                QStringLiteral("/dev/test-target-a1"));
+    window.m_previewTargetPath = QStringLiteral("/dev/test-target-a");
+    window.m_previewTargetComponentPath = QStringLiteral("/dev/test-target-a1");
+    window.m_targetDiagnosticCacheIdentity = window.currentTargetDiagnosticCacheIdentity();
+    window.updateTargetLabels();
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("timeout-snapshot.log"));
+    QVERIFY2(startSlowSnapshotFakePrivilegedSession(window, capturePath, QStringLiteral("30")),
+             "the scripted privileged session must start");
+    QVERIFY(window.m_privilegedSessionReady);
+
+    window.loadSnapshots();
+
+    QVERIFY2(!window.m_privilegedOperationActive,
+             "the safety timeout must release the privileged gate");
+    QVERIFY(window.m_activeBusyOperations.isEmpty());
+    QVERIFY2(window.m_busyIndicator->isHidden(),
+             "the busy indicator must clear after the timeout");
+    QVERIFY2(!window.m_privilegedSession
+                 || window.m_privilegedSession->state() == QProcess::NotRunning,
+             "the timed-out helper session must be closed");
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("safety limit")),
+             qPrintable(QStringLiteral("the timeout must be recorded: %1").arg(log)));
+    QVERIFY2(window.m_snapshotDetails->toPlainText().contains(QStringLiteral("safety limit")),
+             "the captured output must explain the timeout");
+}
+
+void MainWindowUiTest::targetDiagnosticFallbackUpdatesCommittedComponent()
+{
+    // The privileged helper confirms the installed root by mounting it. When
+    // the committed component lacks /etc/os-release and the helper resolves a
+    // different Linux-capable partition on the same disk, the committed
+    // target must adopt the resolved component so the log, the committed
+    // target line and every later request stay consistent. An ordinary
+    // mapper/dm-N spelling change must never rewrite the committed component.
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    DeviceNode boot;
+    boot.path = QStringLiteral("/dev/test-vdb1");
+    boot.type = QStringLiteral("part");
+    boot.fileSystem = QStringLiteral("ext4");
+    boot.linuxCapableFileSystem = true;
+    DeviceNode root;
+    root.path = QStringLiteral("/dev/test-vdb3");
+    root.type = QStringLiteral("part");
+    root.fileSystem = QStringLiteral("ext4");
+    root.linuxCapableFileSystem = true;
+    DeviceNode disk;
+    disk.path = QStringLiteral("/dev/test-vdb");
+    disk.type = QStringLiteral("disk");
+    disk.children.append(boot);
+    disk.children.append(root);
+    window.m_deviceIndex.insert(disk.path, disk);
+    window.m_deviceIndex.insert(boot.path, boot);
+    window.m_deviceIndex.insert(root.path, root);
+    window.m_previewTargetPath = disk.path;
+    window.m_previewTargetComponentPath = boot.path;
+    window.updateTargetLabels();
+
+    const QString helperOutput = QStringLiteral(
+        "[12:00:01] Protected host check: PASS\n"
+        "[12:00:01] Target disk: /dev/test-vdb\n"
+        "[12:00:01] Root component: /dev/test-vdb1 (ext4)\n"
+        "[12:00:02] Root component fallback: selected component /dev/test-vdb1 (ext4) lacks /etc/os-release; resolved /dev/test-vdb3 (ext4) from /dev/test-vdb.\n"
+        "[12:00:02] Detected target OS: Alpine Linux v3.24\n");
+    window.appendDiagnosticLog(QStringLiteral("environment"),
+                               QStringLiteral("Environment validation"),
+                               QStringLiteral("Repair Target"), helperOutput, true);
+
+    QCOMPARE(window.m_previewTargetComponentPath, QStringLiteral("/dev/test-vdb3"));
+    QVERIFY2(window.m_systemTargetLabel->text().contains(QStringLiteral("/dev/test-vdb3")),
+             qPrintable(QStringLiteral("the committed target must adopt the resolved component: %1")
+                            .arg(window.m_systemTargetLabel->text())));
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral(
+                 "Target root component confirmed by privileged evidence: /dev/test-vdb3 (was /dev/test-vdb1)")),
+             qPrintable(QStringLiteral("the confirmation must be visible in the log: %1").arg(log)));
+
+    // A normal spelling change (mapper alias versus dm-N) is not a fallback
+    // and must leave the committed component untouched.
+    window.m_previewTargetComponentPath = boot.path;
+    window.appendDiagnosticLog(QStringLiteral("boot"), QStringLiteral("Boot diagnostics"),
+                               QStringLiteral("Repair Target"),
+                               QStringLiteral("[12:00:03] Root component: /dev/dm-0 (ext4)\n"), true);
+    QCOMPARE(window.m_previewTargetComponentPath, boot.path);
+}
+
+void MainWindowUiTest::nonBtrfsTargetSnapshotInventoryIsInformational()
+{
+    // A non-Btrfs repair target has no Btrfs snapshot inventory. Selecting it
+    // must not produce a failed snapshot state or an ERROR-styled log entry:
+    // the page states the applicability and the load/inspect/rollback
+    // controls stay disabled.
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = false;
+
+    prepareRepairScope(window); // /dev/test-system -> /dev/test-root (ext4)
+    QVERIFY(window.m_previewTargetPath == QStringLiteral("/dev/test-system"));
+    QCOMPARE(window.m_deviceIndex.value(window.m_previewTargetComponentPath).fileSystem,
+             QStringLiteral("ext4"));
+    window.updateTargetLabels();
+
+    // The automatic preload must resolve the applicability without any
+    // privileged request.
+    window.scheduleSnapshotPreload();
+    QTest::qWait(50);
+    const QString details = window.m_snapshotDetails->toPlainText();
+    QVERIFY2(details.contains(QStringLiteral("not applicable")),
+             qPrintable(QStringLiteral("the Snapshots page must explain the non-Btrfs target: %1")
+                            .arg(details)));
+    QVERIFY2(details.contains(QStringLiteral("ext4")),
+             qPrintable(QStringLiteral("the Snapshots page must name the detected filesystem: %1")
+                            .arg(details)));
+    QVERIFY2(!window.m_snapshotLoadButton->isEnabled(),
+             "the Load Btrfs snapshots control must stay disabled for a non-Btrfs target");
+    QVERIFY(!window.m_snapshotInspectButton->isEnabled());
+    QVERIFY(!window.m_snapshotRollbackButton->isEnabled());
+
+    // Explicitly running the inventory follows the same informational path.
+    window.loadSnapshots();
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("Btrfs snapshot inventory is not applicable")),
+             qPrintable(QStringLiteral("the log must record the informational outcome: %1").arg(log)));
+    QVERIFY2(!log.contains(QStringLiteral("Btrfs snapshot inventory failed.")),
+             "a non-Btrfs target must never produce the snapshot failure log line");
+    QVERIFY2(!log.contains(QStringLiteral("Load Btrfs snapshots finished with exit code 1")),
+             "a non-Btrfs target must never produce an error-styled snapshot completion");
+    QVERIFY(!window.m_snapshotTable->rowCount());
+}
+
 void MainWindowUiTest::guardedWriteActionsStayDisabledWithoutTarget()
 {
     MainWindow window;
@@ -4605,7 +6195,7 @@ void MainWindowUiTest::exportDialogsCanBeCancelledReadOnly()
     MainWindow window;
     window.show();
     QTest::qWait(100);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
+    enterHostDiagnosticScope(window);
     window.m_diagnosticList->setCurrentRow(0);
     window.runSelectedDiagnostic();
     QVERIFY(window.m_diagnosticResults && !window.m_diagnosticResults->toPlainText().isEmpty());
@@ -4743,7 +6333,7 @@ void MainWindowUiTest::freshLaunchDoesNotAdoptNewestPriorSession()
     QVERIFY(!readSessionFile(window.m_sessionLogPath).contains(QStringLiteral("UI_TEST_PRIOR_LAUNCH_MARKER")));
 }
 
-void MainWindowUiTest::sessionLogDefersUntilScopeIdentified()
+void MainWindowUiTest::sessionLogDefersUntilScopeIdentifiedThenAppends()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
@@ -4767,25 +6357,27 @@ void MainWindowUiTest::sessionLogDefersUntilScopeIdentified()
     QVERIFY(content.contains(QStringLiteral("/dev/test-host")));
     QVERIFY2(content.contains(marker), "buffered entries must be flushed into the new session file");
     QVERIFY(content.indexOf(QStringLiteral("[SCOPE]")) < content.indexOf(marker));
-}
 
-void MainWindowUiTest::sessionLogAppendsAfterCreation()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
+    // --- merged from sessionLogAppendsAfterCreation() ---
+    {
+        // Never adopt the previous phase's session file.
+        MainWindow::s_activeSessionPath.clear();
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
 
-    prepareRepairScope(window, true);
-    window.updateSessionScope();
-    const QStringList files = sessionLogFiles(logDir.path());
-    QCOMPARE(files.size(), 1);
+        prepareRepairScope(window, true);
+        window.updateSessionScope();
+        const QStringList files = sessionLogFiles(logDir.path());
+        QCOMPARE(files.size(), 1);
 
-    const QString marker = QStringLiteral("UI_TEST_APPEND_AFTER_CREATION");
-    window.appendLog(marker);
-    QVERIFY(readSessionFile(files.first()).contains(marker));
-    QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(marker));
+        const QString marker = QStringLiteral("UI_TEST_APPEND_AFTER_CREATION");
+        window.appendLog(marker);
+        QVERIFY(readSessionFile(files.first()).contains(marker));
+        QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(marker));
+    }
 }
 
 void MainWindowUiTest::sessionLogScopeMarkersTrackTarget()
@@ -5056,7 +6648,7 @@ void MainWindowUiTest::addNoteAppendsTimestampedEntry()
     QCOMPARE(window.m_actionLogEntries.size(), before);
 }
 
-void MainWindowUiTest::sessionLogRetentionPrunesOldFiles()
+void MainWindowUiTest::sessionLogRetentionPrunesOldFilesAndKeepsActive()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
@@ -5078,36 +6670,36 @@ void MainWindowUiTest::sessionLogRetentionPrunesOldFiles()
     QVERIFY2(!remaining.contains(logDir.path() + QStringLiteral("/session-20200101-000001.log")),
              "oldest session files are pruned first");
     QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("retention")));
-}
 
-void MainWindowUiTest::retentionKeepsActiveSessionFile()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
-    for (int index = 0; index < 25; ++index) {
-        const QString name = QStringLiteral("session-202001%1-%2.log")
-                                 .arg(index + 1, 2, 10, QLatin1Char('0'))
-                                 .arg(index + 1, 6, 10, QLatin1Char('0'));
-        writeSessionLog(logDir.path() + QLatin1Char('/') + name,
-                        QStringLiteral("[2020-01-01 00:00:00] [SCOPE] Repair Target | Disk: /dev/old | Root: /dev/old1 | OS: debian"),
-                        QStringLiteral("RETENTION_MARKER"));
+    // --- merged from retentionKeepsActiveSessionFile() ---
+    {
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
+        for (int index = 0; index < 25; ++index) {
+            const QString name = QStringLiteral("session-202001%1-%2.log")
+                                     .arg(index + 1, 2, 10, QLatin1Char('0'))
+                                     .arg(index + 1, 6, 10, QLatin1Char('0'));
+            writeSessionLog(logDir.path() + QLatin1Char('/') + name,
+                            QStringLiteral("[2020-01-01 00:00:00] [SCOPE] Repair Target | Disk: /dev/old | Root: /dev/old1 | OS: debian"),
+                            QStringLiteral("RETENTION_MARKER"));
+        }
+        const QStringList before = sessionLogFiles(logDir.path());
+        QCOMPARE(before.size(), 25);
+        // The newest file is this run's active session, as if it had been created
+        // earlier in the process. Retention must never prune it.
+        const QString activePath = before.last();
+        MainWindow::s_activeSessionPath = activePath;
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        QCOMPARE(window.m_sessionLogPath, activePath);
+        const QStringList remaining = sessionLogFiles(logDir.path());
+        QCOMPARE(remaining.size(), 21);
+        QVERIFY2(remaining.contains(activePath), "retention must never prune the active session file");
+        QVERIFY2(!remaining.contains(logDir.path() + QStringLiteral("/session-20200101-000001.log")),
+                 "prior session files are still pruned oldest-first around the active file");
     }
-    const QStringList before = sessionLogFiles(logDir.path());
-    QCOMPARE(before.size(), 25);
-    // The newest file is this run's active session, as if it had been created
-    // earlier in the process. Retention must never prune it.
-    const QString activePath = before.last();
-    MainWindow::s_activeSessionPath = activePath;
-
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    QCOMPARE(window.m_sessionLogPath, activePath);
-    const QStringList remaining = sessionLogFiles(logDir.path());
-    QCOMPARE(remaining.size(), 21);
-    QVERIFY2(remaining.contains(activePath), "retention must never prune the active session file");
-    QVERIFY2(!remaining.contains(logDir.path() + QStringLiteral("/session-20200101-000001.log")),
-             "prior session files are still pruned oldest-first around the active file");
 }
 
 void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
@@ -5261,6 +6853,1305 @@ void MainWindowUiTest::debianDpkgToolAllowedAndArchRefused()
     }
 }
 
+// Alpine hosts must be labelled accurately (apk / OpenRC with apk package
+// hints) and stay diagnostics-only: cached Alpine capability evidence enables
+// validate/filesystem but fails every guarded repair closed with the
+// Alpine-specific reason.
+void MainWindowUiTest::alpineDetectionLabelsAndCapabilityGating()
+{
+    QTemporaryDir releaseDir;
+    QVERIFY(releaseDir.isValid());
+    const QString releasePath = releaseDir.path() + QStringLiteral("/os-release");
+    {
+        QFile file(releasePath);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream stream(&file);
+        stream << "ID=alpine\n"
+               << "ID_LIKE=\"alpine\"\n"
+               << "PRETTY_NAME=\"Alpine Linux v3.20\"\n";
+    }
+
+    {
+        ScopedEnvironmentVariable alpineRelease("BOOT_REPAIR_OS_RELEASE", releasePath.toLocal8Bit());
+        MainWindow window;
+        QCOMPARE(window.m_distributionLabel->text(), QStringLiteral("Alpine Linux v3.20"));
+        QCOMPARE(window.m_packageManagerLabel->text(), QStringLiteral("apk / OpenRC"));
+
+        QHash<QString, QString> suggestedPackages;
+        for (int row = 0; row < window.m_capabilityTable->rowCount(); ++row) {
+            QTableWidgetItem *commandItem = window.m_capabilityTable->item(row, 1);
+            QTableWidgetItem *packageItem = window.m_capabilityTable->item(row, 4);
+            QVERIFY(commandItem);
+            QVERIFY(packageItem);
+            suggestedPackages.insert(commandItem->text(), packageItem->text());
+        }
+        QCOMPARE(suggestedPackages.value(QStringLiteral("grub-mkconfig")), QStringLiteral("grub"));
+        QCOMPARE(suggestedPackages.value(QStringLiteral("mkinitcpio")), QStringLiteral("mkinitfs"));
+        QCOMPARE(suggestedPackages.value(QStringLiteral("pacman")), QStringLiteral("Not available on Alpine"));
+        QCOMPARE(suggestedPackages.value(QStringLiteral("dkms")), QStringLiteral("dkms"));
+        QVERIFY(!suggestedPackages.values().contains(QStringLiteral("Unknown")));
+    }
+
+    // Alpine is no longer diagnostics-only: the helper reports guarded apk,
+    // OpenRC display, mkinitfs initramfs and extlinux stages as available and
+    // keeps dpkg, the standalone metadata refresh and EFI/UKI unavailable.
+    // Every available stage must carry the Alpine backend wording.
+    MainWindow window;
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+        cacheRepairEvidence(window, capabilityEvidenceAlpine(true, true, true));
+        window.updateFullRepairSummary();
+        QVERIFY(window.repairToolAvailable(QStringLiteral("validate")));
+        QVERIFY(window.repairToolAvailable(QStringLiteral("filesystem")));
+
+        for (const QString &key : {QStringLiteral("fixbroken"), QStringLiteral("upgrade"),
+                                   QStringLiteral("dkms"), QStringLiteral("display"),
+                                   QStringLiteral("initramfs"), QStringLiteral("grub"),
+                                   QStringLiteral("extlinux"), QStringLiteral("bootstack")}) {
+            QVERIFY2(window.repairToolAvailable(key), qPrintable(key));
+        }
+        for (const QString &key : {QStringLiteral("dpkg"), QStringLiteral("aptupdate")}) {
+            QString reason;
+            QVERIFY2(!window.repairToolAvailable(key, &reason), qPrintable(key));
+            QVERIFY2(reason.contains(QStringLiteral("Alpine")), qPrintable(reason));
+        }
+        // The Alpine BIOS/extlinux refusal names the missing EFI boot path
+        // instead of claiming the EFI backend is unimplemented.
+        {
+            QString reason;
+            QVERIFY2(!window.repairToolAvailable(QStringLiteral("efi"), &reason), "efi");
+            QVERIFY2(reason.contains(QStringLiteral("syslinux/extlinux (BIOS) boot detected")),
+                     qPrintable(reason));
+        }
+
+        // dkms and grub follow their installed-state capability lines on
+        // Alpine exactly like the other families.
+        cacheRepairEvidence(window, capabilityEvidenceAlpine(false, false, true));
+        window.updateFullRepairSummary();
+        QVERIFY(!window.repairToolAvailable(QStringLiteral("dkms")));
+        QVERIFY(!window.repairToolAvailable(QStringLiteral("grub")));
+        QVERIFY(!window.m_fullRepairDkms->isEnabled());
+        QVERIFY(!window.m_fullRepairGrub->isEnabled());
+        QVERIFY(window.repairToolAvailable(QStringLiteral("extlinux")));
+        cacheRepairEvidence(window, capabilityEvidenceAlpine(true, true, true));
+        window.updateFullRepairSummary();
+        QVERIFY(window.repairToolAvailable(QStringLiteral("dkms")));
+        QVERIFY(window.repairToolAvailable(QStringLiteral("grub")));
+
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Alpine packages (apk fix)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade Alpine packages (apk upgrade)"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (OpenRC runlevel)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (mkinitfs)"));
+        QCOMPARE(window.m_fullRepairExtlinux->text(),
+                 QStringLiteral("Regenerate extlinux configuration"));
+        QVERIFY(!window.m_fullRepairDpkg->isEnabled());
+        QVERIFY(!window.m_fullRepairAptUpdate->isEnabled());
+        QVERIFY(window.m_fullRepairDpkg->toolTip().contains(QStringLiteral("Alpine")));
+        QVERIFY(window.m_fullRepairAptUpdate->toolTip().contains(QStringLiteral("Alpine")));
+
+        auto *fixbrokenItem = repairItem(window, QStringLiteral("fixbroken"));
+        QVERIFY(fixbrokenItem);
+        QVERIFY(fixbrokenItem->text(1).contains(QStringLiteral("Enabled in Settings")));
+
+        auto *initramfsItem = repairItem(window, QStringLiteral("initramfs"));
+        QVERIFY(initramfsItem);
+        window.m_repairToolTree->setCurrentItem(initramfsItem);
+        window.updateRepairToolDetails();
+        QVERIFY(window.m_repairToolButton->isEnabled());
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("mkinitfs")));
+
+        window.m_fullRepairFilesystem->setChecked(false);
+        window.m_fullRepairDpkg->setChecked(true);
+        window.m_fullRepairBrokenPackages->setChecked(true);
+        window.m_fullRepairDkms->setChecked(true);
+        window.updateFullRepairSummary();
+        QVERIFY(!window.m_fullRepairDpkg->isEnabled());
+        QVERIFY(window.m_fullRepairBrokenPackages->isEnabled());
+        QVERIFY(window.m_fullRepairDkms->isEnabled());
+        QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
+        QVERIFY(window.selectedRepairStages().contains(QStringLiteral("fix-broken")));
+        QVERIFY(window.selectedRepairStages().contains(QStringLiteral("dkms")));
+    }
+}
+
+// The extlinux key is the Alpine/BIOS sibling of GRUB: it must exist as a tool
+// row ordered next to GRUB, carry the extlinux details panel, and stay gated
+// on the helper's `Repair tool extlinux` capability line (fail closed).
+void MainWindowUiTest::alpineExtlinuxToolRowIsGatedByCapabilityEvidence()
+{
+    MainWindow window;
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+        auto *extlinuxItem = repairItem(window, QStringLiteral("extlinux"));
+        QVERIFY2(extlinuxItem, "the extlinux repair tool row must exist");
+        QCOMPARE(extlinuxItem->text(0), QStringLiteral("extlinux configuration"));
+        QVERIFY2(!extlinuxItem->icon(0).isNull(), "the extlinux row must carry the shared boot icon");
+        QVERIFY(window.m_fullRepairExtlinux);
+
+        // The row is GRUB's sibling: it follows GRUB and precedes the
+        // boot-stack recovery tool.
+        auto *grubItem = repairItem(window, QStringLiteral("grub"));
+        auto *bootstackItem = repairItem(window, QStringLiteral("bootstack"));
+        QVERIFY(grubItem && bootstackItem);
+        const int grubRow = window.m_repairToolTree->indexOfTopLevelItem(grubItem);
+        const int extlinuxRow = window.m_repairToolTree->indexOfTopLevelItem(extlinuxItem);
+        const int bootstackRow = window.m_repairToolTree->indexOfTopLevelItem(bootstackItem);
+        QCOMPARE(extlinuxRow, grubRow + 1);
+        QCOMPARE(bootstackRow, extlinuxRow + 1);
+
+        window.m_repairToolTree->setCurrentItem(extlinuxItem);
+        for (bool available : {false, true, false}) {
+            cacheRepairEvidence(window, capabilityEvidenceAlpine(true, true, available));
+            window.updateFullRepairSummary();
+
+            QCOMPARE(window.repairToolAvailable(QStringLiteral("extlinux")), available);
+            QCOMPARE(window.repairEvidenceReadyForTool(QStringLiteral("extlinux")), available);
+            QCOMPARE(window.m_fullRepairExtlinux->isEnabled(), available);
+            QCOMPARE(window.m_repairToolButton->isEnabled(), available);
+            QCOMPARE(window.selectedRepairStages().contains(QStringLiteral("extlinux")), available);
+            QVERIFY2(window.m_fullRepairExtlinux->isChecked(),
+                     "an unavailable stage must keep the user's Settings selection");
+
+            if (available) {
+                QCOMPARE(extlinuxItem->text(1), QStringLiteral("Enabled in Settings"));
+                QCOMPARE(window.m_repairToolTitle->text(), QStringLiteral("extlinux configuration"));
+                QCOMPARE(window.m_repairToolButton->text(), QStringLiteral("Regenerate extlinux"));
+                QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("update-extlinux")));
+                QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("entry-preserving")));
+                QCOMPARE(window.m_repairToolPlanStatus->text(),
+                         QStringLiteral("Full Repair plan: Enabled in Settings"));
+            } else {
+                QVERIFY2(extlinuxItem->text(1).contains(QStringLiteral("update-extlinux is not installed")),
+                         qPrintable(extlinuxItem->text(1)));
+                QVERIFY(window.m_fullRepairExtlinux->toolTip().contains(
+                    QStringLiteral("update-extlinux is not installed")));
+                QVERIFY(window.m_repairToolPlanStatus->text().contains(QStringLiteral("Unavailable:")));
+            }
+        }
+    }
+}
+
+// Enabling the extlinux stage must add it to the Full Repair execution plan
+// directly after GRUB, and an unavailable capability line must remove it again
+// without unchecking the user's Settings selection.
+void MainWindowUiTest::alpineFullRepairPlanIncludesExtlinuxStage()
+{
+    MainWindow window;
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
+                              window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
+                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                              window.m_fullRepairEfi, window.m_fullRepairGrub,
+                              window.m_fullRepairExtlinux}) {
+        QVERIFY(toggle);
+        toggle->setChecked(false);
+    }
+    window.m_fullRepairGrub->setChecked(true);
+    window.m_fullRepairExtlinux->setChecked(true);
+
+    cacheRepairEvidence(window, capabilityEvidenceAlpine(false, true, true));
+    window.updateFullRepairSummary();
+    QCOMPARE(window.selectedRepairStages(),
+             QStringList({QStringLiteral("grub"), QStringLiteral("extlinux")}));
+    QCOMPARE(window.m_fullRepairStageList->count(), 2);
+    QVERIFY(window.m_fullRepairStageList->item(0)->text().contains(QStringLiteral("GRUB")));
+    QVERIFY2(window.m_fullRepairStageList->item(1)->text().contains(QStringLiteral("extlinux configuration")),
+             qPrintable(window.m_fullRepairStageList->item(1)->text()));
+    QVERIFY2(window.m_runFullRepairButton->isEnabled(),
+             "the extlinux stage must be runnable with cached Alpine evidence");
+
+    // An unavailable extlinux capability fails closed: the stage leaves the
+    // plan while the Settings selection is preserved.
+    cacheRepairEvidence(window, capabilityEvidenceAlpine(false, true, false));
+    window.updateFullRepairSummary();
+    QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("grub")});
+    QCOMPARE(window.m_fullRepairStageList->count(), 1);
+    QVERIFY(!window.m_fullRepairStageList->item(0)->text().contains(QStringLiteral("extlinux")));
+    QVERIFY(window.m_fullRepairExtlinux->isChecked());
+    QVERIFY(!window.m_fullRepairExtlinux->isEnabled());
+}
+
+// Alpine UEFI GRUB targets must offer the EFI and GRUB stages from the cached
+// capability lines, label them with the Alpine GRUB EFI wording, describe the
+// guarded --no-nvram / EFI-stub behavior and include both stages in the Full
+// Repair plan; an unavailable EFI line fails closed.
+void MainWindowUiTest::alpineUefiEfiGrubRepairIsOfferedAndLabelled()
+{
+    MainWindow window;
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+        cacheRepairEvidence(window, capabilityEvidenceAlpineUefi(true, true));
+        window.updateFullRepairSummary();
+
+        QVERIFY(window.repairToolAvailable(QStringLiteral("efi")));
+        QVERIFY(window.repairToolAvailable(QStringLiteral("grub")));
+        QVERIFY(window.m_fullRepairEfi->isEnabled());
+        QVERIFY(window.m_fullRepairGrub->isEnabled());
+        QCOMPARE(window.m_fullRepairEfi->text(), QStringLiteral("Reinstall Alpine GRUB EFI loader"));
+        QCOMPARE(window.m_fullRepairGrub->text(), QStringLiteral("Regenerate Alpine GRUB configuration"));
+
+        auto *efiItem = repairItem(window, QStringLiteral("efi"));
+        QVERIFY(efiItem);
+        window.m_repairToolTree->setCurrentItem(efiItem);
+        window.updateRepairToolDetails();
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("--no-nvram")));
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("Alpine")));
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("EFI-stub")));
+
+        auto *grubItem = repairItem(window, QStringLiteral("grub"));
+        QVERIFY(grubItem);
+        window.m_repairToolTree->setCurrentItem(grubItem);
+        window.updateRepairToolDetails();
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("Alpine")));
+        QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("grub-mkconfig")));
+
+        // The plan names the Alpine GRUB EFI stages and keeps EFI before GRUB.
+        window.m_fullRepairEfi->setChecked(true);
+        window.m_fullRepairGrub->setChecked(true);
+        window.updateFullRepairSummary();
+        const QStringList stages = window.selectedRepairStages();
+        QVERIFY2(stages.contains(QStringLiteral("efi")), qPrintable(stages.join(QLatin1Char(','))));
+        QVERIFY2(stages.contains(QStringLiteral("grub")), qPrintable(stages.join(QLatin1Char(','))));
+        bool sawEfi = false;
+        bool sawGrub = false;
+        for (int row = 0; row < window.m_fullRepairStageList->count(); ++row) {
+            const QString text = window.m_fullRepairStageList->item(row)->text();
+            if (text.contains(QStringLiteral("Reinstall Alpine GRUB EFI loader"))) {
+                sawEfi = true;
+                QVERIFY2(!sawGrub, "the EFI stage must precede GRUB in the plan");
+            }
+            if (text.contains(QStringLiteral("Regenerate Alpine GRUB configuration"))) {
+                sawGrub = true;
+            }
+        }
+        QVERIFY2(sawEfi, "the EFI stage must be in the Full Repair plan");
+        QVERIFY2(sawGrub, "the GRUB stage must be in the Full Repair plan");
+
+        // An unavailable EFI capability removes the stage from the plan while
+        // preserving the Settings selection, exactly like every other key.
+        cacheRepairEvidence(window, capabilityEvidenceAlpineUefi(false, true));
+        window.updateFullRepairSummary();
+        QVERIFY(!window.repairToolAvailable(QStringLiteral("efi")));
+        QVERIFY(!window.m_fullRepairEfi->isEnabled());
+        QVERIFY(window.m_fullRepairEfi->isChecked());
+        QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("efi")));
+        QVERIFY(window.m_fullRepairGrub->isEnabled());
+        QVERIFY(window.selectedRepairStages().contains(QStringLiteral("grub")));
+        QCOMPARE(window.m_fullRepairGrub->text(), QStringLiteral("Regenerate Alpine GRUB configuration"));
+    }
+}
+
+// Fedora/RPM targets must be labelled and gated from the detected backends
+// (rpm/dnf5, dracut, GRUB2, GDM) exactly like every other family: labels come
+// from the backend profile lines, availability comes only from the
+// `Repair tool <key>` capability lines, and the plan stages keep the
+// upgrade(40) -> initramfs(70) -> grub(90) order.
+void MainWindowUiTest::fedoraDetectionLabelsAndCapabilityGating()
+{
+    MainWindow window;
+    // The Fedora GDM configuration path is offered next to the Debian GDM3
+    // path through the guarded target configuration action.
+    bool sawGdmConfig = false;
+    for (int index = 0; index < window.m_targetConfigCombo->count(); ++index) {
+        if (window.m_targetConfigCombo->itemText(index) == QStringLiteral("/etc/gdm/custom.conf")) {
+            sawGdmConfig = true;
+            QCOMPARE(window.m_targetConfigCombo->itemData(index).toString(), QStringLiteral("gdm"));
+        }
+    }
+    QVERIFY2(sawGdmConfig, "the Fedora GDM configuration path must be offered");
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+        cacheRepairEvidence(window, capabilityEvidenceFedora(true, true, true, true));
+        window.updateFullRepairSummary();
+
+        // Every Fedora backend stage is available from its own capability
+        // line; dpkg, the BIOS EFI path and extlinux stay unavailable with
+        // their probe reasons.
+        for (const QString &key : {QStringLiteral("validate"), QStringLiteral("filesystem"),
+                                   QStringLiteral("fixbroken"), QStringLiteral("aptupdate"),
+                                   QStringLiteral("upgrade"), QStringLiteral("display"),
+                                   QStringLiteral("initramfs"), QStringLiteral("grub"),
+                                   QStringLiteral("bootstack")}) {
+            QVERIFY2(window.repairToolAvailable(key), qPrintable(key));
+        }
+        for (const QString &key : {QStringLiteral("dpkg"), QStringLiteral("efi"),
+                                   QStringLiteral("extlinux")}) {
+            QString reason;
+            QVERIFY2(!window.repairToolAvailable(key, &reason), qPrintable(key));
+            QVERIFY2(!reason.isEmpty(), qPrintable(key));
+        }
+        {
+            QString reason;
+            QVERIFY(!window.repairToolAvailable(QStringLiteral("efi"), &reason));
+            QVERIFY2(reason.contains(QStringLiteral("BIOS")), qPrintable(reason));
+        }
+
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Fedora packages (dnf)"));
+        QCOMPARE(window.m_fullRepairAptUpdate->text(),
+                 QStringLiteral("Refresh package metadata (dnf makecache)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade Fedora packages (dnf upgrade)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (dracut)"));
+        QCOMPARE(window.m_fullRepairGrub->text(),
+                 QStringLiteral("Update GRUB2 configuration"));
+        QCOMPARE(window.m_fullRepairEfi->text(),
+                 QStringLiteral("Reinstall GRUB2 bootloader"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (GDM)"));
+
+        // The plan names the Fedora backends and keeps the fixed stage order.
+        for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
+                                  window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
+                                  window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                                  window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                                  window.m_fullRepairEfi, window.m_fullRepairGrub,
+                                  window.m_fullRepairExtlinux}) {
+            QVERIFY(toggle);
+            toggle->setChecked(false);
+        }
+        window.m_fullRepairUpgrade->setChecked(true);
+        window.m_fullRepairInitramfs->setChecked(true);
+        window.m_fullRepairGrub->setChecked(true);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.selectedRepairStages(),
+                 QStringList({QStringLiteral("apt-upgrade"), QStringLiteral("initramfs"),
+                              QStringLiteral("grub")}));
+        QCOMPARE(window.m_fullRepairStageList->count(), 3);
+        QVERIFY(window.m_fullRepairStageList->item(0)->text().contains(
+            QStringLiteral("Upgrade installed packages")));
+        QVERIFY2(window.m_fullRepairStageList->item(1)->text().contains(
+                     QStringLiteral("Rebuild initramfs (dracut)")),
+                 qPrintable(window.m_fullRepairStageList->item(1)->text()));
+        QVERIFY2(window.m_fullRepairStageList->item(2)->text().contains(
+                     QStringLiteral("Update GRUB2 configuration")),
+                 qPrintable(window.m_fullRepairStageList->item(2)->text()));
+        QVERIFY2(window.m_runFullRepairButton->isEnabled(),
+                 "the Fedora stages must be runnable with cached evidence");
+
+        // Tool details follow the same detected backends.
+        const QList<QPair<QString, QString>> descriptions = {
+            {QStringLiteral("fixbroken"), QStringLiteral("dnf reinstall")},
+            {QStringLiteral("aptupdate"), QStringLiteral("dnf makecache")},
+            {QStringLiteral("upgrade"), QStringLiteral("dnf upgrade")},
+            {QStringLiteral("initramfs"), QStringLiteral("dracut")},
+            {QStringLiteral("initramfs"), QStringLiteral("lsinitrd")},
+            {QStringLiteral("bootstack"), QStringLiteral("dracut")},
+            {QStringLiteral("bootstack"), QStringLiteral("GRUB2")}
+        };
+        for (const auto &check : descriptions) {
+            auto *item = repairItem(window, check.first);
+            QVERIFY2(item, qPrintable(check.first));
+            window.m_repairToolTree->setCurrentItem(item);
+            window.updateRepairToolDetails();
+            QVERIFY2(window.m_repairToolDescription->text().contains(check.second),
+                     qPrintable(check.first + QLatin1Char(':') + check.second));
+        }
+        {
+            auto *item = repairItem(window, QStringLiteral("grub"));
+            QVERIFY(item);
+            window.m_repairToolTree->setCurrentItem(item);
+            window.updateRepairToolDetails();
+            QCOMPARE(window.m_repairToolTitle->text(), QStringLiteral("GRUB2 configuration"));
+            QCOMPARE(window.m_repairToolButton->text(), QStringLiteral("Regenerate GRUB2"));
+            QVERIFY(window.m_repairToolDescription->text().contains(
+                QStringLiteral("grub2-mkconfig")));
+            QVERIFY(window.m_repairToolDescription->text().contains(
+                QStringLiteral("/boot/grub2/grub.cfg")));
+            QVERIFY(window.m_repairToolDescription->text().contains(
+                QStringLiteral("Reinstall GRUB2 bootloader")));
+            QVERIFY(window.m_repairToolDescription->text().contains(
+                QStringLiteral("bios_grub")));
+        }
+        {
+            auto *item = repairItem(window, QStringLiteral("display"));
+            QVERIFY(item);
+            window.m_repairToolTree->setCurrentItem(item);
+            window.updateRepairToolDetails();
+            QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("GDM")));
+            QVERIFY(window.m_repairToolDescription->text().contains(
+                QStringLiteral("/etc/gdm/custom.conf")));
+        }
+
+        // Unavailable capability lines fail closed while the backend labels
+        // stay derived from the profile evidence, not from availability.
+        cacheRepairEvidence(window, capabilityEvidenceFedora(false, false, false, false));
+        window.updateFullRepairSummary();
+        for (const QString &key : {QStringLiteral("fixbroken"), QStringLiteral("aptupdate"),
+                                   QStringLiteral("upgrade"), QStringLiteral("display"),
+                                   QStringLiteral("initramfs"), QStringLiteral("grub"),
+                                   QStringLiteral("bootstack")}) {
+            QVERIFY2(!window.repairToolAvailable(key), qPrintable(key));
+        }
+        QVERIFY(!window.m_fullRepairBrokenPackages->isEnabled());
+        QVERIFY(!window.m_fullRepairInitramfs->isEnabled());
+        QVERIFY(!window.m_fullRepairGrub->isEnabled());
+        QVERIFY2(window.m_fullRepairInitramfs->isChecked(),
+                 "an unavailable stage must keep the user's Settings selection");
+        QVERIFY2(window.m_fullRepairGrub->isChecked(),
+                 "an unavailable stage must keep the user's Settings selection");
+        QVERIFY(window.selectedRepairStages().isEmpty());
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Fedora packages (dnf)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (dracut)"));
+        QCOMPARE(window.m_fullRepairGrub->text(),
+                 QStringLiteral("Update GRUB2 configuration"));
+    }
+}
+
+// The Fedora upgrade stage must appear in the plan and run when its capability
+// line is available and the setting is on, including when the evidence arrived
+// through an individual diagnostic rather than Run All. The stage is off by
+// default, so the Repair page must say how to include it.
+void MainWindowUiTest::fedoraUpgradeStageIncludedWhenEnabledAndGateRefreshesImmediately()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window);
+
+    // Fresh settings: upgrade is unchecked and gated off until capability
+    // evidence exists.
+    QVERIFY(!window.m_fullRepairUpgrade->isChecked());
+    QVERIFY(!window.m_fullRepairUpgrade->isEnabled());
+
+    // Fedora capability evidence (upgrade available) arrives through one
+    // individual diagnostic; the repair gates must refresh immediately.
+    window.m_uiTestDiagnosticResults.insert(QStringLiteral("environment"), QStringLiteral(
+        "Distribution family: fedora\n"
+        "Package manager backend: rpm\n"
+        "Package manager backends: rpm\n"
+        "Service manager: systemd\n"
+        "Display manager backend: systemd\n"
+        "Initramfs backend: dracut\n"
+        "Bootloader backend: grub\n"
+        "Repair capability probes (read-only, selected target):\n"
+        "Repair tool validate: available\n"
+        "Repair tool filesystem: available\n"
+        "Repair tool dpkg: unavailable|Fedora uses rpm/dnf; dpkg configuration is not available\n"
+        "Repair tool fixbroken: available\n"
+        "Repair tool aptupdate: available\n"
+        "Repair tool upgrade: available\n"
+        "Repair tool dkms: unavailable|the rpm DKMS header correction is not implemented\n"
+        "Repair tool display: available\n"
+        "Repair tool initramfs: available\n"
+        "Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available\n"
+        "Repair tool grub: available\n"
+        "Repair tool extlinux: unavailable|syslinux/extlinux is not installed in the target system\n"
+        "Repair tool bootstack: available\n"
+        "Repair capability evidence (read-only):\n"
+        "Repair capability evidence upgrade: dnf5 present\n\n"
+        "Fedora profile: dnf/dracut/GRUB2.\n"));
+    int environmentRow = -1;
+    for (int row = 0; row < window.m_diagnosticList->count(); ++row) {
+        if (window.m_diagnosticList->item(row)->data(Qt::UserRole).toString() == QStringLiteral("environment")) {
+            environmentRow = row;
+            break;
+        }
+    }
+    QVERIFY(environmentRow >= 0);
+    window.m_diagnosticList->setCurrentRow(environmentRow);
+    window.runSelectedDiagnostic();
+
+    // No second Run All and no summary refresh was needed: the individual
+    // diagnostic refreshed the capability gates itself.
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("upgrade")),
+             "the Fedora upgrade capability must gate open from the individual diagnostic");
+    QVERIFY2(window.m_fullRepairUpgrade->isEnabled(),
+             "the Settings upgrade stage must be enabled without another Run All");
+    QCOMPARE(window.m_fullRepairUpgrade->text(),
+             QStringLiteral("Upgrade Fedora packages (dnf upgrade)"));
+    // Available but unchecked: the Repair page says how to include it instead
+    // of only "Disabled in Settings".
+    auto *upgradeItem = repairItem(window, QStringLiteral("upgrade"));
+    QVERIFY(upgradeItem);
+    QVERIFY2(upgradeItem->text(1).contains(QStringLiteral("enable it to include")),
+             qPrintable(upgradeItem->text(1)));
+
+    // Setting on: the stage is in the plan and runnable. Every other stage is
+    // unchecked so the plan contains exactly the upgrade stage.
+    for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
+                              window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
+                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                              window.m_fullRepairEfi, window.m_fullRepairGrub,
+                              window.m_fullRepairExtlinux}) {
+        toggle->setChecked(false);
+    }
+    window.m_fullRepairUpgrade->setChecked(true);
+    window.updateFullRepairSummary();
+    QCOMPARE(window.selectedRepairStages(), QStringList({QStringLiteral("apt-upgrade")}));
+    QCOMPARE(window.m_fullRepairStageList->count(), 1);
+    QVERIFY2(window.m_fullRepairStageList->item(0)->text().contains(
+                 QStringLiteral("Upgrade installed packages")),
+             qPrintable(window.m_fullRepairStageList->item(0)->text()));
+    QVERIFY(window.m_runFullRepairButton->isEnabled());
+    QVERIFY2(upgradeItem->text(1).contains(QStringLiteral("Enabled in Settings")),
+             qPrintable(upgradeItem->text(1)));
+
+    // A stale widget enablement can never drop a checked, capability-available
+    // stage from the executable plan.
+    window.m_fullRepairUpgrade->setEnabled(false);
+    QCOMPARE(window.selectedRepairStages(), QStringList({QStringLiteral("apt-upgrade")}));
+    window.updateFullRepairSummary();
+    QVERIFY(window.m_fullRepairUpgrade->isEnabled());
+}
+
+// The application must follow the desktop color scheme in both directions:
+// the palette, log text/selection, table alternate rows, disabled states and
+// the custom repair-result colors all adapt, and switching the scheme at
+// runtime goes through colorSchemeChanged.
+void MainWindowUiTest::themeFollowsDesktopColorScheme()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    ScopedColorSchemeOverride scheme(Qt::ColorScheme::Dark);
+    // Emitting the platform signal is exactly what happens when the desktop
+    // switches appearance at runtime.
+    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Dark);
+    QCoreApplication::processEvents();
+
+    const QPalette darkPalette = window.palette();
+    QVERIFY2(darkPalette.color(QPalette::Window).lightness() < 128,
+             "a dark scheme must produce a dark window color");
+    QVERIFY(darkPalette.color(QPalette::Base).lightness() < 128);
+    QVERIFY(darkPalette.color(QPalette::AlternateBase).lightness() < 128);
+    QVERIFY(darkPalette.color(QPalette::Button).lightness() < 128);
+    QVERIFY(darkPalette.color(QPalette::Text).lightness() > 128);
+    QVERIFY(darkPalette.color(QPalette::WindowText).lightness() > 128);
+    QVERIFY(darkPalette.color(QPalette::ButtonText).lightness() > 128);
+    QVERIFY(darkPalette.color(QPalette::HighlightedText).lightness() > 128);
+    QVERIFY2(darkPalette.color(QPalette::Disabled, QPalette::Text)
+                 != darkPalette.color(QPalette::Text),
+             "disabled states must keep their own readable text color");
+    QVERIFY2(window.m_logView->palette().color(QPalette::Base).lightness() < 128,
+             "the log view must use the dark base color");
+    QVERIFY2(window.m_logView->palette().color(QPalette::Text).lightness() > 128,
+             "the log text must stay readable on dark");
+    QVERIFY(window.m_capabilityTable->alternatingRowColors());
+    QVERIFY2(window.m_capabilityTable->palette().color(QPalette::AlternateBase).lightness() < 128,
+             "table alternate rows must use the dark alternate color");
+
+    window.appendLog(QStringLiteral("Repair result: ✓ dark scheme"), QStringLiteral("INFO"),
+                     MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair result: ✗ dark scheme"), QStringLiteral("ERROR"),
+                     MainWindow::LogEntryKind::Repair);
+    window.appendLog(QStringLiteral("Repair result: ▪ dark scheme"), QStringLiteral("INFO"),
+                     MainWindow::LogEntryKind::Repair);
+    flushLogRefresh(window);
+    const QColor darkSuccess = repairGlyphColor(window, QStringLiteral("✓"));
+    const QColor darkFailed = repairGlyphColor(window, QStringLiteral("✗"));
+    const QColor darkNoRepair = repairGlyphColor(window, QStringLiteral("▪"));
+    QVERIFY(darkSuccess.isValid() && darkFailed.isValid() && darkNoRepair.isValid());
+    QVERIFY2(darkSuccess.lightness() > 128, "the success glyph must be a light green on dark");
+    QVERIFY2(darkFailed.lightness() > 128, "the failure glyph must be a light red on dark");
+    QVERIFY2(darkNoRepair.lightness() > 128, "the no-repair glyph must be a light blue on dark");
+    QVERIFY2(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
+                 QStringLiteral("Desktop color scheme: dark (source: test override")),
+             "the applied scheme and its source must be logged");
+
+    // Switch the desktop scheme at runtime: the palette and the custom colors
+    // must follow through the same signal.
+    MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Light);
+    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Light);
+    QCoreApplication::processEvents();
+
+    const QPalette lightPalette = window.palette();
+    QVERIFY2(lightPalette.color(QPalette::Window).lightness() > 128,
+             "a light scheme must produce a light window color");
+    QVERIFY(lightPalette.color(QPalette::Base).lightness() > 128);
+    QVERIFY(lightPalette.color(QPalette::AlternateBase).lightness() > 128);
+    QVERIFY(lightPalette.color(QPalette::Text).lightness() < 128);
+    QVERIFY(lightPalette.color(QPalette::HighlightedText).lightness() > 128);
+    QVERIFY(lightPalette.color(QPalette::Disabled, QPalette::Text)
+                != lightPalette.color(QPalette::Text));
+    QVERIFY(window.m_logView->palette().color(QPalette::Base).lightness() > 128);
+    QVERIFY(window.m_capabilityTable->palette().color(QPalette::AlternateBase).lightness() > 128);
+
+    flushLogRefresh(window);
+    const QColor lightSuccess = repairGlyphColor(window, QStringLiteral("✓"));
+    const QColor lightFailed = repairGlyphColor(window, QStringLiteral("✗"));
+    const QColor lightNoRepair = repairGlyphColor(window, QStringLiteral("▪"));
+    QVERIFY2(lightSuccess.lightness() < 128, "the success glyph must be a dark green on light");
+    QVERIFY2(lightFailed.lightness() < 128, "the failure glyph must be a dark red on light");
+    QVERIFY2(lightNoRepair.lightness() < 128, "the no-repair glyph must be a dark blue on light");
+    QVERIFY2(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
+                 QStringLiteral("Desktop color scheme: light (source: test override")),
+             "a runtime switch must be logged with its source");
+    QVERIFY(darkSuccess != lightSuccess);
+    QVERIFY(darkFailed != lightFailed);
+    QVERIFY(darkNoRepair != lightNoRepair);
+    QVERIFY(darkSuccess.lightness() > lightSuccess.lightness());
+    QVERIFY(darkFailed.lightness() > lightFailed.lightness());
+    QVERIFY(darkNoRepair.lightness() > lightNoRepair.lightness());
+}
+
+// Reproduces the Fedora/GNOME startup race: the desktop was already dark before
+// the launch, the platform theme publishes the scheme only after the first
+// paint, and no colorSchemeChanged is emitted because nothing changed. The
+// deferred re-check must pick the late value up without any user toggle.
+void MainWindowUiTest::themeDetectsDarkSchemeAfterStartup()
+{
+    // Deterministic initial state: the window starts light and the desktop
+    // value only becomes visible after the event loop has started.
+    ScopedColorSchemeOverride scheme(Qt::ColorScheme::Light);
+    MainWindow window;
+    window.show();
+    QVERIFY2(window.palette().color(QPalette::Window).lightness() > 128,
+             "the window must start light before the desktop scheme resolves");
+    QVERIFY2(window.m_logView->palette().color(QPalette::Base).lightness() > 128,
+             "the log view must start light before the desktop scheme resolves");
+
+    window.appendLog(QStringLiteral("Repair result: ✓ startup scheme"), QStringLiteral("INFO"),
+                     MainWindow::LogEntryKind::Repair);
+    flushLogRefresh(window);
+    const QColor lightSuccess = repairGlyphColor(window, QStringLiteral("✓"));
+    QVERIFY(lightSuccess.isValid() && lightSuccess.lightness() < 128);
+
+    // The scheme becomes dark shortly after startup, without any
+    // colorSchemeChanged emission (the desktop was already dark).
+    MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Dark);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        window.palette().color(QPalette::Window).lightness() < 128, 3000);
+
+    QVERIFY(window.palette().color(QPalette::Base).lightness() < 128);
+    QVERIFY(window.palette().color(QPalette::AlternateBase).lightness() < 128);
+    QVERIFY(window.palette().color(QPalette::Text).lightness() > 128);
+    QVERIFY(window.palette().color(QPalette::WindowText).lightness() > 128);
+    QVERIFY2(window.m_logView->palette().color(QPalette::Base).lightness() < 128,
+             "the log view must adopt the late dark scheme");
+    QVERIFY2(window.m_capabilityTable->palette().color(QPalette::AlternateBase).lightness() < 128,
+             "table alternate rows must adopt the late dark scheme");
+
+    // The deferred re-apply must also re-render palette-derived custom colors,
+    // not just switch the palette.
+    const QColor darkSuccess = repairGlyphColor(window, QStringLiteral("✓"));
+    QVERIFY(darkSuccess.isValid());
+    QVERIFY2(darkSuccess.lightness() > 128,
+             "the success glyph must be re-rendered light on the late dark scheme");
+    QVERIFY(darkSuccess != lightSuccess);
+}
+
+// The portal fallback must understand GNOME's Settings portal values: the
+// GNOME namespace returns the strings "prefer-dark"/"prefer-light", the
+// cross-desktop appearance key returns 0/1/2, and GNOME wraps the payload in
+// an extra variant layer that defeated the old single-unwrap parser.
+void MainWindowUiTest::portalColorSchemeParsing()
+{
+    QVERIFY2(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("prefer-dark")))
+                 == Qt::ColorScheme::Dark,
+             "GNOME's prefer-dark string must resolve to dark");
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("dark")))
+            == Qt::ColorScheme::Dark);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("prefer-light")))
+            == Qt::ColorScheme::Light);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("default")))
+            == Qt::ColorScheme::Unknown);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(1))) == Qt::ColorScheme::Dark);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(2))) == Qt::ColorScheme::Light);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(0))) == Qt::ColorScheme::Unknown);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("")))
+            == Qt::ColorScheme::Unknown);
+#ifdef BOOT_REPAIR_HAVE_DBUS
+    // Exactly what `gdbus call ... Read org.gnome.desktop.interface
+    // color-scheme` returns on GNOME 50: a variant inside a variant.
+    const QDBusVariant darkInner(QStringLiteral("prefer-dark"));
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant::fromValue(QDBusVariant(darkInner)))
+            == Qt::ColorScheme::Dark);
+    const QDBusVariant lightInner(QStringLiteral("prefer-light"));
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant::fromValue(QDBusVariant(lightInner)))
+            == Qt::ColorScheme::Light);
+#endif
+}
+
+// The Diagnostics list gains a dedicated "File systems" entry backed by the
+// read-only fs-inspect helper command, and an individual diagnostic never
+// shows the shared capability preamble inside its own result: fstab stays
+// purely fstab while the gating lines remain cached for repairToolAvailable().
+void MainWindowUiTest::filesystemDiagnosticUsesFsInspectAndKeepsFstabPure()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window);
+
+    int filesystemRow = -1;
+    int usageRow = -1;
+    int fstabRow = -1;
+    for (int row = 0; row < window.m_diagnosticList->count(); ++row) {
+        const QString key = window.m_diagnosticList->item(row)->data(Qt::UserRole).toString();
+        if (key == QStringLiteral("filesystem")) filesystemRow = row;
+        if (key == QStringLiteral("usage")) usageRow = row;
+        if (key == QStringLiteral("fstab")) fstabRow = row;
+    }
+    QVERIFY2(filesystemRow >= 0, "the Diagnostics list must offer a dedicated File systems entry");
+    QVERIFY(usageRow >= 0);
+    QVERIFY(fstabRow >= 0);
+    QCOMPARE(window.m_diagnosticList->item(filesystemRow)->text(), QStringLiteral("File systems"));
+    QVERIFY2(usageRow < filesystemRow && filesystemRow < fstabRow,
+             "File systems belongs with the storage diagnostics, before fstab");
+
+    // Running it issues the existing fs-inspect helper command (not diagnose).
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("fs-diagnostic.log"));
+    QVERIFY(startFilesystemFakePrivilegedSession(window, capturePath));
+    window.m_diagnosticList->setCurrentRow(filesystemRow);
+    window.runSelectedDiagnostic();
+
+    const QList<QStringList> requests = capturedHelperRequests(capturePath);
+    QVERIFY2(!requests.isEmpty(), "the read-only fs-inspect request must be recorded");
+    QVERIFY2(requests.first().contains(QStringLiteral("fs-inspect")),
+             qPrintable(requests.first().join(QLatin1Char(' '))));
+    QVERIFY2(!requests.first().contains(QStringLiteral("diagnose")),
+             "the File systems diagnostic must use fs-inspect, not diagnose");
+    const QString cachedFilesystem = window.m_targetDiagnosticCache.value(QStringLiteral("filesystem"));
+    QVERIFY2(cachedFilesystem.contains(QStringLiteral("File system check")),
+             qPrintable(cachedFilesystem));
+    QVERIFY2(!cachedFilesystem.contains(QStringLiteral("Repair capability probes")),
+             "the capability preamble must not leak into the File systems result");
+    QVERIFY(!window.m_diagnosticResults->toPlainText().contains(QStringLiteral("Repair capability probes")));
+
+    // An individual diagnostic that carries the helper's capability preamble
+    // keeps the result pure and the gating lines cached separately.
+    window.m_uiTestDiagnosticResults.insert(QStringLiteral("fstab"), QStringLiteral(
+        "========================================\n"
+        "FSTAB\n"
+        "========================================\n"
+        "Diagnostic: fstab\n"
+        "Scope: Repair Target\n"
+        "Time: 2026-09-20T00:00:00\n\n"
+        "Repair capability probes (read-only, selected target):\n"
+        "Repair tool validate: available\n"
+        "Repair tool upgrade: available\n"
+        "Repair capability evidence (read-only):\n"
+        "Repair capability evidence upgrade: dnf5 present\n\n"
+        "UUID=11111111-2222-3333-4444-555555555555 / ext4 defaults 0 1\n"));
+    window.m_diagnosticList->setCurrentRow(fstabRow);
+    window.runSelectedDiagnostic();
+
+    const QString cachedFstab = window.m_targetDiagnosticCache.value(QStringLiteral("fstab"));
+    QVERIFY2(cachedFstab.contains(QStringLiteral("UUID=11111111-2222-3333-4444-555555555555 / ext4")),
+             qPrintable(cachedFstab));
+    QVERIFY2(!cachedFstab.contains(QStringLiteral("Repair tool")), qPrintable(cachedFstab));
+    QVERIFY2(!cachedFstab.contains(QStringLiteral("Repair capability")), qPrintable(cachedFstab));
+    QVERIFY2(!window.m_diagnosticResults->toPlainText().contains(QStringLiteral("Repair tool upgrade")),
+             "the fstab result pane must stay purely fstab");
+    const QString capabilities = window.m_targetDiagnosticCache.value(QStringLiteral("capabilities"));
+    QVERIFY2(capabilities.contains(QStringLiteral("Repair tool upgrade: available")),
+             qPrintable(capabilities));
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("upgrade")),
+             "the separated capability evidence must keep gating repairToolAvailable()");
+
+    // Re-running the preamble-less File systems diagnostic must not drop the
+    // preserved capability evidence and disable every repair gate.
+    window.m_diagnosticList->setCurrentRow(filesystemRow);
+    window.runSelectedDiagnostic();
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("upgrade")),
+             "a preamble-less diagnostic must preserve the cached capability evidence");
+
+    // The same generic File systems entry is present in the Running Host scope
+    // and dispatches host-fs-inspect (never the target fs-inspect command).
+    // The list itself is backend-family independent, so the entry is offered
+    // for Debian/Arch/Alpine/Fedora alike.
+    prepareRepairScope(window, true);
+    enterHostDiagnosticScope(window);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(),
+             QStringLiteral("Host maintenance: /dev/test-host"));
+    QVERIFY2(filesystemRow >= 0, "the File systems entry must exist in the Running Host scope");
+    QCOMPARE(window.m_diagnosticList->item(filesystemRow)->text(), QStringLiteral("File systems"));
+    window.m_diagnosticList->setCurrentRow(filesystemRow);
+    window.runSelectedDiagnostic();
+
+    const QList<QStringList> hostRequests = capturedHelperRequests(capturePath);
+    QVERIFY2(hostRequests.size() > requests.size(),
+             "the host-scope File systems run must issue a helper request");
+    const QStringList hostRequest = hostRequests.last();
+    QVERIFY2(hostRequest.contains(QStringLiteral("host-fs-inspect")),
+             qPrintable(hostRequest.join(QLatin1Char(' '))));
+    QVERIFY2(!hostRequest.contains(QStringLiteral("fs-inspect")),
+             "host scope must not dispatch the target fs-inspect command");
+    QVERIFY2(!hostRequest.contains(QStringLiteral("diagnose")),
+             "the File systems diagnostic must use host-fs-inspect, not diagnose");
+    const QString cachedHostFilesystem = window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"));
+    QVERIFY2(cachedHostFilesystem.contains(QStringLiteral("File system check")),
+             qPrintable(cachedHostFilesystem));
+    QVERIFY2(window.m_diagnosticResults->toPlainText().contains(QStringLiteral("File system check")),
+             "the host File systems result must be rendered");
+
+    // The Diagnostics list is backend-family independent: the File systems
+    // entry stays present for every detected family (Debian/Arch/Alpine/Fedora)
+    // and only its capability evidence changes the repair-stage gate.
+    for (const QString &familyEvidence : {capabilityEvidence(false, true),
+                                          capabilityEvidence(true, true),
+                                          capabilityEvidenceAlpine(true, true, true),
+                                          capabilityEvidenceFedora(true, true, true, true)}) {
+        cacheRepairEvidence(window, familyEvidence);
+        const int familyFilesystemRow = diagnosticRow(window, QStringLiteral("filesystem"));
+        QVERIFY2(familyFilesystemRow >= 0,
+                 "the File systems entry must be offered for every backend family");
+        QCOMPARE(window.m_diagnosticList->item(familyFilesystemRow)->text(),
+                 QStringLiteral("File systems"));
+    }
+}
+
+// The Diagnostics scope is derived from the Systems page and can never be
+// chosen independently: Host Maintenance active means Running Host, otherwise
+// the committed repair target. The standard top-right scope line follows every
+// Systems transition; a Repair Target run without a committed target raises
+// the existing "No repair target selected" popup; cached running-host results
+// stay hidden while maintenance is off.
+void MainWindowUiTest::hostDiagnosticsRequireHostMaintenanceScope()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // Default state: the derived scope is Repair Target with no committed
+    // target, so the standard scope line names no target.
+    QVERIFY(window.m_diagnosticScopeLabel);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(), QStringLiteral("Target: none selected"));
+    QVERIFY2(window.m_targetConfigCombo && window.m_targetConfigCombo->isHidden(),
+             "target configuration controls are only meaningful for a committed repair target");
+    QVERIFY2(!window.m_runDiagnosticButton->isEnabled(),
+             "the individual run must not be offered without a target or host maintenance");
+
+    // A no-target Run All keeps the existing popup and dispatches nothing.
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Ok);
+        window.runAllDiagnostics();
+        QVERIFY2(capture.appeared, "Run All without a target must raise the no-target popup");
+        QCOMPARE(capture.title, QStringLiteral("No repair target selected"));
+    }
+    const QString noTargetLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(!noTargetLog.contains(QStringLiteral("Starting all available read-only diagnostics")),
+             "a no-target Run All must not dispatch a diagnostic request");
+
+    // Cached running-host evidence is never rendered while maintenance is off,
+    // even though the cache keeps it for the next maintenance session.
+    window.m_hostDiagnosticCache.insert(QStringLiteral("environment"),
+                                        QStringLiteral("HOST_CACHE_MARKER must stay hidden"));
+    window.updateDiagnosticDetails();
+    QVERIFY2(!window.m_diagnosticResults->toPlainText().contains(QStringLiteral("HOST_CACHE_MARKER")),
+             "cached host diagnostics must not be displayed outside Host Maintenance");
+    QVERIFY2(!window.m_diagnosticAvailability->text().contains(QStringLiteral("running-host")),
+             qPrintable(window.m_diagnosticAvailability->text()));
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("environment"))
+                 .contains(QStringLiteral("HOST_CACHE_MARKER")),
+             "hiding host results must not clear the cached host evidence");
+
+    // Entering through the real Systems handler switches the standard scope
+    // line to the protected running host.
+    prepareRepairScope(window, true);
+    window.m_hostMaintenanceMode = false;
+    window.updateHostSystemSummary({window.m_deviceIndex.value(QStringLiteral("/dev/test-host"))});
+    window.updateTargetLabels();
+    QCOMPARE(window.m_diagnosticScopeLabel->text(), QStringLiteral("Target: none selected"));
+    window.selectHostForMaintenance();
+    QVERIFY2(window.m_hostMaintenanceMode,
+             "Host Maintenance must be entered through the real handler");
+    QCOMPARE(window.m_diagnosticScopeLabel->text(),
+             QStringLiteral("Host maintenance: /dev/test-host"));
+    QVERIFY2(window.m_targetConfigCombo->isHidden(),
+             "target configuration controls are never meaningful in host maintenance");
+
+    // Host scope now works: the File systems diagnostic dispatches the host
+    // command and its result is cached and rendered.
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-gate-fs.log"));
+    QVERIFY(startFilesystemFakePrivilegedSession(window, capturePath));
+    const int filesystemRow = diagnosticRow(window, QStringLiteral("filesystem"));
+    QVERIFY(filesystemRow >= 0);
+    window.m_diagnosticList->setCurrentRow(filesystemRow);
+    window.runSelectedDiagnostic();
+    const QList<QStringList> requests = capturedHelperRequests(capturePath);
+    QVERIFY2(!requests.isEmpty(), "the host File systems diagnostic must issue a helper request");
+    QVERIFY2(requests.first().contains(QStringLiteral("host-fs-inspect")),
+             qPrintable(requests.first().join(QLatin1Char(' '))));
+    QVERIFY(window.m_diagnosticResults->toPlainText().contains(QStringLiteral("File system check")));
+
+    // Exiting through the real handler returns to Repair Target, hides the
+    // host results and keeps the cache for the next maintenance session.
+    window.exitHostMaintenanceMode();
+    QVERIFY(!window.m_hostMaintenanceMode);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(), QStringLiteral("Target: none selected"));
+    QVERIFY2(!window.m_diagnosticResults->toPlainText().contains(QStringLiteral("File system check")),
+             "cached host results must not remain shown after leaving maintenance");
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))
+                 .contains(QStringLiteral("File system check")),
+             "leaving maintenance must keep the cached host evidence for the next session");
+
+    // Committing a repair target moves the derived scope back to Repair Target
+    // with the target disk named in the standard scope line.
+    prepareRepairScope(window);
+    window.updateTargetLabels();
+    QVERIFY(!window.m_hostMaintenanceMode);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(),
+             QStringLiteral("Target: /dev/test-system"));
+    QVERIFY2(!window.m_targetConfigCombo->isHidden(),
+             "target configuration controls must appear for a committed repair target");
+
+    // A target Run All dispatches target diagnostics and never touches the
+    // cached running-host evidence.
+    window.runAllDiagnostics();
+    const QString targetLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(targetLog.contains(QStringLiteral("Starting all available read-only diagnostics (Target scope)")),
+             "a committed target Run All must dispatch the target scope");
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))
+                 .contains(QStringLiteral("File system check")),
+             "a target run must not clear the cached host evidence");
+    QVERIFY2(!window.m_diagnosticResults->toPlainText().contains(QStringLiteral("HOST_CACHE_MARKER")),
+             "target results must never render host cache markers");
+}
+
+// A selection or scope change gets exactly one Btrfs snapshot inventory
+// request; re-scheduling the same scope (including a results refresh, a
+// deferred retry and the host-maintenance round trip) never repeats the
+// identical "Loading Btrfs snapshots" request.
+void MainWindowUiTest::snapshotPreloadIsDeduplicatedAcrossScopeTransitions()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // Synthetic protected running host plus two eligible Btrfs repair targets.
+    prepareRepairScope(window, true);
+    window.m_hostMaintenanceMode = false;
+    window.updateHostSystemSummary({window.m_deviceIndex.value(QStringLiteral("/dev/test-host"))});
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-a"),
+                                QStringLiteral("/dev/test-target-a1"));
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-b"),
+                                QStringLiteral("/dev/test-target-b1"));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("dedupe-snapshot.log"));
+    QVERIFY2(startSlowSnapshotFakePrivilegedSession(window, capturePath, QStringLiteral("0.2")),
+             "the scripted privileged session must start");
+    QVERIFY(window.m_privilegedSessionReady);
+
+    const auto snapshotRequestCount = [&capturePath] {
+        int count = 0;
+        for (const QStringList &request : capturedHelperRequests(capturePath)) {
+            if (!request.isEmpty() && request.first() == QStringLiteral("snapshots")) {
+                ++count;
+            }
+        }
+        return count;
+    };
+
+    // First selection: one automatic preload.
+    selectTopLevelDisk(window, QStringLiteral("/dev/test-target-a"));
+    window.setPreviewTarget();
+    QCOMPARE(window.m_previewTargetPath, QStringLiteral("/dev/test-target-a"));
+    QTRY_VERIFY_WITH_TIMEOUT(window.m_snapshotTable->rowCount() == 1
+                                 && !window.m_privilegedOperationActive, 8000);
+    QCOMPARE(snapshotRequestCount(), 1);
+
+    // Re-scheduling and a results refresh within the same scope generation
+    // must not issue a second identical request.
+    window.scheduleSnapshotPreload();
+    window.scheduleSnapshotPreload();
+    QTest::qWait(150);
+    QCOMPARE(snapshotRequestCount(), 1);
+    window.clearSnapshotResults();
+    window.scheduleSnapshotPreload();
+    QTest::qWait(150);
+    QCOMPARE(snapshotRequestCount(), 1);
+
+    // Host-maintenance round trip back to the same target is a scope change:
+    // exactly one new load, and no duplicate afterwards.
+    window.selectHostForMaintenance();
+    QTest::qWait(50);
+    selectTopLevelDisk(window, QStringLiteral("/dev/test-target-a"));
+    window.setPreviewTarget();
+    QTRY_VERIFY_WITH_TIMEOUT(window.m_snapshotTable->rowCount() == 1
+                                 && !window.m_privilegedOperationActive, 8000);
+    QCOMPARE(snapshotRequestCount(), 2);
+    window.scheduleSnapshotPreload();
+    QTest::qWait(150);
+    QCOMPARE(snapshotRequestCount(), 2);
+
+    // A manual Load still refreshes once; the automatic preload never
+    // duplicates it.
+    window.loadSnapshots();
+    QCOMPARE(snapshotRequestCount(), 3);
+    window.scheduleSnapshotPreload();
+    QTest::qWait(150);
+    QCOMPARE(snapshotRequestCount(), 3);
+}
+
+// Installed packages must resolve /usr/libexec/boot-repair/boot-repair-helper
+// instead of a developer source-tree helper; only an explicit user override
+// may win over the installed path, and a source/build run keeps its own helper.
+void MainWindowUiTest::helperPathResolutionPrefersInstalledUnlessOverridden()
+{
+    // Installed layout (/usr/bin): the installed libexec helper is first; the
+    // dev/source helper, if present at all, is only a last-resort fallback.
+    const QList<MainWindow::HelperPathCandidate> installed =
+        MainWindow::repairHelperCandidates(QStringLiteral("/usr/bin"), QByteArray());
+    QVERIFY(!installed.isEmpty());
+    QCOMPARE(installed.first().path,
+             QStringLiteral("/usr/libexec/boot-repair/boot-repair-helper"));
+    QVERIFY2(installed.first().reason.contains(QStringLiteral("installed")),
+             qPrintable(installed.first().reason));
+    int installedSourceIndex = -1;
+    for (int index = 0; index < installed.size(); ++index) {
+        if (installed.at(index).path.contains(QStringLiteral("scripts/boot-repair-helper.sh"))) {
+            installedSourceIndex = index;
+            break;
+        }
+    }
+    if (installedSourceIndex >= 0) {
+        QVERIFY2(installedSourceIndex > 0,
+                 "a source-tree helper must never precede the installed helper");
+        QVERIFY2(installed.at(installedSourceIndex).reason.contains(QStringLiteral("missing")),
+                 qPrintable(installed.at(installedSourceIndex).reason));
+    }
+
+    // Build/portable layout: the helper beside or above the executable wins
+    // over any stale installed helper.
+    const QList<MainWindow::HelperPathCandidate> portable =
+        MainWindow::repairHelperCandidates(QStringLiteral("/home/user/build-release"), QByteArray());
+    int portableSourceIndex = -1;
+    int portableInstalledIndex = -1;
+    for (int index = 0; index < portable.size(); ++index) {
+        if (portable.at(index).path.contains(QStringLiteral("scripts/boot-repair-helper.sh"))
+            && portableSourceIndex < 0) {
+            portableSourceIndex = index;
+        }
+        if (portable.at(index).path == QStringLiteral("/usr/libexec/boot-repair/boot-repair-helper")
+            && portableInstalledIndex < 0) {
+            portableInstalledIndex = index;
+        }
+    }
+    QVERIFY2(portableSourceIndex >= 0, "a build run must offer its source-tree helper");
+    QVERIFY2(portableInstalledIndex >= 0, "the installed helper stays a fallback");
+    QVERIFY2(portableSourceIndex < portableInstalledIndex,
+             "a build run must prefer its source-tree helper over a stale installed one");
+
+    // An explicit override always wins over every candidate.
+    const QList<MainWindow::HelperPathCandidate> overridden = MainWindow::repairHelperCandidates(
+        QStringLiteral("/usr/bin"), QByteArray("/opt/custom/boot-repair-helper"));
+    QVERIFY(!overridden.isEmpty());
+    QCOMPARE(overridden.first().path, QStringLiteral("/opt/custom/boot-repair-helper"));
+    QVERIFY2(overridden.first().reason.contains(QStringLiteral("BOOT_REPAIR_HELPER_PATH")),
+             qPrintable(overridden.first().reason));
+
+    // End to end: a real override file resolves through the same path, and the
+    // window's resolution honors the environment override.
+    QTemporaryDir helperDir;
+    QVERIFY(helperDir.isValid());
+    const QString overridePath = helperDir.filePath(QStringLiteral("boot-repair-helper"));
+    QFile overrideFile(overridePath);
+    QVERIFY(overrideFile.open(QIODevice::WriteOnly | QIODevice::Text));
+    overrideFile.write("#!/bin/sh\nexit 0\n");
+    overrideFile.close();
+    QVERIFY(QFile::setPermissions(overridePath,
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    const QString canonicalOverride = QFileInfo(overridePath).canonicalFilePath();
+    QString reason;
+    QCOMPARE(MainWindow::resolveRepairHelperPath(QStringLiteral("/usr/bin"),
+                                                 overridePath.toUtf8(), &reason),
+             canonicalOverride);
+    QVERIFY2(reason.contains(QStringLiteral("override")), qPrintable(reason));
+
+    MainWindow window;
+    {
+        ScopedEnvironmentVariable overrideEnv("BOOT_REPAIR_HELPER_PATH", overridePath.toUtf8());
+        QString windowReason;
+        QCOMPARE(window.repairHelperPath(&windowReason), canonicalOverride);
+        QVERIFY2(windowReason.contains(QStringLiteral("override")), qPrintable(windowReason));
+    }
+    QVERIFY2(!window.repairHelperPath().isEmpty(),
+             "a build run must still resolve its source-tree helper");
+}
+
+// The family-specific stage labels are applied per backend and reset for
+// Debian/Arch, so Alpine wording can never leak into another family's plan.
+void MainWindowUiTest::stageLabelsTrackBackendFamilyWithoutLeaking()
+{
+    MainWindow window;
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+
+        cacheRepairEvidence(window, capabilityEvidenceAlpine(true, true, true));
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Alpine packages (apk fix)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade Alpine packages (apk upgrade)"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (OpenRC runlevel)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (mkinitfs)"));
+        QCOMPARE(window.m_fullRepairExtlinux->text(),
+                 QStringLiteral("Regenerate extlinux configuration"));
+        // The Alpine BIOS/extlinux fixture keeps the generic EFI/GRUB labels.
+        QCOMPARE(window.m_fullRepairEfi->text(),
+                 QStringLiteral("Repair EFI / UKI boot path (explicit target ESP repair)"));
+        QCOMPARE(window.m_fullRepairGrub->text(), QStringLiteral("Update GRUB configuration"));
+
+        // An Alpine UEFI GRUB target gets the Alpine-specific EFI/GRUB labels.
+        cacheRepairEvidence(window, capabilityEvidenceAlpineUefi(true, true));
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairEfi->text(), QStringLiteral("Reinstall Alpine GRUB EFI loader"));
+        QCOMPARE(window.m_fullRepairGrub->text(), QStringLiteral("Regenerate Alpine GRUB configuration"));
+
+        // A Fedora/RPM target gets the dnf/dracut/GRUB2/GDM wording; the
+        // Debian reset below proves none of it leaks into another family.
+        cacheRepairEvidence(window, capabilityEvidenceFedora(true, true, true, true));
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Fedora packages (dnf)"));
+        QCOMPARE(window.m_fullRepairAptUpdate->text(),
+                 QStringLiteral("Refresh package metadata (dnf makecache)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade Fedora packages (dnf upgrade)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (dracut)"));
+        QCOMPARE(window.m_fullRepairGrub->text(),
+                 QStringLiteral("Update GRUB2 configuration"));
+        QCOMPARE(window.m_fullRepairEfi->text(),
+                 QStringLiteral("Reinstall GRUB2 bootloader"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (GDM)"));
+
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair broken package dependencies"));
+        QCOMPARE(window.m_fullRepairAptUpdate->text(),
+                 QStringLiteral("Refresh package metadata"));
+        QCOMPARE(window.m_fullRepairEfi->text(),
+                 QStringLiteral("Repair EFI / UKI boot path (explicit target ESP repair)"));
+        QCOMPARE(window.m_fullRepairGrub->text(), QStringLiteral("Update GRUB configuration"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade installed packages (adaptive APT simulation)"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager and graphical.target"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs after mapper/crypttab validation"));
+        QCOMPARE(window.m_fullRepairExtlinux->text(),
+                 QStringLiteral("Update extlinux configuration"));
+        QVERIFY(!window.repairToolAvailable(QStringLiteral("extlinux")));
+
+        cacheRepairEvidence(window, capabilityEvidence(true, false));
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair Arch package dependencies (full pacman transaction)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade Arch packages (full pacman transaction)"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager and graphical.target"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (mkinitcpio)"));
+        QCOMPARE(window.m_fullRepairExtlinux->text(),
+                 QStringLiteral("Update extlinux configuration"));
+        QVERIFY(!window.repairToolAvailable(QStringLiteral("extlinux")));
+    }
+}
+
+// A target with several detected package managers runs every backend, so the
+// Settings labels stay generic; the service-manager, initramfs and bootloader
+// labels still follow their own detected backends.
+void MainWindowUiTest::mixedPackageManagerLabelsStayGeneric()
+{
+    const QString mixedEvidence = QStringLiteral(
+        "Distribution family: debian\n"
+        "Package manager backend: apt/dpkg\n"
+        "Package manager backends: apt/dpkg, apk\n"
+        "Service manager: OpenRC\n"
+        "Initramfs backend: mkinitfs\n"
+        "Bootloader backend: syslinux/extlinux\n"
+        "Repair tool validate: available\n"
+        "Repair tool fixbroken: available\n"
+        "Repair tool upgrade: available\n"
+        "Repair tool display: available\n"
+        "Repair tool initramfs: available\n"
+        "Repair tool extlinux: available\n");
+
+    // A mixed rpm + apt/dpkg target: both package backends run, so the package
+    // labels stay generic while the initramfs, bootloader and display labels
+    // still follow their own detected backends.
+    const QString mixedRpmEvidence = QStringLiteral(
+        "Distribution family: fedora\n"
+        "Package manager backend: rpm\n"
+        "Package manager backends: rpm, apt/dpkg\n"
+        "Service manager: systemd\n"
+        "Display manager backend: systemd\n"
+        "Initramfs backend: dracut\n"
+        "Bootloader backend: grub\n"
+        "Repair capability evidence display: graphical.target present; display manager unit gdm.service\n"
+        "Repair capability evidence grub: grub2-mkconfig present; /boot/grub2/grub.cfg present\n"
+        "Repair tool validate: available\n"
+        "Repair tool fixbroken: available\n"
+        "Repair tool aptupdate: available\n"
+        "Repair tool upgrade: available\n"
+        "Repair tool display: available\n"
+        "Repair tool initramfs: available\n"
+        "Repair tool grub: available\n");
+
+    MainWindow window;
+    for (bool host : {false, true}) {
+        prepareRepairScope(window, host);
+        cacheRepairEvidence(window, mixedEvidence);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair broken package dependencies (all detected package managers)"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade installed packages (all detected package managers)"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (OpenRC runlevel)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (mkinitfs)"));
+        QCOMPARE(window.m_fullRepairExtlinux->text(),
+                 QStringLiteral("Regenerate extlinux configuration"));
+
+        cacheRepairEvidence(window, mixedRpmEvidence);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.m_fullRepairBrokenPackages->text(),
+                 QStringLiteral("Repair broken package dependencies (all detected package managers)"));
+        QCOMPARE(window.m_fullRepairAptUpdate->text(),
+                 QStringLiteral("Refresh package metadata"));
+        QCOMPARE(window.m_fullRepairUpgrade->text(),
+                 QStringLiteral("Upgrade installed packages (all detected package managers)"));
+        QCOMPARE(window.m_fullRepairInitramfs->text(),
+                 QStringLiteral("Rebuild initramfs (dracut)"));
+        QCOMPARE(window.m_fullRepairGrub->text(),
+                 QStringLiteral("Update GRUB2 configuration"));
+        QCOMPARE(window.m_fullRepairDisplayManager->text(),
+                 QStringLiteral("Restore detected graphical login manager (GDM)"));
+    }
+}
+
 void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences()
 {
     QTemporaryDir configDir;
@@ -5296,17 +8187,21 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("grub")});
         window.m_fullRepairGrub->setChecked(false);
         QVERIFY(!window.m_runFullRepairButton->isEnabled());
+        window.m_fullRepairExtlinux->setChecked(false);
         window.saveSettings();
         QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
                      .value(QStringLiteral("repair/dkms")).toBool(), true);
         QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
                      .value(QStringLiteral("repair/dpkgConfigure")).toBool(), true);
+        QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
+                     .value(QStringLiteral("repair/extlinux")).toBool(), false);
     }
     {
         MainWindow window;
         window.loadSettings();
         QVERIFY(window.m_fullRepairDkms->isChecked());
         QVERIFY(window.m_fullRepairDpkg->isChecked());
+        QVERIFY(!window.m_fullRepairExtlinux->isChecked());
         QVERIFY(!window.m_fullRepairDkms->isEnabled());
         QVERIFY(!window.m_fullRepairDpkg->isEnabled());
         for (QCheckBox *check : {window.m_fullRepairBrokenPackages, window.m_fullRepairUpgrade,
@@ -5371,7 +8266,7 @@ void MainWindowUiTest::autoRefreshDecisionRespectsSettingScopeAndEvidence()
     QVERIFY(window.shouldScheduleEvidenceRefresh(&reason));
 }
 
-void MainWindowUiTest::autoRefreshSettingOffPreventsScheduledRun()
+void MainWindowUiTest::autoRefreshStaysIdleWithoutSessionOrSetting()
 {
     MainWindow window;
     prepareStaleTargetScope(window);
@@ -5388,30 +8283,31 @@ void MainWindowUiTest::autoRefreshSettingOffPreventsScheduledRun()
     QTest::qWait(kNoSecondRunWaitMs);
     QCOMPARE(diagnosticRunCount(window), 0);
     QVERIFY(window.m_targetDiagnosticsNeedRegeneration);
+
+    // --- merged from autoRefreshWithoutSessionStaysPending() ---
+    {
+        MainWindow window;
+        prepareStaleTargetScope(window);
+        QVERIFY(!window.m_privilegedSessionReady);
+
+        window.scheduleEvidenceRefresh(QStringLiteral("UI test invalidation"));
+        QVERIFY(window.m_evidenceRefreshPending);
+        QVERIFY(!window.m_evidenceRefreshTimer || !window.m_evidenceRefreshTimer->isActive());
+
+        QTest::qWait(kNoSecondRunWaitMs);
+        QCOMPARE(diagnosticRunCount(window), 0);
+        QVERIFY(window.m_targetDiagnosticsNeedRegeneration);
+        QVERIFY(!window.m_targetDiagnosticCache.contains(QStringLiteral("report")));
+        QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
+            QStringLiteral("pending until administrator authorization")));
+    }
 }
 
-void MainWindowUiTest::autoRefreshWithoutSessionStaysPending()
+void MainWindowUiTest::autoRefreshSessionEstablishedRunsOnceAndCoalescesBursts()
 {
     MainWindow window;
     prepareStaleTargetScope(window);
-    QVERIFY(!window.m_privilegedSessionReady);
-
-    window.scheduleEvidenceRefresh(QStringLiteral("UI test invalidation"));
-    QVERIFY(window.m_evidenceRefreshPending);
-    QVERIFY(!window.m_evidenceRefreshTimer || !window.m_evidenceRefreshTimer->isActive());
-
-    QTest::qWait(kNoSecondRunWaitMs);
-    QCOMPARE(diagnosticRunCount(window), 0);
-    QVERIFY(window.m_targetDiagnosticsNeedRegeneration);
-    QVERIFY(!window.m_targetDiagnosticCache.contains(QStringLiteral("report")));
-    QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
-        QStringLiteral("pending until administrator authorization")));
-}
-
-void MainWindowUiTest::autoRefreshSessionEstablishedRunsOnce()
-{
-    MainWindow window;
-    prepareStaleTargetScope(window);
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
     window.scheduleEvidenceRefresh(QStringLiteral("UI test invalidation"));
     QVERIFY(window.m_evidenceRefreshPending);
 
@@ -5430,30 +8326,32 @@ void MainWindowUiTest::autoRefreshSessionEstablishedRunsOnce()
         QStringLiteral("Automatic read-only diagnostics regeneration completed")));
     QVERIFY(window.statusBar()->currentMessage().contains(
         QStringLiteral("Read-only diagnostics regenerated automatically")));
+
+    // --- merged from autoRefreshCoalescesRapidInvalidations() ---
+    {
+        MainWindow window;
+        prepareStaleTargetScope(window);
+        window.m_privilegedSessionReady = true;
+        window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
+
+        window.scheduleEvidenceRefresh(QStringLiteral("first invalidation"));
+        QTest::qWait(10);
+        window.scheduleEvidenceRefresh(QStringLiteral("second invalidation"));
+        QVERIFY(window.m_evidenceRefreshTimer);
+        QVERIFY(window.m_evidenceRefreshTimer->isActive());
+
+        QTRY_VERIFY(diagnosticRunCount(window) >= 1);
+        QTest::qWait(kNoSecondRunWaitMs);
+        QCOMPARE(diagnosticRunCount(window), 1);
+    }
 }
 
-void MainWindowUiTest::autoRefreshCoalescesRapidInvalidations()
+void MainWindowUiTest::autoRefreshCoalescesPlanAndManualRuns()
 {
     MainWindow window;
     prepareStaleTargetScope(window);
     window.m_privilegedSessionReady = true;
-
-    window.scheduleEvidenceRefresh(QStringLiteral("first invalidation"));
-    QTest::qWait(150);
-    window.scheduleEvidenceRefresh(QStringLiteral("second invalidation"));
-    QVERIFY(window.m_evidenceRefreshTimer);
-    QVERIFY(window.m_evidenceRefreshTimer->isActive());
-
-    QTRY_VERIFY(diagnosticRunCount(window) >= 1);
-    QTest::qWait(kNoSecondRunWaitMs);
-    QCOMPARE(diagnosticRunCount(window), 1);
-}
-
-void MainWindowUiTest::autoRefreshMultiStageRepairCoalescesToOneRun()
-{
-    MainWindow window;
-    prepareStaleTargetScope(window);
-    window.m_privilegedSessionReady = true;
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
 
     // While the Full Repair request owns the helper, per-stage invalidations
     // must not schedule anything.
@@ -5471,26 +8369,27 @@ void MainWindowUiTest::autoRefreshMultiStageRepairCoalescesToOneRun()
     QTest::qWait(kNoSecondRunWaitMs);
     QCOMPARE(diagnosticRunCount(window), 1);
     QVERIFY(!window.m_targetDiagnosticsNeedRegeneration);
-}
 
-void MainWindowUiTest::autoRefreshManualRunAllDoesNotDoubleRun()
-{
-    MainWindow window;
-    prepareStaleTargetScope(window);
-    window.m_privilegedSessionReady = true;
-    window.scheduleEvidenceRefresh(QStringLiteral("UI test invalidation"));
-    QVERIFY(window.m_evidenceRefreshTimer);
-    QVERIFY(window.m_evidenceRefreshTimer->isActive());
+    // --- merged from autoRefreshManualRunAllDoesNotDoubleRun() ---
+    {
+        MainWindow window;
+        prepareStaleTargetScope(window);
+        window.m_privilegedSessionReady = true;
+        window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
+        window.scheduleEvidenceRefresh(QStringLiteral("UI test invalidation"));
+        QVERIFY(window.m_evidenceRefreshTimer);
+        QVERIFY(window.m_evidenceRefreshTimer->isActive());
 
-    // Manual Run All before the coalescing timer fires regenerates once and
-    // leaves the scheduled automatic run a no-op.
-    window.runAllDiagnostics();
-    QVERIFY(!window.m_diagnosticsRunInProgress);
-    QCOMPARE(diagnosticRunCount(window), 1);
-    QVERIFY(!window.m_targetDiagnosticsNeedRegeneration);
+        // Manual Run All before the coalescing timer fires regenerates once and
+        // leaves the scheduled automatic run a no-op.
+        window.runAllDiagnostics();
+        QVERIFY(!window.m_diagnosticsRunInProgress);
+        QCOMPARE(diagnosticRunCount(window), 1);
+        QVERIFY(!window.m_targetDiagnosticsNeedRegeneration);
 
-    QTest::qWait(kNoSecondRunWaitMs);
-    QCOMPARE(diagnosticRunCount(window), 1);
+        QTest::qWait(kNoSecondRunWaitMs);
+        QCOMPARE(diagnosticRunCount(window), 1);
+    }
 }
 
 // The single invalidation mapping is the contract every repair action uses;
@@ -5505,6 +8404,8 @@ void MainWindowUiTest::diagnosticSectionMappingTable()
              QStringList({QStringLiteral("display")}));
     QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("grub")),
              QStringList({QStringLiteral("grub")}));
+    QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("extlinux")),
+             QStringList({QStringLiteral("boot"), QStringLiteral("boot-evidence")}));
     QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("initramfs")),
              QStringList({QStringLiteral("kernel")}));
     QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("dkms")),
@@ -5512,7 +8413,8 @@ void MainWindowUiTest::diagnosticSectionMappingTable()
     QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("efi")),
              QStringList({QStringLiteral("uki"), QStringLiteral("grub"), QStringLiteral("boot-evidence")}));
     QCOMPARE(window.diagnosticSectionsForRepair(QStringLiteral("filesystem")),
-             QStringList({QStringLiteral("environment"), QStringLiteral("usage"), QStringLiteral("btrfs")}));
+             QStringList({QStringLiteral("environment"), QStringLiteral("usage"),
+                          QStringLiteral("btrfs"), QStringLiteral("filesystem")}));
     for (const QString &broad : {QStringLiteral("dpkg"), QStringLiteral("dpkg-configure"),
                                  QStringLiteral("fixbroken"), QStringLiteral("fix-broken"),
                                  QStringLiteral("aptupdate"), QStringLiteral("apt-update"),
@@ -5537,7 +8439,6 @@ void MainWindowUiTest::scopedRepairRegeneratesOnlyMappedSections()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -5571,7 +8472,6 @@ void MainWindowUiTest::scopedRepairRegeneratesOnlyMappedSections()
     // A successful repair refreshes devices, which drops the synthetic target;
     // restore it and let the coalesced regeneration run.
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.scheduleEvidenceRefresh(QStringLiteral("UI test scoped refresh"));
     QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
 
@@ -5601,7 +8501,6 @@ void MainWindowUiTest::packageStageRepairRegeneratesCompleteSet()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidence(false, true));
 
@@ -5626,7 +8525,6 @@ void MainWindowUiTest::packageStageRepairRegeneratesCompleteSet()
              "the complete invalidation must drop the cached report");
 
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.scheduleEvidenceRefresh(QStringLiteral("UI test package refresh"));
     QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
 
@@ -5639,8 +8537,9 @@ void MainWindowUiTest::packageStageRepairRegeneratesCompleteSet()
 }
 
 // A Run Full Repair plan with two narrow stages accumulates their section
-// union and regenerates it exactly once at the end.
-void MainWindowUiTest::fullRepairPlanRegeneratesSectionUnionOnce()
+// union and regenerates it exactly once at the end; a mixed plan regenerates
+// only the changed stage's mapped section.
+void MainWindowUiTest::fullRepairPlanRegeneratesOnlyChangedSectionsOnce()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
@@ -5650,7 +8549,6 @@ void MainWindowUiTest::fullRepairPlanRegeneratesSectionUnionOnce()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -5698,7 +8596,6 @@ void MainWindowUiTest::fullRepairPlanRegeneratesSectionUnionOnce()
              "both plan stages must be dispatched in the single Full Repair request");
 
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.scheduleEvidenceRefresh(QStringLiteral("UI test plan union refresh"));
     QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
 
@@ -5710,7 +8607,95 @@ void MainWindowUiTest::fullRepairPlanRegeneratesSectionUnionOnce()
              "the union refresh must regenerate display");
     QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("grub")).trimmed().isEmpty(),
              "the union refresh must regenerate GRUB");
+
+    // --- merged from fullRepairPlanRegeneratesOnlyChangedStages() ---
+    {
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window);
+        window.m_snapshotPreloadScheduled = true;
+        window.m_autoRefreshDiagnostics->setChecked(true);
+        cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+
+        for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
+                                  window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
+                                  window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                                  window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                                  window.m_fullRepairEfi, window.m_fullRepairGrub}) {
+            QVERIFY(toggle);
+            toggle->setChecked(false);
+        }
+        window.m_fullRepairDisplayManager->setChecked(true);
+        window.m_fullRepairGrub->setChecked(true);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.selectedRepairStages(),
+                 QStringList({QStringLiteral("display-manager"), QStringLiteral("grub")}));
+
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("plan-mixed-requests.log"));
+        QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath,
+                                                        {QStringLiteral("display-manager=unchanged"),
+                                                         QStringLiteral("grub=changed")}),
+                 "the scripted privileged session must start");
+        closeRepairProgressDialogWhenDone(&window);
+        acceptNextMessageBox(&window, QMessageBox::Yes);
+
+        window.runFullRepair();
+
+        QVERIFY2(!window.m_fullRepairPlanInProgress,
+                 "the plan guard must be released after the last stage");
+        QVERIFY2(window.m_fullRepairPlanModified,
+                 "a mixed plan must remember the changed stage");
+        QVERIFY2(window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("grub")),
+                 "the changed GRUB stage must mark the grub section stale");
+        QVERIFY2(!window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("display")),
+                 "the unchanged display stage must not mark its section stale");
+        QCOMPARE(window.m_targetDiagnosticsStaleSections.size(), 1);
+        QVERIFY2(!window.m_targetDiagnosticsNeedRegeneration,
+                 "a mixed narrow plan must not invalidate the complete set");
+        QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
+                 "the unchanged stage's cached evidence must stay valid");
+        QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("grub")).trimmed().isEmpty(),
+                 "the changed stage's cached section must be dropped");
+        const QString planLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QCOMPARE(planLog.count(QStringLiteral("STALE DIAGNOSTICS")), 1);
+        QVERIFY2(planLog.contains(QStringLiteral(
+                     "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 1 no repair needed")),
+                 "the mixed plan aggregate must count each stage category");
+        QVERIFY2(planLog.contains(QStringLiteral("  ✓ grub — GRUB configuration regenerated — changes were applied")),
+                 "the changed stage must have an auditable summary line");
+        QVERIFY2(planLog.contains(QStringLiteral("  ▪ display — display manager already correct — no changes")),
+                 "the unchanged stage must have an auditable summary line");
+        // The aggregate is the newest entry of the plan's log section, so it
+        // renders above the captured Full Repair output.
+        flushLogRefresh(window);
+        const QString planVisible = window.m_logView->toPlainText();
+        const int aggregateIndex = planVisible.indexOf(QStringLiteral("Full Repair results:"));
+        const int planOutputIndex = planVisible.indexOf(
+            QStringLiteral("Repair output\nDiagnostic: Full Repair"));
+        QVERIFY2(aggregateIndex >= 0 && planOutputIndex >= 0 && aggregateIndex < planOutputIndex,
+                 "the plan aggregate must render above the captured Full Repair output");
+
+        // The plan's coalesced regeneration runs only the changed stage's section.
+        prepareRepairScope(window);
+        window.scheduleEvidenceRefresh(QStringLiteral("UI test mixed plan refresh"));
+        QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
+
+        const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QCOMPARE(log.count(QStringLiteral("Target diagnostic run: GRUB configuration")), 1);
+        QCOMPARE(log.count(QStringLiteral("Target diagnostic run: Graphical login / display manager")), 0);
+        QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("grub")).trimmed().isEmpty(),
+                 "the changed stage's section must be regenerated");
+        QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
+                 "the unchanged stage's cached evidence must survive the regeneration");
+    }
 }
+
 
 // A repair whose helper status proves "unchanged" keeps every cached section
 // valid, schedules no regeneration and leaves every other repair tool enabled;
@@ -5725,7 +8710,6 @@ void MainWindowUiTest::repairUnchangedKeepsCachedEvidence()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -5781,8 +8765,9 @@ void MainWindowUiTest::repairUnchangedKeepsCachedEvidence()
 }
 
 // A repair whose helper status reports "changed" invalidates exactly the
-// mapped sections, like the pre-existing scoped invalidation.
-void MainWindowUiTest::repairChangedInvalidatesMappedSections()
+// mapped sections, like the pre-existing scoped invalidation; a transcript
+// without the stable status line keeps the fail-safe invalidation.
+void MainWindowUiTest::repairChangeStatusInvalidatesMappedSectionsOrFailsSafe()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
@@ -5792,7 +8777,6 @@ void MainWindowUiTest::repairChangedInvalidatesMappedSections()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(false);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -5835,46 +8819,43 @@ void MainWindowUiTest::repairChangedInvalidatesMappedSections()
         QStringLiteral("Repair output\nDiagnostic: Restore detected graphical login manager"));
     QVERIFY2(summaryIndex >= 0 && outputIndex >= 0 && summaryIndex < outputIndex,
              "the repair summary must render above the captured output");
-}
 
-// A repair transcript without the stable status line keeps the fail-safe
-// behavior: the mapped sections are invalidated.
-void MainWindowUiTest::missingRepairChangeStatusInvalidates()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
+    // --- merged from missingRepairChangeStatusInvalidates() ---
+    {
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
 
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window);
+        window.m_snapshotPreloadScheduled = true;
+        window.m_autoRefreshDiagnostics->setChecked(false);
+        cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
-    QTemporaryDir requestDir;
-    QVERIFY(requestDir.isValid());
-    const QString capturePath = requestDir.filePath(QStringLiteral("missing-status-requests.log"));
-    QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath, QStringList()),
-             "the scripted privileged session must start");
-    closeRepairProgressDialogWhenDone(&window);
-    acceptNextMessageBox(&window, QMessageBox::Yes);
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("missing-status-requests.log"));
+        QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath, QStringList()),
+                 "the scripted privileged session must start");
+        closeRepairProgressDialogWhenDone(&window);
+        acceptNextMessageBox(&window, QMessageBox::Yes);
 
-    QTreeWidgetItem *item = repairItem(window, QStringLiteral("display"));
-    QVERIFY(item);
-    window.m_repairToolTree->setCurrentItem(item);
-    window.runSelectedRepairTool();
+        QTreeWidgetItem *item = repairItem(window, QStringLiteral("display"));
+        QVERIFY(item);
+        window.m_repairToolTree->setCurrentItem(item);
+        window.runSelectedRepairTool();
 
-    QVERIFY2(window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("display")),
-             "a missing change status must fail safe and invalidate the mapped section");
-    QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
-             "the fail-safe invalidation must drop the cached section");
-    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QVERIFY2(!log.contains(QStringLiteral("No system changes were detected")),
-             "a missing status must never be reported as unchanged");
-    QVERIFY2(log.contains(QStringLiteral("Repair result: ✓ display manager repaired — changes were applied")),
-             "a missing status keeps the fail-safe success category, matching the invalidation decision");
+        QVERIFY2(window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("display")),
+                 "a missing change status must fail safe and invalidate the mapped section");
+        QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
+                 "the fail-safe invalidation must drop the cached section");
+        const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QVERIFY2(!log.contains(QStringLiteral("No system changes were detected")),
+                 "a missing status must never be reported as unchanged");
+        QVERIFY2(log.contains(QStringLiteral("Repair result: ✓ display manager repaired — changes were applied")),
+                 "a missing status keeps the fail-safe success category, matching the invalidation decision");
+    }
 }
 
 // A failed modifying repair reports the failed category with the helper's
@@ -5890,7 +8871,6 @@ void MainWindowUiTest::repairFailedResultSummaryAndInvalidation()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(false);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -6168,6 +9148,18 @@ void MainWindowUiTest::repairPlanSummaryVocabularyIsActionAccurate()
              QStringLiteral("  ✓ upgrade — packages upgraded — changes were applied"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("upgrade"), Category::NoRepairNeeded)),
              QStringLiteral("  ▪ upgrade — no packages to upgrade"));
+    // Held-back/skipped package-manager feedback is part of the summary
+    // wording for a changed stage as well as a proven-unchanged one.
+    QCOMPARE(MainWindow::repairResultStageLine(stage(
+                 QStringLiteral("upgrade"), Category::Success, QString(),
+                 QStringLiteral("1 package kept back: firmware-mediatek"))),
+             QStringLiteral("  ✓ upgrade — packages upgraded — changes were applied — "
+                            "1 package kept back: firmware-mediatek"));
+    QCOMPARE(MainWindow::repairResultStageLine(stage(
+                 QStringLiteral("upgrade"), Category::NoRepairNeeded, QString(),
+                 QStringLiteral("1 package kept back: firmware-mediatek"))),
+             QStringLiteral("  ▪ upgrade — no packages to upgrade — "
+                            "1 package kept back: firmware-mediatek"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("fixbroken"), Category::Success)),
              QStringLiteral("  ✓ fixbroken — broken dependencies repaired — changes were applied"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("fixbroken"), Category::NoRepairNeeded)),
@@ -6188,6 +9180,10 @@ void MainWindowUiTest::repairPlanSummaryVocabularyIsActionAccurate()
              QStringLiteral("  ✓ grub — GRUB configuration regenerated — changes were applied"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("grub"), Category::NoRepairNeeded)),
              QStringLiteral("  ▪ grub — GRUB configuration already current — no changes"));
+    QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("extlinux"), Category::Success)),
+             QStringLiteral("  ✓ extlinux — extlinux configuration regenerated — changes were applied"));
+    QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("extlinux"), Category::NoRepairNeeded)),
+             QStringLiteral("  ▪ extlinux — extlinux configuration already current — no changes"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("dkms"), Category::Success)),
              QStringLiteral("  ✓ dkms — DKMS modules rebuilt — changes were applied"));
     QCOMPARE(MainWindow::repairResultStageLine(stage(QStringLiteral("dkms"), Category::NoRepairNeeded)),
@@ -6309,7 +9305,12 @@ void MainWindowUiTest::repairPlanSummaryVocabularyIsActionAccurate()
                             "▪ 2 no repair needed · ▪ 1 not checked — see the filesystem stage line · "
                             "▪ 1 not run — see the grub stage line — review the failed stages in Logs."));
 
-    // Single-action summaries use the same vocabulary table.
+    // Single-action summaries use the same vocabulary table and carry the
+    // same held-back/skipped feedback detail.
+    QCOMPARE(MainWindow::repairResultSummary(Category::Success, QStringLiteral("upgrade"), QString(),
+                                             QStringLiteral("1 package kept back: firmware-mediatek")),
+             QStringLiteral("Repair result: ✓ packages upgraded — changes were applied — "
+                            "1 package kept back: firmware-mediatek"));
     QCOMPARE(MainWindow::repairResultSummary(Category::Success, QStringLiteral("aptupdate")),
              QStringLiteral("Repair result: ✓ package metadata refreshed — changes were applied"));
     QCOMPARE(MainWindow::repairResultSummary(Category::NoRepairNeeded, QStringLiteral("initramfs")),
@@ -6321,6 +9322,50 @@ void MainWindowUiTest::repairPlanSummaryVocabularyIsActionAccurate()
              QStringLiteral("Repair result: ▪ not all filesystems were checked"));
     QCOMPARE(MainWindow::repairResultSummary(Category::NoRepairNeeded),
              QStringLiteral("Repair result: ▪ no repair needed — no changes were detected"));
+}
+
+// A package upgrade whose helper transcript appends held-back/skipped feedback
+// to its change status must show the count and names in the result summary.
+// The helper reports `changed|1 package kept back: <pkg>` when other packages
+// were upgraded; the GUI must not hide that feedback behind the bare changed
+// category.
+void MainWindowUiTest::repairResultSummaryShowsHeldBackPackages()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(true);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("upgrade-feedback-requests.log"));
+    QVERIFY2(startChangeStatusFakePrivilegedSession(
+                 window, capturePath,
+                 {QStringLiteral("apt-upgrade=changed|1 package kept back: firmware-mediatek")}),
+             "the scripted privileged session must start");
+    closeRepairProgressDialogWhenDone(&window);
+    acceptNextMessageBox(&window, QMessageBox::Yes);
+
+    QTreeWidgetItem *item = repairItem(window, QStringLiteral("upgrade"));
+    QVERIFY(item);
+    window.m_repairToolTree->setCurrentItem(item);
+    window.runSelectedRepairTool();
+
+    QVERIFY2(capturedHelperArguments(capturePath).contains(QStringLiteral("apt-upgrade")),
+             "the upgrade repair must be dispatched");
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral(
+                 "Repair result: ✓ packages upgraded — changes were applied — "
+                 "1 package kept back: firmware-mediatek")),
+             "the changed upgrade result summary must name the held-back package");
+    QVERIFY2(!log.contains(QStringLiteral("Repair result: ✗")),
+             "held-back packages must never be reported as a failure");
 }
 
 // A Full Repair run must read chronologically: the file system pre-stage runs
@@ -6337,24 +9382,7 @@ void MainWindowUiTest::fullRepairFilesystemPreStageIsOrderedBeforePlanSummary()
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
+    prepareFilesystemPlan(window);
     QVERIFY(window.m_fullRepairDpkg);
     window.m_fullRepairDpkg->setChecked(true);
     window.updateFullRepairSummary();
@@ -6475,7 +9503,9 @@ void MainWindowUiTest::fullRepairFilesystemPreStageIsOrderedBeforePlanSummary()
 // A clean file system pre-stage inside a Full Repair plan must not append the
 // standalone "no system changes" status: later stages can still change the
 // system, and the plan's single end-of-plan notice owns that register entry.
-void MainWindowUiTest::fullRepairCleanFilesystemPreStageDoesNotClaimUnchanged()
+// The clean pre-stage is log-only inside the plan: the plan summary already
+// reports the result, so no modal information dialog may interrupt it.
+void MainWindowUiTest::fullRepairCleanFilesystemPreStageIsLogOnlyAndDoesNotClaimUnchanged()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
@@ -6483,24 +9513,7 @@ void MainWindowUiTest::fullRepairCleanFilesystemPreStageDoesNotClaimUnchanged()
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
+    prepareFilesystemPlan(window);
     QVERIFY(window.m_fullRepairDpkg);
     window.m_fullRepairDpkg->setChecked(true);
     window.updateFullRepairSummary();
@@ -6539,74 +9552,71 @@ void MainWindowUiTest::fullRepairCleanFilesystemPreStageDoesNotClaimUnchanged()
              "the clean pre-stage must be auditable in the summary");
     QVERIFY2(log.contains(QStringLiteral("  ✓ dpkg — package configuration completed — changes were applied")),
              "the changing stage must be auditable in the summary");
-}
 
-// A filesystem whose offline-only check was skipped because it is mounted is
-// not evidence of a clean filesystem: the plan must count it in its own
-// "not checked" category and list the skipped device, never claim no repair
-// was needed.
-void MainWindowUiTest::fullRepairSkippedFilesystemPreStageIsNotCountedAsNoRepairNeeded()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
+    // --- merged from fullRepairCleanFilesystemPreStageIsLogOnly() ---
+    {
+        // Never adopt the previous phase's session file.
+        MainWindow::s_activeSessionPath.clear();
+        ScopedSessionLogDir logDir;
+        QVERIFY(logDir.isValid());
 
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareFilesystemPlan(window);
+        QVERIFY(window.m_fullRepairDpkg);
+        window.m_fullRepairDpkg->setChecked(true);
+        window.updateFullRepairSummary();
+        QCOMPARE(window.selectedRepairStages(),
+                 QStringList({QStringLiteral("filesystem"), QStringLiteral("dpkg-configure")}));
 
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
+        QTemporaryDir requestDir;
+        QVERIFY(requestDir.isValid());
+        const QString capturePath = requestDir.filePath(QStringLiteral("plan-fs-clean-log-only.log"));
+        QProcess *session = startFilesystemFakePrivilegedSession(window, capturePath,
+                                                                 QStringLiteral("ext4"), false,
+                                                                 QString(),
+                                                                 QStringLiteral("clean"));
+        QVERIFY2(session, "the scripted privileged session must start");
+        QVERIFY(window.m_privilegedSessionReady);
+
+        closeRepairProgressDialogWhenDone(&window);
+
+        QStringList messageTitles;
+        QTimer poll;
+        poll.setInterval(5);
+        QObject::connect(&poll, &QTimer::timeout, &window, [&] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *box = qobject_cast<QMessageBox *>(top);
+                if (!box || !box->isVisible()) {
+                    continue;
+                }
+                messageTitles.append(box->windowTitle());
+                if (QAbstractButton *yes = box->button(QMessageBox::Yes)) {
+                    yes->click();
+                } else {
+                    box->accept();
+                }
+                return;
+            }
+        });
+        poll.start();
+
+        window.runFullRepair();
+        poll.stop();
+
+        QCOMPARE(messageTitles, QStringList({QStringLiteral("Run Full Repair")}));
+        QVERIFY2(!messageTitles.contains(QStringLiteral("File system repair")),
+                 "the clean pre-stage must not open the information dialog during a plan");
+        const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+        QVERIFY2(log.contains(QStringLiteral(
+                     "No file system errors were detected on the selected repair system's root, "
+                     "/boot, ESP or /home filesystems. No repair was run.")),
+                 "the clean pre-stage result must be recorded in the plan log");
+        QVERIFY2(log.contains(QStringLiteral(
+                     "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 1 no repair needed")),
+                 "the plan summary must still report the clean pre-stage");
     }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    QVERIFY(window.m_fullRepairDpkg);
-    window.m_fullRepairDpkg->setChecked(true);
-    window.updateFullRepairSummary();
-    QCOMPARE(window.selectedRepairStages(),
-             QStringList({QStringLiteral("filesystem"), QStringLiteral("dpkg-configure")}));
-
-    QTemporaryDir requestDir;
-    QVERIFY(requestDir.isValid());
-    const QString capturePath = requestDir.filePath(QStringLiteral("plan-fs-skipped-requests.log"));
-    QProcess *session = startFilesystemFakePrivilegedSession(window, capturePath,
-                                                             QStringLiteral("ext4"), /*issue=*/false);
-    QVERIFY2(session, "the scripted privileged session must start");
-    QVERIFY(window.m_privilegedSessionReady);
-
-    closeRepairProgressDialogWhenDone(&window);
-    // The skipped pre-stage is log-only inside the plan: only the plan
-    // confirmation remains modal.
-    acceptNextMessageBoxes(&window, 1, QMessageBox::Yes);
-
-    window.runFullRepair();
-
-    QVERIFY2(!window.m_fullRepairPlanInProgress, "the plan must finish");
-    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QVERIFY2(log.contains(QStringLiteral(
-                 "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 0 no repair needed · "
-                 "▪ 1 not checked — see the filesystem stage line — changes were applied.")),
-             "the aggregate must count the skipped filesystem in its own category "
-             "and reference the stage line that lists the skipped device");
-    QVERIFY2(!log.contains(QStringLiteral("▪ 1 no repair needed")),
-             "a skipped filesystem must never be counted as no-repair-needed");
-    QVERIFY2(log.contains(QStringLiteral(
-                 "  ▪ filesystem — not all filesystems were checked — "
-                 "1 skipped (mounted, offline-only check): /dev/test-root ext4")),
-             "the skipped filesystem and its device must be auditable in the summary");
-    QVERIFY2(log.contains(QStringLiteral("  ✓ dpkg — package configuration completed — changes were applied")),
-             "the remaining plan stages must still run and be auditable");
 }
 
 // Popup policy inside a plan: a clean (or fully skipped) inspection stays
@@ -7101,25 +10111,7 @@ void MainWindowUiTest::manualFilesystemCheckIsDistinguishableFromPlanPreStage()
     MainWindow window;
     window.show();
     QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    window.updateFullRepairSummary();
+    prepareFilesystemPlan(window);
     QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("filesystem")});
 
     QTemporaryDir requestDir;
@@ -7172,90 +10164,6 @@ void MainWindowUiTest::manualFilesystemCheckIsDistinguishableFromPlanPreStage()
              "the manual check must read as newer than the plan, whose summary must "
              "stay above its own pre-stage");
 }
-
-// A clean file system pre-stage inside a Full Repair plan is log-only: the
-// plan summary already reports the result, so no modal information dialog may
-// interrupt or block the plan. A standalone manual check keeps its dialog.
-void MainWindowUiTest::fullRepairCleanFilesystemPreStageIsLogOnly()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
-
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(false);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    QVERIFY(window.m_fullRepairDpkg);
-    window.m_fullRepairDpkg->setChecked(true);
-    window.updateFullRepairSummary();
-    QCOMPARE(window.selectedRepairStages(),
-             QStringList({QStringLiteral("filesystem"), QStringLiteral("dpkg-configure")}));
-
-    QTemporaryDir requestDir;
-    QVERIFY(requestDir.isValid());
-    const QString capturePath = requestDir.filePath(QStringLiteral("plan-fs-clean-log-only.log"));
-    QProcess *session = startFilesystemFakePrivilegedSession(window, capturePath,
-                                                             QStringLiteral("ext4"), false,
-                                                             QString(),
-                                                             QStringLiteral("clean"));
-    QVERIFY2(session, "the scripted privileged session must start");
-    QVERIFY(window.m_privilegedSessionReady);
-
-    closeRepairProgressDialogWhenDone(&window);
-
-    QStringList messageTitles;
-    QTimer poll;
-    poll.setInterval(5);
-    QObject::connect(&poll, &QTimer::timeout, &window, [&] {
-        for (QWidget *top : QApplication::topLevelWidgets()) {
-            auto *box = qobject_cast<QMessageBox *>(top);
-            if (!box || !box->isVisible()) {
-                continue;
-            }
-            messageTitles.append(box->windowTitle());
-            if (QAbstractButton *yes = box->button(QMessageBox::Yes)) {
-                yes->click();
-            } else {
-                box->accept();
-            }
-            return;
-        }
-    });
-    poll.start();
-
-    window.runFullRepair();
-    poll.stop();
-
-    QCOMPARE(messageTitles, QStringList({QStringLiteral("Run Full Repair")}));
-    QVERIFY2(!messageTitles.contains(QStringLiteral("File system repair")),
-             "the clean pre-stage must not open the information dialog during a plan");
-    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QVERIFY2(log.contains(QStringLiteral(
-                 "No file system errors were detected on the selected repair system's root, "
-                 "/boot, ESP or /home filesystems. No repair was run.")),
-             "the clean pre-stage result must be recorded in the plan log");
-    QVERIFY2(log.contains(QStringLiteral(
-                 "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 1 no repair needed")),
-             "the plan summary must still report the clean pre-stage");
-}
-
 // A Full Repair plan whose every modifying stage reported unchanged performs no
 // end-of-plan invalidation and no regeneration at all.
 void MainWindowUiTest::fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged()
@@ -7268,7 +10176,6 @@ void MainWindowUiTest::fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -7339,98 +10246,6 @@ void MainWindowUiTest::fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged()
     QVERIFY2(requests.contains(QStringLiteral("display-manager")) && requests.contains(QStringLiteral("grub")),
              "both plan stages must be dispatched in the single Full Repair request");
 }
-
-// A mixed Full Repair plan invalidates only the changed stages' mapped
-// sections and regenerates exactly that union.
-void MainWindowUiTest::fullRepairPlanRegeneratesOnlyChangedStages()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
-
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.m_autoRefreshDiagnostics->setChecked(true);
-    cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
-
-    for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
-                              window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
-                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
-                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
-                              window.m_fullRepairEfi, window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    window.m_fullRepairDisplayManager->setChecked(true);
-    window.m_fullRepairGrub->setChecked(true);
-    window.updateFullRepairSummary();
-    QCOMPARE(window.selectedRepairStages(),
-             QStringList({QStringLiteral("display-manager"), QStringLiteral("grub")}));
-
-    QTemporaryDir requestDir;
-    QVERIFY(requestDir.isValid());
-    const QString capturePath = requestDir.filePath(QStringLiteral("plan-mixed-requests.log"));
-    QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath,
-                                                    {QStringLiteral("display-manager=unchanged"),
-                                                     QStringLiteral("grub=changed")}),
-             "the scripted privileged session must start");
-    closeRepairProgressDialogWhenDone(&window);
-    acceptNextMessageBox(&window, QMessageBox::Yes);
-
-    window.runFullRepair();
-
-    QVERIFY2(!window.m_fullRepairPlanInProgress,
-             "the plan guard must be released after the last stage");
-    QVERIFY2(window.m_fullRepairPlanModified,
-             "a mixed plan must remember the changed stage");
-    QVERIFY2(window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("grub")),
-             "the changed GRUB stage must mark the grub section stale");
-    QVERIFY2(!window.m_targetDiagnosticsStaleSections.contains(QStringLiteral("display")),
-             "the unchanged display stage must not mark its section stale");
-    QCOMPARE(window.m_targetDiagnosticsStaleSections.size(), 1);
-    QVERIFY2(!window.m_targetDiagnosticsNeedRegeneration,
-             "a mixed narrow plan must not invalidate the complete set");
-    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
-             "the unchanged stage's cached evidence must stay valid");
-    QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("grub")).trimmed().isEmpty(),
-             "the changed stage's cached section must be dropped");
-    const QString planLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QCOMPARE(planLog.count(QStringLiteral("STALE DIAGNOSTICS")), 1);
-    QVERIFY2(planLog.contains(QStringLiteral(
-                 "Full Repair results: ✓ 1 successful · ✗ 0 failed · ▪ 1 no repair needed")),
-             "the mixed plan aggregate must count each stage category");
-    QVERIFY2(planLog.contains(QStringLiteral("  ✓ grub — GRUB configuration regenerated — changes were applied")),
-             "the changed stage must have an auditable summary line");
-    QVERIFY2(planLog.contains(QStringLiteral("  ▪ display — display manager already correct — no changes")),
-             "the unchanged stage must have an auditable summary line");
-    // The aggregate is the newest entry of the plan's log section, so it
-    // renders above the captured Full Repair output.
-    flushLogRefresh(window);
-    const QString planVisible = window.m_logView->toPlainText();
-    const int aggregateIndex = planVisible.indexOf(QStringLiteral("Full Repair results:"));
-    const int planOutputIndex = planVisible.indexOf(
-        QStringLiteral("Repair output\nDiagnostic: Full Repair"));
-    QVERIFY2(aggregateIndex >= 0 && planOutputIndex >= 0 && aggregateIndex < planOutputIndex,
-             "the plan aggregate must render above the captured Full Repair output");
-
-    // The plan's coalesced regeneration runs only the changed stage's section.
-    prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
-    window.scheduleEvidenceRefresh(QStringLiteral("UI test mixed plan refresh"));
-    QTRY_VERIFY_WITH_TIMEOUT(!window.diagnosticsInvalidationPending(), 15000);
-
-    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QCOMPARE(log.count(QStringLiteral("Target diagnostic run: GRUB configuration")), 1);
-    QCOMPARE(log.count(QStringLiteral("Target diagnostic run: Graphical login / display manager")), 0);
-    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("grub")).trimmed().isEmpty(),
-             "the changed stage's section must be regenerated");
-    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("display")).trimmed().isEmpty(),
-             "the unchanged stage's cached evidence must survive the regeneration");
-}
-
 // A failed Full Repair plan must attribute the failure to the stage the helper
 // named. Stages that completed before it keep their own changed/unchanged
 // result and stages the plan never reached are reported as not run instead of
@@ -7445,7 +10260,6 @@ void MainWindowUiTest::fullRepairPlanFailureAttributesOnlyFailingStage()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(false);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
 
@@ -7530,7 +10344,6 @@ void MainWindowUiTest::repairTargetSelectionRegeneratesCompleteSet()
     QTest::qWait(50);
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.m_autoRefreshDiagnostics->setChecked(true);
     window.m_privilegedSessionReady = true;
     cacheRepairEvidence(window, capabilityEvidence(false, true));
@@ -7652,6 +10465,58 @@ void MainWindowUiTest::concurrentAuthorizationRequestsCoalesce()
              "a coalesced caller must observe the cancelled request's failure");
     QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
     window.m_uiTestPrivilegedSessionDelayMs = 0;
+}
+
+void MainWindowUiTest::authorizationFailureSurfacesPolkitAgentHint()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    // Reuse the session-process test seam: a finished process whose merged
+    // output carries the pkexec textual-agent failure. The UI-test
+    // authorization branch must surface the actionable Alpine hint through the
+    // same composition the production pkexec path uses.
+    auto *session = new QProcess(&window);
+    session->setProcessChannelMode(QProcess::MergedChannels);
+    session->start(QStringLiteral("/bin/sh"),
+                   {QStringLiteral("-c"), QStringLiteral("cat >&2; exit 126")});
+    QVERIFY2(session->waitForStarted(5000), "the failing session process must start");
+    session->write(QByteArrayLiteral(
+        "Error creating textual authentication agent: Error opening current "
+        "controlling terminal for the process (`/dev/tty'): No such device or address\n"));
+    session->closeWriteChannel();
+    QVERIFY2(session->waitForFinished(5000), "the failing session process must finish");
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = false;
+    window.m_uiTestPrivilegedSessionGranted = false;
+
+    QString error;
+    QVERIFY2(!window.ensurePrivilegedSession(&error),
+             "an agent-failure session must report authorization failure");
+    // The stable prefix stays first so existing callers and messages remain
+    // compatible, followed by the real pkexec detail and the actionable fix.
+    QVERIFY2(error.startsWith(QStringLiteral("Administrator authorization session was not established.")),
+             qPrintable(QStringLiteral("the stable failure prefix must stay: %1").arg(error)));
+    QVERIFY2(error.contains(QStringLiteral("textual authentication agent")),
+             qPrintable(QStringLiteral("the pkexec detail must be surfaced: %1").arg(error)));
+    QVERIFY2(error.contains(QStringLiteral("No working Polkit authentication agent was found")),
+             qPrintable(QStringLiteral("the actionable agent hint must be surfaced: %1").arg(error)));
+    QVERIFY2(error.contains(QStringLiteral("apk add polkit-elogind xfce-polkit")),
+             qPrintable(QStringLiteral("the hint must name the Alpine fix: %1").arg(error)));
+    // The complete pkexec detail stays in the session log even though the
+    // dialog text stays concise.
+    QVERIFY2(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
+                 QStringLiteral("Authorization session: Error creating textual authentication agent")),
+             "the session log must keep the full pkexec detail");
+
+    // A plain cancellation with no pkexec detail keeps the exact generic
+    // message and gains no misleading agent hint.
+    window.m_privilegedSession = nullptr;
+    session->deleteLater();
+    QString cancelledError;
+    QVERIFY(!window.ensurePrivilegedSession(&cancelledError));
+    QCOMPARE(cancelledError, QStringLiteral("Administrator authorization session was not established."));
 }
 
 void MainWindowUiTest::repairTargetConfirmationRequestsPrivilegedSessionOnce()
@@ -7859,6 +10724,7 @@ void MainWindowUiTest::pendingAutoRefreshRunsAfterScopeAuthorization()
 {
     MainWindow window;
     prepareStaleTargetScope(window);
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
     window.m_uiTestPrivilegedSessionGranted = true;
     window.m_privilegedSessionRequestCount = 0;
 
@@ -7942,8 +10808,12 @@ void MainWindowUiTest::busyIndicatorTracksOverlappingOperations()
     QVERIFY(window.m_busyIndicator);
     QVERIFY(window.m_busyProgress);
     QVERIFY(window.m_busyStatusLabel);
-    QCOMPARE(window.m_busyProgress->minimum(), 0);
-    QCOMPARE(window.m_busyProgress->maximum(), 0);
+    QVERIFY2(qobject_cast<BusyIndicatorWidget *>(window.m_busyProgress),
+             "the busy indicator must be the custom-painted BusyIndicatorWidget");
+    QVERIFY2(!qobject_cast<QProgressBar *>(window.m_busyProgress),
+             "the platform-styled QProgressBar must not be used");
+    QVERIFY2(!window.m_busyProgress->isAnimating(),
+             "the custom indicator must not animate while idle");
     QVERIFY2(window.m_busyIndicator->isHidden(), "the busy indicator must be hidden while idle");
 
     window.beginBusyOperation(QStringLiteral("Running diagnostic: Environment validation"));
@@ -7967,6 +10837,45 @@ void MainWindowUiTest::busyIndicatorTracksOverlappingOperations()
     QVERIFY(window.m_activeBusyOperations.isEmpty());
 }
 
+// The busy indicator must be the same custom-painted marquee on every
+// distribution and theme: the platform QProgressBar indeterminate style (a
+// static solid bar on Fedora/Adwaita, animated stripes on Breeze) is not used.
+// The animation starts with the busy state and stops when the last operation
+// ends; the painted frames themselves are deliberately not pixel-tested.
+void MainWindowUiTest::busyIndicatorUsesCustomAnimatedIndicator()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    QCOMPARE(QString::fromLatin1(window.m_busyProgress->metaObject()->className()),
+             QStringLiteral("BusyIndicatorWidget"));
+    QVERIFY2(!window.m_busyProgress->isAnimating(),
+             "the custom indicator must be idle while no operation is running");
+    const qreal idlePhase = window.m_busyProgress->animationPhase();
+
+    window.beginBusyOperation(QStringLiteral("Running chroot shell command"));
+    QVERIFY(!window.m_busyIndicator->isHidden());
+    QVERIFY2(window.m_busyProgress->isAnimating(),
+             "the custom indicator must animate while an operation is running");
+    QTest::qWait(120);
+    QVERIFY2(window.m_busyProgress->animationPhase() != idlePhase,
+             "the marquee phase must advance while the busy state is active");
+
+    window.endBusyOperation(QStringLiteral("Running chroot shell command"));
+    QVERIFY(window.m_busyIndicator->isHidden());
+    QVERIFY2(!window.m_busyProgress->isAnimating(),
+             "the custom indicator must stop animating when the operation ends");
+
+    // Overlapping operations keep the marquee running until the last one.
+    window.beginBusyOperation(QStringLiteral("Running all diagnostics"));
+    window.beginBusyOperation(QStringLiteral("Running chroot shell command"));
+    window.endBusyOperation(QStringLiteral("Running all diagnostics"));
+    QVERIFY(window.m_busyProgress->isAnimating());
+    window.endBusyOperation(QStringLiteral("Running chroot shell command"));
+    QVERIFY(!window.m_busyProgress->isAnimating());
+}
+
 void MainWindowUiTest::busyIndicatorCoversDiagnosticsAndFailedOperations()
 {
     MainWindow window;
@@ -7978,7 +10887,7 @@ void MainWindowUiTest::busyIndicatorCoversDiagnosticsAndFailedOperations()
 
     // A real diagnostics run must drive the indicator through one complete
     // visible -> hidden cycle carrying the diagnostic label.
-    window.m_diagnosticScopeCombo->setCurrentIndex(1); // Running Host; no privilege.
+    enterHostDiagnosticScope(window);
     int environmentRow = -1;
     for (int row = 0; row < window.m_diagnosticList->count(); ++row) {
         if (window.m_diagnosticList->item(row)->data(Qt::UserRole).toString() == QStringLiteral("environment")) {
@@ -8202,7 +11111,7 @@ void MainWindowUiTest::hostDriveSummaryWrapsAtMinimumWidth()
     QCOMPARE(window.m_hostCardLayout->direction(), QBoxLayout::TopToBottom);
 
     const QString summary = QStringLiteral(
-        "WD_BLACK SN8100 HS 4000GB  •  /dev/nvme0n1  •  3.64 TiB  •  NVME  •  Critical mounts: /, /boot/efi");
+        "Example NVMe 1TB  •  /dev/nvme0n1  •  931 GiB  •  NVME  •  Critical mounts: /, /boot/efi");
     window.m_hostStorageLabel->setText(summary);
     QCoreApplication::processEvents();
     QTest::qWait(50);
@@ -8257,6 +11166,10 @@ void MainWindowUiTest::hostShellModeLabelsAndEnablement()
     QCOMPARE(window.m_tabs->tabText(4), QStringLiteral("Chroot Shell"));
     QCOMPARE(window.m_chrootShellHeading->text(), QStringLiteral("Chroot shell"));
     QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("repair system")));
+    // The chroot shell cannot answer prompts: the UI must say so and point at
+    // the non-interactive flag instead of letting a command hang.
+    QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("interactive prompts")));
+    QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("dnf update -y")));
     QVERIFY(window.m_chrootShellRunButton->toolTip().contains(QStringLiteral("repair system")));
     QVERIFY(window.m_chrootShellCommandEdit->placeholderText().contains(QStringLiteral("update-grub")));
     QVERIFY(window.m_chrootShellCommandEdit->accessibleName().contains(QStringLiteral("Chroot shell")));
@@ -8265,14 +11178,13 @@ void MainWindowUiTest::hostShellModeLabelsAndEnablement()
     QCOMPARE(window.m_chrootShellTargetLabel->text(), QStringLiteral("Target: /dev/test-system"));
 }
 
-void MainWindowUiTest::hostShellDispatchesHostShellCommand()
+void MainWindowUiTest::hostShellDispatchesAndHandlesFailureModes()
 {
     MainWindow window;
     window.show();
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
     cacheRepairEvidence(window, capabilityEvidence(false, true));
     window.updateTargetLabels();
     QVERIFY(!window.m_hostDiagnosticCache.isEmpty());
@@ -8298,63 +11210,117 @@ void MainWindowUiTest::hostShellDispatchesHostShellCommand()
     QVERIFY(window.m_hostDiagnosticCache.isEmpty());
     QVERIFY(window.m_evidenceRefreshTimer);
     QVERIFY(window.m_evidenceRefreshTimer->isActive());
+
+    // --- merged from hostShellAptUpdateWithoutRepositoryDataKeepsHostEvidence() ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, true);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("aptfail")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt update"));
+        window.runChrootShellCommand();
+
+        QCOMPARE(capturedHelperArguments(capturePath).value(0), QStringLiteral("host-shell"));
+        QVERIFY2(!window.m_hostDiagnosticCache.isEmpty(),
+                 "an apt update that received no repository data must keep cached host diagnostics");
+        QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("no repository data")));
+    }
+
+    // --- merged from hostShellTruncatedResponseFailsSafely() ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, true);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("truncated")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt update"));
+        acceptNextMessageBox(&window, QMessageBox::Ok);
+        // A helper response that ends without a DONE record must fail safely:
+        // no crash, a clear error in the shell pane and the application log.
+        window.runChrootShellCommand();
+
+        QCOMPARE(capturedHelperArguments(capturePath).value(0), QStringLiteral("host-shell"));
+        const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+        QVERIFY(shellOutput.contains(QStringLiteral("partial helper output")));
+        QVERIFY(shellOutput.contains(QStringLiteral("protocol DONE record")));
+        QVERIFY(shellOutput.contains(QStringLiteral("[command failed]")));
+        QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("protocol DONE record")));
+        // A truncated response is not a completed command: host evidence is stale.
+        QVERIFY(window.m_hostDiagnosticCache.isEmpty());
+    }
 }
 
-void MainWindowUiTest::hostShellAptUpdateWithoutRepositoryDataKeepsHostEvidence()
+// The helper maps a distribution-disabled plain apt upgrade to a full-upgrade
+// retry and emits a stable mapping line. That line must be visible in the
+// Host/Chroot shell pane and in the application log so the user can see why
+// the requested transaction ran as full-upgrade.
+void MainWindowUiTest::shellAptUpgradePolicyRetryLineIsRendered()
 {
     MainWindow window;
     window.show();
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
     cacheRepairEvidence(window, capabilityEvidence(false, true));
     window.updateTargetLabels();
 
     QTemporaryDir captureDir;
     QVERIFY(captureDir.isValid());
     const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
-    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("aptfail")));
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("aptupgrade")));
 
-    window.m_chrootShellCommandEdit->setText(QStringLiteral("apt update"));
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
     window.runChrootShellCommand();
 
     QCOMPARE(capturedHelperArguments(capturePath).value(0), QStringLiteral("host-shell"));
-    QVERIFY2(!window.m_hostDiagnosticCache.isEmpty(),
-             "an apt update that received no repository data must keep cached host diagnostics");
-    QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("no repository data")));
-}
-
-void MainWindowUiTest::hostShellTruncatedResponseFailsSafely()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    window.m_snapshotPreloadScheduled = true;
-    prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
-    cacheRepairEvidence(window, capabilityEvidence(false, true));
-    window.updateTargetLabels();
-
-    QTemporaryDir captureDir;
-    QVERIFY(captureDir.isValid());
-    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
-    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("truncated")));
-
-    window.m_chrootShellCommandEdit->setText(QStringLiteral("apt update"));
-    acceptNextMessageBox(&window, QMessageBox::Ok);
-    // A helper response that ends without a DONE record must fail safely:
-    // no crash, a clear error in the shell pane and the application log.
-    window.runChrootShellCommand();
-
-    QCOMPARE(capturedHelperArguments(capturePath).value(0), QStringLiteral("host-shell"));
+    const QString mappingLine = QStringLiteral(
+        "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead");
     const QString shellOutput = window.m_chrootShellOutput->toPlainText();
-    QVERIFY(shellOutput.contains(QStringLiteral("partial helper output")));
-    QVERIFY(shellOutput.contains(QStringLiteral("protocol DONE record")));
-    QVERIFY(shellOutput.contains(QStringLiteral("[command failed]")));
-    QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("protocol DONE record")));
-    // A truncated response is not a completed command: host evidence is stale.
-    QVERIFY(window.m_hostDiagnosticCache.isEmpty());
+    QVERIFY2(shellOutput.contains(mappingLine), qPrintable(shellOutput));
+    QVERIFY(shellOutput.contains(QStringLiteral("mock full-upgrade completed")));
+    QVERIFY(shellOutput.contains(QStringLiteral("[exit 0]")));
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(mappingLine), qPrintable(log));
+}
+
+// A same-scope privileged request that arrives while another operation owns
+// the helper is refused, never queued, and the refusal must name the concrete
+// next step instead of leaving the user with a dead end.
+void MainWindowUiTest::privilegedRefusalNamesNextStep()
+{
+    MainWindow window;
+    window.m_privilegedOperationActive = true;
+    window.m_privilegedOperationScopeKey = QStringLiteral("/dev/test-system");
+    window.m_privilegedOperationTitle = QStringLiteral("Run running-host diagnostics");
+
+    bool succeeded = true;
+    const QString response = window.runPrivilegedRequest(
+        QStringLiteral("Host shell"),
+        {QStringLiteral("host-shell"), QStringLiteral("/dev/test-system"),
+         QStringLiteral("/dev/test-root"), QStringLiteral("apt update")},
+        QByteArray(), &succeeded, false, MainWindow::LogEntryKind::HostShell);
+    QVERIFY(!succeeded);
+    QVERIFY2(response.contains(QStringLiteral("is still running and was not queued")), qPrintable(response));
+    QVERIFY2(response.contains(QStringLiteral("Wait for it to finish and retry, or cancel it.")), qPrintable(response));
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("Wait for it to finish and retry, or cancel it.")), qPrintable(log));
 }
 
 void MainWindowUiTest::targetShellDispatchStillUsesShell()
@@ -8366,7 +11332,6 @@ void MainWindowUiTest::targetShellDispatchStillUsesShell()
     QTest::qWait(50);
     window.m_snapshotPreloadScheduled = true;
     prepareRepairScope(window);
-    window.m_diagnosticScopeCombo->setCurrentIndex(0);
     window.updateTargetLabels();
     QVERIFY(window.m_chrootShellRunButton->isEnabled());
     QCOMPARE(window.m_tabs->tabText(4), QStringLiteral("Chroot Shell"));
@@ -8383,6 +11348,67 @@ void MainWindowUiTest::targetShellDispatchStillUsesShell()
              QStringList({QStringLiteral("shell"), QStringLiteral("/dev/test-system"),
                           QStringLiteral("/dev/test-root"), QStringLiteral("update-grub")}));
     QVERIFY(window.m_chrootShellOutput->toPlainText().contains(QStringLiteral("[exit 0]")));
+}
+
+// A chroot-shell command that aborts on an interactive prompt (for example
+// "dnf update" ending in "Is this ok [y/N]:") must surface the helper's
+// actionable non-interactive hint and the failure message in both the shell
+// pane and the application log. The global busy indicator must stay active for
+// the complete chroot-shell request and stop when it returns.
+void MainWindowUiTest::chrootShellInteractivePromptHintAndBusyCoverage()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+    window.updateTargetLabels();
+    QVERIFY(window.m_chrootShellRunButton->isEnabled());
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("prompt")));
+
+    bool busyDuringRequest = false;
+    QString busyLabelDuringRequest;
+    QTimer poll;
+    poll.setInterval(5);
+    QObject::connect(&poll, &QTimer::timeout, &window, [&] {
+        if (!window.m_busyIndicator->isHidden()) {
+            busyDuringRequest = true;
+            busyLabelDuringRequest = window.m_busyStatusLabel->text();
+        }
+    });
+    poll.start();
+
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("dnf update"));
+    window.runChrootShellCommand();
+    poll.stop();
+
+    const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+    QVERIFY2(shellOutput.contains(QStringLiteral("Is this ok [y/N]")),
+             "the interactive prompt evidence must stay visible in the shell pane");
+    QVERIFY2(shellOutput.contains(QStringLiteral("non-interactive flag")),
+             "the actionable non-interactive hint must reach the shell pane");
+    QVERIFY2(shellOutput.contains(QStringLiteral("dnf update -y")),
+             "the hint must name the concrete non-interactive command form");
+    QVERIFY2(shellOutput.contains(QStringLiteral("[command failed]")),
+             "the aborted command must be reported as failed");
+
+    QVERIFY2(busyDuringRequest,
+             "the busy indicator must be active for the whole chroot-shell request");
+    QVERIFY2(busyLabelDuringRequest.contains(QStringLiteral("shell"), Qt::CaseInsensitive),
+             "the busy label must identify the running shell request");
+    QVERIFY2(window.m_busyIndicator->isHidden(),
+             "the busy indicator must hide after the chroot-shell request");
+    QVERIFY(!window.m_busyProgress->isAnimating());
+
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("non-interactive flag")),
+             "the actionable hint must be recorded in the application log");
+    QVERIFY2(log.contains(QStringLiteral("Chroot shell command failed: dnf update")),
+             "the failure message must be recorded in the application log");
 }
 
 void MainWindowUiTest::shellReadinessGateIsSharedByButtonAndReturnPressed()
@@ -8417,7 +11443,6 @@ void MainWindowUiTest::shellReadinessGateIsSharedByButtonAndReturnPressed()
 
     // A resolved host enables the button, and the same command dispatches.
     prepareRepairScope(window, true);
-    window.m_diagnosticScopeCombo->setCurrentIndex(1);
     window.updateTargetLabels();
     QVERIFY(window.m_chrootShellRunButton->isEnabled());
     window.m_chrootShellCommandEdit->setText(QStringLiteral("apt update"));
@@ -8739,6 +11764,978 @@ void MainWindowUiTest::stateTogglingButtonsElideAtMinimumWidth()
     QTest::qWait(50);
     QVERIFY2(buttonTextIsBounded(window.m_unlockTargetButton, &failure),
              qPrintable(QStringLiteral("Already Unlocked: %1").arg(failure)));
+}
+
+// Every table/tree sorts on a header click. The targets tree is the special
+// case: top-level drives and the partitions inside each drive are ordered by
+// the clicked column while the drive/partition identity (selection and
+// expansion state) is preserved.
+void MainWindowUiTest::sortableDeviceTreeSortsDrivesAndPartitions()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    const auto makeDisk = [](const QString &path, const QString &model, quint64 size) {
+        DeviceNode disk;
+        disk.path = path;
+        disk.name = path.section(QLatin1Char('/'), -1);
+        disk.type = QStringLiteral("disk");
+        disk.model = model;
+        disk.sizeBytes = size;
+        disk.transport = QStringLiteral("sata");
+        return disk;
+    };
+    const auto makePart = [](const QString &path, const QString &fileSystem, quint64 size,
+                             bool installedLinux) {
+        DeviceNode part;
+        part.path = path;
+        part.name = path.section(QLatin1Char('/'), -1);
+        part.type = QStringLiteral("part");
+        part.fileSystem = fileSystem;
+        part.linuxCapableFileSystem = fileSystem != QStringLiteral("vfat");
+        part.installedLinux = installedLinux;
+        part.sizeBytes = size;
+        return part;
+    };
+
+    DeviceNode big = makeDisk(QStringLiteral("/dev/test-big"), QStringLiteral("Big Disk"), 2147483648ULL);
+    DeviceNode bigEsp = makePart(QStringLiteral("/dev/test-big1"), QStringLiteral("vfat"), 536870912ULL, false);
+    DeviceNode bigRoot = makePart(QStringLiteral("/dev/test-big2"), QStringLiteral("btrfs"), 1610612736ULL, true);
+    big.children = {bigEsp, bigRoot};
+    DeviceNode mid = makeDisk(QStringLiteral("/dev/test-mid"), QStringLiteral("Mid Disk"), 1073741824ULL);
+    DeviceNode midRoot = makePart(QStringLiteral("/dev/test-mid1"), QStringLiteral("ext4"), 1000000000ULL, false);
+    mid.children = {midRoot};
+    DeviceNode small = makeDisk(QStringLiteral("/dev/test-small"), QStringLiteral("Small Disk"), 104857600ULL);
+    DeviceNode smallRoot = makePart(QStringLiteral("/dev/test-small1"), QStringLiteral("ext4"), 104857600ULL, false);
+    small.children = {smallRoot};
+
+    window.populateDeviceTree({big, mid, small});
+    QCoreApplication::processEvents();
+
+    QTreeWidget *tree = window.m_deviceTree;
+    QVERIFY(tree);
+    QCOMPARE(tree->topLevelItemCount(), 3);
+    auto topPath = [tree](int row) {
+        return tree->topLevelItem(row)->data(0, Qt::UserRole).toString();
+    };
+    // Default: repair-likelihood rank ascending, so the installed-Linux drive
+    // is first and the two Linux-capable drives follow by name.
+    QCOMPARE(tree->header()->sortIndicatorSection(), 1);
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(topPath(0), big.path);
+    QCOMPARE(topPath(1), mid.path);
+    QCOMPARE(topPath(2), small.path);
+
+    QTreeWidgetItem *bigItem = deviceTreeTopLevelItem(window, big.path);
+    QVERIFY(bigItem);
+    // Keep the drive expanded and one partition selected across the sorts.
+    bigItem->setExpanded(true);
+    QTreeWidgetItem *bigRootItem = deviceTreeChildItem(bigItem, bigRoot.path);
+    QVERIFY(bigRootItem);
+    selectDeviceTreeItem(window, bigRootItem);
+
+    // Size ascending must be numeric, not the formatted "1.0 GiB" text:
+    // 100 MiB < 1 GiB < 2 GiB.
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 3));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorSection(), 3);
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(topPath(0), small.path);
+    QCOMPARE(topPath(1), mid.path);
+    QCOMPARE(topPath(2), big.path);
+    bigItem = deviceTreeTopLevelItem(window, big.path);
+    QVERIFY(bigItem);
+    QVERIFY2(bigItem->isExpanded(), "the expanded drive must stay expanded across a sort");
+    QCOMPARE(bigItem->child(0)->data(0, Qt::UserRole).toString(), bigEsp.path);
+    QCOMPARE(bigItem->child(1)->data(0, Qt::UserRole).toString(), bigRoot.path);
+    QVERIFY2(bigRootItem->isSelected(), "the selected partition must stay selected across a sort");
+    QVERIFY2(tree->selectedItems().contains(bigRootItem),
+             "selection must follow the partition item, not its old row");
+
+    // The second click reverses the order, drives and partitions alike.
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 3));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::DescendingOrder);
+    QCOMPARE(topPath(0), big.path);
+    QCOMPARE(topPath(1), mid.path);
+    QCOMPARE(topPath(2), small.path);
+    bigItem = deviceTreeTopLevelItem(window, big.path);
+    QVERIFY(bigItem);
+    QCOMPARE(bigItem->child(0)->data(0, Qt::UserRole).toString(), bigRoot.path);
+    QCOMPARE(bigItem->child(1)->data(0, Qt::UserRole).toString(), bigEsp.path);
+
+    // Status returns to the most-likely-first ranking; the tree exposes a
+    // visible indicator for every sort it applies.
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 1));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorSection(), 1);
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(topPath(0), big.path);
+    QVERIFY2(tree->header()->isSortIndicatorShown(), "the active sort indicator must be visible");
+}
+
+void MainWindowUiTest::deviceTreeSortIndicatorSurvivesLegacyHeaderState()
+{
+    // A header state saved before header sorting existed carries
+    // sortIndicatorShown=false and non-clickable sections. Restoring it must
+    // not hide the indicator or disable header clicks: the device tree always
+    // starts at the documented Status-ascending sort with a visible indicator.
+    QSettings settings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    settings.remove(QStringLiteral("systems/headerStateV3"));
+    settings.sync();
+    {
+        QTreeWidget legacy;
+        legacy.setColumnCount(6);
+        legacy.header()->setSectionsClickable(false);
+        legacy.header()->setSortIndicatorShown(false);
+        settings.setValue(QStringLiteral("systems/headerStateV3"), legacy.header()->saveState());
+        settings.sync();
+    }
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    QVERIFY(window.m_deviceTree);
+    QVERIFY2(window.m_deviceTree->header()->sectionsClickable(),
+             "header clicks must stay enabled after a legacy header state restore");
+    QVERIFY2(window.m_deviceTree->header()->isSortIndicatorShown(),
+             "the sort indicator must stay visible after a legacy header state restore");
+    QCOMPARE(window.m_deviceTree->header()->sortIndicatorSection(), 1);
+    QCOMPARE(window.m_deviceTree->header()->sortIndicatorOrder(), Qt::AscendingOrder);
+
+    settings.remove(QStringLiteral("systems/headerStateV3"));
+    settings.sync();
+}
+
+void MainWindowUiTest::sortableSnapshotTableUsesNumericAndDateKeys()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    QList<SnapshotInventoryRow> rows;
+    rows.append({QStringLiteral("10"), QStringLiteral("2024-01-01 23:30:00 -0500"),
+                 QStringLiteral("pre"), QStringLiteral("Alpha"),
+                 QStringLiteral("Linux root snapshot"), QStringLiteral("@/.snapshots/10/snapshot")});
+    rows.append({QStringLiteral("9"), QStringLiteral("2024-01-02 00:30:00 +0000"),
+                 QStringLiteral("pre"), QStringLiteral("Bravo"),
+                 QStringLiteral("Linux root snapshot"), QStringLiteral("@/.snapshots/9/snapshot")});
+    rows.append({QStringLiteral("100"), QStringLiteral("2024-01-03 08:00:00 +0000"),
+                 QStringLiteral("single"), QStringLiteral("Charlie"),
+                 QStringLiteral("Incomplete/non-root snapshot"), QStringLiteral("@/.snapshots/100/snapshot")});
+    window.populateSnapshotTable(rows);
+    QCoreApplication::processEvents();
+
+    QTableWidget *table = window.m_snapshotTable;
+    QVERIFY(table);
+    QCOMPARE(table->rowCount(), 3);
+    auto idAt = [table](int row) {
+        QTableWidgetItem *item = table->item(row, 0);
+        return item ? item->text() : QString();
+    };
+    QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 1);
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    // Default: newest first. The -0500 snapshot was created at
+    // 2024-01-02 04:30 UTC, so it must precede the +0000 00:30 UTC one even
+    // though its display text sorts earlier.
+    QCOMPARE(idAt(0), QStringLiteral("100"));
+    QCOMPARE(idAt(1), QStringLiteral("10"));
+    QCOMPARE(idAt(2), QStringLiteral("9"));
+
+    // The numeric and date sort keys are stored as real values, not strings.
+    QVERIFY2(table->item(0, 0)->data(BootRepairSortKeyRole).metaType() == QMetaType::fromType<qlonglong>(),
+             "snapshot numbers must carry a numeric sort key");
+    QVERIFY2(table->item(0, 1)->data(BootRepairSortKeyRole).metaType() == QMetaType::fromType<QDateTime>(),
+             "snapshot creation times must carry a date sort key");
+
+    // Snapshot numbers sort 9 < 10 < 100 instead of "10" < "100" < "9".
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 0);
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(idAt(0), QStringLiteral("9"));
+    QCOMPARE(idAt(1), QStringLiteral("10"));
+    QCOMPARE(idAt(2), QStringLiteral("100"));
+
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    QCOMPARE(idAt(0), QStringLiteral("100"));
+    QCOMPARE(idAt(1), QStringLiteral("10"));
+    QCOMPARE(idAt(2), QStringLiteral("9"));
+
+    // Created ascending uses the parsed timestamps: 00:30 UTC, then 04:30 UTC,
+    // then the next day.
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 1));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 1);
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(idAt(0), QStringLiteral("9"));
+    QCOMPARE(idAt(1), QStringLiteral("10"));
+    QCOMPARE(idAt(2), QStringLiteral("100"));
+
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 1));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    QCOMPARE(idAt(0), QStringLiteral("100"));
+    QCOMPARE(idAt(1), QStringLiteral("10"));
+    QCOMPARE(idAt(2), QStringLiteral("9"));
+}
+
+void MainWindowUiTest::sortableRepairToolTreeKeepsWorkflowDefaultAndSorts()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    QTreeWidget *tree = window.m_repairToolTree;
+    QVERIFY(tree);
+    QCOMPARE(tree->topLevelItemCount(), 13);
+
+    auto toolKeys = [tree] {
+        QStringList keys;
+        for (int row = 0; row < tree->topLevelItemCount(); ++row) {
+            keys << tree->topLevelItem(row)->data(0, Qt::UserRole).toString();
+        }
+        return keys;
+    };
+    // The curated Full Repair workflow order is the default and no indicator
+    // is shown until the user picks a column.
+    QCOMPARE(tree->header()->sortIndicatorSection(), -1);
+    QCOMPARE(toolKeys().first(), QStringLiteral("validate"));
+    QCOMPARE(toolKeys().last(), QStringLiteral("bootstack"));
+    const QStringList workflow = toolKeys();
+
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorSection(), 0);
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::AscendingOrder);
+    const QStringList ascending = toolKeys();
+    // The click reorders the list into the platform's tool-name collation; the
+    // exact collation differs between glibc and musl, so assert the structural
+    // contract instead of one locale's ordering.
+    QVERIFY2(ascending != workflow, "clicking the Tool header must reorder the list");
+    QStringList workflowSorted = workflow;
+    QStringList ascendingSorted = ascending;
+    std::sort(workflowSorted.begin(), workflowSorted.end());
+    std::sort(ascendingSorted.begin(), ascendingSorted.end());
+    QCOMPARE(ascendingSorted, workflowSorted);
+
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorOrder(), Qt::DescendingOrder);
+    QStringList reversed = ascending;
+    std::reverse(reversed.begin(), reversed.end());
+    QCOMPARE(toolKeys(), reversed);
+}
+
+void MainWindowUiTest::sortableCapabilityTableDefaultsToFeature()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    QTableWidget *table = window.m_capabilityTable;
+    QVERIFY(table);
+    const int count = table->rowCount();
+    QVERIFY(count > 1);
+    QCOMPARE(table->horizontalHeader()->sortIndicatorSection(), 0);
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+
+    // Population must never leave a cell empty, even though sorting is active
+    // for the next refresh.
+    for (int row = 0; row < count; ++row) {
+        for (int column = 0; column < table->columnCount(); ++column) {
+            QVERIFY2(table->item(row, column),
+                     qPrintable(QStringLiteral("capability cell %1/%2 is empty").arg(row).arg(column)));
+        }
+    }
+    auto featureAt = [table](int row) {
+        QTableWidgetItem *item = table->item(row, 0);
+        return item ? item->text() : QString();
+    };
+    const QString ascendingFirst = featureAt(0);
+    const QString ascendingLast = featureAt(count - 1);
+
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::DescendingOrder);
+    QCOMPARE(featureAt(0), ascendingLast);
+    QCOMPARE(featureAt(count - 1), ascendingFirst);
+
+    QTest::mouseClick(table->horizontalHeader()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(table->horizontalHeader(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(table->horizontalHeader()->sortIndicatorOrder(), Qt::AscendingOrder);
+    QCOMPARE(featureAt(0), ascendingFirst);
+}
+
+// The Selected tool primary action is pinned to the panel header: shrinking
+// the window and scrolling the page to the panel must never hide it.
+void MainWindowUiTest::repairToolActionButtonStaysPinnedToPanelHeader()
+{
+    MainWindow window;
+    window.resize(640, 480);
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(2); // Repair
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.m_repairToolTree->setCurrentItem(repairItem(window, QStringLiteral("validate")));
+    window.updateRepairToolDetails();
+    QCoreApplication::processEvents();
+
+    QVERIFY(window.m_repairToolButton);
+    QVERIFY2(window.m_repairToolButton->isEnabled(),
+             "Validate must be enabled with fresh capability evidence");
+    QVERIFY(window.m_repairSplitter);
+    auto *detailBox = qobject_cast<QGroupBox *>(window.m_repairSplitter->widget(1));
+    QVERIFY(detailBox);
+    auto *scroll = window.findChild<QScrollArea *>(QStringLiteral("repairPageScroll"));
+    QVERIFY(scroll);
+    QVERIFY(scroll->viewport());
+
+    // The action sits in the header row, above the description body.
+    const int buttonTop = window.m_repairToolButton->mapTo(detailBox, QPoint(0, 0)).y();
+    const int descriptionTop = window.m_repairToolDescription->mapTo(detailBox, QPoint(0, 0)).y();
+    QVERIFY2(buttonTop < descriptionTop,
+             "the action button must sit above the tool description in the panel header");
+
+    // Force the panel taller than the short viewport so its body cannot fit;
+    // the pinned header action must stay in view while the page scrolls.
+    const int viewportHeight = scroll->viewport()->height();
+    detailBox->setMinimumHeight(viewportHeight + 140);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+
+    const int panelTop = detailBox->mapTo(scroll->widget(), QPoint(0, 0)).y();
+    scroll->verticalScrollBar()->setValue(panelTop);
+    QCoreApplication::processEvents();
+    QTest::qWait(20);
+
+    QVERIFY2(window.m_repairToolButton->isVisible(), "the action button must stay visible");
+    QVERIFY2(window.m_repairToolButton->isEnabled(), "the action button must stay enabled");
+    const QRect buttonRect(window.m_repairToolButton->mapTo(scroll->viewport(), QPoint(0, 0)),
+                           window.m_repairToolButton->size());
+    QVERIFY2(scroll->viewport()->rect().intersects(buttonRect),
+             qPrintable(QStringLiteral("the action button at %1,%2 must stay inside the %3x%4 viewport")
+                            .arg(buttonRect.x()).arg(buttonRect.y())
+                            .arg(scroll->viewport()->width()).arg(scroll->viewport()->height())));
+    const int panelBottom = detailBox->mapTo(scroll->viewport(), QPoint(0, detailBox->height())).y();
+    QVERIFY2(panelBottom > scroll->viewport()->height(),
+             "the panel must extend below the viewport so the header pinning is meaningful");
+    QVERIFY2(buttonTop * 2 < detailBox->height(),
+             "the action button must stay in the upper half of the panel, not at its bottom");
+}
+
+// The snapshot inventory actions follow the same header pattern instead of
+// sitting at the bottom of the scrollable page.
+void MainWindowUiTest::snapshotActionsStayAboveInventory()
+{
+    MainWindow window;
+    window.resize(640, 480);
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(3); // Snapshots
+
+    prepareRepairScope(window);
+    DeviceNode component = window.m_deviceIndex.value(window.m_previewTargetComponentPath);
+    component.fileSystem = QStringLiteral("btrfs");
+    component.linuxCapableFileSystem = true;
+    component.installedLinux = true;
+    window.m_deviceIndex.insert(component.path, component);
+    window.m_snapshotPreloadScheduled = true;
+    window.updateSnapshotControls();
+    QCoreApplication::processEvents();
+    QVERIFY2(window.m_snapshotLoadButton->isEnabled(),
+             qPrintable(QStringLiteral("Load Snapshots must be enabled for a Btrfs target (tooltip: %1)")
+                            .arg(window.m_snapshotLoadButton->toolTip())));
+
+    auto *snapshotBox = qobject_cast<QGroupBox *>(window.m_snapshotSplitter->parentWidget());
+    QVERIFY(snapshotBox);
+    const int actionsTop = window.m_snapshotLoadButton->mapTo(snapshotBox, QPoint(0, 0)).y();
+    const int tableTop = window.m_snapshotTable->mapTo(snapshotBox, QPoint(0, 0)).y();
+    QVERIFY2(actionsTop < tableTop,
+             "snapshot actions must sit above the inventory table inside the framed panel");
+    QVERIFY2(!window.m_snapshotTable->isAncestorOf(window.m_snapshotLoadButton),
+             "the actions must not live inside the scrollable inventory");
+
+    // Shrinking the window keeps the header actions visible and enabled.
+    window.setMinimumSize(0, 0);
+    window.resize(520, 360);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+    QVERIFY(window.m_snapshotLoadButton->isVisible());
+    QVERIFY(window.m_snapshotLoadButton->isEnabled());
+    const int shrunkActionsTop = window.m_snapshotLoadButton->mapTo(snapshotBox, QPoint(0, 0)).y();
+    const int shrunkTableTop = window.m_snapshotTable->mapTo(snapshotBox, QPoint(0, 0)).y();
+    QVERIFY2(shrunkActionsTop < shrunkTableTop,
+             "the actions must stay above the inventory after the window shrinks");
+}
+
+// The File Copy primary actions close the page-title row with the scope
+// label: title left, scope label, then Preview Changes and Copy and Verify
+// ending at the content edge, all vertically centered with the title while the
+// window is wide enough. The minimum-width block below asserts the responsive
+// fallback (a right-aligned second row) that keeps the title complete.
+void MainWindowUiTest::fileCopyHeaderActionsShareTitleRow()
+{
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(5); // File Copy
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+
+    QVERIFY(window.m_fileCopyHeading);
+    QVERIFY(window.m_fileCopyTargetLabel);
+    QVERIFY(window.m_fileCopyPreviewButton);
+    QVERIFY(window.m_fileCopyRunButton);
+    // The guarded initial state is unchanged by the header move.
+    QVERIFY(!window.m_fileCopyPreviewButton->isEnabled());
+    QVERIFY(!window.m_fileCopyRunButton->isEnabled());
+
+    // The actions now live in the page scroll content together with the title,
+    // instead of floating in a separate row above it.
+    auto *scroll = window.findChild<QScrollArea *>(QStringLiteral("fileCopyPageScroll"));
+    QVERIFY(scroll);
+    QVERIFY2(scroll->isAncestorOf(window.m_fileCopyPreviewButton),
+             "Preview Changes must share the page scroll content with the title");
+    QVERIFY2(scroll->isAncestorOf(window.m_fileCopyRunButton),
+             "Copy and Verify must share the page scroll content with the title");
+
+    QWidget *content = window.m_fileCopyHeading->parentWidget();
+    QVERIFY(content);
+    QCOMPARE(window.m_fileCopyTargetLabel->parentWidget(), content);
+    QCOMPARE(window.m_fileCopyPreviewButton->parentWidget(), content);
+    QCOMPARE(window.m_fileCopyRunButton->parentWidget(), content);
+
+    const auto centerIn = [content](QWidget *widget) {
+        return widget->mapTo(content, widget->rect().center());
+    };
+    const QPoint headingCenter = centerIn(window.m_fileCopyHeading);
+    const QPoint scopeCenter = centerIn(window.m_fileCopyTargetLabel);
+    const QPoint previewCenter = centerIn(window.m_fileCopyPreviewButton);
+    const QPoint runCenter = centerIn(window.m_fileCopyRunButton);
+    QVERIFY2(qAbs(headingCenter.y() - scopeCenter.y()) <= 2,
+             qPrintable(QStringLiteral("title center y=%1, scope label center y=%2")
+                            .arg(headingCenter.y()).arg(scopeCenter.y())));
+    QVERIFY2(qAbs(headingCenter.y() - previewCenter.y()) <= 2,
+             qPrintable(QStringLiteral("title center y=%1, Preview Changes center y=%2")
+                            .arg(headingCenter.y()).arg(previewCenter.y())));
+    QVERIFY2(qAbs(headingCenter.y() - runCenter.y()) <= 2,
+             qPrintable(QStringLiteral("title center y=%1, Copy and Verify center y=%2")
+                            .arg(headingCenter.y()).arg(runCenter.y())));
+
+    // The buttons are on the title row itself, not floating above it.
+    const QRect headingRect(window.m_fileCopyHeading->mapTo(content, QPoint(0, 0)),
+                            window.m_fileCopyHeading->size());
+    const QRect previewRect(window.m_fileCopyPreviewButton->mapTo(content, QPoint(0, 0)),
+                            window.m_fileCopyPreviewButton->size());
+    const QRect runRect(window.m_fileCopyRunButton->mapTo(content, QPoint(0, 0)),
+                        window.m_fileCopyRunButton->size());
+    QVERIFY2(previewRect.top() >= headingRect.top() && previewRect.bottom() <= headingRect.bottom(),
+             qPrintable(QStringLiteral("Preview Changes %1,%2 %3x%4 is not inside the title row %5,%6 %7x%8")
+                            .arg(previewRect.x()).arg(previewRect.y())
+                            .arg(previewRect.width()).arg(previewRect.height())
+                            .arg(headingRect.x()).arg(headingRect.y())
+                            .arg(headingRect.width()).arg(headingRect.height())));
+    QVERIFY2(runRect.top() >= headingRect.top() && runRect.bottom() <= headingRect.bottom(),
+             qPrintable(QStringLiteral("Copy and Verify %1,%2 %3x%4 is not inside the title row %5,%6 %7x%8")
+                            .arg(runRect.x()).arg(runRect.y())
+                            .arg(runRect.width()).arg(runRect.height())
+                            .arg(headingRect.x()).arg(headingRect.y())
+                            .arg(headingRect.width()).arg(headingRect.height())));
+
+    // Left-to-right order: title → scope label → Preview Changes → Copy and Verify.
+    QVERIFY2(headingRect.left() < scopeCenter.x(),
+             "the scope label must sit right of the title");
+    QVERIFY2(scopeCenter.x() < previewCenter.x(),
+             "Preview Changes must sit right of the scope label");
+    QVERIFY2(previewCenter.x() < runCenter.x(),
+             "Copy and Verify must sit right of Preview Changes");
+    QVERIFY2(previewRect.right() < runRect.left(),
+             "Preview Changes and Copy and Verify must not overlap");
+
+    // The row closes at the content pane edge: the last action's right edge
+    // matches the full-width source frame in the same content layout.
+    QVERIFY(window.m_fileCopySourceBox);
+    const int contentRight = window.m_fileCopySourceBox->mapTo(
+        content, QPoint(window.m_fileCopySourceBox->width(), 0)).x();
+    const int runRight = window.m_fileCopyRunButton->mapTo(
+        content, QPoint(window.m_fileCopyRunButton->width(), 0)).x();
+    QVERIFY2(qAbs(runRight - contentRight) <= 2,
+             qPrintable(QStringLiteral("Copy and Verify right=%1, content pane right=%2")
+                            .arg(runRight).arg(contentRight)));
+
+    // The minimum supported window no longer squeezes the title row: the
+    // actions move to a right-aligned second row while the title stays
+    // complete and the scope label keeps the first row.
+    window.setMinimumSize(0, 0);
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+    QVERIFY(window.m_fileCopyPreviewButton->isVisible());
+    QVERIFY(window.m_fileCopyRunButton->isVisible());
+    const QRect smallHeading(window.m_fileCopyHeading->mapTo(content, QPoint(0, 0)),
+                             window.m_fileCopyHeading->size());
+    const QRect smallScope(window.m_fileCopyTargetLabel->mapTo(content, QPoint(0, 0)),
+                           window.m_fileCopyTargetLabel->size());
+    const QRect smallPreview(window.m_fileCopyPreviewButton->mapTo(content, QPoint(0, 0)),
+                             window.m_fileCopyPreviewButton->size());
+    const QRect smallRun(window.m_fileCopyRunButton->mapTo(content, QPoint(0, 0)),
+                         window.m_fileCopyRunButton->size());
+    QVERIFY2(!smallPreview.intersects(smallRun),
+             "the File Copy actions must not overlap at minimum width");
+    QVERIFY2(smallPreview.left() < smallRun.left(),
+             "the File Copy action order must survive the minimum width");
+    QVERIFY2(smallPreview.top() > smallHeading.bottom(),
+             "Preview Changes must move to a second row at minimum width");
+    QVERIFY2(smallRun.top() > smallHeading.bottom(),
+             "Copy and Verify must move to a second row at minimum width");
+    QVERIFY2(!smallPreview.intersects(smallScope) && !smallRun.intersects(smallScope),
+             "the wrapped File Copy actions must not overlap the scope label");
+    const int smallContentRight = window.m_fileCopySourceBox->mapTo(
+        content, QPoint(window.m_fileCopySourceBox->width(), 0)).x();
+    const int smallRunRight = window.m_fileCopyRunButton->mapTo(
+        content, QPoint(window.m_fileCopyRunButton->width(), 0)).x();
+    QVERIFY2(qAbs(smallRunRight - smallContentRight) <= 2,
+             qPrintable(QStringLiteral("minimum width: Copy and Verify right=%1, content pane right=%2")
+                            .arg(smallRunRight).arg(smallContentRight)));
+}
+
+// The Diagnostics title row closes with the scope label followed by Run All:
+// title left, scope label, then Run All at the content edge, all vertically
+// centered with the Diagnostics title.
+void MainWindowUiTest::diagnosticsHeaderRunAllFollowsScopeLabel()
+{
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(1); // Diagnostics
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+
+    QVERIFY(window.m_diagnosticScopeLabel);
+    QVERIFY(window.m_runAllDiagnosticsButton);
+    QCOMPARE(window.m_diagnosticScopeLabel->text(), QStringLiteral("Target: none selected"));
+
+    QWidget *page = window.m_diagnosticScopeLabel->parentWidget();
+    QVERIFY(page);
+    QLabel *title = directChildLabelWithText(page, QStringLiteral("Diagnostics"));
+    QVERIFY2(title, "the Diagnostics section title must exist");
+    QCOMPARE(window.m_runAllDiagnosticsButton->parentWidget(), page);
+    QCOMPARE(title->parentWidget(), page);
+
+    const auto centerIn = [page](QWidget *widget) {
+        return widget->mapTo(page, widget->rect().center());
+    };
+    const QPoint titleCenter = centerIn(title);
+    const QPoint scopeCenter = centerIn(window.m_diagnosticScopeLabel);
+    const QPoint runCenter = centerIn(window.m_runAllDiagnosticsButton);
+    QVERIFY2(qAbs(titleCenter.y() - scopeCenter.y()) <= 2,
+             qPrintable(QStringLiteral("title center y=%1, scope label center y=%2")
+                            .arg(titleCenter.y()).arg(scopeCenter.y())));
+    QVERIFY2(qAbs(titleCenter.y() - runCenter.y()) <= 2,
+             qPrintable(QStringLiteral("title center y=%1, Run All center y=%2")
+                            .arg(titleCenter.y()).arg(runCenter.y())));
+
+    const QRect titleRect(title->mapTo(page, QPoint(0, 0)), title->size());
+    const QRect runRect(window.m_runAllDiagnosticsButton->mapTo(page, QPoint(0, 0)),
+                        window.m_runAllDiagnosticsButton->size());
+    QVERIFY2(runRect.top() >= titleRect.top() && runRect.bottom() <= titleRect.bottom(),
+             qPrintable(QStringLiteral("Run All %1,%2 %3x%4 is not inside the title row %5,%6 %7x%8")
+                            .arg(runRect.x()).arg(runRect.y())
+                            .arg(runRect.width()).arg(runRect.height())
+                            .arg(titleRect.x()).arg(titleRect.y())
+                            .arg(titleRect.width()).arg(titleRect.height())));
+
+    // Left-to-right order: title → scope label → Run All.
+    QVERIFY2(titleRect.left() < scopeCenter.x(),
+             "the scope label must sit right of the Diagnostics title");
+    QVERIFY2(scopeCenter.x() < runCenter.x(),
+             "Run All must sit right of the scope label");
+
+    // Run All closes the row at the content pane edge, matching the diagnostic
+    // splitter that spans the same page layout.
+    QVERIFY(window.m_diagnosticSplitter);
+    const int contentRight = window.m_diagnosticSplitter->mapTo(
+        page, QPoint(window.m_diagnosticSplitter->width(), 0)).x();
+    const int runRight = window.m_runAllDiagnosticsButton->mapTo(
+        page, QPoint(window.m_runAllDiagnosticsButton->width(), 0)).x();
+    QVERIFY2(qAbs(runRight - contentRight) <= 2,
+             qPrintable(QStringLiteral("Run All right=%1, content pane right=%2")
+                            .arg(runRight).arg(contentRight)));
+
+    // The minimum supported window keeps the order and centering.
+    window.setMinimumSize(0, 0);
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+    QVERIFY(window.m_runAllDiagnosticsButton->isVisible());
+    QVERIFY2(qAbs(centerIn(title).y() - centerIn(window.m_runAllDiagnosticsButton).y()) <= 2,
+             "Run All must stay centered on the Diagnostics title row at minimum width");
+    QVERIFY2(centerIn(window.m_diagnosticScopeLabel).x()
+                 < centerIn(window.m_runAllDiagnosticsButton).x(),
+             "Run All must stay right of the scope label at minimum width");
+    const int smallContentRight = window.m_diagnosticSplitter->mapTo(
+        page, QPoint(window.m_diagnosticSplitter->width(), 0)).x();
+    const int smallRunRight = window.m_runAllDiagnosticsButton->mapTo(
+        page, QPoint(window.m_runAllDiagnosticsButton->width(), 0)).x();
+    QVERIFY2(qAbs(smallRunRight - smallContentRight) <= 2,
+             qPrintable(QStringLiteral("minimum width: Run All right=%1, content pane right=%2")
+                            .arg(smallRunRight).arg(smallContentRight)));
+}
+
+// The Repair and Snapshots headers already follow the same pattern: the scope
+// label shares the title row and ends at the content pane edge. This locks the
+// consistency the File Copy and Diagnostics headers were aligned to.
+void MainWindowUiTest::scopeLabelHeadersStayOnTitleRow()
+{
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    QTest::qWait(50);
+
+    struct HeaderSpec {
+        int tabIndex;
+        QLabel *scopeLabel;
+        QString title;
+    };
+    const QList<HeaderSpec> specs = {
+        {2, window.m_repairTargetLabel, QStringLiteral("Repair")},
+        {3, window.m_snapshotTargetLabel, QStringLiteral("Btrfs snapshots")},
+    };
+    for (const HeaderSpec &spec : specs) {
+        window.m_tabs->setCurrentIndex(spec.tabIndex);
+        QCoreApplication::processEvents();
+        QTest::qWait(30);
+
+        QVERIFY2(spec.scopeLabel, qPrintable(spec.title));
+        QWidget *content = spec.scopeLabel->parentWidget();
+        QVERIFY2(content, qPrintable(spec.title));
+        QLabel *title = directChildLabelWithText(content, spec.title);
+        QVERIFY2(title, qPrintable(QStringLiteral("missing %1 title").arg(spec.title)));
+        QCOMPARE(title->parentWidget(), content);
+
+        const QPoint titleCenter = title->mapTo(content, title->rect().center());
+        const QPoint scopeCenter = spec.scopeLabel->mapTo(content, spec.scopeLabel->rect().center());
+        QVERIFY2(qAbs(titleCenter.y() - scopeCenter.y()) <= 2,
+                 qPrintable(QStringLiteral("%1: title center y=%2, scope label center y=%3")
+                                .arg(spec.title).arg(titleCenter.y()).arg(scopeCenter.y())));
+        QVERIFY2(titleCenter.x() < scopeCenter.x(),
+                 qPrintable(QStringLiteral("%1: the scope label must sit right of the title")
+                                .arg(spec.title)));
+
+        // The full-width content pane in the same layout gives the right edge.
+        QWidget *contentPane = spec.tabIndex == 2
+            ? static_cast<QWidget *>(window.m_repairVerticalSplitter)
+            : static_cast<QWidget *>(window.m_snapshotSplitter->parentWidget());
+        QVERIFY2(contentPane, qPrintable(spec.title));
+        const int scopeRight = spec.scopeLabel->mapTo(
+            content, QPoint(spec.scopeLabel->width(), 0)).x();
+        const int paneRight = contentPane->mapTo(
+            content, QPoint(contentPane->width(), 0)).x();
+        QVERIFY2(qAbs(scopeRight - paneRight) <= 2,
+                 qPrintable(QStringLiteral("%1: scope label right=%2, content pane right=%3")
+                                .arg(spec.title).arg(scopeRight).arg(paneRight)));
+    }
+}
+
+// The File Copy and Diagnostics headers reflow instead of squeezing the title
+// row: the title and help keep the first row, the wrapping scope label and the
+// primary actions share the action row (scope left of the buttons, buttons
+// right-aligned) while it has room, and the scope plus actions move together to
+// a right-aligned second row when the window narrows. The title is never
+// truncated and the scope label wraps to its two-line form instead of eliding.
+void MainWindowUiTest::responsivePageHeadersWrapActionsAtMinimumWidth()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(100);
+    window.setMinimumSize(0, 0);
+
+    const auto titleFullyShown = [](QLabel *title) {
+        return title->fontMetrics().horizontalAdvance(title->text()) <= title->width();
+    };
+    const auto rectIn = [](QWidget *parent, QWidget *widget) {
+        return QRect(widget->mapTo(parent, QPoint(0, 0)), widget->size());
+    };
+    const auto rightEdgeIn = [](QWidget *parent, QWidget *widget) {
+        return widget->mapTo(parent, QPoint(widget->width(), 0)).x();
+    };
+
+    // --- File Copy: Host → Repair title with Preview Changes / Copy and Verify ---
+    window.m_tabs->setCurrentIndex(5);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+
+    QVERIFY(window.m_fileCopyHeading);
+    QVERIFY(window.m_fileCopyTargetLabel);
+    QVERIFY(window.m_fileCopyPreviewButton);
+    QVERIFY(window.m_fileCopyRunButton);
+    QVERIFY(window.m_fileCopySourceBox);
+    QWidget *fileCopyContent = window.m_fileCopyHeading->parentWidget();
+    QVERIFY(fileCopyContent);
+    const QList<QPushButton *> fileCopyActions = {
+        window.m_fileCopyPreviewButton, window.m_fileCopyRunButton};
+
+    // Wide: title complete, actions right-aligned on the first row, no overlap
+    // with the scope label.
+    window.resize(1000, 700);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QVERIFY2(titleFullyShown(window.m_fileCopyHeading),
+             "the File Copy title must be fully shown at a wide width");
+    const QRect wideFileCopyTitle = rectIn(fileCopyContent, window.m_fileCopyHeading);
+    const QRect wideFileCopyScope = rectIn(fileCopyContent, window.m_fileCopyTargetLabel);
+    for (QPushButton *action : fileCopyActions) {
+        const QRect rect = rectIn(fileCopyContent, action);
+        QVERIFY2(qAbs(rect.center().y() - wideFileCopyTitle.center().y()) <= 2,
+                 qPrintable(QStringLiteral("%1 must share the wide title row").arg(action->text())));
+        QVERIFY2(!rect.intersects(wideFileCopyScope),
+                 qPrintable(QStringLiteral("%1 must not overlap the scope label").arg(action->text())));
+        QVERIFY2(rect.left() > wideFileCopyScope.right(),
+                 qPrintable(QStringLiteral("%1 must sit right of the scope label").arg(action->text())));
+    }
+    QVERIFY2(fileCopyActions.at(0)->mapTo(fileCopyContent, QPoint(0, 0)).x()
+                 < fileCopyActions.at(1)->mapTo(fileCopyContent, QPoint(0, 0)).x(),
+             "the wide File Copy action order must stay Preview Changes then Copy and Verify");
+    const int wideFileCopyRight = window.m_fileCopySourceBox->mapTo(
+        fileCopyContent, QPoint(window.m_fileCopySourceBox->width(), 0)).x();
+    QVERIFY2(qAbs(rightEdgeIn(fileCopyContent, fileCopyActions.constLast()) - wideFileCopyRight) <= 2,
+             "the wide File Copy actions must stay right-aligned to the content edge");
+
+    // Narrow: title complete, actions on a right-aligned second row, no overlap
+    // with the title or the scope label.
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QVERIFY2(titleFullyShown(window.m_fileCopyHeading),
+             "the File Copy title must stay fully shown at the minimum width");
+    const QRect narrowFileCopyTitle = rectIn(fileCopyContent, window.m_fileCopyHeading);
+    const QRect narrowFileCopyScope = rectIn(fileCopyContent, window.m_fileCopyTargetLabel);
+    QVERIFY2(!narrowFileCopyTitle.intersects(narrowFileCopyScope),
+             "the File Copy title and scope label must not overlap at minimum width");
+    for (QPushButton *action : fileCopyActions) {
+        const QRect rect = rectIn(fileCopyContent, action);
+        QVERIFY2(rect.top() > narrowFileCopyTitle.bottom(),
+                 qPrintable(QStringLiteral("%1 must move to a second row at minimum width").arg(action->text())));
+        QVERIFY2(!rect.intersects(narrowFileCopyTitle),
+                 qPrintable(QStringLiteral("%1 must not overlap the title").arg(action->text())));
+        QVERIFY2(!rect.intersects(narrowFileCopyScope),
+                 qPrintable(QStringLiteral("%1 must not overlap the scope label").arg(action->text())));
+    }
+    QVERIFY2(qAbs(rectIn(fileCopyContent, fileCopyActions.at(0)).center().y()
+                  - rectIn(fileCopyContent, fileCopyActions.at(1)).center().y()) <= 2,
+             "both wrapped File Copy actions must share the second row");
+    const int narrowFileCopyRight = window.m_fileCopySourceBox->mapTo(
+        fileCopyContent, QPoint(window.m_fileCopySourceBox->width(), 0)).x();
+    QVERIFY2(qAbs(rightEdgeIn(fileCopyContent, fileCopyActions.constLast()) - narrowFileCopyRight) <= 2,
+             "the wrapped File Copy actions must stay right-aligned to the content edge");
+
+    // --- Diagnostics: the same pattern with Run All and the shared scope label ---
+    window.m_tabs->setCurrentIndex(1);
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+    QWidget *diagnosticsPage = window.m_diagnosticScopeLabel->parentWidget();
+    QVERIFY(diagnosticsPage);
+    QLabel *diagnosticsTitle = directChildLabelWithText(diagnosticsPage, QStringLiteral("Diagnostics"));
+    QVERIFY(diagnosticsTitle);
+    QVERIFY(window.m_runAllDiagnosticsButton);
+    QVERIFY(window.m_diagnosticSplitter);
+
+    // A long running-host scope is the crowded case: the scope must wrap in
+    // full (never elide away) and stay on the same row as Run All.
+    window.m_diagnosticScopeLabel->setText(QStringLiteral(
+        "Host maintenance: /dev/disk/by-id/nvme-eui.11111111222233334444555566667777"));
+    QCoreApplication::processEvents();
+
+    window.resize(1000, 700);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QVERIFY2(titleFullyShown(diagnosticsTitle),
+             "the Diagnostics title must be fully shown at a wide width");
+    const QRect wideDiagnosticsTitle = rectIn(diagnosticsPage, diagnosticsTitle);
+    const QRect wideDiagnosticsScope = rectIn(diagnosticsPage, window.m_diagnosticScopeLabel);
+    const QRect wideRunAll = rectIn(diagnosticsPage, window.m_runAllDiagnosticsButton);
+    QVERIFY2(qAbs(wideRunAll.center().y() - wideDiagnosticsTitle.center().y()) <= 2,
+             "Run All must share the wide Diagnostics title row");
+    QVERIFY2(!wideRunAll.intersects(wideDiagnosticsScope),
+             "Run All must not overlap the Diagnostics scope label");
+    QVERIFY2(wideRunAll.left() > wideDiagnosticsScope.right(),
+             "Run All must sit right of the Diagnostics scope label");
+    const int wideDiagnosticsRight = window.m_diagnosticSplitter->mapTo(
+        diagnosticsPage, QPoint(window.m_diagnosticSplitter->width(), 0)).x();
+    QVERIFY2(qAbs(rightEdgeIn(diagnosticsPage, window.m_runAllDiagnosticsButton) - wideDiagnosticsRight) <= 2,
+             "Run All must stay right-aligned to the Diagnostics content edge");
+
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QVERIFY2(titleFullyShown(diagnosticsTitle),
+             "the Diagnostics title must stay fully shown at the minimum width");
+    QVERIFY2(window.m_diagnosticScopeLabel->wordWrap(),
+             "the Diagnostics scope label must wrap instead of eliding");
+    const QRect narrowDiagnosticsTitle = rectIn(diagnosticsPage, diagnosticsTitle);
+    const QRect narrowDiagnosticsScope = rectIn(diagnosticsPage, window.m_diagnosticScopeLabel);
+    const QRect narrowRunAll = rectIn(diagnosticsPage, window.m_runAllDiagnosticsButton);
+    QVERIFY2(!narrowDiagnosticsTitle.intersects(narrowDiagnosticsScope),
+             "the Diagnostics title and scope label must not overlap at minimum width");
+    QVERIFY2(narrowDiagnosticsScope.width() >= window.m_diagnosticScopeLabel->sizeHint().width(),
+             qPrintable(QStringLiteral("the long Diagnostics scope must keep its wrapped width: %1 < %2")
+                            .arg(narrowDiagnosticsScope.width())
+                            .arg(window.m_diagnosticScopeLabel->sizeHint().width())));
+    QVERIFY2(narrowDiagnosticsScope.height()
+                 >= window.m_diagnosticScopeLabel->heightForWidth(narrowDiagnosticsScope.width()),
+             "the Diagnostics scope must show every wrapped line");
+    QVERIFY2(qAbs(narrowRunAll.center().y() - narrowDiagnosticsScope.center().y()) <= 2,
+             "Run All must share the scope row at minimum width");
+    QVERIFY2(!narrowRunAll.intersects(narrowDiagnosticsTitle),
+             "Run All must not overlap the Diagnostics title");
+    QVERIFY2(!narrowRunAll.intersects(narrowDiagnosticsScope),
+             "Run All must not overlap the Diagnostics scope label");
+    const int narrowDiagnosticsRight = window.m_diagnosticSplitter->mapTo(
+        diagnosticsPage, QPoint(window.m_diagnosticSplitter->width(), 0)).x();
+    QVERIFY2(qAbs(rightEdgeIn(diagnosticsPage, window.m_runAllDiagnosticsButton) - narrowDiagnosticsRight) <= 2,
+             "Run All must stay right-aligned to the Diagnostics content edge at minimum width");
+}
+
+// Every tab that shows the scope label uses the same wrapping label, and the
+// File Copy header keeps it visible beside its actions: "Host maintenance:
+// /dev/test-host" wraps into the two-line form, stays on the same row as
+// Preview Changes and Copy and Verify at normal and minimum widths, and never
+// elides the value while that two-line form fits. At the minimum width the
+// actions wrap below the title and the scope label wraps with them instead of
+// staying behind on the title row squeezed to nothing.
+void MainWindowUiTest::scopeLabelWrapsToTwoLinesBesideActions()
+{
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    QTest::qWait(50);
+    window.setMinimumSize(0, 0);
+
+    prepareRepairScope(window, /*host=*/true);
+    window.updateTargetLabels();
+    window.m_tabs->setCurrentIndex(5); // File Copy
+    QCoreApplication::processEvents();
+    QTest::qWait(30);
+
+    QVERIFY(window.m_fileCopyHeading);
+    QVERIFY(window.m_fileCopyTargetLabel);
+    QVERIFY(window.m_fileCopyPreviewButton);
+    QVERIFY(window.m_fileCopyRunButton);
+    QCOMPARE(window.m_fileCopyTargetLabel->text(),
+             QStringLiteral("Host maintenance: /dev/test-host"));
+
+    // Consistency: every tab that shows the scope label wraps it the same way
+    // instead of eliding the value away.
+    const QList<QLabel *> scopeLabels = {
+        window.m_fileCopyTargetLabel, window.m_snapshotTargetLabel,
+        window.m_repairTargetLabel, window.m_diagnosticScopeLabel,
+        window.m_chrootShellTargetLabel};
+    for (QLabel *label : scopeLabels) {
+        QVERIFY2(label, "every tab scope label must exist");
+        QVERIFY2(label->wordWrap(),
+                 qPrintable(QStringLiteral("scope label must wrap: %1").arg(label->text())));
+        QCOMPARE(label->alignment(), Qt::Alignment(Qt::AlignRight | Qt::AlignVCenter));
+        QCOMPARE(label->sizePolicy().horizontalPolicy(), QSizePolicy::Preferred);
+    }
+
+    const QFontMetrics metrics(window.m_fileCopyTargetLabel->font());
+    const QString firstLine = QStringLiteral("Host maintenance:");
+    const QString secondLine = QStringLiteral("/dev/test-host");
+    const int twoLineWidth = qMax(metrics.horizontalAdvance(firstLine),
+                                  metrics.horizontalAdvance(secondLine));
+
+    QWidget *content = window.m_fileCopyHeading->parentWidget();
+    QVERIFY(content);
+    const auto rectIn = [content](QWidget *widget) {
+        return QRect(widget->mapTo(content, QPoint(0, 0)), widget->size());
+    };
+
+    struct WidthCase {
+        int width;
+        bool actionsStacked;
+        QString description;
+    };
+    const QList<WidthCase> cases = {
+        {1000, false, QStringLiteral("normal width")},
+        {480, true, QStringLiteral("minimum width")},
+    };
+    for (const WidthCase &testCase : cases) {
+        window.resize(testCase.width, 700);
+        QCoreApplication::processEvents();
+        QTest::qWait(50);
+
+        const QRect heading = rectIn(window.m_fileCopyHeading);
+        const QRect scope = rectIn(window.m_fileCopyTargetLabel);
+        const QRect preview = rectIn(window.m_fileCopyPreviewButton);
+        const QRect run = rectIn(window.m_fileCopyRunButton);
+        const int scopeWrappedHeight =
+            window.m_fileCopyTargetLabel->heightForWidth(scope.width());
+
+        // The two-line form fits in full: both wrapped lines have their
+        // complete width and the allocated height covers every line, so the
+        // scope value is visible instead of elided.
+        QVERIFY2(scope.width() >= twoLineWidth,
+                 qPrintable(QStringLiteral("%1: scope width %2 cannot fit the two-line form %3")
+                                .arg(testCase.description).arg(scope.width()).arg(twoLineWidth)));
+        QVERIFY2(scopeWrappedHeight >= 2 * metrics.lineSpacing(),
+                 qPrintable(QStringLiteral("%1: scope must wrap onto two lines").arg(testCase.description)));
+        QVERIFY2(scope.height() >= scopeWrappedHeight,
+                 qPrintable(QStringLiteral("%1: scope must not clip a wrapped line").arg(testCase.description)));
+
+        // The scope label and both actions share one row, scope to the left.
+        QVERIFY2(qAbs(scope.center().y() - preview.center().y()) <= 2,
+                 qPrintable(QStringLiteral("%1: scope and Preview Changes must share a row")
+                                .arg(testCase.description)));
+        QVERIFY2(qAbs(scope.center().y() - run.center().y()) <= 2,
+                 qPrintable(QStringLiteral("%1: scope and Copy and Verify must share a row")
+                                .arg(testCase.description)));
+        QVERIFY2(scope.right() < preview.left(),
+                 qPrintable(QStringLiteral("%1: scope must sit left of Preview Changes")
+                                .arg(testCase.description)));
+        QVERIFY2(!scope.intersects(preview) && !scope.intersects(run),
+                 qPrintable(QStringLiteral("%1: scope must not overlap the actions")
+                                .arg(testCase.description)));
+        QVERIFY2(!preview.intersects(run) && preview.left() < run.left(),
+                 qPrintable(QStringLiteral("%1: the action order must survive")
+                                .arg(testCase.description)));
+
+        if (testCase.actionsStacked) {
+            // At the minimum width the actions wrap below the title, and the
+            // scope stays with them (never left behind and squeezed).
+            QVERIFY2(preview.top() > heading.bottom() && run.top() > heading.bottom(),
+                     qPrintable(QStringLiteral("%1: the actions must wrap below the title")
+                                    .arg(testCase.description)));
+        } else {
+            QVERIFY2(qAbs(heading.center().y() - preview.center().y()) <= 2,
+                     qPrintable(QStringLiteral("%1: the actions must stay on the title row")
+                                    .arg(testCase.description)));
+        }
+
+        QVERIFY(window.m_fileCopySourceBox);
+        const int contentRight = window.m_fileCopySourceBox->mapTo(
+            content, QPoint(window.m_fileCopySourceBox->width(), 0)).x();
+        QVERIFY2(qAbs(run.right() - contentRight) <= 2,
+                 qPrintable(QStringLiteral("%1: the actions must stay right-aligned to the content edge")
+                                .arg(testCase.description)));
+    }
 }
 
 int main(int argc, char **argv)

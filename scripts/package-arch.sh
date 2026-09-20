@@ -7,7 +7,7 @@ set -euo pipefail
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-arch-package}"
 
-for command in makepkg cmake ninja c++ tar gzip; do
+for command in makepkg cmake ninja c++ tar gzip bsdtar zstd; do
     command -v "$command" >/dev/null 2>&1 || {
         echo "Missing required Arch packaging command: $command" >&2
         echo "Run ./scripts/setup-dev-deps.sh on an Arch-family build host." >&2
@@ -51,10 +51,12 @@ mkdir -p -- "$BUILD_DIR"
 # explicitly so a file such as scripts/build.sh is never mistaken for a
 # build-output path.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
+# AGENTS.md is part of the archive so the source tree keeps the workflow
+# contract available to any packaged test run.
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
-    CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
+    CMakeLists.txt LICENSE README.md CHANGELOG.md AGENTS.md .gitignore \
     src scripts tests data resources docs .github
 
 cat > "$BUILD_DIR/PKGBUILD" <<'PKGBUILD'
@@ -65,6 +67,9 @@ pkgdesc='Guarded Linux diagnostics, host maintenance and repair-system recovery 
 arch=('x86_64')
 url='https://github.com/CaptainMorgan12/Boot_Bitch'
 license=('MIT')
+# makepkg has no !buildinfo option (pacman 7.1.0 rejects it as an unknown
+# option), so sanitize_arch_package strips the .BUILDINFO builddir/startdir
+# fields after the build instead.
 options=(!debug)
 depends=('qt6-base' 'qt6-svg' 'polkit' 'util-linux' 'cryptsetup' 'rsync' 'e2fsprogs' 'dosfstools' 'btrfs-progs' 'xfsprogs' 'efibootmgr' 'binutils' 'python' 'hicolor-icon-theme')
 optdepends=('exfatprogs: exFAT file system check and repair (fsck.exfat)'
@@ -112,6 +117,88 @@ post_upgrade() {
 }
 INSTALL
 
+# makepkg always records the absolute build directory in .BUILDINFO
+# (builddir/startdir) and pacman 7.1.0 rejects a !buildinfo option, so the
+# fields are stripped after the build. .MTREE records .BUILDINFO's size and
+# sha256, so it is regenerated with the same bsdtar command makepkg uses; the
+# package is then recompressed with root ownership so installed files stay
+# owned by root. The function is a no-op when .BUILDINFO is already clean.
+list_package_files()
+{
+    (
+        export LC_COLLATE=C
+        shopt -s dotglob globstar
+        printf '%s\0' **/*
+    )
+}
+
+sanitize_arch_package()
+{
+    local pkg="$1"
+    local work extract builddate needs_repack=0 listing_before listing_after
+
+    work="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-arch-sanitize.XXXXXX")"
+    extract="$work/pkg"
+    mkdir -p -- "$extract"
+
+    if ! bsdtar --zstd -xf "$pkg" -C "$extract"; then
+        rm -rf -- "$work"
+        return 1
+    fi
+
+    if grep -qE '^(builddir|startdir) = ' "$extract/.BUILDINFO"; then
+        grep -vE '^(builddir|startdir) = ' "$extract/.BUILDINFO" > "$extract/.BUILDINFO.new"
+        mv -- "$extract/.BUILDINFO.new" "$extract/.BUILDINFO"
+        needs_repack=1
+    fi
+    if grep -q '/home/' "$extract/.BUILDINFO"; then
+        sed -i 's#/home/[A-Za-z0-9._-]\+#~#g' "$extract/.BUILDINFO"
+        needs_repack=1
+    fi
+
+    if (( ! needs_repack )); then
+        rm -rf -- "$work"
+        return 0
+    fi
+
+    builddate="$(sed -n 's/^builddate = \([0-9][0-9]*\)$/\1/p' "$extract/.BUILDINFO" | head -n1)"
+    [[ -n "$builddate" ]] || builddate="$(stat -c %Y -- "$extract/.BUILDINFO")"
+
+    listing_before="$(bsdtar --zstd -tf "$pkg" | LC_ALL=C sort)"
+
+    (
+        cd -- "$extract" || exit 1
+        # Match makepkg's mtime normalization and .MTREE generation.
+        find . -exec touch -h -d "@$builddate" {} +
+        list_package_files | LANG=C bsdtar -cnf - --format=mtree \
+            --options='!all,use-set,type,uid,gid,mode,time,size,sha256,link' \
+            --null --files-from - --exclude .MTREE | gzip -c -f -n > .MTREE
+        touch -d "@$builddate" .MTREE
+        list_package_files | LANG=C bsdtar --no-fflags --no-read-sparse \
+            --uid 0 --gid 0 -cnf - --null --files-from - |
+            zstd -c -z -q - > "$work/package.pkg.tar.zst"
+    ) || {
+        rm -rf -- "$work"
+        return 1
+    }
+
+    listing_after="$(bsdtar --zstd -tf "$work/package.pkg.tar.zst" | LC_ALL=C sort)"
+    if [[ "$listing_before" != "$listing_after" ]]; then
+        echo "Sanitized Arch package file list differs from the makepkg output." >&2
+        rm -rf -- "$work"
+        return 1
+    fi
+    if bsdtar --zstd -xOf "$work/package.pkg.tar.zst" .BUILDINFO |
+            grep -qE '^(builddir|startdir) = |/home/'; then
+        echo "Sanitized Arch package still records a build path in .BUILDINFO." >&2
+        rm -rf -- "$work"
+        return 1
+    fi
+
+    mv -f -- "$work/package.pkg.tar.zst" "$pkg"
+    rm -rf -- "$work"
+}
+
 # makepkg itself does not modify the VM's package set unless --syncdeps is
 # explicitly requested. Keep package creation on the existing environment by
 # default; use MAKEPKG_ARGS='--force --syncdeps' when desired.
@@ -128,6 +215,17 @@ mapfile -t packages < <(
     echo "makepkg completed but no Arch package was generated." >&2
     exit 1
 }
+
+for package in "${packages[@]}"; do
+    sanitize_arch_package "$package" || {
+        echo "Failed to strip the .BUILDINFO build paths from $package." >&2
+        exit 1
+    }
+    pacman -Qp "$package" >/dev/null || {
+        echo "pacman cannot read the sanitized Arch package: $package" >&2
+        exit 1
+    }
+done
 
 echo
 echo "Arch package created:"
