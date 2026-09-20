@@ -1847,7 +1847,8 @@ private slots:
     void pendingAutoRefreshRunsAfterScopeAuthorization();
     void logKindsSeparateStartupAndDiagnosticLines();
     void busyIndicatorTracksOverlappingOperations();
-    void busyIndicatorUsesCustomAnimatedIndicator();
+    void busyIndicatorUsesCustomStripedIndicator();
+    void busyIndicatorPaintsClassicStripedBar();
     void busyIndicatorCoversDiagnosticsAndFailedOperations();
     void busyIndicatorDoesNotShiftLayout();
     void logsTabReorientsWithWindowWidth();
@@ -10813,7 +10814,7 @@ void MainWindowUiTest::busyIndicatorTracksOverlappingOperations()
     QVERIFY2(!qobject_cast<QProgressBar *>(window.m_busyProgress),
              "the platform-styled QProgressBar must not be used");
     QVERIFY2(!window.m_busyProgress->isAnimating(),
-             "the custom indicator must not animate while idle");
+             "the custom striped bar must not animate while idle");
     QVERIFY2(window.m_busyIndicator->isHidden(), "the busy indicator must be hidden while idle");
 
     window.beginBusyOperation(QStringLiteral("Running diagnostic: Environment validation"));
@@ -10837,12 +10838,13 @@ void MainWindowUiTest::busyIndicatorTracksOverlappingOperations()
     QVERIFY(window.m_activeBusyOperations.isEmpty());
 }
 
-// The busy indicator must be the same custom-painted marquee on every
+// The busy indicator must be the same custom-painted striped bar on every
 // distribution and theme: the platform QProgressBar indeterminate style (a
-// static solid bar on Fedora/Adwaita, animated stripes on Breeze) is not used.
-// The animation starts with the busy state and stops when the last operation
-// ends; the painted frames themselves are deliberately not pixel-tested.
-void MainWindowUiTest::busyIndicatorUsesCustomAnimatedIndicator()
+// static solid bar on Fedora/Adwaita, a moving chunk on Breeze/Fusion) is not
+// used. The animation starts with the busy state and stops when the last
+// operation ends; the painted shape itself is pinned by the pixel-level
+// busyIndicatorPaintsClassicStripedBar test.
+void MainWindowUiTest::busyIndicatorUsesCustomStripedIndicator()
 {
     MainWindow window;
     window.show();
@@ -10851,29 +10853,97 @@ void MainWindowUiTest::busyIndicatorUsesCustomAnimatedIndicator()
     QCOMPARE(QString::fromLatin1(window.m_busyProgress->metaObject()->className()),
              QStringLiteral("BusyIndicatorWidget"));
     QVERIFY2(!window.m_busyProgress->isAnimating(),
-             "the custom indicator must be idle while no operation is running");
+             "the custom striped bar must be idle while no operation is running");
     const qreal idlePhase = window.m_busyProgress->animationPhase();
 
     window.beginBusyOperation(QStringLiteral("Running chroot shell command"));
     QVERIFY(!window.m_busyIndicator->isHidden());
     QVERIFY2(window.m_busyProgress->isAnimating(),
-             "the custom indicator must animate while an operation is running");
+             "the custom striped bar must animate while an operation is running");
     QTest::qWait(120);
     QVERIFY2(window.m_busyProgress->animationPhase() != idlePhase,
-             "the marquee phase must advance while the busy state is active");
+             "the stripe phase must advance while the busy state is active");
 
     window.endBusyOperation(QStringLiteral("Running chroot shell command"));
     QVERIFY(window.m_busyIndicator->isHidden());
     QVERIFY2(!window.m_busyProgress->isAnimating(),
-             "the custom indicator must stop animating when the operation ends");
+             "the custom striped bar must stop animating when the operation ends");
 
-    // Overlapping operations keep the marquee running until the last one.
+    // Overlapping operations keep the striped bar running until the last one.
     window.beginBusyOperation(QStringLiteral("Running all diagnostics"));
     window.beginBusyOperation(QStringLiteral("Running chroot shell command"));
     window.endBusyOperation(QStringLiteral("Running all diagnostics"));
     QVERIFY(window.m_busyProgress->isAnimating());
     window.endBusyOperation(QStringLiteral("Running chroot shell command"));
     QVERIFY(!window.m_busyProgress->isAnimating());
+}
+
+// Pixel-level verification of the restored busy look: a classic striped
+// indeterminate bar (recessed groove, repeating diagonal stripes) instead of
+// the former dashed-segment marquee. A standalone widget with a pinned palette
+// is grabbed so the rendered output itself is inspected, not just the widget
+// class; the pattern is derived only from the palette and the phase, so the
+// same frame is expected on Alpine, Arch, Fedora and Debian/TUXEDO.
+void MainWindowUiTest::busyIndicatorPaintsClassicStripedBar()
+{
+    BusyIndicatorWidget indicator;
+    indicator.resize(120, 8);
+    indicator.setAnimating(false);
+
+    QPalette palette = indicator.palette();
+    palette.setColor(QPalette::Highlight, QColor(0, 0, 255));
+    palette.setColor(QPalette::Base, QColor(255, 255, 255));
+    palette.setColor(QPalette::Mid, QColor(128, 128, 128));
+    palette.setColor(QPalette::WindowText, QColor(0, 0, 0));
+    indicator.setPalette(palette);
+
+    const QImage image = indicator.grab().toImage();
+    QVERIFY(!image.isNull());
+    QVERIFY(image.width() >= 100);
+    QVERIFY(image.height() >= 8);
+
+    const auto isStripe = [](const QColor &pixel) {
+        return pixel.blue() > pixel.red() + 20 && pixel.blue() > pixel.green() + 20;
+    };
+    const auto stripeRuns = [&image, &isStripe](int y) {
+        int runs = 0;
+        bool inStripe = false;
+        for (int x = 0; x < image.width(); ++x) {
+            const bool stripe = isStripe(image.pixelColor(x, y));
+            if (stripe && !inStripe) {
+                ++runs;
+            }
+            inStripe = stripe;
+        }
+        return runs;
+    };
+    const auto firstStripeX = [&image, &isStripe](int y) {
+        // Start past the left edge so the comparison sees a complete stripe
+        // instead of one clipped by the groove outline.
+        for (int x = image.width() / 8; x < image.width(); ++x) {
+            if (isStripe(image.pixelColor(x, y))) {
+                return x;
+            }
+        }
+        return -1;
+    };
+
+    // The classic bar repeats stripes across the track instead of a single
+    // moving chunk, and the stripes cover the full bar height.
+    const int topY = 1;
+    const int bottomY = image.height() - 2;
+    QVERIFY2(stripeRuns(topY) >= 4, "the indeterminate bar must paint repeating stripes");
+    QVERIFY2(stripeRuns(bottomY) >= 4, "the stripes must cover the full bar height");
+
+    // The stripes are diagonal: the first complete stripe starts at a
+    // different x near the top and the bottom of the bar (dashed vertical
+    // segments would align).
+    const int topX = firstStripeX(topY);
+    const int bottomX = firstStripeX(bottomY);
+    QVERIFY(topX >= 0);
+    QVERIFY(bottomX >= 0);
+    QVERIFY2(qAbs(topX - bottomX) >= 2,
+             "the stripes must be diagonal, not vertical or dashed");
 }
 
 void MainWindowUiTest::busyIndicatorCoversDiagnosticsAndFailedOperations()

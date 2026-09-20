@@ -126,13 +126,15 @@ private:
     QList<FilesystemCheckResult> m_results;
 };
 
-// Custom-painted indeterminate busy indicator. A QProgressBar with range 0,0
-// delegates its animation to the platform style, which renders as a static
-// solid bar on some distributions (for example Fedora/Adwaita) and as animated
-// stripes on others. This widget paints its own palette-derived segmented
-// marquee instead, so the busy state looks and animates identically on every
-// distribution and theme. The animation runs only while the widget is visible
-// and the owner says the busy state is active.
+// Custom-painted indeterminate busy indicator: the classic striped progress
+// bar (a recessed groove with repeating diagonal stripes) restored for the
+// global busy state. A QProgressBar with range 0,0 delegates its animation to
+// the platform style, which renders as a static solid bar on some
+// distributions (for example Fedora/Adwaita) and as different animated shapes
+// on others. This widget paints its own palette-derived striped bar instead,
+// so the busy state looks and animates identically on every distribution and
+// theme. The animation runs only while the widget is visible and the owner
+// says the busy state is active.
 class BusyIndicatorWidget final : public QWidget
 {
     Q_OBJECT
@@ -140,14 +142,13 @@ class BusyIndicatorWidget final : public QWidget
 public:
     explicit BusyIndicatorWidget(QWidget *parent = nullptr);
 
-    // True while the marquee timer is running. The UI tests use this to pin
-    // that the indicator starts and stops with the busy state; the painted
-    // animation itself is deliberately not pixel-tested.
+    // True while the striped-bar timer is running. The UI tests use this to
+    // pin that the indicator starts and stops with the busy state.
     bool isAnimating() const;
     qreal animationPhase() const;
 
-    // Starts or stops the marquee. A hidden widget never animates, so showing
-    // the owner again resumes a pending busy state.
+    // Starts or stops the striped-bar animation. A hidden widget never
+    // animates, so showing the owner again resumes a pending busy state.
     void setAnimating(bool animating);
 
 protected:

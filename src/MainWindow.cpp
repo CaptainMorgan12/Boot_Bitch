@@ -2777,45 +2777,57 @@ void BusyIndicatorWidget::paintEvent(QPaintEvent *event)
 {
     Q_UNUSED(event);
     QPainter painter(this);
-    painter.setRenderHint(QPainter::Antialiasing, true);
+    painter.setRenderHint(QPainter::Antialiasing, false);
 
     const QRectF track = QRectF(rect()).adjusted(0.5, 0.5, -0.5, -0.5);
     if (track.width() <= 1.0 || track.height() <= 1.0) {
         return;
     }
-    const qreal radius = track.height() / 2.0;
 
-    // The track is a translucent palette mid-tone, so the widget stays visible
-    // on light and dark themes without depending on a platform progress style.
-    QColor trackColor = palette().color(QPalette::Mid);
-    if (!trackColor.isValid()) {
-        trackColor = palette().color(QPalette::WindowText);
+    // Classic progress-bar groove: a recessed palette tone with a thin border,
+    // so the widget stays visible on light and dark themes without depending
+    // on a platform progress style.
+    QColor borderColor = palette().color(QPalette::Mid);
+    if (!borderColor.isValid()) {
+        borderColor = palette().color(QPalette::WindowText);
     }
-    trackColor.setAlpha(70);
-    painter.setPen(Qt::NoPen);
-    painter.setBrush(trackColor);
-    painter.drawRoundedRect(track, radius, radius);
+    QColor grooveColor = palette().color(QPalette::Base);
+    if (!grooveColor.isValid()) {
+        grooveColor = palette().color(QPalette::Window);
+    }
+    painter.setPen(borderColor);
+    painter.setBrush(grooveColor);
+    painter.drawRoundedRect(track, 2.0, 2.0);
 
-    // Segmented marquee: equally sized chunks slide across the rounded track
-    // and wrap around, clipped to the track outline. Chunk positions depend
+    // Striped marquee: evenly pitched diagonal stripes slide across the groove
+    // and wrap around, clipped to the groove outline. Stripe positions depend
     // only on the phase, so every distribution paints the same moving pattern.
-    QColor chunkColor = palette().color(QPalette::Highlight);
-    if (!chunkColor.isValid() || chunkColor.alpha() == 0) {
-        chunkColor = palette().color(QPalette::Link);
+    QColor stripeColor = palette().color(QPalette::Highlight);
+    if (!stripeColor.isValid() || stripeColor.alpha() == 0) {
+        stripeColor = palette().color(QPalette::Link);
     }
-    if (!chunkColor.isValid() || chunkColor.alpha() == 0) {
-        chunkColor = palette().color(QPalette::WindowText);
+    if (!stripeColor.isValid() || stripeColor.alpha() == 0) {
+        stripeColor = palette().color(QPalette::WindowText);
     }
-    const qreal chunkPitch = 16.0;
-    const qreal chunkWidth = 10.0;
+    const qreal stripeWidth = 6.0;
+    const qreal stripePitch = 12.0;
+    const qreal slant = track.height();
     QPainterPath clip;
-    clip.addRoundedRect(track, radius, radius);
+    clip.addRoundedRect(track, 2.0, 2.0);
+    painter.save();
     painter.setClipPath(clip);
-    painter.setBrush(chunkColor);
-    for (qreal x = track.left() - chunkPitch + m_phase * chunkPitch;
-         x < track.right() + chunkWidth; x += chunkPitch) {
-        painter.drawRoundedRect(QRectF(x, track.top(), chunkWidth, track.height()), radius, radius);
+    painter.setPen(Qt::NoPen);
+    painter.setBrush(stripeColor);
+    for (qreal x = track.left() - slant - stripePitch + m_phase * stripePitch;
+         x < track.right() + stripePitch; x += stripePitch) {
+        QPolygonF stripe;
+        stripe << QPointF(x, track.bottom() + 1.0)
+               << QPointF(x + stripeWidth, track.bottom() + 1.0)
+               << QPointF(x + stripeWidth + slant, track.top() - 1.0)
+               << QPointF(x + slant, track.top() - 1.0);
+        painter.drawPolygon(stripe);
     }
+    painter.restore();
 }
 
 // ---- Numeric-aware table/tree item sorting ----------------------------------
@@ -3135,11 +3147,11 @@ MainWindow::MainWindow(QWidget *parent)
     auto *busyLayout = new QHBoxLayout(m_busyIndicator);
     busyLayout->setContentsMargins(0, 0, 0, 0);
     busyLayout->setSpacing(8);
-    // The indicator is a custom-painted marquee instead of a QProgressBar:
-    // the platform style renders an indeterminate QProgressBar as a static
-    // solid bar on some distributions (for example Fedora/Adwaita) and as
-    // animated stripes on others. The custom widget animates identically
-    // everywhere and derives its colors from the current palette.
+    // The indicator is a custom-painted striped progress bar instead of a
+    // QProgressBar: the platform style renders an indeterminate QProgressBar
+    // as a static solid bar on some distributions (for example Fedora/Adwaita)
+    // and as different animated shapes on others. The custom widget animates
+    // identically everywhere and derives its colors from the current palette.
     m_busyProgress = new BusyIndicatorWidget;
     m_busyProgress->setObjectName(QStringLiteral("busyProgress"));
     m_busyProgress->setAccessibleName(QStringLiteral("Operation in progress"));
@@ -3370,8 +3382,8 @@ void MainWindow::updateBusyIndicator()
     }
     m_busyIndicator->setVisible(busy);
     if (m_busyProgress) {
-        // The custom marquee follows the reference-counted busy state exactly:
-        // it starts with the first operation and stops with the last one.
+        // The custom striped bar follows the reference-counted busy state
+        // exactly: it starts with the first operation and stops with the last.
         m_busyProgress->setAnimating(busy);
     }
     emit busyStateChanged(busy, label);
