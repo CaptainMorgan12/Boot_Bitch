@@ -29,9 +29,9 @@
 #     exclude dropping the frozen copies. They are checked only when
 #     Development/release-<v>/ exists.
 #
-100ea1d39c8dd4c83b3cb429e9c589db523182f45859fb3706a475cad016c4d3  captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
+d54063c42cc30f5fd09d703602471f835e792511e44555858a8e436afdb8ea64  captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
 5f435d0df58d0336328f7f2a0b1cf1729f16e9bafcc8ffeb09a320f0069deb06  captures/release-0.2.23/release-notes-0.2.23.md
-a7f1fa39a742fd1edbdeb4b6f716c79f0c9cc6b5e9274f49df5b31d131d92088  captures/release-0.2.23/SHA256SUMS
+6aab3326d7e3c287682d90d1c2c6a1113b6587d81cae15b2e7b193d67ce46b4d  captures/release-0.2.23/SHA256SUMS
 9a5af6278b8b3eb2b7ec68709a1d1b4be62f76565112beb6418f9fa0b98744f4  captures/release-0.2.24/release-notes-0.2.24.md
 396133d0dda5fe19d43ad83f12a84a024c3911fdb21326edb36563941c8e2893  captures/release-0.2.24/SHA256SUMS
 d2862650baaa8420369e673be8ba962b2854b6220dd63978745edd5eb00532e0  CHANGELOG-0.2.15.section
