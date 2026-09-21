@@ -309,6 +309,8 @@ add_test(NAME boot-repair-filesystem-repair-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-filesystem-repair-contract.sh)
 add_test(NAME boot-repair-host-snapshot-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-snapshot-contract.sh)
+add_test(NAME boot-repair-host-default-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-default-contract.sh)
 add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
@@ -339,6 +341,8 @@ set_tests_properties(boot-repair-display-manager-contract
 set_tests_properties(boot-repair-filesystem-repair-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-host-snapshot-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-host-default-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-icon-atlas-contract
     PROPERTIES LABELS "fast")

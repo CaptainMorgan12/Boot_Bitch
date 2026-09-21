@@ -733,7 +733,7 @@ static const RepairTopicSpec repairTopicSpecs[] = {
     {"packagefeedback", "BEGIN: package backend|SKIP: package backend|Package kept back|Package skipped|Package manager feedback"},
     {"display", "graphical login manager|display manager|display-manager"},
     {"initramfs", "initramfs"},
-    {"efi", "EFI / UKI|EFI bootloader|Make host default boot entry"},
+    {"efi", "EFI / UKI|EFI bootloader|Make host default boot entry|default boot entry"},
     {"grub", "GRUB"},
     {"extlinux", "extlinux"},
     {"bootstack", "boot stack|boot-stack"}
@@ -1038,6 +1038,505 @@ static bool cachedRepairToolAvailable(const QMap<QString, QString> &cache, const
     }
     return true;
 }
+
+// Running-host default-entry capability evidence. The helper names the action
+// with one of several host-scoped labels (for example `Host default:`,
+// `Host default entry:`, `Host default probe:` or the renamed
+// `Repair tool host-default:`). The label and reason wording may evolve, so the
+// parser normalizes the label (case, spaces, '-' and '_') and accepts every
+// known evidence shape: a direct `available`/`unavailable|<reason>` value
+// (optionally followed by loader/kind attributes), the probe decision
+// `candidate=<loader-kind>|none|<reason>` for every detected backend (UKI,
+// shim, GRUB EFI, Fedora BLS, extlinux, ...) and a failed `match=no` probe.
+// Anything else fails closed: the parser never falls back to the coarse `efi`
+// availability, and an unrecognised line is reported instead of silently
+// re-enabling the action.
+namespace {
+struct HostDefaultCapabilityScan {
+    bool found = false;
+    bool available = false;
+    QString unavailableReason;
+    QString unknownLine;
+    // Loader kind named by the capability/probe evidence (for example uki,
+    // shim, grub, bls, extlinux); empty when the helper named none. Used only
+    // for OS/loader-aware wording, never as an availability decision.
+    QString candidateKind;
+    // Loader path/name named by the evidence, when present.
+    QString loaderHint;
+};
+
+// True when a structured `Host default:` value carries a known evidence key.
+// The keys are the helper's documented capability/probe/operation fields; a
+// structured value using any other key stays unrecognised and fails closed.
+bool hostDefaultEvidenceKey(const QString &value)
+{
+    static const char *const keys[] = {
+        "entry=", "candidate=", "loader=", "label=", "action=", "model=",
+        "role=", "partuuid=", "sha256=", "kind=", "mode=", "esp=",
+        "saved_entry=", "target=", "resolves=", "default=", "bls=",
+        "fallback=", "match=", "before=", "after=", "preserved=", "id=",
+        "nvram="
+    };
+    for (const char *key : keys) {
+        if (value.contains(QLatin1String(key), Qt::CaseInsensitive)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Captures the loader-kind/loader-path hints from one evidence value so the
+// dialog and success summary can name the actual detected loader. The helper
+// may emit `candidate=<kind>`, `loader=<path>` and/or `kind=<name>`; every
+// spelling is accepted and the first named value wins.
+void captureHostDefaultLoaderHint(const QString &value, HostDefaultCapabilityScan *scan)
+{
+    const QStringList tokens = value.split(QRegularExpression(QStringLiteral("\\s+")),
+                                           Qt::SkipEmptyParts);
+    for (const QString &token : tokens) {
+        const int equals = token.indexOf(QLatin1Char('='));
+        if (equals <= 0) {
+            continue;
+        }
+        const QString key = token.left(equals).toLower();
+        QString tokenValue = token.mid(equals + 1);
+        tokenValue.remove(QLatin1Char('\''));
+        tokenValue.remove(QLatin1Char('"'));
+        if (tokenValue.isEmpty()) {
+            continue;
+        }
+        if (scan->candidateKind.isEmpty()
+            && (key == QStringLiteral("candidate") || key == QStringLiteral("kind"))) {
+            scan->candidateKind = tokenValue;
+        } else if (scan->loaderHint.isEmpty() && key == QStringLiteral("loader")) {
+            scan->loaderHint = tokenValue;
+        }
+    }
+}
+
+QString normalizedHostDefaultLabel(const QString &line, bool *hasLabel)
+{
+    if (hasLabel) {
+        *hasLabel = false;
+    }
+    const int colon = line.indexOf(QLatin1Char(':'));
+    if (colon <= 0) {
+        return QString();
+    }
+    if (hasLabel) {
+        *hasLabel = true;
+    }
+    QString label = line.left(colon).trimmed().toLower();
+    label.remove(QLatin1Char(' '));
+    label.remove(QLatin1Char('-'));
+    label.remove(QLatin1Char('_'));
+    return label;
+}
+
+bool hostDefaultEvidenceLabel(const QString &normalized)
+{
+    if (normalized.contains(QStringLiteral("default"))) {
+        return normalized.startsWith(QStringLiteral("host"))
+            || normalized.startsWith(QStringLiteral("repairtool"))
+            || normalized.startsWith(QStringLiteral("uki"));
+    }
+    // A helper may name the action without the word "default".
+    return normalized.startsWith(QStringLiteral("host"))
+        && normalized.contains(QStringLiteral("uki"))
+        && (normalized.contains(QStringLiteral("entry")) || normalized.contains(QStringLiteral("boot")));
+}
+
+void applyHostDefaultCapabilityValue(const QString &line, const QString &value,
+                                     HostDefaultCapabilityScan *scan)
+{
+    const QString trimmed = value.trimmed();
+    // The helper may append loader/kind attributes to a direct decision
+    // (`Host default: available candidate=bls`); capture them for wording and
+    // treat the leading token as the decision.
+    captureHostDefaultLoaderHint(trimmed, scan);
+    if (trimmed == QStringLiteral("available")
+        || trimmed.startsWith(QStringLiteral("available "))) {
+        scan->available = true;
+        return;
+    }
+    if (trimmed.startsWith(QStringLiteral("unavailable|"))) {
+        const QString detail = trimmed.mid(QStringLiteral("unavailable|").size()).trimmed();
+        scan->unavailableReason = detail.isEmpty()
+            ? QStringLiteral("Running-host default boot entry selection is unavailable.")
+            : detail;
+        return;
+    }
+    if (trimmed == QStringLiteral("unavailable")) {
+        scan->unavailableReason = QStringLiteral("Running-host default boot entry selection is unavailable.");
+        return;
+    }
+    // A helper may name the probe result directly instead of wrapping it in
+    // candidate=…; both "none" and "none|<reason>" mean no bootable candidate.
+    if (trimmed == QStringLiteral("none") || trimmed.startsWith(QStringLiteral("none|"))) {
+        const QString detail = trimmed == QStringLiteral("none")
+            ? QString()
+            : trimmed.mid(QStringLiteral("none|").size()).trimmed();
+        scan->unavailableReason = detail.isEmpty()
+            ? QStringLiteral("The helper did not identify a bootable running-host default entry.")
+            : detail;
+        return;
+    }
+    const int candidateAt = trimmed.indexOf(QStringLiteral("candidate="));
+    if (candidateAt >= 0) {
+        QString candidateValue = trimmed.mid(candidateAt + QStringLiteral("candidate=").size()).trimmed();
+        QString detail;
+        const int separator = candidateValue.indexOf(QLatin1Char('|'));
+        if (separator >= 0) {
+            detail = candidateValue.mid(separator + 1).trimmed();
+            candidateValue = candidateValue.left(separator);
+        } else {
+            candidateValue = candidateValue.section(QLatin1Char(' '), 0, 0).trimmed();
+        }
+        candidateValue.remove(QLatin1Char('\''));
+        candidateValue.remove(QLatin1Char('"'));
+        if (candidateValue.compare(QStringLiteral("none"), Qt::CaseInsensitive) == 0) {
+            scan->unavailableReason = detail.isEmpty()
+                ? QStringLiteral("The helper did not identify a bootable running-host default entry.")
+                : detail;
+            return;
+        }
+        // A named candidate is a bootable default path for whichever loader
+        // the detected backend uses (uki, shim, grub, bls, extlinux, ...).
+        // `unknown`/empty stay fail-closed like any other unrecognised shape.
+        if (!candidateValue.isEmpty()
+            && candidateValue.compare(QStringLiteral("unknown"), Qt::CaseInsensitive) != 0) {
+            scan->available = true;
+            if (scan->candidateKind.isEmpty()) {
+                scan->candidateKind = candidateValue;
+            }
+            return;
+        }
+        if (scan->unknownLine.isEmpty()) {
+            scan->unknownLine = line;
+        }
+        return;
+    }
+    if (trimmed.contains(QStringLiteral("match=no"))) {
+        // A failed verification probe names the exact mismatch on the line;
+        // surface it verbatim as the gating reason.
+        scan->unavailableReason = line;
+        return;
+    }
+    // Successful probes and operation evidence (a created/reused entry, a
+    // BootOrder/default change, a candidate/inventory line, the retained
+    // fallback) are informational: they are not a capability decision and
+    // must not gate.
+    if (trimmed.contains(QStringLiteral("match=yes"))
+        || trimmed.startsWith(QStringLiteral("entry="))
+        || trimmed.startsWith(QStringLiteral("BootOrder"))
+        || hostDefaultEvidenceKey(trimmed)) {
+        return;
+    }
+    // A helper may emit the named reason directly as a bare value
+    // ("Host default: unregistered UKI entry"). Surface it verbatim and stay
+    // gated; only a structured but unrecognised shape fails closed as
+    // unrecognised evidence.
+    if (!trimmed.contains(QLatin1Char('='))) {
+        scan->unavailableReason = trimmed.isEmpty()
+            ? QStringLiteral("Running-host default boot entry selection is unavailable.")
+            : trimmed;
+        return;
+    }
+    if (scan->unknownLine.isEmpty()) {
+        scan->unknownLine = line;
+    }
+}
+
+HostDefaultCapabilityScan scanHostDefaultCapability(const QMap<QString, QString> &cache)
+{
+    HostDefaultCapabilityScan scan;
+    for (const QString &evidence : cache) {
+        for (const QString &rawLine : evidence.split(QLatin1Char('\n'))) {
+            const QString line = rawLine.trimmed();
+            if (line.isEmpty()) {
+                continue;
+            }
+            bool hasLabel = false;
+            const QString label = normalizedHostDefaultLabel(line, &hasLabel);
+            if (!hasLabel || !hostDefaultEvidenceLabel(label)) {
+                continue;
+            }
+            scan.found = true;
+            const int colon = line.indexOf(QLatin1Char(':'));
+            applyHostDefaultCapabilityValue(line, line.mid(colon + 1), &scan);
+        }
+    }
+    return scan;
+}
+
+// One verified default boot entry as named by the host-default helper output.
+// The helper is expected to emit the stable `Host default: entry=<id>
+// label=… loader=… action=…` evidence line and/or the existing PASS line; both
+// shapes are accepted so a wording change in one line cannot hide the
+// verification. The entry id is the helper's own identity: `Boot####` for
+// firmware entries, or the detected loader's id (for example a Fedora BLS
+// entry id) on BIOS. An empty entryId means the helper did not verify an
+// entry, and the caller must never report success.
+struct HostDefaultVerification {
+    QString entryId;
+    QString label;
+    QString model;
+    QString loader;
+    QString action;
+    QString esp;
+    QString bootOrderBefore;
+    QString bootOrderAfter;
+};
+
+HostDefaultVerification parseHostDefaultVerification(const QString &output)
+{
+    static const QRegularExpression entryRe(
+        QStringLiteral("(?:^|\\s)entry=Boot([0-9A-Fa-f]{4})(?:\\s|$)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression genericEntryRe(
+        QStringLiteral("(?:^|\\s)entry=(?:'([^']*)'|([^\\s']+))"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression passRe(
+        QStringLiteral("running host default EFI entry is Boot([0-9A-Fa-f]{4})(?:\\s+on\\s+(\\S+))?"),
+        QRegularExpression::CaseInsensitiveOption);
+    // A Fedora/RHEL BIOS default is a grubenv saved_entry naming a BLS entry;
+    // the helper verifies it with `default entry: saved_entry=… resolves=yes
+    // target=<id> action=set|unchanged`. Only a resolved target is accepted as
+    // a verified entry.
+    static const QRegularExpression defaultEntryRe(
+        QStringLiteral("default entry:\\s+saved_entry=(\\S+)\\s+resolves=(yes|no)\\s+target=(\\S+)(?:\\s+action=([A-Za-z-]+))?"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression quotedLabelRe(
+        QStringLiteral("label='([^']*)'"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression bareLabelRe(
+        QStringLiteral("label=([^\\s']+)"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression quotedModelRe(
+        QStringLiteral("model='([^']*)'"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression bareModelRe(
+        QStringLiteral("model=([^\\s']+)"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression loaderRe(
+        QStringLiteral("loader=([^\\s']+)"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression actionRe(
+        QStringLiteral("action=([A-Za-z-]+)"), QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression orderRe(
+        QStringLiteral("BootOrder\\s+before=(\\S+)\\s+after=(\\S+)"),
+        QRegularExpression::CaseInsensitiveOption);
+    static const QRegularExpression rawOrderRe(
+        QStringLiteral("^BootOrder:\\s*(\\S+)"), QRegularExpression::CaseInsensitiveOption);
+
+    HostDefaultVerification verification;
+    QString rawOrder;
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (const QString &rawLine : lines) {
+        const QString line = rawLine.trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+
+        const QRegularExpressionMatch entryMatch = entryRe.match(line);
+        const QRegularExpressionMatch genericEntryMatch =
+            entryMatch.hasMatch() ? QRegularExpressionMatch() : genericEntryRe.match(line);
+        if (entryMatch.hasMatch() || genericEntryMatch.hasMatch()) {
+            if (verification.entryId.isEmpty()) {
+                if (entryMatch.hasMatch()) {
+                    verification.entryId = QStringLiteral("Boot") + entryMatch.captured(1).toUpper();
+                } else {
+                    QString id = genericEntryMatch.captured(1).isEmpty()
+                        ? genericEntryMatch.captured(2)
+                        : genericEntryMatch.captured(1);
+                    id = id.trimmed();
+                    if (!id.isEmpty() && id.compare(QStringLiteral("none"), Qt::CaseInsensitive) != 0) {
+                        verification.entryId = id;
+                    }
+                }
+            }
+            if (verification.label.isEmpty()) {
+                QRegularExpressionMatch labelMatch = quotedLabelRe.match(line);
+                if (!labelMatch.hasMatch()) {
+                    labelMatch = bareLabelRe.match(line);
+                }
+                if (labelMatch.hasMatch()) {
+                    verification.label = labelMatch.captured(1).trimmed();
+                }
+            }
+            if (verification.model.isEmpty()) {
+                QRegularExpressionMatch modelMatch = quotedModelRe.match(line);
+                if (!modelMatch.hasMatch()) {
+                    modelMatch = bareModelRe.match(line);
+                }
+                if (modelMatch.hasMatch()) {
+                    verification.model = modelMatch.captured(1).trimmed();
+                }
+            }
+            if (verification.loader.isEmpty()) {
+                const QRegularExpressionMatch loaderMatch = loaderRe.match(line);
+                if (loaderMatch.hasMatch()) {
+                    verification.loader = loaderMatch.captured(1).trimmed();
+                }
+            }
+            if (verification.action.isEmpty()) {
+                const QRegularExpressionMatch actionMatch = actionRe.match(line);
+                if (actionMatch.hasMatch()) {
+                    verification.action = actionMatch.captured(1).trimmed();
+                }
+            }
+        }
+
+        const QRegularExpressionMatch passMatch = passRe.match(line);
+        if (passMatch.hasMatch()) {
+            if (verification.entryId.isEmpty()) {
+                verification.entryId = QStringLiteral("Boot") + passMatch.captured(1).toUpper();
+            }
+            if (verification.esp.isEmpty()) {
+                QString esp = passMatch.captured(2);
+                while (esp.endsWith(QLatin1Char('.')) || esp.endsWith(QLatin1Char(','))) {
+                    esp.chop(1);
+                }
+                verification.esp = esp;
+            }
+        }
+
+        // Fedora/RHEL BIOS: the helper's resolved grubenv target is the
+        // verified default entry (the last line of a successful run reports
+        // resolves=yes for the written target).
+        const QRegularExpressionMatch defaultEntryMatch = defaultEntryRe.match(line);
+        if (defaultEntryMatch.hasMatch()
+            && defaultEntryMatch.captured(2).compare(QStringLiteral("yes"), Qt::CaseInsensitive) == 0) {
+            const QString target = defaultEntryMatch.captured(3).trimmed();
+            if (verification.entryId.isEmpty() && !target.isEmpty()
+                && target.compare(QStringLiteral("none"), Qt::CaseInsensitive) != 0) {
+                verification.entryId = target;
+            }
+            if (verification.action.isEmpty()) {
+                const QString action = defaultEntryMatch.captured(4).trimmed();
+                if (!action.isEmpty()) {
+                    verification.action = action;
+                }
+            }
+        }
+
+        const QRegularExpressionMatch orderMatch = orderRe.match(line);
+        if (orderMatch.hasMatch() && verification.bootOrderAfter.isEmpty()) {
+            verification.bootOrderBefore = orderMatch.captured(1);
+            verification.bootOrderAfter = orderMatch.captured(2);
+        }
+        const QRegularExpressionMatch rawOrderMatch = rawOrderRe.match(line);
+        if (rawOrderMatch.hasMatch()) {
+            // The final efibootmgr capture in the transcript is the post-state.
+            rawOrder = rawOrderMatch.captured(1);
+        }
+    }
+
+    // Inventory detail for a verified firmware entry: the helper prints
+    // "  Boot0009 class=... label=TUXEDO UKI <model> loader=\EFI\BOOT\TUX.EFI".
+    if (verification.entryId.startsWith(QStringLiteral("Boot"))
+        && (verification.label.isEmpty() || verification.loader.isEmpty()
+            || verification.model.isEmpty())) {
+        const QString inventoryPrefix = verification.entryId;
+        for (const QString &rawLine : lines) {
+            const QString line = rawLine.trimmed();
+            if (!line.startsWith(inventoryPrefix)
+                || (!line.contains(QStringLiteral("label=")) && !line.contains(QStringLiteral("loader=")))) {
+                continue;
+            }
+            if (verification.label.isEmpty()) {
+                // The label may contain spaces and is followed by " loader=".
+                static const QRegularExpression inventoryLabelRe(
+                    QStringLiteral("label=(.*?)\\s+loader="), QRegularExpression::CaseInsensitiveOption);
+                const QRegularExpressionMatch labelMatch = inventoryLabelRe.match(line);
+                if (labelMatch.hasMatch()) {
+                    verification.label = labelMatch.captured(1).trimmed();
+                }
+            }
+            if (verification.model.isEmpty()) {
+                QRegularExpressionMatch modelMatch = quotedModelRe.match(line);
+                if (!modelMatch.hasMatch()) {
+                    modelMatch = bareModelRe.match(line);
+                }
+                if (modelMatch.hasMatch()) {
+                    verification.model = modelMatch.captured(1).trimmed();
+                }
+            }
+            if (verification.loader.isEmpty()) {
+                const QRegularExpressionMatch loaderMatch = loaderRe.match(line);
+                if (loaderMatch.hasMatch()) {
+                    verification.loader = loaderMatch.captured(1).trimmed();
+                }
+            }
+        }
+    }
+    if (verification.bootOrderAfter.isEmpty()) {
+        verification.bootOrderAfter = rawOrder;
+    }
+    return verification;
+}
+
+// The failure text surfaced to the user: the helper's complete ERROR reason
+// (with its stage decoration stripped). Empty when the transcript carries no
+// ERROR line; the caller then falls back to shortRepairFailureReason().
+QString hostDefaultFailureDetail(const QString &output)
+{
+    const QStringList lines = output.split(QLatin1Char('\n'));
+    for (auto it = lines.crbegin(); it != lines.crend(); ++it) {
+        const QString line = it->trimmed();
+        if (!line.startsWith(QStringLiteral("ERROR:"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        QString detail = line.mid(QStringLiteral("ERROR:").size()).trimmed();
+        const int failedAt = detail.indexOf(QStringLiteral("' failed: "));
+        if (detail.startsWith(QStringLiteral("stage '")) && failedAt >= 0) {
+            detail = detail.mid(failedAt + QStringLiteral("' failed: ").size()).trimmed();
+        }
+        return detail;
+    }
+    return QString();
+}
+
+// Success summary: the verified default boot entry with the label/loader
+// evidence the helper named (including a separately reported drive model)
+// plus the BootOrder transition. The caller only reaches this for an operation
+// with a verified entryId.
+QString hostDefaultSuccessSummary(const HostDefaultVerification &verification)
+{
+    const bool firmwareEntry = verification.entryId.startsWith(QStringLiteral("Boot"));
+    QString message = firmwareEntry
+        ? QStringLiteral("Verified firmware boot entry %1").arg(verification.entryId)
+        : QStringLiteral("Verified default boot entry %1").arg(verification.entryId);
+    QStringList attributes;
+    QString label = verification.label;
+    // The helper may annotate the label itself or report the drive model in its
+    // own field; both shapes render as one annotated label, never duplicated.
+    if (!verification.model.isEmpty()
+        && !label.contains(verification.model, Qt::CaseInsensitive)) {
+        label = label.isEmpty()
+            ? verification.model
+            : QStringLiteral("%1 %2").arg(label, verification.model);
+    }
+    if (!label.isEmpty()) {
+        attributes.append(QStringLiteral("label %1").arg(label));
+    }
+    if (!verification.loader.isEmpty()) {
+        attributes.append(QStringLiteral("loader %1").arg(verification.loader));
+    }
+    if (!verification.action.isEmpty()) {
+        attributes.append(verification.action);
+    }
+    if (!verification.esp.isEmpty()) {
+        attributes.append(QStringLiteral("on %1").arg(verification.esp));
+    }
+    if (!attributes.isEmpty()) {
+        message += QStringLiteral(" (%1)").arg(attributes.join(QStringLiteral(", ")));
+    }
+    message += QLatin1Char('.');
+    if (!verification.bootOrderAfter.isEmpty()) {
+        message += QStringLiteral("\n\nBootOrder: %1").arg(verification.bootOrderAfter);
+        if (!verification.bootOrderBefore.isEmpty()) {
+            message += QStringLiteral(" (was %1)").arg(verification.bootOrderBefore);
+        }
+    }
+    return message;
+}
+} // namespace
 
 // A soft shadow gradient at the top and bottom edge of a scroll area hints
 // that more content is available in that direction; the overlay never takes
@@ -3597,7 +4096,7 @@ QWidget *MainWindow::buildSystemsPage()
     m_hostDefaultButton = new ElidedPushButton(themedIcon(QStringLiteral("preferences-system")), QStringLiteral("Make Default"));
     m_hostDefaultButton->setEnabled(false);
     m_hostDefaultButton->setToolTip(QStringLiteral(
-        "Restore the host's uniquely identified TUXEDO UKI entry if needed, then place it first in BootOrder while preserving every other entry."));
+        "Restore/ensure the running host's verified default boot entry and select it as the default while preserving every other boot entry."));
     connect(m_hostDefaultButton, &QPushButton::clicked, this, &MainWindow::setHostDefaultBootEntry);
     actionsLayout->addWidget(m_hostDefaultButton, 0, 3, Qt::AlignLeft | Qt::AlignTop);
 
@@ -4010,7 +4509,7 @@ QWidget *MainWindow::buildRepairPage()
     layout->addLayout(heading);
 
     layout->addWidget(subtleLabel(QStringLiteral(
-        "Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.")));
+        "Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (EFI / UKI bootloader, GRUB or extlinux configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.")));
 
     auto *planBox = new QGroupBox(QStringLiteral("Full Repair plan"));
     m_fullRepairPlanBox = planBox;
@@ -5674,6 +6173,13 @@ void MainWindow::setHostDefaultBootEntry()
 {
     QString reason;
     if (!hostDefaultBootReady(&reason)) {
+        // Gated: surface the exact evidence reason in the log, the status bar
+        // and the dialog instead of a silent no-op, and keep the button state
+        // in sync with the evidence that refused the action.
+        appendLog(QStringLiteral("Make Default refused: %1").arg(reason),
+                  QStringLiteral("WARNING"), LogEntryKind::Repair);
+        statusBar()->showMessage(reason, 6000);
+        updateHostDefaultButtonState();
         QMessageBox::warning(this, QStringLiteral("Host default unavailable"), reason);
         return;
     }
@@ -5681,10 +6187,23 @@ void MainWindow::setHostDefaultBootEntry()
     QMessageBox box(this);
     box.setIcon(QMessageBox::Warning);
     box.setWindowTitle(QStringLiteral("Make host the default boot entry"));
-    box.setText(QStringLiteral("Restore and select the running host's default EFI entry?"));
-    box.setInformativeText(QStringLiteral(
-        "Host disk: %1\nRoot: %2\n\nBoot Bitch will identify the host ESP by PARTUUID, restore a missing TUXEDO UKI registration when the file is present, and place that one host entry first in BootOrder. Existing entries on this and other disks remain in the firmware inventory.")
-        .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    box.setText(QStringLiteral("Restore/ensure and select the running host's default boot entry?"));
+    // The loader name comes from the detected backend/probe evidence (UKI,
+    // GRUB EFI, Fedora BLS, extlinux); without it the dialog stays generic
+    // instead of claiming a loader the host does not use.
+    const QString loaderName = hostDefaultLoaderName();
+    const QString loaderText = loaderName.isEmpty()
+        ? QStringLiteral("default boot entry")
+        : QStringLiteral("%1 default boot entry").arg(loaderName);
+    if (hostDefaultUsesEfiFirmware()) {
+        box.setInformativeText(QStringLiteral(
+            "Host disk: %1\nRoot: %2\n\nBoot Bitch will identify the host ESP, restore/ensure the verified %3, and place it first in BootOrder. The fallback/recovery route and every other firmware entry stay bootable and are never deleted.")
+            .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath, loaderText));
+    } else {
+        box.setInformativeText(QStringLiteral(
+            "Host disk: %1\nRoot: %2\n\nBoot Bitch will identify the running host's boot configuration, restore/ensure the verified %3, and select it as the default. Every other boot entry stays bootable and is never deleted.")
+            .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath, loaderText));
+    }
     box.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
     box.setDefaultButton(QMessageBox::Cancel);
     box.button(QMessageBox::Yes)->setText(QStringLiteral("Make Default"));
@@ -5694,7 +6213,7 @@ void MainWindow::setHostDefaultBootEntry()
 
     const QString repairSection = repairLogSectionIdentity(QStringLiteral("host-default"));
     beginRepairLogSection(repairSection);
-    appendLog(QStringLiteral("Starting privileged host default EFI operation on %1 (%2).")
+    appendLog(QStringLiteral("Starting privileged default boot entry operation on %1 (%2).")
                   .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath),
               QStringLiteral("INFO"), LogEntryKind::Repair);
     bool succeeded = false;
@@ -5705,21 +6224,37 @@ void MainWindow::setHostDefaultBootEntry()
     const QString detail = output.trimmed().isEmpty()
         ? QStringLiteral("The privileged helper returned no diagnostic output.")
         : output.trimmed();
-    appendLog(QStringLiteral("Host default EFI output\nDiagnostic: Make host default boot entry\n%1").arg(detail),
+    appendLog(QStringLiteral("Host default output\nDiagnostic: Make host default boot entry\n%1").arg(detail),
               succeeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), LogEntryKind::Repair);
+
+    // A verified default boot entry is the helper's named proof (`entry=` with
+    // its label/loader evidence, the PASS line and/or the BootOrder
+    // transition). An exit 0 without it is never reported as success.
+    const HostDefaultVerification verification = parseHostDefaultVerification(output);
+    const bool verified = !verification.entryId.isEmpty();
     // Categorize the operation exactly like the other repair actions; the
-    // helper-proven unchanged case is the no-repair-needed category.
-    const RepairResultCategory result = categorizeRepairResult(
+    // helper-proven unchanged case is the no-repair-needed category. The
+    // unverified exit-0 case keeps the fail-safe invalidation.
+    RepairResultCategory result = categorizeRepairResult(
         succeeded, {QStringLiteral("host-default")}, output);
+    if (succeeded && !verified) {
+        result = RepairResultCategory::Failed;
+    }
+    // The user-facing failure text is the helper's own reason (stage
+    // decoration stripped), with the standard short-reason fallback when the
+    // transcript carries no ERROR line.
+    QString failure = hostDefaultFailureDetail(output);
+    if (failure.isEmpty()) {
+        failure = shortRepairFailureReason(output);
+    }
     appendRepairResultSummary(result,
-                              result == RepairResultCategory::Failed
-                                  ? shortRepairFailureReason(output)
-                                  : QString(),
+                              result == RepairResultCategory::Failed ? failure : QString(),
                               LogEntryKind::Repair, QStringLiteral("host-default"));
     finishRepairLogSection(repairSection);
-    // The host default entry changes firmware state, so the complete cached
-    // running-host diagnostic set is invalidated. A helper-proven unchanged
-    // operation keeps the cached evidence and schedules no regeneration.
+    // The host default entry changes the host's default boot state, so the
+    // complete cached running-host diagnostic set is invalidated. A
+    // helper-proven unchanged operation keeps the cached evidence and
+    // schedules no regeneration.
     const bool unchanged = result == RepairResultCategory::NoRepairNeeded;
     if (unchanged) {
         appendStatusLog(statusEntryIdentity(QStringLiteral("repair-unchanged")),
@@ -5729,14 +6264,29 @@ void MainWindow::setHostDefaultBootEntry()
         clearHostDiagnosticCache();
         scheduleEvidenceRefresh(QStringLiteral("running-host default boot entry changed"));
     }
-    if (succeeded) {
+    // The Make Default gate reads the cached running-host diagnostics, so the
+    // button state must follow the invalidation immediately.
+    updateHostDefaultButtonState();
+
+    if (succeeded && verified) {
+        statusBar()->showMessage(QStringLiteral("Host default set to %1").arg(verification.entryId), 8000);
         QMessageBox::information(
             this,
-            QStringLiteral("Host default restored"),
-            QStringLiteral("The running host's TUXEDO UKI entry was restored and placed first in BootOrder.\n\nFull helper output is available in Logs."));
+            QStringLiteral("Host default verified"),
+            QStringLiteral("%1\n\nFull helper output is available in Logs.").arg(hostDefaultSuccessSummary(verification)));
+    } else if (succeeded) {
+        const QString unverified =
+            QStringLiteral("The privileged helper exited successfully but did not name a verified default boot entry, so Boot Bitch does not report the running host's default boot entry as changed. Review Logs for the complete helper output.");
+        appendLog(QStringLiteral("Host default not verified: %1").arg(unverified),
+                  QStringLiteral("ERROR"), LogEntryKind::Repair);
+        statusBar()->showMessage(QStringLiteral("Host default not verified: the helper did not name a verified boot entry."), 8000);
+        QMessageBox::warning(this, QStringLiteral("Host default not verified"), unverified);
     } else {
-        QMessageBox::critical(this, QStringLiteral("Host default operation failed"),
-                              QStringLiteral("The host default operation failed. Review Logs for details."));
+        statusBar()->showMessage(QStringLiteral("Host default operation failed: %1").arg(failure), 8000);
+        QMessageBox::critical(
+            this,
+            QStringLiteral("Host default operation failed"),
+            QStringLiteral("The host default operation failed: %1\n\nFull helper output is available in Logs.").arg(failure));
     }
 }
 
@@ -7256,7 +7806,7 @@ void MainWindow::updateSnapshotControls()
     m_snapshotRollbackButton->setToolTip(rollbackCandidate
         ? (hostScope
             ? QStringLiteral("Validate a running-host rollback plan read-only, preserve the running @ as @rollback-before-*, promote a writable snapshot copy and reconcile the boot stack in a scratch chroot. A reboot is required and is never automatic.")
-            : QStringLiteral("Validate a rollback plan read-only, preserve the current @ root, promote a writable snapshot copy, reconcile initramfs/UKI/GRUB and auto-restore the old @ if validation fails."))
+            : QStringLiteral("Validate a rollback plan read-only, preserve the current @ root, promote a writable snapshot copy, reconcile initramfs and the detected bootloader path and auto-restore the old @ if validation fails."))
         : rollbackReason);
 }
 
@@ -7728,7 +8278,7 @@ void MainWindow::rollbackSelectedSnapshot()
     warning.setText(QStringLiteral("Promote snapshot %1 to the normal writable @ root?").arg(snapshotId));
     warning.setInformativeText(QStringLiteral(
         "Target disk: %1\nLinux filesystem: %2\n\n"
-        "Boot Bitch will keep the source snapshot unchanged, preserve the current @ under a timestamped rollback backup, set the promoted copy as the Btrfs default, then rebuild/verify initramfs, TUXEDO UKI when present, and GRUB.\n\n"
+        "Boot Bitch will keep the source snapshot unchanged, preserve the current @ under a timestamped rollback backup, set the promoted copy as the Btrfs default, then rebuild/verify initramfs and the detected bootloader path (UKI, GRUB EFI, extlinux or Fedora BLS) and its configuration.\n\n"
         "If a critical post-switch validation or boot-stack stage fails, Boot Bitch will automatically restore the preserved @ and reconcile its boot stack.\n\n"
         "Separate Btrfs subvolumes such as /home remain outside the root rollback according to the target fstab."
     ).arg(m_previewTargetPath, m_previewTargetComponentPath));
@@ -9789,11 +10339,12 @@ void MainWindow::clearTargetDiagnosticCache()
 // Splits the helper's shared capability preamble out of one individual
 // diagnostic result. The preamble starts with the stable
 // "Repair capability probes (read-only..." header and is a contiguous block of
-// `Repair ...` lines plus the running-host `Host snapshot rollback:` /
-// `Host reboot:` evidence lines; everything after it is the diagnostic's own
-// output. The preamble is never dropped: callers cache it under the dedicated
-// capability key so MainWindow::repairToolAvailable() keeps its single source
-// of truth and the host-scope accessors can fail closed.
+// `Repair ...` lines plus the running-host `Host ...` evidence lines (snapshot
+// rollback, reboot and the default-entry capability/probe evidence); everything
+// after it is the diagnostic's own output. The preamble is never dropped:
+// callers cache it under the dedicated capability key so
+// MainWindow::repairToolAvailable() keeps its single source of truth and the
+// host-scope accessors can fail closed.
 void MainWindow::splitDiagnosticCapabilityPreamble(const QString &captured,
                                                    QString *body,
                                                    QString *preamble)
@@ -10051,19 +10602,38 @@ bool MainWindow::hostDefaultBootReady(QString *reason) const
         return false;
     }
     // The cached running-host diagnostics are the single source of truth for
-    // the host default boot entry: the EFI/UKI repair capability must be
-    // available before the operation is offered.
-    bool hadEvidence = false;
-    if (!cachedRepairToolAvailable(m_hostDiagnosticCache, QStringLiteral("efi"), reason, &hadEvidence)) {
-        if (!hadEvidence && reason) {
-            *reason = QStringLiteral("Run read-only running-host diagnostics before restoring the host default boot entry.");
+    // the host default boot entry. The helper's dedicated host-default/UKI
+    // capability evidence decides the gate; the coarse `efi` availability is
+    // deliberately not consulted because it can be available on layouts where
+    // the host default cannot be selected (and unavailable on a usable UKI
+    // path), so it would misreport the action as ready.
+    const HostDefaultCapabilityScan scan = scanHostDefaultCapability(m_hostDiagnosticCache);
+    if (!scan.unavailableReason.isEmpty()) {
+        if (reason) {
+            *reason = scan.unavailableReason;
         }
         return false;
     }
-    if (reason) {
-        *reason = QStringLiteral("The running host is ready to restore its default EFI boot entry.");
+    // An unrecognised structured line fails closed even when another line
+    // reported available, exactly like cachedRepairToolAvailable().
+    if (!scan.unknownLine.isEmpty()) {
+        if (reason) {
+            *reason = QStringLiteral("Unrecognised running-host default-entry capability evidence: %1. Run running-host diagnostics again, and update Boot Bitch if the helper format changed.").arg(scan.unknownLine);
+        }
+        return false;
     }
-    return true;
+    if (scan.available) {
+        if (reason) {
+            *reason = QStringLiteral("The running host's verified default boot entry can be restored or promoted.");
+        }
+        return true;
+    }
+    if (reason) {
+        *reason = scan.found
+            ? QStringLiteral("The cached running-host diagnostics do not decide whether the host default entry can be restored. Regenerate running-host diagnostics in Host Maintenance, and update Boot Bitch if the helper format changed.")
+            : QStringLiteral("No running-host default-entry capability evidence is cached. Run read-only running-host diagnostics in Host Maintenance before using Make Default.");
+    }
+    return false;
 }
 
 void MainWindow::updateHostDefaultButtonState()
@@ -10074,9 +10644,17 @@ void MainWindow::updateHostDefaultButtonState()
     QString reason;
     const bool ready = hostDefaultBootReady(&reason);
     m_hostDefaultButton->setEnabled(ready);
-    m_hostDefaultButton->setToolTip(ready
-        ? QStringLiteral("Restore and select the running host's default EFI boot entry.")
-        : reason);
+    if (!ready) {
+        m_hostDefaultButton->setToolTip(reason);
+        return;
+    }
+    const QString loaderName = hostDefaultLoaderName();
+    const QString loaderText = loaderName.isEmpty()
+        ? QStringLiteral("default boot entry")
+        : QStringLiteral("%1 default boot entry").arg(loaderName);
+    m_hostDefaultButton->setToolTip(hostDefaultUsesEfiFirmware()
+        ? QStringLiteral("Restore/ensure the running host's verified %1 and place it first in BootOrder while preserving every other firmware entry.").arg(loaderText)
+        : QStringLiteral("Restore/ensure the running host's verified %1 and select it as the default while preserving every other boot entry.").arg(loaderText));
 }
 
 bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *reason) const
@@ -11636,6 +12214,121 @@ QString MainWindow::detectedDisplayManagerName() const
         return QStringLiteral("Ly");
     }
     return QString();
+}
+
+// True when the active scope's cached evidence describes an EFI/firmware
+// default (firmware entries, BootOrder, efibootmgr or a UKI/systemd-boot
+// chain). False keeps the BIOS wording (Fedora BIOS BLS, extlinux) instead of
+// claiming an EFI/firmware entry the helper would never touch.
+bool MainWindow::currentDefaultUsesEfiFirmware() const
+{
+    const QString evidence = currentScopeEvidence();
+    if (evidence.contains(QStringLiteral("Repair tool efi: available"), Qt::CaseInsensitive)
+        || evidence.contains(QStringLiteral("BootCurrent"))
+        || evidence.contains(QStringLiteral("BootOrder"))
+        || evidence.contains(QStringLiteral("efibootmgr"))
+        || evidence.contains(QStringLiteral("EFI System Partition"))) {
+        return true;
+    }
+    const QString bootloader = detectedBootloaderBackend().toLower();
+    return bootloader.contains(QStringLiteral("uki"))
+        || bootloader.contains(QStringLiteral("systemd-boot"));
+}
+
+// User-facing loader name for the active scope's default boot path, derived
+// from the helper's host-default candidate evidence first and the detected
+// backend probes second: "UKI", "shim chain", "GRUB EFI", "Fedora BLS" or
+// "extlinux". Empty when no backend is named; callers then use the generic
+// "default boot entry" wording instead of guessing a loader.
+QString MainWindow::currentBootLoaderName() const
+{
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    const HostDefaultCapabilityScan scan = scanHostDefaultCapability(cache);
+    const QString candidate = scan.candidateKind.toLower();
+    if (candidate.contains(QStringLiteral("uki"))) {
+        return QStringLiteral("UKI");
+    }
+    if (candidate.contains(QStringLiteral("shim"))) {
+        return QStringLiteral("shim chain");
+    }
+    if (candidate.contains(QStringLiteral("bls"))) {
+        return QStringLiteral("Fedora BLS");
+    }
+    if (candidate.contains(QStringLiteral("extlinux"))
+        || candidate.contains(QStringLiteral("syslinux"))) {
+        return QStringLiteral("extlinux");
+    }
+    if (candidate.contains(QStringLiteral("grub"))) {
+        return currentDefaultUsesEfiFirmware() ? QStringLiteral("GRUB EFI")
+                                               : QStringLiteral("GRUB");
+    }
+    const QString bootloader = detectedBootloaderBackend().toLower();
+    if (bootloader.contains(QStringLiteral("uki"))
+        || bootloader.contains(QStringLiteral("systemd-boot"))) {
+        return QStringLiteral("UKI");
+    }
+    if (bootloader.contains(QStringLiteral("extlinux"))
+        || bootloader.contains(QStringLiteral("syslinux"))) {
+        return QStringLiteral("extlinux");
+    }
+    if (bootloader.contains(QStringLiteral("grub"))) {
+        // Fedora's BIOS default is the grubenv saved_entry + BLS mechanism;
+        // its EFI default is the GRUB EFI firmware entry. The grub2
+        // tooling/paths are the same probe evidence the GRUB2 wording uses,
+        // never a distribution-family gate.
+        if (detectedRpmBackend() || detectedGrub2Backend()) {
+            return currentDefaultUsesEfiFirmware() ? QStringLiteral("GRUB EFI")
+                                                   : QStringLiteral("Fedora BLS");
+        }
+        return currentDefaultUsesEfiFirmware() ? QStringLiteral("GRUB EFI")
+                                               : QStringLiteral("GRUB");
+    }
+    return QString();
+}
+
+// Make Default is a running-host action, so its wording must come from the
+// running-host evidence only (never a target scope's cached diagnostics). The
+// helper's named candidate kind wins; otherwise the detected host backend is
+// used. An empty result keeps the generic "default boot entry" wording.
+QString MainWindow::hostDefaultLoaderName() const
+{
+    const HostDefaultCapabilityScan scan = scanHostDefaultCapability(m_hostDiagnosticCache);
+    const QString candidate = scan.candidateKind.toLower();
+    if (candidate.contains(QStringLiteral("uki"))) {
+        return QStringLiteral("UKI");
+    }
+    if (candidate.contains(QStringLiteral("shim"))) {
+        return QStringLiteral("shim chain");
+    }
+    if (candidate.contains(QStringLiteral("bls"))) {
+        return QStringLiteral("Fedora BLS");
+    }
+    if (candidate.contains(QStringLiteral("extlinux"))
+        || candidate.contains(QStringLiteral("syslinux"))) {
+        return QStringLiteral("extlinux");
+    }
+    if (candidate.contains(QStringLiteral("grub"))) {
+        return currentDefaultUsesEfiFirmware() ? QStringLiteral("GRUB EFI")
+                                               : QStringLiteral("GRUB");
+    }
+    return currentBootLoaderName();
+}
+
+bool MainWindow::hostDefaultUsesEfiFirmware() const
+{
+    // Same decisive host evidence as currentDefaultUsesEfiFirmware(), read
+    // from the running-host cache so a target scope can never change it.
+    const QString evidence = m_hostDiagnosticCache.values().join(QLatin1Char('\n'));
+    if (evidence.contains(QStringLiteral("Repair tool efi: available"), Qt::CaseInsensitive)
+        || evidence.contains(QStringLiteral("BootCurrent"))
+        || evidence.contains(QStringLiteral("BootOrder"))
+        || evidence.contains(QStringLiteral("efibootmgr"))
+        || evidence.contains(QStringLiteral("EFI System Partition"))) {
+        return true;
+    }
+    const QString bootloader = detectedBootloaderBackend().toLower();
+    return bootloader.contains(QStringLiteral("uki"))
+        || bootloader.contains(QStringLiteral("systemd-boot"));
 }
 
 // Adopts the process-wide active session file (a second window continuing the
@@ -14301,9 +14994,27 @@ void MainWindow::updateRepairToolDetails()
         iconName = QStringLiteral("initramfs");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("efi")) {
+        const QString loaderName = currentBootLoaderName();
         title = QStringLiteral("EFI / UKI bootloader");
         description = QStringLiteral(
-            "Repair the running host or selected repair system's EFI / UKI boot path. On current TUXEDO Debian-base systems with create_boot_uki_base.sh, Boot Bitch uses the vendor UKI builder and preserves every other ESP's firmware entries and BootOrder; TUXEDO Ubuntu layouts without that builder continue to use their GRUB path. On conventional GRUB EFI systems it performs a guarded grub-install on the selected system's validated ESP and restores one verified vendor-loader firmware entry if the guarded installer only writes files. On Alpine UEFI GRUB systems it backs up the ESP loader files, runs grub-install --target=x86_64-efi --bootloader-id=<detected> --boot-directory=/boot --no-nvram, refreshes the EFI/boot/bootx64.efi fallback copy when the layout had one, and reconciles one firmware entry for the detected loader; a failed install restores the ESP backup. An Alpine EFI-stub-only system is detected and reported, and the stage reconciles captured firmware entries only without synthesising kernel command lines. Afterward, decoded entries on each maintained ESP retain their distribution/vendor label and receive that drive's model once; an existing model name is not duplicated. The maintained BootOrder groups each drive's primary loader, fallback and WebFAI destinations and removes only entries that resolve to a duplicate destination, such as a device-path-only UEFI fallback beside BOOTX64.EFI. Unrelated EFI entries on other disks are never removed.");
+            "Repair the running host or selected repair system's boot path with the detected backend. The stage uses the guarded installer or vendor builder for the detected layout, restores one verified default-loader entry when a guarded installer only writes files, and preserves every other ESP's firmware entries and BootOrder. ");
+        if (loaderName == QStringLiteral("UKI")) {
+            description += QStringLiteral(
+                "The detected vendor UKI layout (for example the TUXEDO create_boot_uki_base.sh / TUX.EFI builder) is rebuilt or re-registered through its official builder. ");
+        } else if (loaderName == QStringLiteral("Fedora BLS")) {
+            description += QStringLiteral(
+                "The detected Fedora GRUB2/BLS backend keeps /boot/grub2/grub.cfg and the BLS entries intact, repairs the boot code on a BIOS layout, and leaves the firmware default to the separate Make Default action. ");
+        } else if (loaderName == QStringLiteral("extlinux")) {
+            description += QStringLiteral(
+                "The detected syslinux/extlinux layout is repaired through its configuration and boot code, never through EFI. ");
+        } else if (loaderName == QStringLiteral("GRUB EFI")) {
+            description += QStringLiteral(
+                "The detected GRUB EFI layout uses a guarded grub-install on the validated ESP and restores one verified vendor-loader firmware entry if the guarded installer only writes files. ");
+        } else if (!loaderName.isEmpty()) {
+            description += QStringLiteral("The detected backend is %1. ").arg(loaderName);
+        }
+        description += QStringLiteral(
+            "On Alpine UEFI GRUB systems it backs up the ESP loader files, runs grub-install --target=x86_64-efi --bootloader-id=<detected> --boot-directory=/boot --no-nvram, refreshes the EFI/boot/bootx64.efi fallback copy when the layout had one, and reconciles one firmware entry for the detected loader; a failed install restores the ESP backup. An Alpine EFI-stub-only system is detected and reported, and the stage reconciles captured firmware entries only without synthesising kernel command lines. Afterward, decoded entries on each maintained ESP retain their distribution/vendor label and receive that drive's model once; an existing model name is not duplicated. Unrelated entries on other disks are never removed.");
         buttonText = QStringLiteral("Repair EFI / UKI");
         iconName = QStringLiteral("drive-removable-media");
         planText = QStringLiteral("Full Repair plan: %1").arg(plan);
@@ -14348,14 +15059,15 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("bootstack")) {
         title = QStringLiteral("Boot stack reconciliation");
         description = QStringLiteral(
-            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, rebuild the TUXEDO UKI when the selected system provides its official builder, or use the detected Arch EFI/GRUB path, reconcile one canonical EFI destination per purpose, and regenerate the GRUB fallback. ");
+            "Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, repair the detected bootloader path (the vendor UKI builder when that layout is present, GRUB EFI, extlinux or Fedora BLS), reconcile one canonical default destination per purpose, and regenerate the detected bootloader configuration. ");
         if (dracutBackend && grub2Backend) {
             description += QStringLiteral(
                 "On a Fedora BIOS target the same reconciliation validates mapper/crypttab, rebuilds the dracut initramfs images and regenerates the GRUB2 configuration (config-only; the guarded bootloader reinstall stays in the GRUB stage). ");
         }
         description += QStringLiteral(
-            "When the EFI / UKI bootloader repair already ran for the same system in this session, this action reuses it: the second UKI rebuild and the duplicate GRUB regeneration are skipped and logged, while mapper/crypttab validation and initramfs reconciliation still run. "
-            "This is the focused recovery action for a root/EFI mismatch after a partial update or snapshot restore; it does not delete kernels or unrelated ESP entries.");
+            "When the EFI / UKI bootloader repair already ran for the same system in this session, this action reuses it: the duplicate bootloader rebuild and GRUB regeneration are skipped and logged, while mapper/crypttab validation and initramfs reconciliation still run. "
+            "The boot tools are independent: EFI / UKI bootloader repair, GRUB or extlinux configuration, boot-stack reconciliation and Make Default can be run in any order, and a later action re-verifies what an earlier one changed and reports its own result instead of replacing it. "
+            "This is the focused recovery action for a root/boot mismatch after a partial update or snapshot restore; it does not delete kernels or unrelated boot entries.");
         buttonText = QStringLiteral("Reconcile Boot Stack");
         iconName = QStringLiteral("system-run");
         planText = QStringLiteral("Full Repair plan: Manual recovery tool");
@@ -14389,7 +15101,7 @@ void MainWindow::updateRepairToolDetails()
     QString displayedPlanStatus = planText;
     if (key == QStringLiteral("bootstack") && efiRepairReuseAvailable()) {
         displayedPlanStatus += QStringLiteral(
-            "\nReuse: the EFI / UKI repair from this session will be reused (second UKI rebuild and duplicate GRUB regeneration skipped).");
+            "\nReuse: the bootloader repair from this session will be reused (the duplicate bootloader rebuild and GRUB regeneration are skipped).");
     }
     if (!targetReady || !diagnosticsReady) {
         displayedPlanStatus += QStringLiteral("\nUnavailable: ")
@@ -14401,7 +15113,7 @@ void MainWindow::updateRepairToolDetails()
         : (!diagnosticsReady
             ? diagnosticReason
             : (key == QStringLiteral("bootstack") && efiRepairReuseAvailable()
-                ? QStringLiteral("Reuses the EFI / UKI repair from this session: the second UKI rebuild and duplicate GRUB regeneration are skipped. Mapper/crypttab validation and initramfs reconciliation still run.")
+                ? QStringLiteral("Reuses the bootloader repair from this session: the second UKI rebuild and duplicate GRUB regeneration are skipped when the earlier EFI / UKI stage already rebuilt and verified the detected layout. Mapper/crypttab validation and initramfs reconciliation still run.")
                 : QStringLiteral("Run this guarded repair action using the cached read-only diagnostic evidence. A confirmation is shown first."))));
 }
 
@@ -15217,9 +15929,12 @@ void MainWindow::runSelectedRepairTool()
     } else if (key == QStringLiteral("efi")) {
         title = QStringLiteral("Repair EFI / UKI bootloader");
         stages = {QStringLiteral("efi")};
-        operations = {QStringLiteral("Use the TUXEDO vendor UKI builder when that layout is detected for the %1, preserving every other firmware entry and BootOrder").arg(selectedSystemLabel),
-                      QStringLiteral("Otherwise reinstall GRUB EFI loader files only on the %1's validated ESP").arg(selectedSystemLabel),
-                      QStringLiteral("Regenerate GRUB configuration afterward")};
+        const QString loaderName = currentBootLoaderName();
+        const QString loaderText = loaderName.isEmpty()
+            ? QStringLiteral("detected bootloader")
+            : loaderName;
+        operations = {QStringLiteral("Repair the %1's %2 boot path through its guarded installer or vendor builder, preserving every other boot entry").arg(selectedSystemLabel, loaderText),
+                      QStringLiteral("Restore one verified default-loader entry when the guarded installer only wrote files")};
     } else if (key == QStringLiteral("grub")) {
         title = QStringLiteral("Regenerate GRUB configuration");
         stages = {QStringLiteral("grub")};
@@ -15238,12 +15953,16 @@ void MainWindow::runSelectedRepairTool()
             // repeat that work or the GRUB regeneration it performed.
             stages.append(QStringLiteral("--post-efi"));
         }
+        const QString loaderName = currentBootLoaderName();
+        const QString loaderText = loaderName.isEmpty()
+            ? QStringLiteral("detected bootloader")
+            : loaderName;
         operations = {QStringLiteral("Validate mapper/crypttab against the %1").arg(selectedSystemLabel),
                       QStringLiteral("Trial-build and rebuild initramfs for installed kernels"),
-                      QStringLiteral("Rebuild the TUXEDO UKI or detected Arch EFI path when supported, removing only duplicate EFI destinations"),
-                      QStringLiteral("Regenerate the GRUB fallback configuration")};
+                      QStringLiteral("Repair the detected %1 boot path, removing only duplicate default destinations").arg(loaderText),
+                      QStringLiteral("Regenerate the detected bootloader configuration")};
         if (reuseEfiRepair) {
-            operations.prepend(QStringLiteral("Reuse the EFI / UKI bootloader repair already completed for this %1: skip the second UKI rebuild and the duplicate GRUB regeneration").arg(selectedSystemLabel));
+            operations.prepend(QStringLiteral("Reuse the bootloader repair already completed for this %1: skip the duplicate bootloader rebuild and GRUB regeneration").arg(selectedSystemLabel));
         }
     } else {
         QMessageBox::warning(this, QStringLiteral("Repair tool unavailable"),

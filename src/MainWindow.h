@@ -571,8 +571,27 @@ private:
     bool repairTargetReady(QString *reason = nullptr) const;
     bool hostBootTargetReady(QString *reason = nullptr) const;
     bool hostMaintenanceReady(QString *reason = nullptr) const;
+    // Host-default readiness from the helper's dedicated running-host
+    // default-entry capability evidence: the stable
+    // `Host default: available|unavailable|<reason>` line, its probe
+    // decisions (`Host default probe: … candidate=…`) and the renamed
+    // `Repair tool host-default:` shape. The coarse `efi` capability is
+    // deliberately not the gate; missing or unrecognised evidence fails closed
+    // with an actionable reason.
     bool hostDefaultBootReady(QString *reason = nullptr) const;
     void updateHostDefaultButtonState();
+    // Loader-generic wording for the active scope's default boot path,
+    // derived from the helper's host-default candidate evidence first and the
+    // detected backend probes second: "UKI", "shim chain", "GRUB EFI",
+    // "Fedora BLS" or "extlinux". An empty result keeps the generic
+    // "default boot entry" wording instead of guessing a loader.
+    // hostDefaultLoaderName()/hostDefaultUsesEfiFirmware() read only the
+    // running-host evidence so a target scope can never change Make Default's
+    // wording.
+    QString currentBootLoaderName() const;
+    QString hostDefaultLoaderName() const;
+    bool currentDefaultUsesEfiFirmware() const;
+    bool hostDefaultUsesEfiFirmware() const;
     bool repairToolAvailable(const QString &key, QString *reason = nullptr) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
     // Single explicit mapping from a repair tool/stage key to the diagnostic

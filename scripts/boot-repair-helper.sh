@@ -233,6 +233,23 @@ efi_boot_artifact_fingerprint()
     return 0
 }
 
+# Dump one PE section of an image without ever rewriting the input.  GNU
+# objcopy always writes an output object; with the output operand omitted it
+# rewrites the input in place, which changes the PE TimeDateStamp (and can
+# invalidate a signed UKI) during what must be a read-only inspection.  Every
+# section dump therefore goes through this wrapper with a throwaway output file.
+objcopy_dump_section()
+{
+    local section="$1" image="$2" out rc
+    command -v objcopy >/dev/null 2>&1 || return 1
+    out="$(mktemp "${SESSION_DIR:-/tmp}/objcopy-section.XXXXXX" 2>/dev/null || true)"
+    [[ -n "$out" ]] || return 1
+    objcopy --dump-section "$section" "$image" "$out" >/dev/null 2>&1
+    rc=$?
+    rm -f -- "$out"
+    return "$rc"
+}
+
 # APT apply/simulation output proves "no work" only when the transaction
 # summary reports nothing to do and no package/configuration action ran.
 apt_transaction_reported_no_changes()
@@ -6638,6 +6655,198 @@ fedora_grub_regenerate_config()
 }
 
 # ---------------------------------------------------------------------------
+# Fedora/RHEL GRUB2 default entry (grubenv saved_entry + BLS)
+# ---------------------------------------------------------------------------
+# The Fedora BIOS default is the grubenv saved_entry naming a BLS entry id
+# (the BLS filename without .conf).  GRUB 2.12 falls back to the first entry
+# when the id does not resolve, so a stale saved_entry is silently ignored
+# rather than shown.  The guarded write below only ever rewrites saved_entry,
+# proves every other grubenv key survived and restores the pre-write block
+# byte-identically on any failure.
+
+# Print "<version>\t<id>" for every non-rescue BLS entry.  The rescue entry is
+# never a Make Default target.
+fedora_bls_entry_ids()
+{
+    local dir="$TARGET_ROOT/boot/loader/entries" file base version
+    [[ -d "$dir" ]] || return 0
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        base="$(basename -- "$file")"
+        case "$base" in
+            *-0-rescue.conf) continue ;;
+        esac
+        version="$(sed -n 's/^version[[:space:]]*//p' "$file" 2>/dev/null | head -n1)"
+        [[ -n "$version" ]] || version="${base%.conf}"
+        printf '%s\t%s\n' "$version" "${base%.conf}"
+    done < <(find "$dir" -maxdepth 1 -type f -name '*.conf' 2>/dev/null | LC_ALL=C sort)
+}
+
+# Newest non-rescue BLS entry id (version sort); fails closed when only the
+# rescue entry (or nothing) is installed.
+fedora_bls_newest_id()
+{
+    local newest=""
+    newest="$(fedora_bls_entry_ids | sort -V -k1,1 | tail -n1 | cut -f2)"
+    [[ -n "$newest" ]] || return 1
+    printf '%s\n' "$newest"
+}
+
+# BLS entry id whose version matches the given kernel release.
+fedora_bls_entry_id_for_kernel()
+{
+    local kver="$1" version id
+    [[ -n "$kver" ]] || return 1
+    while IFS=$'\t' read -r version id; do
+        [[ -n "$id" ]] || continue
+        [[ "$version" == "$kver" || "$id" == *"-$kver" ]] || continue
+        printf '%s\n' "$id"
+        return 0
+    done < <(fedora_bls_entry_ids)
+    return 1
+}
+
+fedora_bls_entry_exists()
+{
+    local wanted="$1" version id
+    [[ -n "$wanted" ]] || return 1
+    while IFS=$'\t' read -r version id; do
+        [[ "$id" == "$wanted" ]] && return 0
+    done < <(fedora_bls_entry_ids)
+    return 1
+}
+
+# Make Default target: the running kernel's BLS id in host mode; the newest
+# non-rescue BLS id for an offline target repair.
+fedora_default_entry_target_id()
+{
+    if (( RUNNING_HOST_MODE == 1 )); then
+        fedora_bls_entry_id_for_kernel "$(running_kernel_version)"
+    else
+        fedora_bls_newest_id
+    fi
+}
+
+# Read-only capability decision for the Fedora BLS default.  Every missing
+# prerequisite fails closed with its exact probe reason.
+fedora_default_entry_unavailable_reason()
+{
+    local default_setting target
+    profile_target_backends
+    grub2_layout_detected \
+        || { printf 'the detected GRUB layout is not a Fedora/RHEL grub2 layout'; return 1; }
+    grub_env_block_valid \
+        || { printf 'grubenv is missing or not a valid GRUB environment block'; return 1; }
+    grub_editenv_tool >/dev/null 2>&1 \
+        || { printf 'grub2-editenv is not installed in the target'; return 1; }
+    grep -Eq '(^|[[:space:]])blscfg([[:space:]]|$)' "$TARGET_ROOT$(grub_config_path)" 2>/dev/null \
+        || { printf 'GRUB_ENABLE_BLSCFG is not enabled; the default is a generated menuentry'; return 1; }
+    default_setting="$(sed -nE 's/^[[:space:]]*GRUB_DEFAULT[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/default/grub" 2>/dev/null | head -n1)"
+    [[ "$default_setting" == saved ]] \
+        || { printf 'GRUB_DEFAULT is not set to saved; grubenv does not select the default entry'; return 1; }
+    if (( RUNNING_HOST_MODE == 1 )); then
+        target="$(fedora_default_entry_target_id || true)"
+        [[ -n "$target" ]] \
+            || { printf 'the running kernel %s has no installed BLS entry' "$(running_kernel_version)"; return 1; }
+    else
+        target="$(fedora_bls_newest_id || true)"
+        [[ -n "$target" ]] || { printf 'no non-rescue BLS entries are installed'; return 1; }
+    fi
+    return 0
+}
+
+# grubenv keys except saved_entry, sorted: the "all other keys preserved" proof.
+grubenv_keys_except_saved_entry()
+{
+    local grubenv="$1"
+    strings "$grubenv" 2>/dev/null \
+        | grep -E '^[A-Za-z_][A-Za-z0-9_]*=' \
+        | grep -v '^saved_entry=' \
+        | LC_ALL=C sort
+}
+
+fedora_default_grubenv_saved_entry()
+{
+    local grubenv="$1"
+    strings "$grubenv" 2>/dev/null | sed -nE 's/^saved_entry=(.*)$/\1/p' | head -n1 || true
+}
+
+# Restore the session grubenv backup and prove it byte-identical.
+fedora_default_restore_grubenv()
+{
+    local backup="$1" grubenv="$2" before_sha="$3"
+    cp -a -- "$backup" "$TARGET_ROOT$grubenv" || return 1
+    [[ "$(repair_file_fingerprint "$TARGET_ROOT$grubenv")" == "$before_sha" ]]
+}
+
+# Guarded Fedora default-entry write.  Only saved_entry is written through the
+# target's grub2-editenv; every other grubenv key must survive and the read-back
+# must name the target BLS id.  Idempotent: an already-correct saved_entry is
+# left untouched with zero writes.  Any failure restores the pre-write grubenv
+# byte-identically and fails loudly.
+fedora_default_entry_ensure()
+{
+    local reason target grubenv editenv backup before_sha after_sha current
+    local keys_before keys_after resolves
+
+    if ! reason="$(fedora_default_entry_unavailable_reason)"; then
+        fail "Fedora BLS default selection is not available: $reason."
+    fi
+    target="$(fedora_default_entry_target_id)"
+    [[ -n "$target" ]] || fail "Unable to resolve the Fedora BLS default entry target."
+    grubenv="$(grub_env_path)"
+    editenv="$(grub_editenv_tool)"
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    resolves=no
+    if [[ -n "$current" ]] && fedora_bls_entry_exists "$current"; then
+        resolves=yes
+    fi
+
+    if [[ "$current" == "$target" && "$resolves" == yes ]]; then
+        log "Fedora default entry: saved_entry=$target resolves=yes target=$target action=unchanged" | tee -a "$SESSION_LOG"
+        repair_change_status host-default "unchanged|grubenv saved_entry already names the running kernel BLS entry $target"
+        return 0
+    fi
+
+    backup="$SESSION_DIR/fedora-default-grubenv-before"
+    cp -a -- "$TARGET_ROOT$grubenv" "$backup" \
+        || fail "Unable to back up grubenv before setting the Fedora default entry."
+    before_sha="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    keys_before="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+
+    log "Fedora default entry: saved_entry=${current:-unset} resolves=$resolves target=$target action=set" | tee -a "$SESSION_LOG"
+    run_chroot_try "Set Fedora GRUB2 default BLS entry ($target)" \
+        "$editenv" "$grubenv" set "saved_entry=$target"
+    if (( CHROOT_TRY_RC != 0 )); then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "grub2-editenv could not set saved_entry=$target; the previous grubenv was restored byte-identical."
+        fi
+        fail "grub2-editenv could not set saved_entry=$target and the grubenv restore could not be proven."
+    fi
+
+    after_sha="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    current="$(fedora_default_grubenv_saved_entry "$TARGET_ROOT$grubenv")"
+    keys_after="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
+    if [[ "$current" != "$target" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "grubenv read-back names '${current:-unset}' instead of $target; the previous grubenv was restored byte-identical."
+        fi
+        fail "grubenv read-back names '${current:-unset}' instead of $target and the restore could not be proven."
+    fi
+    if [[ "$keys_before" != "$keys_after" ]]; then
+        if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
+            fail "setting saved_entry changed another grubenv key; the previous grubenv was restored byte-identical."
+        fi
+        fail "setting saved_entry changed another grubenv key and the restore could not be proven."
+    fi
+
+    log "Fedora default entry: saved_entry=$current resolves=yes target=$target action=set" | tee -a "$SESSION_LOG"
+    log "Fedora default entry: grubenv keys other than saved_entry preserved (sha256 ${after_sha:0:12}…)." | tee -a "$SESSION_LOG"
+    repair_change_status host-default "changed|grubenv saved_entry set to $target (all other keys preserved)"
+}
+
+# ---------------------------------------------------------------------------
 # Fedora/RHEL GRUB2 BIOS boot-code reinstall (evidence-triggered, no new key)
 # ---------------------------------------------------------------------------
 # The reinstall substage runs only when the read-only probe finds the MBR boot
@@ -7098,6 +7307,13 @@ preflight_extlinux()
 # /boot/extlinux.conf.new and exits before it copies modules or updates the
 # boot sector.  The candidate is entry-guarded, verified and only then
 # installed; any failure restores the captured files.
+#
+# Documented default decision: this stage intentionally never changes which
+# extlinux entry is the default.  `default=` in /etc/update-extlinux.conf (and
+# MENU DEFAULT in the generated configuration) is preserved verbatim; Make
+# Default refuses BIOS/extlinux hosts with that named reason instead of writing
+# a default label or a boot sector.  A future guarded default-label action must
+# use the same trial/entry-guard pattern and preserve every existing LABEL.
 adaptive_extlinux_repair()
 {
     local cfg_before="" cfg_after="" candidate="$TARGET_ROOT/boot/extlinux.conf.new"
@@ -7159,6 +7375,331 @@ adaptive_extlinux_repair()
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Extlinux default-label selection (running-host default, config-only)
+# ---------------------------------------------------------------------------
+# Alpine BIOS boots through syslinux/extlinux: there is no firmware entry, so
+# the permanent default is the LABEL marked `MENU DEFAULT` in
+# /boot/extlinux.conf, which the target's update-extlinux regenerates from
+# `default=` in /etc/update-extlinux.conf.  The guarded action below changes
+# exactly those two files: it derives the label that boots the running kernel,
+# runs the same overwrite=0 trial the extlinux repair stage uses (never
+# `extlinux --update`, never a boot-sector write), verifies the candidate
+# preserves every entry and marks only the target label, then installs the
+# candidate and persists `default=`.  Any failure restores both files from the
+# session backup byte-identically.
+
+# `default=` value from /etc/update-extlinux.conf (quotes stripped), if any.
+extlinux_configured_default_label()
+{
+    local conf="$TARGET_ROOT/etc/update-extlinux.conf"
+    [[ -f "$conf" ]] || return 0
+    sed -nE 's/^[[:space:]]*default[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$conf" | head -n1
+}
+
+# True when the configuration marks exactly the wanted LABEL as its default,
+# either with `MENU DEFAULT` (generated form) or a top-level `DEFAULT <label>`
+# that names an entry (hand-edited form).  `DEFAULT menu.c32` never matches.
+extlinux_config_marks_default()
+{
+    local cfg="$1" want="$2" marked
+    [[ -n "$want" && -s "$cfg" ]] || return 1
+    marked="$(awk -v want="$want" '
+        /^[[:space:]]*LABEL[[:space:]]/ { label = $2; next }
+        /^[[:space:]]*MENU[[:space:]]+DEFAULT/ { if (label != "") { print label; exit } next }
+        /^[[:space:]]*DEFAULT[[:space:]]/ { if ($2 != want) next; print want; exit }
+    ' "$cfg")"
+    [[ "$marked" == "$want" ]]
+}
+
+# LABEL currently selected by the configuration itself: `MENU DEFAULT` first,
+# then a top-level `DEFAULT <label>` that names an entry.  Prints nothing when
+# the configuration carries no default marker (extlinux boots the first entry).
+extlinux_config_default_label()
+{
+    local cfg="$1" label=""
+    cfg="${cfg:-$(extlinux_config_path 2>/dev/null || true)}"
+    [[ -s "$cfg" ]] || return 0
+    label="$(awk '
+        /^[[:space:]]*LABEL[[:space:]]/ { label = $2; next }
+        /^[[:space:]]*MENU[[:space:]]+DEFAULT/ { if (label != "") { print label; exit } }
+    ' "$cfg")"
+    [[ -n "$label" ]] && { printf '%s\n' "$label"; return 0; }
+    awk '
+        /^[[:space:]]*LABEL[[:space:]]/ { labels[$2] = 1; next }
+        /^[[:space:]]*DEFAULT[[:space:]]/ { wanted = $2; next }
+        END { if (wanted != "" && labels[wanted]) print wanted }
+    ' "$cfg"
+}
+
+# Print every LABEL whose LINUX/KERNEL entry boots the given kernel release.
+# The mapping mirrors update-extlinux: a `/usr/share/kernel/<flavor>/kernel.release`
+# equal to the release names the flavor whose `/boot/vmlinuz-<flavor>` entry is
+# the one that boots it; an exact `vmlinuz-<release>` and the release's
+# `-<flavor>` suffix are accepted as fallbacks.
+extlinux_entry_labels_for_kernel()
+{
+    local kver="$1" cfg label linux flavor release found
+    [[ -n "$kver" ]] || return 0
+    cfg="$(extlinux_config_path 2>/dev/null || true)"
+    [[ -s "$cfg" ]] || return 0
+    while IFS=$'\t' read -r label linux; do
+        [[ -n "$label" && -n "$linux" ]] || continue
+        linux="${linux##*/}"
+        # A LABEL whose kernel file is missing cannot boot the running kernel;
+        # update-extlinux would drop it from the generated configuration.
+        [[ -s "$TARGET_ROOT/boot/$linux" ]] || continue
+        found=""
+        if [[ "$linux" == "vmlinuz-$kver" || "$linux" == "$kver" ]]; then
+            found=1
+        else
+            flavor="${linux#vmlinuz-}"
+            [[ "$flavor" != "$linux" ]] || flavor=""
+            if [[ -n "$flavor" ]]; then
+                release="$(head -n1 "$TARGET_ROOT/usr/share/kernel/$flavor/kernel.release" 2>/dev/null || true)"
+                if [[ "$release" == "$kver" || "$kver" == *"-$flavor" ]]; then
+                    found=1
+                fi
+            fi
+        fi
+        [[ -n "$found" ]] && printf '%s\n' "$label"
+    done < <(awk '
+        /^[[:space:]]*LABEL[[:space:]]/ { label = $2; next }
+        /^[[:space:]]*(LINUX|KERNEL)[[:space:]]/ { if (label != "") printf "%s\t%s\n", label, $2; next }
+    ' "$cfg")
+}
+
+# Read-only capability decision for the running-host extlinux default.  The
+# action is possible only when update-extlinux, /etc/update-extlinux.conf and
+# the generated /boot/extlinux.conf are all present and exactly one LABEL boots
+# the running kernel; a missing or ambiguous label fails closed with its named
+# reason.  No distribution ID is consulted.
+extlinux_default_entry_unavailable_reason()
+{
+    local kver updater="" cfg labels count label
+    (( RUNNING_HOST_MODE == 1 )) \
+        || { printf 'extlinux default selection is only available for the running host'; return 1; }
+    for updater in /sbin/update-extlinux /usr/sbin/update-extlinux /usr/bin/update-extlinux; do
+        [[ -x "$TARGET_ROOT$updater" ]] && break
+    done
+    [[ -n "$updater" && -x "$TARGET_ROOT$updater" ]] \
+        || { printf 'update-extlinux is not installed in the running host'; return 1; }
+    [[ -f "$TARGET_ROOT/etc/update-extlinux.conf" ]] \
+        || { printf 'the running host has no /etc/update-extlinux.conf'; return 1; }
+    cfg="$(extlinux_config_path 2>/dev/null || true)"
+    [[ -n "$cfg" ]] \
+        || { printf 'no extlinux/syslinux configuration was detected in the running host'; return 1; }
+    [[ "$cfg" == "$TARGET_ROOT/boot/extlinux.conf" ]] \
+        || { printf 'the detected extlinux configuration %s is not /boot/extlinux.conf; refusing to select a default label' "${cfg#"$TARGET_ROOT"}"; return 1; }
+    kver="$(running_kernel_version)"
+    [[ -n "$kver" ]] || { printf 'the running kernel release could not be determined'; return 1; }
+    labels="$(extlinux_entry_labels_for_kernel "$kver")"
+    count="$(grep -c . <<<"$labels" || true)"
+    if (( count == 0 )); then
+        printf 'the running kernel %s has no entry in %s' "$kver" "${cfg#"$TARGET_ROOT"}"
+        return 1
+    fi
+    if (( count > 1 )); then
+        printf 'multiple extlinux entries reference the running kernel %s (%s)' \
+            "$kver" "$(paste -sd, - <<<"$labels")"
+        return 1
+    fi
+    label="$labels"
+    [[ "$label" =~ ^[A-Za-z0-9._-]+$ ]] \
+        || { printf 'extlinux label %s cannot be written to /etc/update-extlinux.conf safely' "'$label'"; return 1; }
+    return 0
+}
+
+# Read-only verdict for the configured extlinux default (diagnostics only): a
+# `default=` that names no entry makes the first entry boot, and a `default=`
+# that disagrees with the current marker is re-applied on the next
+# update-extlinux run.  Never writes anything.
+extlinux_default_verdict()
+{
+    local cfg conf configured effective
+    cfg="$(extlinux_config_path 2>/dev/null || true)"
+    conf="$TARGET_ROOT/etc/update-extlinux.conf"
+    [[ -s "$cfg" && -f "$conf" ]] || return 0
+    configured="$(extlinux_configured_default_label)"
+    effective="$(extlinux_config_default_label "$cfg")"
+    [[ -n "$effective" ]] || return 0
+    if [[ -z "$configured" ]]; then
+        printf 'INFO: /etc/update-extlinux.conf has no default=; extlinux boots the first entry (LABEL %s). This is read-only evidence; the configuration is not modified.\n' \
+            "$effective"
+        return 0
+    fi
+    if ! awk -v want="$configured" '
+        /^[[:space:]]*LABEL[[:space:]]/ { if ($2 == want) found = 1 }
+        END { exit(found ? 0 : 1) }
+    ' "$cfg"; then
+        printf 'WARNING: extlinux default %s does not name an entry; the first entry (LABEL %s) will boot. This is read-only evidence; the configuration is not modified.\n' \
+            "'$configured'" "$effective"
+    elif [[ "$configured" != "$effective" ]]; then
+        printf 'WARNING: extlinux default %s does not match the current default entry (LABEL %s); the next update-extlinux run will change the default. This is read-only evidence; the configuration is not modified.\n' \
+            "'$configured'" "$effective"
+    fi
+}
+
+# Restore the captured /etc/update-extlinux.conf and configuration and drop any
+# trial candidate.  Used by every failure path of the default selection.
+extlinux_default_restore_backup()
+{
+    local dir="$1" cfg="$2"
+    if [[ -f "$dir/update-extlinux.conf" ]]; then
+        cp -a -- "$dir/update-extlinux.conf" "$TARGET_ROOT/etc/update-extlinux.conf"
+    fi
+    if [[ -f "$dir/extlinux.conf" ]]; then
+        cp -a -- "$dir/extlinux.conf" "$cfg"
+    fi
+    rm -f -- "$TARGET_ROOT/boot/extlinux.conf.new"
+    log "Restored the pre-repair extlinux default configuration" | tee -a "$SESSION_LOG"
+}
+
+# Write a copy of the extlinux configuration with `default=<label>` (replacing
+# any existing setting, appending when absent) and an optional `overwrite=`
+# replacement.  The original file is never edited in place: callers install the
+# generated copy and keep the backup for rollback.
+extlinux_conf_with_default()
+{
+    local src="$1" out="$2" label="$3" overwrite="${4:-}"
+    awk -v label="$label" -v overwrite="$overwrite" '
+        /^[[:space:]]*default[[:space:]]*=/ { print "default=" label; done = 1; next }
+        /^[[:space:]]*overwrite[[:space:]]*=/ {
+            if (overwrite != "") print "overwrite=" overwrite; else print; next
+        }
+        { print }
+        END { if (!done) print "default=" label }
+    ' "$src" > "$out"
+}
+
+# Replace $dst with the contents of $src while preserving $dst's original mode
+# and ownership (a password-protected /etc/update-extlinux.conf must not be
+# relaxed to the default umask mode).
+extlinux_replace_conf()
+{
+    local src="$1" dst="$2" staging
+    staging="$dst.replacement.$$"
+    cp -a -- "$dst" "$staging" || return 1
+    cat "$src" > "$staging" || { rm -f -- "$staging"; return 1; }
+    mv -f -- "$staging" "$dst"
+}
+
+# Guarded running-host extlinux default selection.  Idempotent: an already
+# correct configured default and MENU DEFAULT marker performs zero writes and
+# reports unchanged.  The write goes through the same overwrite=0 trial and
+# entry-preservation guard as the repair stage, and never touches the boot
+# sector, ldlinux.sys or the MBR.
+extlinux_default_entry_ensure()
+{
+    local reason kver label cfg conf candidate backup_dir overwrite default_line
+    local default_linux default_initrd candidate_mode
+    local cfg_before conf_before cfg_after conf_after trial final
+
+    if ! reason="$(extlinux_default_entry_unavailable_reason)"; then
+        fail "Extlinux default entry selection is not available: $reason."
+    fi
+    kver="$(running_kernel_version)"
+    label="$(extlinux_entry_labels_for_kernel "$kver" | head -n1)"
+    [[ -n "$label" ]] || fail "Unable to resolve the extlinux label for the running kernel $kver."
+    cfg="$(extlinux_config_path)" || fail "No extlinux configuration was detected for the running host."
+    conf="$TARGET_ROOT/etc/update-extlinux.conf"
+
+    if [[ "$(extlinux_configured_default_label)" == "$label" ]] \
+        && extlinux_config_marks_default "$cfg" "$label"; then
+        log "Extlinux default entry: label=$label kernel=$kver action=unchanged" | tee -a "$SESSION_LOG"
+        log "Host default: entry=$label label='$label' loader=$(extlinux_default_entry | cut -f2) action=unchanged" | tee -a "$SESSION_LOG"
+        repair_change_status host-default "unchanged|extlinux default label $label is already selected"
+        return 0
+    fi
+
+    backup_dir="$SESSION_DIR/extlinux-default-backup"
+    rm -rf -- "$backup_dir"
+    mkdir -p -- "$backup_dir" || fail "Unable to create the extlinux default backup directory."
+    cp -a -- "$conf" "$backup_dir/update-extlinux.conf" \
+        || fail "Unable to back up /etc/update-extlinux.conf before selecting the extlinux default."
+    cp -a -- "$cfg" "$backup_dir/extlinux.conf" \
+        || fail "Unable to back up $cfg before selecting the extlinux default."
+    cfg_before="$(repair_file_fingerprint "$cfg")"
+    conf_before="$(repair_file_fingerprint "$conf")"
+    overwrite="$(sed -nE 's/^[[:space:]]*overwrite[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$conf" | head -n1)"
+
+    trial="$SESSION_DIR/extlinux-default-trial.conf"
+    extlinux_conf_with_default "$conf" "$trial" "$label" 0
+    extlinux_replace_conf "$trial" "$conf" || fail "Unable to stage the extlinux default trial configuration."
+    run_chroot_try "Regenerate extlinux configuration (default=$label, overwrite=0 trial; no boot sector write)" update-extlinux
+    if (( CHROOT_TRY_RC != 0 )); then
+        extlinux_default_restore_backup "$backup_dir" "$cfg"
+        fail "update-extlinux trial failed while selecting default label $label; the previous extlinux configuration was restored."
+    fi
+
+    candidate="$TARGET_ROOT/boot/extlinux.conf.new"
+    if [[ -s "$candidate" ]]; then
+        if ! guard_extlinux_candidate_preserves_entries "$cfg" "$candidate"; then
+            rm -f -- "$candidate"
+            extlinux_default_restore_backup "$backup_dir" "$cfg"
+            fail "extlinux default selection was rolled back because the generated configuration removed an existing boot entry."
+        fi
+        if ! extlinux_verify_candidate "$candidate"; then
+            rm -f -- "$candidate"
+            extlinux_default_restore_backup "$backup_dir" "$cfg"
+            fail "extlinux default selection candidate failed verification; the previous configuration was restored."
+        fi
+        if ! extlinux_config_marks_default "$candidate" "$label"; then
+            rm -f -- "$candidate"
+            extlinux_default_restore_backup "$backup_dir" "$cfg"
+            fail "the generated extlinux configuration does not mark LABEL $label as the default; the previous configuration was restored."
+        fi
+        # Keep the candidate's own mode: update-extlinux makes a
+        # password-protected configuration non-world-readable.
+        candidate_mode="$(stat -c '%a' "$candidate" 2>/dev/null || true)"
+        if ! install -m "${candidate_mode:-0644}" "$candidate" "$cfg"; then
+            rm -f -- "$candidate"
+            extlinux_default_restore_backup "$backup_dir" "$cfg"
+            fail "Unable to install the regenerated extlinux configuration."
+        fi
+        rm -f -- "$candidate"
+    else
+        # update-extlinux removed the candidate because the generated
+        # configuration is byte-identical: the target label must already be the
+        # effective default marker, otherwise the trial proved nothing.
+        rm -f -- "$candidate"
+        if ! extlinux_config_marks_default "$cfg" "$label"; then
+            extlinux_default_restore_backup "$backup_dir" "$cfg"
+            fail "the regenerated extlinux configuration does not select LABEL $label; the previous configuration was restored."
+        fi
+    fi
+
+    # Persist default=<label> from the original configuration, keeping every
+    # other setting (including the original overwrite value) intact.
+    final="$SESSION_DIR/extlinux-default-final.conf"
+    extlinux_conf_with_default "$backup_dir/update-extlinux.conf" "$final" "$label" "${overwrite:-}"
+    if ! extlinux_replace_conf "$final" "$conf"; then
+        rm -f -- "$final"
+        extlinux_default_restore_backup "$backup_dir" "$cfg"
+        fail "Unable to persist default=$label in /etc/update-extlinux.conf."
+    fi
+    rm -f -- "$final"
+
+    if [[ "$(extlinux_configured_default_label)" != "$label" ]] \
+        || ! extlinux_config_marks_default "$cfg" "$label"; then
+        extlinux_default_restore_backup "$backup_dir" "$cfg"
+        fail "extlinux default selection could not be verified after the write; the previous configuration was restored."
+    fi
+    cfg_after="$(repair_file_fingerprint "$cfg")"
+    conf_after="$(repair_file_fingerprint "$conf")"
+    default_line="$(extlinux_default_entry)"
+    default_linux="$(cut -f2 <<<"$default_line")"
+    default_initrd="$(cut -f3 <<<"$default_line")"
+    log "Extlinux default entry: label=$label kernel=$kver action=set" | tee -a "$SESSION_LOG"
+    log "PASS: running host default extlinux entry is LABEL $label -> LINUX $default_linux + INITRD $default_initrd." | tee -a "$SESSION_LOG"
+    log "Host default: entry=$label label='$label' loader=$default_linux action=set" | tee -a "$SESSION_LOG"
+    if [[ "$cfg_before" == "$cfg_after" && "$conf_before" == "$conf_after" ]]; then
+        repair_change_status host-default "unchanged|extlinux default label $label already selected"
+    else
+        repair_change_status host-default "changed|extlinux default label set to $label"
+    fi
+}
+
 # Preflight a TUXEDO UKI rebuild: validate the vendor layout, ensure the
 # newest kernel has an initramfs (rebuilding it first when missing), require
 # enough ESP free space and report whether the embedded UKI kernel is stale.
@@ -7185,7 +7726,7 @@ preflight_tuxedo_uki()
 
     if [[ -s "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" ]] && command -v objcopy >/dev/null 2>&1; then
         local tmp="$SESSION_DIR/uki-preflight-uname"
-        if objcopy --dump-section ".uname=$tmp" "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI" >/dev/null 2>&1; then
+        if objcopy_dump_section ".uname=$tmp" "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"; then
             current="$(tr '\0' '\n' < "$tmp" | head -1)"
             log "UKI preflight: current embedded kernel=${current:-unknown}; target newest kernel=$kver" | tee -a "$SESSION_LOG"
             if [[ -n "$current" && "$current" != "$kver" ]]; then
@@ -7809,6 +8350,14 @@ efi_unavailable_reason()
                 ;;
         esac
     fi
+    # A verified running-host UKI is a complete EFI boot path: registering and
+    # promoting it needs neither GRUB tooling nor the vendor builder, so the
+    # host scope must not gate `efi` off on a UKI-only host (F5).  Target repair
+    # keeps the stricter layout gate below.
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -s "$(host_uki_file_path)" ]] \
+        && [[ "$(host_uki_layout_state)" == present\|* ]]; then
+        return 0
+    fi
     # A Fedora/RHEL grub2 layout on legacy BIOS has no EFI boot path at all:
     # the chain is MBR/bios_grub -> GRUB2 -> BLS.  This is layout + firmware
     # evidence, not a distribution-family gate.
@@ -8343,6 +8892,9 @@ repair_capability_evidence()
                         fi
                         ;;
                 esac
+            elif (( RUNNING_HOST_MODE == 1 )) && [[ -s "$(host_uki_file_path)" ]] \
+                && [[ "$(host_uki_layout_state)" == present\|* ]]; then
+                printf 'verified running-host TUX.EFI UKI; file-based registration needs no GRUB tooling'
             elif grub2_layout_detected && bios_firmware_mode; then
                 printf 'legacy BIOS target; no EFI boot path is available'
             elif [[ "$TARGET_OS_ID" == tuxedo ]] && ! tuxedo_uki_builder_present; then
@@ -9438,6 +9990,16 @@ diagnostic_repair_capabilities()
         else
             printf 'Host reboot: unavailable|%s\n' "$host_reason"
         fi
+        # The running-host default action is decided by its own probe evidence
+        # (verified UKI, canonical vendor loader, Fedora BLS grubenv default),
+        # not by the coarse `efi` key, so the Make Default gate opens and closes
+        # with exactly the evidence the runtime gate uses.
+        if host_reason="$(host_default_unavailable_reason)"; then
+            printf 'Host default: available\n'
+        else
+            printf 'Host default: unavailable|%s\n' "$host_reason"
+        fi
+        host_default_diagnostic_evidence || true
     fi
 }
 
@@ -9900,6 +10462,51 @@ extlinux_default_entry()
     ' "$cfg"
 }
 
+# Read-only registration state of a UKI file on the scope's ESP, resolved by
+# PARTUUID + loader path.  Prints one of:
+#   registered <id> first lead=<id> current=<id|none>
+#   registered <id> not-first lead=<id|none> current=<id|none>
+#   unregistered <partuuid>
+#   unavailable <reason>
+# RUNNING_HOST_MODE selects the host ESP; otherwise the selected target ESP is
+# used.
+diagnostic_uki_registration_state()
+{
+    local partuuid="" order lead current_id ids esp_source
+    command -v efibootmgr >/dev/null 2>&1 || { printf 'unavailable efibootmgr is not installed\n'; return 0; }
+    efi_variables_supported || { printf 'unavailable EFI variables are not supported on this system\n'; return 0; }
+    efi_set_inventory_esp_ids
+    if (( RUNNING_HOST_MODE == 1 )); then
+        partuuid="${EFI_HOST_ESP_PARTUUID,,}"
+    else
+        partuuid="${EFI_TARGET_ESP_PARTUUID,,}"
+        if [[ -z "$partuuid" && -n "$TARGET_ESP_MOUNT" && "$TARGET_ESP_MOUNT" != unresolved ]] \
+            && mountpoint -q "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null; then
+            esp_source="$(findmnt -rn -o SOURCE,FSTYPE --target "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null \
+                | awk '$1 ~ /^\/dev\// {print $1; exit}' || true)"
+            if [[ -n "$esp_source" ]]; then
+                partuuid="$(blkid -s PARTUUID -o value "$esp_source" 2>/dev/null || true)"
+                partuuid="${partuuid,,}"
+            fi
+        fi
+    fi
+    [[ -n "$partuuid" ]] || { printf 'unavailable the scope ESP PARTUUID could not be determined\n'; return 0; }
+    ids="$(efi_entry_ids_for_partuuid_loader "$partuuid" '\efi\boot\tux.efi' 2>/dev/null | sort -u | paste -sd, -)"
+    if [[ -z "$ids" ]]; then
+        printf 'unregistered %s\n' "$partuuid"
+        return 0
+    fi
+    order="$(efibootmgr -v 2>/dev/null | sed -n 's/^BootOrder: //p' | head -n1 || true)"
+    lead="${order%%,*}"
+    lead="${lead^^}"
+    current_id="$(efibootmgr -v 2>/dev/null | sed -nE 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    if [[ "$lead" == "${ids%%,*}" ]]; then
+        printf 'registered %s first lead=%s current=%s\n' "${ids%%,*}" "${lead:-none}" "${current_id:-none}"
+    else
+        printf 'registered %s not-first lead=%s current=%s\n' "${ids%%,*}" "${lead:-none}" "${current_id:-none}"
+    fi
+}
+
 # Describe the detected boot chain (firmware -> loader -> initramfs -> root)
 # and compare the UKI's LUKS declarations with the mounted root so the number
 # of expected unlock prompts is evidence, not a guess.
@@ -9911,6 +10518,8 @@ diagnostic_boot_chain()
     local uki_cmdline="" uki_luks_uuid="" uki_luks_name="" cryptdevice_uuid=""
     local tmp default_entry extlinux_label extlinux_kernel extlinux_initrd
     local has_uki=false has_grub=false
+    local uki_reg_line="" uki_reg_state="" uki_reg_id="" uki_reg_pos="" uki_reg_lead="" uki_reg_current=""
+    local scope_label="selected target"
 
     profile_target_backends
     grub_cfg="$TARGET_ROOT$(grub_config_path)"
@@ -9919,6 +10528,7 @@ diagnostic_boot_chain()
 
     [[ -s "$uki" ]] && has_uki=true
     [[ -s "$grub_cfg" ]] && has_grub=true
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     echo "Detected boot chain (read-only):"
     if [[ "$TARGET_BOOTLOADER_BACKEND" == "syslinux/extlinux" ]]; then
         # Alpine and other BIOS systems boot through extlinux/syslinux; there
@@ -9929,6 +10539,7 @@ diagnostic_boot_chain()
             IFS=$'\t' read -r extlinux_label extlinux_kernel extlinux_initrd <<<"$default_entry"
             printf 'Default extlinux entry: LABEL %s -> LINUX %s + INITRD %s.\n' \
                 "${extlinux_label:-unknown}" "${extlinux_kernel:-unknown}" "${extlinux_initrd:-unknown}"
+            extlinux_default_verdict
         fi
     elif [[ "$TARGET_BOOTLOADER_BACKEND" == "systemd-boot + UKI" ]]; then
         echo "Primary: firmware EFI entry -> systemd-boot -> UKI or loader entry -> initramfs -> root filesystem -> graphical login."
@@ -9939,9 +10550,36 @@ diagnostic_boot_chain()
         echo "Primary: firmware EFI entry -> distribution UKI -> embedded initramfs -> root filesystem -> graphical login."
     elif [[ "$(alpine_efi_backend)" == "efi-stub" ]]; then
         echo "Primary: firmware EFI entry -> EFI-stub kernel on the ESP (vmlinuz-*) -> initramfs on the ESP -> root filesystem -> graphical login."
-    elif [[ "$has_uki" == true && -x "$TARGET_ROOT/usr/sbin/create_boot_uki_base.sh" ]]; then
-        echo "Primary: firmware EFI entry -> TUXEDO UKI (TUX.EFI) -> initramfs -> root filesystem -> graphical login."
-        [[ "$has_grub" == true ]] && echo "Fallback: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+    elif [[ "$has_uki" == true ]]; then
+        # The UKI path is only the primary route when a firmware entry
+        # references TUX.EFI on this scope's ESP and firmware leads with it.
+        # A present-but-unregistered TUX.EFI must not be described as primary.
+        uki_reg_line="$(diagnostic_uki_registration_state)"
+        read -r uki_reg_state uki_reg_id uki_reg_pos uki_reg_lead uki_reg_current <<<"$uki_reg_line"
+        uki_reg_lead="${uki_reg_lead#lead=}"
+        uki_reg_current="${uki_reg_current#current=}"
+        case "$uki_reg_state" in
+            registered)
+                if [[ "$uki_reg_pos" == first ]]; then
+                    echo "Primary: firmware EFI entry -> TUXEDO UKI (TUX.EFI) -> initramfs -> root filesystem -> graphical login."
+                    if [[ -n "$uki_reg_current" && "$uki_reg_current" != none && "$uki_reg_current" != "$uki_reg_id" ]]; then
+                        echo "Current boot: firmware loaded Boot$uki_reg_current, not the registered TUXEDO UKI Boot$uki_reg_id; the fallback/GRUB route was used for this boot."
+                    fi
+                    [[ "$has_grub" == true ]] && echo "Fallback: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+                else
+                    echo "Primary: firmware BootOrder leads with Boot${uki_reg_lead:-unknown} -> distribution EFI loader -> initramfs -> root filesystem -> graphical login."
+                    echo "TUXEDO UKI (TUX.EFI) is registered as Boot$uki_reg_id but is not first in BootOrder."
+                fi
+                ;;
+            unregistered)
+                echo "Primary: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+                echo "WARNING: TUX.EFI present but unregistered on the $scope_label ESP $uki_reg_id; the firmware fallback/GRUB path remains primary."
+                ;;
+            *)
+                echo "Primary: firmware fallback/GRUB entry -> GRUB menu -> initramfs -> root filesystem -> graphical login."
+                echo "WARNING: TUX.EFI is present but its firmware registration could not be verified (${uki_reg_line#unavailable }); the fallback/GRUB path is assumed."
+                ;;
+        esac
     elif [[ "$has_grub" == true && "$(boot_firmware_mode)" == "BIOS/legacy" ]]; then
         echo "Primary: BIOS/legacy firmware -> GRUB menu -> initramfs -> root filesystem -> graphical login."
     elif [[ "$has_grub" == true ]]; then
@@ -9976,7 +10614,7 @@ diagnostic_boot_chain()
         # are compatible declarations of the same volume, not two prompts.
         if [[ "$has_uki" == true ]] && command -v objcopy >/dev/null 2>&1; then
             tmp="$SESSION_DIR/diag-boot-chain-cmdline"
-            if objcopy --dump-section ".cmdline=$tmp" "$uki" >/dev/null 2>&1; then
+            if objcopy_dump_section ".cmdline=$tmp" "$uki"; then
                 uki_cmdline="$(tr '\0' ' ' < "$tmp")"
                 uki_luks_uuid="$(sed -nE 's/.*(^|[[:space:]])rd\.luks\.uuid=([^[:space:]]+).*/\2/p' <<<"$uki_cmdline" | head -n1)"
                 uki_luks_name="$(sed -nE 's/.*(^|[[:space:]])rd\.luks\.name=([^=[:space:]]+)=.*/\2/p' <<<"$uki_cmdline" | head -n1)"
@@ -10054,6 +10692,7 @@ diagnostic_boot_evidence()
                 | grep -E '^(saved_entry|next_entry|prev_saved_entry|boot_success|menu_auto_hide|blsdir)=' \
                 || echo "grub-editenv is unavailable."
         fi
+        grubenv_saved_entry_evidence
     fi
     if [[ -d "$TARGET_ROOT/boot/loader" ]]; then
         if [[ "$TARGET_BOOTLOADER_BACKEND" == "grub" ]]; then
@@ -10282,6 +10921,7 @@ diagnostic_grub()
         strings "$grubenv_path" 2>/dev/null \
             | grep -E '^(saved_entry|next_entry|prev_saved_entry|boot_success|boot_indeterminate|menu_auto_hide|blsdir)=' \
             || echo "No GRUB selection fields found."
+        grubenv_saved_entry_evidence
     else
         echo "GRUB environment is not visible."
     fi
@@ -10327,6 +10967,7 @@ diagnostic_grub()
 diagnostic_uki()
 {
     local uki="" esp_root="" efi_root="" tmp_uname tmp_cmdline partuuid embedded="" efi_nvram_diag scope_label="target"
+    local uki_reg_line="" uki_reg_state="" uki_reg_id="" uki_reg_scope="selected target"
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     profile_target_backends
     esp_root="$(profile_esp_root 2>/dev/null || true)"
@@ -10364,7 +11005,7 @@ diagnostic_uki()
         if command -v objcopy >/dev/null 2>&1; then
             tmp_uname="$(mktemp "$SESSION_DIR/diag-uki-uname.XXXXXX")"
             tmp_cmdline="$(mktemp "$SESSION_DIR/diag-uki-cmdline.XXXXXX")"
-            if objcopy --dump-section ".uname=$tmp_uname" "$uki" >/dev/null 2>&1; then
+            if objcopy_dump_section ".uname=$tmp_uname" "$uki"; then
                 embedded="$(tr '\0' '\n' < "$tmp_uname" | head -1)"
                 echo "Embedded kernel: ${embedded:-unknown}"
                 if [[ -n "$embedded" && -f "$TARGET_ROOT/boot/vmlinuz-$embedded" ]]; then
@@ -10375,12 +11016,30 @@ diagnostic_uki()
             else
                 echo "Unable to read the UKI .uname section."
             fi
-            if objcopy --dump-section ".cmdline=$tmp_cmdline" "$uki" >/dev/null 2>&1; then
+            if objcopy_dump_section ".cmdline=$tmp_cmdline" "$uki"; then
                 echo "Embedded command line:"
                 tr '\0' '\n' < "$tmp_cmdline" | head -20
             fi
         else
             echo "objcopy is not installed on the recovery host; UKI sections were not decoded."
+        fi
+        # A present UKI that no firmware entry references is a degraded default:
+        # the firmware fallback/GRUB path is the effective primary route.
+        if command -v efibootmgr >/dev/null 2>&1; then
+            (( RUNNING_HOST_MODE == 1 )) && uki_reg_scope="host"
+            uki_reg_line="$(diagnostic_uki_registration_state)"
+            read -r uki_reg_state uki_reg_id _rest <<<"$uki_reg_line"
+            case "$uki_reg_state" in
+                registered)
+                    echo "PASS: firmware entry Boot$uki_reg_id references TUX.EFI on the $uki_reg_scope ESP."
+                    ;;
+                unregistered)
+                    echo "WARNING: TUX.EFI present but unregistered on the $uki_reg_scope ESP $uki_reg_id; the firmware fallback/GRUB path remains primary."
+                    ;;
+                *)
+                    echo "INFO: TUX.EFI firmware registration could not be verified (${uki_reg_line#unavailable })."
+                    ;;
+            esac
         fi
     fi
 
@@ -10396,12 +11055,12 @@ diagnostic_uki()
                 tmp_uname="$SESSION_DIR/diag-generic-uki-uname"
                 tmp_cmdline="$SESSION_DIR/diag-generic-uki-cmdline"
                 rm -f -- "$tmp_uname" "$tmp_cmdline"
-                if objcopy --dump-section ".uname=$tmp_uname" "$generic_uki" >/dev/null 2>&1; then
+                if objcopy_dump_section ".uname=$tmp_uname" "$generic_uki"; then
                     echo "Embedded kernel: $(tr '\0' '\n' < "$tmp_uname" | head -1)"
                 else
                     echo "Embedded kernel: unavailable"
                 fi
-                if objcopy --dump-section ".cmdline=$tmp_cmdline" "$generic_uki" >/dev/null 2>&1; then
+                if objcopy_dump_section ".cmdline=$tmp_cmdline" "$generic_uki"; then
                     echo "Embedded command line: $(tr '\0' ' ' < "$tmp_cmdline" | head -1)"
                 fi
             done < <(find "$efi_root/EFI/Linux" -maxdepth 1 -type f -iname '*.efi' -print 2>/dev/null | sort | head -40)
@@ -10445,6 +11104,72 @@ diagnostic_uki()
         echo "EFI variables are not supported on this system (legacy BIOS boot); no firmware entry inventory is applicable."
     else
         echo "efibootmgr/UEFI variables are unavailable in the recovery host."
+    fi
+}
+
+# Read-only verdict for the GRUB saved entry.  With GRUB_DEFAULT=saved a
+# saved_entry that no longer resolves to an installed kernel makes GRUB stop at
+# the visible menu on the next fallback boot (and, with GRUB_ENABLE_CRYPTODISK,
+# adds the GRUB-side unlock prompt).  On a Fedora/RHEL BLS layout the default is
+# the BLS entry id and GRUB 2.12 falls back to the first entry instead.  This is
+# evidence only: grubenv is never rewritten here.
+grubenv_saved_entry_evidence()
+{
+    local scope_label="target" grubenv saved_entry kver default_setting found=""
+    local running_id="" first_id=""
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    grubenv="$TARGET_ROOT$(grub_env_path)"
+    [[ -f "$grubenv" ]] || return 0
+    saved_entry="$(strings "$grubenv" 2>/dev/null | sed -nE 's/^saved_entry=(.*)$/\1/p' | head -n1 || true)"
+    default_setting="$(sed -nE 's/^[[:space:]]*GRUB_DEFAULT[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/default/grub" 2>/dev/null | head -n1 || true)"
+
+    # Fedora/RHEL BLS layout: saved_entry is the BLS filename id.  A missing or
+    # stale id is a degraded default that GRUB silently replaces with the first
+    # BLS entry, so the verdict names both the recorded and the effective entry.
+    if grub2_layout_detected && [[ -d "$TARGET_ROOT/boot/loader/entries" ]]; then
+        first_id="$(fedora_bls_newest_id 2>/dev/null || true)"
+        if [[ -z "$saved_entry" ]]; then
+            if [[ "$default_setting" == saved ]]; then
+                printf 'WARNING: grubenv has no saved_entry; GRUB_DEFAULT=saved boots the first BLS entry (%s). This is read-only evidence; grubenv is not modified.\n' \
+                    "${first_id:-unknown}"
+            else
+                printf 'INFO: grubenv has no saved_entry (GRUB_DEFAULT=%s).\n' "${default_setting:-unset}"
+            fi
+            return 0
+        fi
+        if fedora_bls_entry_exists "$saved_entry"; then
+            printf 'PASS: grubenv saved_entry %s resolves to an installed BLS entry.\n' "'$saved_entry'"
+            if (( RUNNING_HOST_MODE == 1 )); then
+                running_id="$(fedora_bls_entry_id_for_kernel "$(running_kernel_version)" 2>/dev/null || true)"
+                if [[ -n "$running_id" && "$saved_entry" != "$running_id" ]]; then
+                    printf 'INFO: grubenv saved_entry %s does not name the running kernel BLS entry %s; GRUB boots the recorded default.\n' \
+                        "'$saved_entry'" "$running_id"
+                fi
+            fi
+        else
+            printf 'WARNING: grubenv saved_entry %s does not name an installed BLS entry; GRUB falls back to the first entry (%s). This is read-only evidence; grubenv is not modified.\n' \
+                "'$saved_entry'" "${first_id:-unknown}"
+        fi
+        return 0
+    fi
+
+    [[ -n "$saved_entry" ]] || return 0
+    while IFS= read -r kver; do
+        [[ -n "$kver" ]] || continue
+        if [[ "$saved_entry" == *"$kver"* ]]; then
+            found="$kver"
+            break
+        fi
+    done < <(installed_kernel_versions)
+    if [[ -n "$found" ]]; then
+        printf 'PASS: grubenv saved_entry %s resolves to installed kernel %s.\n' "'$saved_entry'" "$found"
+    elif [[ "$default_setting" == saved ]]; then
+        printf 'WARNING: stale grubenv saved_entry %s does not match any installed kernel; GRUB_DEFAULT=saved will stop at the GRUB menu on the next %s fallback boot. This is read-only evidence; grubenv is not modified.\n' \
+            "'$saved_entry'" "$scope_label"
+    else
+        printf 'INFO: grubenv saved_entry %s does not match an installed kernel (GRUB_DEFAULT=%s).\n' \
+            "'$saved_entry'" "${default_setting:-unset}"
     fi
 }
 
@@ -13123,6 +13848,367 @@ is_tuxedo_uki_layout()
     [[ "$TARGET_OS_ID" == "tuxedo" ]] && tuxedo_uki_builder_present
 }
 
+# ---------------------------------------------------------------------------
+# Running-host TUXEDO UKI probes (read-only, file/embedded evidence only)
+# ---------------------------------------------------------------------------
+# The vendor UKI layout is detected from files and embedded sections, never
+# from the distribution ID or the vendor builder (probe, don't prefilter).  A
+# layout counts as present only when TUX.EFI decodes as a PE image whose
+# .uname names an installed kernel and whose .cmdline binds the live root.
+
+# Read-only Secure Boot state from efivarfs: enabled|disabled|unknown.
+host_secure_boot_state()
+{
+    local var="/sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c" value
+    [[ -r "$var" ]] || { printf 'unknown\n'; return 0; }
+    value="$(od -An -t u1 -j 4 -N 1 -- "$var" 2>/dev/null | tr -d '[:space:]')"
+    case "$value" in
+        1) printf 'enabled\n' ;;
+        0) printf 'disabled\n' ;;
+        *) printf 'unknown\n' ;;
+    esac
+}
+
+# Best-effort read-only signature probe for the host UKI.  Under Secure Boot an
+# unsigned (or unverifiable) UKI must never be promoted, so a missing
+# verification tool fails the probe instead of being treated as signed.
+host_uki_signature_verified()
+{
+    local uki="$1"
+    [[ -s "$uki" ]] || return 1
+    if command -v sbverify >/dev/null 2>&1; then
+        sbverify --list "$uki" >/dev/null 2>&1 && return 0
+        return 1
+    fi
+    if command -v pesign >/dev/null 2>&1; then
+        pesign --show-signature --in "$uki" 2>/dev/null | grep -qE '^signature [0-9]+' && return 0
+        return 1
+    fi
+    return 1
+}
+
+# Absolute path of the running host's vendor UKI inside the mounted host ESP.
+host_uki_file_path()
+{
+    # Resolve the host ESP identity first: callers include the read-only
+    # capability probes, which may not have run the inventory setup yet.
+    efi_set_inventory_esp_ids
+    printf '%s/EFI/BOOT/TUX.EFI\n' "${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+}
+
+# Verify the running host's vendor UKI from files only (no NVRAM): PE/COFF
+# readable through objcopy, embedded .uname matching an installed kernel and
+# embedded .cmdline binding the live root (root UUID and, when applicable, the
+# LUKS UUID and Btrfs subvolume).  Prints one record:
+#   present|<embedded>|<cmdline-root>|<live-root>|<luks>|<subvol>
+#   absent|<reason>
+# The EFI/TUXEDO handoff directory, the vendor builder and the fallback copy
+# are evidence, never gates.
+host_uki_layout_state()
+{
+    local mount uki tmp_uname tmp_cmdline embedded cmdline cmdline_root root_uuid luks_uuid subvol fstype backing
+
+    efi_set_inventory_esp_ids
+    mount="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    uki="$mount/EFI/BOOT/TUX.EFI"
+    [[ -s "$uki" ]] || { printf 'absent|%s is missing or empty\n' "$uki"; return 0; }
+    if ! command -v objcopy >/dev/null 2>&1; then
+        printf 'absent|objcopy is unavailable; TUX.EFI embedded sections cannot be verified\n'
+        return 0
+    fi
+    tmp_uname="$(mktemp "${SESSION_DIR:-/tmp}/host-uki-uname.XXXXXX" 2>/dev/null || true)"
+    tmp_cmdline="$(mktemp "${SESSION_DIR:-/tmp}/host-uki-cmdline.XXXXXX" 2>/dev/null || true)"
+    if [[ -z "$tmp_uname" || -z "$tmp_cmdline" ]]; then
+        [[ -n "$tmp_uname" ]] && rm -f -- "$tmp_uname"
+        [[ -n "$tmp_cmdline" ]] && rm -f -- "$tmp_cmdline"
+        printf 'absent|unable to create a temporary file for UKI section inspection\n'
+        return 0
+    fi
+    if ! objcopy_dump_section ".uname=$tmp_uname" "$uki"; then
+        rm -f -- "$tmp_uname" "$tmp_cmdline"
+        printf 'absent|TUX.EFI is not a readable PE/COFF image (objcopy could not read .uname)\n'
+        return 0
+    fi
+    embedded="$(tr '\0' '\n' < "$tmp_uname" | head -1)"
+    if [[ -z "$embedded" ]]; then
+        rm -f -- "$tmp_uname" "$tmp_cmdline"
+        printf 'absent|TUX.EFI does not embed a kernel version (.uname)\n'
+        return 0
+    fi
+    if [[ ! -s "$TARGET_ROOT/boot/vmlinuz-$embedded" ]]; then
+        rm -f -- "$tmp_uname" "$tmp_cmdline"
+        printf 'absent|embedded kernel %s is not installed under /boot\n' "$embedded"
+        return 0
+    fi
+    if ! objcopy_dump_section ".cmdline=$tmp_cmdline" "$uki"; then
+        rm -f -- "$tmp_uname" "$tmp_cmdline"
+        printf 'absent|TUX.EFI does not embed a readable .cmdline section\n'
+        return 0
+    fi
+    cmdline="$(tr '\0' ' ' < "$tmp_cmdline")"
+    rm -f -- "$tmp_uname" "$tmp_cmdline"
+    # Pad so token boundary checks cannot match a longer value by prefix.
+    local padded_cmdline=" $cmdline "
+
+    cmdline_root="$(sed -nE 's/.*(^|[[:space:]])root=UUID=([^[:space:]]+).*/\2/p' <<<"$cmdline" | head -n1)"
+    root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"
+    [[ -n "$root_uuid" ]] \
+        || { printf 'absent|unable to determine the live root filesystem UUID\n'; return 0; }
+    [[ "$padded_cmdline" == *" root=UUID=$root_uuid "* ]] \
+        || { printf 'absent|embedded cmdline does not reference the live root UUID %s\n' "$root_uuid"; return 0; }
+
+    luks_uuid=""
+    backing="$(crypt_backing_device "$ROOT_CANONICAL" 2>/dev/null || true)"
+    if [[ -n "$backing" ]] && command -v cryptsetup >/dev/null 2>&1; then
+        luks_uuid="$(cryptsetup luksUUID "$backing" 2>/dev/null || true)"
+        if [[ -n "$luks_uuid" ]]; then
+            [[ "$padded_cmdline" == *" rd.luks.uuid=$luks_uuid "* \
+               || "$cmdline" == *"cryptdevice=UUID=$luks_uuid:"* \
+               || "$padded_cmdline" == *" rd.luks.name=$luks_uuid="* ]] \
+                || { printf 'absent|embedded cmdline does not reference the live LUKS UUID %s\n' "$luks_uuid"; return 0; }
+        fi
+    fi
+
+    subvol=""
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    if [[ "$fstype" == btrfs ]]; then
+        subvol="${TARGET_SUBVOL:-}"
+        if [[ -n "$subvol" ]]; then
+            [[ "$padded_cmdline" == *" subvol=/$subvol "* || "$padded_cmdline" == *" rootflags=subvol=/$subvol "* ]] \
+                || { printf 'absent|embedded cmdline does not select the live Btrfs subvolume /%s\n' "$subvol"; return 0; }
+        fi
+    fi
+
+    printf 'present|%s|%s|%s|%s|%s\n' "$embedded" "$cmdline_root" "$root_uuid" "$luks_uuid" "$subvol"
+}
+
+# Decide what the running host's firmware default should be.  Prints one of:
+#   uki \EFI\BOOT\TUX.EFI
+#   shim \EFI\tuxedo\shimx64.efi
+#   none|<reason>
+# The shim chain is selected only under (possibly unreadable) Secure Boot when
+# the UKI signature cannot be verified; an unsigned UKI is never promoted.
+host_uki_default_candidate()
+{
+    local state="${1:-}" mount shim
+    efi_set_inventory_esp_ids
+    [[ -n "$state" ]] || state="$(host_uki_layout_state)"
+    if [[ "$state" != present\|* ]]; then
+        printf 'none|%s\n' "${state#absent|}"
+        return 0
+    fi
+    mount="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    shim="$mount/EFI/tuxedo/shimx64.efi"
+    case "$(host_secure_boot_state)" in
+        disabled)
+            printf 'uki \\EFI\\BOOT\\TUX.EFI\n'
+            ;;
+        *)
+            if host_uki_signature_verified "$mount/EFI/BOOT/TUX.EFI"; then
+                printf 'uki \\EFI\\BOOT\\TUX.EFI\n'
+            elif [[ -s "$shim" ]]; then
+                printf 'shim \\EFI\\tuxedo\\shimx64.efi\n'
+            else
+                printf 'none|secure-boot requires a signed loader\n'
+            fi
+            ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# Running-host default selection: capability probes and canonical loader
+# ---------------------------------------------------------------------------
+# The Make Default action is decided from probe evidence, never from a
+# distribution ID: a verified vendor UKI, a canonical vendor GRUB loader file
+# on the host ESP, or the Fedora/RHEL GRUB2 BLS default in grubenv.  Every
+# missing prerequisite fails closed with its exact reason so the cached
+# diagnostic line (`Host default: unavailable|<reason>`) and the helper
+# runtime gate cannot drift apart.
+
+# The running kernel release used for host BLS/default decisions.
+running_kernel_version()
+{
+    uname -r 2>/dev/null || true
+}
+
+# Resolve the running host's canonical vendor loader from files only:
+# EFI/<EFI_BOOTLOADER_ID>/grubx64.efi (or shimx64.efi/systemd-bootx64.efi).
+# Prints "<absolute path>\t<EFI loader path>"; never selects EFI/BOOT/BOOTX64.EFI
+# (the firmware fallback is a recovery route, not the default).  Callers that
+# need EFI_BOOTLOADER_ID for labels or a guarded reinstall resolve it themselves
+# (command-substitution results cannot set it here).
+host_canonical_loader_info()
+{
+    local esp_root id name path
+    efi_set_inventory_esp_ids
+    [[ -n "$EFI_HOST_ESP_SOURCE" ]] || return 1
+    esp_root="${EFI_HOST_ESP_MOUNT:-/boot/efi}/EFI"
+    [[ -d "$esp_root" ]] || return 1
+    id="$(detect_efi_bootloader_id 2>/dev/null || true)"
+    [[ -n "$id" ]] || return 1
+    for name in grubx64.efi shimx64.efi systemd-bootx64.efi; do
+        path="$esp_root/$id/$name"
+        [[ -f "$path" ]] || continue
+        printf '%s\t\\EFI\\%s\\%s\n' "$path" "$id" "$name"
+        return 0
+    done
+    return 1
+}
+
+# Read-only decision for the running host's Make Default action.  Returns 0
+# when a verified default entry can be restored or promoted; prints the exact
+# named reason and returns 1 otherwise.  No EFI path is guessed: a present but
+# unverifiable UKI, a missing canonical loader without grub-install and a
+# read-only NVRAM all fail closed.
+host_default_unavailable_reason()
+{
+    local reason layout_state candidate loader_info
+    profile_target_backends
+
+    # Fedora/RHEL GRUB2 on legacy BIOS has no firmware entry: the default is
+    # the grubenv saved_entry + BLS mechanism.
+    if grub2_layout_detected && bios_firmware_mode; then
+        if reason="$(fedora_default_entry_unavailable_reason)"; then
+            return 0
+        fi
+        printf '%s\n' "$reason"
+        return 1
+    fi
+
+    # Alpine backends that are detected and reported but have no guarded
+    # default-selection path.
+    if is_alpine_family; then
+        case "$(alpine_efi_backend)" in
+            efi-stub)
+                printf 'Alpine EFI-stub host default selection is not implemented; use the Alpine EFI repair stage for entry reconciliation'
+                return 1
+                ;;
+            syslinux-efi)
+                printf 'Alpine syslinux-EFI boot detected (EFI/syslinux/syslinux.efi); Make Default is not implemented for this backend'
+                return 1
+                ;;
+        esac
+    fi
+
+    # BIOS/extlinux has no firmware entry: the default is the LABEL selected by
+    # /etc/update-extlinux.conf through the generated `MENU DEFAULT` marker.
+    # The guarded config-only action changes exactly those two files and never
+    # writes a boot sector; its own probe decides availability.
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        if reason="$(extlinux_default_entry_unavailable_reason)"; then
+            return 0
+        fi
+        printf '%s\n' "$reason"
+        return 1
+    fi
+    if bios_firmware_mode; then
+        printf 'legacy BIOS target; no EFI boot path is available'
+        return 1
+    fi
+    if ! command -v efibootmgr >/dev/null 2>&1; then
+        printf 'efibootmgr is not installed; the running host default EFI entry cannot be changed'
+        return 1
+    fi
+    if ! uefi_nvram_writable; then
+        printf 'UEFI variables are not writable; the running host default EFI entry cannot be changed'
+        return 1
+    fi
+
+    # Verified vendor UKI: the complete file-based default path.
+    layout_state="$(host_uki_layout_state)"
+    if [[ "$layout_state" == present\|* ]]; then
+        candidate="$(host_uki_default_candidate "$layout_state")"
+        case "$candidate" in
+            uki\ *|shim\ *) return 0 ;;
+            none\|*) printf '%s\n' "${candidate#none|}"; return 1 ;;
+            *) printf 'unable to derive a running host UKI candidate'; return 1 ;;
+        esac
+    fi
+    if [[ -s "$(host_uki_file_path)" ]]; then
+        printf 'TUX.EFI is present but could not be verified: %s' "${layout_state#absent|}"
+        return 1
+    fi
+
+    # Canonical vendor GRUB loader (Arch EFI/arch/grubx64.efi, Alpine
+    # EFI/alpine/grubx64.efi, ...): promoting the canonical entry needs no GRUB
+    # tooling.  A missing loader file needs the guarded grub-install.
+    if loader_info="$(host_canonical_loader_info)"; then
+        return 0
+    fi
+    if [[ -z "$EFI_HOST_ESP_SOURCE" ]]; then
+        printf 'the running host EFI System Partition could not be resolved'
+        return 1
+    fi
+    if grub_install_tool >/dev/null 2>&1; then
+        return 0
+    fi
+    printf 'no canonical EFI vendor loader was found on the running host ESP and grub-install is not available'
+    return 1
+}
+
+# Read-only running-host default evidence for the diagnostic capability
+# preamble.  Every emitted line uses a shape the UI capability parser accepts
+# (a probe decision or an informational `Boot#### ... loader=` candidate) so
+# new evidence can never close the Make Default gate by accident.
+host_default_diagnostic_evidence()
+{
+    local layout_state candidate loader_info loader loader_file partuuid line role
+    local fallback_file fallback_note=""
+    local -a ids=()
+    local -a fallback_ids=()
+
+    # BIOS/extlinux: the running kernel's LABEL in /boot/extlinux.conf is the
+    # default target.  The evidence line is emitted only when the guarded
+    # config-only action can run, so the cached capability decision and the
+    # runtime gate cannot drift apart.
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        if extlinux_default_entry_unavailable_reason >/dev/null 2>&1; then
+            printf 'Host default probe: candidate=extlinux label=%s kernel=%s\n' \
+                "$(extlinux_entry_labels_for_kernel "$(running_kernel_version)" | head -n1)" \
+                "$(running_kernel_version)"
+        fi
+        return 0
+    fi
+
+    if [[ -s "$(host_uki_file_path)" ]]; then
+        layout_state="$(host_uki_layout_state)"
+        candidate="$(host_uki_default_candidate "$layout_state")"
+        host_default_probe_evidence "$layout_state" "$candidate"
+        return 0
+    fi
+
+    loader_info="$(host_canonical_loader_info || true)"
+    [[ -n "$loader_info" ]] || return 0
+    IFS=$'\t' read -r loader_file loader <<<"$loader_info"
+    efi_set_inventory_esp_ids
+    partuuid="${EFI_HOST_ESP_PARTUUID,,}"
+    [[ -n "$partuuid" ]] || return 0
+
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" 2>/dev/null | sort -u)
+    if ((${#ids[@]} == 1)); then
+        line="$(efibootmgr -v 2>/dev/null | grep -E "^Boot${ids[0]}\*?[[:space:]]" | head -n1 || true)"
+        role="$(efi_entry_destination_role "$line" || true)"
+        printf 'Host default candidate: Boot%s role=%s loader=%s partuuid=%s nvram=writable (canonical)\n' \
+            "${ids[0]}" "${role:-vendor-loader}" "$loader" "$partuuid"
+    elif ((${#ids[@]} > 1)); then
+        printf 'Host default candidate: Boot%s role=%s loader=%s partuuid=%s nvram=writable (canonical duplicates: %s)\n' \
+            "${ids[0]}" "vendor-loader" "$loader" "$partuuid" "${ids[*]}"
+    else
+        printf 'Host default candidate: Boot---- role=none loader=%s partuuid=%s nvram=writable (canonical file present; no firmware entry)\n' \
+            "$loader" "$partuuid"
+    fi
+    mapfile -t fallback_ids < <(efi_entry_ids_for_partuuid_role "$partuuid" fallback 2>/dev/null | sort -u)
+    if ((${#fallback_ids[@]} > 0)); then
+        fallback_file="${EFI_HOST_ESP_MOUNT:-/boot/efi}/EFI/BOOT/BOOTX64.EFI"
+        if [[ -s "$fallback_file" && -s "$loader_file" ]] && command -v sha256sum >/dev/null 2>&1 \
+            && [[ "$(sha256sum "$fallback_file" | awk '{print $1}')" == "$(sha256sum "$loader_file" | awk '{print $1}')" ]]; then
+            fallback_note="; fallback byte-identical to the canonical loader"
+        fi
+        printf 'Host default candidate: Boot%s role=fallback loader=\\EFI\\BOOT\\BOOTX64.EFI partuuid=%s nvram=writable (fallback retained%s)\n' \
+            "${fallback_ids[0]}" "$partuuid" "$fallback_note"
+    fi
+}
+
 newest_tuxedo_kernel()
 {
     find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'vmlinuz-*-tuxedo-amd64' -printf '%f\n' 2>/dev/null \
@@ -13262,7 +14348,7 @@ efi_label_has_selected_model()
 efi_label_with_selected_model()
 {
     local label="$1" model="$2"
-    if efi_label_has_selected_model "$label" "$model"; then
+    if [[ -z "$model" ]] || efi_label_has_selected_model "$label" "$model"; then
         printf '%s\n' "$label"
     else
         printf '%s %s\n' "$label" "$model"
@@ -13754,6 +14840,18 @@ efi_group_firmware_boot_order()
     log "PASS: EFI BootOrder grouped by drive; all retained firmware entries remain present." | tee -a "$SESSION_LOG"
 }
 
+# Resolve the root-owned EFI label updater (installed path, override, or the
+# copy shipped next to the helper).  Prints the executable path or fails.
+efi_label_updater_path()
+{
+    local updater="${EFI_LABEL_UPDATER:-/usr/libexec/boot-repair/boot-repair-efi-label.py}"
+    if [[ ! -x "$updater" ]]; then
+        updater="$(dirname -- "${BASH_SOURCE[0]}")/boot-repair-efi-label.py"
+    fi
+    [[ -x "$updater" ]] || return 1
+    printf '%s\n' "$updater"
+}
+
 # Append the selected drive's model to firmware labels of selected-ESP entries
 # (through the root-owned label updater with per-entry backups) and restore a
 # missing iPXE/WebFAI recovery registration.  Host and foreign ESPs untouched.
@@ -13787,11 +14885,7 @@ efi_annotate_selected_entries()
             log "EFI Boot$id already names selected model; leaving label '$label' unchanged." | tee -a "$SESSION_LOG"
             continue
         fi
-        updater="${EFI_LABEL_UPDATER:-/usr/libexec/boot-repair/boot-repair-efi-label.py}"
-        if [[ ! -x "$updater" ]]; then
-            updater="$(dirname "${BASH_SOURCE[0]}")/boot-repair-efi-label.py"
-        fi
-        [[ -x "$updater" ]] || {
+        updater="$(efi_label_updater_path)" || {
             log "ERROR: EFI label updater is not installed; refusing to report an unverified label change." | tee -a "$SESSION_LOG" >&2
             return 1
         }
@@ -14019,19 +15113,11 @@ efi_uki_entry_ids_for_partuuid()
     command -v efibootmgr >/dev/null 2>&1 || return 1
     [[ -n "$partuuid" ]] || return 1
 
-    efibootmgr -v 2>/dev/null \
-        | awk -v partuuid="$partuuid" '
-            BEGIN { IGNORECASE=1 }
-            /^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/ \
-                && index(tolower($0), tolower(partuuid)) \
-                && index($0, "TUXEDO UKI") \
-                && index(toupper($0), "TUX.EFI") {
-                    id=$1
-                    sub(/^Boot/, "", id)
-                    sub(/\*.*/, "", id)
-                    print toupper(id)
-                }
-        ' | sort -u
+    # Identity is the ESP PARTUUID plus the decoded loader path, consistent with
+    # destination maintenance and BootOrder grouping.  The firmware label is a
+    # hint only: a vendor or firmware relabel must never hide an existing UKI
+    # entry and provoke a duplicate.
+    efi_entry_ids_for_partuuid_loader "$partuuid" '\efi\boot\tux.efi' | sort -u
 }
 
 efi_entry_ids_for_partuuid_role()
@@ -14063,7 +15149,8 @@ restore_missing_host_tuxedo_uki_entry()
     host_mount="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
     [[ -n "$host_esp" && -n "$EFI_HOST_ESP_PARTUUID" ]] || return 0
     [[ "$allow_same_esp" == 1 || "$host_esp" != "$EFI_ESP_SOURCE" ]] || return 0
-    [[ -d "$host_mount/EFI/TUXEDO" ]] || return 0
+    # The registration target is the UKI file itself; the vendor EFI/TUXEDO
+    # handoff directory is not required for a file-based UKI layout.
     host_uki="$host_mount/EFI/BOOT/TUX.EFI"
     [[ -s "$host_uki" ]] || return 0
 
@@ -14330,12 +15417,15 @@ run_tuxedo_uki_builder()
     path_within "$parent_real" "$target_real" \
         || fail "Temporary EFI guard path escapes the selected target: $guard_parent"
 
-    # The vendor script currently deletes the first globally matching
-    # `TUXEDO UKI` entry before creating a new one.  With two TUXEDO ESPs that
-    # can remove the other disk's valid UKI.  Put a request-scoped shim first
-    # in PATH: reads still use efibootmgr, but the vendor's delete/create calls
-    # are no-ops.  The helper performs the selected-target registration itself
-    # after the UKI image has been verified.
+    # The vendor NVRAM policy has changed across TUXEDO releases: older/variant
+    # `create_boot_uki_base.sh` scripts delete the first globally matching
+    # `TUXEDO UKI` entry before creating a new one, while the current host
+    # script writes only TUX.EFI and explicitly does not touch NVRAM.  With two
+    # TUXEDO ESPs a vendor delete/create could still remove the other disk's
+    # valid UKI, so keep the request-scoped shim as defence-in-depth: reads
+    # still use efibootmgr, but the vendor's delete/create calls are no-ops and
+    # the helper performs the selected-target registration itself after the UKI
+    # image has been verified.
     if [[ -x "$TARGET_ROOT/usr/bin/efibootmgr" ]]; then
         real_efibootmgr="/usr/bin/efibootmgr"
     elif [[ -x "$TARGET_ROOT/usr/sbin/efibootmgr" ]]; then
@@ -14465,7 +15555,7 @@ rebuild_tuxedo_uki()
 
     if command -v objcopy >/dev/null 2>&1; then
         tmp="$(mktemp "$SESSION_DIR/uki-uname.XXXXXX")"
-        if objcopy --dump-section ".uname=$tmp" "$uki" >/dev/null 2>&1; then
+        if objcopy_dump_section ".uname=$tmp" "$uki"; then
             embedded="$(tr '\0' '\n' < "$tmp" | head -1)"
             log "TUXEDO UKI embedded kernel: ${embedded:-unknown}" | tee -a "$SESSION_LOG"
             [[ "$embedded" == "$kver" ]] \
@@ -14490,7 +15580,7 @@ verify_tuxedo_uki_root_binding()
     [[ -s "$uki" ]] || fail "TUXEDO UKI is missing or empty: /boot/efi/EFI/BOOT/TUX.EFI"
     need objcopy
     tmp="$(mktemp "$SESSION_DIR/uki-cmdline.XXXXXX")"
-    objcopy --dump-section ".cmdline=$tmp" "$uki" >/dev/null 2>&1 \
+    objcopy_dump_section ".cmdline=$tmp" "$uki" \
         || fail "Unable to inspect the rebuilt TUXEDO UKI .cmdline section."
     cmdline="$(tr '\0' ' ' < "$tmp")"
     log "TUXEDO UKI cmdline: $cmdline" | tee -a "$SESSION_LOG"
@@ -15162,7 +16252,7 @@ efi_promote_entry_first()
         [[ "$seen_csv" == *",$id,"* ]] && continue
         seen_csv+=",$id,"
         out_csv+=",$id"
-    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
 
     log "Making Boot$wanted the explicit default while preserving all other EFI entries: $out_csv" | tee -a "$SESSION_LOG"
     efibootmgr -o "$out_csv" 2>&1 | tee -a "$SESSION_LOG" || return 1
@@ -15387,75 +16477,628 @@ run_host_repair()
     log "All requested running-host repair stages completed successfully." | tee -a "$SESSION_LOG"
 }
 
-# host-default entry point: restore the running host's canonical EFI entry when
-# missing, promote it to the front of BootOrder and reconcile labels/duplicates
-# while proving the complete pre-change firmware state was preserved.
+# Emit the stable running-host default probe evidence from the verified layout
+# record and the chosen candidate (plan section 2.4).
+host_default_probe_evidence()
+{
+    local state="$1" candidate="$2" embedded="" cmdline_root="" live_root="" luks="" subvol=""
+    local match="no" secure_boot candidate_kind candidate_detail installed="none"
+
+    if [[ "$state" == present\|* ]]; then
+        IFS='|' read -r _ embedded cmdline_root live_root luks subvol <<<"$state"
+        match="yes"
+        installed="$embedded"
+    fi
+    case "$candidate" in
+        uki\ *) candidate_kind="uki" ;;
+        shim\ *) candidate_kind="shim" ;;
+        none\|*) candidate_kind="none"; candidate_detail="${candidate#none|}" ;;
+        *) candidate_kind="none"; candidate_detail="unknown" ;;
+    esac
+    secure_boot="$(host_secure_boot_state)"
+
+    printf 'Host default probe: uki=%s embedded-kernel=%s installed-kernel=%s match=%s\n' \
+        "$([[ "$match" == yes ]] && printf present || printf absent)" \
+        "${embedded:-unknown}" "$installed" "$match" \
+        | tee -a "$SESSION_LOG"
+    printf 'Host default probe: cmdline-root=%s live-root=%s luks=%s subvol=%s match=%s\n' \
+        "${cmdline_root:-unknown}" "${live_root:-unknown}" "${luks:-none}" "${subvol:-none}" "$match" \
+        | tee -a "$SESSION_LOG"
+    if [[ "$candidate_kind" == none ]]; then
+        printf 'Host default probe: secure-boot=%s candidate=none|%s\n' "$secure_boot" "$candidate_detail" \
+            | tee -a "$SESSION_LOG"
+    else
+        printf 'Host default probe: secure-boot=%s candidate=%s\n' "$secure_boot" "$candidate_kind" \
+            | tee -a "$SESSION_LOG"
+    fi
+}
+
+# Resolve one running-host firmware entry scoped by host PARTUUID and loader
+# path (never by label): create it when absent, relabel a foreign-labelled
+# entry in place, or keep the active entry among duplicates for destination
+# maintenance to prune.  $4 is the label stem (for example `TUXEDO UKI` or the
+# EFI bootloader ID), $5 the noun used in messages.  The label carries the
+# selected ESP's own drive model so multiple NVMe installs of the same
+# distribution are distinguishable; two identical drive models intentionally
+# share the same label because identity and every lookup stay PARTUUID + loader
+# scoped.  Prints the verified Boot#### ID on stdout; diagnostics stay on
+# stderr.  Fails closed with a named reason.
+ensure_host_default_entry_for_loader()
+{
+    local pre="$1" loader="$2" kind="$3" label_stem="$4" noun="$5"
+    local host_esp host_mount partuuid
+    local current new_file resolved disk partnum model label
+    local existing_line existing_label verified_id="" created_id=""
+    local updater backup_dir backup current_id next_id action=""
+    local -a ids=() pre_ids=() new_ids=()
+
+    efi_set_inventory_esp_ids
+    host_esp="$EFI_HOST_ESP_SOURCE"
+    host_mount="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    partuuid="${EFI_HOST_ESP_PARTUUID,,}"
+    [[ -n "$host_esp" && -n "$partuuid" ]] \
+        || fail "Unable to resolve the running host ESP and its PARTUUID."
+    is_block_device "$host_esp" || fail "Unable to resolve the running host ESP as a block device."
+    [[ -n "$loader" ]] || fail "Unable to derive the running host $noun loader."
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    current_id="$(sed -nE 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    next_id="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" 2>/dev/null | sort -u)
+    if ((${#ids[@]} > 1)); then
+        for id in "${ids[@]}"; do
+            if [[ "$id" == "$current_id" || "$id" == "$next_id" ]]; then
+                verified_id="$id"
+                break
+            fi
+        done
+        [[ -n "$verified_id" ]] \
+            || fail "ambiguous host $noun entries: ${ids[*]}"
+        existing_line="$(grep -E "^Boot${verified_id}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+        existing_label="$(efi_entry_label_line "$existing_line")"
+        log "Host $noun entries ${ids[*]} point to $loader on $host_esp; keeping active entry Boot$verified_id and pruning the remaining duplicates." | tee -a "$SESSION_LOG" >&2
+        printf '%s\t%s\t%s\t%s\n' "$verified_id" reused "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+        log "Host default: entry=Boot$verified_id label='$existing_label' loader=$loader action=reused" | tee -a "$SESSION_LOG" >&2
+        printf '%s\n' "$verified_id"
+        return 0
+    fi
+
+    model="$(efi_selected_system_model "$host_esp" 2>/dev/null || true)"
+    label="$label_stem"
+    [[ -n "$model" ]] && label="$(efi_label_with_selected_model "$label" "$model")"
+
+    if ((${#ids[@]} == 1)); then
+        verified_id="${ids[0]}"
+        existing_line="$(grep -E "^Boot${verified_id}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+        existing_label="$(efi_entry_label_line "$existing_line")"
+        if [[ "$existing_label" == *"$label_stem"* ]] \
+            && { [[ -z "$model" ]] || efi_label_has_selected_model "$existing_label" "$model"; }; then
+            action=reused
+        else
+            updater="$(efi_label_updater_path)" \
+                || fail "EFI label updater is not installed; refusing to report an unverified host $noun label change."
+            backup_dir="$SESSION_DIR/efi-label-backups"
+            mkdir -p -- "$backup_dir"
+            backup="$backup_dir/Boot${verified_id^^}.bin"
+            "$updater" --bootnum "$verified_id" --partuuid "$partuuid" \
+                --loader "$loader" --label "$label" --backup "$backup" 2>&1 \
+                | tee -a "$SESSION_LOG" >&2 \
+                || fail "Unable to relabel host $noun entry Boot$verified_id in place."
+            action=relabeled
+        fi
+        printf '%s\t%s\t%s\t%s\n' "$verified_id" "$action" "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+        log "Host default: entry=Boot$verified_id label='$label' loader=$loader action=$action" | tee -a "$SESSION_LOG" >&2
+        printf '%s\n' "$verified_id"
+        return 0
+    fi
+
+    # No entry references the host loader yet: create exactly one.
+    uefi_nvram_writable \
+        || fail "Host firmware variables are not writable; the host $noun entry cannot be registered."
+    resolved="$(efi_disk_and_partnum_for_esp "$host_esp" 2>/dev/null || true)"
+    IFS=$'\t' read -r disk partnum <<< "$resolved"
+    [[ -n "$disk" && "$partnum" =~ ^[0-9]+$ ]] \
+        || fail "Unable to derive the host disk and partition for ESP $host_esp."
+
+    if [[ -n "$pre" && -s "$pre" ]]; then
+        mapfile -t pre_ids < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$pre" | tr '[:lower:]' '[:upper:]' | sort -u)
+    else
+        mapfile -t pre_ids < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
+    fi
+
+    log "Creating host $noun firmware entry on $host_esp as '$label' ($loader); existing host, repair, and foreign entries are untouched." | tee -a "$SESSION_LOG" >&2
+    efibootmgr --create --disk "$disk" --part "$partnum" \
+        --label "$label" --loader "$loader" 2>&1 | tee -a "$SESSION_LOG" >&2 \
+        || fail "efibootmgr could not create the host $noun entry on $host_esp."
+    new_file="$SESSION_DIR/efi-nvram-host-default-create.txt"
+    efibootmgr -v > "$new_file" 2>&1 \
+        || fail "Unable to re-read firmware entries after creating the host $noun entry."
+    mapfile -t ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" 2>/dev/null | sort -u)
+    if ((${#ids[@]} == 1)); then
+        verified_id="${ids[0]}"
+        printf '%s\t%s\t%s\t%s\n' "$verified_id" created "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+        log "Host default: entry=Boot$verified_id label='$label' loader=$loader action=created" | tee -a "$SESSION_LOG" >&2
+        printf '%s\n' "$verified_id"
+        return 0
+    fi
+
+    # The created entry could not be verified by identity.  Identify it from the
+    # pre-state difference, roll the write back, and fail closed.
+    mapfile -t new_ids < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$new_file" | tr '[:lower:]' '[:upper:]' | sort -u)
+    created_id=""
+    for id in "${new_ids[@]}"; do
+        [[ " ${pre_ids[*]} " == *" $id "* ]] && continue
+        if [[ -n "$created_id" ]]; then
+            created_id=""
+            break
+        fi
+        created_id="$id"
+    done
+    if [[ -n "$created_id" ]]; then
+        printf '%s\t%s\t%s\t%s\n' "$created_id" created "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+        host_default_rollback "$pre" "$created_id" || true
+        printf '%s\t%s\t%s\t%s\n' "$created_id" rolled-back "$loader" "$kind" > "$SESSION_DIR/host-default-entry.tsv"
+    fi
+    fail "Host $noun registration could not be verified by PARTUUID $partuuid and loader $loader on $host_esp; the created entry was rolled back."
+}
+
+# TUXEDO UKI wrapper: resolve the verified host candidate (UKI or shim chain)
+# and ensure exactly one firmware entry for it.
+ensure_host_default_entry()
+{
+    local pre="${1:-}" candidate kind loader
+    candidate="$(host_uki_default_candidate)"
+    case "$candidate" in
+        uki\ *) kind=uki; loader="${candidate#uki }" ;;
+        shim\ *) kind=shim; loader="${candidate#shim }" ;;
+        none\|*) fail "Host default UKI promotion is not available: ${candidate#none|}" ;;
+        *) fail "Unable to derive a host UKI candidate loader." ;;
+    esac
+    ensure_host_default_entry_for_loader "$pre" "$loader" "$kind" "TUXEDO UKI" "UKI"
+}
+
+# Write state of the host-default transaction: created|relabeled|reused|
+# rolled-back, or empty when nothing was written.
+host_default_write_state()
+{
+    local file="$SESSION_DIR/host-default-entry.tsv"
+    [[ -s "$file" ]] || return 0
+    cut -f2 "$file" | head -n1
+}
+
+# ID of an entry this run created and did not roll back; empty otherwise.
+host_default_created_id()
+{
+    local file="$SESSION_DIR/host-default-entry.tsv" id action
+    [[ -s "$file" ]] || return 0
+    IFS=$'\t' read -r id action _rest < "$file"
+    [[ "$action" == created ]] || return 0
+    printf '%s\n' "$id"
+}
+
+# Restore the captured firmware state after a failed host-default write:
+# BootOrder and BootNext to the pre-capture and, when this run created an entry
+# that is not active, remove exactly that entry.  Never removes an entry that
+# existed before the run.  Prints ROLLBACK evidence and fails loudly with the
+# diff when equality with the pre-capture cannot be proven.
+host_default_rollback()
+{
+    local pre="$1" created_id="${2:-}" old_order old_next current_file active_id
+    [[ -n "$pre" && -s "$pre" ]] || return 1
+    old_order="$(sed -n 's/^BootOrder: //p' "$pre" | head -n1 || true)"
+    old_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$pre" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+
+    if [[ -n "$created_id" && "$created_id" =~ ^[0-9A-F]{4}$ ]]; then
+        active_id="$(efibootmgr -v 2>/dev/null | sed -nE 's/^Boot(Current|Next): ([0-9A-Fa-f]{4}).*/\2/p' | tr '[:lower:]' '[:upper:]' || true)"
+        if grep -Fxq "$created_id" <<<"$active_id"; then
+            log "ROLLBACK: created entry Boot$created_id is active (BootCurrent/BootNext); it is retained but no longer promoted." | tee -a "$SESSION_LOG" >&2
+            created_id=""
+        fi
+    fi
+
+    if [[ -n "$old_order" ]]; then
+        efibootmgr -o "$old_order" 2>&1 | tee -a "$SESSION_LOG" || true
+    fi
+    if [[ -n "$created_id" ]]; then
+        efibootmgr -b "$created_id" -B 2>&1 | tee -a "$SESSION_LOG" || true
+    fi
+    if [[ -n "$old_next" ]]; then
+        efibootmgr -n "$old_next" 2>&1 | tee -a "$SESSION_LOG" || true
+    elif grep -q '^BootNext:' "$pre"; then
+        efibootmgr -N 2>&1 | tee -a "$SESSION_LOG" || true
+    fi
+
+    current_file="$SESSION_DIR/efi-nvram-host-default-rollback.txt"
+    efibootmgr -v > "$current_file" 2>&1 || true
+    if cmp -s "$pre" "$current_file"; then
+        log "ROLLBACK: restored BootOrder=${old_order:-unchanged} and removed created entry Boot${created_id:-none}; firmware state equals the pre-change capture." | tee -a "$SESSION_LOG" >&2
+        return 0
+    fi
+    log "ROLLBACK: restored BootOrder=${old_order:-unchanged}, but the firmware state differs from the pre-change capture:" | tee -a "$SESSION_LOG" >&2
+    diff -u "$pre" "$current_file" 2>/dev/null | head -40 | tee -a "$SESSION_LOG" >&2 || true
+    return 1
+}
+
+# Require every pre-existing firmware ID to remain present after host-default
+# maintenance.  Only an intentionally pruned duplicate host-ESP destination for
+# the same PARTUUID + loader path (or the legacy TUXEDO shim once a UKI
+# destination exists) may disappear.
+host_default_verify_preserved_ids()
+{
+    local pre="$1" after="$2" id line part loader
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        grep -Eq "^Boot${id}\*?[[:space:]]" "$after" && continue
+        line="$(grep -E "^Boot${id}\*?[[:space:]]" "$pre" | head -n1 || true)"
+        part="$(efi_entry_partuuid_line "$line")"
+        loader="$(efi_entry_loader_line "$line" | tr '[:upper:]' '[:lower:]')"
+        # A duplicate host-ESP destination for a surviving PARTUUID + loader
+        # (for example two `arch` entries) is pruned by design.
+        if [[ "$part" == "${EFI_HOST_ESP_PARTUUID,,}" && -n "$loader" ]] \
+            && efi_entry_ids_for_partuuid_loader "$part" "$loader" 2>/dev/null | grep -q .; then
+            continue
+        fi
+        # The legacy signed TUXEDO shim is pruned once a UKI destination exists.
+        if [[ "$part" == "${EFI_HOST_ESP_PARTUUID,,}" && "$loader" == *'\tuxedo\shimx64.efi' ]] \
+            && grep -Fiq 'tux.efi' "$after"; then
+            continue
+        fi
+        log "ERROR: pre-existing firmware entry Boot$id is missing after host default maintenance." | tee -a "$SESSION_LOG" >&2
+        return 1
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$pre" | tr '[:lower:]' '[:upper:]' | sort -u)
+    return 0
+}
+
+# Mutating body of the host UKI default transaction.  Runs inside a subshell
+# from host_default_uki_apply so every failure can be rolled back from the
+# pre-change capture.
+run_host_default_uki_body()
+{
+    local pre="$1" map="$2" new_id action loader after verify_ids order_first
+    local before_order after_order foreign_preserved=0 fallback_id="" fallback_sha="" fallback_file
+    local old_next new_next id line class
+
+    # Reconcile the pre-state identity before ensure() creates or relabels the
+    # host entry: a label change would otherwise make the pre-existing entry
+    # unmappable and provoke a duplicate.
+    efi_reconcile_firmware_inventory "$pre" "$map" \
+        || fail "Firmware inventory reconciliation could not restore every host, repair-target, and foreign entry safely."
+
+    new_id="$(ensure_host_default_entry "$pre")"
+    [[ -n "$new_id" ]] || fail "Host UKI entry could not be resolved after registration."
+    if [[ -s "$SESSION_DIR/host-default-entry.tsv" ]]; then
+        IFS=$'\t' read -r _ action loader _ < "$SESSION_DIR/host-default-entry.tsv"
+    else
+        action="reused"; loader='\EFI\BOOT\TUX.EFI'
+    fi
+
+    efi_restore_reconciled_order "$pre" "$map" "$new_id" \
+        || fail "Unable to restore the reconciled EFI BootOrder without risking loss of another disk's entry."
+    efi_annotate_selected_entries \
+        || fail "Unable to annotate the running host's selected ESP or restore its iPXE/WebFAI registration safely."
+    efi_promote_entry_first "$new_id"
+    efi_prune_selected_duplicate_destinations \
+        || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
+    efi_group_firmware_boot_order \
+        || fail "Unable to group the retained host EFI entries by drive and boot use."
+    order_first="$(efibootmgr -v 2>/dev/null | sed -n 's/^BootOrder: //p' | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
+    if [[ "$order_first" != "$new_id" ]]; then
+        log "EFI grouping did not retain Boot$new_id first; re-promoting it once." | tee -a "$SESSION_LOG"
+        efi_promote_entry_first "$new_id"
+    fi
+    efi_annotate_selected_entries \
+        || fail "Unable to retain host EFI labels after BootOrder maintenance."
+    efi_verify_selected_model_labels \
+        || fail "Host EFI labels could not be verified after BootOrder maintenance."
+
+    # Final read-back verification from firmware itself.
+    after="$SESSION_DIR/efi-nvram-host-default-after.txt"
+    efibootmgr -v > "$after" 2>&1 \
+        || fail "Unable to re-read firmware entries after host default maintenance."
+    mapfile -t verify_ids < <(efi_entry_ids_for_partuuid_loader "${EFI_HOST_ESP_PARTUUID,,}" "${loader,,}" 2>/dev/null | sort -u)
+    [[ ${#verify_ids[@]} -eq 1 && "${verify_ids[0]}" == "$new_id" ]] \
+        || fail "Host UKI entry Boot$new_id no longer matches PARTUUID ${EFI_HOST_ESP_PARTUUID,,} and loader $loader after maintenance."
+    grep -Eq "^Boot${new_id}\*?[[:space:]].*TUXEDO UKI" "$after" \
+        || fail "Host UKI entry Boot$new_id does not carry the TUXEDO UKI label after maintenance."
+    order_first="$(sed -n 's/^BootOrder: //p' "$after" | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$order_first" == "$new_id" ]] \
+        || fail "Boot$new_id is not first in BootOrder after host default maintenance."
+    host_default_verify_preserved_ids "$pre" "$after" \
+        || fail "A pre-existing firmware entry disappeared during host default maintenance."
+    old_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$pre" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    new_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$after" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$old_next" == "$new_next" ]] \
+        || fail "BootNext changed during host default maintenance (before=${old_next:-none}, after=${new_next:-none})."
+
+    before_order="$(sed -n 's/^BootOrder: //p' "$pre" | head -n1 || true)"
+    after_order="$(sed -n 's/^BootOrder: //p' "$after" | head -n1 || true)"
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        grep -Eq "^Boot${id}\*?[[:space:]]" "$after" || continue
+        line="$(grep -E "^Boot${id}\*?[[:space:]]" "$pre" | head -n1 || true)"
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        [[ "$class" == foreign ]] && foreign_preserved=$((foreign_preserved + 1))
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$pre" | tr '[:lower:]' '[:upper:]' | sort -u)
+    log "Host default: BootOrder before=${before_order:-none} after=${after_order:-none} (foreign entries preserved: $foreign_preserved)" | tee -a "$SESSION_LOG"
+
+    fallback_file="${EFI_HOST_ESP_MOUNT:-/boot/efi}/EFI/BOOT/BOOTX64.EFI"
+    fallback_id="$(efi_entry_ids_for_partuuid_role "${EFI_HOST_ESP_PARTUUID,,}" fallback 2>/dev/null | head -n1 || true)"
+    if [[ -s "$fallback_file" ]] && command -v sha256sum >/dev/null 2>&1; then
+        fallback_sha="$(sha256sum "$fallback_file" | awk '{print $1}')"
+    fi
+    log "Host default: fallback=Boot${fallback_id:-none} loader=\\EFI\\BOOT\\BOOTX64.EFI retained sha256=${fallback_sha:-unavailable}" | tee -a "$SESSION_LOG"
+    log "PASS: running host default EFI entry is Boot$new_id on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
+}
+
+# Roll the pre-change firmware state back when the transaction body failed.
+host_default_transaction_exit()
+{
+    local pre="$1" state
+    set +e
+    state="$(host_default_write_state)"
+    case "$state" in
+        ""|rolled-back) ;;
+        *) host_default_rollback "$pre" "$(host_default_created_id)" || true ;;
+    esac
+    set -e
+}
+
+# Transaction wrapper: run the mutating body and roll the pre-change firmware
+# state back when any step fails.  Executed in a subshell by run_host_default so
+# a rollback cannot be bypassed by `fail` inside the body.
+host_default_uki_apply()
+{
+    local pre="$1" map="$2"
+    trap 'host_default_transaction_exit "$pre"' EXIT
+    run_host_default_uki_body "$pre" "$map"
+    trap - EXIT
+}
+
+# ESP loader file backup/rollback for the guarded generic grub-install.  The
+# Alpine stage has its own backup; this covers Arch and any other GRUB EFI host
+# where the canonical loader file is missing and must be reinstalled.
+HOST_DEFAULT_LOADER_BACKUP_DIR=""
+
+host_default_loader_backup_state()
+{
+    local esp_root id vendor_dir fallback backup
+    esp_root="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    id="${EFI_BOOTLOADER_ID:-}"
+    [[ -n "$id" ]] || return 1
+    vendor_dir="$esp_root/EFI/$id"
+    backup="$SESSION_DIR/host-default-efi-backup"
+    rm -rf -- "$backup"
+    mkdir -p -- "$backup/EFI" || return 1
+    if [[ -d "$vendor_dir" ]]; then
+        cp -a -- "$vendor_dir" "$backup/EFI/$id" || return 1
+        : > "$backup/vendor-dir-present"
+    fi
+    fallback="$esp_root/EFI/BOOT/BOOTX64.EFI"
+    if [[ -f "$fallback" ]]; then
+        mkdir -p -- "$backup/EFI/BOOT" || return 1
+        cp -a -- "$fallback" "$backup/EFI/BOOT/BOOTX64.EFI" || return 1
+        : > "$backup/fallback-present"
+    fi
+    HOST_DEFAULT_LOADER_BACKUP_DIR="$backup"
+    log "Backed up running-host EFI loader files to $backup before the guarded reinstall." | tee -a "$SESSION_LOG"
+}
+
+host_default_loader_restore_backup()
+{
+    local esp_root id backup
+    backup="${HOST_DEFAULT_LOADER_BACKUP_DIR:-}"
+    [[ -n "$backup" && -d "$backup/EFI" ]] || return 1
+    esp_root="${EFI_HOST_ESP_MOUNT:-/boot/efi}"
+    id="${EFI_BOOTLOADER_ID:-}"
+    if [[ -n "$id" && -d "$backup/EFI/$id" ]]; then
+        rm -rf -- "$esp_root/EFI/$id"
+        mkdir -p -- "$esp_root/EFI" || return 1
+        cp -a -- "$backup/EFI/$id" "$esp_root/EFI/$id" || return 1
+    elif [[ -n "$id" && ! -f "$backup/vendor-dir-present" && -d "$esp_root/EFI/$id" ]]; then
+        # The pre-repair layout had no vendor directory; do not leave a
+        # partial one behind after a failed reinstall.
+        rm -rf -- "$esp_root/EFI/$id"
+    fi
+    if [[ -f "$backup/EFI/BOOT/BOOTX64.EFI" ]]; then
+        mkdir -p -- "$esp_root/EFI/BOOT" || return 1
+        cp -a -- "$backup/EFI/BOOT/BOOTX64.EFI" "$esp_root/EFI/BOOT/BOOTX64.EFI" || return 1
+    elif [[ ! -f "$backup/fallback-present" && -f "$esp_root/EFI/BOOT/BOOTX64.EFI" ]]; then
+        # The pre-repair layout had no firmware fallback; do not leave one
+        # behind when the failed reinstall created it.
+        rm -f -- "$esp_root/EFI/BOOT/BOOTX64.EFI"
+    fi
+    log "Restored the running-host EFI loader files from $backup." | tee -a "$SESSION_LOG"
+}
+
+# Mutating body of the generic running-host default transaction (Arch, Alpine
+# GRUB EFI and any other vendor-loader host).  The canonical vendor loader is
+# ensured and promoted by PARTUUID + loader path; EFI/BOOT/BOOTX64.EFI is never
+# promoted while the canonical loader file exists, and a missing canonical
+# loader is only recreated through a guarded grub-install with an ESP backup.
+# Runs inside a subshell from host_default_generic_apply so every failure can be
+# rolled back from the pre-change capture.
+run_host_default_generic_body()
+{
+    local pre="$1" map="$2" new_id action loader after verify_ids order_first
+    local before_order after_order foreign_preserved=0 fallback_id="" fallback_sha="" fallback_file=""
+    local fallback_identity="" old_next new_next id line class loader_info loader_file partuuid
+    local -a ids=()
+
+    efi_reconcile_firmware_inventory "$pre" "$map" \
+        || fail "Firmware inventory reconciliation could not restore every host, repair-target, and foreign entry safely."
+
+    efi_set_inventory_esp_ids
+    partuuid="${EFI_HOST_ESP_PARTUUID,,}"
+    [[ -n "$partuuid" ]] || fail "Unable to identify the running host ESP PARTUUID for default selection."
+    EFI_BOOTLOADER_ID="$(detect_efi_bootloader_id 2>/dev/null || true)"
+    [[ -n "$EFI_BOOTLOADER_ID" ]] \
+        || fail "Unable to derive the running host EFI bootloader ID for default selection."
+
+    loader_info="$(host_canonical_loader_info || true)"
+    if [[ -z "$loader_info" ]]; then
+        # The canonical loader file is missing: only a guarded grub-install may
+        # recreate it, never a fallback promotion.
+        validate_efi_bootloader_target
+        host_default_loader_backup_state \
+            || fail "Unable to back up the running-host EFI loader files before the guarded reinstall."
+        if ! ( reinstall_efi_bootloader ); then
+            host_default_loader_restore_backup \
+                || log "WARNING: the running-host EFI loader backup could not be fully restored; inspect ${HOST_DEFAULT_LOADER_BACKUP_DIR:-the session backup}." | tee -a "$SESSION_LOG"
+            fail "The guarded canonical EFI loader reinstall failed; the running-host ESP loader files were restored from the session backup."
+        fi
+        loader_info="$(host_canonical_loader_info || true)"
+        [[ -n "$loader_info" ]] \
+            || fail "The canonical EFI vendor loader under EFI/$EFI_BOOTLOADER_ID is still missing after the guarded reinstall."
+    fi
+    IFS=$'\t' read -r loader_file loader <<<"$loader_info"
+    log "Canonical running-host EFI loader verified: $loader ($loader_file) on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
+
+    new_id="$(ensure_host_default_entry_for_loader "$pre" "$loader" vendor-loader "$EFI_BOOTLOADER_ID" canonical)"
+    [[ -n "$new_id" ]] || fail "Canonical running-host EFI entry could not be resolved after registration."
+    if [[ -s "$SESSION_DIR/host-default-entry.tsv" ]]; then
+        IFS=$'\t' read -r _ action loader _ < "$SESSION_DIR/host-default-entry.tsv"
+    else
+        action="reused"
+    fi
+
+    efi_restore_reconciled_order "$pre" "$map" "$new_id" \
+        || fail "Unable to restore the reconciled EFI BootOrder without risking loss of another disk's entry."
+    efi_annotate_selected_entries \
+        || fail "Unable to annotate the running host's selected ESP safely."
+    efi_promote_entry_first "$new_id"
+    efi_prune_selected_duplicate_destinations \
+        || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
+    efi_group_firmware_boot_order \
+        || fail "Unable to group the retained host EFI entries by drive and boot use."
+    order_first="$(efibootmgr -v 2>/dev/null | sed -n 's/^BootOrder: //p' | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
+    if [[ "$order_first" != "$new_id" ]]; then
+        log "EFI grouping did not retain Boot$new_id first; re-promoting it once." | tee -a "$SESSION_LOG"
+        efi_promote_entry_first "$new_id"
+    fi
+    efi_annotate_selected_entries \
+        || fail "Unable to retain host EFI labels after BootOrder maintenance."
+    efi_verify_selected_model_labels \
+        || fail "Host EFI labels could not be verified after BootOrder maintenance."
+
+    # Final read-back verification from firmware itself.
+    after="$SESSION_DIR/efi-nvram-host-default-after.txt"
+    efibootmgr -v > "$after" 2>&1 \
+        || fail "Unable to re-read firmware entries after host default maintenance."
+    mapfile -t verify_ids < <(efi_entry_ids_for_partuuid_loader "$partuuid" "${loader,,}" 2>/dev/null | sort -u)
+    [[ ${#verify_ids[@]} -eq 1 && "${verify_ids[0]}" == "$new_id" ]] \
+        || fail "Canonical host EFI entry Boot$new_id no longer matches PARTUUID $partuuid and loader $loader after maintenance."
+    order_first="$(sed -n 's/^BootOrder: //p' "$after" | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$order_first" == "$new_id" ]] \
+        || fail "Boot$new_id is not first in BootOrder after host default maintenance."
+    host_default_verify_preserved_ids "$pre" "$after" \
+        || fail "A pre-existing firmware entry disappeared during host default maintenance."
+    old_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$pre" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    new_next="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$after" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$old_next" == "$new_next" ]] \
+        || fail "BootNext changed during host default maintenance (before=${old_next:-none}, after=${new_next:-none})."
+
+    before_order="$(sed -n 's/^BootOrder: //p' "$pre" | head -n1 || true)"
+    after_order="$(sed -n 's/^BootOrder: //p' "$after" | head -n1 || true)"
+    while IFS= read -r id; do
+        [[ -n "$id" ]] || continue
+        grep -Eq "^Boot${id}\*?[[:space:]]" "$after" || continue
+        line="$(grep -E "^Boot${id}\*?[[:space:]]" "$pre" | head -n1 || true)"
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        [[ "$class" == foreign ]] && foreign_preserved=$((foreign_preserved + 1))
+    done < <(sed -nE 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' "$pre" | tr '[:lower:]' '[:upper:]' | sort -u)
+    log "Host default: BootOrder before=${before_order:-none} after=${after_order:-none} (foreign entries preserved: $foreign_preserved)" | tee -a "$SESSION_LOG"
+
+    fallback_file="${EFI_HOST_ESP_MOUNT:-/boot/efi}/EFI/BOOT/BOOTX64.EFI"
+    fallback_id="$(efi_entry_ids_for_partuuid_role "$partuuid" fallback 2>/dev/null | head -n1 || true)"
+    if [[ -s "$fallback_file" ]] && command -v sha256sum >/dev/null 2>&1; then
+        fallback_sha="$(sha256sum "$fallback_file" | awk '{print $1}')"
+        if [[ -s "$loader_file" && "$(sha256sum "$loader_file" | awk '{print $1}')" == "$fallback_sha" ]]; then
+            fallback_identity="byte-identical=yes"
+        else
+            fallback_identity="byte-identical=no"
+        fi
+    fi
+    log "Host default: fallback=Boot${fallback_id:-none} loader=\\EFI\\BOOT\\BOOTX64.EFI retained sha256=${fallback_sha:-unavailable} ${fallback_identity:-byte-identical=unknown}" | tee -a "$SESSION_LOG"
+    log "PASS: running host default EFI entry is Boot$new_id on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
+}
+
+# Transaction wrapper for the generic host-default body.
+host_default_generic_apply()
+{
+    local pre="$1" map="$2"
+    trap 'host_default_transaction_exit "$pre"' EXIT
+    run_host_default_generic_body "$pre" "$map"
+    trap - EXIT
+}
+
+# host-default entry point: ensure exactly one running-host default entry
+# (verified TUXEDO UKI, canonical vendor GRUB loader, or Fedora BLS grubenv
+# saved_entry), promote it and reconcile labels/duplicates while proving the
+# complete pre-change state was preserved.  Every path fails closed with its
+# named reason; a present but unverifiable UKI and a fallback-only ESP are never
+# promoted.
 run_host_default()
 {
-    local raw_disk="$1" raw_root="$2" pre current partuuid role reason
-    local -a ids=()
+    local raw_disk="$1" raw_root="$2" pre reason
+    local layout_state candidate nvram_map
 
     CURRENT_STAGE="host default EFI entry"
     RUNNING_HOST_MODE=1
     prepare_running_host "$raw_disk" "$raw_root" yes
     profile_target_backends
-    if ! reason="$(efi_unavailable_reason)"; then
-        fail "Host default EFI entry selection is not available: $reason."
+    # Resolve the host ESP identity in this shell so the file probe and the
+    # transaction share the same mount and PARTUUID.
+    efi_set_inventory_esp_ids
+
+    # Fedora/RHEL GRUB2 on legacy BIOS has no firmware entry: the permanent
+    # default is the grubenv saved_entry naming the running kernel's BLS entry.
+    if grub2_layout_detected && bios_firmware_mode; then
+        fedora_default_entry_ensure
+        return 0
     fi
-    if is_alpine_family && [[ "$(alpine_efi_backend)" == efi-stub ]]; then
-        # Selecting a default EFI-stub entry is a phase-2 capability: without
-        # the captured cmdline parser the canonical entry cannot be recreated
-        # safely, so fail closed instead of guessing.
-        fail "Alpine EFI-stub host default selection is not implemented; use the Alpine EFI repair stage for entry reconciliation."
+
+    # BIOS/extlinux also has no firmware entry: the permanent default is the
+    # `default=` label in /etc/update-extlinux.conf rendered as MENU DEFAULT.
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        extlinux_default_entry_ensure
+        return 0
     fi
-    uefi_nvram_writable || fail "UEFI variables are not writable; cannot change the running host's default EFI entry."
-    command -v efibootmgr >/dev/null 2>&1 || fail "efibootmgr is required to change the running host's default EFI entry."
+
+    if ! reason="$(host_default_unavailable_reason)"; then
+        fail "Host default selection is not available: $reason."
+    fi
 
     pre="$SESSION_DIR/efi-nvram-host-default-before.txt"
     efibootmgr -v > "$pre" 2>&1 || fail "Unable to capture firmware entries before changing the host default."
     efi_print_firmware_inventory "$pre" | tee -a "$SESSION_LOG"
-    if is_tuxedo_uki_layout; then
-        restore_missing_host_tuxedo_uki_entry 1 \
-            || fail "Unable to restore a missing host TUXEDO UKI entry without risking existing firmware entries."
-        efi_annotate_selected_entries \
-            || fail "Unable to annotate the running host's selected ESP or restore its iPXE/WebFAI registration safely."
-    else
-        validate_efi_bootloader_target
-        partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
-        partuuid="${partuuid,,}"
-        [[ -n "$partuuid" ]] || fail "Unable to identify the running host ESP PARTUUID for default selection."
-        for role in uki vendor-loader fallback wfai; do
-            mapfile -t ids < <(efi_entry_ids_for_partuuid_role "$partuuid" "$role" 2>/dev/null || true)
-            if ((${#ids[@]} == 1)); then
-                break
-            fi
-            ids=()
-        done
-        if ((${#ids[@]} != 1)); then
-            log "No unique firmware entry exists for the running host ESP; creating the canonical host loader entry before selecting the default." | tee -a "$SESSION_LOG"
-            reinstall_efi_bootloader
-            mapfile -t ids < <(efi_entry_ids_for_partuuid_role "$partuuid" vendor-loader 2>/dev/null || true)
-            ((${#ids[@]} == 1)) || fail "Unable to resolve a unique bootloader entry for the running host ESP after canonical EFI registration."
+
+    layout_state="$(host_uki_layout_state)"
+    candidate="$(host_uki_default_candidate "$layout_state")"
+    host_default_probe_evidence "$layout_state" "$candidate"
+
+    if [[ "$layout_state" == present\|* ]]; then
+        case "$candidate" in
+            uki\ *|shim\ *) ;;
+            none\|*) fail "Host default UKI promotion is not available: ${candidate#none|}." ;;
+            *) fail "Unable to derive a host UKI candidate loader." ;;
+        esac
+        nvram_map="$SESSION_DIR/efi-nvram-map-host-default.tsv"
+        if ! ( host_default_uki_apply "$pre" "$nvram_map" ); then
+            fail "Host default UKI transaction failed; the pre-change firmware state was restored where possible."
         fi
-        efi_annotate_selected_entries \
-            || fail "Unable to annotate the running host's selected ESP entries safely."
+    elif [[ -s "$(host_uki_file_path)" ]]; then
+        fail "TUX.EFI is present but could not be verified: ${layout_state#absent|}; refusing to change the boot default."
+    else
+        # Canonical vendor GRUB loader (Arch EFI/arch/grubx64.efi, Alpine
+        # EFI/alpine/grubx64.efi, ...): ensure and promote the canonical entry;
+        # the firmware fallback is never promoted while it exists.
+        nvram_map="$SESSION_DIR/efi-nvram-map-host-default.tsv"
+        if ! ( host_default_generic_apply "$pre" "$nvram_map" ); then
+            fail "Host default transaction failed; the pre-change firmware state was restored where possible."
+        fi
     fi
-    current="$SESSION_DIR/efi-nvram-host-default-after-create.txt"
-    efibootmgr -v > "$current" 2>&1 || fail "Unable to capture firmware entries after host entry restoration."
-    if is_tuxedo_uki_layout; then
-        mapfile -t ids < <(efi_uki_entry_ids_for_partuuid "$EFI_HOST_ESP_PARTUUID" 2>/dev/null || true)
-        ((${#ids[@]} == 1)) || fail "Host TUXEDO UKI entry is not uniquely identifiable; refusing to change BootOrder."
-    fi
-    efi_promote_entry_first "${ids[0]}"
-    efi_prune_selected_duplicate_destinations \
-        || fail "Unable to reconcile duplicate host-ESP EFI destinations safely."
-    efi_group_firmware_boot_order \
-        || fail "Unable to group the retained host EFI entries by drive and boot use."
-    efi_annotate_selected_entries \
-        || fail "Unable to retain host EFI labels after BootOrder maintenance."
-    efi_verify_selected_model_labels \
-        || fail "Host EFI labels could not be verified after BootOrder maintenance."
-    log "PASS: running host default EFI entry is Boot${ids[0]} on $EFI_ESP_SOURCE." | tee -a "$SESSION_LOG"
+
     # The pre-change NVRAM capture is the proof: an identical firmware state
     # after all reconciliation means BootOrder, labels and registrations
     # already matched what the operation would have written.
@@ -15476,6 +17119,13 @@ run_repair()
     parse_repair_arguments "$@"
     ((${#REPAIR_STAGES[@]} > 0)) || fail "No repair stages were requested."
     BOOT_STACK_POST_EFI="$REPAIR_POST_EFI"
+    # Stage order is a hard contract: initramfs -> efi -> boot-stack -> grub.
+    # A permutation that would regenerate GRUB before the EFI/UKI stage (for
+    # example `grub efi`) is intentionally refused here, before any target is
+    # mounted or changed, because the later stage would invalidate the earlier
+    # one.  Make Default is a separate host operation and is safe before or
+    # after any of these stages: it only ensures/promotes the verified host
+    # entry and preserves every pre-existing firmware ID.
     for stage in "${REPAIR_STAGES[@]}"; do
         validate_stage "$stage"
         current_rank="$(stage_rank "$stage")"

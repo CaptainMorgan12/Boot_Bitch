@@ -1353,6 +1353,94 @@ done
     return session;
 }
 
+// Persistent fake privileged session for the running-host Make Default flow.
+// It records every request like the other fakes and answers host-default with
+// the helper's stable evidence shapes:
+//   success    - the plan's `Host default:` entry/BootOrder lines plus the PASS
+//                line and `Repair change status host-default: changed`
+//   unverified - exit 0 and a changed status but no named firmware entry
+//   failure    - the helper's ERROR line and exit code 1
+// successOverride replaces the success transcript so a test can exercise a
+// per-distro entry shape (for example a Fedora BLS id or a separate model=
+// field) without a second fake. The response bodies are base64-encoded
+// arguments so labels, loaders and quotes survive the shell boundary unchanged.
+QProcess *startHostDefaultFakePrivilegedSession(MainWindow &window, const QString &capturePath,
+                                                const QString &mode = QStringLiteral("success"),
+                                                const QString &successOverride = QString())
+{
+    const auto encode = [](const QString &text) {
+        return QString::fromLatin1(text.toUtf8().toBase64());
+    };
+    const QString successOutput = successOverride.isEmpty()
+        ? QStringLiteral(
+              "Host default probe: secure-boot=disabled candidate=uki\n"
+              "Host default: entry=Boot0009 label='TUXEDO UKI Test Model' loader=\\EFI\\BOOT\\TUX.EFI action=created\n"
+              "Host default: BootOrder before=0004,0001 after=0009,0004,0001 (foreign entries preserved: 2)\n"
+              "PASS: running host default EFI entry is Boot0009 on /dev/test-host-esp.\n"
+              "Repair change status host-default: changed\n")
+        : successOverride;
+    const QString unverifiedOutput = QStringLiteral("Repair change status host-default: changed\n");
+    const QString failureOutput = QStringLiteral(
+        "ERROR: stage 'host default EFI entry' failed: UEFI variables are not writable; cannot change the running host's default EFI entry.\n");
+
+    auto *session = new QProcess(&window);
+    QString script = QStringLiteral(R"SCRIPT(
+capture="$1"
+mode="$2"
+success_b64="$3"
+unverified_b64="$4"
+failure_b64="$5"
+while IFS= read -r line; do
+  tag="${line%%$'\t'*}"
+  [ "$tag" = "BEGIN" ] || continue
+  rest="${line#*$'\t'}"
+  id="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  count="${rest%%$'\t'*}"
+  printf '%s\n' "$line" >> "$capture"
+  args=""
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    IFS= read -r argline
+    printf '%s\n' "$argline" >> "$capture"
+    payload="${argline##*$'\t'}"
+    args="$args $(printf '%s' "$payload" | base64 -d)"
+    i=$((i+1))
+  done
+  IFS= read -r endline
+  printf '%s\n' "$endline" >> "$capture"
+  case "$args" in
+    *host-default*)
+      case "$mode" in
+        success) response_b64="$success_b64"; exit_code=0 ;;
+        unverified) response_b64="$unverified_b64"; exit_code=0 ;;
+        failure) response_b64="$failure_b64"; exit_code=1 ;;
+        *) response_b64="$failure_b64"; exit_code=1 ;;
+      esac
+      printf '%s' "$response_b64" | base64 -d | while IFS= read -r out; do
+        printf 'OUT\t%s\t%s\n' "$id" "$out"
+      done
+      printf 'DONE\t%s\t%s\n' "$id" "$exit_code"
+      ;;
+    *)
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+  esac
+done
+)SCRIPT");
+    session->start(QStringLiteral("/bin/bash"),
+                   {QStringLiteral("-c"), script, QStringLiteral("fake-host-default-session"),
+                    capturePath, mode, encode(successOutput), encode(unverifiedOutput),
+                    encode(failureOutput)});
+    if (!session->waitForStarted(5000)) {
+        delete session;
+        return nullptr;
+    }
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = true;
+    return session;
+}
+
 // Builds one eligible Btrfs repair-target disk (and its root component) in the
 // synthetic device index used by the scope-switching regressions.
 void installSyntheticBtrfsTarget(MainWindow &window, const QString &diskPath, const QString &rootPath)
@@ -1891,6 +1979,67 @@ void clickMessageBoxButtonWhenVisible(QObject *context, const QString &buttonTex
     });
     poll->start();
 }
+
+// One synchronous Make Default cycle shows the confirmation (Yes) and then the
+// result box (Ok). This poll accepts the confirmation and records the result
+// title/text so a test can assert exactly what the user saw; the text is copied
+// before the box is dismissed. The confirmation's title/text/informative text
+// are captured too, so the per-distro loader wording is asserted where the user
+// reads it.
+class HostDefaultBoxSequence
+{
+public:
+    explicit HostDefaultBoxSequence(QObject *context)
+    {
+        m_timer = new QTimer(context);
+        m_timer->setInterval(5);
+        QObject::connect(m_timer, &QTimer::timeout, context, [this] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *box = qobject_cast<QMessageBox *>(top);
+                if (!box || !box->isVisible()) {
+                    continue;
+                }
+                if (!confirmationSeen) {
+                    if (QAbstractButton *yes = box->button(QMessageBox::Yes)) {
+                        confirmationSeen = true;
+                        confirmationTitle = box->windowTitle();
+                        confirmationText = box->text();
+                        confirmationInformative = box->informativeText();
+                        yes->click();
+                        return;
+                    }
+                    continue;
+                }
+                if (resultSeen) {
+                    continue;
+                }
+                resultSeen = true;
+                resultTitle = box->windowTitle();
+                resultText = box->text();
+                if (QAbstractButton *ok = box->button(QMessageBox::Ok)) {
+                    ok->click();
+                } else {
+                    box->done(QMessageBox::Ok);
+                }
+                m_timer->stop();
+                m_timer->deleteLater();
+                return;
+            }
+        });
+        m_timer->start();
+    }
+
+    bool confirmationSeen = false;
+    QString confirmationTitle;
+    QString confirmationText;
+    QString confirmationInformative;
+    bool resultSeen = false;
+    QString resultTitle;
+    QString resultText;
+
+private:
+    QTimer *m_timer = nullptr;
+};
 }
 
 class MainWindowUiTest final : public QObject
@@ -1971,6 +2120,12 @@ private slots:
     void hostSnapshotRebootBannerPersistsAcrossScopeAndClearsOnBootChange();
     void hostSnapshotControlsFailClosedWithoutCapabilityEvidence();
     void hostSnapshotRollbackNeverRebootsAutomatically();
+    void hostDefaultGatingRequiresDedicatedCapabilityEvidence();
+    void hostDefaultWordingTracksDetectedLoader();
+    void hostDefaultSuccessShowsVerifiedEntryAndBootOrder();
+    void hostDefaultSuccessWithoutVerifiedEntryIsNotReported();
+    void hostDefaultSuccessShowsDriveModelAnnotatedLabel();
+    void hostDefaultFailureSurfacesHelperReasonVerbatim();
     void hostSnapshotRollbackFailureKeepsBannerOffAndShowsRecoveryGuidance();
     void guardedWriteActionsStayDisabledWithoutTarget();
     void exportDialogsCanBeCancelledReadOnly();
@@ -3897,6 +4052,10 @@ void MainWindowUiTest::bootStackReusesEfiRepairFromSameSession()
              "the boot-stack label must state that the EFI/UKI repair is reused");
     QVERIFY2(window.m_repairToolDescription->text().contains(QStringLiteral("reuses it")),
              "the boot-stack description must document the reuse relationship");
+    QVERIFY2(window.m_repairToolDescription->text().contains(QStringLiteral("any order")),
+             "the boot-stack description must state that the boot tools are order-independent");
+    QVERIFY2(!window.m_repairToolDescription->text().contains(QStringLiteral("second UKI rebuild")),
+             "the reuse wording must not claim a TUXEDO-only UKI rebuild on every backend");
 
     closeRepairProgressDialogWhenDone(&window);
     acceptNextMessageBox(&window, QMessageBox::Yes);
@@ -13591,6 +13750,546 @@ void MainWindowUiTest::hostSnapshotControlsFailClosedWithoutCapabilityEvidence()
     window.updateSnapshotControls();
     QVERIFY2(window.m_snapshotRollbackButton->isEnabled(),
              qPrintable(window.m_snapshotRollbackButton->toolTip()));
+}
+
+// Make Default consumes the helper's dedicated host-default/UKI capability
+// evidence instead of the coarse `efi` line: it fails closed without that
+// evidence, surfaces the helper's exact unavailable reason, and accepts the
+// probe decision and renamed evidence shapes defensively.
+void MainWindowUiTest::hostDefaultGatingRequiresDedicatedCapabilityEvidence()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+
+    // The coarse `efi: available` line alone no longer enables Make Default.
+    QString evidence = capabilityEvidence(false, true);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(
+                 QStringLiteral("No running-host default-entry capability evidence")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // A gated action surfaces the reason and never sends a privileged request.
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-gated.log"));
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath),
+             "the scripted host default session must start");
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Ok);
+        window.setHostDefaultBootEntry();
+        QVERIFY(capture.appeared);
+        QVERIFY2(capture.text.contains(QStringLiteral("No running-host default-entry capability evidence")),
+                 qPrintable(capture.text));
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 0);
+
+    // Unregistered UKI: the helper's named reason is surfaced verbatim in the
+    // tooltip, the dialog, the status bar and the log.
+    const QString unregisteredReason =
+        QStringLiteral("the running host UKI is not registered as a firmware boot entry");
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: unavailable|%1\n").arg(unregisteredReason);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(), unregisteredReason);
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Ok);
+        window.setHostDefaultBootEntry();
+        QVERIFY(capture.appeared);
+        QCOMPARE(capture.text, unregisteredReason);
+    }
+    QVERIFY2(liveEntryText(window, unregisteredReason).contains(unregisteredReason),
+             "the gating reason must be recorded in the log");
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 0);
+
+    // Read-only NVRAM: the exact helper reason gates the action.
+    const QString readOnlyNvramReason =
+        QStringLiteral("UEFI variables are not writable; cannot change the running host's default EFI entry");
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: unavailable|%1\n").arg(readOnlyNvramReason);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(), readOnlyNvramReason);
+
+    // The probe decision shape (the helper plan's stable evidence) is consumed:
+    // a verified candidate enables the action, candidate=none fails closed.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default probe: secure-boot=disabled candidate=uki\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral(
+        "Host default probe: secure-boot=enabled candidate=none|secure-boot requires a signed loader\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(),
+             QStringLiteral("secure-boot requires a signed loader"));
+
+    // A renamed helper evidence line is consumed too instead of silently
+    // falling back to the coarse efi capability.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral(
+        "Repair tool host-default: unavailable|non-UKI layout has no selectable host entry\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(),
+             QStringLiteral("non-UKI layout has no selectable host entry"));
+
+    // A direct none|<reason> decision shape is consumed as unavailable.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: none|the helper could not verify a bootable default entry\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(),
+             QStringLiteral("the helper could not verify a bootable default entry"));
+
+    // A bare named reason is surfaced verbatim and stays gated.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: unregistered UKI entry on the host ESP\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(),
+             QStringLiteral("unregistered UKI entry on the host ESP"));
+
+    // Every detected loader kind is consumed generically: a Fedora BIOS BLS
+    // candidate enables Make Default on a layout where `efi` is unavailable,
+    // exactly like the UKI/shim probe shapes.
+    evidence = capabilityEvidenceFedora(true, true, true, true);
+    evidence += QStringLiteral("Host default probe: candidate=bls\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("Fedora BLS")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // The same is true for a GRUB/extlinux candidate kind.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default probe: candidate=grub\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    evidence = capabilityEvidenceAlpine(true, false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("extlinux")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // A direct availability decision may carry loader/kind attributes.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available candidate=uki loader=\\EFI\\BOOT\\TUX.EFI\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("UKI")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // A Fedora BIOS named refusal is surfaced verbatim and stays gated even
+    // though the same evidence reports the GRUB2 stage available.
+    const QString fedoraRefusal =
+        QStringLiteral("saved_entry does not name an installed BLS entry");
+    evidence = capabilityEvidenceFedora(true, true, true, true);
+    evidence += QStringLiteral("Host default: unavailable|%1\n").arg(fedoraRefusal);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QCOMPARE(window.m_hostDefaultButton->toolTip(), fedoraRefusal);
+
+    // Candidate/inventory operation evidence alone is not a capability
+    // decision: the action stays gated with the regenerate message.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral(
+        "Host default candidate: Boot0002 role=vendor-loader loader=\\EFI\\BOOT\\BOOTX64.EFI partuuid=00000000-00 (canonical)\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("do not decide")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // An unknown evidence shape fails closed and names the unrecognised line
+    // instead of re-enabling the action through the coarse efi capability.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: future-shape=whatever\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("Unrecognised")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // An unrecognised structured line keeps the action gated even when another
+    // line reports available (the same fail-closed rule as the repair tools).
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\nHost default: future-shape=whatever\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("Unrecognised")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+}
+
+// A verified promotion reports the helper's named entry (label and loader) and
+// the BootOrder change; the firmware change then keeps the action gated until
+// fresh running-host diagnostics are cached.
+void MainWindowUiTest::hostDefaultSuccessShowsVerifiedEntryAndBootOrder()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+    QString evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-success.log"));
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("success")),
+             "the scripted host default session must start");
+
+    HostDefaultBoxSequence boxes(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_hostDefaultButton->click();
+
+    QVERIFY(boxes.confirmationSeen);
+    QVERIFY(boxes.resultSeen);
+    QVERIFY2(boxes.confirmationText.contains(QStringLiteral("default boot entry")),
+             qPrintable(boxes.confirmationText));
+    QVERIFY2(boxes.confirmationInformative.contains(QStringLiteral("GRUB EFI default boot entry")),
+             qPrintable(boxes.confirmationInformative));
+    QVERIFY2(!boxes.confirmationInformative.contains(QStringLiteral("TUXEDO UKI entry")),
+             qPrintable(boxes.confirmationInformative));
+    QCOMPARE(boxes.resultTitle, QStringLiteral("Host default verified"));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("Verified firmware boot entry Boot0009")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("TUXEDO UKI Test Model")), qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("\\EFI\\BOOT\\TUX.EFI")), qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("BootOrder: 0009,0004,0001")), qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("was 0004,0001")), qPrintable(boxes.resultText));
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 1);
+
+    // The firmware change invalidated the cached running-host diagnostics, so
+    // the action stays disabled until fresh evidence is cached.
+    QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+}
+
+// An exit-0 helper response without a named verified firmware entry is never
+// reported as a successful promotion.
+void MainWindowUiTest::hostDefaultSuccessWithoutVerifiedEntryIsNotReported()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+    QString evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(window.m_hostDefaultButton->isEnabled());
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-unverified.log"));
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("unverified")),
+             "the scripted host default session must start");
+
+    HostDefaultBoxSequence boxes(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_hostDefaultButton->click();
+
+    QVERIFY(boxes.confirmationSeen);
+    QVERIFY(boxes.resultSeen);
+    QCOMPARE(boxes.resultTitle, QStringLiteral("Host default not verified"));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("did not name a verified default boot entry")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(!boxes.resultText.contains(QStringLiteral("Verified firmware boot entry")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(!boxes.resultText.contains(QStringLiteral("Verified default boot entry")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(liveEntryText(window, QStringLiteral("Host default not verified")).contains(
+                 QStringLiteral("did not name a verified default boot entry")),
+             "the unverified result must be recorded in the log");
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 1);
+    QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+}
+
+// Per-distro loader wording: the confirmation and the button tooltip name the
+// detected backend (UKI, GRUB EFI, Fedora BLS, extlinux) instead of claiming a
+// TUXEDO UKI entry on every distribution, and a Fedora BIOS layout with a
+// helper-reported host default is offered with BIOS wording (no ESP/BootOrder
+// claim).
+void MainWindowUiTest::hostDefaultWordingTracksDetectedLoader()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+
+    // Fedora BIOS: the helper reports the host default available although the
+    // EFI capability is unavailable; the wording must name the Fedora BLS
+    // entry and must not claim an ESP/BootOrder action.
+    QString evidence = capabilityEvidenceFedora(true, true, true, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("Fedora BLS default boot entry")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(!window.m_hostDefaultButton->toolTip().contains(QStringLiteral("BootOrder")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-wording.log"));
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("failure")),
+             "the scripted host default session must start");
+    {
+        HostDefaultBoxSequence boxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(boxes.confirmationSeen);
+        QVERIFY2(boxes.confirmationInformative.contains(QStringLiteral("Fedora BLS default boot entry")),
+                 qPrintable(boxes.confirmationInformative));
+        QVERIFY2(!boxes.confirmationInformative.contains(QStringLiteral("BootOrder")),
+                 qPrintable(boxes.confirmationInformative));
+        QVERIFY2(!boxes.confirmationInformative.contains(QStringLiteral("TUXEDO")),
+                 qPrintable(boxes.confirmationInformative));
+        QVERIFY(boxes.resultSeen);
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 1);
+
+    // Arch-style GRUB EFI: the wording names GRUB EFI and keeps the firmware
+    // placement sentence.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("GRUB EFI default boot entry")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // Alpine BIOS extlinux: the wording names extlinux and stays BIOS-generic.
+    evidence = capabilityEvidenceAlpine(true, false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("extlinux default boot entry")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(!window.m_hostDefaultButton->toolTip().contains(QStringLiteral("BootOrder")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    // UKI host: the helper's candidate names the loader even without a UKI
+    // backend profile spelling.
+    evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default probe: secure-boot=disabled candidate=uki\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("UKI default boot entry")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+}
+
+// The verified success summary names the helper's own entry id (a firmware
+// Boot#### or a detected loader id such as a Fedora BLS entry) and renders the
+// drive-model-annotated label, including when the helper reports the model in
+// its own field.
+void MainWindowUiTest::hostDefaultSuccessShowsDriveModelAnnotatedLabel()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+    QString evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(window.m_hostDefaultButton->isEnabled());
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-model.log"));
+    const QString successOutput = QStringLiteral(
+        "Host default: entry=Boot0009 label='Example NVMe 1TB' model='Example NVMe 1TB' loader=\\EFI\\BOOT\\TUX.EFI action=created\n"
+        "Host default: BootOrder before=0004,0001 after=0009,0004,0001 (foreign entries preserved: 2)\n"
+        "Repair change status host-default: changed\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("success"),
+                                                  successOutput),
+             "the scripted host default session must start");
+
+    HostDefaultBoxSequence boxes(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_hostDefaultButton->click();
+    QVERIFY(boxes.resultSeen);
+    QCOMPARE(boxes.resultTitle, QStringLiteral("Host default verified"));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("Verified firmware boot entry Boot0009")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("label Example NVMe 1TB")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(!boxes.resultText.contains(QStringLiteral("Example NVMe 1TB Example NVMe 1TB")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(boxes.resultText.contains(QStringLiteral("BootOrder: 0009,0004,0001")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(liveEntryText(window, QStringLiteral("label='Example NVMe 1TB'")).contains(
+                 QStringLiteral("model='Example NVMe 1TB'")),
+             "the verified entry evidence must be recorded in the log");
+
+    // A helper-reported model in its own field is appended to the label once.
+    prepareRepairScope(window, true);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(window.m_hostDefaultButton->isEnabled());
+    const QString secondCapture = requestDir.filePath(QStringLiteral("host-default-model2.log"));
+    const QString modelOutput = QStringLiteral(
+        "Host default: entry=Boot0011 label='Fedora Linux 44 (Workstation)' model='Test NVMe Model' loader=\\EFI\\fedora\\shimx64.efi action=reused\n"
+        "Host default: BootOrder before=0009,0004 after=0011,0009,0004 (foreign entries preserved: 2)\n"
+        "Repair change status host-default: changed\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, secondCapture, QStringLiteral("success"),
+                                                  modelOutput),
+             "the scripted host default session must start");
+    {
+        HostDefaultBoxSequence secondBoxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(secondBoxes.resultSeen);
+        QVERIFY2(secondBoxes.resultText.contains(QStringLiteral("label Fedora Linux 44 (Workstation) Test NVMe Model")),
+                 qPrintable(secondBoxes.resultText));
+    }
+
+    // A Fedora BIOS run verifies the grubenv saved_entry + BLS target (there
+    // is no firmware entry): the success summary names the resolved BLS entry
+    // with the generic default-boot-entry wording, not a firmware claim.
+    prepareRepairScope(window, true);
+    evidence = capabilityEvidenceFedora(true, true, true, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    const QString thirdCapture = requestDir.filePath(QStringLiteral("host-default-bls.log"));
+    const QString blsOutput = QStringLiteral(
+        "Fedora default entry: saved_entry=stale-entry resolves=no target=machine-6.8.0-300.fc44.x86_64 action=set\n"
+        "Fedora default entry: saved_entry=machine-6.8.0-300.fc44.x86_64 resolves=yes target=machine-6.8.0-300.fc44.x86_64 action=set\n"
+        "Repair change status host-default: changed|grubenv saved_entry set to machine-6.8.0-300.fc44.x86_64 (all other keys preserved)\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, thirdCapture, QStringLiteral("success"),
+                                                  blsOutput),
+             "the scripted host default session must start");
+    {
+        HostDefaultBoxSequence thirdBoxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(thirdBoxes.resultSeen);
+        QCOMPARE(thirdBoxes.resultTitle, QStringLiteral("Host default verified"));
+        QVERIFY2(thirdBoxes.resultText.contains(QStringLiteral("Verified default boot entry machine-6.8.0-300.fc44.x86_64")),
+                 qPrintable(thirdBoxes.resultText));
+        QVERIFY2(thirdBoxes.resultText.contains(QStringLiteral("(set)")),
+                 qPrintable(thirdBoxes.resultText));
+        QVERIFY2(!thirdBoxes.resultText.contains(QStringLiteral("Verified firmware boot entry")),
+                 qPrintable(thirdBoxes.resultText));
+        QVERIFY2(!thirdBoxes.resultText.contains(QStringLiteral("BootOrder")),
+                 qPrintable(thirdBoxes.resultText));
+    }
+
+    // An unresolved Fedora target (resolves=no only) is never a verified
+    // success: the action reports the helper's failure instead.
+    prepareRepairScope(window, true);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(window.m_hostDefaultButton->isEnabled());
+    const QString fourthCapture = requestDir.filePath(QStringLiteral("host-default-bls-unresolved.log"));
+    const QString unresolvedOutput = QStringLiteral(
+        "Fedora default entry: saved_entry=stale-entry resolves=no target=machine-6.8.0-300.fc44.x86_64 action=set\n"
+        "Repair change status host-default: changed|grubenv saved_entry set to machine-6.8.0-300.fc44.x86_64\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, fourthCapture, QStringLiteral("success"),
+                                                  unresolvedOutput),
+             "the scripted host default session must start");
+    {
+        HostDefaultBoxSequence fourthBoxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(fourthBoxes.resultSeen);
+        QCOMPARE(fourthBoxes.resultTitle, QStringLiteral("Host default not verified"));
+        QVERIFY2(!fourthBoxes.resultText.contains(QStringLiteral("Verified default boot entry")),
+                 qPrintable(fourthBoxes.resultText));
+    }
+}
+
+// A failed promotion surfaces the helper's complete ERROR reason verbatim (the
+// stage decoration is stripped) instead of a generic "review Logs" notice.
+void MainWindowUiTest::hostDefaultFailureSurfacesHelperReasonVerbatim()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+    QString evidence = capabilityEvidence(false, true);
+    evidence += QStringLiteral("Host default: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY(window.m_hostDefaultButton->isEnabled());
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-failure.log"));
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("failure")),
+             "the scripted host default session must start");
+
+    HostDefaultBoxSequence boxes(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_hostDefaultButton->click();
+
+    QVERIFY(boxes.confirmationSeen);
+    QVERIFY(boxes.resultSeen);
+    QCOMPARE(boxes.resultTitle, QStringLiteral("Host default operation failed"));
+    const QString helperReason =
+        QStringLiteral("UEFI variables are not writable; cannot change the running host's default EFI entry");
+    QVERIFY2(boxes.resultText.contains(helperReason), qPrintable(boxes.resultText));
+    QVERIFY2(!boxes.resultText.contains(QStringLiteral("stage 'host default EFI entry'")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(!boxes.resultText.contains(QStringLiteral("Verified firmware entry")),
+             qPrintable(boxes.resultText));
+    QVERIFY2(liveEntryText(window, helperReason).contains(helperReason),
+             "the helper failure reason must be recorded in the log");
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 1);
+    QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
 }
 
 // A successful rollback never reboots by itself, and a failed Reboot Now keeps
