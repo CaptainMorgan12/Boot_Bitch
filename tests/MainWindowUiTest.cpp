@@ -448,6 +448,18 @@ void enterHostDiagnosticScope(MainWindow &window)
     window.updateTargetLabels();
 }
 
+// Host Maintenance scope with a Btrfs running-host root, ready for the
+// running-host snapshot flow tests.
+void prepareHostSnapshotScope(MainWindow &window)
+{
+    prepareRepairScope(window, true);
+    DeviceNode component = window.m_deviceIndex.value(window.m_hostPrimaryComponentPath);
+    component.fileSystem = QStringLiteral("btrfs");
+    window.m_deviceIndex.insert(component.path, component);
+    window.m_hostMaintenanceMode = true;
+    window.updateTargetLabels();
+}
+
 QTreeWidgetItem *repairItem(MainWindow &window, const QString &key)
 {
     for (int row = 0; row < window.m_repairToolTree->topLevelItemCount(); ++row) {
@@ -889,6 +901,22 @@ QList<QStringList> capturedHelperRequests(const QString &capturePath)
     return requests;
 }
 
+int capturedHostRequestCount(const QString &capturePath, const QString &command,
+                             const QString &action = QString())
+{
+    int count = 0;
+    for (const QStringList &request : capturedHelperRequests(capturePath)) {
+        if (request.isEmpty() || request.value(0) != command) {
+            continue;
+        }
+        if (!action.isEmpty() && request.value(3) != action) {
+            continue;
+        }
+        ++count;
+    }
+    return count;
+}
+
 // Starts a fake privileged-session process for the BOOT_REPAIR_UI_TEST build.
 // It records the six protocol records of one request (BEGIN, four ARG, END)
 // into capturePath, then emits a canned response:
@@ -1178,6 +1206,106 @@ done
     session->start(QStringLiteral("/bin/bash"),
                    {QStringLiteral("-c"), script, QStringLiteral("fake-slow-snapshot-session"),
                     capturePath, delaySeconds});
+    if (!session->waitForStarted(5000)) {
+        delete session;
+        return nullptr;
+    }
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = true;
+    return session;
+}
+
+// Persistent fake privileged session for the running-host snapshot flow. It
+// records every request like the other fakes and answers host-snapshots
+// list/inspect/plan/rollback and host-reboot with the helper's stable evidence.
+// rollbackMode "fail" answers the rollback with a failed auto-restore;
+// rebootMode "fail" answers host-reboot with a refusal.
+QProcess *startHostSnapshotFakePrivilegedSession(MainWindow &window, const QString &capturePath,
+                                                 const QString &rollbackMode = QStringLiteral("success"),
+                                                 const QString &rebootMode = QStringLiteral("success"))
+{
+    auto *session = new QProcess(&window);
+    QString script = QStringLiteral(R"SCRIPT(
+capture="$1"
+rollback_mode="$2"
+reboot_mode="$3"
+while IFS= read -r line; do
+  tag="${line%%$'\t'*}"
+  [ "$tag" = "BEGIN" ] || continue
+  rest="${line#*$'\t'}"
+  id="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  count="${rest%%$'\t'*}"
+  printf '%s\n' "$line" >> "$capture"
+  args=""
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    IFS= read -r argline
+    printf '%s\n' "$argline" >> "$capture"
+    payload="${argline##*$'\t'}"
+    args="$args $(printf '%s' "$payload" | base64 -d)"
+    i=$((i+1))
+  done
+  IFS= read -r endline
+  printf '%s\n' "$endline" >> "$capture"
+  case "$args" in
+    *host-snapshots*list*)
+      printf 'OUT\t%s\tHost snapshot inventory: 1 root snapshot(s)\n' "$id"
+      printf 'OUT\t%s\tSNAPSHOT\t7\t@CREATED@\t@TYPE@\t@DESC@\t@STATUS@\t@REL@\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *host-snapshots*inspect*)
+      printf 'OUT\t%s\tInspection is read-only. No snapshot, subvolume, boot file or package state was modified.\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *snapshots*list*)
+      printf 'OUT\t%s\tSNAPSHOT\t9\t@CREATED@\t@TYPE@\t@DESC@\t@STATUS@\t@REL@\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *host-snapshots*plan*)
+      printf 'OUT\t%s\tRUNNING-HOST BTRFS ROLLBACK PLAN\n' "$id"
+      printf 'OUT\t%s\tPLAN_OK=1\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *host-snapshots*rollback*)
+      if [ "$rollback_mode" = "fail" ]; then
+        printf 'OUT\t%s\tHOST ROLLBACK RECOVERY: restoring the preserved pre-rollback @.\n' "$id"
+        printf 'OUT\t%s\tHOST_ROLLBACK_RECOVERY=ok\n' "$id"
+        printf 'DONE\t%s\t1\n' "$id"
+      else
+        printf 'OUT\t%s\tHOST_ROLLBACK_BACKUP_ROOT=@rollback-before-20260920-120000\n' "$id"
+        printf 'OUT\t%s\tHOST_ROLLBACK_REBOOT_REQUIRED=1\n' "$id"
+        printf 'OUT\t%s\tHOST_ROLLBACK_RESULT=SUCCESS\n' "$id"
+        printf 'OUT\t%s\tRepair change status snapshots: changed\n' "$id"
+        printf 'DONE\t%s\t0\n' "$id"
+      fi
+      ;;
+    *host-reboot*)
+      if [ "$reboot_mode" = "fail" ]; then
+        printf 'OUT\t%s\tERROR: systemd refused the running-host reboot request (inhibitor or policy).\n' "$id"
+        printf 'DONE\t%s\t1\n' "$id"
+      else
+        printf 'OUT\t%s\tHOST_REBOOT_SCHEDULED=1\n' "$id"
+        printf 'DONE\t%s\t0\n' "$id"
+      fi
+      ;;
+    *)
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+  esac
+done
+)SCRIPT");
+    auto encode = [](const QString &text) {
+        return QString::fromLatin1(text.toUtf8().toBase64());
+    };
+    script.replace(QStringLiteral("@CREATED@"), encode(QStringLiteral("2026-09-20 12:00:00")));
+    script.replace(QStringLiteral("@TYPE@"), encode(QStringLiteral("single")));
+    script.replace(QStringLiteral("@DESC@"), encode(QStringLiteral("host test snapshot")));
+    script.replace(QStringLiteral("@STATUS@"), encode(QStringLiteral("Linux root snapshot; ro=true")));
+    script.replace(QStringLiteral("@REL@"), encode(QStringLiteral("@.snapshots/7/snapshot")));
+    session->start(QStringLiteral("/bin/bash"),
+                   {QStringLiteral("-c"), script, QStringLiteral("fake-host-snapshot-session"),
+                    capturePath, rollbackMode, rebootMode});
     if (!session->waitForStarted(5000)) {
         delete session;
         return nullptr;
@@ -1700,6 +1828,31 @@ void acceptNextInputDialog(QObject *context, const QString &text)
     });
     poll->start();
 }
+
+// Clicks the named button of the next visible QMessageBox that carries it.
+// Used for the custom Reboot Now / Later buttons of the host rollback dialogs.
+void clickMessageBoxButtonWhenVisible(QObject *context, const QString &buttonText)
+{
+    QTimer *poll = new QTimer(context);
+    poll->setInterval(5);
+    QObject::connect(poll, &QTimer::timeout, context, [poll, buttonText] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *box = qobject_cast<QMessageBox *>(top);
+            if (!box || !box->isVisible()) {
+                continue;
+            }
+            for (QAbstractButton *button : box->buttons()) {
+                if (button->text() == buttonText) {
+                    poll->stop();
+                    button->click();
+                    poll->deleteLater();
+                    return;
+                }
+            }
+        }
+    });
+    poll->start();
+}
 }
 
 class MainWindowUiTest final : public QObject
@@ -1773,6 +1926,13 @@ private slots:
     void rapidScopeSwitchingDuringSnapshotPreloadDoesNotDeadlock();
     void privilegedRequestSafetyTimeoutAbortsWedgedHelper();
     void nonBtrfsTargetSnapshotInventoryIsInformational();
+    void hostMaintenanceSnapshotInventoryUsesHostScope();
+    void hostSnapshotRollbackRequiresConsequencesConfirmation();
+    void hostSnapshotRollbackSuccessShowsRebootRequiredAndBusyClears();
+    void hostSnapshotRollbackRebootNowRequiresSecondConfirmation();
+    void hostSnapshotRebootBannerPersistsAcrossScopeAndClearsOnBootChange();
+    void hostSnapshotControlsFailClosedWithoutCapabilityEvidence();
+    void hostSnapshotRollbackNeverRebootsAutomatically();
     void guardedWriteActionsStayDisabledWithoutTarget();
     void exportDialogsCanBeCancelledReadOnly();
     void actionRegisterPersistsAcrossWindows();
@@ -12806,6 +12966,388 @@ void MainWindowUiTest::scopeLabelWrapsToTwoLinesBesideActions()
                  qPrintable(QStringLiteral("%1: the actions must stay right-aligned to the content edge")
                                 .arg(testCase.description)));
     }
+}
+
+// Running-host snapshot inventory must use the host scope: exactly one
+// host-snapshots list request, the target inventory is not reused, and leaving
+// Host Maintenance restores the ordinary target preload.
+void MainWindowUiTest::hostMaintenanceSnapshotInventoryUsesHostScope()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+    installSyntheticBtrfsTarget(window, QStringLiteral("/dev/test-target-a"),
+                                QStringLiteral("/dev/test-target-a1"));
+    window.m_previewTargetPath = QStringLiteral("/dev/test-target-a");
+    window.m_previewTargetComponentPath = QStringLiteral("/dev/test-target-a1");
+    window.m_targetDiagnosticCacheIdentity = window.currentTargetDiagnosticCacheIdentity();
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-scope.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath),
+             "the scripted host snapshot session must start");
+
+    window.updateSnapshotControls();
+    window.scheduleSnapshotPreload();
+    QTRY_VERIFY_WITH_TIMEOUT(window.m_snapshotTable->rowCount() == 1, 5000);
+    QVERIFY(window.m_snapshotTable->item(0, 4)->text().startsWith(QStringLiteral("Linux root snapshot")));
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("list")), 1);
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("snapshots"),
+                                      QStringLiteral("list")), 0);
+
+    // Leaving Host Maintenance restores the target preload.
+    window.exitHostMaintenanceMode();
+    QTRY_VERIFY_WITH_TIMEOUT(window.m_snapshotTable->rowCount() == 1, 5000);
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("snapshots"),
+                                      QStringLiteral("list")), 1);
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("list")), 1);
+}
+
+// The consequences dialog names the running host, the reboot requirement, the
+// automatic current-state preservation, the /home exclusion and the data-loss
+// caveat; Cancel and a wrong typed confirmation produce no rollback request.
+void MainWindowUiTest::hostSnapshotRollbackRequiresConsequencesConfirmation()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+    QString evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: available\nHost reboot: available\n");
+    cacheRepairEvidence(window, evidence);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-confirm.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath),
+             "the scripted host snapshot session must start");
+
+    window.updateSnapshotControls();
+    window.loadSnapshots();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    window.m_snapshotTable->setCurrentCell(0, 0);
+    window.updateSnapshotControls();
+    QVERIFY2(window.m_snapshotRollbackButton->isEnabled(),
+             qPrintable(QStringLiteral("host rollback must be enabled with available evidence (tooltip: %1)")
+                            .arg(window.m_snapshotRollbackButton->toolTip())));
+
+    // Cancel at the consequences dialog: no rollback request.
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Cancel);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_snapshotRollbackButton->click();
+        QVERIFY(capture.appeared);
+        QVERIFY(capture.informativeText.contains(QStringLiteral("next reboot")));
+        QVERIFY(capture.informativeText.contains(QStringLiteral("Snapper")));
+        QVERIFY(capture.informativeText.contains(QStringLiteral("cannot guarantee")));
+        QVERIFY(capture.informativeText.contains(QStringLiteral("/home")));
+        QVERIFY(capture.informativeText.contains(QStringLiteral("/dev/test-host")));
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("rollback")), 0);
+
+    // Wrong typed text: still no rollback request.
+    {
+        acceptNextMessageBox(&window, QMessageBox::Yes);
+        acceptNextInputDialog(&window, QStringLiteral("ROLLBACKX"));
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_snapshotRollbackButton->click();
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("rollback")), 0);
+
+    // Correct typed text issues exactly one rollback request; dismiss the
+    // success dialog with Later.
+    {
+        NextMessageBoxCapture consequences(&window, QMessageBox::Yes);
+        acceptNextInputDialog(&window, QStringLiteral("ROLLBACK"));
+        clickMessageBoxButtonWhenVisible(&window, QStringLiteral("Later"));
+        // Two progress dialogs: the read-only plan and the rollback request.
+        closeRepairProgressDialogWhenDone(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_snapshotRollbackButton->click();
+        QVERIFY(consequences.appeared);
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("rollback")), 1);
+}
+
+// A successful host rollback clears the busy state, clears the stale
+// inventory, persists the reboot-required state and shows the persistent
+// banner with both actions.
+void MainWindowUiTest::hostSnapshotRollbackSuccessShowsRebootRequiredAndBusyClears()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+    QString evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: available\nHost reboot: available\n");
+    cacheRepairEvidence(window, evidence);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-success.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath),
+             "the scripted host snapshot session must start");
+
+    window.updateSnapshotControls();
+    window.loadSnapshots();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    window.m_snapshotTable->setCurrentCell(0, 0);
+    window.updateSnapshotControls();
+
+    NextMessageBoxCapture consequences(&window, QMessageBox::Yes);
+    acceptNextInputDialog(&window, QStringLiteral("ROLLBACK"));
+    clickMessageBoxButtonWhenVisible(&window, QStringLiteral("Later"));
+    // Two progress dialogs: the read-only plan and the rollback request.
+    closeRepairProgressDialogWhenDone(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_snapshotRollbackButton->click();
+
+    QVERIFY(consequences.appeared);
+    QVERIFY(window.m_hostRebootRequired);
+    QCOMPARE(window.m_hostRebootSnapshotId, QStringLiteral("7"));
+    QVERIFY(!window.m_hostRebootRequiredAt.isEmpty());
+    QVERIFY(!window.m_hostRebootBootId.isEmpty());
+    QVERIFY(!window.m_hostRebootBanner->isHidden());
+    QVERIFY(window.m_hostRebootBannerLabel->text().contains(QStringLiteral("Reboot required")));
+    QVERIFY(window.m_hostRebootBannerLabel->text().contains(QStringLiteral("snapshot 7")));
+    QVERIFY(window.m_activeBusyOperations.isEmpty());
+    QVERIFY(window.m_busyIndicator->isHidden());
+    QCOMPARE(window.m_snapshotTable->rowCount(), 0);
+    // The staged rollback invalidated the cached running-host evidence.
+    QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+}
+
+// Reboot Now always requires a second explicit confirmation; Cancel sends no
+// host-reboot request and the accepted path sends exactly one.
+void MainWindowUiTest::hostSnapshotRollbackRebootNowRequiresSecondConfirmation()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-reboot.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath),
+             "the scripted host snapshot session must start");
+
+    window.setHostRebootRequired(QStringLiteral("7"));
+    QVERIFY(!window.m_hostRebootBanner->isHidden());
+    QVERIFY(window.m_hostRebootNowButton->isEnabled());
+
+    // Cancel at the second confirmation: no host-reboot request.
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Cancel);
+        window.m_hostRebootNowButton->click();
+        QVERIFY(capture.appeared);
+        QVERIFY(capture.title.contains(QStringLiteral("Reboot")));
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 0);
+    QVERIFY(window.m_hostRebootRequired);
+
+    // Accept: exactly one host-reboot request.
+    {
+        NextMessageBoxCapture capture(&window, QMessageBox::Yes);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostRebootNowButton->click();
+        QVERIFY(capture.appeared);
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 1);
+}
+
+// The persisted reminder hides when Host Maintenance is left but returns on
+// re-entry, and a new kernel boot id clears it after a real reboot.
+void MainWindowUiTest::hostSnapshotRebootBannerPersistsAcrossScopeAndClearsOnBootChange()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    ScopedEnvironmentVariable bootIdOverride("BOOT_REPAIR_BOOT_ID", "boot-a");
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+
+    window.setHostRebootRequired(QStringLiteral("7"));
+    QCOMPARE(window.m_hostRebootBootId, QStringLiteral("boot-a"));
+    QVERIFY(!window.m_hostRebootBanner->isHidden());
+
+    // Leaving hides the banner but keeps the flag; re-entering shows it again.
+    window.exitHostMaintenanceMode();
+    QVERIFY(window.m_hostRebootBanner->isHidden());
+    QVERIFY(window.m_hostRebootRequired);
+    window.m_hostMaintenanceMode = true;
+    window.updateHostRebootBanner();
+    QVERIFY(!window.m_hostRebootBanner->isHidden());
+
+    // A different kernel boot id means the staged rollback took effect.
+    qputenv("BOOT_REPAIR_BOOT_ID", "boot-b");
+    window.reconcileHostRebootRequired();
+    QVERIFY(!window.m_hostRebootRequired);
+    QVERIFY(window.m_hostRebootSnapshotId.isEmpty());
+    QVERIFY(window.m_hostRebootBanner->isHidden());
+}
+
+// The host rollback control fails closed without capability evidence and uses
+// the helper's exact unavailable reason when one is cached.
+void MainWindowUiTest::hostSnapshotControlsFailClosedWithoutCapabilityEvidence()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+
+    SnapshotInventoryRow row;
+    row.id = QStringLiteral("7");
+    row.created = QStringLiteral("2026-09-20 12:00:00");
+    row.type = QStringLiteral("single");
+    row.description = QStringLiteral("host test snapshot");
+    row.status = QStringLiteral("Linux root snapshot; ro=true");
+    row.relativePath = QStringLiteral("@.snapshots/7/snapshot");
+
+    window.updateSnapshotControls();
+    window.m_snapshotResultIdentity = window.snapshotScopeIdentity();
+    window.populateSnapshotTable({row});
+    window.m_snapshotTable->setCurrentCell(0, 0);
+
+    // No cached evidence: disabled with the run-diagnostics reason.
+    window.updateSnapshotControls();
+    QVERIFY(!window.m_snapshotRollbackButton->isEnabled());
+    QVERIFY2(window.m_snapshotRollbackButton->toolTip().contains(QStringLiteral("Run running-host diagnostics")),
+             qPrintable(window.m_snapshotRollbackButton->toolTip()));
+
+    // An exact unavailable reason is surfaced verbatim.
+    QString evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: unavailable|snapper is not installed\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateSnapshotControls();
+    QVERIFY(!window.m_snapshotRollbackButton->isEnabled());
+    QCOMPARE(window.m_snapshotRollbackButton->toolTip(), QStringLiteral("snapper is not installed"));
+
+    // Available evidence enables the rollback for a valid root row.
+    evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: available\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateSnapshotControls();
+    QVERIFY2(window.m_snapshotRollbackButton->isEnabled(),
+             qPrintable(window.m_snapshotRollbackButton->toolTip()));
+}
+
+// A successful rollback never reboots by itself, and a failed Reboot Now keeps
+// the banner and surfaces the helper's refusal reason.
+void MainWindowUiTest::hostSnapshotRollbackNeverRebootsAutomatically()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+    QString evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: available\nHost reboot: available\n");
+    cacheRepairEvidence(window, evidence);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-noreboot.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath, QStringLiteral("success"),
+                                                    QStringLiteral("fail")),
+             "the scripted host snapshot session must start");
+
+    window.updateSnapshotControls();
+    window.loadSnapshots();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    window.m_snapshotTable->setCurrentCell(0, 0);
+    window.updateSnapshotControls();
+
+    NextMessageBoxCapture consequences(&window, QMessageBox::Yes);
+    acceptNextInputDialog(&window, QStringLiteral("ROLLBACK"));
+    clickMessageBoxButtonWhenVisible(&window, QStringLiteral("Later"));
+    // Two progress dialogs: the read-only plan and the rollback request.
+    closeRepairProgressDialogWhenDone(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_snapshotRollbackButton->click();
+    QVERIFY(consequences.appeared);
+    QVERIFY(window.m_hostRebootRequired);
+
+    // No automatic reboot after a successful rollback.
+    QTest::qWait(200);
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 0);
+
+    // A refused Reboot Now keeps the banner and reports the helper reason.
+    bool rebootConfirmed = false;
+    bool failureSeen = false;
+    QString failureText;
+    QTimer poll;
+    poll.setInterval(5);
+    QObject::connect(&poll, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *box = qobject_cast<QMessageBox *>(top);
+            if (!box || !box->isVisible()) {
+                continue;
+            }
+            if (!rebootConfirmed) {
+                if (QAbstractButton *yes = box->button(QMessageBox::Yes)) {
+                    rebootConfirmed = true;
+                    yes->click();
+                    return;
+                }
+            } else if (QAbstractButton *ok = box->button(QMessageBox::Ok)) {
+                failureSeen = true;
+                failureText = box->text();
+                ok->click();
+                poll.stop();
+                poll.deleteLater();
+                return;
+            }
+        }
+    });
+    poll.start();
+    closeRepairProgressDialogWhenDone(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_hostRebootNowButton->click();
+
+    QTRY_VERIFY_WITH_TIMEOUT(rebootConfirmed && failureSeen, 5000);
+    QVERIFY(failureText.contains(QStringLiteral("systemd refused")));
+    QVERIFY(window.m_hostRebootRequired);
+    QVERIFY(!window.m_hostRebootBanner->isHidden());
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 1);
 }
 
 int main(int argc, char **argv)

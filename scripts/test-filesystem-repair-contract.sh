@@ -452,6 +452,28 @@ for cap_key in dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub 
 done
 [[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 13 ]] \
     || { echo "FAIL: expected 13 capability keys" >&2; exit 1; }
+# Running-host maintenance adds host-scope capability evidence but must never
+# become a 14th `Repair tool` key; target scope never emits the host lines.
+host_caps="$(run_harness '
+RUNNING_HOST_MODE=1
+TARGET_ROOT=""
+TARGET_OS_ID=arch
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=arch
+TARGET_INITRAMFS_BACKEND=mkinitcpio
+TARGET_BOOTLOADER_BACKEND=grub
+diagnostic_repair_capabilities
+')"
+[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 13 ]] \
+    || { echo "FAIL: host scope changed the 13 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
+grep -Eq '^Host snapshot rollback: (available|unavailable\|)' <<<"$host_caps" \
+    || { echo "FAIL: host snapshot rollback capability line is missing" >&2; exit 1; }
+grep -Eq '^Host reboot: (available|unavailable\|)' <<<"$host_caps" \
+    || { echo "FAIL: host reboot capability line is missing" >&2; exit 1; }
+if grep -q '^Host ' <<<"$cap_unresolved"; then
+    echo 'FAIL: target-scope diagnostics must not emit host capability lines' >&2
+    exit 1
+fi
 
 # ---------------------------------------------------------------------------
 # Part 2: fs-inspect resolves the target scope read-only and reports evidence.

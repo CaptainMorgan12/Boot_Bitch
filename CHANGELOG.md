@@ -34,6 +34,20 @@
   addresses, private IPv4 addresses, non-standard ports and SSH key material,
   with documented synthetic-fixture allowlists, and remove the two screenshots
   that showed a maintainer home path and a disk UUID.
+- Add running-host Btrfs snapshot rollback to Host Maintenance: the Snapshots
+  tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
+  points through a new `host-snapshots` helper command, stages the selected
+  snapshot with the proven name-preserving transaction (preserve the running
+  `@`, promote a writable copy, migrate a nested `@/.snapshots` child
+  subvolume, reconcile initramfs/UKI/GRUB in a scratch chroot, auto-restore on
+  failure) and reports `Host snapshot rollback` capability evidence without
+  adding a 14th `Repair tool` key. A successful rollback persists a
+  **Reboot required** reminder that is cleared by kernel boot-id
+  reconciliation and offers `Reboot Now` only after a second explicit
+  confirmation through the new `host-reboot` command; rollback never reboots
+  automatically. Contract tests cover the preflight/refusal matrix, the
+  transaction, nested migration, undo targets and reboot confirmation, with
+  offscreen UI coverage for the flow, banner and gating.
 
 ## 0.2.25 — 2026-09-19
 

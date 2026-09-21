@@ -109,7 +109,9 @@ if grep -q 'nodev' <<<"$dev_rw_block"; then
     echo 'FAIL: the private target /dev must allow device nodes' >&2
     exit 1
 fi
-[[ "$(grep -c 'mount_special dev-rw none "\$TARGET_ROOT/dev"' "$HELPER")" == 3 ]] \
+# Four chroot installs: prepare_target rw, promote_target_rw,
+# snapshot_mount_promoted_root_rw and the running-host rollback scratch chroot.
+[[ "$(grep -c 'mount_special dev-rw none "\$TARGET_ROOT/dev"' "$HELPER")" == 4 ]] \
     || { echo 'FAIL: not every offline chroot installs the private writable /dev' >&2; exit 1; }
 if grep -Eq 'mount_special rbind-ro /dev|remount,bind,rw,rec .*dev' "$HELPER"; then
     echo 'FAIL: the target /dev is still the recovery host bind' >&2

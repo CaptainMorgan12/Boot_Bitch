@@ -25,6 +25,7 @@ class QCloseEvent;
 class QComboBox;
 class QEventLoop;
 class QFile;
+class QFrame;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -263,9 +264,28 @@ private:
     void clearSnapshotResults();
     void scheduleSnapshotPreload();
     void loadSnapshots();
+    // Scope-aware Btrfs inventory accessors. In Host Maintenance they name the
+    // running host; otherwise the committed repair target. The helper command
+    // follows the scope (host-snapshots vs snapshots) and the identity is the
+    // result-cache key the preload/request paths compare against.
+    QString snapshotDiskPath() const;
+    QString snapshotComponentPath() const;
+    QString snapshotHelperCommand() const;
+    QString snapshotScopeIdentity() const;
     // Target + resolved component identity of the Btrfs inventory a preload or
-    // request serves. Empty when no repair target is committed.
+    // request serves. Empty when no scope is committed.
     QString snapshotScopeKey() const;
+    // Running-host rollback capability from the cached host capability
+    // preamble. Fails closed when the host diagnostics have not run.
+    bool hostSnapshotRollbackAvailable(QString *reason = nullptr) const;
+    // Running-host rollback flow and its persisted reboot-required state.
+    void rollbackHostSnapshot(const QString &snapshotId);
+    void setHostRebootRequired(const QString &snapshotId);
+    void clearHostRebootRequired();
+    void updateHostRebootBanner();
+    void confirmAndRebootHost();
+    QString currentBootId() const;
+    void reconcileHostRebootRequired();
     // Renders parsed snapshot rows into the inventory with numeric/date sort
     // keys and re-applies the active (or default Created-descending) sort.
     void populateSnapshotTable(const QList<SnapshotInventoryRow> &rows);
@@ -879,6 +899,18 @@ private:
     quint64 m_snapshotLoadedGeneration = 0;
     bool m_snapshotInventoryInFlight = false;
     QString m_snapshotRequestScopeKey;
+    // Persistent "Reboot required" state for a staged running-host rollback.
+    // The flag survives an application restart but is cleared by the kernel
+    // boot-id reconciliation after a real reboot.
+    QFrame *m_hostRebootBanner = nullptr;
+    QLabel *m_hostRebootBannerLabel = nullptr;
+    QPushButton *m_hostRebootNowButton = nullptr;
+    QPushButton *m_hostRebootLaterButton = nullptr;
+    bool m_hostRebootRequired = false;
+    bool m_hostRebootBannerDismissed = false;
+    QString m_hostRebootSnapshotId;
+    QString m_hostRebootRequiredAt;
+    QString m_hostRebootBootId;
     QLabel *m_fileCopyHeading = nullptr;
     QComboBox *m_fileCopyDirectionCombo = nullptr;
     QGroupBox *m_fileCopySourceBox = nullptr;

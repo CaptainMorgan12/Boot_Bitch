@@ -36,6 +36,7 @@ This build can:
 - copy files Host → Repair or Repair → Host with guarded `rsync -aHAX --numeric-ids`, smart ownership validation, no `--delete`, and post-copy verification;
 - keep Repair → Host target mounts read-only and promote Host → Repair read-write only after the same independent target safety checks;
 - perform a guarded transactional Btrfs `@` rollback after a read-only preflight, while keeping the source snapshot unchanged and retaining the previous root under a timestamped `@rollback-before-*` name;
+- in Host Maintenance, inspect Snapper root snapshots and Boot Bitch `@rollback-before-*` undo points and stage a running-host rollback with the same name-preserving transaction: the running `@` is preserved first, the selected snapshot is promoted to `@`, a nested `@/.snapshots` child subvolume is migrated, the boot stack is reconciled in a scratch chroot, and a persistent **Reboot required** reminder requires a separate `Reboot Now` confirmation before the promoted root is used;
 - build a Release executable and Debian package with the privileged helper included.
 
 Firmware destination roles are reported explicitly in EFI diagnostics. `uki`
@@ -57,7 +58,7 @@ another decryption prompt.
 Still intentionally constrained in 0.2.25:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
-- transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; it refuses unsupported layouts rather than guessing;
+- transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin, no separate `/boot` and no other nested `@` child subvolumes, and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed;
 - unsupported package-manager operations on Arch (such as standalone APT/dpkg stages), unknown boot layouts, and package transactions whose preflight reports repository errors, removals or unresolved dependencies; these remain hard-gated;
 
 
@@ -912,6 +913,8 @@ EFI maintenance validates entry ownership by ESP PARTUUID, removes only identifi
 ### Snapshots
 
 Shows the guarded Btrfs rollback workflow. Loading and inspection remain read-only. **Roll Back to Selected** performs a separate read-only plan first, then creates a writable copy of the chosen root snapshot, preserves the prior `@`, promotes the copy to the normal writable `@`, sets it as the Btrfs default, reconciles initramfs/TUXEDO UKI/GRUB, and automatically restores the preserved root if critical post-switch validation fails.
+
+In Host Maintenance the same tab serves the running host. Snapper root snapshots and Boot Bitch `@rollback-before-*` undo points are listed read-only; the running snapshot is marked and never offered. Rollback requires available `Host snapshot rollback` capability evidence, a read-only plan, a consequences dialog and a typed `ROLLBACK` confirmation. The running system keeps serving the old root until a reboot, so a persistent **Reboot required** banner with **Reboot Now** and **Later** actions appears after a successful rollback; **Reboot Now** always asks for a second, separate confirmation and is never automatic. The reminder is persisted and cleared only when the kernel boot id proves a real reboot happened. Failed rollbacks keep the banner state, never reboot, and surface the helper's automatic-recovery evidence.
 
 ### File Copy
 

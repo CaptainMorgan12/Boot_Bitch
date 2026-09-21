@@ -3557,7 +3557,7 @@ QWidget *MainWindow::buildSystemsPage()
     m_hostMaintenanceButton = new ElidedPushButton(themedIcon(QStringLiteral("system-run")), QStringLiteral("Host Maintenance"));
     m_hostMaintenanceButton->setEnabled(false);
     m_hostMaintenanceButton->setToolTip(QStringLiteral(
-        "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+        "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; running-host Snapper @ snapshots are available in the Snapshots tab, while the chroot shell and file-copy workflows remain separate target tools."));
     connect(m_hostMaintenanceButton, &QPushButton::clicked, this, &MainWindow::selectHostForMaintenance);
     actionsLayout->addWidget(m_hostMaintenanceButton, 0, 2, Qt::AlignLeft | Qt::AlignTop);
 
@@ -4211,11 +4211,41 @@ QWidget *MainWindow::buildSnapshotsPage()
     auto *heading = new QHBoxLayout;
     heading->addWidget(sectionTitle(QStringLiteral("Btrfs snapshots")));
     heading->addWidget(contextHelpButton(page, QStringLiteral("Snapshots"),
-        QStringLiteral("Inspect Btrfs root snapshots and perform a transactional rollback. Rollback keeps the source snapshot unchanged, preserves the current @ root, promotes a writable copy to @, rebuilds the boot stack and automatically restores the old root if post-switch validation fails.")));
+        QStringLiteral("Inspect Btrfs root snapshots and perform a transactional rollback. Rollback keeps the source snapshot unchanged, preserves the current @ root, promotes a writable copy to @, rebuilds the boot stack and automatically restores the old root if post-switch validation fails. In Host Maintenance the same workflow targets the running host through Snapper @ snapshots and Boot Bitch @rollback-before-* undo points; the running host starts the promoted root only after a reboot.")));
     heading->addStretch(1);
     m_snapshotTargetLabel = new WrappedScopeLabel(QStringLiteral("Target: none selected"));
     heading->addWidget(m_snapshotTargetLabel, 0, Qt::AlignRight | Qt::AlignVCenter);
     layout->addLayout(heading);
+
+    // Persistent reboot-required banner for a staged running-host rollback.
+    // Visible only while Host Maintenance is active; the persisted flag keeps
+    // the reminder across scope switches until the kernel boot id changes.
+    m_hostRebootBanner = new QFrame;
+    m_hostRebootBanner->setObjectName(QStringLiteral("hostRebootBanner"));
+    m_hostRebootBanner->setFrameShape(QFrame::StyledPanel);
+    m_hostRebootBanner->setFrameShadow(QFrame::Plain);
+    auto *rebootBannerLayout = new QHBoxLayout(m_hostRebootBanner);
+    rebootBannerLayout->setContentsMargins(10, 8, 10, 8);
+    rebootBannerLayout->setSpacing(8);
+    m_hostRebootBannerLabel = new QLabel;
+    m_hostRebootBannerLabel->setWordWrap(true);
+    m_hostRebootBannerLabel->setTextInteractionFlags(Qt::TextSelectableByMouse);
+    m_hostRebootBannerLabel->setAccessibleName(QStringLiteral("Reboot required"));
+    rebootBannerLayout->addWidget(m_hostRebootBannerLabel, 1);
+    m_hostRebootNowButton = new QPushButton(themedIcon(QStringLiteral("system-reboot")), QStringLiteral("Reboot Now"));
+    m_hostRebootNowButton->setToolTip(QStringLiteral("Reboots the running host after a separate confirmation; all users are signed out and unsaved work is lost."));
+    m_hostRebootLaterButton = new QPushButton(QStringLiteral("Later"));
+    m_hostRebootLaterButton->setToolTip(QStringLiteral("Hides the reboot reminder until Host Maintenance is re-entered; the staged rollback stays in effect."));
+    connect(m_hostRebootNowButton, &QPushButton::clicked, this, &MainWindow::confirmAndRebootHost);
+    connect(m_hostRebootLaterButton, &QPushButton::clicked, this, [this] {
+        m_hostRebootBannerDismissed = true;
+        updateHostRebootBanner();
+        statusBar()->showMessage(QStringLiteral("Reboot reminder hidden; the running-host rollback stays staged until the host is rebooted."), 5000);
+    });
+    rebootBannerLayout->addWidget(m_hostRebootNowButton, 0, Qt::AlignTop);
+    rebootBannerLayout->addWidget(m_hostRebootLaterButton, 0, Qt::AlignTop);
+    m_hostRebootBanner->setVisible(false);
+    layout->addWidget(m_hostRebootBanner);
 
     m_snapshotTable = new QTableWidget(0, 5);
     m_snapshotTable->setHorizontalHeaderLabels({
@@ -5068,6 +5098,16 @@ void MainWindow::loadSettings()
         m_snapshotSplitter->restoreState(snapshotSplitterState);
     }
 
+    // Persisted running-host rollback reminder. The kernel boot id decides
+    // whether the staged rollback already took effect: a different boot id
+    // clears the flag, an equal one keeps it.
+    m_hostRebootRequired = m_settings->value(QStringLiteral("host/rebootRequired"), false).toBool();
+    m_hostRebootSnapshotId = m_settings->value(QStringLiteral("host/rebootRequiredSnapshot")).toString();
+    m_hostRebootRequiredAt = m_settings->value(QStringLiteral("host/rebootRequiredAt")).toString();
+    m_hostRebootBootId = m_settings->value(QStringLiteral("host/rebootRequiredBootId")).toString();
+    reconcileHostRebootRequired();
+    updateHostRebootBanner();
+
     updateFullRepairSummary();
     updateDiagnosticDetails();
 }
@@ -5111,6 +5151,11 @@ void MainWindow::saveSettings()
     if (m_snapshotSplitter) {
         m_settings->setValue(QStringLiteral("snapshots/splitterStateV1"), m_snapshotSplitter->saveState());
     }
+
+    m_settings->setValue(QStringLiteral("host/rebootRequired"), m_hostRebootRequired);
+    m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), m_hostRebootSnapshotId);
+    m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), m_hostRebootRequiredAt);
+    m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), m_hostRebootBootId);
 
     m_settings->sync();
 }
@@ -5487,7 +5532,7 @@ bool MainWindow::exitHostMaintenanceMode()
     if (m_hostMaintenanceButton) {
         m_hostMaintenanceButton->setText(QStringLiteral("Host Maintenance"));
         m_hostMaintenanceButton->setToolTip(QStringLiteral(
-            "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; snapshots, shell and file-copy workflows remain separate tools."));
+            "Host Maintenance — select the running host for deliberate guarded maintenance. All supported repair stages run against the active system; running-host Snapper @ snapshots are available in the Snapshots tab, while the chroot shell and file-copy workflows remain separate target tools."));
     }
     // Leaving host maintenance also leaves the running-host diagnostics scope;
     // cached host evidence stays cached but is no longer displayed or offered.
@@ -5496,6 +5541,14 @@ bool MainWindow::exitHostMaintenanceMode()
     updateTargetLabels();
     updateSessionScope();
     updateAuthorizationAffordance();
+    // The reboot-required banner is host-scope only; the persisted flag stays
+    // and re-entering Host Maintenance shows the banner again.
+    updateHostRebootBanner();
+    // Leaving host scope restores the ordinary target snapshot preload; the
+    // scope identity change must be observed first so the generation guard
+    // cannot mistake the target preload for the completed host one.
+    updateSnapshotControls();
+    scheduleSnapshotPreload();
     return true;
 }
 
@@ -5527,6 +5580,7 @@ void MainWindow::selectHostForMaintenance()
     clearTargetDiagnosticCache();
     m_targetDiagnosticsNeedRegeneration = false;
     m_hostMaintenanceMode = true;
+    m_hostRebootBannerDismissed = false;
     if (m_hostMaintenanceButton) {
         m_hostMaintenanceButton->setText(QStringLiteral("Exit Host Maintenance"));
         m_hostMaintenanceButton->setToolTip(QStringLiteral(
@@ -5536,10 +5590,16 @@ void MainWindow::selectHostForMaintenance()
     // diagnostics scope; the standard scope line follows through
     // updateTargetLabels() below.
     appendLog(QStringLiteral(
-        "Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; snapshots, shell and file-copy workflows remain separate tools.")
+        "Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; running-host Snapper @ snapshots are available in the Snapshots tab, while the chroot shell and file-copy workflows remain separate target tools.")
                   .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
     updateTargetLabels();
     updateSessionScope();
+    // Show a previously staged rollback reminder again and load the
+    // running-host snapshot inventory. The scope identity change must be
+    // observed before scheduling so the generation guard serves host scope.
+    updateHostRebootBanner();
+    updateSnapshotControls();
+    scheduleSnapshotPreload();
     // Host Maintenance commits the running host as the active scope, so show
     // the protected host drive in the selected-drive details panel right away
     // instead of leaving the previous selection or placeholders.
@@ -7004,7 +7064,7 @@ void MainWindow::updateTargetLabels()
                 ? QStringLiteral("Committed target: none")
                 : QStringLiteral("Committed target: %1").arg(committedSummary)));
         m_systemTargetLabel->setToolTip(m_hostMaintenanceMode
-            ? QStringLiteral("Explicit native running-host maintenance is active. Ordinary target repairs, snapshots, file copy and chroot remain unavailable.")
+            ? QStringLiteral("Explicit native running-host maintenance is active. Ordinary target repairs, file copy and chroot remain unavailable; running-host Snapper @ snapshot rollback is available in the Snapshots tab.")
             : (m_previewTargetPath.isEmpty()
                 ? QStringLiteral("Row selection is inspection only. Press Select Target to commit a repair drive.")
                 : QStringLiteral("Committed repair target. Repair, Diagnostics, Snapshots and File Copy target this physical drive until another drive is explicitly selected with Select Target.\n%1").arg(tooltip)));
@@ -7074,7 +7134,7 @@ void MainWindow::clearSnapshotResults()
     if (m_snapshotDetails) {
         m_snapshotDetails->clear();
     }
-    m_snapshotResultIdentity = currentTargetDiagnosticCacheIdentity();
+    m_snapshotResultIdentity = snapshotScopeIdentity();
 }
 
 void MainWindow::updateSnapshotControls()
@@ -7083,7 +7143,8 @@ void MainWindow::updateSnapshotControls()
         return;
     }
 
-    const QString identity = currentTargetDiagnosticCacheIdentity();
+    const bool hostScope = m_hostMaintenanceMode;
+    const QString identity = snapshotScopeIdentity();
     if (m_snapshotResultIdentity != identity) {
         // A target/scope change starts a new inventory generation: the next
         // automatic preload is allowed exactly once for it, and any completed
@@ -7093,18 +7154,23 @@ void MainWindow::updateSnapshotControls()
     }
 
     QString reason;
-    bool ready = repairTargetReady(&reason);
-    if (ready && m_deviceIndex.contains(m_previewTargetComponentPath)) {
-        const DeviceNode component = m_deviceIndex.value(m_previewTargetComponentPath);
+    bool ready = hostScope ? hostMaintenanceReady(&reason) : repairTargetReady(&reason);
+    const QString componentPath = snapshotComponentPath();
+    if (ready && m_deviceIndex.contains(componentPath)) {
+        const DeviceNode component = m_deviceIndex.value(componentPath);
         if (component.fileSystem.compare(QStringLiteral("btrfs"), Qt::CaseInsensitive) != 0) {
             ready = false;
-            reason = QStringLiteral("The selected Linux root is not Btrfs, so Btrfs snapshots are not available.");
+            reason = hostScope
+                ? QStringLiteral("The running host root is not Btrfs, so Btrfs snapshots are not available.")
+                : QStringLiteral("The selected Linux root is not Btrfs, so Btrfs snapshots are not available.");
         }
     }
 
     m_snapshotLoadButton->setEnabled(ready);
     m_snapshotLoadButton->setToolTip(ready
-        ? QStringLiteral("Enumerate root snapshots through a temporary privileged read-only Btrfs mount.")
+        ? (hostScope
+            ? QStringLiteral("Enumerate running-host root snapshots through a temporary privileged read-only Btrfs mount.")
+            : QStringLiteral("Enumerate root snapshots through a temporary privileged read-only Btrfs mount."))
         : reason);
 
     const bool rowSelected = ready && !m_snapshotTable->selectedItems().isEmpty();
@@ -7114,26 +7180,72 @@ void MainWindow::updateSnapshotControls()
         : (ready ? QStringLiteral("Select a snapshot row first.") : reason));
 
     bool rollbackCandidate = rowSelected;
+    QString rollbackReason;
     if (rollbackCandidate) {
         const int row = m_snapshotTable->currentRow();
         QTableWidgetItem *statusItem = row >= 0 ? m_snapshotTable->item(row, 4) : nullptr;
         rollbackCandidate = statusItem && statusItem->text().startsWith(QStringLiteral("Linux root snapshot"));
+        if (!rollbackCandidate) {
+            rollbackReason = QStringLiteral("Select a valid Linux root snapshot first.");
+        } else if (hostScope) {
+            // Host rollback is enabled only from cached running-host capability
+            // evidence and fails closed when the evidence is missing.
+            QString capabilityReason;
+            if (!hostSnapshotRollbackAvailable(&capabilityReason)) {
+                rollbackCandidate = false;
+                rollbackReason = capabilityReason;
+            }
+        }
+    } else {
+        rollbackReason = ready ? QStringLiteral("Select a valid Linux root snapshot first.") : reason;
     }
     m_snapshotRollbackButton->setEnabled(rollbackCandidate);
     m_snapshotRollbackButton->setToolTip(rollbackCandidate
-        ? QStringLiteral("Validate a rollback plan read-only, preserve the current @ root, promote a writable snapshot copy, reconcile initramfs/UKI/GRUB and auto-restore the old @ if validation fails.")
-        : (ready ? QStringLiteral("Select a valid Linux root snapshot first.") : reason));
+        ? (hostScope
+            ? QStringLiteral("Validate a running-host rollback plan read-only, preserve the running @ as @rollback-before-*, promote a writable snapshot copy and reconcile the boot stack in a scratch chroot. A reboot is required and is never automatic.")
+            : QStringLiteral("Validate a rollback plan read-only, preserve the current @ root, promote a writable snapshot copy, reconcile initramfs/UKI/GRUB and auto-restore the old @ if validation fails."))
+        : rollbackReason);
 }
 
-// Target + resolved component identity of the Btrfs inventory the preload and
-// request paths serve. Empty when no repair target is committed (host
-// maintenance mode has no Btrfs inventory of its own).
+// ---- MainWindow: snapshot scope accessors -----------------------------------
+
+QString MainWindow::snapshotDiskPath() const
+{
+    return m_hostMaintenanceMode ? m_hostPrimaryPath : m_previewTargetPath;
+}
+
+QString MainWindow::snapshotComponentPath() const
+{
+    return m_hostMaintenanceMode ? m_hostPrimaryComponentPath : m_previewTargetComponentPath;
+}
+
+QString MainWindow::snapshotHelperCommand() const
+{
+    return m_hostMaintenanceMode ? QStringLiteral("host-snapshots") : QStringLiteral("snapshots");
+}
+
+// Scope identity of the Btrfs inventory the preload and request paths serve:
+// "host:<disk>" in Host Maintenance, otherwise the committed target disk.
+QString MainWindow::snapshotScopeIdentity() const
+{
+    if (m_hostMaintenanceMode) {
+        return m_hostPrimaryPath.isEmpty()
+            ? QString()
+            : QStringLiteral("host:%1").arg(m_hostPrimaryPath);
+    }
+    return m_previewTargetPath;
+}
+
+// Target/host + resolved component identity of the Btrfs inventory the preload
+// and request paths serve. Empty when no scope is committed.
 QString MainWindow::snapshotScopeKey() const
 {
-    if (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()) {
+    const QString identity = snapshotScopeIdentity();
+    const QString component = snapshotComponentPath();
+    if (identity.isEmpty() || component.isEmpty()) {
         return QString();
     }
-    return m_previewTargetPath + QLatin1Char('\n') + m_previewTargetComponentPath;
+    return identity + QLatin1Char('\n') + component;
 }
 
 void MainWindow::scheduleSnapshotPreload()
@@ -7160,10 +7272,10 @@ void MainWindow::scheduleSnapshotPreload()
         // A privileged request owns the gate. A snapshot preload is background
         // work, so it is never queued behind that request (the nested wait
         // deadlocked the UI). Remember exactly one retry for the then-current
-        // target; the gate release re-runs it.
+        // scope; the gate release re-runs it.
         if (!m_snapshotPreloadDeferred) {
             appendLog(QStringLiteral("Btrfs snapshot preload for %1 is deferred until the running privileged operation finishes; the request was not queued.")
-                          .arg(m_previewTargetPath),
+                          .arg(snapshotDiskPath()),
                       QStringLiteral("INFO"), LogEntryKind::Snapshot);
         }
         m_snapshotPreloadDeferred = true;
@@ -7194,12 +7306,13 @@ void MainWindow::scheduleSnapshotPreload()
         if (m_snapshotInventoryInFlight && m_snapshotRequestScopeKey == currentScope) {
             return;
         }
-        // A target whose filesystem is already known to be non-Btrfs has no
+        // A scope whose filesystem is already known to be non-Btrfs has no
         // snapshot inventory to preload. State the applicability instead of
         // asking the privileged helper for a guaranteed "not applicable"
         // answer.
-        if (m_deviceIndex.contains(m_previewTargetComponentPath)) {
-            const DeviceNode component = m_deviceIndex.value(m_previewTargetComponentPath);
+        const QString componentPath = snapshotComponentPath();
+        if (m_deviceIndex.contains(componentPath)) {
+            const DeviceNode component = m_deviceIndex.value(componentPath);
             if (!component.fileSystem.isEmpty()
                 && component.fileSystem.compare(QStringLiteral("btrfs"), Qt::CaseInsensitive) != 0) {
                 showSnapshotInventoryNotApplicable(component.fileSystem);
@@ -7207,49 +7320,55 @@ void MainWindow::scheduleSnapshotPreload()
             }
         }
         QString reason;
-        if (repairTargetReady(&reason)) {
+        const bool ready = m_hostMaintenanceMode ? hostMaintenanceReady(&reason) : repairTargetReady(&reason);
+        if (ready) {
             loadSnapshots();
         }
     });
 }
 
-// Informational, never error-styled: a non-Btrfs target simply has no Btrfs
+// Informational, never error-styled: a non-Btrfs scope simply has no Btrfs
 // snapshot inventory. The page keeps its neutral empty state and the Logs tab
 // records an INFO entry that the operation is not applicable.
 void MainWindow::showSnapshotInventoryNotApplicable(const QString &fileSystem)
 {
-    // No inventory request is needed for this target, so a deferred preload
+    // No inventory request is needed for this scope, so a deferred preload
     // for it is satisfied by this informational state.
     m_snapshotPreloadDeferred = false;
     const QString fs = fileSystem.trimmed().isEmpty()
         ? QStringLiteral("unknown (not Btrfs)") : fileSystem.trimmed();
-    // Refresh the controls first: a target change clears the results pane, so
+    const bool hostScope = m_hostMaintenanceMode;
+    // Refresh the controls first: a scope change clears the results pane, so
     // the informational text must be written after that reset.
     updateSnapshotControls();
     // The applicability is this scope's complete answer: further automatic
     // preloads are deduped like a completed inventory.
     m_snapshotLoadedGeneration = m_snapshotScopeGeneration;
     if (m_snapshotDetails) {
-        m_snapshotDetails->setPlainText(QStringLiteral(
-            "Btrfs snapshot inventory is not applicable: the selected target filesystem is %1, not Btrfs.\n\nNo snapshot was loaded and the target was not modified.").arg(fs));
+        m_snapshotDetails->setPlainText(hostScope
+            ? QStringLiteral("Btrfs snapshot inventory is not applicable: the running host root filesystem is %1, not Btrfs.\n\nNo snapshot was loaded and the running host was not modified.").arg(fs)
+            : QStringLiteral("Btrfs snapshot inventory is not applicable: the selected target filesystem is %1, not Btrfs.\n\nNo snapshot was loaded and the target was not modified.").arg(fs));
     }
-    appendLog(QStringLiteral(
-                  "Btrfs snapshot inventory is not applicable for %1: the selected target filesystem is %2, not Btrfs. No snapshots were loaded and nothing was changed.")
-                  .arg(m_previewTargetComponentPath, fs),
+    appendLog(hostScope
+                  ? QStringLiteral("Btrfs snapshot inventory is not applicable for the running host: the root filesystem is %1, not Btrfs. No snapshots were loaded and nothing was changed.").arg(fs)
+                  : QStringLiteral("Btrfs snapshot inventory is not applicable for %1: the selected target filesystem is %2, not Btrfs. No snapshots were loaded and nothing was changed.")
+                        .arg(m_previewTargetComponentPath, fs),
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
 }
 
 void MainWindow::loadSnapshots()
 {
+    const bool hostScope = m_hostMaintenanceMode;
     QString reason;
-    if (!repairTargetReady(&reason)) {
+    if (!(hostScope ? hostMaintenanceReady(&reason) : repairTargetReady(&reason))) {
         QMessageBox::warning(this, QStringLiteral("Snapshot inventory unavailable"), reason);
         return;
     }
 
     // A known non-Btrfs component is resolved before any privileged request.
-    if (m_deviceIndex.contains(m_previewTargetComponentPath)) {
-        const DeviceNode component = m_deviceIndex.value(m_previewTargetComponentPath);
+    const QString scopeComponentPath = snapshotComponentPath();
+    if (m_deviceIndex.contains(scopeComponentPath)) {
+        const DeviceNode component = m_deviceIndex.value(scopeComponentPath);
         if (!component.fileSystem.isEmpty()
             && component.fileSystem.compare(QStringLiteral("btrfs"), Qt::CaseInsensitive) != 0) {
             showSnapshotInventoryNotApplicable(component.fileSystem);
@@ -7257,7 +7376,7 @@ void MainWindow::loadSnapshots()
         }
     }
 
-    // A second request for the same target+component while one is already in
+    // A second request for the same scope+component while one is already in
     // flight is a duplicate (for example a manual click racing the preload);
     // it must never issue another privileged inventory request.
     const QString requestScopeKey = snapshotScopeKey();
@@ -7267,12 +7386,12 @@ void MainWindow::loadSnapshots()
 
     if (m_privilegedOperationActive) {
         // The gate is held by another request. Never queue the inventory
-        // behind it; remember one retry for the then-current target and let
+        // behind it; remember one retry for the then-current scope and let
         // the gate release re-run it. A manual Load Snapshots click during a
         // read-only request is therefore deferred, not lost.
         if (!m_snapshotPreloadDeferred) {
             appendLog(QStringLiteral("Btrfs snapshot inventory for %1 is deferred until the running privileged operation finishes; the request was not queued.")
-                          .arg(m_previewTargetPath),
+                          .arg(snapshotDiskPath()),
                       QStringLiteral("INFO"), LogEntryKind::Snapshot);
         }
         m_snapshotPreloadDeferred = true;
@@ -7282,19 +7401,26 @@ void MainWindow::loadSnapshots()
         return;
     }
 
-    BusyOperationScope busy(this, QStringLiteral("Loading Btrfs snapshots"));
+    BusyOperationScope busy(this, hostScope
+        ? QStringLiteral("Loading running-host Btrfs snapshots")
+        : QStringLiteral("Loading Btrfs snapshots"));
 
-    const QString requestTargetPath = m_previewTargetPath;
-    const QString requestComponentPath = m_previewTargetComponentPath;
+    const QString requestTargetPath = snapshotDiskPath();
+    const QString requestComponentPath = snapshotComponentPath();
+    const QString helperCommand = snapshotHelperCommand();
     bool succeeded = false;
     m_snapshotInventoryInFlight = true;
     m_snapshotRequestScopeKey = requestScopeKey;
-    appendLog(QStringLiteral("Loading Btrfs snapshots read-only for %1 (%2).")
-                  .arg(requestTargetPath, requestComponentPath),
+    appendLog(hostScope
+                  ? QStringLiteral("Loading running-host Btrfs snapshots read-only for %1 (%2).")
+                        .arg(requestTargetPath, requestComponentPath)
+                  : QStringLiteral("Loading Btrfs snapshots read-only for %1 (%2).")
+                        .arg(requestTargetPath, requestComponentPath),
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
-        QStringLiteral("Load Btrfs snapshots"),
-        {QStringLiteral("snapshots"), requestTargetPath, requestComponentPath, QStringLiteral("list")},
+        hostScope ? QStringLiteral("Load running-host Btrfs snapshots")
+                  : QStringLiteral("Load Btrfs snapshots"),
+        {helperCommand, requestTargetPath, requestComponentPath, QStringLiteral("list")},
         QByteArray(),
         &succeeded,
         false,
@@ -7307,19 +7433,20 @@ void MainWindow::loadSnapshots()
     m_snapshotRequestScopeKey.clear();
 
     // A scope change while the request was in flight makes this inventory
-    // belong to a target that is no longer selected. Never apply one target's
+    // belong to a scope that is no longer selected. Never apply one scope's
     // rows to another: drop the stale result and let the deferred preload
-    // serve the new target.
-    if (requestTargetPath != m_previewTargetPath
-        || requestComponentPath != m_previewTargetComponentPath) {
-        appendLog(QStringLiteral("Discarded the Btrfs snapshot inventory for %1 (%2) because the active repair target changed while the request was running.")
+    // serve the new scope.
+    if (requestScopeKey != snapshotScopeKey()
+        || requestTargetPath != snapshotDiskPath()
+        || requestComponentPath != snapshotComponentPath()) {
+        appendLog(QStringLiteral("Discarded the Btrfs snapshot inventory for %1 (%2) because the active scope changed while the request was running.")
                       .arg(requestTargetPath, requestComponentPath),
                   QStringLiteral("INFO"), LogEntryKind::Snapshot);
         m_snapshotPreloadDeferred = true;
         updateSnapshotControls();
         return;
     }
-    // The completed request matches the active target, so any retry that was
+    // The completed request matches the active scope, so any retry that was
     // remembered while it was in flight is now satisfied.
     m_snapshotPreloadDeferred = false;
 
@@ -7335,7 +7462,7 @@ void MainWindow::loadSnapshots()
         return;
     }
 
-    // The helper reports a non-Btrfs target as an informational outcome (exit
+    // The helper reports a non-Btrfs scope as an informational outcome (exit
     // code 0) so a filesystem that simply cannot carry Btrfs snapshots never
     // produces a failed state or an error-styled log entry.
     if (output.contains(QStringLiteral("SNAPSHOT_INVENTORY_NOT_APPLICABLE=1"))) {
@@ -7343,7 +7470,7 @@ void MainWindow::loadSnapshots()
         return;
     }
 
-    m_snapshotResultIdentity = currentTargetDiagnosticCacheIdentity();
+    m_snapshotResultIdentity = snapshotScopeIdentity();
 
     auto decode = [](const QString &encoded) {
         return QString::fromUtf8(QByteArray::fromBase64(encoded.toLatin1()));
@@ -7376,13 +7503,22 @@ void MainWindow::loadSnapshots()
 
     const int count = rows.size();
     if (m_snapshotDetails) {
-        m_snapshotDetails->setPlainText(count > 0
-            ? QStringLiteral("Loaded %1 Btrfs root snapshot(s) read-only at %2. Select a row and choose Inspect Selected, or double-click a row, for snapshot-specific validation.\n\nNo snapshot or target file was modified.")
-                  .arg(count)
-                  .arg(QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss")))
-            : QStringLiteral("No Snapper-style Btrfs root snapshots were found on the selected target. The scan was read-only."));
+        const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+        if (count > 0) {
+            m_snapshotDetails->setPlainText(hostScope
+                ? QStringLiteral("Loaded %1 running-host Btrfs root snapshot(s) read-only at %2. Select a row and choose Inspect Selected, or double-click a row, for snapshot-specific validation.\n\nNo snapshot or host file was modified.")
+                      .arg(count).arg(stamp)
+                : QStringLiteral("Loaded %1 Btrfs root snapshot(s) read-only at %2. Select a row and choose Inspect Selected, or double-click a row, for snapshot-specific validation.\n\nNo snapshot or target file was modified.")
+                      .arg(count).arg(stamp));
+        } else {
+            m_snapshotDetails->setPlainText(hostScope
+                ? QStringLiteral("No Snapper-style Btrfs root snapshots or Boot Bitch rollback backups were found on the running host. The scan was read-only.")
+                : QStringLiteral("No Snapper-style Btrfs root snapshots were found on the selected target. The scan was read-only."));
+        }
     }
-    appendLog(QStringLiteral("Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.").arg(count),
+    appendLog(hostScope
+                  ? QStringLiteral("Loaded %1 running-host Btrfs snapshot(s) read-only.").arg(count)
+                  : QStringLiteral("Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.").arg(count),
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
     updateSnapshotControls();
     // The scope is satisfied: automatic preloads for this generation are
@@ -7460,14 +7596,20 @@ void MainWindow::inspectSelectedSnapshot()
         return;
     }
 
-    BusyOperationScope busy(this, QStringLiteral("Inspecting snapshot %1").arg(snapshotId));
+    const bool hostScope = m_hostMaintenanceMode;
+    BusyOperationScope busy(this, hostScope
+        ? QStringLiteral("Inspecting running-host snapshot %1").arg(snapshotId)
+        : QStringLiteral("Inspecting snapshot %1").arg(snapshotId));
 
     bool succeeded = false;
-    appendLog(QStringLiteral("Inspecting Btrfs snapshot %1 read-only.").arg(snapshotId),
+    appendLog(hostScope
+                  ? QStringLiteral("Inspecting running-host Btrfs snapshot %1 read-only.").arg(snapshotId)
+                  : QStringLiteral("Inspecting Btrfs snapshot %1 read-only.").arg(snapshotId),
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
     const QString output = runPrivilegedRequest(
-        QStringLiteral("Inspect Btrfs snapshot %1").arg(snapshotId),
-        {QStringLiteral("snapshots"), m_previewTargetPath, m_previewTargetComponentPath,
+        hostScope ? QStringLiteral("Inspect running-host Btrfs snapshot %1").arg(snapshotId)
+                  : QStringLiteral("Inspect Btrfs snapshot %1").arg(snapshotId),
+        {snapshotHelperCommand(), snapshotDiskPath(), snapshotComponentPath(),
          QStringLiteral("inspect"), snapshotId},
         QByteArray(),
         &succeeded,
@@ -7493,6 +7635,13 @@ void MainWindow::rollbackSelectedSnapshot()
 
     const QString snapshotId = m_snapshotTable->item(row, 0)->data(Qt::UserRole).toString();
     if (snapshotId.isEmpty()) {
+        return;
+    }
+
+    // Host Maintenance runs the running-host name-preserving transaction; the
+    // target branch below stays byte-compatible with the offline flow.
+    if (m_hostMaintenanceMode) {
+        rollbackHostSnapshot(snapshotId);
         return;
     }
 
@@ -7604,6 +7753,359 @@ void MainWindow::rollbackSelectedSnapshot()
         QMessageBox::critical(this, QStringLiteral("Snapshot rollback failed"),
                               QStringLiteral("The rollback did not complete successfully. Do not reboot until you review the Snapshots output and Logs. The helper attempts to restore the preserved @ automatically when post-switch validation fails."));
     }
+}
+
+// Running-host rollback capability from the cached running-host capability
+// preamble. The `Host snapshot rollback:` line is evidence, not a 14th
+// `Repair tool` key; missing evidence fails closed.
+bool MainWindow::hostSnapshotRollbackAvailable(QString *reason) const
+{
+    auto reject = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+        return false;
+    };
+    if (!m_hostMaintenanceMode) {
+        return reject(QStringLiteral("Running-host snapshot rollback is only available in Host Maintenance."));
+    }
+    const QString prefix = QStringLiteral("Host snapshot rollback: ");
+    bool hadEvidence = false;
+    bool available = false;
+    for (const QString &evidence : m_hostDiagnosticCache) {
+        for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+            if (!line.startsWith(prefix)) {
+                continue;
+            }
+            hadEvidence = true;
+            const QString state = line.mid(prefix.size()).trimmed();
+            if (state == QStringLiteral("available")) {
+                available = true;
+            } else if (state.startsWith(QStringLiteral("unavailable|"))) {
+                const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+                return reject(detail.isEmpty()
+                    ? QStringLiteral("Running-host snapshot rollback is unavailable.")
+                    : detail);
+            } else {
+                return reject(QStringLiteral("Running-host snapshot rollback has unknown capability evidence."));
+            }
+        }
+    }
+    if (!available) {
+        return reject(hadEvidence
+            ? QStringLiteral("Running-host snapshot rollback is unavailable.")
+            : QStringLiteral("Run running-host diagnostics in Host Maintenance first."));
+    }
+    if (reason) {
+        *reason = QStringLiteral("Running-host snapshot rollback is available.");
+    }
+    return true;
+}
+
+void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
+{
+    // A previous rollback staged before the reboot may be replaced only after
+    // an explicit warning: the new transaction preserves the currently running
+    // root, while the earlier staged root stays on disk but is no longer the
+    // recorded undo point.
+    if (m_hostRebootRequired) {
+        QMessageBox replacement(this);
+        replacement.setIcon(QMessageBox::Warning);
+        replacement.setWindowTitle(QStringLiteral("Rollback already staged"));
+        replacement.setText(QStringLiteral("A running-host rollback to %1 is already staged and takes effect on the next reboot.")
+                                .arg(m_hostRebootSnapshotId.isEmpty()
+                                         ? QStringLiteral("an earlier snapshot")
+                                         : QStringLiteral("snapshot %1").arg(m_hostRebootSnapshotId)));
+        replacement.setInformativeText(QStringLiteral(
+            "Rolling back again preserves the currently running root as a new @rollback-before-* backup and replaces the staged snapshot. The earlier staged root remains on disk but is no longer the recorded undo point.\n\n"
+            "Continue only if you intend to replace the staged rollback."));
+        replacement.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
+        replacement.setDefaultButton(QMessageBox::Cancel);
+        replacement.button(QMessageBox::Yes)->setText(QStringLiteral("Replace Staged Rollback"));
+        if (replacement.exec() != QMessageBox::Yes) {
+            appendLog(QStringLiteral("Running-host rollback cancelled at the replacement warning; the previously staged rollback remains in effect."),
+                      QStringLiteral("INFO"), LogEntryKind::Snapshot);
+            return;
+        }
+    }
+
+    BusyOperationScope busy(this, QStringLiteral("Rolling back running-host snapshot %1").arg(snapshotId));
+
+    bool planSucceeded = false;
+    appendLog(QStringLiteral("Preparing read-only running-host rollback plan for snapshot %1.").arg(snapshotId),
+              QStringLiteral("INFO"), LogEntryKind::Snapshot);
+    const QString plan = runPrivilegedRequest(
+        QStringLiteral("Preflight running-host rollback %1").arg(snapshotId),
+        {QStringLiteral("host-snapshots"), m_hostPrimaryPath, m_hostPrimaryComponentPath,
+         QStringLiteral("plan"), snapshotId},
+        QByteArray(),
+        &planSucceeded,
+        true,
+        LogEntryKind::Snapshot);
+
+    const QString captured = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    m_snapshotDetails->setPlainText(QStringLiteral("Running-host rollback preflight captured: %1\n\n%2").arg(captured, plan));
+    if (!planSucceeded || !plan.contains(QStringLiteral("PLAN_OK=1"))) {
+        appendLog(QStringLiteral("Running-host snapshot %1 rollback preflight failed; no host data was changed.").arg(snapshotId),
+                  QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+        QMessageBox::warning(this, QStringLiteral("Host rollback preflight failed"),
+                             QStringLiteral("The selected snapshot did not pass the running-host rollback preflight. No rollback was performed.\n\nReview the Snapshots details pane and Logs."));
+        return;
+    }
+
+    QMessageBox warning(this);
+    warning.setIcon(QMessageBox::Warning);
+    warning.setWindowTitle(QStringLiteral("Confirm running-host snapshot rollback"));
+    warning.setText(QStringLiteral("Roll the running host back to snapshot %1?").arg(snapshotId));
+    warning.setInformativeText(QStringLiteral(
+        "Running host: %1\nRoot filesystem: %2\n\n"
+        "The running host keeps running the current root until you reboot. On the next reboot it will start the selected snapshot instead.\n\n"
+        "Snapper/Boot Bitch take a snapshot of the current system first, so the present state is preserved automatically as an @rollback-before-* undo point.\n\n"
+        "Boot Bitch cannot guarantee that no data is lost: changes made after the selected snapshot are not part of the rolled-back root, and separate subvolumes such as /home are not rolled back.\n\n"
+        "All users are signed out and unsaved work is lost when the host reboots. The reboot is never automatic."
+    ).arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
+    warning.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
+    warning.setDefaultButton(QMessageBox::Cancel);
+    warning.button(QMessageBox::Yes)->setText(QStringLiteral("Continue to Confirmation"));
+    if (warning.exec() != QMessageBox::Yes) {
+        appendLog(QStringLiteral("Running-host rollback cancelled after preflight; no host data was changed."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        return;
+    }
+
+    bool ok = false;
+    const QString typed = QInputDialog::getText(
+        this,
+        QStringLiteral("Type ROLLBACK to continue"),
+        QStringLiteral("This operation stages the selected snapshot as the running host's next root and rebuilds boot artifacts.\n\nType ROLLBACK exactly to continue:"),
+        QLineEdit::Normal,
+        QString(),
+        &ok).trimmed();
+    if (!ok || typed != QStringLiteral("ROLLBACK")) {
+        appendLog(QStringLiteral("Running-host rollback cancelled because the confirmation text did not match ROLLBACK."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        return;
+    }
+
+    bool succeeded = false;
+    appendLog(QStringLiteral("Starting running-host Btrfs rollback to snapshot %1 on %2.")
+                  .arg(snapshotId, m_hostPrimaryPath),
+              QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+    const QString output = runPrivilegedRequest(
+        QStringLiteral("Roll back the running host to snapshot %1").arg(snapshotId),
+        {QStringLiteral("host-snapshots"), m_hostPrimaryPath, m_hostPrimaryComponentPath,
+         QStringLiteral("rollback"), snapshotId},
+        QByteArray(),
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot);
+
+    const QString finished = QDateTime::currentDateTime().toString(QStringLiteral("yyyy-MM-dd HH:mm:ss"));
+    m_snapshotDetails->setPlainText(QStringLiteral("Running-host rollback finished: %1\n\n%2").arg(finished, output));
+    if (succeeded && output.contains(QStringLiteral("HOST_ROLLBACK_RESULT=SUCCESS"))) {
+        // The running system still serves the old root; diagnostics describe
+        // the old boot and are invalidated. The reboot-required state is
+        // persisted and reconciled against the kernel boot id.
+        invalidateAllActiveScopeDiagnostics();
+        updateFullRepairSummary();
+        if (m_snapshotTable) {
+            m_snapshotTable->setRowCount(0);
+        }
+        m_snapshotResultIdentity = snapshotScopeIdentity();
+        setHostRebootRequired(snapshotId);
+        m_snapshotDetails->setPlainText(QStringLiteral("Running-host rollback staged: %1\n\n%2\n\nSnapshot inventory and cached running-host diagnostics were cleared because the next boot will start the promoted root. Reboot when ready; the reboot is never automatic.")
+                                            .arg(finished, output));
+        appendLog(QStringLiteral("STALE DIAGNOSTICS: running-host snapshot %1 rollback staged the promoted root for the next reboot; snapshot inventory and cached host diagnostics were invalidated. The running host keeps the current root until reboot.")
+                      .arg(snapshotId),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        updateSnapshotControls();
+        updateHostRebootBanner();
+
+        QMessageBox success(this);
+        success.setIcon(QMessageBox::Information);
+        success.setWindowTitle(QStringLiteral("Running-host rollback staged"));
+        success.setText(QStringLiteral("Snapshot %1 is staged as the running host's next root.").arg(snapshotId));
+        success.setInformativeText(QStringLiteral(
+            "Reboot required — the running host will start snapshot %1 after the next reboot. The previous root was retained as an @rollback-before-* undo point and the boot stack passed reconciliation.\n\n"
+            "Use Reboot Now to reboot immediately, or Later to keep working and reboot manually.").arg(snapshotId));
+        QPushButton *rebootNow = success.addButton(QStringLiteral("Reboot Now"), QMessageBox::AcceptRole);
+        QPushButton *later = success.addButton(QStringLiteral("Later"), QMessageBox::RejectRole);
+        success.setDefaultButton(later);
+        success.exec();
+        if (success.clickedButton() == rebootNow) {
+            confirmAndRebootHost();
+        }
+        return;
+    }
+
+    // Failure/partial: never reboot, keep a previously staged rollback's
+    // banner state, and surface the helper's recovery evidence verbatim.
+    invalidateAllActiveScopeDiagnostics();
+    updateFullRepairSummary();
+    if (m_snapshotTable) {
+        m_snapshotTable->setRowCount(0);
+    }
+    m_snapshotResultIdentity = snapshotScopeIdentity();
+    const bool recoveryFailed = output.contains(QStringLiteral("HOST_ROLLBACK_RECOVERY=failed"))
+        || output.contains(QStringLiteral("CRITICAL"));
+    m_snapshotDetails->setPlainText(QStringLiteral("Running-host rollback attempt finished: %1\n\n%2\n\nCached running-host diagnostics and snapshot inventory were cleared. Do not reboot until you review the Snapshots output and Logs.")
+                                        .arg(finished, output));
+    appendLog(QStringLiteral("STALE DIAGNOSTICS: running-host snapshot %1 rollback did not complete; cached host diagnostics and snapshots were invalidated. Review the operation output before the next repair or reboot.")
+                  .arg(snapshotId),
+              QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+    updateSnapshotControls();
+    if (recoveryFailed) {
+        QMessageBox::critical(this, QStringLiteral("Host rollback failed"),
+                              QStringLiteral("The running-host rollback did not complete and automatic recovery could not be proven. DO NOT REBOOT. Review the Snapshots output and Logs, and repair the boot stack from another system before rebooting.\n\nThe helper output carries HOST_ROLLBACK_RECOVERY and any CRITICAL lines verbatim."));
+    } else {
+        QMessageBox::critical(this, QStringLiteral("Host rollback failed"),
+                              QStringLiteral("The running-host rollback did not complete. The helper reports the preserved @ was restored automatically; do not reboot until you review the Snapshots output and Logs."));
+    }
+}
+
+// ---- MainWindow: running-host reboot-required state -------------------------
+
+QString MainWindow::currentBootId() const
+{
+    // Read-only test seam: BOOT_REPAIR_BOOT_ID overrides the kernel boot id so
+    // the boot-id reconciliation can be exercised without rebooting.
+    const QByteArray override = qgetenv("BOOT_REPAIR_BOOT_ID").trimmed();
+    if (!override.isEmpty()) {
+        return QString::fromUtf8(override);
+    }
+    QFile bootId(QStringLiteral("/proc/sys/kernel/random/boot_id"));
+    if (!bootId.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QString();
+    }
+    return QString::fromUtf8(bootId.readAll()).trimmed();
+}
+
+void MainWindow::setHostRebootRequired(const QString &snapshotId)
+{
+    m_hostRebootRequired = true;
+    m_hostRebootSnapshotId = snapshotId;
+    m_hostRebootRequiredAt = QDateTime::currentDateTime().toString(Qt::ISODate);
+    m_hostRebootBootId = currentBootId();
+    m_hostRebootBannerDismissed = false;
+    if (m_settings) {
+        m_settings->setValue(QStringLiteral("host/rebootRequired"), true);
+        m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), m_hostRebootSnapshotId);
+        m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), m_hostRebootRequiredAt);
+        m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), m_hostRebootBootId);
+        m_settings->sync();
+    }
+    updateHostRebootBanner();
+}
+
+void MainWindow::clearHostRebootRequired()
+{
+    m_hostRebootRequired = false;
+    m_hostRebootSnapshotId.clear();
+    m_hostRebootRequiredAt.clear();
+    m_hostRebootBootId.clear();
+    m_hostRebootBannerDismissed = false;
+    if (m_settings) {
+        m_settings->setValue(QStringLiteral("host/rebootRequired"), false);
+        m_settings->setValue(QStringLiteral("host/rebootRequiredSnapshot"), QString());
+        m_settings->setValue(QStringLiteral("host/rebootRequiredAt"), QString());
+        m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), QString());
+        m_settings->sync();
+    }
+    updateHostRebootBanner();
+}
+
+// Clear the persisted reminder only when a real reboot happened: the stored
+// boot id differs from the current kernel boot id. A missing stored id (for
+// example a settings file from a crash) keeps the reminder and adopts the
+// current boot id.
+void MainWindow::reconcileHostRebootRequired()
+{
+    if (!m_hostRebootRequired) {
+        return;
+    }
+    const QString current = currentBootId();
+    if (!m_hostRebootBootId.isEmpty() && !current.isEmpty() && m_hostRebootBootId != current) {
+        appendLog(QStringLiteral("Previous running-host rollback took effect at boot %1; the reboot reminder was cleared.").arg(current),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        clearHostRebootRequired();
+        return;
+    }
+    if (m_hostRebootBootId.isEmpty() && !current.isEmpty()) {
+        m_hostRebootBootId = current;
+        if (m_settings) {
+            m_settings->setValue(QStringLiteral("host/rebootRequiredBootId"), m_hostRebootBootId);
+            m_settings->sync();
+        }
+    }
+}
+
+void MainWindow::updateHostRebootBanner()
+{
+    if (!m_hostRebootBanner) {
+        return;
+    }
+    const bool visible = m_hostRebootRequired && m_hostMaintenanceMode && !m_hostRebootBannerDismissed;
+    m_hostRebootBanner->setVisible(visible);
+    if (!visible) {
+        return;
+    }
+    const QString snapshot = m_hostRebootSnapshotId.isEmpty()
+        ? QStringLiteral("the rolled-back snapshot")
+        : QStringLiteral("snapshot %1").arg(m_hostRebootSnapshotId);
+    const QString text = QStringLiteral("Reboot required — the running host will start %1 after the next reboot. The current root is preserved as an @rollback-before-* undo point.").arg(snapshot);
+    m_hostRebootBannerLabel->setText(text);
+    m_hostRebootBannerLabel->setAccessibleDescription(text);
+    m_hostRebootNowButton->setAccessibleDescription(QStringLiteral("Reboots the running host after a separate confirmation; all users are signed out."));
+    m_hostRebootLaterButton->setAccessibleDescription(QStringLiteral("Hides the reboot reminder until Host Maintenance is re-entered; the staged rollback stays in effect."));
+}
+
+void MainWindow::confirmAndRebootHost()
+{
+    if (!m_hostMaintenanceMode || !m_hostRebootRequired) {
+        return;
+    }
+
+    QMessageBox confirm(this);
+    confirm.setIcon(QMessageBox::Warning);
+    confirm.setWindowTitle(QStringLiteral("Reboot the running host now?"));
+    confirm.setText(QStringLiteral("Reboot the running host now?"));
+    confirm.setInformativeText(QStringLiteral(
+        "The rolled-back snapshot is already staged and takes effect on the next boot. Rebooting now signs out all users and closes unsaved work.\n\n"
+        "The host reboots only after this separate confirmation."));
+    confirm.setStandardButtons(QMessageBox::Cancel | QMessageBox::Yes);
+    confirm.setDefaultButton(QMessageBox::Cancel);
+    confirm.button(QMessageBox::Yes)->setText(QStringLiteral("Reboot Now"));
+    if (confirm.exec() != QMessageBox::Yes) {
+        appendLog(QStringLiteral("Running-host reboot cancelled at the second confirmation; the staged rollback remains in effect."),
+                  QStringLiteral("INFO"), LogEntryKind::Snapshot);
+        return;
+    }
+
+    BusyOperationScope busy(this, QStringLiteral("Rebooting running host"));
+    bool succeeded = false;
+    appendLog(QStringLiteral("Requesting an explicit running-host reboot after the second confirmation."),
+              QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+    const QString output = runPrivilegedRequest(
+        QStringLiteral("Reboot the running host"),
+        {QStringLiteral("host-reboot"), m_hostPrimaryPath, m_hostPrimaryComponentPath},
+        QByteArray(),
+        &succeeded,
+        true,
+        LogEntryKind::Snapshot);
+
+    if (succeeded && output.contains(QStringLiteral("HOST_REBOOT_SCHEDULED=1"))) {
+        statusBar()->showMessage(QStringLiteral("Running-host reboot scheduled; the host is restarting."), 10000);
+        appendLog(QStringLiteral("Running-host reboot scheduled by the privileged helper."),
+                  QStringLiteral("WARNING"), LogEntryKind::Snapshot);
+        return;
+    }
+    appendLog(QStringLiteral("Running-host reboot was not scheduled; the staged rollback and its reminder remain in effect."),
+              QStringLiteral("ERROR"), LogEntryKind::Snapshot);
+    QMessageBox::warning(this, QStringLiteral("Host reboot not scheduled"),
+                         output.trimmed().isEmpty()
+                             ? QStringLiteral("The running host did not schedule a reboot. The staged rollback and its reminder remain in effect.")
+                             : output);
+    updateHostRebootBanner();
 }
 
 // ---- MainWindow: File Copy --------------------------------------------------
@@ -9206,9 +9708,11 @@ void MainWindow::clearTargetDiagnosticCache()
 // Splits the helper's shared capability preamble out of one individual
 // diagnostic result. The preamble starts with the stable
 // "Repair capability probes (read-only..." header and is a contiguous block of
-// `Repair ...` lines; everything after it is the diagnostic's own output. The
-// preamble is never dropped: callers cache it under the dedicated capability
-// key so MainWindow::repairToolAvailable() keeps its single source of truth.
+// `Repair ...` lines plus the running-host `Host snapshot rollback:` /
+// `Host reboot:` evidence lines; everything after it is the diagnostic's own
+// output. The preamble is never dropped: callers cache it under the dedicated
+// capability key so MainWindow::repairToolAvailable() keeps its single source
+// of truth and the host-scope accessors can fail closed.
 void MainWindow::splitDiagnosticCapabilityPreamble(const QString &captured,
                                                    QString *body,
                                                    QString *preamble)
@@ -9236,12 +9740,14 @@ void MainWindow::splitDiagnosticCapabilityPreamble(const QString &captured,
         return;
     }
 
-    // The preamble is the contiguous run of `Repair ...` lines that starts at
-    // the header and ends at the first blank or non-`Repair` line.
+    // The preamble is the contiguous run of `Repair ...` lines (plus the
+    // running-host `Host ...` evidence lines) that starts at the header and
+    // ends at the first blank or unrelated line.
     int end = start;
     while (end < lines.size()) {
         const QString line = lines.at(end).trimmed();
-        if (line.isEmpty() || !line.startsWith(QStringLiteral("Repair "))) {
+        if (line.isEmpty()
+            || (!line.startsWith(QStringLiteral("Repair ")) && !line.startsWith(QStringLiteral("Host ")))) {
             break;
         }
         ++end;

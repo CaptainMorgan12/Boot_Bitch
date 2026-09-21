@@ -7,6 +7,19 @@ refinements are listed below.
 
 Released 2026-09-19.
 
+- Add running-host Btrfs snapshot rollback to Host Maintenance. The Snapshots
+  tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
+  points through the new `host-snapshots` helper command, stages the selected
+  snapshot with the name-preserving transaction (preserve the running `@`,
+  promote a writable copy, migrate a nested `@/.snapshots` child subvolume,
+  reconcile initramfs/UKI/GRUB in a scratch chroot, automatically restore on
+  failure) and reports `Host snapshot rollback` capability evidence without
+  adding a 14th `Repair tool` key. A successful rollback persists a **Reboot
+  required** reminder, cleared by kernel boot-id reconciliation, with `Reboot
+  Now` offered only after a second explicit confirmation through the new
+  `host-reboot` command; rollback never reboots automatically. Running-host
+  rollback is limited to Snapper top-level `@` roots with no `subvolid=` pin,
+  no separate `/boot` and no other nested `@` child subvolumes.
 - Add native RPM packaging and tooling: `scripts/package-rpm.sh` builds the
   CPack RPM with family-specific dependency names and
   `scripts/rpm-postinst.sh` as its POSIX `/bin/sh` scriptlet, and

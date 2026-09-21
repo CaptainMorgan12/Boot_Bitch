@@ -297,8 +297,10 @@ Usage:
   $PROGRAM_NAME config-read  <target-disk> <root-device> <config-key>
   $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>
   $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id]
+  $PROGRAM_NAME host-snapshots <host-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id|@rollback-before-<stamp>]
   $PROGRAM_NAME repair       <target-disk> <root-device> <stage> [stage ...]
   $PROGRAM_NAME host-repair  <host-disk> <root-device> <stage> [stage ...]
+  $PROGRAM_NAME host-reboot  <host-disk> <root-device>
   $PROGRAM_NAME host-validate <host-disk> <root-device>
   $PROGRAM_NAME host-diagnose <host-disk> <root-device> <diagnostic|all>
   $PROGRAM_NAME host-default <host-disk> <root-device>
@@ -335,6 +337,12 @@ Snapshots:
   inspect <id>      Inspect one Btrfs root snapshot read-only
   plan <id>         Validate and show a transactional rollback plan read-only
   rollback <id>     Promote a writable copy to @, reconcile boot stack, auto-revert on failure
+  Host actions use the same verbs with host-snapshots against the running host.
+  The selected Snapper @ snapshot is promoted to @ with a name-preserving
+  transaction, the running @ is preserved as the @rollback-before-* undo point
+  and a reboot is required before the running host starts the promoted root.
+  An existing @rollback-before-* name is accepted as the rollback target.
+  host-reboot schedules a reboot only after the explicit GUI confirmation.
 
 File system repair:
   fs-inspect       Resolve root, /boot, ESP and /home filesystems and run
@@ -387,8 +395,9 @@ supports the detected layout.
 Host maintenance is a separate native-running-system path. It accepts all
 repair stages supported by the detected backend with the same stage-specific
 checks; unsupported package or boot stages are rejected before any write.
-Host validation and diagnostics are read-only; snapshot, shell and file-copy
-workflows remain separate target tools.
+Host validation and diagnostics are read-only. Running-host Snapper @
+snapshots are available through host-snapshots in the Snapshots tab; the
+chroot shell and file-copy workflows remain separate target tools.
 USAGE
 }
 
@@ -9405,6 +9414,25 @@ diagnostic_repair_capabilities()
     for key in "${keys[@]}"; do
         printf 'Repair capability evidence %s: %s\n' "$key" "$(repair_capability_evidence "$key")"
     done
+
+    # Running-host maintenance adds two scope-specific capability lines. They
+    # are deliberately not `Repair tool` keys: the 13-key gating contract and
+    # the Settings/Full Repair plan stay untouched, and the Snapshots tab
+    # consumes these lines from the cached host capability preamble.
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local host_reason
+        if host_reason="$(host_snapshot_rollback_unavailable_reason)"; then
+            printf 'Host snapshot rollback: available\n'
+        else
+            printf 'Host snapshot rollback: unavailable|%s\n' "$host_reason"
+        fi
+        printf 'Host snapshot rollback evidence: %s\n' "$(host_snapshot_rollback_evidence)"
+        if host_reason="$(host_reboot_unavailable_reason)"; then
+            printf 'Host reboot: available\n'
+        else
+            printf 'Host reboot: unavailable|%s\n' "$host_reason"
+        fi
+    fi
 }
 
 diagnostic_boot()
@@ -11112,7 +11140,10 @@ snapshot_xml_value()
 # snapshot found under the top-level @.snapshots directory (read-only).
 list_snapshots()
 {
-    local id snap info created type desc status ro_prop rel
+    # The optional active subvolume id marks the snapshot the running system is
+    # currently executing from (or that is the Btrfs default) so host scope
+    # never offers it as a rollback target.
+    local active_id="${1:-}" id snap info created type desc status ro_prop rel
     local count=0
 
     while IFS=$'\t' read -r id snap; do
@@ -11124,7 +11155,9 @@ list_snapshots()
         type="$(snapshot_xml_value "$info" type || true)"
         desc="$(snapshot_xml_value "$info" description || true)"
         ro_prop="$(btrfs property get -ts "$snap" ro 2>/dev/null | awk -F= '$1=="ro" {print $2; exit}')"
-        if [[ -f "$snap/etc/os-release" ]]; then
+        if [[ -n "$active_id" && "$(btrfs_subvol_id "$snap" 2>/dev/null || true)" == "$active_id" ]]; then
+            status="Active root snapshot (currently running)"
+        elif [[ -f "$snap/etc/os-release" ]]; then
             status="Linux root snapshot${ro_prop:+; ro=$ro_prop}"
         else
             status="Incomplete/non-root snapshot${ro_prop:+; ro=$ro_prop}"
@@ -11261,7 +11294,9 @@ snapshot_kernel_pair_audit()
     fi
     for kernel in "${kernels[@]}"; do
         version="${kernel##*/vmlinuz-}"
-        if [[ -f "$root/boot/initrd.img-$version" ]]; then
+        # Debian names images initrd.img-<kver>; Arch/mkinitcpio uses the
+        # kernel flavor (initramfs-linux.img), so both pairings are accepted.
+        if [[ -f "$root/boot/initrd.img-$version" || -f "$root/boot/initramfs-$version.img" ]]; then
             echo "  PASS: $version has matching initramfs."
         else
             echo "  FAIL: $version has no matching initramfs."
@@ -11485,6 +11520,14 @@ snapshot_verify_installed_kernels()
     ((${#kernels[@]} > 0)) || fail "Promoted rollback root has no installed kernel under /boot."
     for kernel in "${kernels[@]}"; do
         version="${kernel##*/vmlinuz-}"
+        if [[ -f "$TARGET_ROOT/boot/initramfs-$version.img" ]]; then
+            # Arch/mkinitcpio flavor pairing: vmlinuz-<flavor> pairs with
+            # initramfs-<flavor>.img, while module directories are named after
+            # the full kernel version and cannot be derived from the flavor.
+            # The mkinitcpio rebuild below proves the module/image pairing.
+            log "Rollback kernel pair before rebuild: $version (mkinitcpio flavor naming)" | tee -a "$SESSION_LOG"
+            continue
+        fi
         if [[ -f "$TARGET_ROOT/boot/initrd.img-$version" ]]; then
             log "Rollback kernel pair before rebuild: $version" | tee -a "$SESSION_LOG"
         else
@@ -11765,6 +11808,819 @@ run_snapshots()
         plan) snapshot_rollback_plan "$requested" ;;
         rollback) rollback_snapshot "$requested" ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# Running-host Btrfs snapshot inventory and name-preserving rollback
+# ---------------------------------------------------------------------------
+# The host mechanism is deliberately NOT `snapper rollback`: on name-pinned @
+# roots (TUXEDO OS/Debian, Arch) snapper only sets the Btrfs default subvolume
+# and never edits fstab, GRUB or the UKI, so it would be a boot no-op.  Boot
+# Bitch instead reuses the proven target transaction shape live: preserve the
+# mounted @ under @rollback-before-*, promote a writable copy of the selected
+# snapshot to @, migrate a nested @/.snapshots child subvolume, reconcile the
+# boot stack in a scratch chroot and automatically restore the preserved root
+# on failure.  The running kernel keeps serving the old subvolume until reboot.
+
+# Path of the running root subvolume relative to the Btrfs top level.  The live
+# mount option is preferred; a default-subvolume mount is resolved through the
+# running root's subvolume id.  Prints nothing and returns 1 when the running
+# root is not a named subvolume (raw top-level root).
+host_snapshot_running_path()
+{
+    local id path
+    path="$(current_btrfs_subvol 2>/dev/null || true)"
+    if [[ -n "$path" ]]; then
+        printf '%s\n' "$path"
+        return 0
+    fi
+    id="$(btrfs_subvol_id / 2>/dev/null || true)"
+    [[ "$id" =~ ^[0-9]+$ ]] || return 1
+    if [[ "$id" == "5" ]]; then
+        printf '/\n'
+        return 0
+    fi
+    path="$(btrfs subvolume list / 2>/dev/null \
+        | sed -n "s/^ID[[:space:]]\+${id}[[:space:]].*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p" \
+        | head -n1)"
+    [[ -n "$path" ]] || return 1
+    printf '%s\n' "$path"
+}
+
+# The Snapper root configuration is the required snapshot producer/metadata
+# source.  A home or foreign configuration is never used as a rollback source.
+host_snapshot_snapper_config_ok()
+{
+    local cfg="/etc/snapper/configs/root"
+    [[ -f "$cfg" ]] || return 1
+    grep -Eq '^[[:space:]]*SUBVOLUME[[:space:]]*=[[:space:]]*"/"' "$cfg" || return 1
+    grep -Eq '^[[:space:]]*FSTYPE[[:space:]]*=[[:space:]]*"btrfs"' "$cfg" || return 1
+    return 0
+}
+
+# A name-preserving rename cannot change a subvolid= binding: the next boot
+# would keep mounting the old subvolume by id.  Refuse any subvolid= pin.
+host_snapshot_subvolid_pinned()
+{
+    if [[ -r /proc/cmdline ]] && grep -Eq '(^|[[:space:]])rootflags=[^[:space:]]*subvolid=' /proc/cmdline; then
+        return 0
+    fi
+    [[ -r /etc/fstab ]] || return 1
+    awk '
+        /^[[:space:]]*#/ { next }
+        NF >= 4 && $4 ~ /(^|,)subvolid=/ { found=1 }
+        END { exit(found ? 0 : 1) }
+    ' /etc/fstab
+}
+
+# A separate /boot filesystem is not part of the root snapshot, so the
+# promoted root may not match the running kernels/modules.  Refuse it.
+host_snapshot_has_separate_boot()
+{
+    local root_src boot_src
+    root_src="$(findmnt -rn -o SOURCE --target / 2>/dev/null | head -n1 || true)"
+    boot_src="$(findmnt -rn -o SOURCE --target /boot 2>/dev/null | head -n1 || true)"
+    if [[ -n "$root_src" && -n "$boot_src" ]]; then
+        if [[ "${root_src%%\[*}" != "${boot_src%%\[*}" ]]; then
+            return 0
+        fi
+        if [[ "$root_src" == *"["* && "$boot_src" == *"["* \
+              && "${root_src##*[}" != "${boot_src##*[}" ]]; then
+            return 0
+        fi
+    fi
+    [[ -r /etc/fstab ]] || return 1
+    awk '
+        /^[[:space:]]*#/ { next }
+        NF >= 3 && $2 == "/boot" { found=1 }
+        END { exit(found ? 0 : 1) }
+    ' /etc/fstab
+}
+
+# Timeshift-btrfs snapshots have their own restore tooling and no Snapper
+# metadata; a host with that inventory is recognized and refused, never
+# silently ignored.
+host_snapshot_timeshift_managed()
+{
+    if [[ -n "${SNAPSHOT_TOP:-}" && -d "$SNAPSHOT_TOP/timeshift-btrfs" ]]; then
+        return 0
+    fi
+    local cfg
+    for cfg in /etc/timeshift.json /etc/timeshift/timeshift.json; do
+        [[ -f "$cfg" ]] || continue
+        grep -Eqi 'btrfs' "$cfg" && return 0
+    done
+    return 1
+}
+
+# Nested child subvolumes of the running @ root.  Only @/.snapshots is
+# migrated by this release; any other nested subvolume would be dragged into
+# the preserved backup root and is refused instead of silently losing data.
+# `btrfs subvolume list -o` prints top-level-relative paths, unlike the default
+# list output whose nested paths are relative to their parent subvolume.
+host_snapshot_nested_child_paths()
+{
+    btrfs subvolume list -o / 2>/dev/null \
+        | sed -n 's/.*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p'
+}
+
+host_snapshot_other_nested_children()
+{
+    host_snapshot_nested_child_paths \
+        | awk '$0 ~ /^@\// && $0 !~ /^@\/\.snapshots(\/|$)/ { print }'
+}
+
+# True when the running @ root carries a nested @/.snapshots child subvolume
+# (bare `snapper create-config` layout) that must be migrated on promotion.
+host_snapshot_nested_snapshots_child()
+{
+    host_snapshot_nested_child_paths | grep -Fxq '@/.snapshots'
+}
+
+host_snapshot_free_space_ok()
+{
+    local available_kb
+    available_kb="$(df -Pk / 2>/dev/null | awk 'NR==2 {print $4}')"
+    [[ "$available_kb" =~ ^[0-9]+$ ]] || return 1
+    # The rollback is COW, but candidate creation and boot-stack regeneration
+    # need working room.
+    (( available_kb >= 1048576 ))
+}
+
+# Resolve a host rollback target: a numeric Snapper snapshot id under the
+# top-level snapshot store, or one of Boot Bitch's own @rollback-before-*
+# undo points.  Any other name is refused fail-closed.
+host_snapshot_target_is_undo()
+{
+    [[ "${1:-}" =~ ^@rollback-before-[0-9]{8}-[0-9]{6}$ ]]
+}
+
+host_snapshot_resolve_target()
+{
+    local requested="$1" path
+    if host_snapshot_target_is_undo "$requested"; then
+        path="$SNAPSHOT_TOP/$requested"
+        [[ -d "$path" ]] || return 1
+        btrfs subvolume show "$path" >/dev/null 2>&1 || return 1
+        printf '%s\n' "$path"
+        return 0
+    fi
+    [[ "$requested" =~ ^[0-9]+$ ]] || return 1
+    snapshot_find_path "$requested"
+}
+
+# Read-only capability detail line; never fails.
+host_snapshot_rollback_evidence()
+{
+    local version running store
+    version="$(LC_ALL=C snapper --version 2>/dev/null | head -n1 || true)"
+    running="$(host_snapshot_running_path 2>/dev/null || true)"
+    if host_snapshot_nested_snapshots_child 2>/dev/null; then
+        store="@/.snapshots (nested; migration supported)"
+    elif [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/@.snapshots" ]]; then
+        store="top-level @.snapshots"
+    elif [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/.snapshots" ]]; then
+        store="top-level .snapshots"
+    else
+        store="snapshot store not mounted"
+    fi
+    printf 'snapper %s; running root %s; %s' \
+        "${version:-not detected}" "${running:-unknown}" "$store"
+}
+
+# Probe-based reason for the `Host snapshot rollback:` capability line.
+# Returns 0 (available) with no output, or 1 with the exact missing
+# prerequisite on stdout.  Read-only and never fails the calling diagnostic.
+host_snapshot_rollback_unavailable_reason()
+{
+    local fstype running nested
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    if [[ "$fstype" != "btrfs" ]]; then
+        printf 'the running host root filesystem is %s, not Btrfs' "${fstype:-unknown}"
+        return 1
+    fi
+    command -v btrfs >/dev/null 2>&1 || { printf 'btrfs-progs is not installed'; return 1; }
+    command -v snapper >/dev/null 2>&1 || { printf 'snapper is not installed'; return 1; }
+    host_snapshot_snapper_config_ok \
+        || { printf 'no Snapper root configuration manages / with FSTYPE=btrfs'; return 1; }
+    running="$(host_snapshot_running_path 2>/dev/null || true)"
+    if [[ "$running" != "@" ]]; then
+        printf 'the running root subvolume is %s, not the top-level @' "${running:-unknown}"
+        return 1
+    fi
+    if host_snapshot_subvolid_pinned; then
+        printf 'the running host pins subvolid= in fstab or the kernel command line'
+        return 1
+    fi
+    if host_snapshot_has_separate_boot; then
+        printf 'the running host has a separate /boot filesystem outside the root snapshot'
+        return 1
+    fi
+    if host_snapshot_timeshift_managed; then
+        printf 'a Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported'
+        return 1
+    fi
+    nested="$(host_snapshot_other_nested_children 2>/dev/null || true)"
+    if [[ -n "$nested" ]]; then
+        printf 'the running @ root contains nested subvolumes that this release does not migrate: %s' \
+            "$(tr '\n' ' ' <<<"$nested" | sed 's/[[:space:]]*$//')"
+        return 1
+    fi
+    if ! target_path_is_mounted_rw /; then
+        printf 'the running host root filesystem is read-only'
+        return 1
+    fi
+    if ! host_snapshot_free_space_ok; then
+        printf 'less than 1 GiB of free Btrfs space is available'
+        return 1
+    fi
+    if ! ( host_package_manager_gate ) >/dev/null 2>&1; then
+        printf 'a package manager or package-manager lock is active'
+        return 1
+    fi
+    if pgrep -x snapper >/dev/null 2>&1; then
+        printf 'another snapper command is running'
+        return 1
+    fi
+    return 0
+}
+
+# Probe-based reason for the `Host reboot:` capability line.
+host_reboot_unavailable_reason()
+{
+    if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+        return 0
+    fi
+    if command -v rc-shutdown >/dev/null 2>&1 || command -v reboot >/dev/null 2>&1; then
+        return 0
+    fi
+    printf 'no supported reboot mechanism was found on the running host'
+    return 1
+}
+
+# Host inventory: Snapper root snapshots plus Boot Bitch @rollback-before-*
+# undo points, with the currently running snapshot marked and never offered as
+# a rollback target.  Read-only.
+host_list_snapshots()
+{
+    local active_id output count name path created ro_prop status rel
+
+    active_id="$(btrfs_subvol_id / 2>/dev/null || true)"
+    output="$(list_snapshots "$active_id")"
+    printf '%s\n' "$output"
+    count="$(grep -c '^SNAPSHOT' <<<"$output" || true)"
+
+    while IFS= read -r path; do
+        [[ -n "$path" ]] || continue
+        name="${path##*/}"
+        btrfs subvolume show "$path" >/dev/null 2>&1 || continue
+        created="$(btrfs subvolume show "$path" 2>/dev/null \
+            | sed -n 's/^[[:space:]]*Creation time:[[:space:]]*//p' | head -n1)"
+        [[ -n "$created" ]] || created="$(stat -c '%y' "$path" 2>/dev/null | cut -d. -f1 || true)"
+        ro_prop="$(btrfs property get -ts "$path" ro 2>/dev/null | awk -F= '$1=="ro" {print $2; exit}')"
+        if snapshot_root_valid "$path"; then
+            status="Linux root snapshot; Boot Bitch rollback backup (undo point)${ro_prop:+; ro=$ro_prop}"
+        else
+            status="Incomplete rollback backup${ro_prop:+; ro=$ro_prop}"
+        fi
+        rel="${path#"$SNAPSHOT_TOP"/}"
+        printf 'SNAPSHOT\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "$name" \
+            "$(snapshot_b64 "$created")" \
+            "$(snapshot_b64 "rollback-backup")" \
+            "$(snapshot_b64 "Boot Bitch pre-rollback root (undo point)")" \
+            "$(snapshot_b64 "$status")" \
+            "$(snapshot_b64 "$rel")"
+        count=$((count + 1))
+    done < <(find "$SNAPSHOT_TOP" -mindepth 1 -maxdepth 1 -type d -name '@rollback-before-*' 2>/dev/null | sort)
+
+    printf 'Host snapshot inventory: %s root snapshot(s)\n' "$count"
+}
+
+host_inspect_snapshot()
+{
+    local requested="$1" snap running default_line
+
+    snap="$(host_snapshot_resolve_target "$requested" || true)"
+    [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the running host's Btrfs filesystem."
+    running="$(host_snapshot_running_path 2>/dev/null || true)"
+    default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+
+    echo "Running host context:"
+    echo "  Running root subvolume: ${running:-unknown}"
+    echo "  Current default subvolume: ${default_line:-unknown}"
+    if host_snapshot_nested_snapshots_child; then
+        echo "  Nested @/.snapshots child subvolume: present (migrated into the promoted @)"
+    fi
+    echo
+
+    if [[ "$requested" =~ ^[0-9]+$ ]]; then
+        inspect_snapshot "$requested"
+        return 0
+    fi
+
+    echo "Rollback backup: $requested"
+    echo "Path: ${snap#"$SNAPSHOT_TOP"/}"
+    echo
+    btrfs subvolume show "$snap" 2>&1 || true
+    echo
+    echo "Root validation:"
+    if snapshot_root_valid "$snap"; then
+        echo "  PASS: /etc/os-release and /etc/fstab exist"
+    else
+        echo "  FAIL: the rollback backup is not a complete Linux root"
+    fi
+    echo
+    echo "Kernel/initramfs pairing:"
+    snapshot_kernel_pair_audit "$snap" || true
+    echo
+    echo "Backup fstab:"
+    sed -n '1,160p' "$snap/etc/fstab" 2>/dev/null || echo "  unavailable"
+    echo
+    echo "Backup crypttab:"
+    sed -n '1,120p' "$snap/etc/crypttab" 2>/dev/null || echo "  unavailable"
+    echo
+    echo "Inspection is read-only. No snapshot, subvolume, boot file or package state was modified."
+}
+
+# Complete read-only preflight and transactional plan for a running-host @
+# rollback.  Creates nothing; emits PLAN_OK=1 only after every check passes.
+host_snapshot_rollback_plan()
+{
+    local requested="$1" snap info type current pretty created root_id default_line rel backup_preview
+    local running_id default_id snap_id
+    local -a other_children=()
+
+    snap="$(host_snapshot_resolve_target "$requested" || true)"
+    [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the running host's Btrfs filesystem."
+
+    [[ "$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)" == "btrfs" ]] \
+        || fail "Host snapshot rollback requires a Btrfs running host root."
+    need btrfs
+    command -v snapper >/dev/null 2>&1 \
+        || fail "snapper is not installed on the running host; Snapper is the required snapshot producer."
+    host_snapshot_snapper_config_ok \
+        || fail "No Snapper root configuration manages / with FSTYPE=btrfs; host rollback is limited to Snapper-managed @ roots."
+    if ! ( LC_ALL=C snapper --no-dbus -c root list >/dev/null 2>&1 ); then
+        fail "The Snapper root configuration could not be queried (snapper --no-dbus list failed); refusing an unhealthy or concurrent Snapper state."
+    fi
+    if pgrep -x snapper >/dev/null 2>&1; then
+        fail "Another snapper command is running; refusing a concurrent Snapper transaction."
+    fi
+    ( host_package_manager_gate ) >/dev/null 2>&1 \
+        || fail "A package manager or package-manager lock is active; refusing a concurrent host rollback."
+
+    current="$(host_snapshot_running_path || true)"
+    [[ "$current" == "@" ]] \
+        || fail "The running root subvolume is '${current:-unknown}', not the top-level @; this release supports Snapper @ roots only."
+    host_snapshot_subvolid_pinned \
+        && fail "The running host pins subvolid= in fstab or the kernel command line; a name-preserving rollback cannot change it."
+    host_snapshot_has_separate_boot \
+        && fail "The running host has a separate /boot filesystem outside the root snapshot; refusing host rollback."
+    host_snapshot_timeshift_managed \
+        && fail "A Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported on this host."
+    target_path_is_mounted_rw / \
+        || fail "The running host root filesystem is read-only; refusing host rollback."
+    host_snapshot_free_space_ok \
+        || fail "Less than 1 GiB of free Btrfs space is available; refusing host rollback."
+
+    mapfile -t other_children < <(host_snapshot_other_nested_children)
+    ((${#other_children[@]} == 0)) \
+        || fail "The running @ root contains nested subvolume(s) that this release does not migrate: ${other_children[*]}; refusing host rollback."
+
+    if host_snapshot_target_is_undo "$requested"; then
+        type="rollback-backup"
+        info=""
+        snapshot_root_valid "$snap" \
+            || fail "Rollback backup $requested is not a valid Linux root subvolume."
+    else
+        info="$(snapshot_info_file "$snap" || true)"
+        [[ -n "$info" ]] \
+            || fail "Snapshot $requested has no Snapper info.xml metadata; non-Snapper Btrfs snapshots are not supported as host rollback targets."
+        type="$(snapshot_xml_value "$info" type || true)"
+        [[ "$type" == "single" ]] \
+            || fail "Snapshot $requested is a Snapper '$type' snapshot; only single snapshots can be promoted to @."
+        snapshot_root_valid "$snap" \
+            || fail "Snapshot $requested is not a valid Linux root snapshot (/etc/os-release and /etc/fstab are required)."
+    fi
+    validate_snapshot_fstab_for_rollback "$snap" \
+        || fail "Snapshot $requested fstab is not compatible with a safe @ rollback."
+    validate_snapshot_crypttab_for_rollback "$snap" \
+        || fail "Snapshot $requested crypttab does not resolve safely on the running host disk."
+    snapshot_has_separate_boot "$snap" \
+        && fail "Snapshot $requested has a separate /boot entry; refusing host rollback."
+
+    running_id="$(btrfs_subvol_id / 2>/dev/null || true)"
+    snap_id="$(btrfs_subvol_id "$snap" 2>/dev/null || true)"
+    if [[ -n "$running_id" && -n "$snap_id" && "$running_id" == "$snap_id" ]]; then
+        fail "Snapshot $requested is the currently running root; refusing to roll back to the running system."
+    fi
+    default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$default_line" | head -1)"
+    if [[ -n "$default_id" && -n "$snap_id" && "$default_id" == "$snap_id" ]]; then
+        fail "Snapshot $requested is the current Btrfs default subvolume; refusing to roll back to the active root."
+    fi
+
+    root_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/@" || true)"
+    pretty="$(awk -F= '$1=="PRETTY_NAME" {sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$snap/etc/os-release")"
+    created="$(btrfs subvolume show "$snap" 2>/dev/null | sed -n 's/^[[:space:]]*Creation time:[[:space:]]*//p' | head -1)"
+    rel="${snap#"$SNAPSHOT_TOP"/}"
+    backup_preview="@rollback-before-$(date +%Y%m%d-%H%M%S)"
+
+    echo "========================================"
+    echo "RUNNING-HOST BTRFS ROLLBACK PLAN"
+    echo "========================================"
+    echo "Host disk: $TARGET_DISK"
+    echo "Btrfs filesystem: $ROOT_DEVICE"
+    echo "Running root subvolume: @${root_id:+ (subvolume ID $root_id)}"
+    echo "Current default subvolume: ${default_line:-unknown}"
+    echo
+    echo "Selected rollback target: $requested"
+    echo "Path: $rel"
+    echo "Target OS: ${pretty:-Linux}"
+    [[ -n "$created" ]] && echo "Created: $created"
+    echo "Snapper type: $type"
+    [[ -n "$info" ]] && echo "Description: $(snapshot_xml_value "$info" description || true)"
+    echo
+    echo "Preflight kernel/initramfs evidence:"
+    snapshot_kernel_pair_audit "$snap" || true
+    echo
+    echo "Separate Btrfs subvolumes are retained rather than rolled back:"
+    snapshot_separate_subvolumes "$snap"
+    echo
+    if host_snapshot_nested_snapshots_child; then
+        echo "Nested @/.snapshots child subvolume: will be migrated into the promoted @."
+    fi
+    echo
+    echo "Host rollback transaction:"
+    echo "  1. Keep the selected snapshot/backup unchanged."
+    echo "  2. Create a new writable snapshot candidate @rollback-new-<stamp>."
+    echo "  3. Preserve the running @ as $backup_preview (the automatic undo point)."
+    echo "  4. Promote the candidate to @ and set it as the Btrfs default subvolume."
+    echo "  5. Migrate a nested @/.snapshots child subvolume when present."
+    echo "  6. Mount the promoted @ in a scratch chroot and reconcile initramfs/UKI/GRUB."
+    echo "  7. If a critical post-switch stage fails, restore the preserved @ automatically."
+    echo
+    echo "The running host keeps running the current root until reboot."
+    echo "A reboot is required and is never performed automatically."
+    echo "PLAN_OK=1"
+}
+
+# Detach every helper-owned scratch mount except the Btrfs top-level mount.
+host_snapshot_unmount_scratch()
+{
+    local idx path
+    local -a keep=()
+    for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
+        path="${MOUNTS[$idx]:-}"
+        [[ -n "$path" ]] || continue
+        if [[ "$path" == "$SNAPSHOT_TOP" ]]; then
+            keep+=("$path")
+            continue
+        fi
+        if mountpoint -q "$path" 2>/dev/null; then
+            # The scratch tree contains a recursive /sys bind whose nested
+            # submounts can keep the parent busy; the lazy fallback detaches
+            # only the helper's private scratch mounts, never the live root.
+            umount "$path" 2>/dev/null || umount -l "$path" 2>/dev/null || return 1
+        fi
+    done
+    if ((${#keep[@]} > 0)); then
+        MOUNTS=("${keep[@]}")
+    else
+        MOUNTS=()
+    fi
+    return 0
+}
+
+# Mount the promoted @ read-write at a scratch path (never over the live /)
+# with its fstab subvolumes, boot entries and chroot pseudo-filesystems.
+host_snapshot_mount_promoted_root_rw()
+{
+    local scratch="$SESSION_DIR/host-promoted-root"
+    ROOT_DEVICE="$(preferred_block_path "$ROOT_DEVICE" "$ROOT_CANONICAL")"
+    mkdir -p -- "$scratch"
+    mount_recorded "$ROOT_DEVICE" "$scratch" -o rw,subvol=@
+    MOUNT_BASE="$scratch"
+    TARGET_ROOT="$scratch"
+    TARGET_SUBVOL="@"
+    read_target_os
+    # The shared post-switch reconcile selects the initramfs/GRUB backend from
+    # the promoted root's own probes, exactly like a target repair.
+    profile_target_backends
+    prepare_mapper_compatibility_aliases
+    mount_target_btrfs_subvolumes rw
+    mount_target_boot_entry "/boot" rw
+    mount_target_boot_entry "/boot/efi" rw
+    mount_target_boot_entry "/efi" rw
+    mount_special dev-rw none "$TARGET_ROOT/dev"
+    mount_special proc proc "$TARGET_ROOT/proc"
+    mount_special rbind-ro /sys "$TARGET_ROOT/sys"
+    mount_special tmpfs none "$TARGET_ROOT/run"
+}
+
+# Recovery for a failed running-host rollback: detach the scratch mounts, move
+# a migrated nested .snapshots child back into the preserved root, promote the
+# preserved @ back to @, restore the previous Btrfs default and reconcile its
+# boot stack.  Returns non-zero when any step leaves the host without a safe
+# root.
+host_snapshot_restore_preserved_root()
+{
+    local top="$1" backup_name="$2" failed_name="$3" old_default_id="$4" current_id restore_rc=0
+    log "HOST ROLLBACK RECOVERY: restoring the preserved pre-rollback @." | tee -a "$SESSION_LOG"
+
+    if ! host_snapshot_unmount_scratch; then
+        log "CRITICAL: cannot detach the promoted host rollback mounts; refusing to rename Btrfs roots during recovery." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    if ! mount -o remount,rw "$top" 2>/dev/null; then
+        log "CRITICAL: could not remount the Btrfs top-level filesystem read-write during host rollback recovery." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+
+    # A nested @/.snapshots child was migrated into the promoted @; move it
+    # back so the preserved root is a complete Snapper root again.
+    if btrfs subvolume show "$top/@/.snapshots" >/dev/null 2>&1; then
+        if [[ -d "$top/$backup_name/.snapshots" ]]; then
+            rmdir -- "$top/$backup_name/.snapshots" 2>/dev/null || true
+        fi
+        if ! mv -- "$top/@/.snapshots" "$top/$backup_name/.snapshots"; then
+            log "CRITICAL: could not move the nested @/.snapshots child back into the preserved root." | tee -a "$SESSION_LOG"
+            return 1
+        fi
+    fi
+
+    if [[ ! -d "$top/$backup_name" ]]; then
+        log "CRITICAL: preserved root $backup_name is missing; refusing to move the active rollback candidate." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    if [[ -e "$top/@" ]]; then
+        if ! mv -- "$top/@" "$top/$failed_name"; then
+            log "CRITICAL: could not move the failed host rollback candidate out of @; refusing to promote the preserved root." | tee -a "$SESSION_LOG"
+            return 1
+        fi
+    fi
+    mv -- "$top/$backup_name" "$top/@" || return 1
+
+    if [[ "$old_default_id" =~ ^[0-9]+$ ]]; then
+        if ! btrfs subvolume set-default "$old_default_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
+            log "CRITICAL: could not restore the previous Btrfs default subvolume." | tee -a "$SESSION_LOG"
+            return 1
+        fi
+    else
+        current_id="$(btrfs_subvol_id "$top/@" || true)"
+        if [[ -n "$current_id" ]]; then
+            if ! btrfs subvolume set-default "$current_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
+                log "CRITICAL: could not restore the previous Btrfs default subvolume." | tee -a "$SESSION_LOG"
+                return 1
+            fi
+        else
+            log "CRITICAL: could not determine the preserved root subvolume ID." | tee -a "$SESSION_LOG"
+            return 1
+        fi
+    fi
+
+    host_snapshot_mount_promoted_root_rw || return 1
+    set +e
+    ( snapshot_post_switch_reconcile ) 2>&1 | tee -a "$SESSION_LOG"
+    restore_rc=${PIPESTATUS[0]}
+    set -e
+    if ((restore_rc != 0)); then
+        log "CRITICAL: the original @ was restored, but its boot-stack reconciliation also failed. Manual boot repair is required before reboot." | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    log "PASS: the original @ and its boot stack were restored automatically. Failed rollback candidate retained as $failed_name." | tee -a "$SESSION_LOG"
+    return 0
+}
+
+# Execute the running-host rollback: snapshot the selected snapshot/undo point
+# to a writable candidate, preserve the running @ under @rollback-before-*,
+# promote the candidate, migrate a nested @/.snapshots child, reconcile the
+# boot stack in a scratch chroot and automatically restore the preserved root
+# on any critical failure.  The host is never rebooted here.
+host_rollback_snapshot()
+{
+    local requested="$1" snap stamp candidate_name backup_name failed_name candidate_path
+    local old_default_line old_default_id candidate_id rc output nested=0
+    local pre_fstab pre_grub pre_cmdline pre_uki path
+
+    # The complete read-only preflight runs again here; the helper never trusts
+    # the GUI's earlier plan request.  PLAN_OK=1 is printed again as evidence.
+    host_snapshot_rollback_plan "$requested"
+    snap="$(host_snapshot_resolve_target "$requested" || true)"
+    [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the running host's Btrfs filesystem."
+
+    if host_snapshot_nested_snapshots_child; then
+        nested=1
+    fi
+
+    stamp="$(date +%Y%m%d-%H%M%S)"
+    candidate_name="@rollback-new-$stamp"
+    backup_name="@rollback-before-$stamp"
+    failed_name="@rollback-failed-$stamp"
+    candidate_path="$SNAPSHOT_TOP/$candidate_name"
+
+    for path in "$candidate_path" "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$failed_name"; do
+        [[ ! -e "$path" ]] || fail "Host rollback staging path already exists: ${path#"$SNAPSHOT_TOP"/}"
+    done
+
+    old_default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    old_default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$old_default_line" | head -1)"
+    pre_fstab="$(repair_file_fingerprint /etc/fstab)"
+    pre_grub="$(repair_file_fingerprint /boot/grub/grub.cfg)"
+    pre_cmdline="$(repair_file_fingerprint /etc/kernel/cmdline)"
+    pre_uki="$(repair_file_fingerprint /boot/efi/EFI/BOOT/TUX.EFI)"
+
+    # Firmware-variable writes stay intercepted for the complete transaction
+    # (candidate creation, promotion and the scratch chroot reconcile).
+    prepare_host_command_guard
+
+    log "Running-host rollback selected: snapshot $requested." | tee -a "$SESSION_LOG"
+    log "Preserved root name: $backup_name" | tee -a "$SESSION_LOG"
+    log "Rollback source remains unchanged; the running host keeps the current root until reboot." | tee -a "$SESSION_LOG"
+    log "Pre-rollback boot artifact fingerprints: fstab=$pre_fstab grub=$pre_grub cmdline=$pre_cmdline uki=$pre_uki" | tee -a "$SESSION_LOG"
+
+    # This is the exact point where the host rollback crosses from read-only
+    # planning to a modifying transaction.
+    TARGET_WRITE_INTENT=1
+    mount -o remount,rw "$SNAPSHOT_TOP" 2>&1 | tee -a "$SESSION_LOG"
+
+    log "Creating writable rollback candidate $candidate_name" | tee -a "$SESSION_LOG"
+    btrfs subvolume snapshot "$snap" "$candidate_path" 2>&1 | tee -a "$SESSION_LOG"
+    snapshot_root_valid "$candidate_path" || {
+        btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
+        fail "Writable host rollback candidate failed Linux-root validation; the running root was not changed."
+    }
+
+    mv -- "$SNAPSHOT_TOP/@" "$SNAPSHOT_TOP/$backup_name" || {
+        btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
+        fail "Could not preserve the running @ subvolume; host rollback was not performed."
+    }
+    if ! mv -- "$candidate_path" "$SNAPSHOT_TOP/@"; then
+        if mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/@" 2>/dev/null; then
+            fail "Could not promote the host rollback candidate to @; the original @ name was restored."
+        fi
+        fail "Could not promote the host rollback candidate or restore the original @ name. Do not reboot."
+    fi
+
+    if (( nested == 1 )); then
+        log "Migrating nested @/.snapshots child subvolume into the promoted root." | tee -a "$SESSION_LOG"
+        if [[ -d "$SNAPSHOT_TOP/@/.snapshots" && ! -L "$SNAPSHOT_TOP/@/.snapshots" ]]; then
+            if ! rmdir -- "$SNAPSHOT_TOP/@/.snapshots" 2>/dev/null; then
+                host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+                fail "The promoted @ contains a non-empty .snapshots directory; cannot migrate the nested child subvolume. Original root restoration was attempted."
+            fi
+        elif [[ -e "$SNAPSHOT_TOP/@/.snapshots" ]]; then
+            host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "The promoted @ contains an unexpected .snapshots entry; cannot migrate the nested child subvolume. Original root restoration was attempted."
+        fi
+        if ! mv -- "$SNAPSHOT_TOP/$backup_name/.snapshots" "$SNAPSHOT_TOP/@/.snapshots"; then
+            host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "Could not migrate the nested @/.snapshots child subvolume. Original root restoration was attempted."
+        fi
+    fi
+
+    candidate_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/@" || true)"
+    if [[ -z "$candidate_id" ]]; then
+        host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+        fail "Unable to determine the promoted @ subvolume ID. Original root restoration was attempted."
+    fi
+    set +e
+    btrfs subvolume set-default "$candidate_id" "$SNAPSHOT_TOP" 2>&1 | tee -a "$SESSION_LOG"
+    rc=${PIPESTATUS[0]}
+    set -e
+    if ((rc != 0)); then
+        log "Host rollback default-subvolume update failed; automatically restoring the preserved root." | tee -a "$SESSION_LOG"
+        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+            printf 'HOST_ROLLBACK_RECOVERY=ok\n'
+        else
+            printf 'HOST_ROLLBACK_RECOVERY=failed\n'
+        fi
+        fail "Host rollback failed while setting the Btrfs default subvolume; the preserved root restoration was attempted."
+    fi
+    sync
+
+    if ! host_snapshot_mount_promoted_root_rw; then
+        log "Host rollback candidate mount/preflight failed; automatically restoring the preserved root." | tee -a "$SESSION_LOG"
+        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+            printf 'HOST_ROLLBACK_RECOVERY=ok\n'
+        else
+            printf 'HOST_ROLLBACK_RECOVERY=failed\n'
+        fi
+        fail "Host rollback failed while mounting the promoted @; the preserved root restoration was attempted."
+    fi
+    set +e
+    output="$( ( snapshot_post_switch_reconcile ) 2>&1 )"
+    rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+
+    if ((rc != 0)); then
+        log "Host rollback candidate failed post-switch validation/boot reconciliation; automatically restoring the preserved root." | tee -a "$SESSION_LOG"
+        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+            printf 'HOST_ROLLBACK_RECOVERY=ok\n'
+        else
+            printf 'HOST_ROLLBACK_RECOVERY=failed\n'
+        fi
+        fail "Host rollback failed post-switch validation; the preserved root restoration was attempted."
+    fi
+
+    sync
+    log "========================================" | tee -a "$SESSION_LOG"
+    log "RUNNING-HOST SNAPSHOT ROLLBACK COMPLETE" | tee -a "$SESSION_LOG"
+    log "Selected rollback target: $requested" | tee -a "$SESSION_LOG"
+    log "Promoted root: @ (subvolume ID $candidate_id); the running system keeps the previous root until reboot." | tee -a "$SESSION_LOG"
+    log "Previous root retained as: $backup_name" | tee -a "$SESSION_LOG"
+    printf 'HOST_ROLLBACK_OLD_DEFAULT=%s\n' "${old_default_id:-unknown}"
+    printf 'HOST_ROLLBACK_OLD_ROOT=@\n'
+    printf 'HOST_ROLLBACK_NEW_ROOT=@\n'
+    printf 'HOST_ROLLBACK_BACKUP_ROOT=%s\n' "$backup_name"
+    printf 'HOST_ROLLBACK_REBOOT_REQUIRED=1\n'
+    printf 'HOST_ROLLBACK_RESULT=SUCCESS\n'
+    repair_change_status snapshots changed
+}
+
+# host-snapshots dispatch: list|inspect|plan|rollback against the running
+# host.  A non-Btrfs host has no Btrfs snapshot inventory: the read-only list
+# reports that as an informational outcome (exit 0), while inspect/plan/
+# rollback remain explicit errors because they name a concrete Btrfs
+# operation.  A rollback always re-runs every preflight in the helper.
+run_host_snapshots()
+{
+    local action="${1:-}" requested="${2:-}" fstype
+    need base64
+    need tr
+    need find
+    need sed
+    need stat
+    case "$action" in
+        list)
+            [[ $# -eq 1 ]] || fail "host-snapshots list does not accept a snapshot id."
+            ;;
+        inspect|plan|rollback)
+            [[ $# -eq 2 ]] || fail "host-snapshots $action requires exactly one snapshot id or @rollback-before-* name."
+            ;;
+        *)
+            fail "Unknown host-snapshots action: ${action:-missing}. Use list, inspect, plan or rollback."
+            ;;
+    esac
+
+    CURRENT_STAGE="host snapshot $action"
+    RUNNING_HOST_MODE=1
+    if [[ "$action" == "rollback" ]]; then
+        prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" yes
+    else
+        prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no
+    fi
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    if [[ "$fstype" != "btrfs" ]]; then
+        if [[ "$action" == "list" ]]; then
+            printf 'Host snapshot inventory is not applicable: the running host root filesystem is %s, not Btrfs.\n' "${fstype:-unknown}"
+            printf 'SNAPSHOT_INVENTORY_NOT_APPLICABLE=1\n'
+            log "Host snapshot inventory skipped: ${fstype:-unknown} is not Btrfs." | tee -a "$SESSION_LOG"
+            return 0
+        fi
+        fail "Host snapshot $action requires a Btrfs running host root; detected ${fstype:-unknown}."
+    fi
+    need btrfs
+    mount_snapshot_top
+
+    case "$action" in
+        list) host_list_snapshots ;;
+        inspect) host_inspect_snapshot "$requested" ;;
+        plan) host_snapshot_rollback_plan "$requested" ;;
+        rollback) host_rollback_snapshot "$requested" ;;
+    esac
+}
+
+# host-reboot: schedule one reboot of the running host.  The GUI reaches this
+# command only after its separate explicit confirmation; the helper never
+# reboots on its own and never falls back to an unprivileged mechanism.
+run_host_reboot()
+{
+    local raw_disk="${1:-}" raw_root="${2:-}"
+    (($# == 2)) || fail "host-reboot requires a host disk and root component."
+    [[ -n "$raw_disk" && -n "$raw_root" ]] || fail "host-reboot requires a host disk and root component."
+
+    CURRENT_STAGE="host reboot"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$raw_disk" "$raw_root" no
+
+    if [[ -d /run/systemd/system ]] && command -v systemctl >/dev/null 2>&1; then
+        log "Scheduling running-host reboot through systemd." | tee -a "$SESSION_LOG"
+        systemctl reboot --no-block || fail "systemd refused the running-host reboot request (inhibitor or policy)."
+    elif command -v rc-shutdown >/dev/null 2>&1; then
+        log "Scheduling running-host reboot through OpenRC." | tee -a "$SESSION_LOG"
+        rc-shutdown -r now || fail "OpenRC refused the running-host reboot request."
+    elif command -v reboot >/dev/null 2>&1; then
+        log "Scheduling running-host reboot through the system reboot command." | tee -a "$SESSION_LOG"
+        reboot || fail "The system reboot command failed."
+    else
+        fail "No supported reboot mechanism was found on the running host."
+    fi
+    printf 'HOST_REBOOT_SCHEDULED=1\n'
 }
 
 # Interactive-prompt evidence.  dnf5 (and apt/pacman/apk) print their
@@ -14830,7 +15686,7 @@ session_server()
         op_args=("${fields[@]:1}")
         case "$command" in
             unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair) ;;
-            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair) ;;
+            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot) ;;
             *)
                 secret=""
                 session_protocol_error "$request_id" "Command is not permitted by the privileged-session broker: $command"
@@ -14935,6 +15791,13 @@ main()
             ;;
         snapshots)
             run_snapshots "$@"
+            ;;
+        host-snapshots)
+            run_host_snapshots "$@"
+            ;;
+        host-reboot)
+            [[ $# -eq 0 ]] || fail "host-reboot does not accept extra arguments."
+            run_host_reboot "$TARGET_DISK" "$ROOT_DEVICE"
             ;;
         shell)
             [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
