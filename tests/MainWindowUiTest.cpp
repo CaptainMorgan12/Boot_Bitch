@@ -758,12 +758,12 @@ private:
 };
 
 // Applies a deterministic desktop color scheme through the production test
-// seam (the same code path the platform's colorSchemeChanged signal uses) and
+// seam (the same code path the platform's scheme-change signal uses) and
 // restores the previous application palette on scope exit.
 class ScopedColorSchemeOverride
 {
 public:
-    explicit ScopedColorSchemeOverride(Qt::ColorScheme scheme)
+    explicit ScopedColorSchemeOverride(MainWindow::ColorSchemeValue scheme)
         : m_originalPalette(QApplication::palette())
     {
         MainWindow::setColorSchemeOverrideForTests(scheme);
@@ -771,13 +771,30 @@ public:
 
     ~ScopedColorSchemeOverride()
     {
-        MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Unknown);
+        MainWindow::setColorSchemeOverrideForTests(MainWindow::ColorSchemeValue::Unknown);
         QApplication::setPalette(m_originalPalette);
     }
 
 private:
     QPalette m_originalPalette;
 };
+
+// Drives a runtime scheme switch the way the platform does: emitting
+// QStyleHints::colorSchemeChanged on Qt >= 6.5 (the signal the window
+// connects to), and calling the same slot directly on older Qt, where the
+// signal and Qt::ColorScheme do not exist.
+void switchDesktopColorScheme(MainWindow &window, MainWindow::ColorSchemeValue scheme)
+{
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    Q_UNUSED(window);
+    QGuiApplication::styleHints()->colorSchemeChanged(
+        scheme == MainWindow::ColorSchemeValue::Dark ? Qt::ColorScheme::Dark
+                                                     : Qt::ColorScheme::Light);
+#else
+    Q_UNUSED(scheme);
+    window.applyColorScheme();
+#endif
+}
 
 // Foreground color a rendered repair-result glyph carries in the log document.
 QColor repairGlyphColor(MainWindow &window, const QString &glyph)
@@ -7599,17 +7616,17 @@ void MainWindowUiTest::fedoraUpgradeStageIncludedWhenEnabledAndGateRefreshesImme
 // The application must follow the desktop color scheme in both directions:
 // the palette, log text/selection, table alternate rows, disabled states and
 // the custom repair-result colors all adapt, and switching the scheme at
-// runtime goes through colorSchemeChanged.
+// runtime goes through the platform scheme-change path.
 void MainWindowUiTest::themeFollowsDesktopColorScheme()
 {
     MainWindow window;
     window.show();
     QTest::qWait(50);
 
-    ScopedColorSchemeOverride scheme(Qt::ColorScheme::Dark);
-    // Emitting the platform signal is exactly what happens when the desktop
-    // switches appearance at runtime.
-    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Dark);
+    ScopedColorSchemeOverride scheme(MainWindow::ColorSchemeValue::Dark);
+    // Triggering the platform scheme change is exactly what happens when the
+    // desktop switches appearance at runtime.
+    switchDesktopColorScheme(window, MainWindow::ColorSchemeValue::Dark);
     QCoreApplication::processEvents();
 
     const QPalette darkPalette = window.palette();
@@ -7652,9 +7669,9 @@ void MainWindowUiTest::themeFollowsDesktopColorScheme()
              "the applied scheme and its source must be logged");
 
     // Switch the desktop scheme at runtime: the palette and the custom colors
-    // must follow through the same signal.
-    MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Light);
-    QGuiApplication::styleHints()->colorSchemeChanged(Qt::ColorScheme::Light);
+    // must follow through the same path.
+    MainWindow::setColorSchemeOverrideForTests(MainWindow::ColorSchemeValue::Light);
+    switchDesktopColorScheme(window, MainWindow::ColorSchemeValue::Light);
     QCoreApplication::processEvents();
 
     const QPalette lightPalette = window.palette();
@@ -7689,13 +7706,14 @@ void MainWindowUiTest::themeFollowsDesktopColorScheme()
 
 // Reproduces the Fedora/GNOME startup race: the desktop was already dark before
 // the launch, the platform theme publishes the scheme only after the first
-// paint, and no colorSchemeChanged is emitted because nothing changed. The
-// deferred re-check must pick the late value up without any user toggle.
+// paint, and no platform scheme-change signal is emitted because nothing
+// changed. The deferred re-check must pick the late value up without any user
+// toggle.
 void MainWindowUiTest::themeDetectsDarkSchemeAfterStartup()
 {
     // Deterministic initial state: the window starts light and the desktop
     // value only becomes visible after the event loop has started.
-    ScopedColorSchemeOverride scheme(Qt::ColorScheme::Light);
+    ScopedColorSchemeOverride scheme(MainWindow::ColorSchemeValue::Light);
     MainWindow window;
     window.show();
     QVERIFY2(window.palette().color(QPalette::Window).lightness() > 128,
@@ -7709,9 +7727,9 @@ void MainWindowUiTest::themeDetectsDarkSchemeAfterStartup()
     const QColor lightSuccess = repairGlyphColor(window, QStringLiteral("✓"));
     QVERIFY(lightSuccess.isValid() && lightSuccess.lightness() < 128);
 
-    // The scheme becomes dark shortly after startup, without any
-    // colorSchemeChanged emission (the desktop was already dark).
-    MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme::Dark);
+    // The scheme becomes dark shortly after startup, without any platform
+    // scheme-change emission (the desktop was already dark).
+    MainWindow::setColorSchemeOverrideForTests(MainWindow::ColorSchemeValue::Dark);
     QTRY_VERIFY_WITH_TIMEOUT(
         window.palette().color(QPalette::Window).lightness() < 128, 3000);
 
@@ -7740,28 +7758,31 @@ void MainWindowUiTest::themeDetectsDarkSchemeAfterStartup()
 void MainWindowUiTest::portalColorSchemeParsing()
 {
     QVERIFY2(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("prefer-dark")))
-                 == Qt::ColorScheme::Dark,
+                 == MainWindow::ColorSchemeValue::Dark,
              "GNOME's prefer-dark string must resolve to dark");
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("dark")))
-            == Qt::ColorScheme::Dark);
+            == MainWindow::ColorSchemeValue::Dark);
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("prefer-light")))
-            == Qt::ColorScheme::Light);
+            == MainWindow::ColorSchemeValue::Light);
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("default")))
-            == Qt::ColorScheme::Unknown);
-    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(1))) == Qt::ColorScheme::Dark);
-    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(2))) == Qt::ColorScheme::Light);
-    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(0))) == Qt::ColorScheme::Unknown);
+            == MainWindow::ColorSchemeValue::Unknown);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(1)))
+            == MainWindow::ColorSchemeValue::Dark);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(2)))
+            == MainWindow::ColorSchemeValue::Light);
+    QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(uint(0)))
+            == MainWindow::ColorSchemeValue::Unknown);
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant(QStringLiteral("")))
-            == Qt::ColorScheme::Unknown);
+            == MainWindow::ColorSchemeValue::Unknown);
 #ifdef BOOT_REPAIR_HAVE_DBUS
     // Exactly what `gdbus call ... Read org.gnome.desktop.interface
     // color-scheme` returns on GNOME 50: a variant inside a variant.
     const QDBusVariant darkInner(QStringLiteral("prefer-dark"));
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant::fromValue(QDBusVariant(darkInner)))
-            == Qt::ColorScheme::Dark);
+            == MainWindow::ColorSchemeValue::Dark);
     const QDBusVariant lightInner(QStringLiteral("prefer-light"));
     QVERIFY(MainWindow::colorSchemeFromPortalValue(QVariant::fromValue(QDBusVariant(lightInner)))
-            == Qt::ColorScheme::Light);
+            == MainWindow::ColorSchemeValue::Light);
 #endif
 }
 

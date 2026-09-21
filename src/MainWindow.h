@@ -224,11 +224,24 @@ public:
     void beginBusyOperation(const QString &label);
     void endBusyOperation(const QString &label);
 
+    // Internal desktop color-scheme value. Qt::ColorScheme,
+    // QStyleHints::colorScheme() and QStyleHints::colorSchemeChanged exist
+    // only on Qt >= 6.5, so the window never names them in its interface and
+    // the same code compiles against older Qt 6 releases. On Qt >= 6.5 the
+    // platform hint is mapped into this enum; on older Qt the platform palette
+    // fallback in resolvedColorScheme() (and the XDG portal/gsettings paths,
+    // which work through QtDBus on any Qt 6) supplies the light/dark answer.
+    enum class ColorSchemeValue {
+        Unknown,
+        Light,
+        Dark
+    };
+
     // Parses a portal Read/SettingChanged value into a scheme. Handles the
     // GNOME string values ("prefer-dark"/"prefer-light") and the extra variant
     // layer GNOME's Settings portal wraps around them. Public so the UI suite
     // can pin the parsing independently of a running portal.
-    static Qt::ColorScheme colorSchemeFromPortalValue(const QVariant &value);
+    static ColorSchemeValue colorSchemeFromPortalValue(const QVariant &value);
 
 signals:
     void busyStateChanged(bool busy, const QString &label);
@@ -701,10 +714,11 @@ private:
 
     // Applies the resolved desktop color scheme to the application palette
     // whenever the current palette does not match it, so a GNOME/Fedora dark
-    // desktop can never render the app light. Reacts to
-    // QStyleHints::colorSchemeChanged at runtime and re-renders every
-    // palette-derived custom color (log text/selection, stale highlighting,
-    // repair-result glyphs, committed-target highlight, scroll fades).
+    // desktop can never render the app light. Reacts to the platform scheme
+    // change signal at runtime (QStyleHints::colorSchemeChanged on Qt >= 6.5)
+    // and re-renders every palette-derived custom color (log text/selection,
+    // stale highlighting, repair-result glyphs, committed-target highlight,
+    // scroll fades).
     void applyColorScheme();
     void updateThemeDependentColors();
     // Coalesces a deferred scheme re-resolution into one event-loop turn.
@@ -723,14 +737,14 @@ private:
     // answers nothing. Never runs on the offscreen/minimal test platform.
     void queryGsettingsColorScheme();
     // One application-log + stderr line per scheme/source change.
-    void logColorSchemeResolution(Qt::ColorScheme scheme, ColorSchemeSource source);
-    static Qt::ColorScheme effectiveColorScheme();
-    Qt::ColorScheme resolvedColorScheme(ColorSchemeSource *source = nullptr) const;
+    void logColorSchemeResolution(ColorSchemeValue scheme, ColorSchemeSource source);
+    static ColorSchemeValue effectiveColorScheme();
+    ColorSchemeValue resolvedColorScheme(ColorSchemeSource *source = nullptr) const;
     // Test-only override so the offscreen suite can exercise both schemes
     // deterministically. Unknown means "use the desktop scheme".
-    static void setColorSchemeOverrideForTests(Qt::ColorScheme scheme);
-    static Qt::ColorScheme colorSchemeOverrideForTests();
-    static Qt::ColorScheme s_colorSchemeOverride;
+    static void setColorSchemeOverrideForTests(ColorSchemeValue scheme);
+    static ColorSchemeValue colorSchemeOverrideForTests();
+    static ColorSchemeValue s_colorSchemeOverride;
 
 private slots:
     // Portal SettingChanged hook. The signal carries (namespace, key, value)
@@ -808,9 +822,9 @@ private:
     // Adwaita light in a dark session. The last applied scheme plus the
     // coalescing/reentrancy guards keep the deferred re-checks from
     // re-rendering or re-applying a palette that already matches.
-    Qt::ColorScheme m_portalColorScheme = Qt::ColorScheme::Unknown;
-    Qt::ColorScheme m_gsettingsColorScheme = Qt::ColorScheme::Unknown;
-    Qt::ColorScheme m_lastAppliedColorScheme = Qt::ColorScheme::Unknown;
+    ColorSchemeValue m_portalColorScheme = ColorSchemeValue::Unknown;
+    ColorSchemeValue m_gsettingsColorScheme = ColorSchemeValue::Unknown;
+    ColorSchemeValue m_lastAppliedColorScheme = ColorSchemeValue::Unknown;
     // Last "scheme|source" pair written to the application log, so repeated
     // palette events do not spam the register with identical lines.
     QString m_lastLoggedColorScheme;

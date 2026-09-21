@@ -3075,10 +3075,14 @@ MainWindow::MainWindow(QWidget *parent)
     // overridden when it does not already match the resolved scheme.
     queryPortalColorScheme();
     applyColorScheme();
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
+    // Qt only exposes a platform color-scheme hint (and its change signal)
+    // since 6.5; older Qt relies on the palette/portal/gsettings evidence.
     if (QGuiApplication::styleHints()) {
         connect(QGuiApplication::styleHints(), &QStyleHints::colorSchemeChanged,
                 this, [this](Qt::ColorScheme) { applyColorScheme(); });
     }
+#endif
     // The platform theme can publish the scheme only after the first paint and
     // does not emit colorSchemeChanged when the desktop was already dark
     // before the launch. Re-resolve once the event loop runs and once more
@@ -3090,7 +3094,7 @@ MainWindow::MainWindow(QWidget *parent)
     // still available through the read-only gsettings fallback. The portal
     // reply stays authoritative when it arrives later.
     QTimer::singleShot(600, this, [this] {
-        if (m_portalColorScheme == Qt::ColorScheme::Unknown) {
+        if (m_portalColorScheme == ColorSchemeValue::Unknown) {
             queryGsettingsColorScheme();
         }
     });
@@ -13179,29 +13183,40 @@ static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1)
 
 // ---- MainWindow: system color scheme ----------------------------------------
 
-Qt::ColorScheme MainWindow::s_colorSchemeOverride = Qt::ColorScheme::Unknown;
+MainWindow::ColorSchemeValue MainWindow::s_colorSchemeOverride = ColorSchemeValue::Unknown;
 
-void MainWindow::setColorSchemeOverrideForTests(Qt::ColorScheme scheme)
+void MainWindow::setColorSchemeOverrideForTests(ColorSchemeValue scheme)
 {
     s_colorSchemeOverride = scheme;
 }
 
-Qt::ColorScheme MainWindow::colorSchemeOverrideForTests()
+MainWindow::ColorSchemeValue MainWindow::colorSchemeOverrideForTests()
 {
     return s_colorSchemeOverride;
 }
 
 // The platform/test hint alone. It is not authoritative when the desktop
-// evidence disagrees; resolvedColorScheme() applies that precedence.
-Qt::ColorScheme MainWindow::effectiveColorScheme()
+// evidence disagrees; resolvedColorScheme() applies that precedence. The
+// platform hint exists only on Qt >= 6.5; on older Qt the value stays Unknown
+// and resolvedColorScheme() falls through to the palette-derived answer.
+MainWindow::ColorSchemeValue MainWindow::effectiveColorScheme()
 {
-    if (s_colorSchemeOverride != Qt::ColorScheme::Unknown) {
+    if (s_colorSchemeOverride != ColorSchemeValue::Unknown) {
         return s_colorSchemeOverride;
     }
+#if QT_VERSION >= QT_VERSION_CHECK(6, 5, 0)
     if (QGuiApplication::styleHints()) {
-        return QGuiApplication::styleHints()->colorScheme();
+        switch (QGuiApplication::styleHints()->colorScheme()) {
+        case Qt::ColorScheme::Dark:
+            return ColorSchemeValue::Dark;
+        case Qt::ColorScheme::Light:
+            return ColorSchemeValue::Light;
+        default:
+            return ColorSchemeValue::Unknown;
+        }
     }
-    return Qt::ColorScheme::Unknown;
+#endif
+    return ColorSchemeValue::Unknown;
 }
 
 // Maps a portal Read/SettingChanged value to a scheme. GNOME's Settings portal
@@ -13209,7 +13224,7 @@ Qt::ColorScheme MainWindow::effectiveColorScheme()
 // GNOME namespace returns the string "prefer-dark", the cross-desktop
 // appearance key returns 0/1/2), so every variant layer is unwrapped before
 // the payload is classified.
-Qt::ColorScheme MainWindow::colorSchemeFromPortalValue(const QVariant &value)
+MainWindow::ColorSchemeValue MainWindow::colorSchemeFromPortalValue(const QVariant &value)
 {
     QVariant inner = value;
 #ifdef BOOT_REPAIR_HAVE_DBUS
@@ -13218,30 +13233,30 @@ Qt::ColorScheme MainWindow::colorSchemeFromPortalValue(const QVariant &value)
     }
 #else
     Q_UNUSED(inner);
-    return Qt::ColorScheme::Unknown;
+    return ColorSchemeValue::Unknown;
 #endif
     if (inner.userType() == QMetaType::QString) {
         const QString text = inner.toString().trimmed().toLower();
         if (text == QStringLiteral("dark") || text == QStringLiteral("prefer-dark")) {
-            return Qt::ColorScheme::Dark;
+            return ColorSchemeValue::Dark;
         }
         if (text == QStringLiteral("light") || text == QStringLiteral("prefer-light")) {
-            return Qt::ColorScheme::Light;
+            return ColorSchemeValue::Light;
         }
-        return Qt::ColorScheme::Unknown;
+        return ColorSchemeValue::Unknown;
     }
     bool ok = false;
     const uint code = inner.toUInt(&ok);
     if (!ok) {
-        return Qt::ColorScheme::Unknown;
+        return ColorSchemeValue::Unknown;
     }
     if (code == 1) {
-        return Qt::ColorScheme::Dark;
+        return ColorSchemeValue::Dark;
     }
     if (code == 2) {
-        return Qt::ColorScheme::Light;
+        return ColorSchemeValue::Light;
     }
-    return Qt::ColorScheme::Unknown;
+    return ColorSchemeValue::Unknown;
 }
 
 // The scheme the application should render. Desktop evidence (the XDG portal,
@@ -13251,28 +13266,28 @@ Qt::ColorScheme MainWindow::colorSchemeFromPortalValue(const QVariant &value)
 // color-scheme is prefer-dark (verified on Fedora 44 / GNOME 50). With no
 // desktop evidence the platform hint is used; the native palette is the last
 // resort before light.
-Qt::ColorScheme MainWindow::resolvedColorScheme(ColorSchemeSource *source) const
+MainWindow::ColorSchemeValue MainWindow::resolvedColorScheme(ColorSchemeSource *source) const
 {
-    if (s_colorSchemeOverride != Qt::ColorScheme::Unknown) {
+    if (s_colorSchemeOverride != ColorSchemeValue::Unknown) {
         if (source) {
             *source = ColorSchemeSource::TestOverride;
         }
         return s_colorSchemeOverride;
     }
-    if (m_portalColorScheme != Qt::ColorScheme::Unknown) {
+    if (m_portalColorScheme != ColorSchemeValue::Unknown) {
         if (source) {
             *source = ColorSchemeSource::Portal;
         }
         return m_portalColorScheme;
     }
-    if (m_gsettingsColorScheme != Qt::ColorScheme::Unknown) {
+    if (m_gsettingsColorScheme != ColorSchemeValue::Unknown) {
         if (source) {
             *source = ColorSchemeSource::GSettings;
         }
         return m_gsettingsColorScheme;
     }
-    const Qt::ColorScheme platform = effectiveColorScheme();
-    if (platform != Qt::ColorScheme::Unknown) {
+    const ColorSchemeValue platform = effectiveColorScheme();
+    if (platform != ColorSchemeValue::Unknown) {
         if (source) {
             *source = ColorSchemeSource::Platform;
         }
@@ -13282,8 +13297,8 @@ Qt::ColorScheme MainWindow::resolvedColorScheme(ColorSchemeSource *source) const
         *source = ColorSchemeSource::Palette;
     }
     return QApplication::palette().color(QPalette::Window).lightness() < 128
-        ? Qt::ColorScheme::Dark
-        : Qt::ColorScheme::Light;
+        ? ColorSchemeValue::Dark
+        : ColorSchemeValue::Light;
 }
 
 namespace {
@@ -13367,12 +13382,12 @@ QPalette fallbackColorSchemePalette(bool dark)
 }
 
 // Human-readable scheme name used by the startup/change log line.
-QString colorSchemeName(Qt::ColorScheme scheme)
+QString colorSchemeName(MainWindow::ColorSchemeValue scheme)
 {
     switch (scheme) {
-    case Qt::ColorScheme::Dark:
+    case MainWindow::ColorSchemeValue::Dark:
         return QStringLiteral("dark");
-    case Qt::ColorScheme::Light:
+    case MainWindow::ColorSchemeValue::Light:
         return QStringLiteral("light");
     default:
         return QStringLiteral("unknown");
@@ -13384,7 +13399,7 @@ QString colorSchemeName(Qt::ColorScheme scheme)
 // is tried first and the cross-desktop appearance key second, mirroring the
 // asynchronous fallback chain. The timeout only bounds a hung portal; a
 // healthy one answers in a few milliseconds.
-Qt::ColorScheme readPortalColorScheme()
+MainWindow::ColorSchemeValue readPortalColorScheme()
 {
     const QDBusConnection bus = QDBusConnection::sessionBus();
     const auto read = [&bus](const QString &nameSpace) {
@@ -13396,12 +13411,12 @@ Qt::ColorScheme readPortalColorScheme()
         call << nameSpace << QStringLiteral("color-scheme");
         const QDBusMessage reply = bus.call(call, QDBus::Block, 250);
         if (reply.type() != QDBusMessage::ReplyMessage || reply.arguments().isEmpty()) {
-            return Qt::ColorScheme::Unknown;
+            return MainWindow::ColorSchemeValue::Unknown;
         }
         return MainWindow::colorSchemeFromPortalValue(reply.arguments().constFirst());
     };
-    Qt::ColorScheme scheme = read(QStringLiteral("org.gnome.desktop.interface"));
-    if (scheme == Qt::ColorScheme::Unknown) {
+    MainWindow::ColorSchemeValue scheme = read(QStringLiteral("org.gnome.desktop.interface"));
+    if (scheme == MainWindow::ColorSchemeValue::Unknown) {
         scheme = read(QStringLiteral("org.freedesktop.appearance"));
     }
     return scheme;
@@ -13421,8 +13436,8 @@ Qt::ColorScheme readPortalColorScheme()
 void MainWindow::applyColorScheme()
 {
     ColorSchemeSource source = ColorSchemeSource::Palette;
-    const Qt::ColorScheme scheme = resolvedColorScheme(&source);
-    const bool wantDark = scheme == Qt::ColorScheme::Dark;
+    const ColorSchemeValue scheme = resolvedColorScheme(&source);
+    const bool wantDark = scheme == ColorSchemeValue::Dark;
     const bool paletteMatches =
         (QApplication::palette().color(QPalette::Window).lightness() < 128) == wantDark;
     if (!paletteMatches) {
@@ -13440,7 +13455,7 @@ void MainWindow::applyColorScheme()
 // One application-log + stderr line per scheme/source change. The line names
 // the platform hint and every desktop-evidence value that was consulted, so a
 // light launch under a dark desktop can be diagnosed from the log alone.
-void MainWindow::logColorSchemeResolution(Qt::ColorScheme scheme, ColorSchemeSource source)
+void MainWindow::logColorSchemeResolution(ColorSchemeValue scheme, ColorSchemeSource source)
 {
     const QString schemeName = colorSchemeName(scheme);
     QString sourceName;
@@ -13467,10 +13482,10 @@ void MainWindow::logColorSchemeResolution(Qt::ColorScheme scheme, ColorSchemeSou
     }
     m_lastLoggedColorScheme = key;
     QString detail = QStringLiteral("platform hint: %1").arg(colorSchemeName(effectiveColorScheme()));
-    if (m_portalColorScheme != Qt::ColorScheme::Unknown) {
+    if (m_portalColorScheme != ColorSchemeValue::Unknown) {
         detail += QStringLiteral(", portal: %1").arg(colorSchemeName(m_portalColorScheme));
     }
-    if (m_gsettingsColorScheme != Qt::ColorScheme::Unknown) {
+    if (m_gsettingsColorScheme != ColorSchemeValue::Unknown) {
         detail += QStringLiteral(", gsettings: %1").arg(colorSchemeName(m_gsettingsColorScheme));
     }
     const QString message = QStringLiteral("Desktop color scheme: %1 (source: %2; %3)")
@@ -13527,8 +13542,8 @@ void MainWindow::queryPortalColorScheme()
     }
     m_portalColorSchemeQueryStarted = true;
 
-    const Qt::ColorScheme scheme = readPortalColorScheme();
-    if (scheme != Qt::ColorScheme::Unknown) {
+    const ColorSchemeValue scheme = readPortalColorScheme();
+    if (scheme != ColorSchemeValue::Unknown) {
         m_portalColorScheme = scheme;
     } else {
         // A portal that was slow or not yet up still gets an asynchronous
@@ -13564,9 +13579,9 @@ void MainWindow::requestPortalColorScheme(const QString &settingsNamespace, cons
         watcher->deleteLater();
         const QDBusMessage reply = watcher->reply();
         if (reply.type() == QDBusMessage::ReplyMessage && !reply.arguments().isEmpty()) {
-            const Qt::ColorScheme scheme =
+            const ColorSchemeValue scheme =
                 colorSchemeFromPortalValue(reply.arguments().constFirst());
-            if (scheme != Qt::ColorScheme::Unknown) {
+            if (scheme != ColorSchemeValue::Unknown) {
                 m_portalColorScheme = scheme;
                 applyColorScheme();
                 return;
@@ -13628,13 +13643,13 @@ void MainWindow::queryGsettingsColorScheme()
         return;
     }
     const QString output = QString::fromUtf8(process.readAllStandardOutput()).trimmed().toLower();
-    Qt::ColorScheme scheme = Qt::ColorScheme::Unknown;
+    ColorSchemeValue scheme = ColorSchemeValue::Unknown;
     if (output.contains(QStringLiteral("dark"))) {
-        scheme = Qt::ColorScheme::Dark;
+        scheme = ColorSchemeValue::Dark;
     } else if (output.contains(QStringLiteral("light"))) {
-        scheme = Qt::ColorScheme::Light;
+        scheme = ColorSchemeValue::Light;
     }
-    if (scheme != Qt::ColorScheme::Unknown) {
+    if (scheme != ColorSchemeValue::Unknown) {
         m_gsettingsColorScheme = scheme;
         applyColorScheme();
     }
