@@ -35,6 +35,7 @@
 #include <QSettings>
 #include <QSplitter>
 #include <QStatusBar>
+#include <QStyleOptionViewItem>
 #include <QStyleHints>
 #include <QTabWidget>
 #include <QTabBar>
@@ -284,6 +285,25 @@ void selectDeviceTreeItem(MainWindow &window, QTreeWidgetItem *item)
     window.m_deviceTree->setCurrentItem(item);
     item->setSelected(true);
     QCoreApplication::processEvents();
+}
+
+// Synthetic drive for the Status wrapping tests. A non-empty osName makes
+// friendlyTopLevelStatus() render "Linux detected — <osName>", the same status
+// shape a real scan shows; installedLinux keeps the drive past the default
+// visibility filters.
+DeviceNode makeStatusWrapDisk(const QString &path, const QString &model,
+                              const QString &osName, quint64 sizeBytes = 1000000000ULL)
+{
+    DeviceNode disk;
+    disk.path = path;
+    disk.name = path.section(QLatin1Char('/'), -1);
+    disk.type = QStringLiteral("disk");
+    disk.model = model;
+    disk.osName = osName;
+    disk.installedLinux = true;
+    disk.sizeBytes = sizeBytes;
+    disk.transport = QStringLiteral("nvme");
+    return disk;
 }
 
 // Reusable alignment check for a stack of action buttons that share one
@@ -2040,6 +2060,10 @@ private slots:
     void scopeLabelHeadersStayOnTitleRow();
     void responsivePageHeadersWrapActionsAtMinimumWidth();
     void scopeLabelWrapsToTwoLinesBesideActions();
+    void deviceStatusWrapsTwoLinesAndElides();
+    void deviceStatusRowHeightGrowsWithWrappedText();
+    void deviceColumnsShrinkSoStatusKeepsRemainingWidth();
+    void deviceStatusLayoutStableAcrossSortAndRefresh();
 };
 
 void MainWindowUiTest::initTestCase()
@@ -13444,6 +13468,245 @@ void MainWindowUiTest::hostSnapshotRollbackNeverRebootsAutomatically()
     QVERIFY(window.m_hostRebootRequired);
     QVERIFY(!window.m_hostRebootBanner->isHidden());
     QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 1);
+}
+
+// The Status cell must word-wrap to at most two lines and elide the remainder
+// of the second line on every style. Qt's default delegate left the wrapped
+// row height to the style's own size hint, which wrapped on Breeze but elided
+// on Fusion for the same text; the dedicated delegate removes that dependency.
+void MainWindowUiTest::deviceStatusWrapsTwoLinesAndElides()
+{
+    MainWindow window;
+    window.resize(1100, 760);
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    const DeviceNode disk = makeStatusWrapDisk(
+        QStringLiteral("/dev/test-wrap0"), QStringLiteral("Wrap Test Drive"),
+        QStringLiteral("Extremely Long Distribution Name That Cannot Fit In Two Status Lines"));
+    window.populateDeviceTree({disk});
+    QCoreApplication::processEvents();
+
+    QTreeWidget *tree = window.m_deviceTree;
+    QVERIFY(tree);
+    QTreeWidgetItem *item = deviceTreeTopLevelItem(window, disk.path);
+    QVERIFY(item);
+
+    // Pin the Status column narrow, exactly like a header drag, so the long
+    // status needs more than two lines.
+    tree->setColumnWidth(1, 150);
+    tree->doItemsLayout();
+    QCoreApplication::processEvents();
+
+    const QFont font = tree->font();
+    const int statusWidth = tree->columnWidth(1);
+    const QString status = item->text(1);
+    QVERIFY2(status.size() > 40, qPrintable(status));
+
+    QStyleOptionViewItem option;
+    option.initFrom(tree);
+    option.font = font;
+    option.widget = tree;
+    option.features |= QStyleOptionViewItem::WrapText;
+    option.rect = QRect(0, 0, statusWidth, 0);
+    const int margin = tree->style()->pixelMetric(QStyle::PM_FocusFrameHMargin, &option, tree) + 1;
+    const int textWidth = statusWidth - 2 * margin;
+
+    int wrappedHeight = 0;
+    const QStringList lines = DeviceStatusDelegate::wrappedLines(status, font, textWidth, 2, &wrappedHeight);
+    QCOMPARE(lines.size(), 2);
+    QVERIFY2(lines.constLast().endsWith(QChar(0x2026)),
+             qPrintable(QStringLiteral("the truncated second line must end in an ellipsis: %1")
+                            .arg(lines.constLast())));
+    const int visibleChars = lines.at(0).size() + lines.constLast().size();
+    QVERIFY2(visibleChars < status.size(),
+             "the ellipsized status must not contain the complete text");
+    QVERIFY2(wrappedHeight >= 2 * QFontMetrics(font).height(),
+             "the two-line wrap must reserve two text lines");
+
+    // The delegate's row height at the live width is the wrapped height and is
+    // capped at two lines.
+    auto *delegate = tree->itemDelegateForColumn(1);
+    QVERIFY(delegate);
+    const QSize hint = delegate->sizeHint(option, tree->indexFromItem(item, 1));
+    QCOMPARE(hint.height(), wrappedHeight);
+    QVERIFY2(hint.height() <= 2 * QFontMetrics(font).lineSpacing() + 2,
+             "the status row must never grow past two lines");
+}
+
+// A long status grows its row to the wrapped height while a short status keeps
+// the compact single-line row.
+void MainWindowUiTest::deviceStatusRowHeightGrowsWithWrappedText()
+{
+    MainWindow window;
+    window.resize(1100, 760);
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    const DeviceNode shortDisk = makeStatusWrapDisk(
+        QStringLiteral("/dev/test-short"), QStringLiteral("Short Status Drive"),
+        QStringLiteral("Arch"));
+    const DeviceNode longDisk = makeStatusWrapDisk(
+        QStringLiteral("/dev/test-long"), QStringLiteral("Long Status Drive"),
+        QStringLiteral("An Extremely Long Distribution Name That Needs More Than Two Lines"));
+    window.populateDeviceTree({shortDisk, longDisk});
+    QCoreApplication::processEvents();
+
+    QTreeWidget *tree = window.m_deviceTree;
+    tree->setColumnWidth(1, 240);
+    tree->doItemsLayout();
+    QCoreApplication::processEvents();
+
+    QTreeWidgetItem *shortItem = deviceTreeTopLevelItem(window, shortDisk.path);
+    QTreeWidgetItem *longItem = deviceTreeTopLevelItem(window, longDisk.path);
+    QVERIFY(shortItem && longItem);
+
+    const QFontMetrics metrics(tree->font());
+    const int shortHeight = tree->visualItemRect(shortItem).height();
+    const int longHeight = tree->visualItemRect(longItem).height();
+
+    QVERIFY2(shortHeight < 2 * metrics.height(),
+             qPrintable(QStringLiteral("the short status row grew to %1 px").arg(shortHeight)));
+    QVERIFY2(longHeight >= 2 * metrics.height(),
+             qPrintable(QStringLiteral("the long status row stayed at %1 px").arg(longHeight)));
+    QVERIFY2(longHeight > shortHeight,
+             "the wrapped status row must be taller than the single-line row");
+
+    // The long status fills two lines and elides instead of adding a third.
+    const int statusWidth = tree->columnWidth(1);
+    const int margin = tree->style()->pixelMetric(QStyle::PM_FocusFrameHMargin, nullptr, tree) + 1;
+    int wrappedHeight = 0;
+    const QStringList lines = DeviceStatusDelegate::wrappedLines(
+        longItem->text(1), tree->font(), statusWidth - 2 * margin, 2, &wrappedHeight);
+    QCOMPARE(lines.size(), 2);
+    QVERIFY(lines.constLast().endsWith(QChar(0x2026)));
+}
+
+// Model/Label, Filesystem and Device are content-sized and only shrink; the
+// Status column stretches to whatever width remains, so the table always fits
+// its pane instead of overflowing with a horizontal scrollbar.
+void MainWindowUiTest::deviceColumnsShrinkSoStatusKeepsRemainingWidth()
+{
+    MainWindow window;
+    window.resize(1500, 820);
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    const DeviceNode disk = makeStatusWrapDisk(
+        QStringLiteral("/dev/disk/by-id/nvme-eui.0123456789abcdef"),
+        QStringLiteral("Example NVMe 1TB with Heatsink and Long Marketing Name"),
+        QStringLiteral("An Extremely Long Distribution Name That Needs More Than Two Lines"));
+    window.populateDeviceTree({disk});
+    QTest::qWait(50);
+
+    QTreeWidget *tree = window.m_deviceTree;
+    const auto columnWidths = [tree] {
+        QList<int> widths;
+        for (int column = 0; column < tree->columnCount(); ++column) {
+            widths.append(tree->columnWidth(column));
+        }
+        return widths;
+    };
+    const auto widthSum = [](const QList<int> &widths) {
+        int sum = 0;
+        for (int width : widths) {
+            sum += width;
+        }
+        return sum;
+    };
+
+    const QList<int> wide = columnWidths();
+    const int wideViewport = tree->viewport()->width();
+    QCOMPARE(widthSum(wide), wideViewport);
+    QVERIFY2(!tree->horizontalScrollBar()->isVisible(),
+             "the columns must fit the wide viewport without a horizontal scrollbar");
+    QVERIFY2(wide.at(1) >= 150, "the Status column must keep its floor width");
+    // The shrink-only columns never grow past the policy ceilings.
+    QVERIFY(wide.at(0) <= 360);
+    QVERIFY(wide.at(4) <= 150);
+    QVERIFY(wide.at(5) <= 260);
+
+    // Narrowing the window makes the shrink-only columns give up width; Status
+    // still owns the remainder and stays at or above its floor.
+    window.resize(1000, 820);
+    QTest::qWait(100);
+
+    const QList<int> narrow = columnWidths();
+    const int narrowViewport = tree->viewport()->width();
+    QCOMPARE(widthSum(narrow), narrowViewport);
+    QVERIFY2(!tree->horizontalScrollBar()->isVisible(),
+             "the columns must fit the narrow viewport without a horizontal scrollbar");
+    QVERIFY(narrow.at(0) <= wide.at(0));
+    QVERIFY(narrow.at(4) <= wide.at(4));
+    QVERIFY(narrow.at(5) <= wide.at(5));
+    QVERIFY2(narrow.at(0) < wide.at(0) || narrow.at(4) < wide.at(4) || narrow.at(5) < wide.at(5),
+             "at least one shrink-only column must shrink with the window");
+    QVERIFY2(narrow.at(1) >= 150,
+             qPrintable(QStringLiteral("the Status column shrank below its floor: %1").arg(narrow.at(1))));
+    QVERIFY2(narrow.at(1) > narrow.at(4) && narrow.at(1) > narrow.at(5),
+             "the Status column must stay wider than the shrink-only columns");
+}
+
+// Sorting and re-rendering rebuild the same wrapped row height: the delegate
+// measures against the live column width instead of caching a style-dependent
+// size hint.
+void MainWindowUiTest::deviceStatusLayoutStableAcrossSortAndRefresh()
+{
+    MainWindow window;
+    window.resize(1100, 760);
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    const DeviceNode longDisk = makeStatusWrapDisk(
+        QStringLiteral("/dev/test-stable-long"), QStringLiteral("Long Status Drive"),
+        QStringLiteral("An Extremely Long Distribution Name That Needs More Than Two Lines"));
+    const DeviceNode shortDisk = makeStatusWrapDisk(
+        QStringLiteral("/dev/test-stable-short"), QStringLiteral("Short Status Drive"),
+        QStringLiteral("Arch"));
+
+    const auto populate = [&] {
+        window.populateDeviceTree({longDisk, shortDisk});
+        QCoreApplication::processEvents();
+        window.m_deviceTree->setColumnWidth(1, 220);
+        window.m_deviceTree->doItemsLayout();
+        QCoreApplication::processEvents();
+    };
+    populate();
+
+    QTreeWidget *tree = window.m_deviceTree;
+    QTreeWidgetItem *longItem = deviceTreeTopLevelItem(window, longDisk.path);
+    QVERIFY(longItem);
+    const int wrappedHeight = tree->visualItemRect(longItem).height();
+    QVERIFY2(wrappedHeight >= 2 * tree->fontMetrics().height(),
+             "the long status must start wrapped to two lines");
+
+    // Sorting by Model keeps the same item and the same wrapped height.
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 0));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorSection(), 0);
+    QTreeWidgetItem *afterSort = deviceTreeTopLevelItem(window, longDisk.path);
+    QVERIFY(afterSort);
+    QCOMPARE(tree->visualItemRect(afterSort).height(), wrappedHeight);
+
+    // Sorting back to Status is stable too.
+    QTest::mouseClick(tree->header()->viewport(), Qt::LeftButton, Qt::NoModifier,
+                      headerSectionCenter(tree->header(), 1));
+    QCoreApplication::processEvents();
+    QCOMPARE(tree->header()->sortIndicatorSection(), 1);
+    afterSort = deviceTreeTopLevelItem(window, longDisk.path);
+    QVERIFY(afterSort);
+    QCOMPARE(tree->visualItemRect(afterSort).height(), wrappedHeight);
+
+    // A refresh-style re-population rebuilds the rows at the same height.
+    populate();
+    QTreeWidgetItem *afterRefresh = deviceTreeTopLevelItem(window, longDisk.path);
+    QVERIFY(afterRefresh);
+    QCOMPARE(tree->visualItemRect(afterRefresh).height(), wrappedHeight);
 }
 
 int main(int argc, char **argv)

@@ -362,6 +362,26 @@ refinements are listed below. See the [0.2.25 release notes](docs/release-notes-
   a missing or unregistered authentication agent) instead of only the generic
   cancellation text, and mirror the full authorization output into the session
   log.
+- Add running-host Btrfs snapshot rollback to Host Maintenance: the Snapshots
+  tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
+  points through a new `host-snapshots` helper command, stages the selected
+  snapshot with the proven name-preserving transaction (preserve the running
+  `@`, promote a writable copy, migrate a nested `@/.snapshots` child
+  subvolume, reconcile initramfs/UKI/GRUB in a scratch chroot, auto-restore on
+  failure) and reports `Host snapshot rollback` capability evidence without
+  adding a 14th `Repair tool` key. A successful rollback persists a
+  **Reboot required** reminder that is cleared by kernel boot-id
+  reconciliation and offers `Reboot Now` only after a second explicit
+  confirmation through the new `host-reboot` command; rollback never reboots
+  automatically.
+- Make the Available repair targets table's wrap and elision deterministic
+  across styles: a new `DeviceStatusDelegate` lays the Status text out against
+  the live column width (at most two lines, with the remainder elided on the
+  second) and a dynamic column policy sizes the other columns to their content
+  while only ever shrinking them, so the Status column keeps the remaining
+  viewport width and wrapped row heights and painting are identical on Breeze,
+  Fusion and Adwaita. The policy re-applies on viewport resize, restored
+  header state and every refresh.
 
 ## 0.2.24 refinements
 

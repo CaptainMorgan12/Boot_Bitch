@@ -48,6 +48,15 @@
   automatically. Contract tests cover the preflight/refusal matrix, the
   transaction, nested migration, undo targets and reboot confirmation, with
   offscreen UI coverage for the flow, banner and gating.
+- Make the Available repair targets table's wrap and elision deterministic
+  across styles: a new `DeviceStatusDelegate` lays the Status text out against
+  the live column width (at most two lines, with the remainder elided on the
+  second) and a dynamic column policy sizes the other columns to their content
+  while only ever shrinking them, so the Status column keeps the remaining
+  viewport width and wrapped row heights and painting are identical on Breeze,
+  Fusion and Adwaita. The policy re-applies on viewport resize, restored
+  header state and every refresh; UI tests cover the two-line/elided contract,
+  row-height growth, column shrinkage and stability across sort and refresh.
 
 ## 0.2.25 — 2026-09-19
 
@@ -312,10 +321,33 @@
   the publishing invariants read-only, and `scripts/local-refresh.sh` syncs
   the canonical tree to the local staging mirror without committing or
   pushing.
-- Surface the real Polkit/pkexec authorization failure in the GUI (for
-  example a missing or unregistered authentication agent) instead of only the
-  generic cancellation text, and mirror the full authorization output into
-  the session log.
+- Surface the real Polkit/pkexec authorization failure in the GUI (for example
+  a missing or unregistered authentication agent) instead of only the generic
+  cancellation text, and mirror the full authorization output into the session
+  log.
+- Add running-host Btrfs snapshot rollback to Host Maintenance: the Snapshots
+  tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
+  points through a new `host-snapshots` helper command, stages the selected
+  snapshot with the proven name-preserving transaction (preserve the running
+  `@`, promote a writable copy, migrate a nested `@/.snapshots` child
+  subvolume, reconcile initramfs/UKI/GRUB in a scratch chroot, auto-restore on
+  failure) and reports `Host snapshot rollback` capability evidence without
+  adding a 14th `Repair tool` key. A successful rollback persists a
+  **Reboot required** reminder that is cleared by kernel boot-id
+  reconciliation and offers `Reboot Now` only after a second explicit
+  confirmation through the new `host-reboot` command; rollback never reboots
+  automatically. Contract tests cover the preflight/refusal matrix, the
+  transaction, nested migration, undo targets and reboot confirmation, with
+  offscreen UI coverage for the flow, banner and gating.
+- Make the Available repair targets table's wrap and elision deterministic
+  across styles: a new `DeviceStatusDelegate` lays the Status text out against
+  the live column width (at most two lines, with the remainder elided on the
+  second) and a dynamic column policy sizes the other columns to their content
+  while only ever shrinking them, so the Status column keeps the remaining
+  viewport width and wrapped row heights and painting are identical on Breeze,
+  Fusion and Adwaita. The policy re-applies on viewport resize, restored
+  header state and every refresh; UI tests cover the two-line/elided contract,
+  row-height growth, column shrinkage and stability across sort and refresh.
 
 ## 0.2.24 — 2026-09-16
 

@@ -13,6 +13,7 @@
 #include <QMap>
 #include <QSet>
 #include <QStringList>
+#include <QStyledItemDelegate>
 #include <QTableWidgetItem>
 #include <QTreeWidgetItem>
 #include <QVariant>
@@ -39,6 +40,7 @@ class QSplitter;
 class QTabWidget;
 class QTableWidget;
 class QTimer;
+class QTreeView;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolButton;
@@ -69,6 +71,33 @@ class SortableTreeWidgetItem final : public QTreeWidgetItem
 public:
     using QTreeWidgetItem::QTreeWidgetItem;
     bool operator<(const QTreeWidgetItem &other) const override;
+};
+
+// Status-cell delegate for the Available repair targets tree. Qt computes a
+// wrapped row's height from the style's size hint and QTreeView passes an
+// invalid width while doing so, which made the same status text wrap on one
+// style (Breeze) and elide on another (Fusion/Adwaita). This delegate lays the
+// text out itself against the live column width, draws at most two lines and
+// elides the remainder of the second line, so row heights and painting are
+// identical on every style, font and distribution.
+class DeviceStatusDelegate final : public QStyledItemDelegate
+{
+public:
+    explicit DeviceStatusDelegate(QTreeView *view, QObject *parent = nullptr);
+
+    void paint(QPainter *painter, const QStyleOptionViewItem &option,
+               const QModelIndex &index) const override;
+    QSize sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const override;
+
+    // Word-wraps text to at most maxLines lines of the given pixel width and
+    // elides the last visible line when the text does not fit. The optional
+    // height receives the summed wrapped line height. Shared with the UI tests
+    // so the two-line/elided contract can be asserted without a real window.
+    static QStringList wrappedLines(const QString &text, const QFont &font, int width,
+                                    int maxLines = 2, int *height = nullptr);
+
+private:
+    QTreeView *m_view = nullptr;
 };
 
 // One parsed "SNAPSHOT\t..." helper record. loadSnapshots() parses the
@@ -716,7 +745,7 @@ private:
     void refreshLogView();
     void scheduleLogRefresh();
     void autoSizeDeviceColumns();
-    void applyDeviceColumnDefaults();
+    void applyDeviceColumnLayout();
     void updateDeviceTreeHeight();
     void normalizeButtonSizing();
     bool devicePassesTopLevelFilters(const DeviceNode &device) const;
@@ -796,6 +825,9 @@ private:
     QStringList m_activeBusyOperations;
 
     QTreeWidget *m_deviceTree = nullptr;
+    // Guards the viewport-resize -> column policy -> relayout chain so a
+    // programmatic width change cannot re-enter the layout handler.
+    bool m_deviceColumnLayoutInProgress = false;
     QSplitter *m_systemSplitter = nullptr;
     QPushButton *m_refreshDevicesButton = nullptr;
     QPushButton *m_setTargetButton = nullptr;

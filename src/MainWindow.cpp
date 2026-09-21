@@ -77,6 +77,7 @@
 #include <QTextCharFormat>
 #include <QTextCursor>
 #include <QTextDocument>
+#include <QTextLayout>
 #include <QTextStream>
 #include <QTimer>
 #include <QToolButton>
@@ -3344,6 +3345,12 @@ bool MainWindow::eventFilter(QObject *watched, QEvent *event)
             scheduleColorSchemeRefresh();
         }
     }
+    // Keep the shrink-only columns and the stretched Status column in step with
+    // the pane width; a wrap-width change also changes the wrapped row heights.
+    if (m_deviceTree && watched == m_deviceTree->viewport()
+        && event->type() == QEvent::Resize) {
+        applyDeviceColumnLayout();
+    }
     return QMainWindow::eventFilter(watched, event);
 }
 
@@ -3622,7 +3629,15 @@ QWidget *MainWindow::buildSystemsPage()
     for (int column = 0; column < m_deviceTree->columnCount(); ++column) {
         m_deviceTree->header()->setSectionResizeMode(column, QHeaderView::Interactive);
     }
-    applyDeviceColumnDefaults();
+    // The Status column owns its two-line wrap/elide layout and its row
+    // heights; the style-independent delegate is what keeps Fusion, Breeze and
+    // Adwaita rendering identical.
+    m_deviceTree->setItemDelegateForColumn(1, new DeviceStatusDelegate(m_deviceTree, m_deviceTree));
+    // The dynamic column policy follows every viewport width change (window
+    // resize, splitter drag, scrollbar appearance) instead of only the
+    // construction-time defaults.
+    m_deviceTree->viewport()->installEventFilter(this);
+    applyDeviceColumnLayout();
     // Header-click sorting. The default orders candidates by repair
     // likelihood through the Status column's numeric rank, which preserves the
     // historical "most likely first" ranking; every other column sorts by its
@@ -5070,6 +5085,13 @@ void MainWindow::loadSettings()
         m_deviceTree->header()->setSectionsClickable(true);
         m_deviceTree->header()->setSortIndicatorShown(true);
         m_deviceTree->sortByColumn(1, Qt::AscendingOrder);
+        // A restored header state can carry arbitrary section widths from an
+        // older layout; re-apply the dynamic policy once the window is shown
+        // and the viewport width is final.
+        QTimer::singleShot(0, this, [this] {
+            applyDeviceColumnLayout();
+            updateDeviceTreeHeight();
+        });
     }
 
     const QByteArray splitterState = m_settings->value(QStringLiteral("systems/splitterStateV3")).toByteArray();
@@ -5255,6 +5277,9 @@ void MainWindow::populateDeviceTree(const QList<DeviceNode> &devices)
         addDeviceItem(nullptr, device);
     }
     applyActiveSort(m_deviceTree, 1, Qt::AscendingOrder);
+    // Size the shrink-only columns to the freshly rendered content and give
+    // the Status column the remainder before the pane height is computed.
+    applyDeviceColumnLayout();
 
     updateCommittedTargetVisual();
     m_deviceTree->collapseAll();
@@ -5435,13 +5460,6 @@ void MainWindow::addDeviceItem(QTreeWidgetItem *parent, const DeviceNode &node)
         font.setBold(true);
         item->setFont(0, font);
         item->setToolTip(0, QStringLiteral("Select this physical drive as the repair target. Expand it only to view technical partition/volume details.\n%1").arg(nameText));
-    }
-
-    const bool benefitsFromSecondLine = nameText.size() > 34 || statusText.size() > 38;
-    if (benefitsFromSecondLine) {
-        const int height = m_deviceTree->fontMetrics().lineSpacing() * 2 + 8;
-        item->setSizeHint(0, QSize(0, height));
-        item->setSizeHint(1, QSize(0, height));
     }
 
     for (const DeviceNode &child : node.children) {
@@ -15815,32 +15833,255 @@ void MainWindow::setLogWrapEnabled(bool enabled)
         : Qt::ScrollBarAsNeeded);
 }
 
+// ---- Device tree status delegate and dynamic column policy ------------------
+
+DeviceStatusDelegate::DeviceStatusDelegate(QTreeView *view, QObject *parent)
+    : QStyledItemDelegate(parent)
+    , m_view(view)
+{
+}
+
+QStringList DeviceStatusDelegate::wrappedLines(const QString &text, const QFont &font, int width,
+                                               int maxLines, int *height)
+{
+    QStringList lines;
+    if (text.isEmpty() || maxLines <= 0) {
+        if (height) {
+            *height = 0;
+        }
+        return lines;
+    }
+
+    if (width <= 0) {
+        // No measurable width yet (before the first layout): keep the text on
+        // one line instead of guessing a wrap point.
+        lines.append(text);
+    } else {
+        QTextLayout layout(text, font);
+        QTextOption textOption;
+        textOption.setWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+        layout.setTextOption(textOption);
+        layout.beginLayout();
+
+        QList<QTextLine> textLines;
+        while (textLines.size() < maxLines) {
+            QTextLine line = layout.createLine();
+            if (!line.isValid()) {
+                break;
+            }
+            line.setLineWidth(width);
+            textLines.append(line);
+        }
+        // A third line proves the second one ran out of room and must carry
+        // the ellipsis. Asking the layout (instead of comparing text offsets)
+        // ignores trailing whitespace that wrapping consumed.
+        bool truncated = false;
+        if (textLines.size() == maxLines) {
+            truncated = layout.createLine().isValid();
+        }
+
+        const QFontMetrics metrics(font);
+        for (int i = 0; i < textLines.size(); ++i) {
+            const QTextLine &line = textLines.at(i);
+            if (i == textLines.size() - 1 && truncated) {
+                lines.append(metrics.elidedText(text.mid(line.textStart()).trimmed(),
+                                                Qt::ElideRight, width));
+            } else {
+                lines.append(text.mid(line.textStart(), line.textLength()));
+            }
+        }
+        layout.endLayout();
+    }
+
+    if (height) {
+        *height = QFontMetrics(font).height() * lines.size();
+    }
+    return lines;
+}
+
+QSize DeviceStatusDelegate::sizeHint(const QStyleOptionViewItem &option, const QModelIndex &index) const
+{
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+
+    // QTreeView computes wrapped row heights with an invalid option width, so
+    // fall back to the live column width; this is what makes the wrapped row
+    // height independent of the style's own wrap heuristic.
+    int width = option.rect.width();
+    if (width <= 0 && m_view && index.isValid()) {
+        width = m_view->columnWidth(index.column());
+    }
+    const QWidget *widget = opt.widget;
+    QStyle *style = widget ? widget->style() : QApplication::style();
+    const int margin = style->pixelMetric(QStyle::PM_FocusFrameHMargin, &opt, widget) + 1;
+    width -= 2 * margin;
+    if (opt.features & QStyleOptionViewItem::HasDecoration) {
+        width -= opt.decorationSize.width() + 2 * margin;
+    }
+
+    int height = 0;
+    const QStringList lines = wrappedLines(opt.text, opt.font, width, 2, &height);
+    if (lines.isEmpty()) {
+        height = QFontMetrics(opt.font).height();
+    }
+    return QSize(0, height);
+}
+
+void DeviceStatusDelegate::paint(QPainter *painter, const QStyleOptionViewItem &option,
+                                 const QModelIndex &index) const
+{
+    QStyleOptionViewItem opt = option;
+    initStyleOption(&opt, index);
+
+    // The style paints the background, selection, icon and focus ring; only
+    // the wrapped text is drawn here so the two-line/elided contract is the
+    // same for every style.
+    QStyleOptionViewItem background = opt;
+    background.text.clear();
+    const QWidget *widget = opt.widget;
+    QStyle *style = widget ? widget->style() : QApplication::style();
+    style->drawControl(QStyle::CE_ItemViewItem, &background, painter, widget);
+
+    if (opt.text.isEmpty()) {
+        return;
+    }
+
+    const int margin = style->pixelMetric(QStyle::PM_FocusFrameHMargin, &opt, widget) + 1;
+    QRect textRect = opt.rect.adjusted(margin, 0, -margin, 0);
+    if (opt.features & QStyleOptionViewItem::HasDecoration) {
+        if (opt.decorationPosition == QStyleOptionViewItem::Left) {
+            textRect.setLeft(textRect.left() + opt.decorationSize.width() + 2 * margin);
+        } else if (opt.decorationPosition == QStyleOptionViewItem::Right) {
+            textRect.setRight(textRect.right() - opt.decorationSize.width() - 2 * margin);
+        }
+    }
+
+    int wrappedHeight = 0;
+    const QStringList lines = wrappedLines(opt.text, opt.font, textRect.width(), 2, &wrappedHeight);
+    if (lines.isEmpty()) {
+        return;
+    }
+
+    QPalette::ColorGroup group = (opt.state & QStyle::State_Enabled)
+        ? QPalette::Normal
+        : QPalette::Disabled;
+    if (group == QPalette::Normal && !(opt.state & QStyle::State_Active)) {
+        group = QPalette::Inactive;
+    }
+    const QPalette::ColorRole role = (opt.state & QStyle::State_Selected)
+        ? QPalette::HighlightedText
+        : QPalette::Text;
+
+    painter->save();
+    painter->setPen(opt.palette.color(group, role));
+    painter->setFont(opt.font);
+    const Qt::Alignment alignment = QStyle::visualAlignment(opt.direction, opt.displayAlignment);
+    const int lineHeight = QFontMetrics(opt.font).height();
+    int y = textRect.y() + qMax(0, (textRect.height() - wrappedHeight) / 2);
+    for (const QString &line : lines) {
+        painter->drawText(QRect(textRect.x(), y, textRect.width(), lineHeight),
+                          static_cast<int>(alignment), line);
+        y += lineHeight;
+    }
+    painter->restore();
+}
+
 void MainWindow::autoSizeDeviceColumns()
 {
     if (!m_deviceTree) {
         return;
     }
 
-    static const int maximumWidths[] = {360, 420, 120, 110, 150, 260};
-    for (int column = 0; column < m_deviceTree->columnCount(); ++column) {
-        m_deviceTree->resizeColumnToContents(column);
-        if (m_deviceTree->columnWidth(column) > maximumWidths[column]) {
-            m_deviceTree->setColumnWidth(column, maximumWidths[column]);
-        }
-    }
+    applyDeviceColumnLayout();
+    updateDeviceTreeHeight();
     statusBar()->showMessage(QStringLiteral("Device columns auto-sized. Drag headers to fine-tune widths."), 3500);
 }
 
-void MainWindow::applyDeviceColumnDefaults()
+// Applies the dynamic column policy: Model/Label, Connection, Size, Filesystem
+// and Device are sized to their content and only ever shrink; the Status column
+// stretches to the remaining viewport width. When the pane is too narrow for
+// every floor, the shrink-only columns give up their surplus (largest first)
+// so Status stays usable instead of the table simply overflowing.
+void MainWindow::applyDeviceColumnLayout()
 {
-    if (!m_deviceTree) {
+    if (!m_deviceTree || m_deviceColumnLayoutInProgress) {
         return;
     }
 
-    const int widths[] = {240, 285, 95, 90, 115, 175};
-    for (int column = 0; column < m_deviceTree->columnCount(); ++column) {
-        m_deviceTree->setColumnWidth(column, widths[column]);
+    QHeaderView *header = m_deviceTree->header();
+    const int columnCount = m_deviceTree->columnCount();
+    if (!header || columnCount != 6) {
+        return;
     }
+
+    constexpr int kStatusColumn = 1;
+    static const int minimumWidths[] = {120, 150, 55, 55, 65, 80};
+    static const int maximumWidths[] = {360, 0, 120, 110, 150, 260};
+
+    m_deviceColumnLayoutInProgress = true;
+    // At most two passes: the first sizes the sections for the current
+    // viewport; a second only runs when toggling a scrollbar changed the
+    // viewport width while the sections were being resized.
+    for (int pass = 0; pass < 2; ++pass) {
+        const int available = m_deviceTree->viewport()->width();
+        if (available <= 0) {
+            break;
+        }
+
+        int widths[6] = {0};
+        int fixedTotal = 0;
+        for (int column = 0; column < columnCount; ++column) {
+            if (column == kStatusColumn) {
+                continue;
+            }
+            // resizeColumnToContents() is the public content measurement; the
+            // resulting width is then clamped to the policy's floor/ceiling.
+            m_deviceTree->resizeColumnToContents(column);
+            const int content = m_deviceTree->columnWidth(column);
+            widths[column] = qBound(minimumWidths[column], content, maximumWidths[column]);
+            fixedTotal += widths[column];
+        }
+
+        int deficit = minimumWidths[kStatusColumn] - (available - fixedTotal);
+        while (deficit > 0) {
+            int donor = -1;
+            int donorSurplus = 0;
+            for (int column = 0; column < columnCount; ++column) {
+                if (column == kStatusColumn) {
+                    continue;
+                }
+                const int surplus = widths[column] - minimumWidths[column];
+                if (surplus > donorSurplus) {
+                    donorSurplus = surplus;
+                    donor = column;
+                }
+            }
+            if (donor < 0) {
+                break;
+            }
+            const int take = qMin(donorSurplus, deficit);
+            widths[donor] -= take;
+            fixedTotal -= take;
+            deficit -= take;
+        }
+        widths[kStatusColumn] = qMax(minimumWidths[kStatusColumn], available - fixedTotal);
+
+        bool changed = false;
+        for (int column = 0; column < columnCount; ++column) {
+            if (m_deviceTree->columnWidth(column) != widths[column]) {
+                m_deviceTree->setColumnWidth(column, widths[column]);
+                changed = true;
+            }
+        }
+        if (changed) {
+            // Re-measure the wrapped status rows against the new width.
+            m_deviceTree->doItemsLayout();
+        }
+        if (m_deviceTree->viewport()->width() == available) {
+            break;
+        }
+    }
+    m_deviceColumnLayoutInProgress = false;
 }
 
 void MainWindow::updateDeviceTreeHeight()

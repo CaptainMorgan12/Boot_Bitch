@@ -283,6 +283,15 @@ Released 2026-09-19.
   a missing or unregistered authentication agent) instead of only the generic
   cancellation text, and mirror the full authorization output into the session
   log.
+- Make the Available repair targets table's wrap and elision deterministic
+  across styles: a new `DeviceStatusDelegate` lays the Status text out against
+  the live column width (at most two lines, with the remainder elided on the
+  second) and a dynamic column policy sizes the other columns to their content
+  while only ever shrinking them, so the Status column keeps the remaining
+  viewport width and wrapped row heights and painting are identical on Breeze,
+  Fusion and Adwaita. The policy re-applies on viewport resize, restored
+  header state and every refresh; UI tests cover the two-line/elided contract,
+  row-height growth, column shrinkage and stability across sort and refresh.
 
 The Debian package, AppImage, Arch package, RPM and APK are built from the
 complete source tree and validated in their target environments. Verify
