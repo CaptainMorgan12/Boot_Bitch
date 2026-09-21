@@ -68,10 +68,65 @@ project_version="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*
 }
 grep -q "<release version=\"$project_version\" date=\"" \
     "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
-grep -q '<screenshots>' "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
+metainfo="$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
+grep -q '<screenshots>' "$metainfo"
 grep -q '<image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/' \
-    "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
-grep -q '<pkgname>boot-repair</pkgname>' "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
+    "$metainfo"
+
+# The public tree ships exactly the documented eight screenshots, the AppStream
+# metadata lists every one of them (and nothing that is missing) and the README
+# gallery references the same files. A screenshot refresh must update all three.
+documented_screenshots=(
+    01-systems-target-selection.png
+    02-diagnostics-report.png
+    03-repair-confirmation.png
+    04-snapshots.png
+    05-chroot-shell.png
+    06-file-copy.png
+    07-application-log.png
+    08-settings.png
+)
+mapfile -t public_screenshots < <(
+    find "$ROOT_DIR/docs/screenshots" -maxdepth 1 -type f -name '*.png' -printf '%f\n' | LC_ALL=C sort
+)
+[[ "${#public_screenshots[@]}" -eq "${#documented_screenshots[@]}" ]] || {
+    echo "FAIL: expected exactly ${#documented_screenshots[@]} screenshots in docs/screenshots/, found ${#public_screenshots[@]}." >&2
+    exit 1
+}
+for shot in "${public_screenshots[@]}"; do
+    [[ " ${documented_screenshots[*]} " == *" $shot "* ]] || {
+        echo "FAIL: docs/screenshots/$shot is not part of the documented set." >&2
+        exit 1
+    }
+done
+[[ "$(grep -cE '<screenshot(>|[[:space:]])' "$metainfo")" -eq "${#documented_screenshots[@]}" ]] || {
+    echo "FAIL: AppStream metadata must list exactly ${#documented_screenshots[@]} screenshots." >&2
+    exit 1
+}
+for shot in "${documented_screenshots[@]}"; do
+    [[ -f "$ROOT_DIR/docs/screenshots/$shot" ]] || {
+        echo "FAIL: documented screenshot docs/screenshots/$shot is missing." >&2
+        exit 1
+    }
+    grep -qF "docs/screenshots/$shot" "$metainfo" || {
+        echo "FAIL: AppStream metadata does not list docs/screenshots/$shot." >&2
+        exit 1
+    }
+    grep -qF "docs/screenshots/$shot" "$ROOT_DIR/README.md" || {
+        echo "FAIL: README.md gallery does not reference docs/screenshots/$shot." >&2
+        exit 1
+    }
+done
+while IFS= read -r url; do
+    [[ -n "$url" ]] || continue
+    referenced="${url##*/}"
+    [[ " ${documented_screenshots[*]} " == *" $referenced "* ]] || {
+        echo "FAIL: AppStream metadata references docs/screenshots/$referenced, which is not shipped." >&2
+        exit 1
+    }
+done < <(sed -n 's#.*<image type="source">\([^<]*\)</image>.*#\1#p' "$metainfo")
+
+grep -q '<pkgname>boot-repair</pkgname>' "$metainfo"
 grep -q '<launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>' \
     "$ROOT_DIR/data/org.bootrepair.BootRepair.metainfo.xml"
 grep -q '^Icon=org.bootrepair.BootRepair$' "$ROOT_DIR/data/org.bootrepair.BootRepair.desktop"

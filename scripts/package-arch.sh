@@ -3,6 +3,14 @@ set -euo pipefail
 
 # Build the Arch package (makepkg) from a versioned copy of the working tree.
 # Must run as an unprivileged user on an Arch-family host.
+#
+# makepkg produces boot-bitch-<version>-1-<arch>.pkg.tar.zst (pkgrel stays
+# inside the package); the release asset drops the pkgrel and is normalized to
+# boot-bitch-<version>-<arch>.pkg.tar.zst by sync-release-artifacts.sh.
+
+# The package modes must not depend on the builder's umask; a restrictive agent
+# umask (for example 077) would otherwise package 0700 directories.
+umask 022
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-arch-package}"

@@ -2,7 +2,9 @@
 set -u
 
 # Report missing build/runtime tools; exits non-zero when a required tool is
-# absent. Installs nothing.
+# absent. Installs nothing and never installs the product package (the user
+# installs packages on the host; scripts/setup-dev-deps.sh installs development
+# dependencies only).
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 failures=0
@@ -15,6 +17,7 @@ if [[ -r /etc/os-release ]]; then
     case "${ID:-}" in
         debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) host_family=debian; host_package_manager='APT / dpkg' ;;
         arch|manjaro|endeavouros|garuda|artix) host_family=arch; host_package_manager=pacman ;;
+        alpine) host_family=alpine; host_package_manager=apk ;;
         fedora|rhel|rocky|almalinux) host_family=rpm; host_package_manager='DNF / RPM' ;;
         opensuse*|suse|sles) host_family=suse; host_package_manager='zypper / RPM' ;;
         *)
@@ -22,6 +25,8 @@ if [[ -r /etc/os-release ]]; then
                 host_family=debian; host_package_manager='APT / dpkg'
             elif [[ " ${ID_LIKE:-} " == *" arch "* ]]; then
                 host_family=arch; host_package_manager=pacman
+            elif [[ " ${ID_LIKE:-} " == *" alpine "* ]]; then
+                host_family=alpine; host_package_manager=apk
             elif [[ " ${ID_LIKE:-} " == *" fedora "* || " ${ID_LIKE:-} " == *" rhel "* ]]; then
                 host_family=rpm; host_package_manager='DNF / RPM'
             elif [[ " ${ID_LIKE:-} " == *" suse "* ]]; then
@@ -60,11 +65,20 @@ check_cmd 'CMake' cmake
 check_cmd 'Ninja' ninja
 check_cmd 'pkg-config' pkg-config
 check_cmd 'CPack' cpack
+check_cmd 'Python 3' python3
+check_cmd 'tar' tar
+check_cmd 'gzip' gzip
+check_cmd 'sha512sum' sha512sum
 check_cmd 'dpkg-deb' dpkg-deb no
 check_cmd 'dpkg-shlibdeps' dpkg-shlibdeps no
 check_cmd 'rpmbuild' rpmbuild no
 check_cmd 'makepkg (Arch)' makepkg no
+check_cmd 'abuild (Alpine)' abuild no
+check_cmd 'bsdtar (Arch)' bsdtar no
+check_cmd 'zstd (Arch)' zstd no
 check_cmd 'desktop-file-validate' desktop-file-validate no
+check_cmd 'appstreamcli' appstreamcli no
+check_cmd 'shellcheck' shellcheck no
 check_cmd 'lintian' lintian no
 
 printf '\nRuntime/recovery commands:\n'
@@ -100,9 +114,9 @@ check_any()
     optional_missing=$((optional_missing + 1))
 }
 
-check_any 'Package manager' apt-get pacman dnf zypper
+check_any 'Package manager' apt-get pacman dnf zypper apk
 check_any 'GRUB generator' update-grub grub-mkconfig
-check_any 'Initramfs generator' update-initramfs mkinitcpio dracut
+check_any 'Initramfs generator' update-initramfs mkinitcpio dracut mkinitfs
 check_any 'Initramfs inspector' lsinitramfs lsinitrd
 check_any 'systemd-boot inspector' bootctl
 

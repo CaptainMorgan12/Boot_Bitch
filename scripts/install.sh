@@ -4,6 +4,10 @@ set -euo pipefail
 # Install Boot Bitch, preferring a native package found under the local build
 # directories and falling back to --source (the CMake install).
 #
+# User-facing installer: the typed INSTALL confirmation keeps the host install
+# a user action. Agents must not run it (host installs are forbidden); only
+# development dependencies may be installed automatically.
+#
 # Arguments: --dry-run|--simulate, --source
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"

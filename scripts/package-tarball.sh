@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Build the CPack TGZ binary install-tree archive for this host distribution.
 
+# The archive modes must not depend on the builder's umask; a restrictive agent
+# umask (for example 077) would otherwise package 0700 directories.
+umask 022
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-tarball}"
 

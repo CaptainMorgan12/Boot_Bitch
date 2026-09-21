@@ -3,6 +3,10 @@ set -euo pipefail
 
 # Install build and runtime dependencies for the detected package-manager
 # family, then verify the environment with check-dev-env.sh.
+#
+# Development dependencies only: this script never installs the built
+# boot-repair/boot-bitch package. The user installs packages on the host;
+# scripts/install.sh is the interactive user-facing installer.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -95,8 +99,9 @@ debian)
     base_packages=(
         build-essential cmake ninja-build pkg-config qt6-base-dev qt6-svg-dev
         qt6-base-dev-tools extra-cmake-modules dpkg-dev desktop-file-utils
-        lintian pkexec util-linux mount rsync cryptsetup e2fsprogs dosfstools
-        btrfs-progs xfsprogs systemd efibootmgr binutils lvm2 mdadm
+        lintian appstream pkexec util-linux mount rsync cryptsetup
+        e2fsprogs dosfstools btrfs-progs xfsprogs systemd efibootmgr binutils
+        python3 lvm2 mdadm
     )
 
     "${SUDO[@]}" apt-get update
@@ -136,8 +141,13 @@ alpine)
         qt6-qtbase-dev qt6-qtsvg-dev
         desktop-file-utils util-linux rsync cryptsetup
         e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils
-        hicolor-icon-theme polkit
+        hicolor-icon-theme
     )
+    # polkit-elogind matches the package's hard dependency: the plain polkit
+    # package pulls the ConsoleKit libraries, which cannot register a session
+    # authentication agent, so pkexec falls back to a textual agent and fails
+    # without a controlling terminal.
+    base_packages+=(polkit-elogind)
     "${SUDO[@]}" apk add --no-cache "${base_packages[@]}"
     collect_filesystem_optional_packages
     # Alpine names the ZFS userspace tools simply 'zfs'; zpool lives there.

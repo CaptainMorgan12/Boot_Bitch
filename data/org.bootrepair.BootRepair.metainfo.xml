@@ -44,22 +44,22 @@
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/05-chroot-shell.png</image>
     </screenshot>
     <screenshot>
-      <caption>Verified file recovery and copy with a guarded destination path</caption>
+      <caption>Host to Repair file copy with a guarded destination path</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
     </screenshot>
     <screenshot>
-      <caption>Session log with scoped diagnostics and colored repair summaries</caption>
+      <caption>Application log with session history and scoped diagnostics</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/07-application-log.png</image>
     </screenshot>
     <screenshot>
-      <caption>Settings for repair stages, diagnostics refresh and session logs</caption>
+      <caption>Settings for Full Repair stages, diagnostics refresh and safety controls</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/08-settings.png</image>
     </screenshot>
   </screenshots>
   <releases>
     <release version="0.2.25" date="2026-09-19">
       <description>
-        <p>Alpine backend, multi-format packaging and release-tooling release:</p>
+        <p>Adds native RPM and APK release artifacts and the Alpine, Arch and Fedora repair backends:</p>
         <ul>
           <li>Alpine/apk repair backend: simulation-first apk fix and apk upgrade transactions, targeted missing-package-file repair, mkinitfs initramfs rebuilds, config-only extlinux regeneration and OpenRC display-manager restore, gated by the new extlinux capability key.</li>
           <li>Native RPM and Alpine packaging: package-rpm.sh with test-rpm.sh, and package-alpine.sh with test-apk.sh, build and validate artifacts without installing them.</li>

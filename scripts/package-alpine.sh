@@ -4,6 +4,15 @@ set -euo pipefail
 # Build the Alpine package (abuild) from a versioned copy of the working tree.
 # Must run as an unprivileged user inside an Alpine environment (an Alpine
 # host, chroot or container); abuild refuses to run as root.
+#
+# abuild produces boot-bitch-<version>-r0.apk (r0 stays inside the package);
+# the release asset is normalized to boot-bitch-<version>.apk. The artifact
+# links the build environment's Qt/musl versions, so build it per Alpine
+# release (and per architecture) instead of reusing it across releases.
+
+# The package modes must not depend on the builder's umask; a restrictive agent
+# umask (for example 077) would otherwise package 0700 directories.
+umask 022
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-alpine-package}"

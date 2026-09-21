@@ -9,6 +9,16 @@ set -euo pipefail
 # The generated RPM carries auto ELF Requires/Provides plus the explicit
 # package list below. The Qt SVG image format plugin is loaded at runtime, so
 # its package is added explicitly and named per RPM family.
+#
+# Build-host rule: the auto ELF Requires pin the build host's Qt symbol
+# version (for example libQt6Core.so.6(Qt_6.x)), so build the RPM on the
+# oldest target distribution (or in its matching container) rather than on the
+# newest build host. CPack produces boot-bitch-<version>-1.<arch>.rpm; the
+# release asset is normalized to boot-bitch-<version>.<arch>.rpm.
+
+# The package modes must not depend on the builder's umask; a restrictive agent
+# umask (for example 077) would otherwise package 0700 directories.
+umask 022
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/Development/build-rpm}"

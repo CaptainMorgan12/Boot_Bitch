@@ -10,7 +10,10 @@ include(GNUInstallDirs)
 
 # Keep install/package directory modes deterministic even when the builder uses
 # a collaborative umask such as 0002. Debian package directories should not
-# become group-writable merely because the source build directory is.
+# become group-writable merely because the source build directory is. The
+# packaging wrappers (scripts/build.sh and scripts/package-*.sh) set umask 022
+# for the same reason, so a restrictive builder umask cannot leak 0700/0600
+# modes into a package.
 set(CMAKE_INSTALL_DEFAULT_DIRECTORY_PERMISSIONS
     OWNER_READ OWNER_WRITE OWNER_EXECUTE
     GROUP_READ GROUP_EXECUTE
@@ -23,9 +26,13 @@ set(CMAKE_CXX_EXTENSIONS OFF)
 set(CMAKE_AUTOMOC ON)
 set(CMAKE_AUTORCC ON)
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Widgets)
+# Minimum supported Qt is 6.4: CI pins the Ubuntu 24.04 image (Qt 6.4) as the
+# compatibility gate, and the source guards Qt 6.5-only APIs behind
+# QT_VERSION_CHECK so newer Qt releases keep building with the extra platform
+# features.
+find_package(Qt6 6.4 REQUIRED COMPONENTS Core Gui Widgets)
 include(CTest)
-find_package(Qt6 REQUIRED COMPONENTS Test)
+find_package(Qt6 6.4 REQUIRED COMPONENTS Test)
 
 # KDE KAuth remains optional. When present it is linked so the same source tree
 # validates the future privilege-integration dependency without making KDE
@@ -199,8 +206,14 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/post
 # CPack can also produce an RPM for Fedora, openSUSE and other RPM-based
 # systems.  Keep these requirements separate from the Debian dependency names;
 # rpmbuild resolves the shared Qt libraries from the generated ELF metadata.
+# The auto ELF Requires pin the build host's Qt symbol version (for example
+# libQt6Core.so.6(Qt_6.x)), so release RPMs are built on the oldest supported
+# target distribution; scripts/package-rpm.sh documents that build-host rule.
 # The per-family Qt SVG package name (qt6-qtsvg on Fedora/RHEL, libQt6Svg6 on
 # openSUSE) is added by scripts/package-rpm.sh because it differs per target.
+# Optional file system tools stay out of weak RPM dependencies because their
+# package names differ per RPM family; the Debian Recommends and the Arch/
+# Alpine optdepends carry the optional contract instead.
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CaptainMorgan12/Boot_Bitch")
 set(CPACK_RPM_PACKAGE_NAME "boot-bitch")
 set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")

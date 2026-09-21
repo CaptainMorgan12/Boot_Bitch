@@ -10,6 +10,11 @@ set -euo pipefail
 #              LINUXDEPLOY_PLUGIN_QT/APPIMAGE_RUNTIME_FILE (passed through to
 #              build-appimage.sh).
 
+# Package/staged-install modes must not depend on the builder's umask: a
+# restrictive agent umask (for example 077) would otherwise package 0700
+# directories and 0600 files. CMake also normalizes install directory modes.
+umask 022
+
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"

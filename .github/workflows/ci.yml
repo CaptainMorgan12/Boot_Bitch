@@ -4,26 +4,65 @@ on:
   push:
   pull_request:
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   build-and-test:
-    runs-on: ubuntu-latest
+    # ubuntu-24.04 ships Qt 6.4, the oldest Qt this project supports. Pinning
+    # the image keeps that compatibility gate deterministic instead of letting
+    # a floating ubuntu-latest tag move the Qt baseline under CI.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v5
+
+      - name: Public tree hygiene
+        run: bash .github/scripts/check-public-tree.sh
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential cmake ninja-build pkg-config qt6-base-dev \
-            qt6-base-dev-tools appstream desktop-file-utils pkexec
+            qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck
+
       - name: Configure
         run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
       - name: Build
         run: cmake --build build --parallel
+
       - name: Test
         env:
           QT_QPA_PLATFORM: offscreen
-        run: ctest --test-dir build --output-on-failure
+        run: |
+          # The packaging-profile contract fails while a built package sits in
+          # the tree (install.sh finds the artifact and skips the guidance text
+          # the test greps for). The public checkout normally has no package;
+          # exclude the test only when one is present so a clean tree still
+          # runs the complete public suite.
+          if find . -type f \( -name '*.deb' -o -name '*.rpm' -o -name '*.apk' \
+                -o -name '*.pkg.tar.*' -o -name '*.AppImage' \) -print -quit | grep -q .; then
+            echo 'Package artifact present: excluding the packaging-profile contract.'
+            ctest --test-dir build --output-on-failure -LE packaging
+          else
+            ctest --test-dir build --output-on-failure
+          fi
+
       - name: Shell syntax
-        run: bash -n scripts/*.sh
-      - name: Validate AppStream metadata
-        run: appstreamcli validate --no-net data/org.bootrepair.BootRepair.metainfo.xml
+        run: |
+          bash -n scripts/*.sh
+          sh -n scripts/postinst scripts/rpm-postinst.sh
+
+      - name: ShellCheck
+        run: shellcheck -S warning scripts/*.sh
+
+      - name: Validate desktop entry and AppStream metadata
+        run: |
+          desktop-file-validate data/org.bootrepair.BootRepair.desktop
+          appstreamcli validate --no-net data/org.bootrepair.BootRepair.metainfo.xml

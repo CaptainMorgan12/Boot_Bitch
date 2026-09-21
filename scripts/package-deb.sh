@@ -2,6 +2,8 @@
 set -euo pipefail
 
 # Build the Debian package on a Debian-family host (requires dpkg-dev).
+# scripts/build.sh sets umask 022 before CPack runs, so package modes stay
+# independent of the builder's umask.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 

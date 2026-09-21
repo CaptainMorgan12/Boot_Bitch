@@ -4,6 +4,9 @@ set -euo pipefail
 # Remove Boot Bitch, using the native package manager when it is installed as a
 # package and otherwise the manifest recorded by install.sh --source.
 #
+# User-facing uninstaller: the typed UNINSTALL confirmation keeps removal a
+# user action; agents must not run it.
+#
 # Override the manifest path with INSTALL_MANIFEST=/absolute/path.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -69,6 +72,19 @@ then
     read -r -p "Type UNINSTALL to remove the package: " confirm
     [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
     run_privileged pacman -R boot-bitch
+    remove_legacy_source_install
+    exit $?
+fi
+
+if command -v apk >/dev/null 2>&1 \
+   && apk info --exists boot-bitch >/dev/null 2>&1
+then
+    echo "Boot Bitch is installed as an Alpine package."
+    echo "Recommended removal command: apk del boot-bitch"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    run_privileged apk del boot-bitch
     remove_legacy_source_install
     exit $?
 fi

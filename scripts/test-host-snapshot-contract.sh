@@ -150,8 +150,15 @@ umount() { :; }
 mountpoint() { return 1; }
 need() { :; }
 lsblk() { printf '%s\n' "\${FAKE_HOST_FSTYPE:-btrfs}"; }
-snapper() { [[ "\${1:-}" == --version ]] && printf 'snapper 0.10.6\n'; return 0; }
-host_package_manager_gate() { :; }
+snapper() {
+    if [[ "\${1:-}" == --version ]]; then printf 'snapper 0.10.6\n'; return 0; fi
+    if [[ "\${*}" == *--no-dbus*list* && "\${FAKE_SNAPPER_LIST_RC:-0}" != 0 ]]; then
+        return "\$FAKE_SNAPPER_LIST_RC"
+    fi
+    return 0
+}
+pgrep() { return "\${FAKE_SNAPPER_PROC_RC:-1}"; }
+host_package_manager_gate() { return "\${FAKE_PKG_GATE_RC:-0}"; }
 validate_snapshot_fstab_for_rollback() { return "\${FAKE_FSTAB_RC:-0}"; }
 validate_snapshot_crypttab_for_rollback() { return 0; }
 snapshot_has_separate_boot() { return "\${FAKE_SNAP_BOOT_RC:-1}"; }
@@ -274,13 +281,41 @@ expect_refusal 'snapshot separate /boot' 'FAKE_SNAP_BOOT_RC=0; run_host_snapshot
     'separate /boot entry'
 expect_refusal 'active snapshot' 'FAKE_RUNNING_ID=101; FAKE_SNAP_ID=101; run_host_snapshots plan 1' \
     'currently running root'
+expect_refusal 'snapper list query failure' 'FAKE_SNAPPER_LIST_RC=1; run_host_snapshots plan 1' \
+    'could not be queried'
+expect_refusal 'concurrent snapper process' 'FAKE_SNAPPER_PROC_RC=0; run_host_snapshots plan 1' \
+    'Another snapper command is running'
+expect_refusal 'active package-manager lock' 'FAKE_PKG_GATE_RC=1; run_host_snapshots plan 1' \
+    'package manager or package-manager lock is active'
+expect_refusal 'missing snapshot' 'run_host_snapshots plan 999' \
+    'was not found'
+expect_refusal 'missing Snapper info.xml' \
+    "rm -f '$sandbox/top/@/.snapshots/1/info.xml'; run_host_snapshots plan 1" \
+    'has no Snapper info.xml metadata'
+expect_refusal 'invalid snapshot root' \
+    "rm -f '$sandbox/top/@/.snapshots/1/snapshot/etc/os-release'; run_host_snapshots plan 1" \
+    'not a valid Linux root snapshot'
+expect_refusal 'snapshot is the default subvolume' \
+    "export FAKE_DEFAULT_LINE='ID 101 gen 1 top level 5 path @/.snapshots/1/snapshot'; run_host_snapshots plan 1" \
+    'current Btrfs default subvolume'
 
-# A pre snapshot is refused as a rollback target.
-build_nested_fixture
-sed -i 's#<type>single</type>#<type>pre</type>#' "$sandbox/top/@/.snapshots/1/info.xml"
-pre_output="$(run_harness 'run_host_snapshots plan 1' 2>&1 || true)"
-grep -Fq "Snapper 'pre' snapshot" <<<"$pre_output" \
-    || { echo 'FAIL: pre snapshot refusal reason is missing' >&2; printf '%s\n' "$pre_output" >&2; exit 1; }
+# A pre or post snapshot is refused as a rollback target.
+for snapshot_type in pre post; do
+    build_nested_fixture
+    sed -i "s#<type>single</type>#<type>$snapshot_type</type>#" "$sandbox/top/@/.snapshots/1/info.xml"
+    type_output="$(run_harness 'run_host_snapshots plan 1' 2>&1 || true)"
+    grep -Fq "Snapper '$snapshot_type' snapshot" <<<"$type_output" \
+        || { echo "FAIL: $snapshot_type snapshot refusal reason is missing" >&2; printf '%s\n' "$type_output" >&2; exit 1; }
+done
+
+# Capability reasons are probe-based too: a non-Btrfs root and an active
+# package-manager lock each name their own missing prerequisite.
+non_btrfs_reason="$(run_harness 'FAKE_HOST_FSTYPE=ext4; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
+grep -Fq 'not Btrfs' <<<"$non_btrfs_reason" \
+    || { echo 'FAIL: non-Btrfs capability reason is missing' >&2; printf '%s\n' "$non_btrfs_reason" >&2; exit 1; }
+lock_reason="$(run_harness 'FAKE_PKG_GATE_RC=1; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
+grep -Fq 'package manager or package-manager lock is active' <<<"$lock_reason" \
+    || { echo 'FAIL: package-lock capability reason is missing' >&2; printf '%s\n' "$lock_reason" >&2; exit 1; }
 
 # A foreign (home) configuration alone is not a root configuration: the
 # capability probe reports the missing root configuration.

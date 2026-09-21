@@ -2243,6 +2243,10 @@ grep -Fq 'run_package_stage apt-update aptupdate' "$HELPER"
 grep -Fq 'run_package_stage apt-upgrade upgrade' "$HELPER"
 grep -Fq 'adaptive_arch_pacman_repair "Repair Arch package dependencies" fixbroken' "$HELPER"
 grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade' "$HELPER"
+# The APT upgrade stage simulates the least invasive mode first and promotes
+# to full-upgrade/dist-upgrade only from the simulation evidence.
+grep -q '^apt_simulation_has_pending_packages()' "$HELPER"
+grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 
 # The live harness runs in a subshell that re-sources the helper so the stub
 # overrides installed by the earlier boot-stack section cannot leak in.
@@ -2444,6 +2448,137 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
     apt_feedback_out="$(adaptive_apt_upgrade)"
     grep -Fqx 'Repair change status upgrade: changed|1 package kept back: firmware-mediatek' <<<"$apt_feedback_out" \
         || { echo 'FAIL: apt changed status does not name the kept-back package' >&2; printf '%s\n' "$apt_feedback_out" >&2; exit 1; }
+)
+
+# ---------------------------------------------------------------------------
+# adaptive_apt_upgrade picks the least invasive safe mode from simulation
+# evidence: a standard upgrade that leaves packages pending is promoted only
+# after a safe full-upgrade simulation, a policy refusal maps to full-upgrade
+# (then dist-upgrade), and an unsafe promotion falls back to the successful
+# standard upgrade. The apply call always reuses the simulated mode, so the
+# executed transaction is the one that passed the safety checks.
+# ---------------------------------------------------------------------------
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    apt_mode_root="$(mktemp -d)"
+    mkdir -p "$apt_mode_root/usr/bin" "$apt_mode_root/session"
+    : > "$apt_mode_root/usr/bin/apt-get"
+    chmod +x "$apt_mode_root/usr/bin/apt-get"
+    TARGET_ROOT="$apt_mode_root"
+    SESSION_DIR="$apt_mode_root/session"
+    SESSION_LOG="$apt_mode_root/session.log"
+    : > "$SESSION_LOG"
+
+    # simulate_apt_upgrade_mode runs the chroot runner in a command
+    # substitution, so the stub records simulated modes in a file instead of a
+    # shell variable.
+    apt_mode_calls_file="$apt_mode_root/sim-calls"
+    apt_mode_apply_file="$apt_mode_root/apply-call"
+    : > "$apt_mode_calls_file"
+    : > "$apt_mode_apply_file"
+    apt_mode_upgrade_out="" apt_mode_upgrade_rc=0
+    apt_mode_full_out="" apt_mode_full_rc=0
+    apt_mode_dist_out="" apt_mode_dist_rc=0
+
+    run_selected_chroot()
+    {
+        local joined="$*" mode=""
+        case "$joined" in
+            *'apt-get -s'*' full-upgrade') mode=full-upgrade ;;
+            *'apt-get -s'*' dist-upgrade') mode=dist-upgrade ;;
+            *'apt-get -s'*' upgrade') mode=upgrade ;;
+            *) return 0 ;;
+        esac
+        printf '%s\n' "$mode" >> "$apt_mode_calls_file"
+        case "$mode" in
+            upgrade) printf '%s\n' "$apt_mode_upgrade_out"; return "$apt_mode_upgrade_rc" ;;
+            full-upgrade) printf '%s\n' "$apt_mode_full_out"; return "$apt_mode_full_rc" ;;
+            dist-upgrade) printf '%s\n' "$apt_mode_dist_out"; return "$apt_mode_dist_rc" ;;
+        esac
+    }
+    run_chroot_try()
+    {
+        local label="$1"; shift
+        printf '%s\n' "$*" > "$apt_mode_apply_file"
+        CHROOT_TRY_RC=0
+        CHROOT_TRY_OUTPUT=""
+    }
+    apt_mode_assert_calls()
+    {
+        local actual
+        actual="$(tr '\n' ' ' < "$apt_mode_calls_file")"
+        [[ "$actual" == "$1" ]] \
+            || { echo "FAIL: adaptive_apt_upgrade simulated '$actual' instead of '$1'" >&2; exit 1; }
+    }
+    apt_mode_assert_apply()
+    {
+        local expected="$1" output="$2" actual
+        actual="$(cat "$apt_mode_apply_file")"
+        [[ "$actual" == "apt-get -y $expected" ]] \
+            || { echo "FAIL: adaptive_apt_upgrade applied '$actual' instead of 'apt-get -y $expected'" >&2; printf '%s\n' "$output" >&2; exit 1; }
+    }
+
+    # Standard upgrade with pending packages: full-upgrade is simulated and
+    # chosen, and the apply uses it.
+    apt_mode_upgrade_out=$'Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 2 not upgraded.'
+    apt_mode_upgrade_rc=0
+    apt_mode_full_out=$'Reading package lists...\nInst linux-image [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.'
+    apt_mode_full_rc=0
+    apt_mode_out="$(adaptive_apt_upgrade)"
+    apt_mode_assert_calls 'upgrade full-upgrade '
+    apt_mode_assert_apply full-upgrade "$apt_mode_out"
+    grep -Fqx 'Repair change status upgrade: changed' <<<"$apt_mode_out" \
+        || { echo 'FAIL: pending-package promotion status is not changed' >&2; printf '%s\n' "$apt_mode_out" >&2; exit 1; }
+    grep -Fq "APT upgrade decision: 'full-upgrade' selected" "$SESSION_LOG" \
+        || { echo 'FAIL: the full-upgrade decision was not logged' >&2; exit 1; }
+
+    # Standard upgrade without pending packages stays the least invasive
+    # transaction: full-upgrade is never simulated.
+    : > "$apt_mode_calls_file"
+    : > "$apt_mode_apply_file"
+    apt_mode_upgrade_out=$'Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.'
+    apt_mode_upgrade_rc=0
+    apt_mode_out="$(adaptive_apt_upgrade)"
+    apt_mode_assert_calls 'upgrade '
+    apt_mode_assert_apply upgrade "$apt_mode_out"
+    grep -Fqx 'Repair change status upgrade: unchanged|simulated upgrade transaction proposed no package changes' <<<"$apt_mode_out" \
+        || { echo 'FAIL: no-op standard upgrade status is not unchanged' >&2; printf '%s\n' "$apt_mode_out" >&2; exit 1; }
+
+    # A distribution policy that refuses plain `apt upgrade` maps to
+    # full-upgrade once the refusal is recognized.
+    : > "$apt_mode_calls_file"
+    : > "$apt_mode_apply_file"
+    apt_mode_upgrade_rc=100
+    apt_mode_upgrade_out="E: 'apt upgrade' is disabled on TUXEDO OS! Please use 'apt full-upgrade' instead."
+    apt_mode_full_rc=0
+    apt_mode_out="$(adaptive_apt_upgrade)"
+    apt_mode_assert_calls 'upgrade full-upgrade '
+    apt_mode_assert_apply full-upgrade "$apt_mode_out"
+
+    # When full-upgrade is unsafe (essential package removal), dist-upgrade is
+    # evaluated and chosen.
+    : > "$apt_mode_calls_file"
+    : > "$apt_mode_apply_file"
+    apt_mode_full_out=$'WARNING: The following essential packages will be removed.\nRemv libc6 [2.0]'
+    apt_mode_full_rc=0
+    apt_mode_dist_out=$'Reading package lists...\nInst linux-image [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.'
+    apt_mode_dist_rc=0
+    apt_mode_out="$(adaptive_apt_upgrade)"
+    apt_mode_assert_calls 'upgrade full-upgrade dist-upgrade '
+    apt_mode_assert_apply dist-upgrade "$apt_mode_out"
+
+    # A safe standard upgrade that leaves packages pending stays chosen when
+    # the full-upgrade simulation is unsafe.
+    : > "$apt_mode_calls_file"
+    : > "$apt_mode_apply_file"
+    apt_mode_upgrade_out=$'Reading package lists...\nInst linux-image [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 1 not upgraded.'
+    apt_mode_upgrade_rc=0
+    apt_mode_out="$(adaptive_apt_upgrade)"
+    apt_mode_assert_calls 'upgrade full-upgrade '
+    apt_mode_assert_apply upgrade "$apt_mode_out"
+    grep -Fq 'using the successful standard upgrade transaction' "$SESSION_LOG" \
+        || { echo 'FAIL: the unsafe-promotion fallback was not logged' >&2; exit 1; }
 )
 
 # dnf5: a skipped package is non-fatal and surfaced; the changed stage keeps
@@ -3922,6 +4057,31 @@ grep -Fqx 'Repair capability evidence efi: Alpine GRUB EFI backend; grub-install
     || { echo 'FAIL: Alpine GRUB EFI evidence does not cite the probes' >&2; exit 1; }
 grep -Fqx 'Repair capability evidence grub: grub-mkconfig present; /boot/grub/grub.cfg present' <<<"$alpine_efi_uefi_caps" \
     || { echo 'FAIL: Alpine GRUB evidence does not cite the probes' >&2; exit 1; }
+
+# ESP device evidence is cited only for a real mountpoint: findmnt --target on
+# a plain directory reports the containing filesystem (the Qt 6.4 CI host
+# reported /dev/root for the fixture ESP path), which is not the ESP.
+grep -Fq 'mountpoint -q "$esp_path"' "$HELPER" \
+    || { echo 'FAIL: the Alpine EFI evidence does not gate the ESP device on a real mountpoint' >&2; exit 1; }
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    alpine_efi_firmware_available() { return 0; }
+    filesystem_scope_resolve() { :; }
+    filesystem_scope_tools() { :; }
+    findmnt() { printf '%s\n' '/dev/contract-root'; }
+    mountpoint() { return "${FAKE_MOUNTPOINT_RC:-1}"; }
+    caps_plain="$(TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine \
+        diagnostic_repair_capabilities)"
+    if grep -Fq 'ESP device: /dev/contract-root' <<<"$caps_plain"; then
+        echo 'FAIL: a plain ESP directory was cited as an ESP device' >&2
+        exit 1
+    fi
+    caps_mounted="$(FAKE_MOUNTPOINT_RC=0 TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine \
+        diagnostic_repair_capabilities)"
+    grep -Fq 'ESP device: /dev/contract-root' <<<"$caps_mounted" \
+        || { echo 'FAIL: a real ESP mountpoint was not cited as an ESP device' >&2; exit 1; }
+)
 
 # The runtime stage gate accepts efi/grub on the UEFI fixture and refuses the
 # legacy-BIOS GRUB backend with the same probe reason as the capability line.
