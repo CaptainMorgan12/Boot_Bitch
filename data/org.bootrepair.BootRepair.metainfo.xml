@@ -23,6 +23,10 @@
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
   <screenshots>
+    <screenshot>
+      <caption>Systems: choose the protected running host or a detected repair target</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/01-systems-target-selection.png</image>
+    </screenshot>
     <screenshot type="default">
       <caption>Read-only diagnostics report for the selected scope</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/02-diagnostics-report.png</image>
@@ -30,6 +34,10 @@
     <screenshot>
       <caption>Full Repair plan with per-stage gating from cached diagnostics</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/03-repair-confirmation.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Verified file recovery and copy with a guarded destination path</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
     </screenshot>
     <screenshot>
       <caption>Session log with scoped diagnostics and colored repair summaries</caption>

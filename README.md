@@ -68,6 +68,10 @@ Still intentionally constrained in 0.2.25:
 
 These anonymized screenshots show Boot Bitch running in a disposable recovery VM. The target is a separate virtual disk; personal host paths and physical-device identifiers have been removed.
 
+### Systems
+
+![Systems target selection](docs/screenshots/01-systems-target-selection.png)
+
 ### Diagnostics
 
 ![Diagnostics report](docs/screenshots/02-diagnostics-report.png)
@@ -78,11 +82,15 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 
 ### Snapshots
 
-![Snapshot handling on an ext4 target](docs/screenshots/04-snapshots.png)
+![Btrfs snapshot inventory and read-only scan](docs/screenshots/04-snapshots.png)
 
 ### Chroot Shell
 
 ![Chroot shell](docs/screenshots/05-chroot-shell.png)
+
+### File Copy
+
+![File recovery and copy with a guarded destination path](docs/screenshots/06-file-copy.png)
 
 ### Logs
 
