@@ -1091,6 +1091,18 @@ if ! (
         "$TARGET_ROOT/boot/extlinux.conf"; then
         ext_fail 'E1 left the stale LABEL virt as MENU DEFAULT'
     fi
+    # The successful selection must keep every existing entry in the installed
+    # configuration: a generated candidate that drops the untouched LABEL is
+    # the exact regression E6 fails closed on, and it must never reach the
+    # installed file on the success path either.
+    for label in lts virt; do
+        grep -Eq "^[[:space:]]*LABEL[[:space:]]+$label\$" "$TARGET_ROOT/boot/extlinux.conf" \
+            || ext_fail "E1 dropped the existing LABEL $label"
+    done
+    grep -Eq '^[[:space:]]*LINUX[[:space:]]+vmlinuz-virt$' "$TARGET_ROOT/boot/extlinux.conf" \
+        || ext_fail 'E1 dropped the untouched virt LINUX entry'
+    grep -Eq '^[[:space:]]*INITRD[[:space:]]+initramfs-virt$' "$TARGET_ROOT/boot/extlinux.conf" \
+        || ext_fail 'E1 dropped the untouched virt INITRD entry'
     [[ "$(grep -c . "$EFI_TEST_EXT_CALLS" || true)" -eq 1 ]] \
         || ext_fail 'E1 did not run exactly one update-extlinux trial'
     if grep -Fq 'overwrite=0' "$TARGET_ROOT/etc/update-extlinux.conf"; then

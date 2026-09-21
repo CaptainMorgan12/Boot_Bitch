@@ -2122,6 +2122,7 @@ private slots:
     void hostSnapshotRollbackNeverRebootsAutomatically();
     void hostDefaultGatingRequiresDedicatedCapabilityEvidence();
     void hostDefaultWordingTracksDetectedLoader();
+    void hostDefaultExtlinuxCandidateGatingAndSuccess();
     void hostDefaultSuccessShowsVerifiedEntryAndBootOrder();
     void hostDefaultSuccessWithoutVerifiedEntryIsNotReported();
     void hostDefaultSuccessShowsDriveModelAnnotatedLabel();
@@ -14118,6 +14119,103 @@ void MainWindowUiTest::hostDefaultWordingTracksDetectedLoader()
     window.updateHostDefaultButtonState();
     QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("UKI default boot entry")),
              qPrintable(window.m_hostDefaultButton->toolTip()));
+}
+
+// Alpine BIOS/extlinux Make Default: the dedicated `candidate=extlinux` probe
+// decision enables the action on a layout where the coarse `efi` capability is
+// unavailable, and the verified success names the extlinux LABEL with
+// extlinux-specific wording (never a firmware entry or BootOrder claim). The
+// unchanged run has no PASS line and still renders the extlinux wording from
+// the cached candidate evidence.
+void MainWindowUiTest::hostDefaultExtlinuxCandidateGatingAndSuccess()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, true);
+
+    // The helper's Alpine BIOS capability evidence: efi is unavailable,
+    // extlinux is available and the probe names the extlinux candidate.
+    QString evidence = capabilityEvidenceAlpine(true, false, true);
+    evidence += QStringLiteral("Host default probe: candidate=extlinux label=lts kernel=6.18.52-0-lts\n");
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(window.m_hostDefaultButton->toolTip().contains(QStringLiteral("extlinux default boot entry")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+    QVERIFY2(!window.m_hostDefaultButton->toolTip().contains(QStringLiteral("BootOrder")),
+             qPrintable(window.m_hostDefaultButton->toolTip()));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-default-extlinux.log"));
+    const QString extlinuxOutput = QStringLiteral(
+        "Extlinux default entry: label=lts kernel=6.18.52-0-lts action=set\n"
+        "PASS: running host default extlinux entry is LABEL lts -> LINUX vmlinuz-lts + INITRD initramfs-lts.\n"
+        "Host default: entry=lts label='lts' loader=vmlinuz-lts action=set\n"
+        "Repair change status host-default: changed|extlinux default label set to lts\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, capturePath, QStringLiteral("success"),
+                                                  extlinuxOutput),
+             "the scripted host default session must start");
+
+    {
+        HostDefaultBoxSequence boxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(boxes.confirmationSeen);
+        QVERIFY(boxes.resultSeen);
+        QVERIFY2(boxes.confirmationInformative.contains(QStringLiteral("extlinux default boot entry")),
+                 qPrintable(boxes.confirmationInformative));
+        QVERIFY2(!boxes.confirmationInformative.contains(QStringLiteral("BootOrder")),
+                 qPrintable(boxes.confirmationInformative));
+        QCOMPARE(boxes.resultTitle, QStringLiteral("Host default verified"));
+        QVERIFY2(boxes.resultText.contains(QStringLiteral("Verified default boot entry lts (extlinux")),
+                 qPrintable(boxes.resultText));
+        QVERIFY2(boxes.resultText.contains(QStringLiteral("loader vmlinuz-lts")),
+                 qPrintable(boxes.resultText));
+        QVERIFY2(!boxes.resultText.contains(QStringLiteral("Verified firmware boot entry")),
+                 qPrintable(boxes.resultText));
+        QVERIFY2(!boxes.resultText.contains(QStringLiteral("BootOrder")),
+                 qPrintable(boxes.resultText));
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-default")), 1);
+    QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+    QVERIFY(!window.m_hostDefaultButton->isEnabled());
+
+    // Idempotent rerun: the helper reports action=unchanged without a PASS
+    // line; the wording still names extlinux from the cached candidate
+    // evidence and the operation is the no-repair-needed category.
+    prepareRepairScope(window, true);
+    cacheRepairEvidence(window, evidence);
+    window.updateHostDefaultButtonState();
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(), qPrintable(window.m_hostDefaultButton->toolTip()));
+    const QString unchangedCapture =
+        requestDir.filePath(QStringLiteral("host-default-extlinux-unchanged.log"));
+    const QString unchangedOutput = QStringLiteral(
+        "Extlinux default entry: label=lts kernel=6.18.52-0-lts action=unchanged\n"
+        "Host default: entry=lts label='lts' loader=vmlinuz-lts action=unchanged\n"
+        "Repair change status host-default: unchanged|extlinux default label lts is already selected\n");
+    QVERIFY2(startHostDefaultFakePrivilegedSession(window, unchangedCapture, QStringLiteral("success"),
+                                                  unchangedOutput),
+             "the scripted host default session must start");
+    {
+        HostDefaultBoxSequence boxes(&window);
+        closeRepairProgressDialogWhenDone(&window);
+        window.m_hostDefaultButton->click();
+        QVERIFY(boxes.resultSeen);
+        QCOMPARE(boxes.resultTitle, QStringLiteral("Host default verified"));
+        QVERIFY2(boxes.resultText.contains(QStringLiteral("Verified default boot entry lts (extlinux")),
+                 qPrintable(boxes.resultText));
+        QVERIFY2(!boxes.resultText.contains(QStringLiteral("Verified firmware boot entry")),
+                 qPrintable(boxes.resultText));
+    }
+    QCOMPARE(capturedHostRequestCount(unchangedCapture, QStringLiteral("host-default")), 1);
+    QVERIFY2(window.m_hostDefaultButton->isEnabled(),
+             "an unchanged extlinux default keeps the cached evidence and the action ready");
 }
 
 // The verified success summary names the helper's own entry id (a firmware

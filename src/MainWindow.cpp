@@ -1282,6 +1282,9 @@ struct HostDefaultVerification {
     QString label;
     QString model;
     QString loader;
+    // Loader kind named by the helper's PASS line ("EFI", "extlinux", ...);
+    // used only for loader-specific success wording, never as verification.
+    QString kind;
     QString action;
     QString esp;
     QString bootOrderBefore;
@@ -1298,6 +1301,12 @@ HostDefaultVerification parseHostDefaultVerification(const QString &output)
         QRegularExpression::CaseInsensitiveOption);
     static const QRegularExpression passRe(
         QStringLiteral("running host default EFI entry is Boot([0-9A-Fa-f]{4})(?:\\s+on\\s+(\\S+))?"),
+        QRegularExpression::CaseInsensitiveOption);
+    // The same PASS line names the loader kind: "running host default extlinux
+    // entry is LABEL …" on Alpine BIOS, "running host default EFI entry is
+    // Boot…" on firmware layouts. Only the wording uses it.
+    static const QRegularExpression passKindRe(
+        QStringLiteral("running host default ([A-Za-z0-9_-]+) entry"),
         QRegularExpression::CaseInsensitiveOption);
     // A Fedora/RHEL BIOS default is a grubenv saved_entry naming a BLS entry;
     // the helper verifies it with `default entry: saved_entry=… resolves=yes
@@ -1394,6 +1403,10 @@ HostDefaultVerification parseHostDefaultVerification(const QString &output)
                 }
                 verification.esp = esp;
             }
+        }
+        const QRegularExpressionMatch passKindMatch = passKindRe.match(line);
+        if (passKindMatch.hasMatch() && verification.kind.isEmpty()) {
+            verification.kind = passKindMatch.captured(1).toLower();
         }
 
         // Fedora/RHEL BIOS: the helper's resolved grubenv target is the
@@ -1496,13 +1509,24 @@ QString hostDefaultFailureDetail(const QString &output)
 // evidence the helper named (including a separately reported drive model)
 // plus the BootOrder transition. The caller only reaches this for an operation
 // with a verified entryId.
-QString hostDefaultSuccessSummary(const HostDefaultVerification &verification)
+QString hostDefaultSuccessSummary(const HostDefaultVerification &verification,
+                                  const QString &loaderName = QString())
 {
     const bool firmwareEntry = verification.entryId.startsWith(QStringLiteral("Boot"));
+    // An Alpine BIOS/extlinux default is a LABEL in /boot/extlinux.conf, not a
+    // firmware entry. The PASS line names the loader kind on a changed run; an
+    // unchanged run has no PASS line, so the cached candidate evidence is the
+    // fallback. The kind only selects wording, never verification.
+    const bool extlinuxEntry =
+        verification.kind.compare(QStringLiteral("extlinux"), Qt::CaseInsensitive) == 0
+        || loaderName.compare(QStringLiteral("extlinux"), Qt::CaseInsensitive) == 0;
     QString message = firmwareEntry
         ? QStringLiteral("Verified firmware boot entry %1").arg(verification.entryId)
         : QStringLiteral("Verified default boot entry %1").arg(verification.entryId);
     QStringList attributes;
+    if (extlinuxEntry) {
+        attributes.append(QStringLiteral("extlinux"));
+    }
     QString label = verification.label;
     // The helper may annotate the label itself or report the drive model in its
     // own field; both shapes render as one annotated label, never duplicated.
@@ -1512,7 +1536,8 @@ QString hostDefaultSuccessSummary(const HostDefaultVerification &verification)
             ? verification.model
             : QStringLiteral("%1 %2").arg(label, verification.model);
     }
-    if (!label.isEmpty()) {
+    if (!label.isEmpty()
+        && !(extlinuxEntry && label.compare(verification.entryId, Qt::CaseInsensitive) == 0)) {
         attributes.append(QStringLiteral("label %1").arg(label));
     }
     if (!verification.loader.isEmpty()) {
@@ -6273,7 +6298,8 @@ void MainWindow::setHostDefaultBootEntry()
         QMessageBox::information(
             this,
             QStringLiteral("Host default verified"),
-            QStringLiteral("%1\n\nFull helper output is available in Logs.").arg(hostDefaultSuccessSummary(verification)));
+            QStringLiteral("%1\n\nFull helper output is available in Logs.")
+                .arg(hostDefaultSuccessSummary(verification, loaderName)));
     } else if (succeeded) {
         const QString unverified =
             QStringLiteral("The privileged helper exited successfully but did not name a verified default boot entry, so Boot Bitch does not report the running host's default boot entry as changed. Review Logs for the complete helper output.");
