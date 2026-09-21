@@ -257,9 +257,13 @@ protected:
 // Scope labels on the responsive page headers wrap into the two-line form
 // ("Host maintenance:" then "/dev/vda") instead of eliding the value away when
 // the header narrows. QLabel's wrapped size hint prefers that form; the
-// minimum height additionally reserves the two wrapped lines so a vertical
-// squeeze in a scroll-area page cannot clip the second line. The complete text
-// stays in text() and in the tooltip set by updateTargetLabels().
+// minimum height additionally reserves the wrapped lines so a vertical squeeze
+// in a scroll-area page cannot clip the text. The minimum is recomputed for
+// the label's actual width (a long scope can need a third line on narrow
+// headers, and Qt versions differ in which width the wrapped size hint
+// measures), so the layout can never assign less height than the text needs.
+// The complete text stays in text() and in the tooltip set by
+// updateTargetLabels().
 class WrappedScopeLabel final : public QLabel
 {
 public:
@@ -278,14 +282,14 @@ public:
     QSize sizeHint() const override
     {
         QSize hint = QLabel::sizeHint();
-        hint.setHeight(qMax(hint.height(), twoLineHeight()));
+        hint.setHeight(qMax(hint.height(), requiredHeight()));
         return hint;
     }
 
     QSize minimumSizeHint() const override
     {
         QSize hint = QLabel::minimumSizeHint();
-        hint.setHeight(qMax(hint.height(), twoLineHeight()));
+        hint.setHeight(qMax(hint.height(), requiredHeight()));
         return hint;
     }
 
@@ -296,6 +300,12 @@ protected:
         if (event->type() == QEvent::FontChange) {
             updateMinimumHeight();
         }
+    }
+
+    void resizeEvent(QResizeEvent *event) override
+    {
+        QLabel::resizeEvent(event);
+        updateMinimumHeight();
     }
 
 private:
@@ -310,12 +320,24 @@ private:
         updateMinimumHeight();
     }
 
+    // The wrapped height for the label's current width, never less than the
+    // two-line form. Before the first layout the width is unknown, so only the
+    // two-line floor is guaranteed.
+    int requiredHeight() const
+    {
+        const int wrapped = width() > 0 ? heightForWidth(width()) : 0;
+        return qMax(twoLineHeight(), wrapped);
+    }
+
     // An explicit minimum height, unlike minimumSizeHint(), survives the
-    // vertical squeeze of a scroll-area page layout, so the second scope line
-    // can never be clipped.
+    // vertical squeeze of a scroll-area page layout, so no wrapped line can be
+    // clipped.
     void updateMinimumHeight()
     {
-        setMinimumHeight(twoLineHeight());
+        const int wanted = requiredHeight();
+        if (minimumHeight() != wanted) {
+            setMinimumHeight(wanted);
+        }
     }
 
     int twoLineHeight() const

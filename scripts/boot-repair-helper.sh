@@ -8048,7 +8048,7 @@ package_backend_evidence()
 repair_capability_evidence()
 {
     local key="$1" dm_unit kernel_list image_list esp_root detail kver backend
-    local esp_source efi_id loader_path
+    local esp_source efi_id loader_path esp_path
     local -a applicable=()
 
     case "$key" in
@@ -8298,9 +8298,15 @@ repair_capability_evidence()
                             fi
                             if [[ "${TARGET_ESP_MOUNT:-unresolved}" != unresolved ]]; then
                                 detail+="; ESP candidate: $TARGET_ESP_MOUNT"
-                                esp_source="$(findmnt -rn -o SOURCE --target "$(target_path "$TARGET_ESP_MOUNT")" 2>/dev/null \
-                                    | awk '$1 ~ /^\/dev\// {print $1; exit}')"
-                                [[ -n "$esp_source" ]] && detail+="; ESP device: $esp_source"
+                                # findmnt --target on a non-mountpoint returns
+                                # the containing filesystem, which is not the
+                                # ESP; cite a device only for a real ESP mount.
+                                esp_path="$(target_path "$TARGET_ESP_MOUNT")"
+                                if mountpoint -q "$esp_path" 2>/dev/null; then
+                                    esp_source="$(findmnt -rn -o SOURCE --target "$esp_path" 2>/dev/null \
+                                        | awk '$1 ~ /^\/dev\// {print $1; exit}')"
+                                    [[ -n "$esp_source" ]] && detail+="; ESP device: $esp_source"
+                                fi
                                 efi_id="$(detect_efi_bootloader_id 2>/dev/null || true)"
                                 if [[ -n "$efi_id" ]]; then
                                     loader_path="$(find "$(target_path "$TARGET_ESP_MOUNT")/EFI/$efi_id" -maxdepth 1 \

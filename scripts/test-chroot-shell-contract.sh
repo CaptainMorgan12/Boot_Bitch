@@ -178,7 +178,11 @@ shell_stub_root="$(mktemp -d)"
     chroot()
     {
         printf '%s\n' "$@" > "$shell_stub_root/args"
-        readlink "/proc/$$/fd/0" > "$shell_stub_root/stdin" 2>/dev/null || true
+        # Inspect the running command's own fd 0: the helper redirects the
+        # whole chroot invocation from /dev/null. /proc/self (not the test
+        # script's $$) reflects the redirection and stays meaningful no matter
+        # what stdin ctest or CI hands to this script.
+        readlink "/proc/self/fd/0" > "$shell_stub_root/stdin" 2>/dev/null || true
         printf 'Is this ok [y/N]: ' >&2
         return 1
     }
