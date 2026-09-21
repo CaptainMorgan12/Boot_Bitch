@@ -36,6 +36,14 @@
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/03-repair-confirmation.png</image>
     </screenshot>
     <screenshot>
+      <caption>Btrfs snapshot inventory with a read-only scan</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/04-snapshots.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>Guarded Chroot Shell for the selected repair system</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/05-chroot-shell.png</image>
+    </screenshot>
+    <screenshot>
       <caption>Verified file recovery and copy with a guarded destination path</caption>
       <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
     </screenshot>

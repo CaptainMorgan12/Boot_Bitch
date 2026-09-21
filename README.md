@@ -70,35 +70,35 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 
 ### Systems
 
-![Systems target selection](docs/screenshots/01-systems-target-selection.png)
+![Systems: choose the protected running host or a detected repair target](docs/screenshots/01-systems-target-selection.png)
 
 ### Diagnostics
 
-![Diagnostics report](docs/screenshots/02-diagnostics-report.png)
+![Read-only diagnostics report for the selected scope](docs/screenshots/02-diagnostics-report.png)
 
 ### Repair
 
-![Repair plan and diagnostic freshness gate](docs/screenshots/03-repair-confirmation.png)
+![Full Repair plan with per-stage gating from cached diagnostics](docs/screenshots/03-repair-confirmation.png)
 
 ### Snapshots
 
-![Btrfs snapshot inventory and read-only scan](docs/screenshots/04-snapshots.png)
+![Btrfs snapshot inventory with a read-only scan](docs/screenshots/04-snapshots.png)
 
 ### Chroot Shell
 
-![Chroot shell](docs/screenshots/05-chroot-shell.png)
+![Guarded Chroot Shell for the selected repair system](docs/screenshots/05-chroot-shell.png)
 
 ### File Copy
 
-![File recovery and copy with a guarded destination path](docs/screenshots/06-file-copy.png)
+![Verified file recovery and copy with a guarded destination path](docs/screenshots/06-file-copy.png)
 
 ### Logs
 
-![Application log](docs/screenshots/07-application-log.png)
+![Session log with scoped diagnostics and colored repair summaries](docs/screenshots/07-application-log.png)
 
 ### Settings
 
-![Settings](docs/screenshots/08-settings.png)
+![Settings for repair stages, diagnostics refresh and session logs](docs/screenshots/08-settings.png)
 
 ## 0.2.25 refinements
 
@@ -210,7 +210,7 @@ repair backends; see the [0.2.25 release notes](docs/release-notes-0.2.25.md).
   behavior. Dependency setup and installation are package-manager aware
   (APT/dpkg, pacman, DNF/RPM and zypper/RPM) with native Arch, RPM and
   package-manager-neutral TGZ workflows while `.deb` generation stays
-  Debian-family; AppStream ships six remote screenshots, the current release
+  Debian-family; AppStream ships eight remote screenshots, the current release
   entry, a `<pkgname>` association and no deprecated `developer_name`, with
   hicolor icon-cache refreshes, the Discover stock-icon workaround and the
   `/usr/local` icon-cache cleanup on uninstall; file system check tools are

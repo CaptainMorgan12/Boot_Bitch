@@ -110,7 +110,7 @@ Released 2026-09-19.
   behavior. Dependency setup and installation are package-manager aware
   (APT/dpkg, pacman, DNF/RPM and zypper/RPM) with native Arch, RPM and
   package-manager-neutral TGZ workflows while `.deb` generation stays
-  Debian-family; AppStream ships six remote screenshots, the current release
+  Debian-family; AppStream ships eight remote screenshots, the current release
   entry, a `<pkgname>` association and no deprecated `developer_name`, with
   hicolor icon-cache refreshes, the Discover stock-icon workaround and the
   `/usr/local` icon-cache cleanup on uninstall; file system check tools are
