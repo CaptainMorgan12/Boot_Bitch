@@ -1933,6 +1933,7 @@ private slots:
     void hostSnapshotRebootBannerPersistsAcrossScopeAndClearsOnBootChange();
     void hostSnapshotControlsFailClosedWithoutCapabilityEvidence();
     void hostSnapshotRollbackNeverRebootsAutomatically();
+    void hostSnapshotRollbackFailureKeepsBannerOffAndShowsRecoveryGuidance();
     void guardedWriteActionsStayDisabledWithoutTarget();
     void exportDialogsCanBeCancelledReadOnly();
     void actionRegisterPersistsAcrossWindows();
@@ -13136,6 +13137,101 @@ void MainWindowUiTest::hostSnapshotRollbackSuccessShowsRebootRequiredAndBusyClea
     QCOMPARE(window.m_snapshotTable->rowCount(), 0);
     // The staged rollback invalidated the cached running-host evidence.
     QVERIFY(window.m_hostDiagnosticCache.value(QStringLiteral("capabilities")).isEmpty());
+
+    // A second rollback before the reboot requires the replacement warning;
+    // cancelling it sends no further plan or rollback request.
+    cacheRepairEvidence(window, evidence);
+    window.loadSnapshots();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    window.m_snapshotTable->setCurrentCell(0, 0);
+    window.updateSnapshotControls();
+    const int plansBefore = capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                                     QStringLiteral("plan"));
+    {
+        NextMessageBoxCapture replacement(&window, QMessageBox::Cancel);
+        window.m_snapshotRollbackButton->click();
+        QVERIFY(replacement.appeared);
+        QVERIFY(replacement.text.contains(QStringLiteral("already staged")));
+        QVERIFY(replacement.informativeText.contains(QStringLiteral("no longer the recorded undo point")));
+    }
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("plan")), plansBefore);
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-snapshots"),
+                                      QStringLiteral("rollback")), 1);
+}
+
+// A failed running-host rollback fails closed: no reboot offer, the banner
+// state is unchanged, the helper recovery evidence is surfaced and the busy
+// indicator clears.
+void MainWindowUiTest::hostSnapshotRollbackFailureKeepsBannerOffAndShowsRecoveryGuidance()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareHostSnapshotScope(window);
+    window.clearHostRebootRequired();
+    QString evidence = capabilityEvidence(true, true);
+    evidence += QStringLiteral("Host snapshot rollback: available\nHost reboot: available\n");
+    cacheRepairEvidence(window, evidence);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("host-snapshot-failure.log"));
+    QVERIFY2(startHostSnapshotFakePrivilegedSession(window, capturePath, QStringLiteral("fail")),
+             "the scripted host snapshot session must start");
+
+    window.updateSnapshotControls();
+    window.loadSnapshots();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    window.m_snapshotTable->setCurrentCell(0, 0);
+    window.updateSnapshotControls();
+
+    bool consequencesAccepted = false;
+    bool failureSeen = false;
+    QString failureText;
+    QTimer poll;
+    poll.setInterval(5);
+    QObject::connect(&poll, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *box = qobject_cast<QMessageBox *>(top);
+            if (!box || !box->isVisible()) {
+                continue;
+            }
+            if (!consequencesAccepted) {
+                if (QAbstractButton *yes = box->button(QMessageBox::Yes)) {
+                    consequencesAccepted = true;
+                    yes->click();
+                    return;
+                }
+            } else if (QAbstractButton *ok = box->button(QMessageBox::Ok)) {
+                failureSeen = true;
+                failureText = box->text();
+                ok->click();
+                poll.stop();
+                poll.deleteLater();
+                return;
+            }
+        }
+    });
+    poll.start();
+    acceptNextInputDialog(&window, QStringLiteral("ROLLBACK"));
+    closeRepairProgressDialogWhenDone(&window);
+    closeRepairProgressDialogWhenDone(&window);
+    window.m_snapshotRollbackButton->click();
+
+    QVERIFY(consequencesAccepted);
+    QVERIFY(failureSeen);
+    QVERIFY2(failureText.contains(QStringLiteral("do not reboot")),
+             qPrintable(failureText));
+    QVERIFY(!window.m_hostRebootRequired);
+    QVERIFY(window.m_hostRebootBanner->isHidden());
+    QVERIFY(window.m_activeBusyOperations.isEmpty());
+    QVERIFY(window.m_busyIndicator->isHidden());
+    QVERIFY(window.m_snapshotDetails->toPlainText().contains(QStringLiteral("HOST_ROLLBACK_RECOVERY=ok")));
+    QCOMPARE(capturedHostRequestCount(capturePath, QStringLiteral("host-reboot")), 0);
 }
 
 // Reboot Now always requires a second explicit confirmation; Cancel sends no
