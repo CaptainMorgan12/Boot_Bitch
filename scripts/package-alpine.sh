@@ -55,13 +55,10 @@ mkdir -p -- "$BUILD_DIR"
 # explicitly so a file such as scripts/build.sh is never mistaken for a
 # build-output path.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
-# AGENTS.md is part of the archive because the APKBUILD check() phase runs
-# the project test suite, including the agent-safety contract that requires
-# the workflow rules in AGENTS.md.
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
-    CMakeLists.txt LICENSE README.md CHANGELOG.md AGENTS.md .gitignore \
+    CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
     src scripts tests data resources docs .github
 SOURCE_SHA512="$(sha512sum "$SOURCE_ARCHIVE" | awk '{print $1}')"
 

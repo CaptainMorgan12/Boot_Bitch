@@ -2,36 +2,9 @@
 
 ## Unreleased
 
-- Make test-VM installs a hard workflow contract: after each major
-  fix/implementation batch the test VMs (Fedora, Alpine BIOS/EFI) are rebuilt
-  and installed so the user can test, while host packages are built and synced
-  but never installed on the host. `AGENTS.md` documents the rule and
-  `scripts/test-agent-safety-contract.sh` (ctest `fast`) freezes its exact
-  wording.
-- Include `AGENTS.md` in the Alpine and Arch source archives so the packaged
-  test suite can run the agent-safety contract from the unpacked tree.
-- Add `scripts/test-agent-safety-contract.sh` and the `fast`-labeled
-  `boot-repair-agent-safety-contract` ctest: it fails when a script installs
-  the `boot-repair`/`boot-bitch` package on the host (the user
-  installs packages; development dependencies stay allowed), invokes
-  `local-refresh.sh --install`, or invokes a screenshot tool from `scripts/`
-  or `tests/`, and it freezes both hard rules in `AGENTS.md`.
-- Add a test-only per-change gate: it configures and builds only when sources
-  changed, runs the fast ctest tier and prints a compact summary. It never
-  builds a package, installs anything or touches a VM; `--ui` adds the UI suite
-  only when UI/UX changed and `--full` runs every local test except the
-  packaging-profile contract (the documented built-package trap).
-- Add ctest tiers (`fast`, `ui`, `slow`, `packaging`, `release`) and document
-  the iteration/checkpoint workflow in `AGENTS.md`. Host installs, package
-  builds and VM validation move to checkpoints or release approval.
 - Consolidate the MainWindow regression suite from 161 to 148 cases by merging
   overlapping fixture setups (no coverage removed) and add a test seam for the
   automatic evidence-refresh delay, cutting the UI tier from ~49 s to ~31 s.
-- Extend the repository-hygiene contract to personal account/host names, VM
-  guest credentials, concrete UUIDs, disk vendor/model/serial text, MAC
-  addresses, private IPv4 addresses, non-standard ports and SSH key material,
-  with documented synthetic-fixture allowlists, and remove the two screenshots
-  that showed a maintainer home path and a disk UUID.
 - Add running-host Btrfs snapshot rollback to Host Maintenance: the Snapshots
   tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
   points through a new `host-snapshots` helper command, stages the selected

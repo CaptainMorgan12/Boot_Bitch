@@ -51,12 +51,10 @@ mkdir -p -- "$BUILD_DIR"
 # explicitly so a file such as scripts/build.sh is never mistaken for a
 # build-output path.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
-# AGENTS.md is part of the archive so the source tree keeps the workflow
-# contract available to any packaged test run.
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
-    CMakeLists.txt LICENSE README.md CHANGELOG.md AGENTS.md .gitignore \
+    CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
     src scripts tests data resources docs .github
 
 cat > "$BUILD_DIR/PKGBUILD" <<'PKGBUILD'

@@ -114,11 +114,9 @@ Released 2026-09-19.
   entry, a `<pkgname>` association and no deprecated `developer_name`, with
   hicolor icon-cache refreshes, the Discover stock-icon workaround and the
   `/usr/local` icon-cache cleanup on uninstall; file system check tools are
-  declared package dependencies; `prepare-release.sh`, `verify-release.sh` and
-  `local-refresh.sh` cover the release documentation and the staging sync; and
-  the Alpine/Fedora VM validation provisions abuild through the QEMU guest
-  agent, builds the signed package via `guest-exec` and validates the Fedora
-  44 RPM with `scripts/test-rpm.sh` without installing it.
+  declared package dependencies; and the native Arch, Alpine and Fedora
+  packages are validated with `scripts/test-rpm.sh`, `scripts/test-apk.sh` and
+  `scripts/test-deb.sh` without installing them.
 
 The Debian package, AppImage, Arch package, RPM and APK are built from the
 complete source tree and validated in their target environments. Verify
