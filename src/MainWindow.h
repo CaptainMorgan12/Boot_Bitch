@@ -326,6 +326,11 @@ private:
     void rollbackSelectedSnapshot();
     void runChrootShellCommand();
     void clearChrootShellOutput();
+    // Shared Host/Chroot shell transcript append. The wrapped pane follows the
+    // newest output only when it already shows the end, so a user reading
+    // earlier output (or selecting text) keeps their position.
+    void appendShellOutput(const QString &text);
+    bool shellOutputAtBottom() const;
     bool shellCommandReady(QString *reason = nullptr) const;
     void updateChrootShellMode();
     // APT release-info-change handling for user-run Chroot/Host shell commands.

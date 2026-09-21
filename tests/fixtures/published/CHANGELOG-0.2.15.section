@@ -1,28 +1,17 @@
 ## 0.2.15 — 2026-09-13
 
-First official GitHub release of Boot Bitch (published as `Boot_Bitch`).
-
-- Added a guarded Qt 6 recovery workflow for selecting physical targets,
-  unlocking LUKS volumes, inspecting boot state, and applying supported repairs.
-- Added authoritative per-target diagnostic caching. Full Repair requires fresh
-  matching evidence for every selected stage; individual repairs require their
-  matching fresh diagnostic. Run All remains the simplest way to populate the
-  complete set.
-  Target edits, writes, shell commands, snapshot rollback, and Host → Repair
-  copies mark affected evidence stale and explain how to regenerate it.
-- Added simulation-first package, DKMS, initramfs, GRUB, EFI/UKI, and boot-stack
-  repair paths with hard stops for unknown or unsafe failures.
-- Added evidence-based graphical-login repair for SDDM, GDM3, LightDM, greetd,
-  ly, and configured custom systemd display managers. The repair inspects the
-  target default, installed units, and last-boot evidence, performs headless
-  preflight checks, and never starts a graphical session in the chroot.
-- Added read-only Btrfs/Snapper snapshot inventory and guarded transactional
-  rollback for supported top-level-`@` layouts, with automatic restoration on
-  critical reconciliation failure.
-- Added the Chroot Shell, guarded bidirectional File Copy, persistent categorized
-  Logs, asynchronous snapshot loading, and target configuration editors.
-- Added protected ESP/firmware handling, target-aware encrypted-device checks,
-  KDE/Freedesktop packaging metadata, AppStream metadata, and the `boot-repair(1)`
-  manual page.
-- Added UI, helper-contract, and staged Debian-package validation tests.
+- First official GitHub release: a guarded Qt 6 recovery workflow for
+  selecting targets, unlocking LUKS, inspecting boot state and applying
+  supported repairs, with authoritative per-target diagnostic caching (stale
+  evidence on edits, writes, shell, rollback and copies) and simulation-first
+  package, DKMS, initramfs, GRUB, EFI/UKI and boot-stack paths that stop on
+  unknown or unsafe failures.
+- Evidence-based graphical-login repair (SDDM, GDM3, LightDM, greetd, ly,
+  custom systemd managers) and guarded transactional Btrfs/Snapper rollback
+  with automatic restoration on critical reconciliation failure.
+- Feature set and packaging: Chroot Shell, guarded bidirectional File Copy,
+  persistent categorized Logs, asynchronous snapshot loading, target
+  configuration editors, protected ESP/firmware handling, KDE/Freedesktop and
+  AppStream metadata, the `boot-repair(1)` manual page, and UI,
+  helper-contract and staged Debian-package validation tests.
 

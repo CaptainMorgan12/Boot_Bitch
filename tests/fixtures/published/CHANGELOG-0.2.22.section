@@ -1,8 +1,6 @@
 ## 0.2.22 — 2026-09-14
 
-- Fix Host → Repair destination browsing to decode directory records correctly
-  and display the selected repair system's folders instead of an empty list.
-- Keep the repaired-system browser compact by default, make it freely
-  resizable, and reserve enough layout space for navigation and confirmation
-  controls at smaller window sizes.
+- Fix Host → Repair destination browsing to decode directory records
+  correctly, and make the repaired-system browser compact by default, freely
+  resizable and usable at small window sizes.
 

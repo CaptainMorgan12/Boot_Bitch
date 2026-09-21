@@ -1,9 +1,8 @@
 ## 0.2.16 — 2026-09-13
 
-Maintenance release following the first public 0.2.15 release.
-
-- Fixed compact snapshot-row sizing on Qt 6.4/Ubuntu CI.
-- Added `pkexec` to the GitHub Actions test environment so repair-readiness UI checks run with the required capability present.
-- Made source-tree helper discovery tolerant of a lost executable bit by invoking readable shell helpers through `/bin/bash`.
-- Revalidated the UI, Chroot Shell, display-manager contract, package, desktop-entry and AppStream checks.
+- Fix compact snapshot-row sizing on Qt 6.4/Ubuntu CI, install `pkexec` in the
+  GitHub Actions test environment so repair-readiness UI checks run with the
+  capability present, tolerate a lost executable bit on source-tree helpers by
+  invoking readable shell helpers through `/bin/bash`, and revalidate the UI,
+  Chroot Shell, display-manager, package, desktop-entry and AppStream checks.
 

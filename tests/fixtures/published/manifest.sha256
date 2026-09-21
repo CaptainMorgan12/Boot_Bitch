@@ -4,8 +4,20 @@
 # directory; each path is a byte-for-byte frozen copy of a published
 # release artifact. Tests compare the live tree against these bytes;
 # a mismatch means a published release was rewritten. Published
-# releases are immutable (docs/publishing.md): restore the frozen
+# releases are immutable (Development/docs/publishing.md): restore the frozen
 # bytes and put the new work in the next version section instead.
+#
+# Rebaselined 2026-09-20: the maintainer approved a one-time concision pass
+# over every release section (0.2.15-0.2.25) and authorized regenerating
+# these frozen copies and manifest.sha256 from the rewritten live content.
+# From this baseline the rewritten sections are frozen again; the exception
+# must not be reused. See Development/docs/publishing.md (Release invariants).
+#
+# Lead-simplification rebaseline 2026-09-20 (follow-up): the release lead
+# sentences were simplified under the same one-time approval (no
+# previous-release wording, short change summaries) and the changed README
+# and CHANGELOG sections, release notes and captures were regenerated from
+# the rewritten live content; the leads are frozen from this baseline.
 #
 # Seeded 2026-09-19 from the canonical tree (the content published on
 # GitHub main) and cross-checked against the staging clone tags.
@@ -29,33 +41,33 @@
 #     exclude dropping the frozen copies. They are checked only when
 #     Development/release-<v>/ exists.
 #
+a3aa94e54433fa80643f43159b864f99bcd03d3f53f40e8d63e23b6c55328e79  CHANGELOG-0.2.15.section
+f7d47ea1ab8da2e7ef9f02ea38fe416cd950dc144793f048ca91f6405e6e430e  CHANGELOG-0.2.16.section
+6d2b83d4fd9bd1a70644bd3a3d08fe2cb4da0f339f15c17cc7cdbd4a13ab4146  CHANGELOG-0.2.17.section
+727afb77b99b80a7fe484457ca6733630b1c300471d5ec1d46f4b7f9a89da065  CHANGELOG-0.2.18.section
+abb2e08b7c97188b0bcf05fba9e74345e817c5d18747b5ad6d8f30429d1df58d  CHANGELOG-0.2.19.section
+f549291e36500c3d14d6e132bd9a12dc362bfa915fc322d9541c5c5c07ece33a  CHANGELOG-0.2.20.section
+4e661d997b51a148262c309b6e9110f671d899377aefa2e96abbea629743bb11  CHANGELOG-0.2.21.section
+f6e324f64f8526f32df3b0376b09a6fad3edacb2a651acf61f39d74f90f671ee  CHANGELOG-0.2.22.section
+da56c77c22ea2755964832c447484cf9bce8122fe75c6b33f9237de086f92c85  CHANGELOG-0.2.23.section
+f3b9d181e39563d98d027a257fb10302a848be4525bb5529e1fd5cd6d18e9ce7  CHANGELOG-0.2.24.section
+fbf1a689730399628422936c6cd3c4fa19b0829170bf34ccda803988901b112b  README-0.2.15.section
+faed4dfb46100e036ba5b93b02b150f1c2c3fb82408224c3524fa41063e46c5c  README-0.2.16.section
+94f3c7309f1c05617ee9aeb33b394106cecfcf50c43b2145668081c09c4a353c  README-0.2.17.section
+8bec883abf34b688066907b46564cbfe6c94d14f866778d83e76c2c6cfefc5cb  README-0.2.18.section
+d0dc076f1ec0a2900ce23fb9a854efb96f61eb4c74945775458abbda7b6d4a00  README-0.2.19.section
+7c76daffb5865774ec366140fd2e87cb2b371ffb0fd39a00ec09b1b0d4a0e01b  README-0.2.20.section
+248f1f9f5747f60f9e6930e42292e4e43137bfc2d61a66e7d06c31fceb8ee099  README-0.2.21.section
+544a46284bf85ef364b279c5ac1ab995f03d78a623c40b185c8461a7245b43a7  README-0.2.22.section
+7ff248b43354933cae2a2f3d7f53d54a47132084567f6a420b1f861803741ba7  README-0.2.23.section
+d58d0c059c4260783a70b0cff1a6f5942bbd7ea93c23d9c0ba86930392ab6f2e  README-0.2.24.section
+9004e167e66719b2aa83b176f6ce4b4ee3956463e6f06364b550040ccf123f84  captures/release-0.2.23/SHA256SUMS
 d54063c42cc30f5fd09d703602471f835e792511e44555858a8e436afdb8ea64  captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
-5f435d0df58d0336328f7f2a0b1cf1729f16e9bafcc8ffeb09a320f0069deb06  captures/release-0.2.23/release-notes-0.2.23.md
-6aab3326d7e3c287682d90d1c2c6a1113b6587d81cae15b2e7b193d67ce46b4d  captures/release-0.2.23/SHA256SUMS
-9a5af6278b8b3eb2b7ec68709a1d1b4be62f76565112beb6418f9fa0b98744f4  captures/release-0.2.24/release-notes-0.2.24.md
-396133d0dda5fe19d43ad83f12a84a024c3911fdb21326edb36563941c8e2893  captures/release-0.2.24/SHA256SUMS
-d2862650baaa8420369e673be8ba962b2854b6220dd63978745edd5eb00532e0  CHANGELOG-0.2.15.section
-a812e1d1c18f9e47d9ea15632c087d5d6269a2925b6cb710403e1aecc6d4eb20  CHANGELOG-0.2.16.section
-c34097602176df15fb626d08c75cb1e6be6646a1c66af7f1d88eb4e49b8f7bfc  CHANGELOG-0.2.17.section
-dc75612c2c02590d7daa61e7e9d19014a3b8ffd43a3d7666ef824317e580cc60  CHANGELOG-0.2.18.section
-f6b38650bd46fdf58e1491fc08700253dff95a7f1d1765faf80daced67c66fd5  CHANGELOG-0.2.19.section
-57955e3d4772538df54cb5745897f29bf7397464e2f0e7812f1df9f0bd295714  CHANGELOG-0.2.20.section
-0353b42c4ee7184435ae0e68b158629df1dfd81f87bf66d39b78d08e6ee71fd8  CHANGELOG-0.2.21.section
-2f75ec999dac12947f32b8595a830dcb0b5e5f50194d5fb6ced410f6460ab963  CHANGELOG-0.2.22.section
-c5f67820383dc53cbebf65af496ae3805f233a955514bb1c29328389795c374b  CHANGELOG-0.2.23.section
-b1c4935fd9d5bd7669e8137521bc109e7cebfe8c1a8eed5a080ea661d3d19ee8  CHANGELOG-0.2.24.section
-79b2869e0b7b1ee0a8e3c786d65f80c8daa80ec056a0a992a97866842707465b  docs/release-notes-0.2.20.md
-591e424fe5c6c034ae261c9d22789174f3880b0b19441f8c88afe01bca1f7714  docs/release-notes-0.2.21.md
-0543de8ade9e24d6507c2819d4a8aad760e813f47d3e44a21ed82a255ddc837d  docs/release-notes-0.2.22.md
-5f435d0df58d0336328f7f2a0b1cf1729f16e9bafcc8ffeb09a320f0069deb06  docs/release-notes-0.2.23.md
-9a5af6278b8b3eb2b7ec68709a1d1b4be62f76565112beb6418f9fa0b98744f4  docs/release-notes-0.2.24.md
-2ee3d07a06179a10de92e9b7cbbe21d48fea7bed65c4b88202a583ef6158aa05  README-0.2.15.section
-651515dfa6d2db47d33673817b179c39f90a3f0a683e344505fad85dd4dac6ef  README-0.2.16.section
-cf96209f626763070f6c4b48eb85530e16fa9830eaadc074c5d246cc771cb11e  README-0.2.17.section
-14b2098b9985bfbcf566c4a9054fa5aa7566f40b717473267d4618e947c658ea  README-0.2.18.section
-c3b4a997e1b5803abd03619e68fd47c628c5d061c0ccd245dd668d41d68d8194  README-0.2.19.section
-c71de13e5021698ce3317014edf56f8e776362b515ae6c1ae6579f7bbbfc87be  README-0.2.20.section
-502533b12f2abbc5b37a6c1833f4ae6974dc7d2f6f56a49e23d7920d70f528e3  README-0.2.21.section
-70f7929426161d48f0f7d3350a1050dfea677dcdf29e0986638ddb83bf4c353d  README-0.2.22.section
-697224bd61e4601c4411eb2cf45c8289e575aa84894a2f29bfcd3877b97379b5  README-0.2.23.section
-aa4cd92bf23a59f8d48f28c308c019e51fb441f6179b4b1f61ae8d8ee942ac2c  README-0.2.24.section
+640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  captures/release-0.2.23/release-notes-0.2.23.md
+dabf3b6e3924f5f27735f8d190233e5ab53a545b850e7dbcfa383de014957c92  captures/release-0.2.24/SHA256SUMS
+87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  captures/release-0.2.24/release-notes-0.2.24.md
+4c5349793140662ff0d6ecdf9f33dc00a59d84c49278601004434ffb937b36c6  docs/release-notes-0.2.20.md
+388ebedb586fcdd0f17106f92dd15aa4be10e738a40b527a65e8c64c280ae87b  docs/release-notes-0.2.21.md
+58b95987679839b537ed5ce6834f0f8327ed6951139de5bcc89d61b8cbd4aeaf  docs/release-notes-0.2.22.md
+640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  docs/release-notes-0.2.23.md
+87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  docs/release-notes-0.2.24.md

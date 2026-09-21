@@ -4419,7 +4419,16 @@ QWidget *MainWindow::buildChrootShellPage()
 
     m_chrootShellOutput = new QPlainTextEdit;
     m_chrootShellOutput->setReadOnly(true);
-    m_chrootShellOutput->setLineWrapMode(QPlainTextEdit::NoWrap);
+    // Shell transcripts routinely carry lines wider than the pane (package
+    // manager progress, URLs, helper paths) and long unbroken tokens. Wrap at
+    // the widget width so nothing is clipped at the default window size: at
+    // word boundaries where possible and anywhere inside a long token. The
+    // horizontal scrollbar stays off so a very narrow window keeps wrapping
+    // instead of hiding text off-screen, while the vertical scrollbar appears
+    // as needed once the transcript exceeds the pane.
+    m_chrootShellOutput->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+    m_chrootShellOutput->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+    m_chrootShellOutput->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
     m_chrootShellOutput->setPlaceholderText(QStringLiteral("Command output will appear here."));
     QFont mono(QStringLiteral("monospace"));
     mono.setStyleHint(QFont::Monospace);
@@ -8612,6 +8621,35 @@ void MainWindow::clearChrootShellOutput()
     }
 }
 
+// True when the shell transcript shows its end. A view whose content fits
+// entirely has no scroll range and therefore counts as being at the bottom.
+bool MainWindow::shellOutputAtBottom() const
+{
+    if (!m_chrootShellOutput) {
+        return false;
+    }
+    const QScrollBar *bar = m_chrootShellOutput->verticalScrollBar();
+    return !bar || bar->value() >= bar->maximum();
+}
+
+// Appends one paragraph to the shared Host/Chroot shell transcript. Wrapped
+// output can be taller than the pane, so the follow decision is made before
+// the append: output that arrives while the user is scrolled back to read
+// earlier lines (or has a selection) must not steal the view. When the view
+// already shows the end, the caret moves to the end exactly as before so the
+// newest output stays visible.
+void MainWindow::appendShellOutput(const QString &text)
+{
+    if (!m_chrootShellOutput) {
+        return;
+    }
+    const bool followOutput = shellOutputAtBottom();
+    m_chrootShellOutput->appendPlainText(text);
+    if (followOutput) {
+        m_chrootShellOutput->moveCursor(QTextCursor::End);
+    }
+}
+
 bool MainWindow::shellCommandReady(QString *reason) const
 {
     // The Run button and the command field's returnPressed handler share this
@@ -8762,17 +8800,17 @@ void MainWindow::runChrootShellCommand()
     // release-info-change retry keep the complete pane and log transcript of
     // the existing shell flow, so no failure is silently overwritten.
     auto runAttempt = [&](const QString &attemptCommand, bool *attemptSucceeded) {
-        m_chrootShellOutput->appendPlainText(QStringLiteral("$ %1").arg(attemptCommand));
-        m_chrootShellOutput->appendPlainText(QStringLiteral("[running…]"));
+        appendShellOutput(QStringLiteral("$ %1").arg(attemptCommand));
+        appendShellOutput(QStringLiteral("[running…]"));
         bool attemptOk = false;
         const QString attemptOutput = runPrivilegedRequest(
             shellTitle,
             {helperCommand, diskPath, componentPath, attemptCommand},
             QByteArray(), &attemptOk, false, shellKind);
         if (!attemptOutput.isEmpty()) {
-            m_chrootShellOutput->appendPlainText(attemptOutput.trimmed());
+            appendShellOutput(attemptOutput.trimmed());
         }
-        m_chrootShellOutput->appendPlainText(attemptOk ? QStringLiteral("[exit 0]") : QStringLiteral("[command failed]"));
+        appendShellOutput(attemptOk ? QStringLiteral("[exit 0]") : QStringLiteral("[command failed]"));
         const QString shellDetail = attemptOutput.trimmed().isEmpty()
             ? QStringLiteral("(no command output)")
             : attemptOutput.trimmed();
@@ -8869,7 +8907,6 @@ void MainWindow::runChrootShellCommand()
                                        shellKind);
     }
     m_chrootShellCommandEdit->clear();
-    m_chrootShellOutput->moveCursor(QTextCursor::End);
 }
 
 void MainWindow::runFileCopyPreview()

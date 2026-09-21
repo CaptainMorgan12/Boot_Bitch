@@ -236,8 +236,8 @@ fi
 
 echo
 echo "Release mirror: VM-built packages (Alpine .apk, Arch .pkg.tar.zst, RPM)"
-echo "are mirrored into $BUILD_DIR by scripts/sync-release-artifacts.sh; the"
-echo "authoritative capture stays under Development/release-<version>/."
+echo "are mirrored into $BUILD_DIR by Development/scripts/sync-release-artifacts.sh;"
+echo "the authoritative capture stays under Development/release-<version>/."
 
 echo
 echo "Nothing was installed on the host."

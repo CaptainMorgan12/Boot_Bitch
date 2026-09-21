@@ -1,23 +1,17 @@
 ## 0.2.23 — 2026-09-15
 
-This GitHub release includes the local 0.2.21 and 0.2.22 iterations below.
+Adds guarded running-host maintenance, repair-system folder browsing and
+verified EFI destination and label maintenance.
 
-- Maintain one canonical UKI, fallback, and WebFAI destination per maintained
-  ESP. Safely remove duplicate selected-ESP routes such as a legacy TUXEDO
-  shim or device-path-only fallback when the explicit destination is present;
-  unrelated ESP entries remain untouched.
-- Group retained firmware entries by drive and normal boot use, keeping each
-  drive's UKI or vendor loader before its fallback and WebFAI route.
-- Add a read-only detected boot-chain and root-LUKS handoff summary to boot
-  evidence so TUXEDO Debian-base UKI and TUXEDO Ubuntu/GRUB paths remain
-  distinct and repairs do not introduce a second unlock route.
-- Clarify EFI repair behavior and model-aware destination labels in the UI and
-  documentation.
-- Update existing EFI descriptions through a guarded EFI_LOAD_OPTION rewrite
-  with PARTUUID/loader validation and read-back verification; `efibootmgr -L`
-  is used only for creation because it does not rename an existing entry.
-- Keep the repaired-system folder browser's navigation row outside the folder
-  list's minimum height so compact dialogs do not overlap their controls.
-- Clarify bundled icon fallbacks and Running Host versus selected repair-system
-  support in the README, installed manual and package descriptions.
+- Maintain one canonical UKI, firmware fallback and WebFAI destination per
+  maintained ESP, remove safely identified duplicates, and group retained
+  firmware entries in BootOrder by drive and normal use (UKI/vendor loader
+  before fallback and WebFAI); update existing descriptions only through a
+  validated EFI_LOAD_OPTION rewrite with read-back.
+- Record the detected UKI/GRUB boot chain and root-LUKS handoff in boot
+  evidence so repairs preserve the expected single unlock path.
+- UI/docs: keep the repaired-system folder browser's navigation and
+  confirmation rows visible at compact sizes, annotate maintained entries with
+  the drive model without duplicating model text, and clarify EFI behavior,
+  icon fallbacks and Running Host versus selected-repair support.
 

@@ -1,53 +1,45 @@
 ## 0.2.24 refinements
 
-Boot Bitch 0.2.24 is a maintenance release with the changes made since the
-published 0.2.23 release. The previous GitHub release was 0.2.23; see the
-[0.2.24 release notes](docs/release-notes-0.2.24.md).
+Adds the semantic icon atlas, the read-only-first file system repair engine,
+Arch host-maintenance package repair and the distribution/boot backend
+profiler; see the [0.2.24 release notes](docs/release-notes-0.2.24.md).
 
 - Bundle the semantic icon atlas as the deterministic UI source across desktop
-  themes, including dedicated kernel, initramfs, GRUB and distribution icons,
-  and add the Qt SVG runtime dependency required on Arch and other minimal
-  installations.
-- Add Arch host-maintenance package repair and upgrade stages through guarded
-  full pacman transactions; standalone APT/dpkg stages remain unavailable on
-  Arch.
-- Remove stale `/usr/local` source installs during package uninstall so
-  application-menu launches resolve the current packaged binary.
-- Fix the Debian/TUXEDO GRUB preflight to inspect an isolated `grub-mkconfig`
-  output rather than `update-grub` progress text.
-- Restore the protected-host shield/check as a bundled green status icon.
+  themes and add the Qt SVG runtime dependency required on Arch and other
+  minimal installations.
 - Add the read-only-first File system repair tool and Full Repair stage
   (ordered first): resolve the root, `/boot`, ESP and `/home` filesystems with
   their UUIDs, run the matching read-only check, and offer per-device repair
   modes only after issues are found and the user confirms; offline tools
   refuse mounted filesystems while btrfs/zpool scrub stay online.
-- Make diagnostics regeneration evidence-driven and scoped: repairs that
-  changed nothing keep the cache valid, changed repairs refresh only the
-  affected sections, and a Full Repair plan regenerates once at the end.
-- Make repair result summaries action-accurate and explicit about skipped
-  filesystems, with colored ✓/✗/▪ glyphs that survive every log rendering path
-  and a Full Repair plan that reads chronologically.
-- Fix conventional GRUB EFI repair with same-labelled host/repair ESP entries:
-  the efibootmgr warning no longer pollutes the captured firmware ID, and a
-  failed plan marks only the failing stage failed while completed stages keep
-  their result and skipped stages are "not run".
-- Deduplicate status output: combined Run All reports show the capability
-  probe/evidence block once, and re-running a diagnostic or repair updates its
-  existing log section in place instead of appending duplicates.
-- Keep layouts content-sized and responsive: splitter panes retain a relative
-  one-fifth minimum, scrollable pages show edge shadows with chevrons, the
-  Systems page and running-host card fit any window width, and the Full Repair
-  plan list starts at a few splitter-adjustable rows.
-- Ship software-center metadata that displays correctly: six screenshots, the
-  current 0.2.24 release, the installed size, package association and
-  icon-cache refreshes, including a packaged icon-path workaround for
-  Discover's stock-icon bug.
-- Declare the file system check tools as package dependencies (common tools
-  hard, the rest recommended/optional), install them all in dev/VM setups,
-  warn in `install.sh` when a tool is missing, and report no-op pacman
-  transactions as unchanged.
-- Code review pass: fixed the committed-target tooltip newline, removed the
-  dead `update-grub` preflight fallback, consolidated duplicate diagnostic
-  cache helpers and Full Repair stage gating, plus dead-pattern and ShellCheck
-  cleanups with no behavior changes.
+- Add Arch host-maintenance package repair and upgrade stages through
+  transaction-specific preflights and guarded full pacman transactions;
+  standalone APT/dpkg stages remain unavailable on Arch.
+- Add the read-only distribution/boot backend profiler, backend-profile
+  contract test and kernel/initramfs pairing diagnostics; gate every repair
+  tool and Full Repair stage on the scope's read-only diagnostics (DKMS, APT
+  metadata and Arch prerequisites disable with a reason while helper
+  preflights remain).
+- UI/UX polish: busy indicator; one authorization request per scope; journal
+  evidence filtered to boot components; section-scoped diagnostics refresh
+  with coalesced incremental rendering; narrow-window Logs/File Copy; guarded
+  Host Shell with the host-maintenance crash fix; single Polkit prompt on Host
+  Maintenance entry; `@section` log search and section filters; responsive
+  Repair/Systems layouts; scroll edge shadows; one-fifth splitter minimums;
+  Systems page and Host Maintenance details fit; compact snapshot rows; and
+  software-center metadata with six screenshots, the installed size, package
+  association and icon-cache refreshes.
+- Fixes: same-labelled GRUB EFI entries no longer pollute the captured
+  firmware ID and a failed plan attributes each stage correctly; an idle
+  PackageKit daemon no longer blocks host package repairs; the initramfs
+  generator is detected from installed packages; apt release-metadata changes
+  warn and retry once; no-op pacman transactions report unchanged; repair
+  summaries are action-accurate with durable ✓/✗/▪ glyphs; diagnostics
+  regeneration is evidence-driven and Run All no longer duplicates log
+  sections; stale `/usr/local` source installs are removed on uninstall; the
+  Debian/TUXEDO GRUB preflight inspects an isolated `grub-mkconfig` output;
+  the protected-host shield/check returns as a bundled green status icon;
+  file-system check tools are declared package dependencies (common tools
+  hard, the rest recommended/optional); code-review cleanups with no behavior
+  change.
 

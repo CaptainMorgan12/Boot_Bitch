@@ -5,9 +5,9 @@
 - Make test-VM installs a hard workflow contract: after each major
   fix/implementation batch the test VMs (Fedora, Alpine BIOS/EFI) are rebuilt
   and installed so the user can test, while host packages are built and synced
-  but never installed on the host. `AGENTS.md` and `docs/testing.md` document
-  the rule and `scripts/test-agent-safety-contract.sh` (ctest `fast`) freezes
-  its exact wording.
+  but never installed on the host. `AGENTS.md` documents the rule and
+  `scripts/test-agent-safety-contract.sh` (ctest `fast`) freezes its exact
+  wording.
 - Include `AGENTS.md` in the Alpine and Arch source archives so the packaged
   test suite can run the agent-safety contract from the unpacked tree.
 - Add `scripts/test-agent-safety-contract.sh` and the `fast`-labeled
@@ -16,16 +16,14 @@
   installs packages; development dependencies stay allowed), invokes
   `local-refresh.sh --install`, or invokes a screenshot tool from `scripts/`
   or `tests/`, and it freezes both hard rules in `AGENTS.md`.
-- Add `scripts/dev-check.sh`, the test-only per-change gate: it configures and
-  builds only when sources changed, runs the fast ctest tier and prints a
-  compact summary. It never builds a package, installs anything or touches a
-  VM; `--ui` adds the UI suite only when UI/UX changed and `--full` runs every
-  local test except the packaging-profile contract (the documented
-  built-package trap).
+- Add a test-only per-change gate: it configures and builds only when sources
+  changed, runs the fast ctest tier and prints a compact summary. It never
+  builds a package, installs anything or touches a VM; `--ui` adds the UI suite
+  only when UI/UX changed and `--full` runs every local test except the
+  packaging-profile contract (the documented built-package trap).
 - Add ctest tiers (`fast`, `ui`, `slow`, `packaging`, `release`) and document
-  the iteration/checkpoint workflow in `AGENTS.md`, `docs/publishing.md` and
-  `docs/testing.md`. Host installs,
-  package builds and VM validation move to checkpoints or release approval.
+  the iteration/checkpoint workflow in `AGENTS.md`. Host installs, package
+  builds and VM validation move to checkpoints or release approval.
 - Consolidate the MainWindow regression suite from 161 to 148 cases by merging
   overlapping fixture setups (no coverage removed) and add a test seam for the
   automatic evidence-refresh delay, cutting the UI tier from ~49 s to ~31 s.
@@ -60,420 +58,251 @@
 
 ## 0.2.25 — 2026-09-19
 
-- Add native RPM packaging and tooling: `scripts/package-rpm.sh` builds the
-  CPack RPM with family-specific dependency names and
-  `scripts/rpm-postinst.sh` as its POSIX `/bin/sh` scriptlet, and
-  `scripts/test-rpm.sh` inspects, extracts and validates the artifact without
-  installing it.
-- Add Alpine packaging and tooling: `scripts/package-alpine.sh` builds the
-  signed `boot-bitch-<version>-r0.apk` with abuild and runs the project tests
-  in its `check()` phase, and `scripts/test-apk.sh` validates the artifact
-  metadata, dependencies, signature and installed file set without installing
-  it.
+- Add native RPM and APK release artifacts: `scripts/package-rpm.sh` builds
+  the CPack RPM with family-specific dependency names and the POSIX `/bin/sh`
+  `scripts/rpm-postinst.sh` scriptlet, and `scripts/package-alpine.sh` builds
+  the signed `boot-bitch-<version>-r0.apk` with abuild and runs the project
+  tests in its `check()` phase; `scripts/test-rpm.sh` and
+  `scripts/test-apk.sh` validate both artifacts (metadata, dependencies,
+  signature, installed file set) without installing them.
 - Add a Fedora/RPM-family repair backend from the same read-only probe
-  evidence as the other families: guarded dnf5 package transactions
-  (`rpm -Va` + `dnf reinstall` fix-broken, a `dnf makecache` metadata stage
-  and one simulated `dnf upgrade`), dracut initramfs rebuilds with
-  kernel/image pairing, trial builds and `lsinitrd` verification, GRUB2
-  configuration regeneration (`grub2-mkconfig --no-grubenv-update` with BLS
-  and menuentry preservation) plus a guarded GRUB2 bootloader reinstall on
-  BIOS when the boot-code probe finds the MBR or BIOS boot partition broken,
-  boot-stack reconciliation over dracut + GRUB2, and the systemd GDM display
-  path with Fedora naming (`/etc/gdm/custom.conf`). Journald logging and the
-  13 capability keys are unchanged; every Fedora label and gate derives from
-  the helper's probe evidence, never from the distribution ID.
+  evidence as the other families: guarded dnf5 package transactions (`rpm -Va`
+  + `dnf reinstall` fix-broken, a `dnf makecache` metadata stage, one
+  simulated `dnf upgrade`), dracut initramfs rebuilds with kernel/image
+  pairing and `lsinitrd` verification, GRUB2 configuration regeneration
+  (`grub2-mkconfig --no-grubenv-update` with BLS and menuentry preservation)
+  plus a guarded GRUB2 boot-code reinstall on BIOS, boot-stack reconciliation
+  over dracut + GRUB2, and the systemd GDM display path
+  (`/etc/gdm/custom.conf`). Journald logging and the 13 capability keys are
+  unchanged; every Fedora label and gate derives from probe evidence, never
+  from the distribution ID.
 - Add an Alpine/apk repair backend alongside Debian/APT and Arch/pacman:
   read-only profile and capability evidence, simulation-first `apk fix` and
   `apk upgrade` transactions, and targeted missing-package-file repair driven
   by `apk audit --system` plus `apk info --who-owns`. The new `extlinux`
-  capability key gates the Alpine extlinux stage and the existing capability
-  keys are unchanged; EFI/UKI stages remain Debian/Arch-only.
-- Add Alpine repair stages: `mkinitfs` initramfs rebuilds with kernel/flavor
-  pairing, config-only extlinux regeneration through a guarded
-  `update-extlinux` with entry preservation and rollback, and OpenRC
-  display-manager runlevel restore that never starts a graphical session
-  inside the target chroot. Alpine Host Maintenance uses the same guards
-  through the running apk/OpenRC.
+  capability key gates the Alpine extlinux stage; `mkinitfs` initramfs
+  rebuilds, config-only `update-extlinux` regeneration with entry preservation
+  and rollback, and OpenRC display-manager runlevel restore that never starts
+  a graphical session inside the target chroot complete the stage set. Alpine
+  Host Maintenance uses the same guards through the running apk/OpenRC, and
+  EFI/UKI stages remain Debian/Arch-only.
 - Add transaction-specific Arch repair preflights and guarded apply paths for
-  full pacman package transactions, mkinitcpio, conventional GRUB and EFI.
-  Conventional EFI repair restores one verified vendor-loader firmware entry
-  when a guarded grub-install leaves only files on the ESP.
-  Repository/download errors, removals, unresolved dependencies, standalone
-  APT/dpkg operations and unknown layouts stay explicitly gated.
-- Add a read-only distribution and boot backend profiler for the running host
-  and selected repair target. Debian/APT and Arch/pacman families are detected
-  separately, alongside initramfs generator, GRUB/systemd-boot/UKI layout, ESP
-  mount and kernel naming evidence.
-- Add a backend-profile contract test and portable kernel/initramfs pairing
-  diagnostics for Arch-style `vmlinuz-linux` and `initramfs-*.img` files.
-- Add Alpine VM validation: provision the QEMU guest agent once in the guest,
-  then `local-refresh.sh --alpine-vm` provisions the unprivileged abuild user,
-  builds the signed package through `guest-exec`
-  and copies it back while asserting the guest keeps running from its own
-  disk.
-- Add Fedora VM validation (a single domain with a protected running host and
-  a disposable target disk, virtiofs share, SELinux permissive for the guest
-  agent, BIOS) and build the Fedora 44 RPM in the guest; the artifact is
-  validated by `scripts/test-rpm.sh` without installing it and synced into the
-  0.2.25 release capture.
-- Make build dependency setup and installation package-manager aware for
-  APT/dpkg, pacman, DNF/RPM and zypper/RPM hosts. Add native Arch, RPM and
-  package-manager-neutral TGZ workflows while keeping `.deb` generation
-  explicitly Debian-family.
-- Gate every repair tool and Full Repair stage on read-only per-tool capability
-  evidence from the selected scope's diagnostics (`Repair tool <key>:
-  available|unavailable|<reason>`). Unavailable actions such as DKMS on a
-  system without it, or dpkg/standalone APT metadata on Arch, are disabled in
-  both the Repair tools and Settings plan; helper runtime preflights remain
-  mandatory. Arch probes also require pacman configuration and database, a
-  detected display manager, installed kernel module directories and a
-  resolvable ESP where those stages need them. Every capability decision is
-  recorded with supporting evidence in the combined diagnostic log, alongside
-  the GUI's launch-time device, protected-host and helper detection.
-- Arch: treat individual mirror retrieval failures as warnings when the
-  sandboxed full pacman transaction still succeeds. Repository, signature,
-  integrity, dependency, removal and transaction errors remain fatal.
-- Fix a false host-maintenance refusal when the idle PackageKit daemon is
-  running. Real conflicts are still detected through active apt/dpkg/pacman
-  processes and held package-manager locks.
-- Detect the target initramfs generator from what is actually installed
-  (initramfs-tools, dracut, mkinitcpio) instead of a stray binary, and require
-  the TUXEDO UKI builder for that layout's EFI repair.
-- Request administrator authorization once when Host Maintenance is selected
-  or a repair target is confirmed, then reuse the session for diagnostics and
-  repairs; a cancelled prompt leaves the scope usable with a visible
-  Authorize action.
-- Show a global busy indicator while diagnostics, repairs, snapshots, unlock,
-  copy, shell or authorization operations are running.
-- Keep boot-repair journal evidence focused on system boot components: filter
-  out unrelated application entries and collapse near-identical lines into a
-  single counted entry. The filter now covers every journal evidence section
-  (boot evidence, unlock evidence and display evidence), not just boot errors.
-- Re-running diagnostics refreshes only the affected diagnostic sections in
-  the application log; repair, snapshot and other entries are preserved. Log
-  rendering is coalesced and incremental so automatic regeneration no longer
-  causes UI lag, and the busy indicator sits in a reserved header slot so it
-  cannot shift the layout.
-- Logs and File Copy layouts adapt to narrow windows: the session-log frame
-  defaults smaller and moves below the log view when space is tight, File Copy
-  buttons shrink instead of overlapping, and drive summary text wraps instead
-  of clipping.
-- Add a guarded running-host shell: in Host Maintenance the Chroot Shell tab
-  becomes a Host Shell that runs a bash command on the running host through the
-  new `host-shell` helper command with firmware write isolation. Fixes an
-  application crash when the shell was invoked from host maintenance.
-- Coalesce authorization requests so entering Host Maintenance produces a
-  single Polkit password prompt even when the deferred scope request and the
-  pending diagnostics refresh overlap; the separate LUKS passphrase prompt is
-  unchanged.
-- Log search now supports `@section` terms (for example `@errors`) and a filter
-  dropdown (All entries / Diagnostics / Repairs / each diagnostic section) to
-  show complete diagnostic sections.
-- Repair and Systems layouts: the Full Repair plan frame sizes to its content
-  so Individual Repair Tools moves up, the plan/run buttons shrink and elide
-  instead of overlapping, Systems action buttons share a standardized column
-  width, runtime button labels elide instead of spilling, and the Snapshots
-  tab uses the same framed section design as the other tabs.
-- Log section filters now also show the repair entries related to that section
-  (for example Kernel / initramfs shows the kernel diagnostic plus initramfs
-  and DKMS repairs), never render an empty view, and the Individual Repair
-  Tools pane defaults wider so tool names are fully visible.
-- Handle vendor apt release-metadata changes (Origin/Label/Suite/Codename/
-  Version) during the metadata refresh: warn with the affected repositories
-  and retry once with Acquire::AllowReleaseInfoChange, while every other apt
-  error and all package transactions stay strict.
-- Each application launch starts a fresh session log: the live view begins
-  empty and a new timestamped session file is created when a scope is
-  identified. Previous runs appear only as prior sessions; a second window in
-  the same process reuses the active session file.
-- Write one canonical session log per run to a local log directory, with
-  scope markers for the protected host and each selected repair target,
-  visible timestamps, a prior-session list with read-only viewing, clear and
-  add-note actions, and automatic retention (20 files or 10 MB).
-- Automatically regenerate stale read-only diagnostics after repairs or
-  target changes once a privileged session exists, so available repair
-  actions stay enabled without manually clearing and re-running Run All.
-  Settings toggle, default on; it never triggers an authorization prompt on
-  its own.
-- Code review pass: fixed a literal `\n` in the committed-target row tooltip,
-  removed the unreachable `update-grub` GRUB-preflight fallback (the isolated
-  `grub-mkconfig` path is the only supported preflight), consolidated the
-  duplicate diagnostic-bundle cache helpers, delegated Full Repair stage
-  gating to the canonical stage-key mapping, and cleaned up dead patterns,
-  redundant packaging checks and ShellCheck false positives without changing
-  behavior.
-- Software-center packaging: the AppStream metainfo now ships six remote
-  screenshots, the current release entry, a `<pkgname>` package
-  association (so Discover lists the installed app and GNOME Software shows
-  the installed size), and the deprecated developer_name tag is gone. The
-  Debian package refreshes the hicolor icon cache via a postinst and the Arch
-  package via an install scriptlet, the packaged desktop entry points at the
-  installed icon path as a workaround for Discover's broken stock-icon
-  lookup (upstream KDE bug), and the uninstall cleanup removes the legacy
-  /usr/local icon cache that made launchers fall back to a generic icon.
-- Declare the file system check tools as package dependencies: e2fsprogs,
-  dosfstools, btrfs-progs and xfsprogs are hard dependencies, with
-  exfatprogs, ntfs-3g/ntfsprogs, f2fs-tools, jfsutils, reiserfsprogs and
-  zfsutils-linux recommended/optional; setup-dev-deps.sh installs them all
-  for dev and VM rigs, and install.sh warns which filesystems cannot be
-  checked when a tool is missing. Arch pacman transactions that perform no
-  package changes ("there is nothing to do") now report unchanged instead of
-  changed, matching the apt behavior.
-- Fix conventional GRUB EFI repair when the host and repair ESPs carry
-  same-labelled entries: efibootmgr's same-label warning could leak into the
-  captured firmware ID, which made the BootOrder restore fail after
-  grub-install had already removed and recreated entries. The created entry
-  ID is now captured cleanly and validated, and a missing/invalid mapping
-  fails closed with a specific reason instead of a generic error. A failed
-  Full Repair plan now attributes results correctly: completed stages keep
-  their own success/no-change result, only the failing stage is failed, and
-  stages that never ran are reported as "not run".
-- Make repair result summaries action-accurate: package metadata refresh,
-  initramfs rebuild, package upgrade and the other stages now use their own
-  verbs ("package metadata refreshed", "initramfs rebuilt", "no packages to
-  upgrade", ...) instead of a generic "repair successful", and a file system
-  check that skipped mounted/offline-only devices is reported as "not all
-  filesystems were checked" with the skipped devices listed, never as "no
-  repair needed". Summary glyphs are colored through a document highlighter so
-  the green check / red cross / blue square survive every rendering path
-  (initial, incremental, filter rebuild, section replacement, prior logs).
-  A Full Repair plan's file-system pre-stage, plan summary/output and the
-  post-plan diagnostics now read in chronological order, and a manual Check
-  File Systems run is clearly distinguished from the plan pre-stage.
-- Make diagnostics regeneration evidence-driven and scoped: repairs that
-  provably changed nothing no longer invalidate cached diagnostics or trigger
-  a regeneration (all other repair actions stay enabled), while changed
-  actions invalidate only the sections their tool affects (for example a
-  display-manager repair refreshes only the display section; package
-  transactions and boot-stack reconciliation refresh the full set). Run Full
-  Repair accumulates the changed stages' union and regenerates once at the
-  end, skipping regeneration entirely when no stage changed. Repair log
-  sections now start with a colored result summary (green ✓ repair
-  successful, red ✗ repair failed, blue ▪ no repair needed) and a plan-level
-  aggregate with one auditable line per stage. The host file system scope now
-  includes the ESP and a separate /boot, and boot-stack reconciliation reuses
-  the EFI/UKI rebuild and GRUB regeneration already performed in the same
-  session instead of repeating them.
-- Combined Run All reports now emit the read-only capability probe/evidence
-  block once at the top instead of repeating it inside every diagnostic
-  section; individual diagnostics keep their self-contained block. Re-running
-  a diagnostic or repair action updates that section's existing log block in
-  place (newest position) instead of appending another copy, so GRUB,
-  initramfs, kernel, file system and other repeated sections no longer pile
-  up in the live log; different tools and scopes stay separate, and session
-  files on disk remain full history.
-- Add a read-only-first file system repair engine. Diagnostics resolve the
-  root, /boot, ESP and /home filesystems for the selected scope (repair
-  target or running host), report each device's UUID and run the matching
-  read-only check (e2fsck -n, xfs_repair -n, btrfs check --readonly,
-  fsck.fat -n, fsck.exfat -n, ntfsfix -n, jfs_fsck -n, reiserfsck --check,
-  zpool status) without writing. Only when a check reports issues does the
-  tool offer repair: per-device modes are limited to what is valid for the
-  mounted state (offline tools refuse mounted filesystems, btrfs scrub and
-  zpool scrub are online modes), every repair requires explicit
-  confirmation, dangerous modes such as btrfs check --repair carry an extra
-  warning, and each helper invocation and its per-tool exit classification
-  is logged. The new "File system repair" tool/stage is gated on the
-  `filesystem` capability evidence and runs first in the Full Repair plan.
-- Keep the automatic read-only diagnostics asynchronous and always
-  available: selecting a repair disk, entering Host Maintenance, switching
-  the repair disk, unlocking and authorizing still schedule one coalesced
-  run, and manual Run All or individual diagnostics can be triggered at any
-  time. Run All during the automatic full report is acknowledged, during an
-  individual run it is queued, and individual runs wait centrally behind the
-  active privileged request. Any privileged action (for example Make Default)
-  waits for the running request to finish with a visible status instead of
-  queueing an empty dialog that looks hung. Make Default now follows the same
-  single truth log as the repair tools: host identity plus the cached
-  running-host EFI/UKI capability evidence, parsed once in a shared helper.
-- The Systems page pins its content to the viewport width like the other
-  tabs: the device tree and the selected-drive details frame fit the window
-  and scroll horizontally inside their own sections instead of clipping at
-  the page edge, and the running-host action buttons wrap onto a second row
-  on narrow windows, right-anchored to the card's trailing edge so Details,
-  Host Maintenance and Make Default all stay visible at any width. The
-  OS/storage/mount summary stacks above the actions when narrow and stays
-  beside them when wide.
-- Every scrollable page now shows a soft edge shadow (with a small chevron)
-  when more content continues below or above the viewport, so sections such
-  as Host capabilities and dependencies are no longer hidden behind the
-  scroll area; the hint follows the scroll position and clears at the end.
-- Splitter panes keep a relative minimum of one fifth of the splitter size
-  instead of fixed pixel or row minimums, so dragging left/right or up/down
-  never hides a pane. The Full Repair plan list starts at a few visible rows
-  and grows to whatever height the divider gives it, with no forced height.
-- Selecting Host Maintenance fills the Selected drive details panel with the
-  protected running host drive; leaving it restores the committed repair
-  target's details, or clears the panel when no target is committed.
-- Extend the bundled icon atlas with dedicated monochrome kernel, initramfs,
-  GRUB and distribution icons in the same line-art style as the rest of the
-  atlas (GRUB and the distribution penguin are adapted from the TUXEDO OS
-  KDE/Breeze theme, see `resources/icons/atlas/LICENSE.breeze`; kernel and
-  initramfs are drawn for the atlas). The atlas is now authoritative: repair
-  tools, Full Repair stages and diagnostic sections no longer inherit
-  placeholder icons from the active desktop theme, so the GRUB and
-  Kernel/initramfs sections, the Initramfs and GRUB tools, and the
-  Distribution and boot backend profile match the theme on every desktop.
-- Add release-preparation tooling: `scripts/prepare-release.sh` promotes the
-  Unreleased changelog entries into a dated version section, generates the
-  scoped per-version release notes and inserts the new README refinements
-  section without touching earlier ones; `scripts/verify-release.sh` checks
-  the publishing invariants read-only, and `scripts/local-refresh.sh` syncs
-  the canonical tree to the local staging mirror without committing or
-  pushing.
-- Surface the real Polkit/pkexec authorization failure in the GUI (for example
-  a missing or unregistered authentication agent) instead of only the generic
-  cancellation text, and mirror the full authorization output into the session
-  log.
+  full pacman package transactions, mkinitcpio, conventional GRUB and EFI;
+  conventional EFI repair restores one verified vendor-loader firmware entry
+  when a guarded grub-install leaves only files on the ESP, and individual
+  mirror retrieval failures are warnings when the sandboxed transaction still
+  succeeds while repository, signature, integrity, dependency, removal and
+  transaction errors remain fatal. The read-only distribution and boot backend
+  profiler detects Debian/APT and Arch/pacman families separately alongside
+  the initramfs generator, GRUB/systemd-boot/UKI layout, ESP mount and kernel
+  naming evidence, with a backend-profile contract test and portable
+  kernel/initramfs pairing diagnostics; every repair tool and Full Repair
+  stage is gated on read-only per-tool capability evidence (`Repair tool
+  <key>: available|unavailable|<reason>`), unavailable actions disable with
+  their reason (for example DKMS on a system without it, or dpkg/standalone
+  APT metadata on Arch), helper runtime preflights stay mandatory, and Arch
+  probes require pacman configuration/database, a detected display manager,
+  installed kernel module directories and a resolvable ESP where those stages
+  need them.
 - Add running-host Btrfs snapshot rollback to Host Maintenance: the Snapshots
   tab lists Snapper root snapshots and Boot Bitch `@rollback-before-*` undo
-  points through a new `host-snapshots` helper command, stages the selected
-  snapshot with the proven name-preserving transaction (preserve the running
-  `@`, promote a writable copy, migrate a nested `@/.snapshots` child
-  subvolume, reconcile initramfs/UKI/GRUB in a scratch chroot, auto-restore on
-  failure) and reports `Host snapshot rollback` capability evidence without
-  adding a 14th `Repair tool` key. A successful rollback persists a
-  **Reboot required** reminder that is cleared by kernel boot-id
-  reconciliation and offers `Reboot Now` only after a second explicit
-  confirmation through the new `host-reboot` command; rollback never reboots
-  automatically. Contract tests cover the preflight/refusal matrix, the
-  transaction, nested migration, undo targets and reboot confirmation, with
-  offscreen UI coverage for the flow, banner and gating.
-- Make the Available repair targets table's wrap and elision deterministic
-  across styles: a new `DeviceStatusDelegate` lays the Status text out against
-  the live column width (at most two lines, with the remainder elided on the
-  second) and a dynamic column policy sizes the other columns to their content
-  while only ever shrinking them, so the Status column keeps the remaining
-  viewport width and wrapped row heights and painting are identical on Breeze,
-  Fusion and Adwaita. The policy re-applies on viewport resize, restored
-  header state and every refresh; UI tests cover the two-line/elided contract,
-  row-height growth, column shrinkage and stability across sort and refresh.
+  points through the new `host-snapshots` helper command and stages the
+  name-preserving transaction (preserve the running `@`, promote a writable
+  copy, migrate a nested `@/.snapshots` child subvolume, reconcile
+  initramfs/UKI/GRUB in a scratch chroot, automatically restore on failure)
+  while reporting `Host snapshot rollback` capability evidence without adding
+  a 14th `Repair tool` key. A successful rollback persists a **Reboot
+  required** reminder, cleared by kernel boot-id reconciliation, with `Reboot
+  Now` offered only after a second explicit confirmation through the new
+  `host-reboot` command; rollback never reboots automatically and is limited
+  to Snapper top-level `@` roots with no `subvolid=` pin, no separate `/boot`
+  and no other nested `@` child subvolumes.
+- Add a read-only-first file system repair engine: diagnostics resolve the
+  root, `/boot`, ESP and `/home` filesystems for the selected scope (repair
+  target or running host) with their UUIDs and run the matching read-only
+  check (`e2fsck -n`, `xfs_repair -n`, `btrfs check --readonly`, `fsck.fat
+  -n`, `fsck.exfat -n`, `ntfsfix -n`, `jfs_fsck -n`, `reiserfsck --check`,
+  `zpool status`) without writing. Only when a check reports issues does the
+  tool offer repair: per-device modes are limited to what is valid for the
+  mounted state (offline tools refuse mounted filesystems while btrfs and
+  zpool scrub stay online), every repair requires explicit confirmation,
+  dangerous modes such as `btrfs check --repair` carry an extra warning, and
+  each helper invocation and its per-tool exit classification is logged. The
+  new `filesystem`-gated "File system repair" tool/stage runs first in the
+  Full Repair plan.
+- Logging, diagnostics and UI/UX: each launch starts a fresh session log with
+  scope markers, visible timestamps, prior-session viewing, clear/add-note
+  actions and automatic retention (20 files or 10 MB); stale read-only
+  diagnostics regenerate automatically after invalidating operations once a
+  privileged session exists (affected sections only, or the union once at the
+  end of Full Repair, and repairs that changed nothing keep the cache valid),
+  Run All stays asynchronous with the capability block emitted once and
+  repeated sections updated in place, journal evidence is filtered to system
+  boot components with near-identical lines collapsed, and log rendering is
+  coalesced and incremental with colored ✓/✗/▪ result summaries and
+  action-accurate verbs. The UI adds a global busy indicator; one
+  authorization request per scope with a visible Authorize action after
+  cancellation (the separate LUKS prompt is unchanged); a guarded running-host
+  Host Shell through the new `host-shell` command with firmware write
+  isolation, also fixing the Host Maintenance shell crash; `@section` log
+  search with section filters and a wider Individual Repair Tools pane;
+  deterministic responsive repair-target rows (`DeviceStatusDelegate`); and
+  narrow-window Systems, Logs, File Copy and Repair layouts with one-fifth
+  splitter minimums, scroll edge shadows and the bundled monochrome
+  kernel/initramfs/GRUB/distribution icons.
+- Fixes and tooling: an idle PackageKit daemon no longer blocks host package
+  repairs; vendor apt release-metadata changes warn and retry once with
+  `Acquire::AllowReleaseInfoChange` while other apt errors and all package
+  transactions stay strict; real Polkit/pkexec authorization failures are
+  surfaced and logged; the initramfs generator is detected from installed
+  packages with the TUXEDO UKI builder required for that EFI layout; the
+  conventional GRUB EFI repair no longer lets the efibootmgr same-label
+  warning pollute the captured firmware ID and fails closed on a missing or
+  invalid mapping; a failed Full Repair plan marks only the failing stage and
+  reports stages that never ran as "not run"; internal cleanups change no
+  behavior. Dependency setup and installation are package-manager aware
+  (APT/dpkg, pacman, DNF/RPM and zypper/RPM) with native Arch, RPM and
+  package-manager-neutral TGZ workflows while `.deb` generation stays
+  Debian-family; AppStream ships six remote screenshots, the current release
+  entry, a `<pkgname>` association and no deprecated `developer_name`, with
+  hicolor icon-cache refreshes, the Discover stock-icon workaround and the
+  `/usr/local` icon-cache cleanup on uninstall; file system check tools are
+  declared package dependencies; `prepare-release.sh`, `verify-release.sh` and
+  `local-refresh.sh` cover the release documentation and the staging sync; and
+  the Alpine/Fedora VM validation provisions abuild through the QEMU guest
+  agent, builds the signed package via `guest-exec` and validates the Fedora
+  44 RPM with `scripts/test-rpm.sh` without installing it.
 
 ## 0.2.24 — 2026-09-16
 
-- Bundle the semantic icon atlas as the deterministic UI source across desktop themes and add the Qt SVG runtime dependency required by Arch and other minimal installations.
-- Add Arch host-maintenance package repair and upgrade stages through guarded full pacman transactions; standalone APT/dpkg stages remain unavailable on Arch.
-- Remove stale `/usr/local` source installs during package uninstall so application-menu launches resolve the current packaged binary.
-- Fix Debian/TUXEDO GRUB preflight to inspect an isolated `grub-mkconfig` output rather than `update-grub` progress text.
-- Restore the protected-host shield/check as a bundled green status icon.
+- Bundle the semantic icon atlas as the deterministic UI source across desktop
+  themes and add the Qt SVG runtime dependency required on Arch and other
+  minimal installations.
+- Add the read-only-first File system repair tool and Full Repair stage
+  (ordered first): resolve the root, `/boot`, ESP and `/home` filesystems with
+  their UUIDs, run the matching read-only check, and offer per-device repair
+  modes only after issues are found and the user confirms; offline tools
+  refuse mounted filesystems while btrfs/zpool scrub stay online.
+- Add Arch host-maintenance package repair and upgrade stages through
+  transaction-specific preflights and guarded full pacman transactions;
+  standalone APT/dpkg stages remain unavailable on Arch.
+- Add the read-only distribution/boot backend profiler, backend-profile
+  contract test and kernel/initramfs pairing diagnostics; gate every repair
+  tool and Full Repair stage on the scope's read-only diagnostics (DKMS, APT
+  metadata and Arch prerequisites disable with a reason while helper
+  preflights remain).
+- UI/UX polish: busy indicator; one authorization request per scope; journal
+  evidence filtered to boot components; section-scoped diagnostics refresh
+  with coalesced incremental rendering; narrow-window Logs/File Copy; guarded
+  Host Shell with the host-maintenance crash fix; single Polkit prompt on Host
+  Maintenance entry; `@section` log search and section filters; responsive
+  Repair/Systems layouts; scroll edge shadows; one-fifth splitter minimums;
+  Systems page and Host Maintenance details fit; compact snapshot rows; and
+  software-center metadata with six screenshots, the installed size, package
+  association and icon-cache refreshes.
+- Fixes: same-labelled GRUB EFI entries no longer pollute the captured
+  firmware ID and a failed plan attributes each stage correctly; an idle
+  PackageKit daemon no longer blocks host package repairs; the initramfs
+  generator is detected from installed packages; apt release-metadata changes
+  warn and retry once; no-op pacman transactions report unchanged; repair
+  summaries are action-accurate with durable ✓/✗/▪ glyphs; diagnostics
+  regeneration is evidence-driven and Run All no longer duplicates log
+  sections; stale `/usr/local` source installs are removed on uninstall; the
+  Debian/TUXEDO GRUB preflight inspects an isolated `grub-mkconfig` output;
+  the protected-host shield/check returns as a bundled green status icon;
+  file-system check tools are declared package dependencies (common tools
+  hard, the rest recommended/optional); code-review cleanups with no behavior
+  change.
 
 ## 0.2.23 — 2026-09-15
 
-This GitHub release includes the local 0.2.21 and 0.2.22 iterations below.
+Adds guarded running-host maintenance, repair-system folder browsing and
+verified EFI destination and label maintenance.
 
-- Maintain one canonical UKI, fallback, and WebFAI destination per maintained
-  ESP. Safely remove duplicate selected-ESP routes such as a legacy TUXEDO
-  shim or device-path-only fallback when the explicit destination is present;
-  unrelated ESP entries remain untouched.
-- Group retained firmware entries by drive and normal boot use, keeping each
-  drive's UKI or vendor loader before its fallback and WebFAI route.
-- Add a read-only detected boot-chain and root-LUKS handoff summary to boot
-  evidence so TUXEDO Debian-base UKI and TUXEDO Ubuntu/GRUB paths remain
-  distinct and repairs do not introduce a second unlock route.
-- Clarify EFI repair behavior and model-aware destination labels in the UI and
-  documentation.
-- Update existing EFI descriptions through a guarded EFI_LOAD_OPTION rewrite
-  with PARTUUID/loader validation and read-back verification; `efibootmgr -L`
-  is used only for creation because it does not rename an existing entry.
-- Keep the repaired-system folder browser's navigation row outside the folder
-  list's minimum height so compact dialogs do not overlap their controls.
-- Clarify bundled icon fallbacks and Running Host versus selected repair-system
-  support in the README, installed manual and package descriptions.
+- Maintain one canonical UKI, firmware fallback and WebFAI destination per
+  maintained ESP, remove safely identified duplicates, and group retained
+  firmware entries in BootOrder by drive and normal use (UKI/vendor loader
+  before fallback and WebFAI); update existing descriptions only through a
+  validated EFI_LOAD_OPTION rewrite with read-back.
+- Record the detected UKI/GRUB boot chain and root-LUKS handoff in boot
+  evidence so repairs preserve the expected single unlock path.
+- UI/docs: keep the repaired-system folder browser's navigation and
+  confirmation rows visible at compact sizes, annotate maintained entries with
+  the drive model without duplicating model text, and clarify EFI behavior,
+  icon fallbacks and Running Host versus selected-repair support.
 
 ## 0.2.22 — 2026-09-14
 
-- Fix Host → Repair destination browsing to decode directory records correctly
-  and display the selected repair system's folders instead of an empty list.
-- Keep the repaired-system browser compact by default, make it freely
-  resizable, and reserve enough layout space for navigation and confirmation
-  controls at smaller window sizes.
+- Fix Host → Repair destination browsing to decode directory records
+  correctly, and make the repaired-system browser compact by default, freely
+  resizable and usable at small window sizes.
 
 ## 0.2.21 — 2026-09-14
 
-- Protect multi-disk EFI state during TUXEDO UKI and conventional GRUB EFI
-  rebuilds. The vendor helper's global `TUXEDO UKI` delete/create calls are
-  isolated, every firmware entry is classified as host, selected repair target,
-  foreign, or unknown, and stable PARTUUID/label/loader identities restore
-  entries even when firmware reuses a Boot#### number. Host and unrelated-drive
-  entries keep their relative order; vendor-specific paths are refused rather
-  than guessed. BootOrder and BootNext are reconciled after the repair.
-- Guard GRUB regeneration against dropping existing menu entries. A generated
-  configuration that omits a previously present Linux entry is rejected and a
-  post-write mismatch is rolled back to the known-good configuration.
-- Restore a missing running-host TUXEDO UKI registration before resolving the
-  selected-system entry, and annotate only the selected ESP's decoded firmware
-  labels with its distribution/model identity. Existing model text is not
-  duplicated; a present `iPXE.efi` loader without a matching entry receives a
-  uniquely named `WFAI <model>` registration on TUXEDO systems (or `iPXE
-  <model>` on another distribution) on that ESP.
-- Make Host → Repair File Copy destination browsing target-aware. The chooser
-  requests each directory listing through a temporary read-only target mount,
-  instead of opening a host `QFileDialog` that could be mistaken for the
-  repaired system's folder tree; a new destination can still be entered as an
-  absolute virtual path and is validated again by the guarded copy.
+- Protect multi-disk EFI state during TUXEDO UKI and conventional GRUB
+  rebuilds: isolate vendor delete/create calls, classify every firmware entry,
+  restore entries by stable PARTUUID/label/loader identity, preserve relative
+  order, reconcile BootOrder/BootNext and refuse vendor-specific paths rather
+  than guessing; restore a missing running-host TUXEDO UKI registration and
+  annotate only the selected ESP's labels.
+- Extend read-only diagnostics and guarded repairs to the explicitly selected
+  Running Host, guard GRUB regeneration against dropping existing menu entries
+  (reject and roll back), and make Host → Repair destination browsing use
+  temporary read-only target mounts so the repair tree cannot be confused with
+  the host's folders.
 
 ## 0.2.20 — 2026-09-13
 
-- Add native Qt fallback glyphs and bundled icon search paths so AppImage
-  controls remain visible when the host desktop theme is unavailable.
-- Keep GNOME, GTK and KDE platform-theme styling while making portable
-  launches use the same readable icon treatment as installed builds.
+- Bundle the semantic Qt/KDE icon atlas for tabs, diagnostics, repair stages
+  and actions, preferring a usable host theme or freedesktop aliases before
+  the bundled artwork and native high-contrast fallbacks; add filesystem-aware
+  device icons and reject solid theme placeholders so controls remain readable
+  on incomplete host themes.
 
 ## 0.2.19 — 2026-09-13
 
 - Add CaptainMorgan12 attribution to the About dialog, AppStream metadata,
-  Debian package metadata and copyright files.
-- Add a Qt-aware AppImage build workflow with optional linuxdeploy Qt bundling.
-- Keep GNOME/GTK snapshot rows compact and improve dark-theme icon contrast,
-  including terminal and disabled-stage icons.
+  Debian package metadata and copyright files, and add a Qt-aware AppImage
+  build workflow with optional linuxdeploy Qt bundling.
+- UI polish: keep GNOME/GTK snapshot rows compact and improve dark-theme icon
+  contrast, including terminal and disabled-stage icons.
 
 ## 0.2.18 — 2026-09-13
 
-- Keep table rows compact under GNOME/GTK platform themes and grow only rows that wrap.
-- Improve dark-theme icon contrast while preserving colored status artwork.
-- Update GitHub Actions checkout to `actions/checkout@v5` for Node.js 24 runners.
+- UI/CI polish: compact GNOME/GTK table rows that grow only when wrapped, dark
+  theme glyph tinting with colored status artwork preserved, and
+  `actions/checkout@v5` for Node.js 24 runners.
 
 ## 0.2.17 — 2026-09-13
 
-- Add optional GNOME/GTK Qt platform-theme and XDG portal package suggestions.
-- Document environment-driven GNOME theme selection while retaining native KDE styling.
+- Packaging/theme docs: optional GNOME/GTK Qt platform-theme, XDG portal and
+  GNOME Qt theme suggestions, with environment-driven GNOME theme selection
+  documented while KDE keeps its native Plasma style.
 
 ## 0.2.16 — 2026-09-13
 
-Maintenance release following the first public 0.2.15 release.
-
-- Fixed compact snapshot-row sizing on Qt 6.4/Ubuntu CI.
-- Added `pkexec` to the GitHub Actions test environment so repair-readiness UI checks run with the required capability present.
-- Made source-tree helper discovery tolerant of a lost executable bit by invoking readable shell helpers through `/bin/bash`.
-- Revalidated the UI, Chroot Shell, display-manager contract, package, desktop-entry and AppStream checks.
+- Fix compact snapshot-row sizing on Qt 6.4/Ubuntu CI, install `pkexec` in the
+  GitHub Actions test environment so repair-readiness UI checks run with the
+  capability present, tolerate a lost executable bit on source-tree helpers by
+  invoking readable shell helpers through `/bin/bash`, and revalidate the UI,
+  Chroot Shell, display-manager, package, desktop-entry and AppStream checks.
 
 ## 0.2.15 — 2026-09-13
 
-First official GitHub release of Boot Bitch (published as `Boot_Bitch`).
-
-- Added a guarded Qt 6 recovery workflow for selecting physical targets,
-  unlocking LUKS volumes, inspecting boot state, and applying supported repairs.
-- Added authoritative per-target diagnostic caching. Full Repair requires fresh
-  matching evidence for every selected stage; individual repairs require their
-  matching fresh diagnostic. Run All remains the simplest way to populate the
-  complete set.
-  Target edits, writes, shell commands, snapshot rollback, and Host → Repair
-  copies mark affected evidence stale and explain how to regenerate it.
-- Added simulation-first package, DKMS, initramfs, GRUB, EFI/UKI, and boot-stack
-  repair paths with hard stops for unknown or unsafe failures.
-- Added evidence-based graphical-login repair for SDDM, GDM3, LightDM, greetd,
-  ly, and configured custom systemd display managers. The repair inspects the
-  target default, installed units, and last-boot evidence, performs headless
-  preflight checks, and never starts a graphical session in the chroot.
-- Added read-only Btrfs/Snapper snapshot inventory and guarded transactional
-  rollback for supported top-level-`@` layouts, with automatic restoration on
-  critical reconciliation failure.
-- Added the Chroot Shell, guarded bidirectional File Copy, persistent categorized
-  Logs, asynchronous snapshot loading, and target configuration editors.
-- Added protected ESP/firmware handling, target-aware encrypted-device checks,
-  KDE/Freedesktop packaging metadata, AppStream metadata, and the `boot-repair(1)`
-  manual page.
-- Added UI, helper-contract, and staged Debian-package validation tests.
+- First official GitHub release: a guarded Qt 6 recovery workflow for
+  selecting targets, unlocking LUKS, inspecting boot state and applying
+  supported repairs, with authoritative per-target diagnostic caching (stale
+  evidence on edits, writes, shell, rollback and copies) and simulation-first
+  package, DKMS, initramfs, GRUB, EFI/UKI and boot-stack paths that stop on
+  unknown or unsafe failures.
+- Evidence-based graphical-login repair (SDDM, GDM3, LightDM, greetd, ly,
+  custom systemd managers) and guarded transactional Btrfs/Snapper rollback
+  with automatic restoration on critical reconciliation failure.
+- Feature set and packaging: Chroot Shell, guarded bidirectional File Copy,
+  persistent categorized Logs, asynchronous snapshot loading, target
+  configuration editors, protected ESP/firmware handling, KDE/Freedesktop and
+  AppStream metadata, the `boot-repair(1)` manual page, and UI,
+  helper-contract and staged Debian-package validation tests.
 
 ## Pre-release changelog
 

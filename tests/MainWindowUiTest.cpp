@@ -44,6 +44,7 @@
 #include <QTextBlock>
 #include <QTextDocument>
 #include <QTextFragment>
+#include <QTextLayout>
 #include <QTextStream>
 #include <QTimer>
 #include <QTreeWidget>
@@ -2041,6 +2042,8 @@ private slots:
     void privilegedRefusalNamesNextStep();
     void targetShellDispatchStillUsesShell();
     void chrootShellInteractivePromptHintAndBusyCoverage();
+    void shellOutputWrapsLongLinesWithinPane();
+    void shellOutputAutoScrollOnlyWhenAlreadyAtBottom();
     void shellReadinessGateIsSharedByButtonAndReturnPressed();
     void chrootShellReleaseInfoChangeRetryOnAccept();
     void chrootShellReleaseInfoChangeRetryDeclinedKeepsFailure();
@@ -11664,6 +11667,188 @@ void MainWindowUiTest::chrootShellInteractivePromptHintAndBusyCoverage()
              "the actionable hint must be recorded in the application log");
     QVERIFY2(log.contains(QStringLiteral("Chroot shell command failed: dnf update")),
              "the failure message must be recorded in the application log");
+}
+
+// The shared Host/Chroot shell transcript wraps at the pane width instead of
+// clipping wide package-manager lines at the default window size. Wrapping
+// happens at word boundaries where possible and anywhere inside a long token,
+// the horizontal scrollbar is suppressed (a very narrow window keeps wrapping
+// rather than hiding text off-screen), and the vertical scrollbar covers a
+// transcript taller than the pane.
+void MainWindowUiTest::shellOutputWrapsLongLinesWithinPane()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(100);
+    // A prior test may have persisted a wider geometry; pin the constructor's
+    // default size so the wrap assertions are order-independent.
+    window.resize(1180, 760);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    QVERIFY(window.m_chrootShellOutput);
+    QVERIFY(window.m_chrootShellOutput->isReadOnly());
+    QCOMPARE(window.m_chrootShellOutput->lineWrapMode(), QPlainTextEdit::WidgetWidth);
+    QCOMPARE(window.m_chrootShellOutput->wordWrapMode(), QTextOption::WrapAtWordBoundaryOrAnywhere);
+    QCOMPARE(window.m_chrootShellOutput->horizontalScrollBarPolicy(), Qt::ScrollBarAlwaysOff);
+
+    // The pane must be visible for Qt to lay out and update its scrollbars.
+    window.m_tabs->setCurrentIndex(4);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    const auto documentWidth = [&window] {
+        return window.m_chrootShellOutput->document()->documentLayout()->documentSize().width();
+    };
+    const auto visualLineCount = [&window] {
+        const QTextBlock block = window.m_chrootShellOutput->document()->firstBlock();
+        return block.isValid() && block.layout() ? block.layout()->lineCount() : 0;
+    };
+
+    // A long word-separated line must wrap into several visual lines while the
+    // paragraph text stays complete. The trailing clause keeps it wider than
+    // the default pane even on a wide monospace font.
+    window.m_chrootShellOutput->clear();
+    const QString longLine = QStringLiteral(
+        "Get:1 https://archive.example.org/tuxedo/testing amd64 libpackage-name 1.2.3-4~tuxedo1 amd64 [1234 kB] "
+        "and the package manager keeps describing this transaction in a single transcript line");
+    window.appendShellOutput(longLine);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(window.m_chrootShellOutput->document()->firstBlock().text(), longLine);
+    QVERIFY2(visualLineCount() > 1,
+             "a line wider than the pane must wrap into multiple visual lines");
+    QVERIFY2(window.m_chrootShellOutput->horizontalScrollBar()->maximum() == 0,
+             "wrapped shell output must not need a horizontal scrollbar");
+    QVERIFY2(documentWidth() <= window.m_chrootShellOutput->viewport()->width() + 1.0,
+             "the wrapped document must not exceed the viewport width");
+
+    // A single unbroken token has no word boundary: it must still wrap instead
+    // of overflowing the frame.
+    window.m_chrootShellOutput->clear();
+    const QString longToken = QStringLiteral("https://example.invalid/") + QString(320, QLatin1Char('a'));
+    window.appendShellOutput(longToken);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(window.m_chrootShellOutput->document()->firstBlock().text(), longToken);
+    QVERIFY2(visualLineCount() > 1,
+             "a long unbroken token must wrap anywhere instead of overflowing");
+    QVERIFY2(window.m_chrootShellOutput->horizontalScrollBar()->maximum() == 0,
+             "an unbroken token must not create a hidden horizontal scroll range");
+    QVERIFY2(documentWidth() <= window.m_chrootShellOutput->viewport()->width() + 1.0,
+             "the wrapped token must not exceed the viewport width");
+
+    // Vertical scrolling stays available: the scrollbar range grows as soon as
+    // the transcript exceeds the pane and stays absent while it fits.
+    window.m_chrootShellOutput->clear();
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_chrootShellOutput->verticalScrollBar()->maximum(), 0);
+    for (int i = 0; i < 200; ++i) {
+        window.appendShellOutput(QStringLiteral("wrapped output line %1").arg(i));
+    }
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QVERIFY2(window.m_chrootShellOutput->verticalScrollBar()->maximum() > 0,
+             "the vertical scrollbar must cover a transcript taller than the pane");
+    QCOMPARE(window.m_chrootShellOutput->horizontalScrollBar()->maximum(), 0);
+
+    // The minimum supported window size keeps wrapping (no hidden horizontal
+    // scroll and no clipped text) rather than falling back to a clipped line.
+    window.m_chrootShellOutput->clear();
+    window.resize(480, 500);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    window.appendShellOutput(longLine);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QCOMPARE(window.m_chrootShellOutput->document()->firstBlock().text(), longLine);
+    QVERIFY2(visualLineCount() > 1,
+             "a narrow window must keep wrapping the line instead of clipping it");
+    QVERIFY2(window.m_chrootShellOutput->horizontalScrollBar()->maximum() == 0,
+             "a narrow window must not hide text behind a horizontal scroll range");
+    QVERIFY2(documentWidth() <= window.m_chrootShellOutput->viewport()->width() + 1.0,
+             "a narrow window must wrap within its viewport width");
+}
+
+// Appending to the shared shell transcript follows the newest output only when
+// the view already shows the end. A user who scrolled back to read earlier
+// output (or is selecting text) keeps their position and selection while new
+// output is still appended; returning to the bottom resumes following.
+void MainWindowUiTest::shellOutputAutoScrollOnlyWhenAlreadyAtBottom()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+    window.updateTargetLabels();
+
+    // The pane must be visible for Qt to lay out and update its scrollbars.
+    window.m_tabs->setCurrentIndex(4);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    // Fill the wrapped transcript so it has a real scroll range.
+    window.m_chrootShellOutput->clear();
+    for (int i = 0; i < 120; ++i) {
+        window.appendShellOutput(QStringLiteral("transcript line %1").arg(i));
+    }
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+    QScrollBar *bar = window.m_chrootShellOutput->verticalScrollBar();
+    QVERIFY(bar);
+    QVERIFY2(bar->maximum() > 0, "the filled transcript must be scrollable");
+    QCOMPARE(bar->value(), bar->maximum());
+
+    // A real command follows the bottom while the view shows the end.
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("success")));
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("update-grub"));
+    window.runChrootShellCommand();
+    QCoreApplication::processEvents();
+    QVERIFY2(window.m_chrootShellOutput->toPlainText().contains(QStringLiteral("mock host command output")),
+             "the command output must reach the shell pane");
+    QCOMPARE(bar->value(), bar->maximum());
+
+    // Scrolled back to earlier output, a new command must append without
+    // stealing the view (and still deliver its output).
+    bar->setValue(0);
+    QCoreApplication::processEvents();
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("success")));
+    const int lengthBeforeScrolledCommand = window.m_chrootShellOutput->toPlainText().size();
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("update-grub"));
+    window.runChrootShellCommand();
+    QCoreApplication::processEvents();
+    QCOMPARE(bar->value(), 0);
+    QVERIFY(window.m_chrootShellOutput->toPlainText().size() > lengthBeforeScrolledCommand);
+    QVERIFY(window.m_chrootShellOutput->toPlainText().contains(QStringLiteral("mock host command output")));
+
+    // A selection made while reading earlier output survives appended output
+    // and still copies the selected text.
+    QTextCursor selection = window.m_chrootShellOutput->textCursor();
+    selection.setPosition(0);
+    selection.setPosition(24, QTextCursor::KeepAnchor);
+    window.m_chrootShellOutput->setTextCursor(selection);
+    const QString selected = window.m_chrootShellOutput->textCursor().selectedText();
+    QVERIFY(!selected.isEmpty());
+    window.appendShellOutput(QStringLiteral("output arriving during a selection"));
+    QCoreApplication::processEvents();
+    QVERIFY2(window.m_chrootShellOutput->textCursor().hasSelection(),
+             "output appended while the user has a selection must not clear it");
+    QCOMPARE(window.m_chrootShellOutput->textCursor().selectedText(), selected);
+    QCOMPARE(bar->value(), 0);
+    window.m_chrootShellOutput->copy();
+    QCOMPARE(QApplication::clipboard()->text(),
+             QString(selected).replace(QChar::ParagraphSeparator, QLatin1Char('\n')));
+
+    // Returning to the bottom resumes following.
+    bar->setValue(bar->maximum());
+    QCoreApplication::processEvents();
+    window.appendShellOutput(QStringLiteral("followed output"));
+    QCoreApplication::processEvents();
+    QCOMPARE(bar->value(), bar->maximum());
 }
 
 void MainWindowUiTest::shellReadinessGateIsSharedByButtonAndReturnPressed()

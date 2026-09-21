@@ -1,6 +1,8 @@
 ## 0.2.16 refinements
 
-- Fix Qt 6.4/Ubuntu CI compatibility for compact single-line snapshot rows.
-- Install `pkexec` in the GitHub Actions runner so repair-readiness UI tests exercise the same guarded capability path as supported desktop systems.
-- Accept a readable uploaded shell helper when a web-based copy loses its executable bit, invoking it explicitly through `/bin/bash`.
+- Fix compact snapshot-row sizing on Qt 6.4/Ubuntu CI, install `pkexec` in the
+  GitHub Actions test environment so repair-readiness UI checks run with the
+  capability present, tolerate a lost executable bit on source-tree helpers by
+  invoking readable shell helpers through `/bin/bash`, and revalidate the UI,
+  Chroot Shell, display-manager, package, desktop-entry and AppStream checks.
 

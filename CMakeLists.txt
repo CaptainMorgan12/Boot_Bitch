@@ -298,14 +298,10 @@ add_test(NAME boot-repair-host-snapshot-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-snapshot-contract.sh)
 add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
-add_test(NAME boot-repair-release-preparation-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-release-preparation-contract.sh)
 add_test(NAME boot-repair-published-immutability-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-published-release-immutability-contract.sh)
 add_test(NAME boot-repair-agent-safety-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-agent-safety-contract.sh)
-add_test(NAME boot-repair-repo-hygiene-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-repo-hygiene-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
 
@@ -313,7 +309,7 @@ add_test(NAME boot-repair-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
 
 # -----------------------------------------------------------------------------
-# Test tiers (scripts/dev-check.sh drives these)
+# Test tiers (Development/scripts/dev-check.sh drives these)
 # -----------------------------------------------------------------------------
 # Label map:
 #   fast      - quick shell/contract gate, run per change (`ctest -L fast`)
@@ -321,9 +317,12 @@ add_test(NAME boot-repair-efi-label-update
 #   slow      - long-running contract test, run at checkpoints (`--full`)
 #   packaging - packaging-profile contract; known trap: fails while a built
 #               package sits in the local release capture (AGENTS.md)
-#   release   - release-preparation and published-immutability contracts
+#   release   - published-release immutability contract
 # A test may carry more than one label; `ctest -L fast` is the default quick
 # gate and must stay fast (the backend-profile contract runs in the slow tier).
+# The release-preparation and repository-hygiene contracts moved with the
+# maintainer tooling to Development/scripts/ (never published);
+# Development/scripts/dev-check.sh runs them on every tier.
 set_tests_properties(boot-repair-chroot-shell-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-display-manager-contract
@@ -342,11 +341,7 @@ set_tests_properties(boot-repair-ui-read-only
     PROPERTIES LABELS "ui")
 set_tests_properties(boot-repair-packaging-profile-contract
     PROPERTIES LABELS "packaging")
-set_tests_properties(boot-repair-release-preparation-contract
-    PROPERTIES LABELS "fast;release")
 set_tests_properties(boot-repair-published-immutability-contract
     PROPERTIES LABELS "fast;release")
 set_tests_properties(boot-repair-agent-safety-contract
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-repo-hygiene-contract
     PROPERTIES LABELS "fast")
