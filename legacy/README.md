@@ -34,27 +34,38 @@ stays installed as the no-X fallback.
 `QTabWidget`/`QProcess`, no kdelibs) C++98 application; see
 `legacy/gui/README.md` for the full design, the modern-GUI parity table and
 CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it:
-**Systems** renders the read-only kernel inventory, the helper-confirmed target
-facts and a LUKS **Unlock** control (passphrase over the helper's stdin only;
-disabled for the protected running host), **Diagnostics** lists the 13
-`Repair tool` capability lines with an all/available/unavailable filter and
-Run All, **Repair** shows the resolved elevation method with a re-check button
-and enables only the legacy-supported commands (`validate`, `diagnose`,
-`fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
-`initramfs`) whose cached capability line is `available` for the current
-scope, and **Logs** streams the helper output with an all/errors filter. A
+**Systems** renders the read-only kernel inventory, the **Selected drive
+details** panel (drive, detected target/component, model/label, status, size,
+connection, filesystem, UUID, mounts, protection), the scope/target controls
+with explicit **Set as repair target** / **Host Maintenance** commit and a
+dedicated **Unlock status** frame (locked/unlocked, component, mapper, method,
+errors; disabled for the protected running host), **Diagnostics** lists the 13
+`Repair tool` capability lines with an all/available/unavailable filter and Run
+All (a plain interactive sudo is authorized through a modal hidden-input
+dialog fed to `sudo -S -v` over a pipe; Run All stays disabled until a target
+is committed or Host Maintenance is active), **Repair** shows the resolved
+elevation method with a re-check button and enables only the
+legacy-supported commands (`validate`, `diagnose`, `fs-inspect`, `fix-broken`,
+`dpkg-configure`, `apt-update`, `apt-upgrade`, `initramfs`) whose cached
+capability line is `available` for the current scope, **Chroot Shell** and
+**File Copy** mirror the modern tabs with every control greyed and the exact
+probe/helper reason, **Logs** streams the helper output with an all/errors
+filter, a **Search log:** box and a per-session list (live session first,
+earlier files selectable read-only), and **Settings** shows the read-only
+configuration plus greyed modern options and a working log-wrap toggle. A
 repair that is not proven `unchanged` (or an unlock that changes the topology)
 invalidates the cache and disables the gated actions until diagnostics run
-again. Unavailable tools and the modern-only features (Full Repair plan,
-snapshots, file copy, chroot shell, host default/reboot, EFI/UKI/extlinux,
-Settings) stay greyed with their probe/helper reasons. The helper keeps every
-runtime preflight.
+again. The deliberately omitted modern-only features (Full Repair plan,
+snapshots, host default/reboot, EFI/UKI/extlinux) stay greyed with their
+probe/helper reasons. The helper keeps every runtime preflight.
 
 Build it natively on Etch with `qmake-qt3`/`make` (or through
 `scripts/package-legacy.sh`); `--print-config` and `--help` work without X and
 the no-X path is the launcher's `boot-repair-legacy --tui` menu (now with an
-unlock entry). `--smoke-test` also verifies the new controls and the
-1024x768 layout programmatically.
+unlock entry). `--smoke-test` also verifies the details/unlock/session/search/
+gating controls and the 1024x768 layout programmatically (run it as root or
+after `sudo -S -v`, since the modal authorization dialog is never opened in
+smoke mode).
 
 ## Launcher
 
@@ -153,6 +164,20 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   disabled for the protected running host, the diagnostics/log filters were
   exercised and the launcher documents `unlock <disk> <luks-device>`. Evidence:
   `Development/release-0.2.25/etch-legacy/gui-polish-*`.
+- Modern-parity pass (same day, later): the eight-tab layout (Systems,
+  Diagnostics, Repair, Chroot Shell, File Copy, Logs, Settings, About / TUI)
+  with the selected-drive details panel, the unlock-status frame, the
+  search/session Logs and the committed-target / Host Maintenance gating was
+  built and installed (`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256
+  `02f14b29…`; installed GUI `ffbeafda…`). The smoke reports
+  `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+  controls: ok; layout: ok (51 widgets checked)` (rc 0) as root and through the
+  default elevation probe; `--print-config` is clean and names the IDE
+  transport plus the ext3 UUIDs. Etch's sudo 1.6.8 has no `-n`, so the modal
+  `sudo -S -v` authorization falls back to a timestamp-validated plain `sudo`,
+  and `--smoke-test --elevate sudo` fails fast with the exact remedy instead of
+  ever printing a password prompt into the results window. Evidence:
+  `Development/release-0.2.25/etch-legacy/gui-parity-*`.
 
 ## Packaging
 
@@ -211,9 +236,11 @@ a package.
 compiles the Qt-free parser/inventory modules with plain `g++ -std=c++98
 -Werror`, runs the fixture assertions from `legacy/tests/gui-parser-test.cpp`
 (capability parsing, fail-closed gating, change-status invalidation, device
-inventory, LUKS unlock-result markers) and checks the Qt3-only source contract,
-the legacy command set, the parity controls (unlock/elevation/filters/greyed
-features) and the layout guards. The full Qt3 compile and the extended
+inventory with UUID/label/transport and resolved dm chains, LUKS
+unlock-result/error markers) and checks the Qt3-only source contract, the
+legacy command set, the parity controls (tabs, details panel, unlock status,
+session/search, settings, target/Host-Maintenance gating, modal sudo
+authorization) and the layout guards. The full Qt3 compile and the extended
 `--smoke-test` (controls + 1024x768 layout assertions) are verified on the Etch
 guest by the packaging build.
 

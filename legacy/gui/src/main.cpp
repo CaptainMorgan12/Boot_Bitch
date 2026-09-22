@@ -48,8 +48,10 @@ void printUsage(FILE *out, const char *program)
         "  --host-root PATH     running-host root component (smoke test/auto-fill)\n"
         "  --log-dir DIR        directory for the per-session helper log\n"
         "  --smoke-test         run host-diagnose all + host-validate, verify the\n"
-        "                       unlock/elevation/filter controls and the 1024x768\n"
-        "                       layout, print the result, then exit (needs a display)\n"
+        "                       details/unlock/session/search/gating controls and\n"
+        "                       the 1024x768 layout, print the result, then exit\n"
+        "                       (needs a display; run as root or with an\n"
+        "                       authenticated '--elevate sudo -n')\n"
         "  --print-config       print the resolved helper, host target and read-only\n"
         "                       device inventory without starting a GUI\n"
         "  -V, --version        print the legacy frontend version\n"
@@ -248,11 +250,12 @@ int main(int argc, char **argv)
         const std::vector<legacy::DeviceRow> rows = legacy::scanDevices();
         std::printf("devices: %lu\n", static_cast<unsigned long>(rows.size()));
         for (std::size_t i = 0; i < rows.size(); ++i) {
-            std::printf("  %-22s %-8s %-10s %-8s %-12s %s\n",
+            std::printf("  %-22s %-8s %-10s %-8s %-12s %-10s %-36s %s\n",
                         rows[i].path.c_str(), rows[i].size.c_str(),
                         rows[i].disk ? (rows[i].optical ? "optical" : "disk")
                                      : (rows[i].mapper ? "mapper" : "partition"),
                         rows[i].fstype.c_str(), rows[i].mountpoint.c_str(),
+                        rows[i].transport.c_str(), rows[i].uuid.c_str(),
                         rows[i].model.c_str());
         }
         return 0;

@@ -121,6 +121,52 @@ grep -q 'Modern features not available' "$WINDOW" \
     || fail "GUI lost the greyed modern-features list"
 pass "parity controls (unlock, elevation, diagnostics/log filters, greyed features)"
 
+# --- tab parity, Systems panel, unlock status and Logs session/search --------
+for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings' 'About / TUI'; do
+    grep -q "\"$tab\"" "$WINDOW" || fail "GUI lost a modern-parity tab: $tab"
+done
+for marker in 'Selected drive details' 'Connection:' 'UUID:' 'Protection:' 'updateDriveDetails'; do
+    grep -q "$marker" "$WINDOW" || fail "Systems details panel marker missing: $marker"
+done
+for marker in 'Unlock status' 'm_unlockStatusCache' 'State: unlocked' 'State: locked' 'visibleMapperForDisk'; do
+    grep -q "$marker" "$WINDOW" || fail "unlock status marker missing: $marker"
+done
+for marker in 'Search log:' 'm_logSearchEdit' 'Session logs' 'm_sessionLogList' 'refreshSessionLogList' 'sessionLogSelectionChanged'; do
+    grep -q "$marker" "$WINDOW" || fail "Logs session/search marker missing: $marker"
+done
+for marker in 'Application configuration' 'm_logWrapCheck' 'Mandatory safety controls'; do
+    grep -q "$marker" "$WINDOW" || fail "Settings tab marker missing: $marker"
+done
+for marker in 'm_targetCommitted' 'm_hostMaintenance' 'diagnosticsScopeReady' 'scopeReadyReason' 'Set as repair target' 'Host Maintenance'; do
+    grep -q "$marker" "$WINDOW" || fail "modern diagnostics gating marker missing: $marker"
+done
+pass "tab parity (details/unlock/session/search/settings/gating)"
+
+# --- modal elevation prompt, no inline sudo password echo -------------------
+grep -q 'elevationNeedsPassword' "$WINDOW" || fail "GUI does not pre-check an interactive elevation"
+grep -q 'authenticateElevation' "$WINDOW" || fail "GUI does not authenticate interactive elevation"
+grep -q 'Administrator authorization' "$WINDOW" || fail "GUI lost the modal authorization dialog"
+grep -q 'elevationNeedsPassword' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner lost the interactive-elevation check"
+grep -q 'authenticateElevation' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner lost the sudo authentication path"
+grep -q '"\-S", "\-p", "", "\-v"' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner no longer feeds sudo -S -v over the pipe"
+grep -q 'command: %1 %2' "$WINDOW" || fail "GUI lost the command transcript line"
+grep -q 'never logged or placed' "$WINDOW" || fail "GUI lost the secret-handling wording"
+pass "modal hidden-input elevation prompt (sudo -S -v, no inline echo)"
+
+# --- device inventory details (UUID/label/transport) -------------------------
+grep -q 'readIdentityLinks' "$GUI_DIR/src/DeviceInventory.cpp" \
+    || fail "DeviceInventory lost the /dev/disk/by-* identity links"
+grep -q 'resolveLinkTarget' "$GUI_DIR/src/DeviceInventory.cpp" \
+    || fail "DeviceInventory lost the symlink resolution"
+grep -q 'transportForDisk' "$GUI_DIR/src/DeviceInventory.cpp" \
+    || fail "DeviceInventory lost the connection probe"
+grep -q 'uuid' "$GUI_DIR/src/DeviceInventory.h" || fail "DeviceRow lost the UUID field"
+grep -q 'transport' "$GUI_DIR/src/DeviceInventory.h" || fail "DeviceRow lost the transport field"
+pass "read-only UUID/label/transport inventory for the details panel"
+
 # --- layout guards and the extended smoke test ------------------------------
 grep -q 'QFontMetrics' "$WINDOW" || fail "GUI lost the title/button font-metric layout guard"
 grep -q 'setMinimumWidth' "$WINDOW" || fail "GUI lost the minimum-width layout guard"

@@ -40,6 +40,21 @@ public:
     // readable choice ("root", "sudo -n", "gksu --sudo-mode", ...).
     bool resolveElevation(QString *description);
 
+    // True when the resolved elevation is a plain `sudo` that will ask for a
+    // password. The GUI prompts for it in a modal hidden-input dialog and calls
+    // authenticateElevation(); `sudo -n`, gksu/gksudo, su and direct/root
+    // execution never need the password here (gksu/gksudo prompt themselves).
+    bool elevationNeedsPassword(QString *description = 0);
+
+    // Authenticates the cached interactive `sudo` with `secret` by running
+    // `sudo -S -p '' -v`; the password travels over a pipe, never argv/env and
+    // never into the helper transcript. On success the cached prefix becomes
+    // `sudo -n` when the installed sudo supports it (modern hosts), otherwise
+    // plain `sudo`, which runs non-interactively while the cached timestamp is
+    // valid (Etch's sudo 1.6.8 has no -n). `error` receives sudo's own stderr
+    // line on failure.
+    bool authenticateElevation(const QByteArray &secret, QString *error = 0);
+
     // Drops the cached elevation decision so the next resolveElevation()/run()
     // probes the environment again (the GUI's "re-check elevation" control).
     void resetElevation();
@@ -77,6 +92,9 @@ private:
     bool m_noElevate;
     bool m_resolved;
     bool m_direct;
+    // True after authenticateElevation() succeeded, so a plain-sudo prefix is
+    // not prompted again while its cached timestamp is valid.
+    bool m_authenticated;
     QStringList m_prefix;
     QString m_description;
     QString m_buffer;

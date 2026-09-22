@@ -37,9 +37,12 @@ struct MountRecord {
 
 struct DeviceRow {
     DeviceRow();
-    std::string name;       // hda / hda1 / dm-0
+    std::string name;       // hda / hda1 / root (mapper name)
     std::string path;       // /dev/hda (mapper: /dev/mapper/<name>)
-    std::string parent;     // "" for a whole disk
+    std::string kernelName; // dm-0 for mapper rows, "" otherwise
+    std::string parent;     // "" for a whole disk; mapper rows keep the
+                            // resolved backing partition (hda5), walking
+                            // through intermediate dm devices when possible
     bool disk;
     bool mapper;
     bool optical;
@@ -48,6 +51,9 @@ struct DeviceRow {
     std::string model;      // disks only, from sysfs
     std::string fstype;     // mounted or swapped filesystem, else ""
     std::string mountpoint; // mount target, else "" / "[swap]"
+    std::string uuid;       // /dev/disk/by-uuid link value, else ""
+    std::string label;      // /dev/disk/by-label link value, else ""
+    std::string transport;  // IDE/SATA/USB/... best-effort, else ""
 };
 
 // Parsers for the world-readable kernel files (tested on the host).
@@ -57,15 +63,23 @@ std::map<std::string, std::string> parseProcSwaps(const std::string &text);
 
 // Builds the display rows from already-read inputs. `diskNames` are the entries
 // of /sys/block that are whole disks; `attributes` maps "<name>/<attr>" to the
-// file contents (size in 512-byte sectors, device/model, removable).
+// file contents (size in 512-byte sectors, device/model, removable,
+// device-link = the /sys/block/<name>/device symlink target).
 // `mapperLinks` maps "/dev/mapper/<name>" to the dm kernel name (dm-0).
+// `uuidByPath`/`labelByPath` map a resolved /dev path (/dev/hda1,
+// /dev/mapper/root, /dev/dm-0) to its /dev/disk/by-uuid or /dev/disk/by-label
+// entry value; they may be empty.
 std::vector<DeviceRow> buildDeviceRows(
     const std::vector<PartitionRecord> &partitions,
     const std::map<std::string, MountRecord> &mounts,
     const std::map<std::string, std::string> &swaps,
     const std::vector<std::string> &diskNames,
     const std::map<std::string, std::string> &attributes,
-    const std::map<std::string, std::string> &mapperLinks);
+    const std::map<std::string, std::string> &mapperLinks,
+    const std::map<std::string, std::string> &uuidByPath =
+        std::map<std::string, std::string>(),
+    const std::map<std::string, std::string> &labelByPath =
+        std::map<std::string, std::string>());
 
 // Reads the live kernel metadata and returns the rows (read-only).
 std::vector<DeviceRow> scanDevices();

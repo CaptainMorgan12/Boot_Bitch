@@ -66,6 +66,11 @@ bool changeStatusIsUnchanged(const std::string &status);
 //   prints only these markers.
 std::string unlockMapper(const std::string &text);
 bool unlockAuthFailed(const std::string &text);
+// Last "ERROR:" line of a transcript, trimmed and with the prefix removed
+// ("" when the transcript carries no error line). Used by the Systems tab's
+// unlock status to name the helper's exact failure without a passphrase ever
+// being present in the transcript.
+std::string unlockErrorLine(const std::string &text);
 
 // Cached capability/evidence model for one selected scope identity.
 // Fail closed: availability requires a completed diagnostic run for the same

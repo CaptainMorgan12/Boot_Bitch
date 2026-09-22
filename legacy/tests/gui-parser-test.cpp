@@ -158,10 +158,12 @@ void testDeviceParsers()
         "   3     1     104391 hda1\n"
         "   3     2    2097152 hda2\n"
         " 253     0    2097152 dm-0\n"
+        " 253     1    4194304 dm-1\n"
+        "  11     0    2097152 sr0\n"
         "   7     0      10240 loop0\n";
     const std::vector<legacy::PartitionRecord> records =
         legacy::parseProcPartitions(partitions);
-    check(records.size() == 5, "partition records parsed");
+    check(records.size() == 7, "partition records parsed");
     check(records[0].name == "hda" && records[0].blocks == 8388608ULL,
           "disk record parsed");
     check(records[1].name == "hda1" && records[1].majorNumber == 3,
@@ -205,11 +207,21 @@ void testDeviceParsers()
     std::map<std::string, std::string> attributes;
     attributes["hda/size"] = "16777216\n";      // 8 GiB in 512-byte sectors
     attributes["hda/device/model"] = "GENERIC DISK\n";
+    attributes["hda/device-link"] = "../../../ide0/ide0.0\n";
     attributes["hda1/size"] = "208782\n";       // ~102 MiB
+    attributes["sr0/removable"] = "1\n";
     attributes["dm-0/size"] = "4194304\n";
     attributes["dm-0/slave"] = "hda1\n";
+    attributes["dm-1/size"] = "4194304\n";
+    attributes["dm-1/slave"] = "dm-0\n";
     std::map<std::string, std::string> mapperLinks;
-    mapperLinks["/dev/mapper/root"] = "dm-0";
+    mapperLinks["/dev/mapper/crypt"] = "dm-0";
+    mapperLinks["/dev/mapper/root"] = "dm-1";
+    std::map<std::string, std::string> uuidByPath;
+    uuidByPath["/dev/hda1"] = "1111-2222";
+    uuidByPath["/dev/mapper/root"] = "uuid-root";
+    std::map<std::string, std::string> labelByPath;
+    labelByPath["/dev/hda1"] = "boot";
     std::map<std::string, legacy::MountRecord> mountRows;
     legacy::MountRecord rootMount;
     rootMount.source = "/dev/mapper/root";
@@ -218,11 +230,14 @@ void testDeviceParsers()
     mountRows["/dev/mapper/root"] = rootMount;
 
     const std::vector<legacy::DeviceRow> rows = legacy::buildDeviceRows(
-        records, mountRows, swapMap, diskNames, attributes, mapperLinks);
+        records, mountRows, swapMap, diskNames, attributes, mapperLinks,
+        uuidByPath, labelByPath);
 
     bool sawDisk = false;
     bool sawPart = false;
     bool sawMapper = false;
+    bool sawCrypt = false;
+    bool sawOptical = false;
     bool sawLoop = false;
     bool sawDm = false;
     for (std::size_t i = 0; i < rows.size(); ++i) {
@@ -232,17 +247,31 @@ void testDeviceParsers()
             check(row.disk && !row.mapper, "/dev/hda is a disk row");
             check(row.size == "8.0G", "/dev/hda size formatted");
             check(row.model == "GENERIC DISK", "/dev/hda model read");
+            check(row.transport == "IDE", "/dev/hda transport probed");
+        }
+        if (row.path == "/dev/sr0") {
+            sawOptical = true;
+            check(row.optical, "/dev/sr0 is optical");
+            check(row.transport == "removable", "/dev/sr0 removable transport");
         }
         if (row.path == "/dev/hda1") {
             sawPart = true;
             check(!row.disk && row.parent == "hda", "/dev/hda1 parent resolved");
+            check(row.uuid == "1111-2222", "/dev/hda1 UUID linked");
+            check(row.label == "boot", "/dev/hda1 label linked");
         }
         if (row.path == "/dev/mapper/root") {
             sawMapper = true;
             check(row.mapper && row.parent == "hda1",
-                  "mapper row keeps the dm slave parent");
+                  "mapper row resolves the dm chain to the backing partition");
+            check(row.kernelName == "dm-1", "mapper row keeps the dm kernel name");
+            check(row.uuid == "uuid-root", "mapper UUID linked by path");
             check(row.mountpoint == "/" && row.fstype == "ext3",
                   "mapper row carries the mount");
+        }
+        if (row.path == "/dev/mapper/crypt") {
+            sawCrypt = true;
+            check(row.parent == "hda1", "crypt mapper resolves to its partition");
         }
         if (row.path == "/dev/loop0") sawLoop = true;
         if (row.path == "/dev/dm-0") sawDm = true;
@@ -250,6 +279,8 @@ void testDeviceParsers()
     check(sawDisk, "/dev/hda listed");
     check(sawPart, "/dev/hda1 listed");
     check(sawMapper, "/dev/mapper/root listed from /dev/mapper");
+    check(sawCrypt, "/dev/mapper/crypt listed");
+    check(sawOptical, "/dev/sr0 listed");
     check(!sawLoop, "loop devices are not offered");
     check(!sawDm, "raw dm-N nodes are not duplicated as rows");
 
@@ -304,6 +335,17 @@ void testUnlockHelpers()
           "auth-failure marker detected");
     check(legacy::unlockMapper(failedTranscript).empty(),
           "failed unlock carries no mapper");
+    check(legacy::unlockErrorLine(failedTranscript) == "LUKS passphrase was not accepted.",
+          "last error line extracted for the unlock status");
+
+    const std::string twoErrors =
+        "ERROR: first failure\n"
+        "some progress\n"
+        "ERROR: the exact failure\n";
+    check(legacy::unlockErrorLine(twoErrors) == "the exact failure",
+          "last ERROR line wins");
+    check(legacy::unlockErrorLine("no errors here").empty(),
+          "missing error line yields an empty message");
 
     // The marker must be an exact line: prose that merely mentions it (for
     // example the log line the GUI writes) must not trigger a retry.

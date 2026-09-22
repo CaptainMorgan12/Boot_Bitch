@@ -303,6 +303,19 @@ bool unlockAuthFailed(const std::string &text)
     return false;
 }
 
+std::string unlockErrorLine(const std::string &text)
+{
+    const std::vector<std::string> lines = splitLines(text);
+    std::string last;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string line = trim(lines[i]);
+        if (startsWith(line, "ERROR:")) {
+            last = trim(line.substr(std::strlen("ERROR:")));
+        }
+    }
+    return last;
+}
+
 CapabilityModel::CapabilityModel()
     : m_ran(false), m_stale(false)
 {

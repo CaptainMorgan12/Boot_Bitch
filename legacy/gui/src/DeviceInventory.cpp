@@ -17,6 +17,9 @@
 
 namespace legacy {
 
+// Defined below; needed by the transport probe in the anonymous namespace.
+bool isMdName(const std::string &name);
+
 namespace {
 
 std::string trim(const std::string &text)
@@ -83,6 +86,130 @@ std::string attributeValue(const std::map<std::string, std::string> &attributes,
     const std::map<std::string, std::string>::const_iterator it =
         attributes.find(key);
     return it == attributes.end() ? std::string() : trim(it->second);
+}
+
+// Normalizes a symlink target relative to the directory that holds the link
+// ("../../hda1" under /dev/disk/by-uuid -> "/dev/hda1").
+std::string resolveLinkTarget(const std::string &linkDir, const std::string &target)
+{
+    if (target.empty()) {
+        return std::string();
+    }
+    std::string path = target;
+    if (path[0] != '/') {
+        path = linkDir + "/" + path;
+    }
+    std::vector<std::string> parts;
+    std::istringstream stream(path);
+    std::string part;
+    while (std::getline(stream, part, '/')) {
+        if (part.empty() || part == ".") {
+            continue;
+        }
+        if (part == "..") {
+            if (!parts.empty()) {
+                parts.pop_back();
+            }
+            continue;
+        }
+        parts.push_back(part);
+    }
+    std::string resolved = "/";
+    for (std::size_t i = 0; i < parts.size(); ++i) {
+        if (i > 0) {
+            resolved += "/";
+        }
+        resolved += parts[i];
+    }
+    return resolved;
+}
+
+// Reads a /dev/disk/by-* directory into a map keyed by the resolved device
+// path. The directory is world-readable and the read-only GUI never opens the
+// device itself.
+std::map<std::string, std::string> readIdentityLinks(const std::string &directory)
+{
+    std::map<std::string, std::string> links;
+    DIR *dir = ::opendir(directory.c_str());
+    if (!dir) {
+        return links;
+    }
+    struct dirent *entry = 0;
+    while ((entry = ::readdir(dir)) != 0) {
+        const std::string name = entry->d_name;
+        if (name == "." || name == "..") {
+            continue;
+        }
+        char buffer[512];
+        const std::string link = directory + "/" + name;
+        const ssize_t length = ::readlink(link.c_str(), buffer, sizeof(buffer) - 1);
+        if (length <= 0) {
+            continue;
+        }
+        buffer[length] = '\0';
+        const std::string resolved = resolveLinkTarget(directory, buffer);
+        if (!resolved.empty()) {
+            links[resolved] = name;
+        }
+    }
+    ::closedir(dir);
+    return links;
+}
+
+// Best-effort connection type from sysfs. `attributes` carries
+// "<name>/device-link" (the /sys/block/<name>/device symlink target) and
+// "<name>/removable".
+std::string transportForDisk(const std::string &name,
+                             const std::map<std::string, std::string> &attributes)
+{
+    if (attributeValue(attributes, name + "/removable") == "1") {
+        return "removable";
+    }
+    std::string link = attributeValue(attributes, name + "/device-link");
+    for (std::string::size_type i = 0; i < link.size(); ++i) {
+        if (link[i] >= 'A' && link[i] <= 'Z') {
+            link[i] = static_cast<char>(link[i] - 'A' + 'a');
+        }
+    }
+    if (link.find("usb") != std::string::npos) {
+        return "USB";
+    }
+    if (name.size() >= 2 && name.compare(0, 2, "hd") == 0) {
+        return "IDE";
+    }
+    if (link.find("/ide") != std::string::npos) {
+        return "IDE";
+    }
+    if (link.find("ata") != std::string::npos
+        || link.find("sata") != std::string::npos) {
+        return "SATA";
+    }
+    if (name.size() >= 2 && name.compare(0, 2, "vd") == 0) {
+        return "VirtIO";
+    }
+    if (name.size() >= 2 && name.compare(0, 2, "sd") == 0) {
+        return link.find("scsi") != std::string::npos ? "SCSI" : "SATA";
+    }
+    if (isMdName(name)) {
+        return "RAID";
+    }
+    return std::string();
+}
+
+std::string identityValueFor(const DeviceRow &row,
+                             const std::map<std::string, std::string> &links)
+{
+    std::map<std::string, std::string>::const_iterator it = links.find(row.path);
+    if (it != links.end()) {
+        return it->second;
+    }
+    if (row.mapper && !row.kernelName.empty()) {
+        it = links.find("/dev/" + row.kernelName);
+        if (it != links.end()) {
+            return it->second;
+        }
+    }
+    return std::string();
 }
 
 // Strips the trailing partition index from a kernel name (hda1 -> hda,
@@ -177,8 +304,11 @@ std::string mapperKernelName(const std::string &path,
     }
     // Debian Etch udev creates /dev/mapper/<name> as a block device node; map
     // its major:minor through /sys/block/dm-N/dev.
+    // major()/minor() are function-like macros in glibc's and musl's
+    // <sys/sysmacros.h>; a global-scope qualifier would break the musl
+    // expansion, so call them unqualified (both expand to the device split).
     if (::stat(path.c_str(), &info) == 0 && S_ISBLK(info.st_mode)) {
-        return mapperTargetFromIds(::major(info.st_rdev), ::minor(info.st_rdev),
+        return mapperTargetFromIds(major(info.st_rdev), minor(info.st_rdev),
                                    deviceMap);
     }
     return std::string();
@@ -315,7 +445,9 @@ std::vector<DeviceRow> buildDeviceRows(
     const std::map<std::string, std::string> &swaps,
     const std::vector<std::string> &diskNames,
     const std::map<std::string, std::string> &attributes,
-    const std::map<std::string, std::string> &mapperLinks)
+    const std::map<std::string, std::string> &mapperLinks,
+    const std::map<std::string, std::string> &uuidByPath,
+    const std::map<std::string, std::string> &labelByPath)
 {
     std::vector<DeviceRow> rows;
     std::map<std::string, bool> diskSet;
@@ -351,6 +483,7 @@ std::vector<DeviceRow> buildDeviceRows(
         row.size = formatSizeKb(row.blocks);
         if (isDisk) {
             row.model = attributeValue(attributes, record.name + "/device/model");
+            row.transport = transportForDisk(record.name, attributes);
         }
         const std::map<std::string, MountRecord>::const_iterator mount =
             mounts.find(row.path);
@@ -375,6 +508,7 @@ std::vector<DeviceRow> buildDeviceRows(
         row.disk = false;
         row.name = it->first.substr(std::strlen("/dev/mapper/"));
         row.path = it->first;
+        row.kernelName = it->second;
         // Kernel 2.6.18 has no dm/name but exposes the backing device through
         // dm-N/slaves; use it to name the parent partition when available.
         row.parent = attributeValue(attributes, it->second + "/slave");
@@ -397,6 +531,38 @@ std::vector<DeviceRow> buildDeviceRows(
             }
         }
         rows.push_back(row);
+    }
+
+    // A dm device stacked on another dm device (LVM over LUKS) reports only its
+    // immediate slave. Resolve the chain down to the backing partition so the
+    // details panel and unlock status can attribute the mapper to its disk.
+    std::map<std::string, std::size_t> rowByKernelName;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (rows[i].mapper && !rows[i].kernelName.empty()) {
+            rowByKernelName[rows[i].kernelName] = i;
+        }
+    }
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        if (!rows[i].mapper || rows[i].parent.empty()) {
+            continue;
+        }
+        std::string parent = rows[i].parent;
+        for (int depth = 0; depth < 8; ++depth) {
+            const std::map<std::string, std::size_t>::const_iterator parentRow =
+                rowByKernelName.find(parent);
+            if (parentRow == rowByKernelName.end()
+                || rows[parentRow->second].parent.empty()
+                || rows[parentRow->second].parent == parent) {
+                break;
+            }
+            parent = rows[parentRow->second].parent;
+        }
+        rows[i].parent = parent;
+    }
+
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        rows[i].uuid = identityValueFor(rows[i], uuidByPath);
+        rows[i].label = identityValueFor(rows[i], labelByPath);
     }
     return rows;
 }
@@ -444,6 +610,17 @@ std::vector<DeviceRow> scanDevices()
             }
             if (readFile("/sys/block/" + name + "/device/model", &value)) {
                 attributes[name + "/device/model"] = value;
+            }
+            if (readFile("/sys/block/" + name + "/removable", &value)) {
+                attributes[name + "/removable"] = value;
+            }
+            char linkBuffer[512];
+            const ssize_t linkLength = ::readlink(
+                ("/sys/block/" + name + "/device").c_str(), linkBuffer,
+                sizeof(linkBuffer) - 1);
+            if (linkLength > 0) {
+                linkBuffer[linkLength] = '\0';
+                attributes[name + "/device-link"] = linkBuffer;
             }
             // Partitions are not separate /sys/block entries on 2.6.18, so
             // read their size attributes from the parent directory.
@@ -497,8 +674,12 @@ std::vector<DeviceRow> scanDevices()
         }
     }
 
+    const std::map<std::string, std::string> uuidByPath =
+        readIdentityLinks("/dev/disk/by-uuid");
+    const std::map<std::string, std::string> labelByPath =
+        readIdentityLinks("/dev/disk/by-label");
     return buildDeviceRows(partitions, mounts, swaps, diskNames, attributes,
-                           mapperLinks);
+                           mapperLinks, uuidByPath, labelByPath);
 }
 
 bool detectRunningHostTarget(std::string *rootPath, std::string *diskPath)

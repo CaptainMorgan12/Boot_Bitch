@@ -1,18 +1,26 @@
 // LegacyMainWindow - Qt3/Q3-widget frontend for the ported legacy helper.
 //
 // Layout mirrors the modern Boot Bitch Qt6 information hierarchy where Qt3
-// allows it: Systems (read-only kernel inventory + helper-confirmed target
-// facts + LUKS unlock), Diagnostics (13 `Repair tool` capability lines with an
+// allows it: Systems (read-only kernel inventory, helper-confirmed target
+// facts, the selected-drive details panel, LUKS unlock with its status),
+// Diagnostics (13 `Repair tool` capability lines with an
 // all/available/unavailable filter, greyed probe reasons and raw evidence),
 // Repair (privilege-elevation state, only the legacy-supported commands gated
 // by the cached capability lines, plus the greyed modern-only feature list),
-// Logs (streamed helper output with an all/errors filter) and About/TUI.
+// Chroot Shell and File Copy (deliberately greyed with their probe/helper
+// reasons), Logs (streamed helper output with an all/errors filter, a search
+// box and the per-session log list), Settings (read-only configuration plus
+// greyed modern-only options) and About/TUI.
 //
 // The window never reads block devices; all device/target confirmation and
 // every privileged action goes through the helper (QProcess). Gating mirrors
 // MainWindow::repairToolAvailable: fail closed, missing/unparseable evidence
-// keeps the action disabled. The LUKS passphrase travels only over the
-// helper's standard input and is never logged or placed in command arguments.
+// keeps the action disabled, and diagnostics/repairs additionally require an
+// explicitly committed repair target or active Host Maintenance exactly like
+// the modern Systems page. A plain interactive `sudo` is authorized through a
+// modal hidden-input dialog that feeds `sudo -S -v` over a pipe; the LUKS
+// passphrase travels only over the helper's standard input. Neither secret is
+// ever logged or placed in command arguments.
 //
 // Qt3 note: the Q3* class names of Qt4's Qt3-support module do not exist in
 // Qt3 itself; the native Qt3 classes are QMainWindow/QListView/QTextEdit/
@@ -31,9 +39,11 @@
 #include "DeviceInventory.h"
 #include "EvidenceParser.h"
 
+class QCheckBox;
 class QComboBox;
 class QGroupBox;
 class QLabel;
+class QLineEdit;
 class QListView;
 class QPushButton;
 class QTabWidget;
@@ -57,9 +67,9 @@ public:
 
     // Smoke test: auto-detects the running host target when none was set,
     // runs `host-diagnose all` followed by `host-validate` through the helper,
-    // then verifies the new controls (unlock/elevation/filters) and the layout
-    // at 1024x768 (no clipped group titles, buttons, list columns or combos).
-    // Used for the Etch VM validation (no screenshots).
+    // then verifies the new controls (details/unlock/session/search/gating) and
+    // the layout at 1024x768 (no clipped group titles, buttons, list columns or
+    // combos). Used for the Etch VM validation (no screenshots).
     void startSmokeTest();
 
 signals:
@@ -70,12 +80,18 @@ private slots:
     void scopeChanged(int index);
     void deviceSelectionChanged();
     void targetEdited();
+    void setRepairTarget();
+    void toggleHostMaintenance();
     void runDiagnostics();
     void runAction();
     void runUnlock();
     void recheckElevation();
     void diagnosticsFilterChanged();
     void logFilterChanged();
+    void logSearchChanged();
+    void sessionLogSelectionChanged();
+    void refreshSessionLogs();
+    void toggleLogWrap(bool enabled);
     void helperLine(const QString &line);
     void helperFinished(bool ok, int exitCode);
     void cancelRun();
@@ -89,7 +105,10 @@ private:
     QWidget *buildTargetsTab();
     QWidget *buildDiagnosticsTab();
     QWidget *buildActionsTab();
+    QWidget *buildChrootShellTab();
+    QWidget *buildFileCopyTab();
     QWidget *buildLogTab();
+    QWidget *buildSettingsTab();
     QWidget *buildAboutTab();
 
     QPushButton *makeButton(const QString &text, QWidget *parent);
@@ -102,19 +121,32 @@ private:
     QString selectedDisk() const;
     QString selectedRoot() const;
     bool selectionComplete() const;
+    bool targetCommitted() const;
+    bool hostMaintenanceActive() const;
+    bool diagnosticsScopeReady() const;
+    QString scopeReadyReason() const;
+    QString runningHostDisk() const;
     void updateStatus();
     void updateActionStates();
     void updateElevationLabel();
     void updateCapabilityView();
     void updateFactView(const ParsedTranscript &parsed);
+    void updateDriveDetails();
+    void updateUnlockStatus();
     void mergeHelperDevices(const ParsedTranscript &parsed);
     void refreshRootCombo();
+    void refreshSessionLogList();
+    void refreshLogView();
+    bool logLinePassesFilter(const QString &line) const;
+    QStringList sessionLogFiles() const;
+    QString visibleMapperForDisk(const QString &disk) const;
     void autoDetectHostTarget();
+    bool promptElevationPassword();
     void startCommand(const QStringList &args, bool diagnostic,
                       const QString &label, bool unlock = false);
     void reportChangeStatuses(const ParsedTranscript &parsed);
     void handleUnlockFinished(bool ok, const std::string &transcript,
-                              const QString &device);
+                              const QString &device, const QString &disk);
     bool verifySmokeControls(QString *problems);
     bool verifyLayout(QString *problems, int *checked);
 
@@ -126,20 +158,31 @@ private:
     QComboBox *m_diagFilterCombo;
     QComboBox *m_logFilterCombo;
     QListView *m_deviceList;
-    QListView *m_factList;
+    QListView *m_detailList;
     QListView *m_capabilityList;
     QListView *m_unsupportedList;
+    QListView *m_sessionLogList;
     QTextEdit *m_rawView;
     QTextEdit *m_logView;
-    QLabel *m_unlockStatusView;
+    QTextEdit *m_unlockStatusView;
+    QLineEdit *m_logSearchEdit;
+    QCheckBox *m_logWrapCheck;
     QLabel *m_scopeHint;
     QLabel *m_gateHint;
     QLabel *m_elevationLabel;
+    QLabel *m_targetSummary;
+    QLabel *m_settingsHelperLabel;
+    QLabel *m_settingsElevationLabel;
+    QLabel *m_settingsLogDirLabel;
+    QLabel *m_settingsSessionLabel;
+    QLabel *m_settingsVersionLabel;
     QPushButton *m_scanButton;
     QPushButton *m_diagnosticsButton;
     QPushButton *m_cancelButton;
     QPushButton *m_unlockButton;
     QPushButton *m_elevateButton;
+    QPushButton *m_setTargetButton;
+    QPushButton *m_hostMaintenanceButton;
     QMap<QString, QPushButton *> m_actionButtons;
     std::vector<QPushButton *> m_buttons;
     std::vector<QGroupBox *> m_groupBoxes;
@@ -147,20 +190,32 @@ private:
     HelperRunner *m_runner;
     CapabilityModel m_model;
     QMap<QString, DeviceRow> m_rows;
+    QMap<QString, QString> m_factMap;
+    QMap<QString, QString> m_unlockStatusCache;
 
     QString m_transcript;
     QString m_logDirectory;
     QString m_logPath;
     QString m_lastHelperDescription;
     QString m_unlockDevice;
-    QString m_unlockStatus;
+    QString m_unlockDisk;
+    QString m_helperDisk;
+    QString m_helperComponent;
+    QString m_hostDetectedDisk;
+    QString m_committedDisk;
+    QString m_committedRoot;
+    QString m_priorLogPath;
     QStringList m_logLines;
+    QStringList m_priorLogLines;
 
     bool m_updatingCombos;
     bool m_running;
     bool m_pendingDiagnostic;
     bool m_pendingUnlock;
     bool m_unlockRetry;
+    bool m_targetCommitted;
+    bool m_hostMaintenance;
+    bool m_viewingPriorLog;
     QString m_pendingIdentity;
     QString m_pendingLabel;
 
