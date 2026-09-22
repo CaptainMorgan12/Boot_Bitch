@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Contract test for the legacy Debian Etch packaging path (L2):
-#   - scripts/package-legacy.sh and legacy/launcher/* syntax (sh + bash)
-#   - bash 3.1 cleanliness of the package script and the launcher
+#   - scripts/package-legacy.sh syntax and bash 3.1 cleanliness
 #   - --dry-run staging layout, control fields and exact dependency list,
 #     including the Qt3 GUI binary/desktop/icon layout
-#   - staged launcher version/helper substitution and documented command list
+#   - the shell-only boot-repair-legacy TUI launcher (and its desktop entry
+#     and man page) is deliberately NOT shipped: the GUI is the entry point
 #   - the off-Etch refusal and the missing-helper failure stay clear and safe
 #
 # Uses a fixture helper, so it runs on any host without the ported helper and
@@ -15,9 +15,6 @@ set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$ROOT_DIR/scripts/package-legacy.sh"
-LAUNCHER="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
-DESKTOP="$ROOT_DIR/legacy/launcher/boot-repair-legacy.desktop"
-MAN="$ROOT_DIR/legacy/launcher/boot-repair-legacy.1"
 CONTROL_IN="$ROOT_DIR/legacy/packaging/control.in"
 GUI_PRO="$ROOT_DIR/legacy/gui/boot-bitch-legacy.pro"
 GUI_DESKTOP="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
@@ -30,9 +27,6 @@ fail()
 }
 
 [[ -x "$PKG" ]] || fail "scripts/package-legacy.sh is missing or not executable"
-[[ -x "$LAUNCHER" ]] || fail "legacy/launcher/boot-repair-legacy is missing or not executable"
-[[ -f "$DESKTOP" ]] || fail "legacy/launcher/boot-repair-legacy.desktop is missing"
-[[ -f "$MAN" ]] || fail "legacy/launcher/boot-repair-legacy.1 is missing"
 [[ -f "$CONTROL_IN" ]] || fail "legacy/packaging/control.in is missing"
 [[ -f "$GUI_PRO" ]] || fail "legacy/gui/boot-bitch-legacy.pro is missing"
 [[ -f "$GUI_DESKTOP" ]] || fail "legacy/gui/data/boot-repair-legacy-gui.desktop is missing"
@@ -47,14 +41,10 @@ grep -qE '^[[:space:]]*QT[[:space:]]*\+=' "$GUI_PRO" \
 
 # --- Syntax and bash 3.1 floor ---------------------------------------------
 bash -n "$PKG" || fail "scripts/package-legacy.sh failed bash -n"
-bash -n "$LAUNCHER" || fail "legacy/launcher/boot-repair-legacy failed bash -n"
-sh -n "$LAUNCHER" || fail "legacy/launcher/boot-repair-legacy failed sh -n (POSIX parse)"
 
-for file in "$PKG" "$LAUNCHER"; do
-    if grep -nE 'mapfile|readarray|declare[[:space:]]+-A|local[[:space:]]+-A|\$\{[A-Za-z_][A-Za-z0-9_]*(\^\^|\^|,,)\}' "$file"; then
-        fail "bash-4-only construct in ${file#"$ROOT_DIR"/}"
-    fi
-done
+if grep -nE 'mapfile|readarray|declare[[:space:]]+-A|local[[:space:]]+-A|\$\{[A-Za-z_][A-Za-z0-9_]*(\^\^|\^|,,)\}' "$PKG"; then
+    fail "bash-4-only construct in ${PKG#"$ROOT_DIR"/}"
+fi
 
 VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\).*/\1/p' \
     "$ROOT_DIR/CMakeLists.txt" | head -1)"
@@ -85,15 +75,12 @@ fi
 for path in \
     "$STAGE/DEBIAN/control" \
     "$STAGE/usr/sbin/boot-repair-legacy-helper" \
-    "$STAGE/usr/bin/boot-repair-legacy" \
     "$STAGE/usr/bin/boot-repair-legacy-gui" \
-    "$STAGE/usr/share/applications/boot-repair-legacy.desktop" \
     "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" \
     "$STAGE/usr/share/icons/hicolor/16x16/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
-    "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz" \
     "$STAGE/usr/share/doc/boot-repair-legacy/copyright" \
     "$STAGE/usr/share/doc/boot-repair-legacy/changelog.Debian.gz"
 do
@@ -101,14 +88,21 @@ do
 done
 [[ -x "$STAGE/usr/sbin/boot-repair-legacy-helper" ]] \
     || fail "staged helper is not executable"
-[[ -x "$STAGE/usr/bin/boot-repair-legacy" ]] \
-    || fail "staged launcher is not executable"
 [[ -x "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
     || fail "staged GUI binary is not executable"
 [[ -s "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
     || fail "staged GUI binary is empty"
 cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
     || fail "staged helper does not match its source"
+
+# The shell-only TUI launcher, its desktop entry and its man page are gone.
+for path in \
+    "$STAGE/usr/bin/boot-repair-legacy" \
+    "$STAGE/usr/share/applications/boot-repair-legacy.desktop" \
+    "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz"
+do
+    [[ ! -e "$path" ]] || fail "staged tree still ships the removed launcher path: ${path#"$TMP"/}"
+done
 
 # --- Control metadata -------------------------------------------------------
 CONTROL="$STAGE/DEBIAN/control"
@@ -119,48 +113,22 @@ grep -qx 'Section: admin' "$CONTROL" || fail "control Section field is wrong"
 grep -qE '^Installed-Size: [0-9]+$' "$CONTROL" || fail "control Installed-Size is not numeric"
 grep -q '^Maintainer: .\+ <.\+@.\+>$' "$CONTROL" || fail "control Maintainer field is malformed"
 grep -q '^Description: .\+' "$CONTROL" || fail "control Description is missing"
-grep -q '^Recommends: .*dialog' "$CONTROL" || fail "control Recommends is missing dialog"
+grep -q '^Recommends: .*dosfstools' "$CONTROL" || fail "control Recommends is missing dosfstools"
 grep -q '^Suggests: .*kdelibs4c2a' "$CONTROL" || fail "control Suggests is missing kdelibs4c2a"
 
 DEPENDS='Depends: libqt3-mt (>= 3:3.3.7), bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup'
 grep -qxF "$DEPENDS" "$CONTROL" || fail "staged control dependency list differs from the contract"
 grep -qxF "$DEPENDS" "$CONTROL_IN" || fail "control.in dependency list differs from the contract"
-
-# --- Staged launcher --------------------------------------------------------
-grep -qF "VERSION='$VERSION'" "$STAGE/usr/bin/boot-repair-legacy" \
-    || fail "staged launcher did not receive the project version"
-grep -qF "DEFAULT_HELPER='/usr/sbin/boot-repair-legacy-helper'" "$STAGE/usr/bin/boot-repair-legacy" \
-    || fail "staged launcher did not receive the installed helper path"
-
-LIST="$("$STAGE/usr/bin/boot-repair-legacy" --list-commands)"
-for token in validate diagnose fs-inspect fix-broken dpkg-configure initramfs apt-update apt-upgrade; do
-    grep -q -- "$token" <<<"$LIST" || fail "documented command list is missing: $token"
-done
-
-"$STAGE/usr/bin/boot-repair-legacy" --version | grep -qxF "boot-repair-legacy $VERSION" \
-    || fail "staged launcher --version is wrong"
-
-resolved="$(BOOT_REPAIR_LEGACY_HELPER=/bin/true "$STAGE/usr/bin/boot-repair-legacy" --print-helper)"
-[[ "$resolved" == /bin/true ]] || fail "launcher helper discovery override failed: $resolved"
-
-# --dry-run must print the command and must never execute the helper.
-cat > "$TMP/exec-helper.sh" <<EOF
-#!/bin/sh
-touch "$TMP/executed"
-EOF
-chmod 0755 "$TMP/exec-helper.sh"
-"$STAGE/usr/bin/boot-repair-legacy" --helper "$TMP/exec-helper.sh" --dry-run \
-    validate /dev/hdb /dev/hdb1 > "$TMP/launcher-dry.log" 2>&1 \
-    || { cat "$TMP/launcher-dry.log" >&2; fail "launcher --dry-run failed"; }
-[[ ! -e "$TMP/executed" ]] || fail "launcher --dry-run executed the helper"
-grep -q 'validate /dev/hdb /dev/hdb1' "$TMP/launcher-dry.log" \
-    || fail "launcher --dry-run did not print the helper command"
+grep -qxF 'Recommends: dosfstools, lvm2, mdadm, initramfs-tools, rsync' "$CONTROL" \
+    || fail "control Recommends still carries launcher-only entries"
+grep -qxF 'Suggests: kdelibs4c2a' "$CONTROL" \
+    || fail "control Suggests still carries launcher-only entries"
+grep -q 'launcher' "$CONTROL" && fail "control Description still mentions the removed launcher"
 
 # --- Default helper discovery and the port-helper drift gate ---------------
 TREE="$TMP/tree"
-mkdir -p "$TREE/scripts" "$TREE/legacy" "$TREE/legacy/launcher" "$TREE/legacy/packaging"
+mkdir -p "$TREE/scripts" "$TREE/legacy" "$TREE/legacy/packaging"
 cp "$PKG" "$TREE/scripts/package-legacy.sh"
-cp "$ROOT_DIR/legacy/launcher/"* "$TREE/legacy/launcher/"
 cp "$ROOT_DIR/legacy/packaging/"* "$TREE/legacy/packaging/"
 cp -a "$ROOT_DIR/legacy/gui" "$TREE/legacy/gui"
 printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.txt"
@@ -180,12 +148,7 @@ if "$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-stage2" --
 fi
 grep -q 'port.sh --check failed' "$TMP/tree-fail.log" || fail "drift-gate failure message is unclear"
 
-# --- Desktop entries and man page -------------------------------------------
-grep -qx 'Type=Application' "$DESKTOP" || fail "desktop entry Type is wrong"
-grep -qx 'Exec=boot-repair-legacy' "$DESKTOP" || fail "desktop entry Exec is wrong"
-grep -qx 'Terminal=false' "$DESKTOP" || fail "desktop entry Terminal is wrong"
-grep -qx 'Categories=System;' "$DESKTOP" || fail "desktop entry Categories is wrong"
-grep -qx 'Icon=boot-repair-legacy' "$DESKTOP" || fail "launcher desktop entry Icon is wrong"
+# --- GUI desktop entry ------------------------------------------------------
 grep -qx 'Type=Application' "$GUI_DESKTOP" || fail "GUI desktop entry Type is wrong"
 grep -qx 'Exec=boot-repair-legacy-gui' "$GUI_DESKTOP" || fail "GUI desktop entry Exec is wrong"
 grep -qx 'Icon=boot-repair-legacy' "$GUI_DESKTOP" || fail "GUI desktop entry Icon is wrong"
@@ -195,10 +158,6 @@ cmp -s "$GUI_DESKTOP" "$STAGE/usr/share/applications/boot-repair-legacy-gui.desk
     || fail "staged GUI desktop entry differs from its source"
 cmp -s "$GUI_ICON" "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
     || fail "staged 48x48 icon differs from its source"
-
-gzip -dc "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz" > "$TMP/man.roff" \
-    || fail "staged man page is not valid gzip"
-grep -q '^\.TH BOOT-REPAIR-LEGACY 1 ' "$TMP/man.roff" || fail "staged man page is malformed"
 
 # --- Dry-run never builds, off-Etch build refuses, missing helper fails -----
 if find "$OUT" -name '*.deb' -print | grep -q .; then
@@ -226,4 +185,4 @@ grep -q 'LEGACY_HELPER_SRC' "$TMP/missing.log" \
 "$PKG" --help | grep -q -- '--dry-run' || fail "package-legacy.sh --help is missing --dry-run"
 "$PKG" --help | grep -q -- '--output' || fail "package-legacy.sh --help is missing --output"
 
-echo "PASS: legacy package staging, control metadata, launcher contract and dry-run/off-Etch guards are wired."
+echo "PASS: legacy package staging, GUI entry point, control metadata and dry-run/off-Etch guards are wired."

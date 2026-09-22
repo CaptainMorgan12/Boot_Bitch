@@ -14,7 +14,9 @@
 #
 # The Qt3 GUI (legacy/gui/) is built natively with qmake-qt3 + make when
 # qmake-qt3 is available; --dry-run on a host without Qt3 stages a placeholder
-# GUI binary so the layout/control contract stays testable.
+# GUI binary so the layout/control contract stays testable. The GUI is the
+# package's only entry point: the shell-only `boot-repair-legacy` TUI launcher
+# (legacy/launcher/) is development-only and is deliberately NOT staged.
 #
 # Helper source coordination (the port agent owns the generated helper):
 #   LEGACY_HELPER_SRC      source path, absolute or relative to the repo root.
@@ -26,9 +28,6 @@
 #                            legacy/boot-repair-helper-legacy.sh
 #                            scripts/legacy/boot-repair-helper-legacy.sh
 #                            scripts/boot-repair-legacy-helper.sh
-#   LEGACY_HELPER_INSTALL  installed path, default
-#                          /usr/sbin/boot-repair-legacy-helper (the launcher
-#                          substitutes this into its discovery list).
 #   LEGACY_ARCH            package architecture, default amd64.
 #   LEGACY_OUTPUT_DIR      output directory, default Development/build-legacy-package.
 #   LEGACY_STAGE_DIR       staging root, default <output>/stage.
@@ -50,12 +49,8 @@ STAGE_DIR_OVERRIDE="${LEGACY_STAGE_DIR:-}"
 DRY_RUN=0
 
 HELPER_SRC_ENV="${LEGACY_HELPER_SRC:-}"
-HELPER_INSTALL="${LEGACY_HELPER_INSTALL:-/usr/sbin/boot-repair-legacy-helper}"
 GUI_BUILD_DIR_OVERRIDE="${LEGACY_GUI_BUILD_DIR:-}"
 
-LAUNCHER_SRC="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
-DESKTOP_SRC="$ROOT_DIR/legacy/launcher/boot-repair-legacy.desktop"
-MAN_SRC="$ROOT_DIR/legacy/launcher/boot-repair-legacy.1"
 CONTROL_TEMPLATE="$ROOT_DIR/legacy/packaging/control.in"
 COPYRIGHT_SRC="$ROOT_DIR/legacy/packaging/copyright"
 CHANGELOG_SRC="$ROOT_DIR/legacy/packaging/changelog.Debian"
@@ -85,7 +80,6 @@ Options:
 
 Environment:
   LEGACY_HELPER_SRC      ported helper source (see the script header)
-  LEGACY_HELPER_INSTALL  installed helper path (default /usr/sbin/boot-repair-legacy-helper)
   LEGACY_ARCH            package architecture (default amd64)
   LEGACY_OUTPUT_DIR      output directory
   LEGACY_STAGE_DIR       staging root
@@ -220,18 +214,9 @@ stage_tree()
         "$_stage/usr/sbin" \
         "$_stage/usr/bin" \
         "$_stage/usr/share/applications" \
-        "$_stage/usr/share/man/man1" \
         "$_stage/usr/share/doc/$PKG_NAME"
 
     install -m 0755 "$HELPER_SRC" "$_stage/usr/sbin/boot-repair-legacy-helper"
-    sed -e "s|@VERSION@|$PROJECT_VERSION|g" \
-        -e "s|@HELPER_PATH@|$HELPER_INSTALL|g" \
-        "$LAUNCHER_SRC" > "$_stage/usr/bin/boot-repair-legacy"
-    chmod 0755 "$_stage/usr/bin/boot-repair-legacy"
-    install -m 0644 "$DESKTOP_SRC" "$_stage/usr/share/applications/$PKG_NAME.desktop"
-    if [ -f "$MAN_SRC" ]; then
-        gzip -9 -n -c "$MAN_SRC" > "$_stage/usr/share/man/man1/$PKG_NAME.1.gz"
-    fi
     install -m 0644 "$COPYRIGHT_SRC" "$_stage/usr/share/doc/$PKG_NAME/copyright"
     gzip -9 -n -c "$CHANGELOG_SRC" > "$_stage/usr/share/doc/$PKG_NAME/changelog.Debian.gz"
 
@@ -239,8 +224,6 @@ stage_tree()
 
     bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
         || fail 'staged helper failed bash -n.'
-    bash -n "$_stage/usr/bin/boot-repair-legacy" \
-        || fail 'staged launcher failed bash -n.'
 
     _installed_size="$(du -sk "$_stage/usr" | awk '{print $1}')"
     sed -e "s|@VERSION@|$PROJECT_VERSION-$PKG_RELEASE|g" \
@@ -267,15 +250,24 @@ validate_artifact()
         || fail "built package Depends is missing the Qt3 runtime libqt3-mt"
     for _path in \
         ./usr/sbin/boot-repair-legacy-helper \
-        ./usr/bin/boot-repair-legacy \
         ./usr/bin/$GUI_NAME \
-        ./usr/share/applications/$PKG_NAME.desktop \
         ./usr/share/applications/$GUI_NAME.desktop \
         ./usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png \
         ./usr/share/doc/$PKG_NAME/copyright
     do
         if ! dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
             fail "built package is missing $_path"
+        fi
+    done
+    # The shell-only TUI launcher (and its desktop entry/man page) is
+    # development-only and must never ship: the GUI is the entry point.
+    for _path in \
+        ./usr/bin/boot-repair-legacy \
+        ./usr/share/applications/$PKG_NAME.desktop \
+        ./usr/share/man/man1/$PKG_NAME.1.gz
+    do
+        if dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
+            fail "built package still ships the removed launcher path $_path"
         fi
     done
     sha256sum "$_deb"
@@ -309,8 +301,8 @@ main()
         "$ROOT_DIR/CMakeLists.txt" | head -1)"
     [ -n "$PROJECT_VERSION" ] || fail 'unable to determine the project version from CMakeLists.txt.'
 
-    for _required in "$LAUNCHER_SRC" "$DESKTOP_SRC" "$CONTROL_TEMPLATE" \
-        "$COPYRIGHT_SRC" "$CHANGELOG_SRC" "$GUI_PRO" "$GUI_DESKTOP_SRC"; do
+    for _required in "$CONTROL_TEMPLATE" "$COPYRIGHT_SRC" "$CHANGELOG_SRC" \
+        "$GUI_PRO" "$GUI_DESKTOP_SRC"; do
         [ -f "$_required" ] || fail "missing legacy packaging input: $_required"
     done
     for _size in $GUI_ICON_SIZES; do
@@ -354,8 +346,8 @@ EOF
     DEB_PATH="$OUTPUT_DIR/${PKG_NAME}_${PROJECT_VERSION}-${PKG_RELEASE}_${ARCH}.deb"
 
     printf 'Package:    %s %s-%s (%s)\n' "$PKG_NAME" "$PROJECT_VERSION" "$PKG_RELEASE" "$ARCH"
-    printf 'Helper:     %s -> %s\n' "$HELPER_SRC" "$HELPER_INSTALL"
-    printf 'GUI:        %s (Qt3, qmake-qt3)\n' "${GUI_PRO#"$ROOT_DIR"/}"
+    printf 'Helper:     %s -> /usr/sbin/boot-repair-legacy-helper\n' "$HELPER_SRC"
+    printf 'GUI:        %s (Qt3, qmake-qt3; package entry point)\n' "${GUI_PRO#"$ROOT_DIR"/}"
     printf 'Stage tree: %s\n' "$STAGE"
     printf 'Artifact:   %s\n' "$DEB_PATH"
 

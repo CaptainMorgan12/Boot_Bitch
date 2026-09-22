@@ -33,8 +33,11 @@ Repair capability evidence extlinux: update-extlinux is not installed in the tar
 Repair capability evidence bootstack: initramfs backend: initramfs-tools; initramfs and GRUB prerequisites available
 Legacy feature gating (read-only):
 Legacy feature file-copy: unavailable|rsync is not installed in the recovery environment
+Legacy feature shell: unavailable|the installed timeout does not support --foreground/--kill-after
 Legacy feature host-shell: unavailable|unshare is not installed in the recovery environment
 Legacy feature host-maintenance: unavailable|unshare is not installed in the recovery environment
+Legacy feature snapshots: unavailable|the selected target filesystem is ext3, not Btrfs
+Legacy feature host-default: unavailable|host default selection requires the running-host scope
 
 ========================================
 Environment validation

@@ -173,6 +173,33 @@ std::vector<std::string> capabilityKeys()
     return result;
 }
 
+std::vector<std::string> diagnosticKeys()
+{
+    static const char *const keys[] = {
+        "environment", "backend", "boot", "boot-evidence", "kernel", "grub",
+        "uki", "display", "errors", "usage", "filesystem", "fstab", "btrfs",
+        "mapper", "luks", "report"
+    };
+    std::vector<std::string> result;
+    for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        result.push_back(keys[i]);
+    }
+    return result;
+}
+
+std::vector<std::string> legacyFeatureKeys()
+{
+    static const char *const keys[] = {
+        "file-copy", "shell", "host-shell", "host-maintenance", "snapshots",
+        "host-default"
+    };
+    std::vector<std::string> result;
+    for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        result.push_back(keys[i]);
+    }
+    return result;
+}
+
 std::string repairToolKeyForStage(const std::string &stage)
 {
     if (stage == "dpkg-configure") return "dpkg";
@@ -185,7 +212,8 @@ std::string repairToolKeyForStage(const std::string &stage)
 }
 
 ParsedTranscript::ParsedTranscript()
-    : capabilityLineCount(0), unknownCapabilityLineCount(0)
+    : capabilityLineCount(0), unknownCapabilityLineCount(0),
+      legacyFeatureLineCount(0), unknownLegacyFeatureLineCount(0)
 {
 }
 
@@ -195,6 +223,8 @@ ParsedTranscript parseTranscript(const std::string &text)
     const std::vector<std::string> lines = splitLines(text);
     const std::vector<std::string> keys = capabilityKeys();
     std::set<std::string> knownKeys(keys.begin(), keys.end());
+    const std::vector<std::string> features = legacyFeatureKeys();
+    std::set<std::string> knownFeatures(features.begin(), features.end());
     std::set<std::string> seenPaths;
 
     for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -214,6 +244,14 @@ ParsedTranscript parseTranscript(const std::string &text)
         }
         if (parseEvidenceLine(line, "Repair capability evidence ", &key, &value)) {
             parsed.capabilityEvidence.push_back(std::make_pair(key, value));
+            continue;
+        }
+        if (parseEvidenceLine(line, "Legacy feature ", &key, &value)) {
+            ++parsed.legacyFeatureLineCount;
+            if (knownFeatures.find(key) == knownFeatures.end()) {
+                ++parsed.unknownLegacyFeatureLineCount;
+            }
+            parsed.legacyFeatures.push_back(std::make_pair(key, value));
             continue;
         }
         if (parseEvidenceLine(line, "Repair change status ", &key, &value)) {
@@ -277,6 +315,28 @@ bool changeStatusIsUnchanged(const std::string &status)
     return status == "unchanged" || startsWith(status, "unchanged|");
 }
 
+bool legacyFeatureIsAvailable(const std::string &state, std::string *reason)
+{
+    if (state == "available") {
+        if (reason) {
+            reason->clear();
+        }
+        return true;
+    }
+    std::string text;
+    if (startsWith(state, "unavailable|")) {
+        text = state.substr(std::strlen("unavailable|"));
+    } else if (!state.empty()) {
+        text = "unrecognised legacy feature state '" + state + "'";
+    } else {
+        text = "no legacy feature line was emitted";
+    }
+    if (reason) {
+        *reason = text;
+    }
+    return false;
+}
+
 std::string unlockMapper(const std::string &text)
 {
     const std::vector<std::string> lines = splitLines(text);
@@ -325,6 +385,7 @@ void CapabilityModel::clearCapabilities()
 {
     m_capabilities.clear();
     m_evidence.clear();
+    m_legacyFeatures.clear();
 }
 
 void CapabilityModel::reset()
@@ -363,6 +424,10 @@ void CapabilityModel::applyDiagnosticTranscript(const std::string &identity,
     }
     for (std::size_t i = 0; i < parsed.capabilityEvidence.size(); ++i) {
         m_evidence[parsed.capabilityEvidence[i].first] = parsed.capabilityEvidence[i].second;
+    }
+    for (std::size_t i = 0; i < parsed.legacyFeatures.size(); ++i) {
+        // Same last-line-wins rule as the capability map.
+        m_legacyFeatures[parsed.legacyFeatures[i].first] = parsed.legacyFeatures[i].second;
     }
     m_ran = true;
     m_stale = false;
@@ -457,6 +522,60 @@ bool CapabilityModel::isAvailable(const std::string &key,
     return capabilityIsAvailable(it->second, reason);
 }
 
+bool CapabilityModel::legacyFeatureAvailable(const std::string &feature,
+                                             const std::string &identity,
+                                             std::string *reason) const
+{
+    const std::vector<std::string> keys = legacyFeatureKeys();
+    bool known = false;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] == feature) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        if (reason) {
+            *reason = "Unknown legacy feature '" + feature + "'; fail closed.";
+        }
+        return false;
+    }
+    if (!m_ran || m_identity != identity) {
+        if (reason) {
+            *reason = "Run diagnostics for the selected scope first.";
+        }
+        return false;
+    }
+    if (m_stale) {
+        if (reason) {
+            std::string names;
+            for (std::size_t i = 0; i < m_invalidatingKeys.size(); ++i) {
+                if (!names.empty()) {
+                    names += ", ";
+                }
+                names += m_invalidatingKeys[i];
+            }
+            *reason = "Diagnostics are stale after a repair that was not proven "
+                      "unchanged";
+            if (!names.empty()) {
+                *reason += " (" + names + ")";
+            }
+            *reason += "; run diagnostics again.";
+        }
+        return false;
+    }
+    const std::map<std::string, std::string>::const_iterator it =
+        m_legacyFeatures.find(feature);
+    if (it == m_legacyFeatures.end()) {
+        if (reason) {
+            *reason = "No 'Legacy feature " + feature + ":' line was cached; "
+                      "run diagnostics for the selected scope (fail closed).";
+        }
+        return false;
+    }
+    return legacyFeatureIsAvailable(it->second, reason);
+}
+
 std::string CapabilityModel::state(const std::string &key) const
 {
     const std::map<std::string, std::string>::const_iterator it =
@@ -469,6 +588,13 @@ std::string CapabilityModel::evidence(const std::string &key) const
     const std::map<std::string, std::string>::const_iterator it =
         m_evidence.find(key);
     return it == m_evidence.end() ? std::string() : it->second;
+}
+
+std::string CapabilityModel::legacyFeatureState(const std::string &feature) const
+{
+    const std::map<std::string, std::string>::const_iterator it =
+        m_legacyFeatures.find(feature);
+    return it == m_legacyFeatures.end() ? std::string() : it->second;
 }
 
 std::vector<std::string> CapabilityModel::invalidatingKeys() const

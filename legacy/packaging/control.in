@@ -4,15 +4,14 @@ Section: admin
 Priority: optional
 Architecture: @ARCH@
 Depends: libqt3-mt (>= 3:3.3.7), bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup
-Recommends: dialog, dosfstools, lvm2, mdadm, initramfs-tools, rsync
-Suggests: kdelibs4c2a, konsole | xterm
+Recommends: dosfstools, lvm2, mdadm, initramfs-tools, rsync
+Suggests: kdelibs4c2a
 Installed-Size: @INSTALLED_SIZE@
 Maintainer: CaptainMorgan12 <CaptainMorgan12@users.noreply.github.com>
-Description: legacy Boot Bitch recovery GUI, helper and launcher (Debian Etch era)
+Description: legacy Boot Bitch recovery GUI and helper (Debian Etch era)
  Legacy Boot Bitch frontend for Debian 4.0 (Etch) and KDE 3.5-era systems:
- a Qt3 GUI (boot-repair-legacy-gui) over the ported
- boot-repair-legacy-helper, plus the gksu/sudo launcher with its
- dialog/console menu as the no-X fallback. The helper keeps the modern Boot
+ the Qt3 GUI (boot-repair-legacy-gui) is the package's entry point and runs
+ the ported boot-repair-legacy-helper. The helper keeps the modern Boot
  Bitch command surface and the Repair tool / Repair change status evidence
  contract, but runs on bash 3.1 and pre-systemd userlands. Read-only
  diagnostics are the default; every repair stage stays behind the helper's

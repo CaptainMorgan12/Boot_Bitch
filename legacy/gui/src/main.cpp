@@ -9,7 +9,6 @@
 // The helper path discovery mirrors the boot-repair-legacy launcher:
 // --helper, BOOT_REPAIR_LEGACY_HELPER, /usr/sbin/boot-repair-legacy-helper,
 // /usr/libexec/boot-repair/boot-repair-helper-legacy, source-tree paths.
-
 #include <qapplication.h>
 #include <qfile.h>
 #include <qobject.h>
@@ -57,7 +56,8 @@ void printUsage(FILE *out, const char *program)
         "  -V, --version        print the legacy frontend version\n"
         "  -h, --help           show this help\n"
         "\n"
-        "TUI fallback (no X session): boot-repair-legacy --tui\n",
+        "This GUI is the legacy package's entry point; every privileged command\n"
+        "runs through the helper and stays behind its runtime preflights.\n",
         program);
 }
 

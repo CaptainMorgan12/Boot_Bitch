@@ -4,13 +4,15 @@
 // allows it: Systems (read-only kernel inventory, helper-confirmed target
 // facts, the selected-drive details panel, LUKS unlock with its status),
 // Diagnostics (13 `Repair tool` capability lines with an
-// all/available/unavailable filter, greyed probe reasons and raw evidence),
-// Repair (privilege-elevation state, only the legacy-supported commands gated
-// by the cached capability lines, plus the greyed modern-only feature list),
-// Chroot Shell and File Copy (deliberately greyed with their probe/helper
-// reasons), Logs (streamed helper output with an all/errors filter, a search
-// box and the per-session log list), Settings (read-only configuration plus
-// greyed modern-only options) and About/TUI.
+// all/available/unavailable filter, per-diagnostic runs, a read-only target
+// configuration viewer, greyed probe reasons and raw evidence), Repair
+// (privilege-elevation state, only the legacy-supported commands gated by the
+// cached capability lines, including the guarded GRUB-legacy regeneration,
+// plus the greyed modern-only feature list driven by the helper's
+// `Legacy feature` probes), Chroot Shell and File Copy (deliberately greyed
+// with their probe reasons), Logs (streamed helper output with an all/errors
+// filter, a search box and the per-session log list), Settings (read-only
+// configuration plus greyed modern-only options) and About.
 //
 // The window never reads block devices; all device/target confirmation and
 // every privileged action goes through the helper (QProcess). Gating mirrors
@@ -83,6 +85,10 @@ private slots:
     void setRepairTarget();
     void toggleHostMaintenance();
     void runDiagnostics();
+    void runSelectedDiagnostic();
+    void diagnosticSelectionChanged();
+    void viewConfigFile();
+    void copyResults();
     void runAction();
     void runUnlock();
     void recheckElevation();
@@ -130,6 +136,11 @@ private:
     void updateActionStates();
     void updateElevationLabel();
     void updateCapabilityView();
+    void updateLegacyFeatureView();
+    void updateFeatureTab(QGroupBox *group, QLabel *label, const char *feature,
+                          const QString &title);
+    void legacyFeatureDisplay(const char *feature, QString *state,
+                              QString *reason) const;
     void updateFactView(const ParsedTranscript &parsed);
     void updateDriveDetails();
     void updateUnlockStatus();
@@ -143,7 +154,8 @@ private:
     void autoDetectHostTarget();
     bool promptElevationPassword();
     void startCommand(const QStringList &args, bool diagnostic,
-                      const QString &label, bool unlock = false);
+                      const QString &label, bool unlock = false,
+                      bool config = false);
     void reportChangeStatuses(const ParsedTranscript &parsed);
     void handleUnlockFinished(bool ok, const std::string &transcript,
                               const QString &device, const QString &disk);
@@ -157,12 +169,15 @@ private:
     QComboBox *m_unlockCombo;
     QComboBox *m_diagFilterCombo;
     QComboBox *m_logFilterCombo;
+    QComboBox *m_configCombo;
     QListView *m_deviceList;
     QListView *m_detailList;
     QListView *m_capabilityList;
+    QListView *m_diagnosticList;
     QListView *m_unsupportedList;
     QListView *m_sessionLogList;
     QTextEdit *m_rawView;
+    QTextEdit *m_configView;
     QTextEdit *m_logView;
     QTextEdit *m_unlockStatusView;
     QLineEdit *m_logSearchEdit;
@@ -171,6 +186,8 @@ private:
     QLabel *m_gateHint;
     QLabel *m_elevationLabel;
     QLabel *m_targetSummary;
+    QLabel *m_chrootReasonLabel;
+    QLabel *m_fileCopyReasonLabel;
     QLabel *m_settingsHelperLabel;
     QLabel *m_settingsElevationLabel;
     QLabel *m_settingsLogDirLabel;
@@ -178,11 +195,16 @@ private:
     QLabel *m_settingsVersionLabel;
     QPushButton *m_scanButton;
     QPushButton *m_diagnosticsButton;
+    QPushButton *m_runDiagnosticButton;
+    QPushButton *m_copyResultsButton;
+    QPushButton *m_configButton;
     QPushButton *m_cancelButton;
     QPushButton *m_unlockButton;
     QPushButton *m_elevateButton;
     QPushButton *m_setTargetButton;
     QPushButton *m_hostMaintenanceButton;
+    QGroupBox *m_chrootGroup;
+    QGroupBox *m_fileCopyGroup;
     QMap<QString, QPushButton *> m_actionButtons;
     std::vector<QPushButton *> m_buttons;
     std::vector<QGroupBox *> m_groupBoxes;
@@ -212,6 +234,7 @@ private:
     bool m_running;
     bool m_pendingDiagnostic;
     bool m_pendingUnlock;
+    bool m_pendingConfig;
     bool m_unlockRetry;
     bool m_targetCommitted;
     bool m_hostMaintenance;

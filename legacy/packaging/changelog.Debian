@@ -1,12 +1,15 @@
 boot-repair-legacy (0.2.25-etch1) unstable; urgency=low
 
   * Legacy Boot Bitch frontend for Debian 4.0 (Etch) / KDE 3.5-era systems:
-    the Qt3 GUI (boot-repair-legacy-gui) renders the helper's read-only
-    device inventory and Repair tool capability lines, greys unavailable
-    tools with their probe reason and only enables the legacy-supported
-    commands; the gksu/dialog launcher stays installed as the no-X fallback.
+    the Qt3 GUI (boot-repair-legacy-gui) is the package's entry point. It
+    renders the helper's read-only device inventory and Repair tool
+    capability lines, greys unavailable tools with their probe reason and
+    only enables the legacy-supported commands (including the guarded
+    GRUB-legacy regeneration). The shell-only boot-repair-legacy TUI
+    launcher, its desktop entry and its man page are no longer shipped.
   * The ported boot-repair-legacy-helper keeps the modern command surface and
     the Repair tool / Repair change status evidence contract on bash 3.1 and
-    pre-systemd userlands.
+    pre-systemd userlands; the GUI also consumes the probe-based
+    Legacy feature lines for the greyed workflows.
 
  -- CaptainMorgan12 <CaptainMorgan12@users.noreply.github.com>  Mon, 21 Sep 2026 00:00:00 +0000

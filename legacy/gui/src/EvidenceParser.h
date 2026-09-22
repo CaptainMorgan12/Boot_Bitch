@@ -7,6 +7,9 @@
 // src/MainWindow.cpp:
 //   - `Repair tool <key>: available|unavailable|<reason>` decides availability,
 //   - a missing, unknown or malformed line keeps the action disabled,
+//   - `Legacy feature <feature>: available|unavailable|<reason>` decides the
+//     legacy-only workflows (file copy, shell, host-shell, host-maintenance,
+//     snapshots, host-default) with the same fail-closed rule,
 //   - `Repair change status <key>: unchanged|...` is a proven no-op, anything
 //     else invalidates the cached diagnostics.
 //
@@ -25,6 +28,15 @@ namespace legacy {
 // MainWindow::repairToolAvailable). Kept here as the single legacy-side list.
 std::vector<std::string> capabilityKeys();
 
+// The 16 read-only diagnostic keys accepted by `diagnose <key>` and
+// `host-diagnose <key>` (the `report` key is the combined report).
+std::vector<std::string> diagnosticKeys();
+
+// The legacy feature keys emitted by the helper's read-only
+// `Legacy feature <feature>:` gating report. Kept here as the single
+// legacy-side list.
+std::vector<std::string> legacyFeatureKeys();
+
 // Stable mapping from helper repair stage to capability key, mirroring
 // MainWindow::repairToolKeyForStage.
 std::string repairToolKeyForStage(const std::string &stage);
@@ -37,6 +49,9 @@ struct ParsedTranscript {
     std::vector<std::pair<std::string, std::string> > capabilities;
     // `Repair capability evidence <key>: <text>` lines.
     std::vector<std::pair<std::string, std::string> > capabilityEvidence;
+    // `Legacy feature <feature>: <state>` lines in order; state is the
+    // verbatim text after the colon ("available" or "unavailable|<reason>").
+    std::vector<std::pair<std::string, std::string> > legacyFeatures;
     // `Repair change status <key>: <state>` lines in order.
     std::vector<std::pair<std::string, std::string> > changeStatuses;
     // Recognised target/validation fact lines, verbatim (trimmed).
@@ -46,6 +61,9 @@ struct ParsedTranscript {
     // Number of `Repair tool` lines seen and how many had an unknown key.
     int capabilityLineCount;
     int unknownCapabilityLineCount;
+    // Number of `Legacy feature` lines seen and how many had an unknown key.
+    int legacyFeatureLineCount;
+    int unknownLegacyFeatureLineCount;
 };
 
 // Parses a helper transcript; tolerant, never throws.
@@ -54,6 +72,10 @@ ParsedTranscript parseTranscript(const std::string &text);
 // True only for the exact state "available". Otherwise the reason is the text
 // after "unavailable|" (or the whole state for unrecognised states).
 bool capabilityIsAvailable(const std::string &state, std::string *reason);
+
+// Legacy feature state helper with the same fail-closed semantics as
+// capabilityIsAvailable: true only for the exact state "available".
+bool legacyFeatureIsAvailable(const std::string &state, std::string *reason);
 
 // True for "unchanged" and "unchanged|<reason>" (proven no-op).
 bool changeStatusIsUnchanged(const std::string &status);
@@ -103,10 +125,20 @@ public:
     bool isAvailable(const std::string &key, const std::string &identity,
                      std::string *reason) const;
 
+    // Fail-closed availability for a legacy feature line (`file-copy`,
+    // `shell`, `host-shell`, `host-maintenance`, `snapshots`,
+    // `host-default`). A missing, unknown or unrecognised line keeps the
+    // feature unavailable, exactly like isAvailable().
+    bool legacyFeatureAvailable(const std::string &feature,
+                                const std::string &identity,
+                                std::string *reason) const;
+
     // Verbatim state line for a key ("" when absent).
     std::string state(const std::string &key) const;
     // Verbatim evidence line for a key ("" when absent).
     std::string evidence(const std::string &key) const;
+    // Verbatim legacy feature state line ("" when absent).
+    std::string legacyFeatureState(const std::string &feature) const;
     // Capability keys with an invalidating change status, in first-seen order.
     std::vector<std::string> invalidatingKeys() const;
     // Diagnostics must be regenerated (a non-unchanged status was seen).
@@ -123,6 +155,7 @@ private:
     bool m_stale;
     std::map<std::string, std::string> m_capabilities;
     std::map<std::string, std::string> m_evidence;
+    std::map<std::string, std::string> m_legacyFeatures;
     std::map<std::string, std::string> m_changes;
     std::vector<std::string> m_invalidatingKeys;
 };

@@ -55,6 +55,9 @@ void testTranscriptParsing(const std::string &fixture)
     check(parsed.unknownCapabilityLineCount == 0, "no unknown capability keys");
     check(parsed.capabilities.size() == 13, "all capability lines retained");
     check(parsed.capabilityEvidence.size() == 13, "all evidence lines retained");
+    check(parsed.legacyFeatureLineCount == 6, "6 Legacy feature lines parsed");
+    check(parsed.unknownLegacyFeatureLineCount == 0, "no unknown legacy feature keys");
+    check(parsed.legacyFeatures.size() == 6, "all legacy feature lines retained");
     check(parsed.changeStatuses.size() == 1, "change status parsed");
 
     std::string reason;
@@ -66,6 +69,20 @@ void testTranscriptParsing(const std::string &fixture)
           "unknown state rejected (fail closed)");
     check(!legacy::capabilityIsAvailable("", &reason),
           "missing state rejected (fail closed)");
+
+    check(legacy::legacyFeatureIsAvailable("available", &reason),
+          "legacy feature available state");
+    check(!legacy::legacyFeatureIsAvailable("unavailable|probe failed", &reason),
+          "legacy feature unavailable state rejected");
+    check(reason == "probe failed",
+          "legacy feature reason extracted verbatim");
+    check(!legacy::legacyFeatureIsAvailable("mystery", &reason),
+          "unknown legacy feature state rejected (fail closed)");
+    check(!legacy::legacyFeatureIsAvailable("", &reason),
+          "missing legacy feature state rejected (fail closed)");
+
+    check(legacy::diagnosticKeys().size() == 16, "16 diagnostic keys");
+    check(legacy::legacyFeatureKeys().size() == 6, "6 legacy feature keys");
 
     check(legacy::changeStatusIsUnchanged("unchanged"), "unchanged status");
     check(legacy::changeStatusIsUnchanged("unchanged|read-only"),
@@ -121,10 +138,33 @@ void testCapabilityModel(const std::string &fixture)
           "diagnostics for another identity never unlock this one");
     check(model.evidence("grub") == "update-grub present", "evidence line cached");
 
+    // Legacy feature lines gate the legacy-only workflows with the same
+    // fail-closed semantics as the capability lines.
+    check(!model.legacyFeatureAvailable("shell", identity, &reason),
+          "unavailable legacy feature stays disabled");
+    check(reason == "the installed timeout does not support --foreground/--kill-after",
+          "legacy feature reason is the helper's probe reason");
+    check(!model.legacyFeatureAvailable("mystery", identity, &reason),
+          "unknown legacy feature key fails closed");
+    check(model.legacyFeatureState("host-maintenance")
+              == "unavailable|unshare is not installed in the recovery environment",
+          "legacy feature state cached verbatim");
+    check(!model.legacyFeatureAvailable("shell", "target|/dev/hdb|/dev/hdb1", &reason),
+          "legacy features never unlock for another identity");
+
+    legacy::CapabilityModel noFeatures;
+    noFeatures.applyDiagnosticTranscript(identity, "Repair tool validate: available\n", true);
+    check(!noFeatures.legacyFeatureAvailable("shell", identity, &reason),
+          "missing Legacy feature line fails closed");
+    check(contains(reason, "No 'Legacy feature shell:' line was cached"),
+          "missing legacy feature reason names the exact line");
+
     model.applyCommandTranscript("Repair change status fixbroken: changed\n");
     check(model.diagnosticsStale(), "changed status marks diagnostics stale");
     check(!model.isAvailable("grub", identity, &reason),
           "stale diagnostics keep actions disabled");
+    check(!model.legacyFeatureAvailable("shell", identity, &reason),
+          "stale diagnostics keep legacy features disabled");
     check(contains(reason, "stale"), "stale reason is explicit");
 
     legacy::CapabilityModel clean;

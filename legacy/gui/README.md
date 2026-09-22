@@ -42,7 +42,11 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   lines with an **all/available/unavailable filter**; unavailable rows are
   greyed and show the helper's probe reason verbatim. `Repair capability
   evidence` lines feed the reason/tooltip; **Run All diagnostics** is the
-  read-only evidence source and **Cancel** stops a running command. A plain
+  combined read-only evidence source and **Cancel** stops a running command.
+  The per-key **Diagnostic checks** list runs one read-only `diagnose <key>` /
+  `host-diagnose <key>` through the helper, **Copy results** copies the raw
+  evidence pane and the **Target configuration** group is a read-only viewer
+  for the helper's `config-read` keys (11 files; target scope only). A plain
   interactive `sudo` is authorized through a modal hidden-input
   **Administrator authorization** dialog whose password is fed to `sudo -S -v`
   over a pipe (never argv, never the transcript); cancelled or failed
@@ -51,18 +55,25 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   `gksudo`, `sudo -n`, `su`, root or unavailable) with a **Re-check elevation**
   button that re-probes and surfaces the exact error, and exposes only the
   legacy-supported commands (`validate`, `diagnose`, `fs-inspect`,
-  `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`, `initramfs`)
-  in the running-host (`host-*`) or offline-target form. A button is enabled
-  only when the scope is ready (committed target or Host Maintenance), the
-  cached capability line for its key says `available` for the *current*
-  selection and no repair has invalidated the cache; otherwise the tooltip
+  `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`, `initramfs`,
+  and the guarded `grub` regeneration) in the running-host (`host-*`) or
+  offline-target form. A button is enabled only when the scope is ready
+  (committed target or Host Maintenance), the cached capability line for its
+  key says `available` for the *current* selection and no repair has
+  invalidated the cache; host `initramfs`/`grub` additionally require the
+  helper's `Legacy feature host-maintenance:` probe. Otherwise the tooltip
   names the exact reason. Write actions ask for confirmation; the helper keeps
   its runtime preflights. The modern-only features (Full Repair plan,
   snapshots, file copy, chroot shell, host default/reboot, EFI/UKI/extlinux,
-  Settings) are listed **greyed with their reasons**.
+  Settings) are listed **greyed with their reasons**; where the helper emits a
+  `Legacy feature` probe, the row's state and reason come from that cached
+  line and fail closed when it is missing or unrecognised.
 - **Chroot Shell** and **File Copy** mirror the modern tab layouts with every
-  control greyed and the exact probe/helper reason (no chroot shell command in
-  the legacy helper; missing `unshare`/`timeout`/`rsync` evidence on Etch).
+  control greyed and the exact `Legacy feature shell:` / `Legacy feature
+  file-copy:` probe reason (the helper commands exist but need `chroot` +
+  `timeout --foreground/--kill-after` / `unshare`, or an rsync with
+  `--chown`; this frontend exposes no workflow and never weakens the helper
+  preflights).
 - **Logs** streams the merged helper output with an **all/errors filter**, a
   **Search log:** substring filter (case-insensitive) and a **Session logs**
   list: the live session is the first entry, earlier files in the log
@@ -72,7 +83,9 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   directory, current session log, version), a working **Wrap long log lines**
   toggle and the greyed modern options (automatic diagnostics regeneration,
   device-discovery filters) plus the mandatory safety controls.
-- **About / TUI** documents the no-X fallback: `boot-repair-legacy --tui`.
+- **About** documents the CLI, the packaged entry point and the licence; there
+  is no TUI fallback in the package (the shell-only launcher is no longer
+  shipped).
 
 ## Modern-GUI parity
 
@@ -81,17 +94,21 @@ The Qt6 Boot Bitch tabs map onto this frontend where Qt3 allows it:
 | Modern GUI | Legacy Qt3 | Notes |
 | --- | --- | --- |
 | Systems (device tree, selected drive details, Unlock status, Select Target/Unlock/Authorize) | Systems (inventory, details panel, scope/target, Host Maintenance, unlock + status) | target is typed/selected then committed; modal sudo authorization replaces Polkit "Authorize" |
-| Diagnostics (check list, Run All/Run Diagnostic, results) | Diagnostics (capability list + Run All, raw evidence) | capability lines are the legacy result source; gated by committed target/Host Maintenance |
-| Repair (Full Repair plan, individual tools, gating) | Repair (individual gated tools) | no combined plan on the legacy helper |
-| Snapshots | — | deliberately omitted (no Btrfs/snapper evidence on Etch) |
-| Chroot Shell | Chroot Shell (greyed) | no chroot shell command in the legacy helper |
-| File Copy | File Copy (greyed) | missing rsync/containment evidence |
+| Diagnostics (check list, Run All/Run Diagnostic, results) | Diagnostics (capability list + Run All + per-key runs, read-only config viewer, raw evidence, Copy results) | capability/feature lines are the legacy evidence source; gated by committed target/Host Maintenance |
+| Repair (Full Repair plan, individual tools, gating) | Repair (individual gated tools incl. guarded GRUB-legacy regeneration) | no combined plan on the legacy helper |
+| Snapshots | — | deliberately omitted; the greyed row follows `Legacy feature snapshots:` |
+| Chroot Shell | Chroot Shell (greyed) | helper exposes `shell`; greyed with the `Legacy feature shell:` probe reason |
+| File Copy | File Copy (greyed) | helper exposes file copy; greyed with the `Legacy feature file-copy:` probe reason |
 | Logs (search, entry-kind filter, session logs) | Logs (search, all/errors filter, session list) | full live log always saved |
 | Settings (persistent options) | Settings (read-only config + greyed options) | no persistent settings; CLI flags/env only |
 
 Deliberate omissions (documented, not hidden): Full Repair plan, snapshots,
 host default/reboot and EFI/UKI/extlinux repair. They never appear as enabled
-controls and the action table keeps the exact legacy command set.
+controls and the action table keeps the exact legacy command set. The greyed
+rows for features the helper probes (`snapshots`, `file-copy`, `shell`,
+`host-default`) show the cached `Legacy feature` state and reason, fail closed
+when the line is missing, and never claim "unavailable" for a feature the
+helper reports available.
 
 ## Build
 
@@ -123,16 +140,19 @@ boot-repair-legacy-gui --help | --version | --print-config
 
 `--help`, `--version` and `--print-config` work without an X display.
 `--smoke-test` runs `host-diagnose all` followed by `host-validate` through the
-helper, verifies the details/unlock/session/search/gating controls and the
-1024x768 layout (group titles, button text, list columns and combos are checked
-with font metrics and widget geometry) and prints the combined result; it needs
-a display (Xvfb with a 1024x768 screen is sufficient). Elevation order is
-`sudo -n` (only when already authorized), `gksu --sudo-mode`, `gksudo`, `sudo`,
-`su`; `--no-elevate` runs the helper directly. A plain interactive `sudo` is
-authorized once per session through the modal hidden-input dialog and then
-runs as `sudo -n`; the smoke test never opens a modal and requires root or a
-pre-authenticated `--elevate 'sudo -n'`. No secret is ever placed on a command
-line; the LUKS passphrase uses stdin only.
+helper, verifies the details/unlock/session/search/gating controls, the
+per-diagnostic check list, the read-only config viewer and the probe-based
+`Legacy feature` gating (rows, greyed tabs and the host-maintenance-gated
+actions), and the 1024x768 layout (group titles, button text, list columns and
+combos are checked with font metrics and widget geometry) and prints the
+combined result; it needs a display (Xvfb with a 1024x768 screen is
+sufficient). Elevation order is `sudo -n` (only when already authorized),
+`gksu --sudo-mode`, `gksudo`, `sudo`, `su`; `--no-elevate` runs the helper
+directly. A plain interactive `sudo` is authorized once per session through
+the modal hidden-input dialog and then runs as `sudo -n`; the smoke test never
+opens a modal and requires root or a pre-authenticated `--elevate 'sudo -n'`.
+No secret is ever placed on a command line; the LUKS passphrase uses stdin
+only.
 
 ## Tests
 
@@ -140,12 +160,14 @@ line; the LUKS passphrase uses stdin only.
 `boot-repair-legacy-gui-contract`) compiles the Qt-free parser/inventory
 modules with plain `g++ -std=c++98 -Werror`, runs the fixture assertions in
 `legacy/tests/gui-parser-test.cpp` (capability parsing, fail-closed gating,
-change-status invalidation, device inventory with UUID/label/transport and the
-resolved dm chain, unlock-result/error markers) and checks the Qt3-only source
-contract, the legacy command set, the parity controls (tabs, details panel,
-unlock status, session/search, settings, gating, modal sudo authorization) and
-the layout guards. The full Qt3 compile and the extended smoke test run on the
-Etch guest.
+`Legacy feature` parsing/gating, change-status invalidation, device inventory
+with UUID/label/transport and the resolved dm chain, unlock-result/error
+markers) and checks the Qt3-only source contract, the legacy command set
+(including `grub`), the parity controls (tabs, details panel, unlock status,
+session/search, settings, gating, modal sudo authorization, per-diagnostic
+runs, read-only config viewer, probe-based feature gating) and the layout
+guards. The full Qt3 compile and the extended smoke test run on the Etch
+guest.
 
 ## Etch validation (2026-09-22)
 
@@ -180,3 +202,17 @@ the default elevation probe. Etch's sudo 1.6.8 has no `-n`, so the modal
 `--smoke-test --elevate sudo` exits 1 with the fail-fast message instead of
 ever printing a password prompt into the results window. Evidence:
 `Development/release-0.2.25/etch-legacy/gui-parity-*`.
+
+Residuals pass (same day, later): the probe-based `Legacy feature` gating
+(fail closed on missing/unrecognised lines), the 16 per-key diagnostic runs,
+the read-only `config-read` viewer, the guarded GRUB-legacy `grub` action and
+the launcher removal were built and installed
+(`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256 `34545074…`; GUI
+`cd61e6d2…`, helper `d4d842d7…`). `dpkg -r` removed the previous package
+(launcher, desktop entry and man page included); the new `.deb` installs only
+the GUI/helper/desktop/icons/docs. The Xvfb smoke reports
+`SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+controls: ok; layout: ok (60 widgets checked)` (rc 0), and the session log
+carries all six `Legacy feature` lines (including `host-maintenance:
+unavailable|unshare is not installed in the recovery environment`). Evidence:
+`Development/release-0.2.25/etch-legacy/gui-residual-20260922/`.

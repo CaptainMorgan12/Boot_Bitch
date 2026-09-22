@@ -6,7 +6,10 @@
 #     capability parsing, fail-closed gating, change-status invalidation and
 #     the read-only device-inventory parsers
 #   - asserts the GUI sources use Qt3 widgets/QProcess and the stable evidence
-#     prefixes, expose only the legacy-supported command set and keep
+#     prefixes, expose only the legacy-supported command set (including the
+#     guarded GRUB-legacy stage), consume the helper's probe-based
+#     `Legacy feature` lines for gating/greyed reasons, provide the
+#     per-diagnostic runs and the read-only configuration viewer, and keep
 #     --help/--print-config usable before QApplication is created
 #
 # The full Qt3 build runs natively on the Etch guest via scripts/package-legacy.sh;
@@ -69,10 +72,20 @@ grep -q 'Repair capability evidence ' "$PARSER" \
     || fail "parser lost the 'Repair capability evidence' prefix"
 grep -q 'Repair change status ' "$PARSER" \
     || fail "parser lost the 'Repair change status' prefix"
+grep -q 'Legacy feature ' "$PARSER" \
+    || fail "parser lost the 'Legacy feature' prefix"
 for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
     grep -q "\"$key\"" "$PARSER" || fail "capability key missing from the parser: $key"
 done
-pass "13-key evidence contract present"
+for feature in file-copy shell host-shell host-maintenance snapshots host-default; do
+    grep -q "\"$feature\"" "$PARSER" || fail "legacy feature key missing from the parser: $feature"
+done
+for key in environment backend boot boot-evidence kernel grub uki display errors usage filesystem fstab btrfs mapper luks report; do
+    grep -q "\"$key\"" "$PARSER" || fail "diagnostic key missing from the parser: $key"
+done
+grep -q 'legacyFeatureAvailable' "$PARSER" || fail "parser lost the fail-closed legacy feature gate"
+grep -q 'legacyFeatureIsAvailable' "$PARSER" || fail "parser lost the legacy feature state helper"
+pass "13-key evidence contract + 6 legacy feature probes + 16 diagnostic keys"
 
 # --- Qt3 widget/toolkit usage ------------------------------------------------
 for symbol in QMainWindow QListView QTextEdit QTabWidget QProcess; do
@@ -88,7 +101,7 @@ pass "Qt3-only widget/toolkit usage (no kdelibs)"
 WINDOW="$GUI_DIR/src/LegacyMainWindow.cpp"
 ACTION_BLOCK="$(sed -n '/^const ActionSpec actionSpecs\[\] = {/,/^};/p' "$WINDOW")"
 [[ -n "$ACTION_BLOCK" ]] || fail "actionSpecs block not found"
-for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs; do
+for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs grub; do
     grep -q "\"$stage\"" <<<"$ACTION_BLOCK" || fail "legacy stage missing from the GUI: $stage"
 done
 # `unlock` is a dedicated control (passphrase on stdin), never a repair stage;
@@ -100,7 +113,8 @@ done
 grep -q 'host-validate' "$WINDOW" || fail "GUI lost the host-validate command form"
 grep -q 'host-diagnose' "$WINDOW" || fail "GUI lost the host-diagnose command form"
 grep -q 'host-repair' "$WINDOW" || fail "GUI lost the host-repair command form"
-pass "legacy command set only (validate/diagnose/fs-inspect/repairs)"
+grep -q 'hostMaintenance' "$WINDOW" || fail "GUI lost the host-maintenance feature gate"
+pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub)"
 
 # --- modern-GUI parity controls ---------------------------------------------
 grep -q '"unlock"' "$WINDOW" || fail "GUI lost the dedicated unlock command"
@@ -119,10 +133,29 @@ for filter in 'All tools' 'Available only' 'Unavailable only' 'All entries' 'Err
 done
 grep -q 'Modern features not available' "$WINDOW" \
     || fail "GUI lost the greyed modern-features list"
-pass "parity controls (unlock, elevation, diagnostics/log filters, greyed features)"
+# Per-diagnostic runs + read-only config viewer (parity G1/G2).
+for marker in 'm_diagnosticList' 'm_runDiagnosticButton' 'Run selected diagnostic' \
+    'runSelectedDiagnostic' 'diagnosticKeys' 'Copy results' 'm_copyResultsButton'; do
+    grep -q "$marker" "$WINDOW" || fail "per-diagnostic control missing: $marker"
+done
+for marker in 'm_configCombo' 'm_configButton' 'View target file (read-only)' \
+    'viewConfigFile' 'config-read' 'm_configView'; do
+    grep -q "$marker" "$WINDOW" || fail "read-only config viewer marker missing: $marker"
+done
+grep -q 'grub' <<<"$ACTION_BLOCK" || fail "guarded GRUB action missing"
+# Probe-based legacy feature gating (fail closed) replaces hardcoded reasons.
+for marker in 'legacyFeatureAvailable' 'legacyFeatureState' 'legacyFeatureDisplay' \
+    'updateLegacyFeatureView' 'updateFeatureTab' 'helper probe:'; do
+    grep -q "$marker" "$WINDOW" || fail "legacy feature gating marker missing: $marker"
+done
+grep -q "the legacy helper exposes no chroot shell command" "$WINDOW" \
+    && fail "hardcoded chroot-shell reason still present"
+grep -q "not supported by the legacy helper on Etch" "$WINDOW" \
+    && fail "hardcoded host-default reason still present"
+pass "parity controls (unlock, elevation, filters, per-diagnostic runs, config viewer, probe gating)"
 
 # --- tab parity, Systems panel, unlock status and Logs session/search --------
-for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings' 'About / TUI'; do
+for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings' 'About'; do
     grep -q "\"$tab\"" "$WINDOW" || fail "GUI lost a modern-parity tab: $tab"
 done
 for marker in 'Selected drive details' 'Connection:' 'UUID:' 'Protection:' 'updateDriveDetails'; do
@@ -190,11 +223,13 @@ grep -q -- '--print-config' "$MAIN" || fail "main.cpp lost --print-config"
 grep -q -- '--smoke-test' "$MAIN" || fail "main.cpp lost --smoke-test"
 pass "headless --help/--version/--print-config before QApplication"
 
-# --- launcher documents the same command set --------------------------------
-LAUNCHER="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
-grep -q 'apt-upgrade' "$LAUNCHER" || fail "launcher command list is missing apt-upgrade"
-grep -q 'unlock <disk> <luks-device>' "$LAUNCHER" \
-    || fail "launcher command list is missing the unlock control"
-pass "launcher documents the GUI command set"
+# --- GUI is the packaged entry point (no TUI launcher fallback) --------------
+grep -q -- '--tui' "$WINDOW" \
+    && fail "GUI still advertises the removed boot-repair-legacy --tui fallback"
+grep -q 'TUI fallback' "$WINDOW" && fail "GUI still documents a TUI fallback"
+grep -q 'TUI fallback' "$MAIN" && fail "GUI usage still documents a TUI fallback"
+grep -q "package's entry point" "$WINDOW" \
+    || fail "GUI About does not state the packaged entry point"
+pass "GUI is the packaged entry point (no launcher fallback advertised)"
 
 echo "legacy GUI contract: PASS"
