@@ -118,6 +118,13 @@ debian)
             optional_packages+=("$package")
         fi
     done
+    # Debian moved the Qt SVG image-format plugin out of libqt6svg6 into
+    # qt6-svg-plugins in qt6-svg 6.7.2-5. The AppImage bundler can only ship
+    # the plugin when the build host has it installed; bookworm and Ubuntu
+    # 24.04 ship it inside libqt6svg6, so the package is optional.
+    if package_available qt6-svg-plugins; then
+        optional_packages+=(qt6-svg-plugins)
+    fi
     collect_filesystem_optional_packages
 
     "${SUDO[@]}" apt-get install --no-install-recommends -y "${base_packages[@]}" "${optional_packages[@]}"

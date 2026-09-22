@@ -68,3 +68,35 @@ if (( failures )); then
   exit 1
 fi
 echo "Icon atlas audit passed: ${#requested[@]} icon request(s) have a bundled asset."
+
+# The atlas assets are SVG, so the runtime needs Qt's SVG image-format plugin
+# (QIcon reads them through QImageReader). Every package profile must declare
+# the plugin package, otherwise the atlas silently degrades to generic style
+# icons. Debian moved the plugin out of libqt6svg6 into qt6-svg-plugins in
+# qt6-svg 6.7.2-5 (trixie and newer, TUXEDO OS); bookworm and Ubuntu 24.04
+# still ship it inside libqt6svg6, hence the versioned alternative. Fedora's
+# and Alpine's qt6-qtsvg, openSUSE's libQt6Svg6 and Arch's qt6-svg all include
+# the plugin.
+runtime_failures=0
+check_runtime_dependency() {
+  local profile="$1" file="$2" needle="$3"
+  if [[ -f "$file" ]] && grep -qF -- "$needle" "$file"; then
+    printf '%-12s %-4s %s\n' "$profile" "PASS" "$needle"
+  else
+    printf '%-12s %-4s %s\n' "$profile" "FAIL" "missing: $needle"
+    runtime_failures=$((runtime_failures + 1))
+  fi
+}
+printf '\n%-12s %-4s %s\n' "Profile" "State" "Qt SVG image-format plugin dependency"
+printf '%-12s %-4s %s\n' "-------" "-----" "----------------------------------------"
+check_runtime_dependency "deb" "$root_dir/CMakeLists.txt" "qt6-svg-plugins | libqt6svg6 (<< 6.7.2-5~)"
+check_runtime_dependency "rpm" "$root_dir/scripts/package-rpm.sh" "qt6-qtsvg"
+check_runtime_dependency "suse" "$root_dir/scripts/package-rpm.sh" "libQt6Svg6"
+check_runtime_dependency "arch" "$root_dir/scripts/package-arch.sh" "'qt6-base' 'qt6-svg'"
+check_runtime_dependency "apk" "$root_dir/scripts/package-alpine.sh" "qt6-qtsvg"
+
+if (( runtime_failures )); then
+  echo "Icon atlas runtime audit failed: $runtime_failures package profile(s) do not declare the Qt SVG image-format plugin." >&2
+  exit 1
+fi
+echo "Icon atlas runtime audit passed: every package profile declares the Qt SVG image-format plugin."

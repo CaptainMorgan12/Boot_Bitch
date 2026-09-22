@@ -187,7 +187,14 @@ set(CPACK_DEBIAN_PACKAGE_SHLIBDEPS ON)
 # Optional platform-theme integrations make Qt controls and dialogs blend
 # into GNOME without overriding KDE's native Qt theme.
 set(CPACK_DEBIAN_PACKAGE_SUGGESTS "qt6-gtk-platformtheme, qt6-xdgdesktopportal-platformtheme, qgnomeplatform-qt6")
-set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, libqt6svg6, hicolor-icon-theme")
+# Qt loads the bundled SVG icon atlas through the SVG image-format plugin, not
+# through a linked library, so the plugin package is the runtime dependency.
+# Debian moved the plugin out of libqt6svg6 into qt6-svg-plugins in qt6-svg
+# 6.7.2-5 (Debian trixie and newer, TUXEDO OS); bookworm and Ubuntu 24.04
+# still ship it inside libqt6svg6. The versioned alternative keeps both
+# installable and still forces the plugin on trixie upgrades where the old
+# libqt6svg6 is already present.
+set(CPACK_DEBIAN_PACKAGE_DEPENDS "pkexec, mount, cryptsetup, rsync, e2fsprogs, dosfstools, btrfs-progs, xfsprogs, efibootmgr, binutils, python3, qt6-svg-plugins | libqt6svg6 (<< 6.7.2-5~), hicolor-icon-theme")
 set(CPACK_DEBIAN_PACKAGE_RECOMMENDS "exfatprogs, ntfs-3g, f2fs-tools, jfsutils, reiserfsprogs, zfsutils-linux")
 set(CPACK_STRIP_FILES TRUE)
 set(CPACK_DEBIAN_FILE_NAME DEB-DEFAULT)
@@ -210,7 +217,9 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/post
 # libQt6Core.so.6(Qt_6.x)), so release RPMs are built on the oldest supported
 # target distribution; scripts/package-rpm.sh documents that build-host rule.
 # The per-family Qt SVG package name (qt6-qtsvg on Fedora/RHEL, libQt6Svg6 on
-# openSUSE) is added by scripts/package-rpm.sh because it differs per target.
+# openSUSE) is added by scripts/package-rpm.sh because it differs per target;
+# those packages ship the SVG image-format plugin, as do Arch's qt6-svg and
+# Alpine's qt6-qtsvg, so only the Debian split needs the alternative above.
 # Optional file system tools stay out of weak RPM dependencies because their
 # package names differ per RPM family; the Debian Recommends and the Arch/
 # Alpine optdepends carry the optional contract instead.

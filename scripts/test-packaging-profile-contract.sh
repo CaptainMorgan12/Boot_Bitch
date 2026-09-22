@@ -57,6 +57,17 @@ grep -q 'qt6-qtsvg' "$ROOT_DIR/scripts/package-rpm.sh"
 grep -q 'libQt6Svg6' "$ROOT_DIR/scripts/package-rpm.sh"
 grep -q 'CPACK_RPM_PACKAGE_REQUIRES=' "$ROOT_DIR/scripts/package-rpm.sh"
 
+# The bundled icon atlas is SVG, so every package profile must carry Qt's SVG
+# image-format plugin at runtime. Debian moved the plugin out of libqt6svg6
+# into qt6-svg-plugins in qt6-svg 6.7.2-5, hence the versioned alternative
+# that keeps bookworm/Ubuntu 24.04 installable; the fast icon-atlas contract
+# audits the same declarations and the per-artifact validators assert them in
+# the built metadata.
+grep -q 'qt6-svg-plugins | libqt6svg6 (<< 6.7.2-5~)' "$ROOT_DIR/CMakeLists.txt"
+grep -q "'qt6-base' 'qt6-svg'" "$ROOT_DIR/scripts/package-arch.sh"
+grep -q 'qt6-qtsvg' "$ROOT_DIR/scripts/package-alpine.sh"
+"$ROOT_DIR/scripts/check-icon-atlas.sh" >/dev/null
+
 # AppStream metadata and the desktop entry must stay in sync with the packaged
 # application: software centers need remote screenshots, the current release
 # version and the package association to list the installed .deb.

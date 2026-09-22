@@ -48,6 +48,24 @@ echo "=== PACKAGE METADATA ==="
 dpkg-deb --info "$DEB"
 echo
 
+# Qt loads the bundled SVG icon atlas through the SVG image-format plugin, so
+# the control file must declare the plugin package. Debian moved the plugin
+# out of libqt6svg6 into qt6-svg-plugins in qt6-svg 6.7.2-5; older releases
+# (bookworm, Ubuntu 24.04) still ship it inside libqt6svg6, hence the
+# versioned alternative.
+echo "=== QT SVG RUNTIME DEPENDENCY ==="
+deb_depends="$(dpkg-deb -f "$DEB" Depends)"
+grep -Fq 'qt6-svg-plugins' <<<"$deb_depends" || {
+    echo "FAIL: control Depends does not declare the Qt SVG image-format plugin (qt6-svg-plugins)." >&2
+    exit 1
+}
+grep -Fq 'libqt6svg6 (<< 6.7.2-5~)' <<<"$deb_depends" || {
+    echo "FAIL: control Depends is missing the pre-split libqt6svg6 fallback (<< 6.7.2-5~)." >&2
+    exit 1
+}
+echo "PASS: control Depends declares the Qt SVG image-format plugin with the pre-split fallback."
+echo
+
 echo "=== PACKAGE CONTENTS ==="
 dpkg-deb --contents "$DEB"
 echo

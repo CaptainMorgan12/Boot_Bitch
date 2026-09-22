@@ -23,6 +23,14 @@
   silently omitting the update metadata), and the release tooling captures,
   mirrors, checksums and verifies the `.zsync` alongside the AppImage so the
   GitHub source is detected automatically.
+- Fix the bundled icon atlas falling back to generic style icons on Debian
+  trixie and newer: Debian moved Qt's SVG image-format plugin out of
+  `libqt6svg6` into `qt6-svg-plugins`, so the `.deb` now depends on
+  `qt6-svg-plugins | libqt6svg6 (<< 6.7.2-5~)` (bookworm and Ubuntu 24.04
+  keep the plugin inside `libqt6svg6`). `scripts/check-icon-atlas.sh` now
+  audits that SVG-plugin dependency across the deb, RPM, Arch and APK package
+  profiles, and `scripts/test-deb.sh` / `scripts/test-rpm.sh` assert it in the
+  built package metadata.
 
 ## 0.2.25 — 2026-09-19
 

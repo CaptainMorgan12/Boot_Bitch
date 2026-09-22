@@ -166,6 +166,10 @@ do
     grep -Fqx "$requirement" <<<"$rpm_requires" || \
         fail "RPM is missing the explicit runtime requirement: $requirement"
 done
+# Qt loads the bundled SVG icon atlas through the image-format plugin, which
+# Fedora/RHEL package as qt6-qtsvg and openSUSE as libQt6Svg6.
+grep -qE '^(qt6-qtsvg|libQt6Svg6)$' <<<"$rpm_requires" || \
+    fail "RPM is missing the Qt SVG image-format plugin requirement (qt6-qtsvg or libQt6Svg6)."
 
 echo "PASS: executable, desktop entry, application icons, privileged helper, EFI updater and metadata are present."
 echo
