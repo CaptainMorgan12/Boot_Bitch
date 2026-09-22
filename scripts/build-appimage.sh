@@ -159,18 +159,38 @@ APPDIR="$BUILD_DIR/Boot-Bitch.AppDir"
 rm -rf -- "$APPDIR"
 DESTDIR="$APPDIR" cmake --install "$BUILD_DIR" --strip
 
-[[ -x "$APPDIR/usr/bin/boot-repair" ]] || {
-    echo "AppDir executable missing: $APPDIR/usr/bin/boot-repair" >&2
-    exit 1
+# Every executable must keep mode 0755 in the AppDir so the squashfs carries
+# the executable bit. The privileged helper is the critical one: pkexec runs
+# it as root, and the AppImage's FUSE mount is read-only, so a build that
+# dropped the bit could not be repaired at runtime. linuxdeploy runs after the
+# install, so the permissions are re-asserted before packaging as well.
+assert_appdir_executables()
+{
+    local executable
+    for executable in \
+        "usr/bin/boot-repair" \
+        "usr/libexec/boot-repair/boot-repair-helper" \
+        "usr/libexec/boot-repair/boot-repair-efi-label.py"; do
+        [[ -f "$APPDIR/$executable" ]] || {
+            echo "AppDir executable missing: $APPDIR/$executable" >&2
+            exit 1
+        }
+        chmod 0755 "$APPDIR/$executable"
+        [[ -x "$APPDIR/$executable" ]] || {
+            echo "AppDir executable is not executable: $APPDIR/$executable" >&2
+            exit 1
+        }
+    done
 }
-[[ -x "$APPDIR/usr/libexec/boot-repair/boot-repair-helper" ]] || {
-    echo "AppDir privileged helper missing: $APPDIR/usr/libexec/boot-repair/boot-repair-helper" >&2
-    exit 1
-}
+
+assert_appdir_executables
 
 # AppImage launches through this small wrapper so the image can be mounted at
 # any path. The GUI itself remains unprivileged; privileged operations still
-# use the host's pkexec/Polkit and system tools.
+# use the host's pkexec/Polkit and system tools. The type2 runtime mounts the
+# squashfs read-only without noexec, but a FUSE mount is only accessible to the
+# user who mounted it, so the GUI stages a sha256-verified private copy of the
+# helper before pkexec runs it as root (see MainWindow::privilegedSessionHelper).
 cat > "$APPDIR/AppRun" <<'APP_RUN'
 #!/bin/sh
 set -eu
@@ -223,6 +243,9 @@ PLUGIN_WRAPPER
         --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
         --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
         --plugin qt)
+    # linuxdeploy may rewrite AppDir entries; never package a helper without
+    # the executable bit.
+    assert_appdir_executables
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"
 else
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"

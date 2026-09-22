@@ -8,6 +8,7 @@
 #include <QCheckBox>
 #include <QColor>
 #include <QComboBox>
+#include <QCryptographicHash>
 #include <QDateTime>
 #include <QDialog>
 #include <QDialogButtonBox>
@@ -2160,6 +2161,8 @@ private slots:
     void hostDiagnosticsRequireHostMaintenanceScope();
     void snapshotPreloadIsDeduplicatedAcrossScopeTransitions();
     void helperPathResolutionPrefersInstalledUnlessOverridden();
+    void helperPathResolutionStagesAppImageCopy();
+    void helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths();
     void stageLabelsTrackBackendFamilyWithoutLeaking();
     void mixedPackageManagerLabelsStayGeneric();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
@@ -8362,6 +8365,148 @@ void MainWindowUiTest::helperPathResolutionPrefersInstalledUnlessOverridden()
     }
     QVERIFY2(!window.repairHelperPath().isEmpty(),
              "a build run must still resolve its source-tree helper");
+}
+
+namespace {
+
+// A throwaway executable shell helper plus the mountinfo line that describes
+// its filesystem, used by the private-copy staging tests.
+struct HelperStagingFixture {
+    QTemporaryDir dir;
+    QString helperPath;
+    QString mountPoint;
+    QList<QByteArray> mountInfo;
+
+    explicit HelperStagingFixture(const QByteArray &fsType, const QByteArray &options)
+    {
+        const QString root = dir.path();
+        const QString mountRoot = root + QStringLiteral("/.mount_bootTest123/usr/libexec/boot-repair");
+        QDir().mkpath(mountRoot);
+        helperPath = mountRoot + QStringLiteral("/boot-repair-helper");
+        QFile helper(helperPath);
+        helper.open(QIODevice::WriteOnly | QIODevice::Text);
+        helper.write("#!/bin/sh\nprintf 'SESSION_READY\\t1\\n'\n");
+        helper.close();
+        QFile::setPermissions(helperPath,
+                              QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+        helperPath = QFileInfo(helperPath).canonicalFilePath();
+        mountPoint = QFileInfo(root + QStringLiteral("/.mount_bootTest123")).canonicalFilePath();
+        mountInfo = {QStringLiteral("100 1 0:99 / %1 %2 - %3 /somewhere/boot-repair_0.2.25_x86_64.AppImage ro")
+                         .arg(mountPoint,
+                              QString::fromLatin1(options),
+                              QString::fromLatin1(fsType))
+                         .toUtf8()};
+    }
+};
+
+QByteArray helperSha256(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QByteArray();
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    hash.addData(&file);
+    return hash.result();
+}
+
+} // namespace
+
+// An AppImage helper runs from a FUSE mount that only the user who mounted it
+// can read, so pkexec (root) gets EACCES. The resolution must stage a verified
+// private copy in a user-only runtime directory and remove it on cleanup.
+void MainWindowUiTest::helperPathResolutionStagesAppImageCopy()
+{
+    HelperStagingFixture fixture("fuse.boot-repair_0.2.25_x86_64.AppImage", "ro,nosuid,nodev");
+    QVERIFY(fixture.dir.isValid());
+    QVERIFY(!fixture.helperPath.isEmpty());
+
+    QString reason;
+    QVERIFY2(MainWindow::helperNeedsPrivateCopy(fixture.helperPath, fixture.mountInfo, &reason),
+             "an AppImage FUSE mount must require a private helper copy");
+    QVERIFY2(reason.contains(QStringLiteral("AppImage")), qPrintable(reason));
+
+    QTemporaryDir runtimeDir;
+    QVERIFY(runtimeDir.isValid());
+    const MainWindow::StagedHelper staged = MainWindow::stageHelperForPrivilegedSession(
+        fixture.helperPath, runtimeDir.path(), fixture.mountInfo);
+    QVERIFY2(staged.error.isEmpty(), qPrintable(staged.error));
+    QVERIFY(!staged.stagedPath.isEmpty());
+    QVERIFY(staged.stagedPath != fixture.helperPath);
+    QCOMPARE(staged.path, staged.stagedPath);
+    QVERIFY(staged.stagedPath.startsWith(QFileInfo(runtimeDir.path()).canonicalFilePath()));
+    QCOMPARE(QFileInfo(staged.stagedPath).fileName(), QStringLiteral("boot-repair-helper"));
+
+    // Owner-executable, user-only and byte-identical to the resolved helper.
+    const QFileInfo stagedInfo(staged.stagedPath);
+    QVERIFY(stagedInfo.exists());
+    QVERIFY(stagedInfo.isExecutable());
+    const QFile::Permissions foreignBits =
+        QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup
+        | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+    QCOMPARE(stagedInfo.permissions() & foreignBits, QFile::Permissions());
+    QCOMPARE(helperSha256(staged.stagedPath), helperSha256(fixture.helperPath));
+
+    // The window records the copy and removes it (and its directory) on close.
+    MainWindow window;
+    window.m_stagedHelperPaths << staged.stagedPath;
+    window.m_stagedHelperDirs << staged.stagingDir;
+    window.m_stagedHelperSources.insert(staged.stagedPath, fixture.helperPath);
+    window.cleanupStagedHelpers();
+    QVERIFY(!QFileInfo::exists(staged.stagedPath));
+    QVERIFY(!QFileInfo::exists(staged.stagingDir));
+    QVERIFY(window.m_stagedHelperPaths.isEmpty());
+    QVERIFY(window.m_stagedHelperSources.isEmpty());
+}
+
+// The same private copy is staged for a noexec mount, while a regular
+// installed helper path is returned unchanged.
+void MainWindowUiTest::helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths()
+{
+    HelperStagingFixture noexecFixture("ext4", "rw,relatime,noexec");
+    QString reason;
+    QVERIFY2(MainWindow::helperNeedsPrivateCopy(noexecFixture.helperPath,
+                                                noexecFixture.mountInfo, &reason),
+             "a noexec helper filesystem must require a private copy");
+    QVERIFY2(reason.contains(QStringLiteral("noexec")), qPrintable(reason));
+
+    QTemporaryDir runtimeDir;
+    QVERIFY(runtimeDir.isValid());
+    const MainWindow::StagedHelper staged = MainWindow::stageHelperForPrivilegedSession(
+        noexecFixture.helperPath, runtimeDir.path(), noexecFixture.mountInfo);
+    QVERIFY2(staged.error.isEmpty(), qPrintable(staged.error));
+    QVERIFY(!staged.stagedPath.isEmpty());
+    QVERIFY(QFileInfo(staged.stagedPath).isExecutable());
+    QCOMPARE(helperSha256(staged.stagedPath), helperSha256(noexecFixture.helperPath));
+    QVERIFY(QFile::remove(staged.stagedPath));
+    QVERIFY(QDir().rmdir(staged.stagingDir));
+
+    // A regular executable mount needs no copy at all.
+    HelperStagingFixture normalFixture("ext4", "rw,relatime");
+    QVERIFY(!MainWindow::helperNeedsPrivateCopy(normalFixture.helperPath, normalFixture.mountInfo));
+    const MainWindow::StagedHelper untouched = MainWindow::stageHelperForPrivilegedSession(
+        normalFixture.helperPath, runtimeDir.path(), normalFixture.mountInfo);
+    QVERIFY(untouched.error.isEmpty());
+    QCOMPARE(untouched.path, normalFixture.helperPath);
+    QVERIFY(untouched.stagedPath.isEmpty());
+
+    // End to end through the session resolution: the explicit override on an
+    // AppImage mount is staged and recorded, and cleanup removes the copy.
+    MainWindow window;
+    ScopedEnvironmentVariable overrideEnv("BOOT_REPAIR_HELPER_PATH",
+                                          noexecFixture.helperPath.toUtf8());
+    QString resolution;
+    const QString sessionHelper = window.privilegedSessionHelper(&resolution, runtimeDir.path(),
+                                                                 noexecFixture.mountInfo);
+    QVERIFY(!sessionHelper.isEmpty());
+    QVERIFY(sessionHelper != noexecFixture.helperPath);
+    QVERIFY2(resolution.contains(QStringLiteral("staged")), qPrintable(resolution));
+    QVERIFY2(resolution.contains(QStringLiteral("sha256")), qPrintable(resolution));
+    QCOMPARE(window.m_stagedHelperPaths.size(), 1);
+    QCOMPARE(window.m_stagedHelperSources.value(sessionHelper), noexecFixture.helperPath);
+    window.cleanupStagedHelpers();
+    QVERIFY(!QFileInfo::exists(sessionHelper));
+    QVERIFY(window.m_stagedHelperPaths.isEmpty());
 }
 
 // The family-specific stage labels are applied per backend and reset for

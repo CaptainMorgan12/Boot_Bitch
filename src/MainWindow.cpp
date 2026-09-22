@@ -8,6 +8,7 @@
 #include <QClipboard>
 #include <QCoreApplication>
 #include <QAction>
+#include <QCryptographicHash>
 #include <QDir>
 #include <QKeySequence>
 #include <QPixmap>
@@ -79,11 +80,15 @@
 #include <QTextDocument>
 #include <QTextLayout>
 #include <QTextStream>
+#include <QTemporaryDir>
+#include <QTemporaryFile>
 #include <QTimer>
 #include <QToolButton>
 #include <QTreeWidget>
 #include <QTreeWidgetItem>
 #include <QVBoxLayout>
+
+#include <utility>
 
 #ifdef BOOT_REPAIR_HAVE_DBUS
 #include <QDBusConnection>
@@ -3861,11 +3866,13 @@ MainWindow::~MainWindow()
 {
     closeSessionLogFile();
     closePrivilegedSession();
+    cleanupStagedHelpers();
 }
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
     closePrivilegedSession();
+    cleanupStagedHelpers();
     saveSettings();
     QMainWindow::closeEvent(event);
 }
@@ -6662,9 +6669,14 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     m_privilegedSessionRequestFailed = false;
 
     QString helperResolution;
-    const QString helper = repairHelperPath(&helperResolution);
+    const QString helper = privilegedSessionHelper(&helperResolution);
     if (helper.isEmpty()) {
-        setError(QStringLiteral("The privileged Boot Bitch helper was not found. Rebuild or install this source tree."));
+        if (helperResolution.contains(QStringLiteral("could not be staged"))) {
+            setError(QStringLiteral("The privileged Boot Bitch helper could not be prepared for pkexec: %1")
+                         .arg(helperResolution));
+        } else {
+            setError(QStringLiteral("The privileged Boot Bitch helper was not found. Rebuild or install this source tree."));
+        }
         return false;
     }
     // Log the chosen helper and why it won, so an installed package can never
@@ -15246,6 +15258,342 @@ QString MainWindow::repairHelperPath(QString *resolution) const
 {
     return resolveRepairHelperPath(QCoreApplication::applicationDirPath(),
                                    qgetenv("BOOT_REPAIR_HELPER_PATH"), resolution);
+}
+
+namespace {
+
+// /proc/self/mountinfo escapes spaces, tabs, newlines and backslashes in path
+// fields as octal sequences (\040, \011, \012, \134).
+QString decodeMountInfoPath(const QByteArray &value)
+{
+    QByteArray decoded;
+    decoded.reserve(value.size());
+    for (qsizetype index = 0; index < value.size(); ++index) {
+        if (value.at(index) == '\\' && index + 3 < value.size()
+            && value.at(index + 1) >= '0' && value.at(index + 1) <= '7'
+            && value.at(index + 2) >= '0' && value.at(index + 2) <= '7'
+            && value.at(index + 3) >= '0' && value.at(index + 3) <= '7') {
+            decoded.append(static_cast<char>((value.at(index + 1) - '0') * 64
+                                             + (value.at(index + 2) - '0') * 8
+                                             + (value.at(index + 3) - '0')));
+            index += 3;
+        } else {
+            decoded.append(value.at(index));
+        }
+    }
+    return QString::fromLocal8Bit(decoded);
+}
+
+bool pathIsUnderMount(const QString &path, const QString &mountPoint)
+{
+    if (mountPoint == QStringLiteral("/")) {
+        return true;
+    }
+    return path == mountPoint || path.startsWith(mountPoint + QLatin1Char('/'));
+}
+
+QString sha256Hex(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly)) {
+        return QString();
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    if (!hash.addData(&file)) {
+        return QString();
+    }
+    return QString::fromLatin1(hash.result().toHex());
+}
+
+// User-only runtime base for a private helper copy. XDG_RUNTIME_DIR is the
+// first choice; /run/user/<uid> is the documented fallback and the system temp
+// directory is the last resort for systems without either.
+QString helperStagingBasePath()
+{
+    const auto ownedPrivateDir = [](const QString &path) {
+        const QFileInfo info(path);
+        return !path.isEmpty() && info.isDir() && !info.isSymLink()
+            && info.ownerId() == geteuid();
+    };
+    const QString runtimeLocation =
+        QStandardPaths::writableLocation(QStandardPaths::RuntimeLocation);
+    if (ownedPrivateDir(runtimeLocation)) {
+        return runtimeLocation;
+    }
+    const QString runUser = QStringLiteral("/run/user/%1").arg(geteuid());
+    if (ownedPrivateDir(runUser)) {
+        return runUser;
+    }
+    const QString temp = QDir::tempPath();
+    if (ownedPrivateDir(temp)) {
+        return temp;
+    }
+    return QString();
+}
+
+} // namespace
+
+QList<QByteArray> MainWindow::readMountInfo(const QString &path)
+{
+    QFile file(path);
+    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        return QList<QByteArray>();
+    }
+    return file.readAll().split('\n');
+}
+
+bool MainWindow::helperNeedsPrivateCopy(const QString &helperPath,
+                                        const QList<QByteArray> &mountInfo,
+                                        QString *reason)
+{
+    if (helperPath.isEmpty() || mountInfo.isEmpty()) {
+        return false;
+    }
+    const QFileInfo info(helperPath);
+    const QString canonical = info.canonicalFilePath();
+    const QString target = canonical.isEmpty() ? info.absoluteFilePath() : canonical;
+
+    // Longest mount-point prefix wins, exactly like the kernel resolves the
+    // filesystem that owns the path.
+    QString bestMountPoint;
+    QString bestFsType;
+    QStringList bestOptions;
+    for (const QByteArray &rawLine : mountInfo) {
+        const QByteArray line = rawLine.trimmed();
+        if (line.isEmpty()) {
+            continue;
+        }
+        const QList<QByteArray> fields = line.split(' ');
+        const qsizetype separator = fields.indexOf(QByteArrayLiteral("-"));
+        if (separator < 6 || separator + 3 >= fields.size()) {
+            continue;
+        }
+        const QString mountPoint = decodeMountInfoPath(fields.at(4));
+        if (!pathIsUnderMount(target, mountPoint)) {
+            continue;
+        }
+        if (!bestMountPoint.isEmpty() && mountPoint.size() <= bestMountPoint.size()) {
+            continue;
+        }
+        bestMountPoint = mountPoint;
+        bestFsType = QString::fromLocal8Bit(fields.at(separator + 1));
+        bestOptions = QString::fromLocal8Bit(fields.at(5)).split(QLatin1Char(','), Qt::SkipEmptyParts);
+        bestOptions += QString::fromLocal8Bit(fields.at(separator + 3))
+                           .split(QLatin1Char(','), Qt::SkipEmptyParts);
+    }
+    if (bestMountPoint.isEmpty()) {
+        return false;
+    }
+
+    const bool fuseMount = bestFsType.startsWith(QStringLiteral("fuse"), Qt::CaseInsensitive);
+    const bool appImageMount = fuseMount
+        && (bestMountPoint.contains(QStringLiteral("/.mount_"))
+            || bestFsType.contains(QStringLiteral(".AppImage"), Qt::CaseInsensitive));
+    // A FUSE mount without allow_other is only accessible to the user who
+    // mounted it: the kernel denies root (pkexec) with EACCES. This is the
+    // AppImage failure mode and applies to any other owner-only FUSE mount.
+    if (appImageMount || (fuseMount && !bestOptions.contains(QStringLiteral("allow_other")))) {
+        if (reason) {
+            *reason = appImageMount
+                ? QStringLiteral("the AppImage FUSE mount at %1 is only accessible to the user who mounted it and pkexec runs the helper as root")
+                      .arg(bestMountPoint)
+                : QStringLiteral("the FUSE mount at %1 is only accessible to its owner and pkexec runs the helper as root")
+                      .arg(bestMountPoint);
+        }
+        return true;
+    }
+    if (bestOptions.contains(QStringLiteral("noexec"))) {
+        if (reason) {
+            *reason = QStringLiteral("the helper filesystem at %1 is mounted noexec").arg(bestMountPoint);
+        }
+        return true;
+    }
+    return false;
+}
+
+MainWindow::StagedHelper MainWindow::stageHelperForPrivilegedSession(
+    const QString &helperPath, const QString &runtimeBase, const QList<QByteArray> &mountInfo)
+{
+    StagedHelper result;
+    result.path = helperPath;
+    result.sourcePath = helperPath;
+
+    QString stagingReason;
+    if (!helperNeedsPrivateCopy(helperPath, mountInfo, &stagingReason)) {
+        return result;
+    }
+    result.reason = stagingReason;
+
+    const QFileInfo sourceInfo(helperPath);
+    if (!sourceInfo.exists() || !sourceInfo.isFile() || !sourceInfo.isReadable()) {
+        result.error = QStringLiteral("the resolved helper %1 is not a readable regular file").arg(helperPath);
+        result.path.clear();
+        return result;
+    }
+
+    QString base = runtimeBase;
+    if (base.isEmpty()) {
+        base = helperStagingBasePath();
+    }
+    if (base.isEmpty()) {
+        result.error = QStringLiteral("no private user runtime directory is available for the helper copy");
+        result.path.clear();
+        return result;
+    }
+
+    const QString stagingRoot = QDir(base).filePath(QStringLiteral("boot-repair"));
+    if (!QDir().mkpath(stagingRoot)) {
+        result.error = QStringLiteral("the private helper directory %1 could not be created").arg(stagingRoot);
+        result.path.clear();
+        return result;
+    }
+    const QFileInfo stagingRootInfo(stagingRoot);
+    const QFile::Permissions ownerOnly =
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner;
+    const QFile::Permissions foreignBits =
+        QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup
+        | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther;
+    // The directory may have been created by mkpath with the process umask;
+    // own it exclusively and re-check after the chmod. A pre-existing
+    // directory we do not own is refused instead of reused.
+    if (!stagingRootInfo.isDir() || stagingRootInfo.isSymLink()
+        || stagingRootInfo.ownerId() != geteuid()
+        || !QFile::setPermissions(stagingRoot, ownerOnly)
+        || (QFileInfo(stagingRoot).permissions() & foreignBits) != 0) {
+        result.error = QStringLiteral("the private helper directory %1 is not user-only").arg(stagingRoot);
+        result.path.clear();
+        return result;
+    }
+
+    // A unique per-copy directory keeps the file name exactly
+    // "boot-repair-helper" so every invocation path still recognizes it as a
+    // shell helper. The temporary directory removes itself on failure.
+    QTemporaryDir copyDir(QDir(stagingRoot).filePath(QStringLiteral("helper-XXXXXX")));
+    if (!copyDir.isValid()) {
+        result.error = QStringLiteral("a private helper directory could not be created below %1").arg(stagingRoot);
+        result.path.clear();
+        return result;
+    }
+    const QString stagedPath = copyDir.filePath(QStringLiteral("boot-repair-helper"));
+
+    QFile source(helperPath);
+    if (!source.open(QIODevice::ReadOnly)) {
+        result.error = QStringLiteral("the resolved helper %1 could not be read").arg(helperPath);
+        result.path.clear();
+        return result;
+    }
+    QFile staged(stagedPath);
+    if (!staged.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        result.error = QStringLiteral("the private helper copy %1 could not be created").arg(stagedPath);
+        result.path.clear();
+        return result;
+    }
+    QCryptographicHash hash(QCryptographicHash::Sha256);
+    bool copyFailed = false;
+    QByteArray buffer;
+    while (!(buffer = source.read(1 << 16)).isEmpty()) {
+        hash.addData(buffer);
+        if (staged.write(buffer) != buffer.size()) {
+            copyFailed = true;
+            break;
+        }
+    }
+    source.close();
+    staged.close();
+    if (copyFailed || staged.error() != QFileDevice::NoError
+        || !QFile::setPermissions(stagedPath, ownerOnly)) {
+        result.error = QStringLiteral("the private helper copy %1 could not be written").arg(stagedPath);
+        result.path.clear();
+        return result;
+    }
+    const QString sourceHash = QString::fromLatin1(hash.result().toHex());
+    const QString stagedHash = sha256Hex(stagedPath);
+    if (sourceHash.isEmpty() || stagedHash != sourceHash) {
+        result.error = QStringLiteral("the private helper copy %1 failed sha256 verification").arg(stagedPath);
+        result.path.clear();
+        return result;
+    }
+
+    // The copy is verified: keep it (and its directory) for the session
+    // lifetime instead of letting the temporary directory remove it.
+    copyDir.setAutoRemove(false);
+    result.stagedPath = stagedPath;
+    result.stagingDir = copyDir.path();
+    result.path = stagedPath;
+    return result;
+}
+
+QString MainWindow::privilegedSessionHelper(QString *resolution,
+                                            const QString &runtimeBase,
+                                            const QList<QByteArray> &mountInfo)
+{
+    QString helperResolution;
+    const QString helper = repairHelperPath(&helperResolution);
+    if (helper.isEmpty()) {
+        if (resolution) {
+            *resolution = helperResolution;
+        }
+        return QString();
+    }
+
+    const QList<QByteArray> mounts = mountInfo.isEmpty() ? readMountInfo() : mountInfo;
+    QString stagingReason;
+    bool needsPrivateCopy = helperNeedsPrivateCopy(helper, mounts, &stagingReason);
+    if (!needsPrivateCopy && mounts.isEmpty() && helper.contains(QStringLiteral("/.mount_"))) {
+        // The mount table could not be read but the path is an AppImage mount
+        // path: stage the copy instead of letting pkexec fail on the FUSE
+        // mount.
+        needsPrivateCopy = true;
+        stagingReason = QStringLiteral("the helper runs from an AppImage mount and the mount table could not be read");
+    }
+    if (!needsPrivateCopy) {
+        if (resolution) {
+            *resolution = helperResolution;
+        }
+        return helper;
+    }
+
+    // Reuse a copy staged earlier in this window for the same source instead
+    // of accumulating one copy per authorization attempt.
+    for (auto staged = m_stagedHelperSources.cbegin(); staged != m_stagedHelperSources.cend(); ++staged) {
+        if (staged.value() == helper && QFileInfo::exists(staged.key())) {
+            if (resolution) {
+                *resolution = QStringLiteral("%1; using the private copy staged at %2 (%3)")
+                                  .arg(helperResolution, staged.key(), stagingReason);
+            }
+            return staged.key();
+        }
+    }
+
+    const StagedHelper staged = stageHelperForPrivilegedSession(helper, runtimeBase, mounts);
+    if (!staged.error.isEmpty()) {
+        if (resolution) {
+            *resolution = QStringLiteral("%1; the helper could not be staged for pkexec: %2")
+                              .arg(helperResolution, staged.error);
+        }
+        return QString();
+    }
+    m_stagedHelperPaths.append(staged.stagedPath);
+    m_stagedHelperDirs.append(staged.stagingDir);
+    m_stagedHelperSources.insert(staged.stagedPath, helper);
+    if (resolution) {
+        *resolution = QStringLiteral("%1; staged a private copy at %2 because %3 (sha256 %4 verified)")
+                          .arg(helperResolution, staged.stagedPath, stagingReason, sha256Hex(staged.stagedPath));
+    }
+    return staged.path;
+}
+
+void MainWindow::cleanupStagedHelpers()
+{
+    for (const QString &path : std::as_const(m_stagedHelperPaths)) {
+        QFile::remove(path);
+    }
+    for (const QString &dir : std::as_const(m_stagedHelperDirs)) {
+        QDir().rmdir(dir);
+    }
+    m_stagedHelperPaths.clear();
+    m_stagedHelperDirs.clear();
+    m_stagedHelperSources.clear();
 }
 
 QStringList MainWindow::selectedRepairStages() const

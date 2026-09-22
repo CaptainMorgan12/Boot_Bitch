@@ -567,6 +567,38 @@ private:
                                            const QByteArray &explicitOverride,
                                            QString *resolution = nullptr);
     QString repairHelperPath(QString *resolution = nullptr) const;
+    // A helper prepared for a privileged pkexec launch. AppImage FUSE mounts
+    // are only accessible to the user who mounted them (root gets EACCES) and
+    // noexec mounts refuse execution, so those helpers are copied into a
+    // private, user-only runtime directory before pkexec sees them. Regular
+    // installed/usr/libexec paths are returned unchanged.
+    struct StagedHelper {
+        QString path;        // helper path to execute (the copy when staged)
+        QString sourcePath;  // resolved helper before staging
+        QString stagedPath;  // private copy path, empty when nothing was staged
+        QString stagingDir;  // private directory created for the copy
+        QString reason;      // why the private copy was required
+        QString error;       // non-empty when staging was required but failed
+    };
+    // Parses /proc/self/mountinfo (injectable path for the UI tests).
+    static QList<QByteArray> readMountInfo(const QString &path = QStringLiteral("/proc/self/mountinfo"));
+    // True when the resolved helper cannot be read/executed by pkexec as root:
+    // an AppImage/FUSE mount without allow_other or a noexec mount.
+    static bool helperNeedsPrivateCopy(const QString &helperPath,
+                                       const QList<QByteArray> &mountInfo,
+                                       QString *reason = nullptr);
+    // Copies the helper into <runtimeBase>/boot-repair/helper-XXXXXX/ with
+    // mode 0700, verifies the sha256 of the copy and returns the staged path.
+    static StagedHelper stageHelperForPrivilegedSession(const QString &helperPath,
+                                                        const QString &runtimeBase,
+                                                        const QList<QByteArray> &mountInfo);
+    // Resolves the helper for a pkexec launch and stages the private copy when
+    // required. `runtimeBase`/`mountInfo` are injectable for the UI tests.
+    QString privilegedSessionHelper(QString *resolution = nullptr,
+                                    const QString &runtimeBase = QString(),
+                                    const QList<QByteArray> &mountInfo = QList<QByteArray>());
+    // Removes every private helper copy staged by this window.
+    void cleanupStagedHelpers();
     QStringList selectedRepairStages() const;
     bool repairTargetReady(QString *reason = nullptr) const;
     bool hostBootTargetReady(QString *reason = nullptr) const;
@@ -1131,6 +1163,12 @@ private:
     QString m_efiBootloaderRepairedScope;
 
     QProcess *m_privilegedSession = nullptr;
+    // Private helper copies staged for pkexec (AppImage/FUSE or noexec mount),
+    // the private directory each copy lives in, and the resolved source each
+    // copy was made from. All copies are removed when the window closes.
+    QStringList m_stagedHelperPaths;
+    QStringList m_stagedHelperDirs;
+    QHash<QString, QString> m_stagedHelperSources;
     // Non-modal wait loop owned by the current ensurePrivilegedSession() call;
     // null unless a pkexec/Polkit authorization is being awaited. The session
     // QProcess handlers end the wait as soon as the outcome is known.

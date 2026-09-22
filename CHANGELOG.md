@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Fix the AppImage administrator-authorization failure where Unlock and Host
+  Maintenance reported `Permission denied` for
+  `/tmp/.mount_*/usr/libexec/boot-repair/boot-repair-helper`: an AppImage is
+  served through a FUSE mount that only the user who mounted it may read, so
+  pkexec (root) could not open the bundled helper even though it was mode
+  0755. The GUI now stages a sha256-verified private copy of the helper
+  (mode 0700, in `$XDG_RUNTIME_DIR/boot-repair/`) whenever the resolved helper
+  lives on an AppImage/FUSE mount or a noexec filesystem, hands that path to
+  pkexec, logs the copy and the reason, and removes it when the window closes;
+  installed `/usr/libexec` helpers keep their existing behavior.
+  `scripts/build-appimage.sh` re-asserts mode 0755 on every bundled executable
+  (before and after linuxdeploy) so the squashfs can never ship a
+  non-executable helper.
 - Add AppImage update metadata for Gear Lever/AppImageUpdate:
   `scripts/build-appimage.sh` now embeds a `gh-releases-zsync` update
   information string and writes the matching
