@@ -2057,6 +2057,8 @@ private slots:
     void fullRepairButtonsDoNotOverlapAtMinimumWidth();
     void fullRepairPlanListUsesSplitterAdjustableHeight();
     void repairSplitterDefaultsFavorToolListWidth();
+    void repairSplitterHandleDragsBothPanes();
+    void repairToolColumnsAreUserResizable();
     void applicationDialogsFollowConsistentLayout();
     void snapshotRowsFitSingleLineContent();
     void snapshotsSectionUsesFramedContainer();
@@ -2104,7 +2106,7 @@ private slots:
     void recurringStatusEntriesStaySeparatePerScopeAndDisk();
     void runAllReplacesPriorReportAndPerKeySections();
     void incrementalLogViewMatchesFullRebuild();
-    void nonLinuxTargetIsRejectedSafely();
+    void blankAndDataTargetsSelectableWhileOpticalAndLuksStayGated();
     void selectTargetStaysEnabledForEligibleHostMaintenanceCandidate();
     void unprivilegedScanUdevEvidenceEnablesSelectTarget();
     void tableFilesystemColumnShowsUdevEnrichedFilesystem();
@@ -2718,6 +2720,161 @@ void MainWindowUiTest::repairSplitterDefaultsFavorToolListWidth()
     QVERIFY2(adjusted.at(1) > adjusted.at(0), "the user must be able to widen the description pane");
     QVERIFY(adjusted.at(0) > 0);
     QVERIFY(adjusted.at(1) > 0);
+}
+
+void MainWindowUiTest::repairSplitterHandleDragsBothPanes()
+{
+    // Exercise the built-in defaults, not a state saved by another test.
+    QSettings settings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    settings.remove(QStringLiteral("repair/splitterStateV3"));
+    settings.sync();
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(2); // Repair
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    QSplitter *splitter = window.m_repairSplitter;
+    QVERIFY(splitter);
+    QCOMPARE(splitter->orientation(), Qt::Horizontal);
+    QVERIFY2(splitter->handleWidth() >= 6,
+             qPrintable(QStringLiteral("the divider must be wide enough to grab (%1 px)")
+                            .arg(splitter->handleWidth())));
+    QVERIFY(!splitter->childrenCollapsible());
+    QWidget *toolsPane = splitter->widget(0);
+    QWidget *detailPane = splitter->widget(1);
+    QVERIFY(toolsPane && detailPane);
+    QVERIFY2(toolsPane->minimumWidth() > 0 && detailPane->minimumWidth() > 0,
+             "both repair panes must keep a usable minimum width");
+    QWidget *handle = splitter->handle(1);
+    QVERIFY(handle);
+    QVERIFY2(handle->width() >= 6, "the splitter handle widget must be grabbable");
+
+    const QList<int> before = splitter->sizes();
+    QCOMPARE(before.size(), 2);
+    QVERIFY(before.at(0) > 0 && before.at(1) > 0);
+
+    // Drag the divider left: the tools pane shrinks, the details pane grows,
+    // and neither pane is collapsed.
+    const QPoint start(handle->width() / 2, handle->height() / 2);
+    QTest::mousePress(handle, Qt::LeftButton, Qt::KeyboardModifiers(), start);
+    QTest::mouseMove(handle, start + QPoint(-80, 0));
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::KeyboardModifiers(), start + QPoint(-80, 0));
+    QCoreApplication::processEvents();
+    const QList<int> afterShrink = splitter->sizes();
+    QCOMPARE(afterShrink.size(), 2);
+    QVERIFY2(afterShrink.at(0) < before.at(0),
+             qPrintable(QStringLiteral("dragging left did not shrink the tools pane (%1 -> %2)")
+                            .arg(before.at(0)).arg(afterShrink.at(0))));
+    QVERIFY(afterShrink.at(0) > 0);
+    QVERIFY(afterShrink.at(1) > 0);
+
+    // Drag back to the right: the divider stays adjustable in both directions.
+    QTest::mousePress(handle, Qt::LeftButton, Qt::KeyboardModifiers(), start);
+    QTest::mouseMove(handle, start + QPoint(140, 0));
+    QTest::mouseRelease(handle, Qt::LeftButton, Qt::KeyboardModifiers(), start + QPoint(140, 0));
+    QCoreApplication::processEvents();
+    const QList<int> afterGrow = splitter->sizes();
+    QCOMPARE(afterGrow.size(), 2);
+    QVERIFY2(afterGrow.at(0) > afterShrink.at(0),
+             qPrintable(QStringLiteral("dragging right did not widen the tools pane (%1 -> %2)")
+                            .arg(afterShrink.at(0)).arg(afterGrow.at(0))));
+    QVERIFY(afterGrow.at(0) > 0);
+    QVERIFY(afterGrow.at(1) > 0);
+}
+
+void MainWindowUiTest::repairToolColumnsAreUserResizable()
+{
+    // Exercise the built-in defaults, not a state saved by another test.
+    QSettings settings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    settings.remove(QStringLiteral("repair/splitterStateV3"));
+    settings.sync();
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_tabs->setCurrentIndex(2); // Repair
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    QTreeWidget *tree = window.m_repairToolTree;
+    QVERIFY(tree);
+    QHeaderView *header = tree->header();
+    QVERIFY(header);
+    QCOMPARE(header->sectionResizeMode(0), QHeaderView::Interactive);
+    QCOMPARE(header->sectionResizeMode(1), QHeaderView::Interactive);
+    QVERIFY2(!header->stretchLastSection(),
+             "the Full Repair section must stay draggable instead of stretching");
+
+    // The Full Repair column starts wide enough for a complete availability
+    // reason, so long "Unavailable: …" texts are not truncated by default.
+    QVERIFY2(header->sectionSize(1) >= 320,
+             qPrintable(QStringLiteral("Full Repair default width is only %1 px")
+                            .arg(header->sectionSize(1))));
+
+    // Drag the Tool/Full Repair divider left: the Tool section shrinks and the
+    // Full Repair section shifts left with the divider, exactly like a user
+    // resize of the first column.
+    const int toolBefore = header->sectionSize(0);
+    const int fullBefore = header->sectionSize(1);
+    const int fullPositionBefore = header->sectionViewportPosition(1);
+    const QPoint divider(header->sectionViewportPosition(0) + toolBefore - 1, header->height() / 2);
+    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), divider);
+    QTest::mouseMove(header->viewport(), divider - QPoint(50, 0));
+    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), divider - QPoint(50, 0));
+    QCoreApplication::processEvents();
+    QVERIFY2(header->sectionSize(0) < toolBefore,
+             qPrintable(QStringLiteral("dragging the divider left did not shrink the Tool column (%1 -> %2)")
+                            .arg(toolBefore).arg(header->sectionSize(0))));
+    QVERIFY2(header->sectionViewportPosition(1) < fullPositionBefore,
+             qPrintable(QStringLiteral("the Full Repair column did not follow the divider (%1 -> %2)")
+                            .arg(fullPositionBefore).arg(header->sectionViewportPosition(1))));
+    QCOMPARE(header->sectionSize(1), fullBefore);
+
+    // The Full Repair column's own trailing divider is draggable in both
+    // directions: shrink it and then widen it past its default so a long
+    // "Unavailable: …" reason can be revealed in full.
+    const int fullEdgeBefore = header->sectionSize(1);
+    const QPoint trailing(header->sectionViewportPosition(1) + fullEdgeBefore - 1, header->height() / 2);
+    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailing);
+    QTest::mouseMove(header->viewport(), trailing - QPoint(40, 0));
+    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailing - QPoint(40, 0));
+    QCoreApplication::processEvents();
+    QVERIFY2(header->sectionSize(1) < fullEdgeBefore,
+             qPrintable(QStringLiteral("dragging the trailing divider left did not shrink Full Repair (%1 -> %2)")
+                            .arg(fullEdgeBefore).arg(header->sectionSize(1))));
+
+    const int shrunkFull = header->sectionSize(1);
+    const QPoint trailingAgain(header->sectionViewportPosition(1) + shrunkFull - 1, header->height() / 2);
+    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailingAgain);
+    QTest::mouseMove(header->viewport(), trailingAgain + QPoint(80, 0));
+    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailingAgain + QPoint(80, 0));
+    QCoreApplication::processEvents();
+    QVERIFY2(header->sectionSize(1) > fullEdgeBefore,
+             qPrintable(QStringLiteral("dragging the trailing divider right did not widen Full Repair (%1 -> %2)")
+                            .arg(shrunkFull).arg(header->sectionSize(1))));
+
+    // The capability/diagnostics table shares the pattern and must follow the
+    // same user-resizable contract.
+    QTableWidget *capability = window.m_capabilityTable;
+    QVERIFY(capability);
+    QHeaderView *capabilityHeader = capability->horizontalHeader();
+    QVERIFY(capabilityHeader);
+    for (int column = 0; column < capability->columnCount(); ++column) {
+        QCOMPARE(capabilityHeader->sectionResizeMode(column), QHeaderView::Interactive);
+    }
+    QVERIFY2(!capabilityHeader->stretchLastSection(),
+             "the capability Notes section must stay draggable");
+    const int notesColumn = capability->columnCount() - 1;
+    const int notesBefore = capabilityHeader->sectionSize(notesColumn);
+    QVERIFY2(notesBefore >= 200,
+             qPrintable(QStringLiteral("Notes default width is only %1 px").arg(notesBefore)));
+    capabilityHeader->resizeSection(notesColumn, notesBefore + 80);
+    QCoreApplication::processEvents();
+    QVERIFY2(capabilityHeader->sectionSize(notesColumn) > notesBefore,
+             "the capability table must accept a user section resize");
 }
 
 void MainWindowUiTest::applicationDialogsFollowConsistentLayout()
@@ -5851,28 +6008,71 @@ void MainWindowUiTest::incrementalLogViewMatchesFullRebuild()
     QCOMPARE(window.m_logView->toPlainText(), incrementalText);
 }
 
-void MainWindowUiTest::nonLinuxTargetIsRejectedSafely()
+void MainWindowUiTest::blankAndDataTargetsSelectableWhileOpticalAndLuksStayGated()
 {
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
     MainWindow window;
     window.show();
     QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_uiTestPrivilegedSessionGranted = false;
 
-    DeviceNode disk;
-    disk.path = QStringLiteral("/dev/test-data-disk");
-    disk.type = QStringLiteral("disk");
-    disk.model = QStringLiteral("Test data disk");
-    window.m_deviceIndex.insert(disk.path, disk);
+    // A blank virtio data disk (no filesystem at all) is a valid inspection
+    // target: it must enable Select Target and advertise itself as eligible.
+    DeviceNode blank;
+    blank.path = QStringLiteral("/dev/test-blank-vdb");
+    blank.type = QStringLiteral("disk");
+    blank.model = QStringLiteral("Test blank disk");
+    blank.transport = QStringLiteral("virtio");
+    blank.sizeBytes = 20ULL * 1024ULL * 1024ULL * 1024ULL;
+    window.m_deviceIndex.insert(blank.path, blank);
 
-    // A disk with no Linux filesystem and no encrypted Linux candidate must
-    // never expose Select Target; this also protects the click path from
-    // stale/default-constructed device records during udev refreshes.
-    window.showDeviceDetails(disk, true, &disk);
+    window.showDeviceDetails(blank, true, &blank);
     QVERIFY(window.m_setTargetButton);
-    QVERIFY(!window.m_setTargetButton->isEnabled());
-    QVERIFY(window.m_setTargetButton->toolTip().contains(QStringLiteral("No Linux filesystem")));
+    QVERIFY2(window.m_setTargetButton->isEnabled(),
+             qPrintable(QStringLiteral("Select Target must be enabled for a blank data disk "
+                                       "(tooltip: %1)").arg(window.m_setTargetButton->toolTip())));
+    QCOMPARE(window.m_detailProtection->text(), QStringLiteral("Eligible repair candidate"));
+
+    // A non-Linux data volume (NTFS) is selectable for inspection as well.
+    DeviceNode dataPartition;
+    dataPartition.path = QStringLiteral("/dev/test-data-disk1");
+    dataPartition.type = QStringLiteral("part");
+    dataPartition.fileSystem = QStringLiteral("ntfs");
+    DeviceNode dataDisk;
+    dataDisk.path = QStringLiteral("/dev/test-data-disk");
+    dataDisk.type = QStringLiteral("disk");
+    dataDisk.model = QStringLiteral("Test data disk");
+    dataDisk.children.append(dataPartition);
+    window.m_deviceIndex.insert(dataDisk.path, dataDisk);
+    window.m_deviceIndex.insert(dataPartition.path, dataPartition);
+    window.showDeviceDetails(dataDisk, true, &dataDisk);
+    QVERIFY(window.m_setTargetButton->isEnabled());
+    QCOMPARE(window.m_detailProtection->text(), QStringLiteral("Eligible repair candidate"));
+
+    // Committing the blank disk through the real handler stores the physical
+    // path as the component (there is nothing else to resolve) and still
+    // refuses repair until a Linux root filesystem appears.
+    selectTopLevelDisk(window, blank.path);
+    QVERIFY(window.m_setTargetButton->isEnabled());
+    window.m_setTargetButton->click();
+    QCOMPARE(window.m_previewTargetPath, blank.path);
+    QCOMPARE(window.m_previewTargetComponentPath, blank.path);
+    QVERIFY2(window.m_systemTargetLabel->text().contains(blank.path),
+             qPrintable(QStringLiteral("the committed-target line must name the blank drive: %1")
+                            .arg(window.m_systemTargetLabel->text())));
+    QString readyReason;
+    QVERIFY2(!window.repairTargetReady(&readyReason),
+             "a blank target must not satisfy the repair readiness gate");
+    QVERIFY2(readyReason.contains(QStringLiteral("No mountable Linux root filesystem")),
+             qPrintable(QStringLiteral("unexpected readiness reason: %1").arg(readyReason)));
+    window.m_previewTargetPath.clear();
+    window.m_previewTargetComponentPath.clear();
 
     // A locked encrypted data volume must remain unlock-only until a Linux
-    // root is visible.  It must never be committed as an unusable target.
+    // root is visible. It must never be committed as an unusable target.
     DeviceNode encrypted;
     encrypted.path = QStringLiteral("/dev/test-data-disk2p1");
     encrypted.type = QStringLiteral("crypt");
@@ -5887,6 +6087,45 @@ void MainWindowUiTest::nonLinuxTargetIsRejectedSafely()
     window.showDeviceDetails(encryptedDisk, true, &encryptedDisk);
     QVERIFY(!window.m_setTargetButton->isEnabled());
     QVERIFY(window.m_setTargetButton->toolTip().contains(QStringLiteral("Unlock")));
+    QCOMPARE(window.m_detailProtection->text(), QStringLiteral("Unlock required before selection"));
+
+    // Live/installer media (sr0-style rom carrying iso9660) is never a repair
+    // target and must not claim eligibility.
+    DeviceNode liveMedia;
+    liveMedia.path = QStringLiteral("/dev/test-sr0");
+    liveMedia.type = QStringLiteral("rom");
+    liveMedia.fileSystem = QStringLiteral("iso9660");
+    liveMedia.removable = true;
+    liveMedia.readOnly = true;
+    liveMedia.model = QStringLiteral("QEMU DVD-ROM");
+    window.m_deviceIndex.insert(liveMedia.path, liveMedia);
+    window.showDeviceDetails(liveMedia, true, &liveMedia);
+    QVERIFY2(!window.m_setTargetButton->isEnabled(),
+             "live/installer media must not expose Select Target");
+    QVERIFY2(window.m_setTargetButton->toolTip().contains(QStringLiteral("Live / installer media")),
+             qPrintable(QStringLiteral("unexpected tooltip: %1").arg(window.m_setTargetButton->toolTip())));
+    QCOMPARE(window.m_detailProtection->text(), QStringLiteral("Live / installer media — not selectable"));
+
+    // The protected running host stays protected and non-selectable.
+    DeviceNode hostRoot;
+    hostRoot.path = QStringLiteral("/dev/test-host1");
+    hostRoot.type = QStringLiteral("part");
+    hostRoot.fileSystem = QStringLiteral("ext4");
+    hostRoot.linuxCapableFileSystem = true;
+    hostRoot.installedLinux = true;
+    hostRoot.protectedDevice = true;
+    DeviceNode hostDisk;
+    hostDisk.path = QStringLiteral("/dev/test-host");
+    hostDisk.type = QStringLiteral("disk");
+    hostDisk.protectedDevice = true;
+    hostDisk.children.append(hostRoot);
+    window.m_deviceIndex.insert(hostDisk.path, hostDisk);
+    window.m_deviceIndex.insert(hostRoot.path, hostRoot);
+    window.showDeviceDetails(hostDisk, true, &hostDisk);
+    QVERIFY(!window.m_setTargetButton->isEnabled());
+    QVERIFY(window.m_setTargetButton->toolTip().contains(QStringLiteral("protected running host")));
+    QCOMPARE(window.m_detailProtection->text(),
+             QStringLiteral("PROTECTED — running system; read-only details only"));
     window.m_previewTargetPath.clear();
     window.m_previewTargetComponentPath.clear();
 }

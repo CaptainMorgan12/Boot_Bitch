@@ -2560,6 +2560,48 @@ bool treeContainsLinuxCandidateNode(const DeviceNode &node)
     return false;
 }
 
+// True when any node in the tree is optical/live media: a CD/DVD/BD drive
+// (lsblk type "rom") or an iso9660/udf filesystem such as a live or installer
+// image. Such media is read-only installation material, never a repair target,
+// even though it carries no protected mount.
+bool treeContainsOpticalMedia(const DeviceNode &node)
+{
+    const QString type = node.type.toLower();
+    const QString fileSystem = node.fileSystem.toLower();
+    if (type == QStringLiteral("rom")
+        || fileSystem == QStringLiteral("iso9660")
+        || fileSystem == QStringLiteral("udf")) {
+        return true;
+    }
+    for (const DeviceNode &child : node.children) {
+        if (treeContainsOpticalMedia(child)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A top-level disk is a selectable inspection/repair target when it is not the
+// protected running host, is not optical/live media, and is not a locked LUKS
+// container without a visible Linux filesystem. Blank and non-Linux data disks
+// are selectable so they can be inspected and, once a Linux root is visible,
+// repaired; a locked LUKS container stays unlock-only because committing it
+// used to store an unusable component. Both the details panel and the commit
+// handler share this single predicate so the button state can never drift.
+bool diskIsSelectableRepairTarget(const DeviceNode &disk)
+{
+    if (disk.protectedDevice || disk.path.isEmpty()) {
+        return false;
+    }
+    if (treeContainsOpticalMedia(disk)) {
+        return false;
+    }
+    if (treeContainsEncryptedNode(disk) && !treeContainsLinuxCandidateNode(disk)) {
+        return false;
+    }
+    return true;
+}
+
 bool treeContainsUnlockedLinuxInsideEncrypted(const DeviceNode &node)
 {
     if (node.encrypted) {
@@ -4625,8 +4667,14 @@ QWidget *MainWindow::buildRepairPage()
     m_repairVerticalSplitter->setHandleWidth(6);
 
     m_repairSplitter = new QSplitter(Qt::Horizontal);
+    m_repairSplitter->setObjectName(QStringLiteral("repairSplitter"));
     m_repairSplitter->setChildrenCollapsible(false);
     m_repairSplitter->setMinimumHeight(300);
+    // The divider between the Individual repair tools table and the Selected
+    // tool pane is a first-class control: a wide-enough handle and explicit
+    // pane floors keep it grabbable while both panes stay usable.
+    m_repairSplitter->setHandleWidth(8);
+    m_repairSplitter->setOpaqueResize(true);
 
     auto *toolBox = new QGroupBox(QStringLiteral("Individual repair tools"));
     auto *toolLayout = new QVBoxLayout(toolBox);
@@ -4646,8 +4694,14 @@ QWidget *MainWindow::buildRepairPage()
     m_repairToolTree->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     installCopyAction(m_repairToolTree);
     m_repairToolTree->setMinimumHeight(165);
-    m_repairToolTree->header()->setSectionResizeMode(0, QHeaderView::Stretch);
-    m_repairToolTree->header()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
+    // Both columns are user-resizable. Stretch/ResizeToContents lock the
+    // section widths and elided the long "Unavailable: …" reasons, so the
+    // sections stay Interactive and receive sensible defaults once the tool
+    // rows are populated below.
+    m_repairToolTree->header()->setSectionResizeMode(0, QHeaderView::Interactive);
+    m_repairToolTree->header()->setSectionResizeMode(1, QHeaderView::Interactive);
+    m_repairToolTree->header()->setStretchLastSection(false);
+    m_repairToolTree->header()->setMinimumSectionSize(72);
     // Header-click sorting is available, but the curated Full Repair workflow
     // order stays the default until the user picks a column (the hidden
     // indicator). Clicking a header sorts by that column and toggles
@@ -4683,6 +4737,20 @@ QWidget *MainWindow::buildRepairPage()
         item->setIcon(0, themedIcon(QString::fromLatin1(spec.icon)));
         item->setToolTip(0, item->text(0));
         item->setToolTip(1, QStringLiteral("Mirrors the corresponding Settings → Full Repair plan checkbox. Individual tools remain runnable independently."));
+    }
+    // Default widths: the Tool column fits the longest complete tool name and
+    // the Full Repair column starts wide enough for a full availability
+    // reason. Both dividers remain draggable from these defaults.
+    {
+        const QFontMetrics toolMetrics(m_repairToolTree->font());
+        int toolColumnWidth = 0;
+        for (int row = 0; row < m_repairToolTree->topLevelItemCount(); ++row) {
+            toolColumnWidth = qMax(toolColumnWidth,
+                                   toolMetrics.horizontalAdvance(m_repairToolTree->topLevelItem(row)->text(0)));
+        }
+        toolColumnWidth = qMax(200, toolColumnWidth + m_repairToolTree->indentation() + 24);
+        m_repairToolTree->header()->resizeSection(0, toolColumnWidth);
+        m_repairToolTree->header()->resizeSection(1, qMax(360, toolColumnWidth));
     }
     toolLayout->addWidget(m_repairToolTree, 1);
 
@@ -4729,7 +4797,12 @@ QWidget *MainWindow::buildRepairPage()
 
     m_repairSplitter->addWidget(toolBox);
     m_repairSplitter->addWidget(detailBox);
-    m_repairSplitter->setHandleWidth(6);
+    // Explicit pane floors keep the divider grabbable in both directions: the
+    // tools pane stays wide enough for its two columns and the Selected tool
+    // pane keeps room for its title/action row even at the minimum window
+    // width.
+    toolBox->setMinimumWidth(200);
+    detailBox->setMinimumWidth(160);
     // The tools pane is the primary work area: give it roughly 62% of the
     // default width so complete tool names are visible, and let the selected
     // tool description use the remainder. QSplitter keeps this ratio while
@@ -5532,12 +5605,22 @@ QWidget *MainWindow::buildSettingsPage()
     m_capabilityTable->setFrameShadow(QFrame::Plain);
     m_capabilityTable->setLineWidth(1);
     installCopyAction(m_capabilityTable);
-    m_capabilityTable->horizontalHeader()->setSectionResizeMode(0, QHeaderView::ResizeToContents);
-    m_capabilityTable->horizontalHeader()->setSectionResizeMode(1, QHeaderView::ResizeToContents);
-    m_capabilityTable->horizontalHeader()->setSectionResizeMode(2, QHeaderView::ResizeToContents);
-    m_capabilityTable->horizontalHeader()->setSectionResizeMode(3, QHeaderView::ResizeToContents);
-    m_capabilityTable->horizontalHeader()->setSectionResizeMode(4, QHeaderView::ResizeToContents);
-    m_capabilityTable->horizontalHeader()->setStretchLastSection(true);
+    // Same user-resizable contract as the repair tools table: every section is
+    // Interactive with a sensible default, so a long capability note can be
+    // widened by dragging instead of being locked to its content width.
+    QHeaderView *capabilityHeader = m_capabilityTable->horizontalHeader();
+    for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
+        capabilityHeader->setSectionResizeMode(column, QHeaderView::Interactive);
+    }
+    capabilityHeader->setStretchLastSection(false);
+    capabilityHeader->setMinimumSectionSize(72);
+    const QFontMetrics capabilityMetrics(m_capabilityTable->font());
+    capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Feature")) + 24));
+    capabilityHeader->resizeSection(1, qMax(160, capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version")) + 24));
+    capabilityHeader->resizeSection(2, qMax(90, capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target")) + 24));
+    capabilityHeader->resizeSection(3, qMax(110, capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable")) + 24));
+    capabilityHeader->resizeSection(4, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Suggested package")) + 24));
+    capabilityHeader->resizeSection(5, qMax(280, capabilityMetrics.horizontalAdvance(QStringLiteral("Notes")) + 24));
     // Keep rows content-sized across desktop styles.  Wrapped rows are
     // explicitly enlarged by resizeCapabilityRows(); all others stay at the
     // compact one-line height.
@@ -6353,22 +6436,31 @@ void MainWindow::showDeviceDetails(const DeviceNode &disk, bool allowRepairTarge
     m_detailMounts->setText(resolvedMounts);
     m_detailProtection->setText(disk.protectedDevice
         ? QStringLiteral("PROTECTED — running system; read-only details only")
-        : QStringLiteral("Eligible repair candidate"));
+        : (treeContainsOpticalMedia(disk)
+            ? QStringLiteral("Live / installer media — not selectable")
+            : (treeContainsEncryptedNode(disk) && !treeContainsLinuxCandidateNode(disk)
+                ? QStringLiteral("Unlock required before selection")
+                : QStringLiteral("Eligible repair candidate"))));
 
-    // A locked LUKS container is an unlock candidate, not yet a repair
-    // target.  Selecting it before a Linux root is visible used to commit an
-    // unusable component and could crash later target diagnostics.  Keep
-    // Select Target disabled until unlock/refresh exposes a Linux filesystem.
+    // Blank and non-Linux data disks are selectable for inspection: the
+    // details panel used to demand a visible Linux filesystem, which kept a
+    // valid empty virtio target unusable while live/installer media still
+    // claimed "Eligible repair candidate". A locked LUKS container without a
+    // visible Linux root stays unlock-only; optical/live media is never a
+    // target. The single shared predicate keeps the button and the label in
+    // step.
     const bool hasTargetCandidate = treeContainsLinuxCandidateNode(disk);
-    const bool canTarget = allowRepairTarget && !disk.protectedDevice
-        && !disk.path.isEmpty() && hasTargetCandidate;
+    const bool opticalMedia = treeContainsOpticalMedia(disk);
+    const bool canTarget = allowRepairTarget && diskIsSelectableRepairTarget(disk);
     m_setTargetButton->setEnabled(canTarget);
     m_setTargetButton->setToolTip(canTarget
         ? QStringLiteral("Commit this physical drive as the repair target.")
         : (allowRepairTarget && !disk.protectedDevice
-            ? (treeContainsEncryptedNode(disk)
-                ? QStringLiteral("Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.")
-                : QStringLiteral("No Linux filesystem was detected on this drive."))
+            ? (opticalMedia
+                ? QStringLiteral("Live / installer media is read-only boot media and cannot be selected as a repair target.")
+                : (treeContainsEncryptedNode(disk) && !hasTargetCandidate
+                    ? QStringLiteral("Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.")
+                    : QStringLiteral("No selectable repair target was detected on this drive.")))
             : QStringLiteral("The protected running host cannot be selected as a repair target.")));
 
     const DeviceNode *unlockCandidate = nullptr;
@@ -6447,13 +6539,25 @@ void MainWindow::setPreviewTarget()
         return;
     }
 
+    // Commit-time gate mirrors diskIsSelectableRepairTarget(): optical/live
+    // media and a locked LUKS container without a visible Linux root are
+    // refused, while a blank or data disk commits its physical path so it can
+    // be inspected (and repaired once a Linux root appears).
+    if (treeContainsOpticalMedia(disk)) {
+        QMessageBox::information(this, QStringLiteral("Live / installer media cannot be selected"),
+                                 QStringLiteral("This drive carries read-only live/installer media. Insert or select a data drive instead; the boot media itself is never a repair target."));
+        return;
+    }
     const DeviceNode *preferred = preferredRepairNode(disk);
     const bool hasLinuxCandidate = treeContainsLinuxCandidateNode(disk);
-    if (!preferred || preferred->path.isEmpty() || !hasLinuxCandidate) {
+    if (treeContainsEncryptedNode(disk) && !hasLinuxCandidate) {
         QMessageBox::information(this, QStringLiteral("Unlock or select a Linux system first"),
-                                 treeContainsEncryptedNode(disk)
-                                     ? QStringLiteral("This encrypted drive has no visible Linux filesystem yet. Use Unlock, refresh devices, and select the target after its Linux root is detected.")
-                                     : QStringLiteral("This drive does not currently expose a Linux filesystem. It cannot be selected as a repair target."));
+                                 QStringLiteral("This encrypted drive has no visible Linux filesystem yet. Use Unlock, refresh devices, and select the target after its Linux root is detected."));
+        return;
+    }
+    if (!preferred || preferred->path.isEmpty()) {
+        QMessageBox::information(this, QStringLiteral("Target unavailable"),
+                                 QStringLiteral("This drive has no resolvable target component. Refresh devices and select it again."));
         return;
     }
     m_previewTargetPath = disk.path;
@@ -6475,10 +6579,11 @@ void MainWindow::setPreviewTarget()
     updateSessionScope();
     scheduleSnapshotPreload();
     scheduleEvidenceRefresh(QStringLiteral("repair target selection changed"));
-    // A committed target is already a decrypted, Linux-capable root: a locked
-    // LUKS container can never reach this point because the candidate checks
-    // above reject it. Request the session once here so later diagnostics and
-    // repairs reuse the same authorization.
+    // The committed component is either an unlocked Linux filesystem or the
+    // physical disk itself (blank/data target). A locked LUKS container can
+    // never reach this point because the checks above reject it. Request the
+    // session once here so later diagnostics and repairs reuse the same
+    // authorization.
     if (preferred && !preferred->encrypted
         && preferred->fileSystem.compare(QStringLiteral("crypto_LUKS"), Qt::CaseInsensitive) != 0) {
         requestPrivilegedSessionForScope(QStringLiteral("target:%1").arg(m_previewTargetPath));
