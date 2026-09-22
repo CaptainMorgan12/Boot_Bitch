@@ -1,0 +1,72 @@
+Legacy root evidence accepted: /etc/debian_version + dpkg database (no /etc/os-release present).
+Running-host identity and boot-mount check: PASS
+Host disk: /dev/hda
+Host root component: /dev/mapper/root (ext3)
+Host root mount: / (subvolume=default/none)
+Repair capability probes (read-only, selected target):
+Repair tool validate: available
+Repair tool filesystem: available
+Repair tool dpkg: available
+Repair tool fixbroken: available
+Repair tool aptupdate: available
+Repair tool upgrade: available
+Repair tool dkms: unavailable|DKMS is not installed in the target
+Repair tool display: unavailable|No supported display manager was detected in the target
+Repair tool initramfs: available
+Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available
+Repair tool grub: available
+Repair tool extlinux: unavailable|update-extlinux is not installed in the target
+Repair tool bootstack: unavailable|boot-stack reconciliation requires a GRUB2 or EFI boot path; the detected GRUB legacy BIOS layout is not supported
+Repair capability evidence (read-only):
+Repair capability evidence validate: read-only preflight always available
+Repair capability evidence filesystem: scope filesystems resolved; tools: e2fsck(ext3)
+Repair capability evidence dpkg: /usr/bin/dpkg and /var/lib/dpkg/status present
+Repair capability evidence fixbroken: /usr/bin/dpkg and /usr/bin/apt-get present
+Repair capability evidence aptupdate: /usr/bin/apt-get present; APT sources present
+Repair capability evidence upgrade: /usr/bin/dpkg and /usr/bin/apt-get present
+Repair capability evidence dkms: dkms executable missing
+Repair capability evidence display: no supported display-manager backend detected
+Repair capability evidence initramfs: initramfs backend: initramfs-tools; update-initramfs and mkinitramfs present
+Repair capability evidence efi: grub-install present; ESP mount candidate: unresolved
+Repair capability evidence grub: update-grub present
+Repair capability evidence extlinux: update-extlinux is not installed in the target
+Repair capability evidence bootstack: initramfs backend: initramfs-tools; initramfs and GRUB prerequisites available
+Legacy feature gating (read-only):
+Legacy feature file-copy: unavailable|rsync is not installed in the recovery environment
+Legacy feature host-shell: unavailable|unshare is not installed in the recovery environment
+Legacy feature host-maintenance: unavailable|unshare is not installed in the recovery environment
+
+========================================
+Environment validation
+========================================
+Diagnostic: environment
+Scope: Running Host
+Time: 2026-09-22T01:46:53-0600
+
+System: Debian (legacy root 4.0, /etc/debian_version + dpkg database)
+Physical drive: /dev/hda
+Detected component: /dev/mapper/root
+Root subvolume: none
+Filesystem: ext3
+Running host root mount source: /dev/mapper/root
+Running host root mount options: rw,data=ordered
+Inspection mode: read-only
+/etc/os-release: missing
+/etc/fstab: present
+/etc/crypttab: present
+/boot: present
+/boot/efi: missing
+/efi: missing
+
+========================================
+Mapper diagnostic
+========================================
+Diagnostic: mapper
+Scope: Running Host
+
+Block dependency tree for selected component:
+hda5 8:5 0 2G 0 part
+└─hda5_crypt (dm-0) 253:0 0 2G 0 crypt
+  └─root (dm-1) 253:1 0 2G 0 lvm /
+
+Repair change status validate: unchanged|validation is read-only

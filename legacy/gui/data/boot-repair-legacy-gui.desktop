@@ -1,10 +1,10 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Boot Repair (Legacy)
-GenericName=Linux Recovery Utility (Legacy)
+Name=Boot Repair (Legacy GUI)
+GenericName=Linux Recovery Utility (Legacy GUI)
 Comment=Inspect and repair boot problems on Debian Etch-era (KDE 3.5) systems
-Exec=boot-repair-legacy
+Exec=boot-repair-legacy-gui
 Icon=boot-repair-legacy
 Terminal=false
 Categories=System;

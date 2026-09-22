@@ -339,6 +339,8 @@ add_test(NAME boot-repair-legacy-smoke
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-smoke.sh)
 add_test(NAME boot-repair-legacy-package-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-legacy-package-contract.sh)
+add_test(NAME boot-repair-legacy-gui-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-gui-contract.sh)
 
 add_test(NAME boot-repair-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
@@ -377,6 +379,8 @@ set_tests_properties(boot-repair-icon-atlas-contract
 set_tests_properties(boot-repair-appimage-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-legacy-package-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-legacy-gui-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-efi-label-update
     PROPERTIES LABELS "fast")

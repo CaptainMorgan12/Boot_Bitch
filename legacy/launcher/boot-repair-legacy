@@ -94,6 +94,7 @@ repair <disk> <root> fix-broken       safe repair: restore broken package state
 repair <disk> <root> dpkg-configure   safe repair: finish pending dpkg configuration
 repair <disk> <root> initramfs        safe repair: rebuild the target initramfs
 repair <disk> <root> apt-update       safe repair: refresh package metadata (mirror-gated)
+repair <disk> <root> apt-upgrade      safe repair: upgrade packages (mirror-gated)
 EOF
 }
 

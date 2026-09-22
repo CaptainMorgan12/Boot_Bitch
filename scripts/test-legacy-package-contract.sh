@@ -2,12 +2,15 @@
 # Contract test for the legacy Debian Etch packaging path (L2):
 #   - scripts/package-legacy.sh and legacy/launcher/* syntax (sh + bash)
 #   - bash 3.1 cleanliness of the package script and the launcher
-#   - --dry-run staging layout, control fields and exact dependency list
+#   - --dry-run staging layout, control fields and exact dependency list,
+#     including the Qt3 GUI binary/desktop/icon layout
 #   - staged launcher version/helper substitution and documented command list
 #   - the off-Etch refusal and the missing-helper failure stay clear and safe
 #
 # Uses a fixture helper, so it runs on any host without the ported helper and
-# never builds or installs a package. Fast tier.
+# never builds or installs a package. When qmake-qt3 is unavailable the dry run
+# stages a placeholder GUI binary (documented); a real Etch build always
+# installs the compiled binary. Fast tier.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -16,6 +19,9 @@ LAUNCHER="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
 DESKTOP="$ROOT_DIR/legacy/launcher/boot-repair-legacy.desktop"
 MAN="$ROOT_DIR/legacy/launcher/boot-repair-legacy.1"
 CONTROL_IN="$ROOT_DIR/legacy/packaging/control.in"
+GUI_PRO="$ROOT_DIR/legacy/gui/boot-bitch-legacy.pro"
+GUI_DESKTOP="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
+GUI_ICON="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-48x48.png"
 
 fail()
 {
@@ -28,6 +34,16 @@ fail()
 [[ -f "$DESKTOP" ]] || fail "legacy/launcher/boot-repair-legacy.desktop is missing"
 [[ -f "$MAN" ]] || fail "legacy/launcher/boot-repair-legacy.1 is missing"
 [[ -f "$CONTROL_IN" ]] || fail "legacy/packaging/control.in is missing"
+[[ -f "$GUI_PRO" ]] || fail "legacy/gui/boot-bitch-legacy.pro is missing"
+[[ -f "$GUI_DESKTOP" ]] || fail "legacy/gui/data/boot-repair-legacy-gui.desktop is missing"
+[[ -f "$GUI_ICON" ]] || fail "legacy/gui/data/boot-repair-legacy-48x48.png is missing"
+
+# Qt3-only: no kdelibs, no Qt4/5/6 modules.
+grep -q '^CONFIG  += qt' "$GUI_PRO" || fail "GUI project does not enable Qt"
+grep -qE '^[[:space:]]*(CONFIG|QT|LIBS)[^#]*kdelibs' "$GUI_PRO" \
+    && fail "GUI project must not require kdelibs"
+grep -qE '^[[:space:]]*QT[[:space:]]*\+=' "$GUI_PRO" \
+    && fail "GUI project must stay Qt3 core-widgets only"
 
 # --- Syntax and bash 3.1 floor ---------------------------------------------
 bash -n "$PKG" || fail "scripts/package-legacy.sh failed bash -n"
@@ -70,7 +86,13 @@ for path in \
     "$STAGE/DEBIAN/control" \
     "$STAGE/usr/sbin/boot-repair-legacy-helper" \
     "$STAGE/usr/bin/boot-repair-legacy" \
+    "$STAGE/usr/bin/boot-repair-legacy-gui" \
     "$STAGE/usr/share/applications/boot-repair-legacy.desktop" \
+    "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" \
+    "$STAGE/usr/share/icons/hicolor/16x16/apps/boot-repair-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz" \
     "$STAGE/usr/share/doc/boot-repair-legacy/copyright" \
     "$STAGE/usr/share/doc/boot-repair-legacy/changelog.Debian.gz"
@@ -81,6 +103,10 @@ done
     || fail "staged helper is not executable"
 [[ -x "$STAGE/usr/bin/boot-repair-legacy" ]] \
     || fail "staged launcher is not executable"
+[[ -x "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
+    || fail "staged GUI binary is not executable"
+[[ -s "$STAGE/usr/bin/boot-repair-legacy-gui" ]] \
+    || fail "staged GUI binary is empty"
 cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
     || fail "staged helper does not match its source"
 
@@ -96,7 +122,7 @@ grep -q '^Description: .\+' "$CONTROL" || fail "control Description is missing"
 grep -q '^Recommends: .*dialog' "$CONTROL" || fail "control Recommends is missing dialog"
 grep -q '^Suggests: .*kdelibs4c2a' "$CONTROL" || fail "control Suggests is missing kdelibs4c2a"
 
-DEPENDS='Depends: libqt3-mt | libqt3c102-mt, bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup'
+DEPENDS='Depends: libqt3-mt (>= 3:3.3.7), bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup'
 grep -qxF "$DEPENDS" "$CONTROL" || fail "staged control dependency list differs from the contract"
 grep -qxF "$DEPENDS" "$CONTROL_IN" || fail "control.in dependency list differs from the contract"
 
@@ -107,7 +133,7 @@ grep -qF "DEFAULT_HELPER='/usr/sbin/boot-repair-legacy-helper'" "$STAGE/usr/bin/
     || fail "staged launcher did not receive the installed helper path"
 
 LIST="$("$STAGE/usr/bin/boot-repair-legacy" --list-commands)"
-for token in validate diagnose fs-inspect fix-broken dpkg-configure initramfs apt-update; do
+for token in validate diagnose fs-inspect fix-broken dpkg-configure initramfs apt-update apt-upgrade; do
     grep -q -- "$token" <<<"$LIST" || fail "documented command list is missing: $token"
 done
 
@@ -136,6 +162,7 @@ mkdir -p "$TREE/scripts" "$TREE/legacy" "$TREE/legacy/launcher" "$TREE/legacy/pa
 cp "$PKG" "$TREE/scripts/package-legacy.sh"
 cp "$ROOT_DIR/legacy/launcher/"* "$TREE/legacy/launcher/"
 cp "$ROOT_DIR/legacy/packaging/"* "$TREE/legacy/packaging/"
+cp -a "$ROOT_DIR/legacy/gui" "$TREE/legacy/gui"
 printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.txt"
 cp "$FIXTURE_HELPER" "$TREE/legacy/boot-repair-helper.sh"
 printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"
@@ -153,11 +180,21 @@ if "$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-stage2" --
 fi
 grep -q 'port.sh --check failed' "$TMP/tree-fail.log" || fail "drift-gate failure message is unclear"
 
-# --- Desktop entry and man page --------------------------------------------
+# --- Desktop entries and man page -------------------------------------------
 grep -qx 'Type=Application' "$DESKTOP" || fail "desktop entry Type is wrong"
 grep -qx 'Exec=boot-repair-legacy' "$DESKTOP" || fail "desktop entry Exec is wrong"
 grep -qx 'Terminal=false' "$DESKTOP" || fail "desktop entry Terminal is wrong"
 grep -qx 'Categories=System;' "$DESKTOP" || fail "desktop entry Categories is wrong"
+grep -qx 'Icon=boot-repair-legacy' "$DESKTOP" || fail "launcher desktop entry Icon is wrong"
+grep -qx 'Type=Application' "$GUI_DESKTOP" || fail "GUI desktop entry Type is wrong"
+grep -qx 'Exec=boot-repair-legacy-gui' "$GUI_DESKTOP" || fail "GUI desktop entry Exec is wrong"
+grep -qx 'Icon=boot-repair-legacy' "$GUI_DESKTOP" || fail "GUI desktop entry Icon is wrong"
+grep -qx 'Terminal=false' "$GUI_DESKTOP" || fail "GUI desktop entry Terminal is wrong"
+grep -qx 'Categories=System;' "$GUI_DESKTOP" || fail "GUI desktop entry Categories is wrong"
+cmp -s "$GUI_DESKTOP" "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" \
+    || fail "staged GUI desktop entry differs from its source"
+cmp -s "$GUI_ICON" "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
+    || fail "staged 48x48 icon differs from its source"
 
 gzip -dc "$STAGE/usr/share/man/man1/boot-repair-legacy.1.gz" > "$TMP/man.roff" \
     || fail "staged man page is not valid gzip"

@@ -81,16 +81,43 @@ Safe repair: rebuild the target initramfs.
 .TP
 .B repair <disk> <root> apt-update
 Safe repair: refresh package metadata (mirror-gated).
+.TP
+.B repair <disk> <root> apt-upgrade
+Safe repair: upgrade installed packages (mirror-gated).
+.SH GUI
+The package also ships
+.BR boot-repair-legacy-gui ,
+a Qt3 frontend that shows the read-only device inventory, the helper's
+.B "Repair tool"
+capability lines (unavailable tools are greyed with their probe reason) and
+only enables the legacy-supported commands whose capability line is
+.BR available .
+Its
+.B \-\-help
+option documents
+.BR \-\-helper ,
+.BR \-\-elevate
+and the headless
+.B \-\-print\-config
+mode. When no X session is available, run
+.B "boot-repair-legacy \-\-tui"
+for the same helper commands through this launcher's console/dialog menu.
 .SH FILES
 .TP
 .I /usr/bin/boot-repair-legacy
 This launcher.
 .TP
+.I /usr/bin/boot-repair-legacy-gui
+The Qt3 frontend (Qt 3.3.x, GPL-2 runtime).
+.TP
 .I /usr/sbin/boot-repair-legacy-helper
 The ported privileged helper.
 .TP
 .I /usr/share/applications/boot-repair-legacy.desktop
-Desktop entry.
+Launcher desktop entry.
+.TP
+.I /usr/share/applications/boot-repair-legacy-gui.desktop
+GUI desktop entry.
 .SH SEE ALSO
 .BR dialog (1),
 .BR gksu (1),

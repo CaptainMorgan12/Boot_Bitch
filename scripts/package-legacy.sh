@@ -12,6 +12,10 @@
 # Usage:
 #   scripts/package-legacy.sh [--output DIR] [--stage-dir DIR] [--dry-run]
 #
+# The Qt3 GUI (legacy/gui/) is built natively with qmake-qt3 + make when
+# qmake-qt3 is available; --dry-run on a host without Qt3 stages a placeholder
+# GUI binary so the layout/control contract stays testable.
+#
 # Helper source coordination (the port agent owns the generated helper):
 #   LEGACY_HELPER_SRC      source path, absolute or relative to the repo root.
 #                          Default discovery order (legacy/boot-repair-helper.sh
@@ -28,6 +32,8 @@
 #   LEGACY_ARCH            package architecture, default amd64.
 #   LEGACY_OUTPUT_DIR      output directory, default Development/build-legacy-package.
 #   LEGACY_STAGE_DIR       staging root, default <output>/stage.
+#   LEGACY_GUI_BUILD_DIR   Qt3 shadow build directory, default
+#                          <output>/gui-build.
 set -eu
 # Package modes must not depend on the builder's umask.
 umask 022
@@ -45,6 +51,7 @@ DRY_RUN=0
 
 HELPER_SRC_ENV="${LEGACY_HELPER_SRC:-}"
 HELPER_INSTALL="${LEGACY_HELPER_INSTALL:-/usr/sbin/boot-repair-legacy-helper}"
+GUI_BUILD_DIR_OVERRIDE="${LEGACY_GUI_BUILD_DIR:-}"
 
 LAUNCHER_SRC="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
 DESKTOP_SRC="$ROOT_DIR/legacy/launcher/boot-repair-legacy.desktop"
@@ -54,6 +61,12 @@ COPYRIGHT_SRC="$ROOT_DIR/legacy/packaging/copyright"
 CHANGELOG_SRC="$ROOT_DIR/legacy/packaging/changelog.Debian"
 PORT_TOOL="$ROOT_DIR/legacy/port.sh"
 PORT_TOOL_FALLBACK="$ROOT_DIR/legacy/tools/port-helper.sh"
+
+GUI_NAME='boot-repair-legacy-gui'
+GUI_PRO="$ROOT_DIR/legacy/gui/boot-bitch-legacy.pro"
+GUI_DESKTOP_SRC="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
+GUI_ICON_DIR="$ROOT_DIR/legacy/gui/data"
+GUI_ICON_SIZES='16 22 32 48'
 
 usage()
 {
@@ -76,6 +89,7 @@ Environment:
   LEGACY_ARCH            package architecture (default amd64)
   LEGACY_OUTPUT_DIR      output directory
   LEGACY_STAGE_DIR       staging root
+  LEGACY_GUI_BUILD_DIR   Qt3 shadow build directory (default <output>/gui-build)
 EOF
 }
 
@@ -142,6 +156,58 @@ run_drift_check()
     fi
 }
 
+# Build the Qt3 GUI with qmake-qt3/make into a shadow build directory. Returns
+# nonzero when the toolchain is unavailable during --dry-run (the caller then
+# stages a placeholder so the layout contract still validates on any host).
+build_gui()
+{
+    _gui_build="$1"
+    if [ -z "$(command -v qmake-qt3 2>/dev/null || true)" ] \
+        || [ -z "$(command -v make 2>/dev/null || true)" ]; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            printf 'NOTE: qmake-qt3/make not found; staging a placeholder GUI binary (dry run only).\n'
+            return 1
+        fi
+        fail 'qmake-qt3 and make are required to build the legacy GUI (install qt3-dev-tools and g++).'
+    fi
+    [ -f "$GUI_PRO" ] || fail "missing Qt3 GUI project: $GUI_PRO"
+    printf 'Building legacy Qt3 GUI (qmake-qt3 + make)...\n'
+    rm -rf -- "$_gui_build"
+    mkdir -p -- "$_gui_build"
+    (
+        cd -- "$_gui_build" || exit 1
+        BOOT_REPAIR_LEGACY_VERSION="$PROJECT_VERSION" qmake-qt3 "$GUI_PRO" || exit 1
+        make || exit 1
+    ) || fail "legacy GUI build failed (see the output above); expected $GUI_NAME."
+    [ -x "$_gui_build/$GUI_NAME" ] \
+        || fail "legacy GUI build produced no executable: $_gui_build/$GUI_NAME"
+    return 0
+}
+
+stage_gui()
+{
+    _stage="$1"
+    _gui_build="$GUI_BUILD_DIR"
+    if build_gui "$_gui_build"; then
+        install -m 0755 "$_gui_build/$GUI_NAME" "$_stage/usr/bin/$GUI_NAME"
+    else
+        # Dry-run placeholder: proves the staged layout/desktop/icon contract
+        # without a Qt3 toolchain. A real build always installs the binary.
+        printf '#!/bin/sh\n# dry-run placeholder: build on Etch with qmake-qt3.\necho "%s: dry-run placeholder (no Qt3 toolchain on this host)" >&2\nexit 0\n' \
+            "$GUI_NAME" > "$_stage/usr/bin/$GUI_NAME"
+        chmod 0755 "$_stage/usr/bin/$GUI_NAME"
+    fi
+    install -m 0644 "$GUI_DESKTOP_SRC" \
+        "$_stage/usr/share/applications/$GUI_NAME.desktop"
+    for _size in $GUI_ICON_SIZES; do
+        _icon="$GUI_ICON_DIR/boot-repair-legacy-${_size}x${_size}.png"
+        [ -f "$_icon" ] || fail "missing legacy icon: $_icon"
+        mkdir -p "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps"
+        install -m 0644 "$_icon" \
+            "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-repair-legacy.png"
+    done
+}
+
 stage_tree()
 {
     _stage="$1"
@@ -169,6 +235,8 @@ stage_tree()
     install -m 0644 "$COPYRIGHT_SRC" "$_stage/usr/share/doc/$PKG_NAME/copyright"
     gzip -9 -n -c "$CHANGELOG_SRC" > "$_stage/usr/share/doc/$PKG_NAME/changelog.Debian.gz"
 
+    stage_gui "$_stage"
+
     bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
         || fail 'staged helper failed bash -n.'
     bash -n "$_stage/usr/bin/boot-repair-legacy" \
@@ -195,10 +263,15 @@ validate_artifact()
         || fail "built package has the wrong Architecture field"
     dpkg-deb --field "$_deb" Depends | grep -q 'cryptsetup' \
         || fail "built package Depends is missing cryptsetup"
+    dpkg-deb --field "$_deb" Depends | grep -q 'libqt3-mt' \
+        || fail "built package Depends is missing the Qt3 runtime libqt3-mt"
     for _path in \
         ./usr/sbin/boot-repair-legacy-helper \
         ./usr/bin/boot-repair-legacy \
+        ./usr/bin/$GUI_NAME \
         ./usr/share/applications/$PKG_NAME.desktop \
+        ./usr/share/applications/$GUI_NAME.desktop \
+        ./usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png \
         ./usr/share/doc/$PKG_NAME/copyright
     do
         if ! dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
@@ -236,8 +309,13 @@ main()
         "$ROOT_DIR/CMakeLists.txt" | head -1)"
     [ -n "$PROJECT_VERSION" ] || fail 'unable to determine the project version from CMakeLists.txt.'
 
-    for _required in "$LAUNCHER_SRC" "$DESKTOP_SRC" "$CONTROL_TEMPLATE" "$COPYRIGHT_SRC" "$CHANGELOG_SRC"; do
+    for _required in "$LAUNCHER_SRC" "$DESKTOP_SRC" "$CONTROL_TEMPLATE" \
+        "$COPYRIGHT_SRC" "$CHANGELOG_SRC" "$GUI_PRO" "$GUI_DESKTOP_SRC"; do
         [ -f "$_required" ] || fail "missing legacy packaging input: $_required"
+    done
+    for _size in $GUI_ICON_SIZES; do
+        _required="$GUI_ICON_DIR/boot-repair-legacy-${_size}x${_size}.png"
+        [ -f "$_required" ] || fail "missing legacy icon: $_required"
     done
 
     HELPER_SRC="$(find_helper)" \
@@ -254,7 +332,7 @@ building; run this script without --dry-run in the Etch guest.
 EOF
             exit 2
         fi
-        for _cmd in dpkg-deb fakeroot gzip sed install du awk sha256sum; do
+        for _cmd in dpkg-deb fakeroot gzip sed install du awk sha256sum qmake-qt3 make; do
             command -v "$_cmd" >/dev/null 2>&1 \
                 || fail "missing required Etch packaging command: $_cmd"
         done
@@ -267,11 +345,17 @@ EOF
     else
         STAGE="$OUTPUT_DIR/stage"
     fi
+    if [ -n "$GUI_BUILD_DIR_OVERRIDE" ]; then
+        GUI_BUILD_DIR="$GUI_BUILD_DIR_OVERRIDE"
+    else
+        GUI_BUILD_DIR="$OUTPUT_DIR/gui-build"
+    fi
     mkdir -p "$OUTPUT_DIR"
     DEB_PATH="$OUTPUT_DIR/${PKG_NAME}_${PROJECT_VERSION}-${PKG_RELEASE}_${ARCH}.deb"
 
     printf 'Package:    %s %s-%s (%s)\n' "$PKG_NAME" "$PROJECT_VERSION" "$PKG_RELEASE" "$ARCH"
     printf 'Helper:     %s -> %s\n' "$HELPER_SRC" "$HELPER_INSTALL"
+    printf 'GUI:        %s (Qt3, qmake-qt3)\n' "${GUI_PRO#"$ROOT_DIR"/}"
     printf 'Stage tree: %s\n' "$STAGE"
     printf 'Artifact:   %s\n' "$DEB_PATH"
 
