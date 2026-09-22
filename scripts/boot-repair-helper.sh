@@ -50,6 +50,10 @@ ARCH_PACMAN_DB_REL=""
 ARCH_PACMAN_CACHE_REL=""
 ARCH_PACMAN_LOG_REL=""
 MOUNTS=()
+# Mounts that existed before this request touched the target (for example the
+# systemd-managed ESP mount).  They are recorded for evidence only: cleanup
+# must never claim, unmount or remount them.
+PREEXISTING_MOUNTS=()
 TARGET_DATA_MOUNTS=()
 SESSION_LOG=""
 TEMP_TARGET_PATHS=()
@@ -418,16 +422,75 @@ chroot shell and file-copy workflows remain separate target tools.
 USAGE
 }
 
+# Every mount covering a path, bottom-most first, as "TARGET SOURCE OPTIONS ID"
+# rows.  findmnt prints stacked mounts in mount order: the effective (topmost)
+# mount is the last row.  Mount IDs are reused across mounts and are never a
+# topmost proof, so callers must not order by ID.
+target_mount_stack()
+{
+    local path="$1"
+    [[ -e "$path" ]] || return 1
+    findmnt -rn -o TARGET,SOURCE,OPTIONS,ID --target "$path" 2>/dev/null || true
+}
+
+# The effective (topmost) mount row for a path: "TARGET SOURCE OPTIONS ID".
+target_mount_top()
+{
+    target_mount_stack "$1" | tail -n1
+}
+
 target_path_is_mounted_rw()
 {
-    local path="$1" options
+    local path="$1" row options
     [[ -e "$path" ]] || return 1
-    options="$(findmnt -rn -o OPTIONS --target "$path" 2>/dev/null | head -n1 || true)"
+    row="$(target_mount_top "$path" 2>/dev/null || true)"
+    [[ -n "$row" ]] || return 1
+    options="$(awk '{print $3}' <<<"$row")"
     [[ -n "$options" ]] || return 1
+    # The effective (topmost) mount decides writability: a read-only layer
+    # stacked above a writable mount must never pass.  errors=remount-ro alone
+    # never proves writability either, so only an explicit topmost rw passes.
     case ",$options," in
         *,rw,*) return 0 ;;
         *) return 1 ;;
     esac
+}
+
+# Evidence for a helper-owned mount that could not be detached.  Prints the
+# stable MOUNT_LEAK line, mirrors it to stderr/session log and leaves a
+# process-independent record under STATE_ROOT so the next request can see the
+# leaked mount instead of the failure being silently swallowed.
+mount_cleanup_leak_evidence()
+{
+    local mountpoint="$1" row source options id evidence
+    row="$(target_mount_top "$mountpoint" 2>/dev/null || true)"
+    source="$(awk '{print $2}' <<<"$row")"
+    options="$(awk '{print $3}' <<<"$row")"
+    id="$(awk '{print $4}' <<<"$row")"
+    evidence="MOUNT_LEAK path=$mountpoint source=${source:-unknown} options=${options:-unknown} id=${id:-unknown}"
+    log "$evidence"
+    printf '%s\n' "$evidence" >&2
+    [[ -n "$SESSION_LOG" && -w "$SESSION_LOG" ]] \
+        && printf '%s\n' "$evidence" >> "$SESSION_LOG"
+    if [[ -n "$STATE_ROOT" ]]; then
+        mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
+        printf '%s %s\n' "$(date --iso-8601=seconds 2>/dev/null || date)" "$evidence" \
+            >> "$STATE_ROOT/mount-leaks.log" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Drop only mount records that are no longer mounted.  A reset must never
+# forget a still-mounted helper mount, or cleanup can no longer find it.
+mount_records_prune()
+{
+    local mountpoint
+    local -a kept=()
+    for mountpoint in "${MOUNTS[@]:-}"; do
+        [[ -n "$mountpoint" ]] || continue
+        mountpoint -q "$mountpoint" 2>/dev/null && kept+=("$mountpoint")
+    done
+    MOUNTS=("${kept[@]}")
 }
 
 # EXIT trap for every helper invocation: when this request crossed the
@@ -463,8 +526,14 @@ cleanup()
 
     for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
         mountpoint="${MOUNTS[$idx]}"
+        [[ -n "$mountpoint" ]] || continue
         if mountpoint -q "$mountpoint" 2>/dev/null; then
             umount "$mountpoint" 2>/dev/null || umount -l "$mountpoint" 2>/dev/null || true
+            # A lazy detach is not a cleanup proof: verify the mount is gone
+            # and leave explicit leak evidence when it is not.
+            if mountpoint -q "$mountpoint" 2>/dev/null; then
+                mount_cleanup_leak_evidence "$mountpoint"
+            fi
         fi
     done
 
@@ -542,6 +611,180 @@ target_path()
     else
         printf '%s\n' "$TARGET_ROOT$suffix"
     fi
+}
+
+# ---------------------------------------------------------------------------
+# ESP writability preflight
+# ---------------------------------------------------------------------------
+# The vendor TUXEDO UKI builder writes through /boot/efi without mounting or
+# remounting anything, so the helper must prove the *effective* (topmost) mount
+# is the writable ESP before the builder runs.  Read-only helper mounts left on
+# top of the systemd-managed rw mount made ukify fail with EROFS even though
+# the old bottom-row probe reported rw.
+
+# The resolved ESP directory for the current scope.
+esp_mount_path()
+{
+    local mp="${TARGET_ESP_MOUNT:-}"
+    [[ -n "$mp" && "$mp" != "unresolved" ]] || mp="/boot/efi"
+    target_path "$mp"
+}
+
+# True when a findmnt row (TARGET SOURCE OPTIONS ID) is backed by the selected
+# ESP device, directly or through a bind of it.
+mount_row_source_is_esp()
+{
+    local row="$1" source esp_canon source_canon
+    [[ -n "$EFI_ESP_SOURCE" ]] || return 1
+    source="$(awk '{print $2}' <<<"$row")"
+    [[ -n "$source" ]] || return 1
+    esp_canon="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || printf '%s' "$EFI_ESP_SOURCE")"
+    source_canon="$(canonical_block "$source" 2>/dev/null || printf '%s' "$source")"
+    [[ "$source_canon" == "$esp_canon" ]]
+}
+
+mount_row_is_rw()
+{
+    case ",$(awk '{print $3}' <<<"$1")," in
+        *,rw,*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Exact inspection/cleanup command for a leaked read-only ESP stack.  The
+# systemd automount unit is named after its mount path (for example
+# /boot/efi -> boot-efi.mount).
+esp_mount_cleanup_command()
+{
+    local path="$1" unit
+    unit="${path#/}"
+    unit="${unit//\//-}.mount"
+    printf 'inspect: findmnt -T %s -o TARGET,SOURCE,OPTIONS,ID; clear: umount %s (repeat until one /dev row remains); or for the systemd automount: umount -R %s && systemctl start %s' \
+        "$path" "$path" "$path" "$unit"
+}
+
+# Probe the effective ESP mount and log the stable evidence line.  Sets:
+#   ESP_STACK_COUNT ESP_TOP_SOURCE ESP_TOP_OPTIONS ESP_TOP_ID ESP_VERDICT
+#   ESP_LEAKED_RO
+# ESP_VERDICT is rw (topmost is the writable ESP), ro-leaked (topmost is the
+# ESP but read-only) or foreign (topmost is not the selected ESP device).
+esp_mount_probe()
+{
+    local esp_dir="$1" row stack idx
+    local -a rows=()
+    ESP_STACK_COUNT=0
+    ESP_TOP_SOURCE=""
+    ESP_TOP_OPTIONS=""
+    ESP_TOP_ID=""
+    ESP_VERDICT="foreign"
+    ESP_LEAKED_RO=0
+
+    stack="$(target_mount_stack "$esp_dir" 2>/dev/null || true)"
+    if [[ -n "$stack" ]]; then
+        mapfile -t rows <<< "$stack"
+    fi
+    if ((${#rows[@]} > 0)); then
+        ESP_STACK_COUNT=${#rows[@]}
+        row="${rows[${#rows[@]}-1]}"
+        ESP_TOP_SOURCE="$(awk '{print $2}' <<<"$row")"
+        ESP_TOP_OPTIONS="$(awk '{print $3}' <<<"$row")"
+        ESP_TOP_ID="$(awk '{print $4}' <<<"$row")"
+        if mount_row_source_is_esp "$row"; then
+            if mount_row_is_rw "$row"; then
+                ESP_VERDICT="rw"
+            else
+                ESP_VERDICT="ro-leaked"
+            fi
+        fi
+        # Count the contiguous read-only same-device layers at the top; these
+        # are the only layers a safe cleanup may detach.
+        for (( idx=${#rows[@]}-1; idx>=0; --idx )); do
+            row="${rows[$idx]}"
+            if mount_row_source_is_esp "$row" && ! mount_row_is_rw "$row"; then
+                ((ESP_LEAKED_RO += 1))
+                continue
+            fi
+            break
+        done
+    fi
+    log "ESP mount preflight: target=$esp_dir stack=$ESP_STACK_COUNT top-source=${ESP_TOP_SOURCE:-none} top-options=${ESP_TOP_OPTIONS:-none} top-id=${ESP_TOP_ID:-none} verdict=$ESP_VERDICT leaked-ro=$ESP_LEAKED_RO" | tee -a "$SESSION_LOG"
+    return 0
+}
+
+# Fail-closed writability preflight for the selected ESP.  mode=check never
+# unmounts anything and refuses on any non-rw verdict.  mode=clear additionally
+# detaches only read-only layers of the selected ESP that sit above a writable
+# same-device mount; a foreign or writable layer above the base, a missing base
+# or a failed unmount refuses with the exact manual cleanup command.  The clear
+# path is idempotent and re-probes after every layer.
+esp_writable_preflight()
+{
+    local mode="${1:-check}" esp_dir row base_idx below_idx guard
+    local -a rows=()
+
+    [[ "$mode" == "check" || "$mode" == "clear" ]] || fail "Internal ESP preflight mode error: $mode"
+    esp_dir="$(esp_mount_path)"
+    if ! mountpoint -q "$esp_dir" 2>/dev/null; then
+        fail "EFI System Partition is not mounted at $esp_dir; mount it read-write before repair."
+    fi
+    esp_mount_probe "$esp_dir"
+    case "$ESP_VERDICT" in
+        rw) return 0 ;;
+        ro-leaked)
+            if [[ "$mode" != "clear" ]]; then
+                fail "The EFI System Partition at $esp_dir is mounted read-only on top of its writable mount (leaked read-only layers: $ESP_LEAKED_RO); refusing the UKI rebuild. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+            fi
+            ;;
+        *)
+            fail "The effective mount at $esp_dir is not the selected EFI System Partition (top-source=${ESP_TOP_SOURCE:-none} top-options=${ESP_TOP_OPTIONS:-none} top-id=${ESP_TOP_ID:-none}); refusing the UKI rebuild. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+            ;;
+    esac
+
+    # Only the contiguous run of read-only layers of the selected ESP above a
+    # writable same-device mount may be detached, top-down.  Verify the whole
+    # clearable shape before the first unmount so a foreign or writable layer
+    # in between is never partially dismantled.
+    mapfile -t rows < <(target_mount_stack "$esp_dir" 2>/dev/null || true)
+    base_idx=$(( ${#rows[@]} - 1 - ESP_LEAKED_RO ))
+    if (( base_idx < 0 )) || ! mount_row_source_is_esp "${rows[$base_idx]}" \
+       || ! mount_row_is_rw "${rows[$base_idx]}"; then
+        fail "The read-only ESP stack at $esp_dir is not directly bounded by a writable mount of the selected ESP (leaked layers: $ESP_LEAKED_RO, base layer: $(awk '{print $2, $3}' <<<"${rows[$base_idx]:-none}")); refusing to unmount anything. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+    fi
+
+    local converged=false
+    guard=$((ESP_LEAKED_RO + 2))
+    while (( guard > 0 )); do
+        guard=$((guard - 1))
+        mapfile -t rows < <(target_mount_stack "$esp_dir" 2>/dev/null || true)
+        if ((${#rows[@]} == 0)); then
+            fail "EFI System Partition mount stack at $esp_dir disappeared during cleanup; clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+        fi
+        row="${rows[${#rows[@]}-1]}"
+        if mount_row_source_is_esp "$row" && mount_row_is_rw "$row"; then
+            converged=true
+            break
+        fi
+        mount_row_source_is_esp "$row" \
+            || fail "ESP mount cleanup stopped: the topmost mount at $esp_dir (source=$(awk '{print $2}' <<<"$row") options=$(awk '{print $3}' <<<"$row")) is not the selected ESP; refusing to unmount it. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+        if mount_row_is_rw "$row"; then
+            fail "ESP mount cleanup stopped: the topmost mount at $esp_dir is already writable but the probe still reports a leaked stack; refusing to unmount it. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+        fi
+        # The layer directly below must belong to the same ESP (either another
+        # leaked read-only layer or the writable base); anything else refuses.
+        below_idx=$(( ${#rows[@]} - 2 ))
+        if (( below_idx < 0 )) || ! mount_row_source_is_esp "${rows[$below_idx]}"; then
+            fail "ESP mount cleanup stopped: the layer below the leaked layer at $esp_dir is not the selected ESP (below: $(awk '{print $2, $3}' <<<"${rows[$below_idx]:-none}")); refusing to unmount anything. Clean up with: $(esp_mount_cleanup_command "$esp_dir")"
+        fi
+        if ! umount "$esp_dir" 2>/dev/null; then
+            fail "ESP mount cleanup could not unmount the leaked read-only layer target=$esp_dir source=$(awk '{print $2}' <<<"$row") id=$(awk '{print $4}' <<<"$row"); clean up manually with: $(esp_mount_cleanup_command "$esp_dir")"
+        fi
+        log "ESP mount cleanup: unmounted leaked ro layer target=$esp_dir source=$(awk '{print $2}' <<<"$row") id=$(awk '{print $4}' <<<"$row")" | tee -a "$SESSION_LOG"
+        esp_mount_probe "$esp_dir"
+    done
+    [[ "$converged" == true ]] \
+        || fail "ESP mount cleanup at $esp_dir did not converge to a writable mount; clean up manually with: $(esp_mount_cleanup_command "$esp_dir")"
+    [[ "$ESP_VERDICT" == "rw" ]] \
+        || fail "ESP mount cleanup at $esp_dir did not reach a writable ESP (verdict=$ESP_VERDICT); clean up manually with: $(esp_mount_cleanup_command "$esp_dir")"
 }
 
 mapper_aliases_for_device()
@@ -1023,12 +1266,18 @@ mount_target_boot_entry()
     IFS=$'\t' read -r spec fstype options <<< "$entry"
 
     resolved="$(resolve_fstab_source "$spec")"
-    [[ -n "$resolved" && -b "$resolved" ]] || fail "Unable to resolve fstab entry for $mp: $spec"
+    [[ -n "$resolved" ]] && is_block_device "$resolved" \
+        || fail "Unable to resolve fstab entry for $mp: $spec"
     same_single_top_disk "$TARGET_DISK" "$resolved" || fail "$mp resolves outside the selected target disk: $resolved"
 
-    dest="$TARGET_ROOT$mp"
-    [[ "$dest" == "$TARGET_ROOT/"* && ! -L "$dest" ]] \
-        || fail "Refusing to mount target $mp through an unsafe path."
+    # BusyBox-safe join: a running-host root "/" must not produce "//boot/efi"
+    # (mountpoint does not normalize the double slash), and the joined path
+    # must stay inside the selected target root.
+    dest="$(target_path "$mp")"
+    [[ -n "$dest" && "$dest" == /* && ! -L "$dest" ]] \
+        || fail "Refusing to mount target $mp through an unsafe path: $dest"
+    [[ "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ]] \
+        || fail "Target $mp join escaped the selected root: $dest"
     local root_real dest_parent_real
     root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null)" \
         || fail "Unable to resolve target root before mounting $mp."
@@ -1037,18 +1286,32 @@ mount_target_boot_entry()
     path_within "$dest_parent_real" "$root_real" \
         || fail "Target mount parent escapes the selected root for $mp."
     if mountpoint -q "$dest" 2>/dev/null; then
-        if [[ "$requested_mode" == "rw" ]]; then
-            local recorded_mount=false recorded_path
-            for recorded_path in "${MOUNTS[@]}"; do
-                if [[ "$recorded_path" == "$dest" ]]; then
-                    recorded_mount=true
-                    break
-                fi
-            done
-            [[ "$recorded_mount" == true ]] || fail "Unexpected existing mount at target $mp; refusing to change its mode."
-            log "Remounting target $mp read-write"
-            mount -o remount,rw "$dest"
+        local recorded_mount=false recorded_path
+        for recorded_path in "${MOUNTS[@]}"; do
+            if [[ "$recorded_path" == "$dest" ]]; then
+                recorded_mount=true
+                break
+            fi
+        done
+        if [[ "$recorded_mount" == true ]]; then
+            if [[ "$requested_mode" == "rw" ]]; then
+                log "Remounting target $mp read-write"
+                mount -o remount,rw "$dest"
+            fi
+            return 0
         fi
+        # Not helper-recorded: a pre-existing (systemd or foreign) mount.  Its
+        # evidence is recorded for the session, but cleanup must never claim,
+        # unmount or remount it.
+        local existing_row existing_source existing_options existing_id
+        existing_row="$(target_mount_top "$dest" 2>/dev/null || true)"
+        existing_source="$(awk '{print $2}' <<<"$existing_row")"
+        existing_options="$(awk '{print $3}' <<<"$existing_row")"
+        existing_id="$(awk '{print $4}' <<<"$existing_row")"
+        PREEXISTING_MOUNTS+=("$dest|${existing_source:-unknown}|${existing_options:-unknown}|${existing_id:-unknown}")
+        log "Target $mp is already mounted at $dest (pre-existing source=${existing_source:-unknown} options=${existing_options:-unknown} id=${existing_id:-unknown}); leaving it untouched." | tee -a "$SESSION_LOG"
+        [[ "$requested_mode" != "rw" ]] \
+            || fail "Unexpected existing mount at target $mp; refusing to change its mode."
         return 0
     fi
 
@@ -2286,7 +2549,8 @@ prepare_target()
         # is critical for chroot tools: / must be the selected root mount, not
         # merely a directory inside a subvolid=5 mount.
         umount "$MOUNT_BASE"
-        MOUNTS=()
+        # Never forget a still-mounted record: prune only detached entries.
+        mount_records_prune
         mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o "$root_mount_options,subvolid=5"
         mounted_root="$(find_btrfs_root "$MOUNT_BASE" || true)"
         if [[ -n "$mounted_root" ]]; then
@@ -2302,14 +2566,14 @@ prepare_target()
             ROOT_DEVICE="$(preferred_block_path "$raw_root" "$ROOT_CANONICAL")"
 
             umount "$MOUNT_BASE"
-            MOUNTS=()
+            mount_records_prune
             mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o "$mode,subvol=$TARGET_SUBVOL"
             TARGET_ROOT="$MOUNT_BASE"
         else
             # No subvolume carries os-release. Fall through to the same-disk
             # component fallback below instead of refusing immediately.
             umount "$MOUNT_BASE"
-            MOUNTS=()
+            mount_records_prune
             TARGET_ROOT="$MOUNT_BASE"
             TARGET_SUBVOL=""
         fi
@@ -2324,7 +2588,7 @@ prepare_target()
         # not verify while running unprivileged.
         if mountpoint -q "$MOUNT_BASE" 2>/dev/null; then
             umount "$MOUNT_BASE"
-            MOUNTS=()
+            mount_records_prune
         fi
         selected_component="$ROOT_DEVICE"
         selected_fstype="$fstype"
@@ -2419,7 +2683,11 @@ prepare_running_host()
         target_path_is_mounted_rw / || fail "The running host root filesystem is not writable. Repair from another system instead."
         target_path_is_mounted_rw /boot || fail "The running host /boot filesystem is not writable."
         if [[ -n "$EFI_ESP_SOURCE" && -n "$TARGET_ESP_MOUNT" ]]; then
-            target_path_is_mounted_rw "$TARGET_ESP_MOUNT" || fail "The running host EFI System Partition is not writable."
+            # Topmost-mount probe: a leaked read-only ESP layer above the
+            # systemd-managed rw mount must never pass this gate.  Safe leaked
+            # layers of the same ESP are cleared here; foreign/unsafe stacks
+            # fail closed with the exact manual cleanup command.
+            esp_writable_preflight clear
         fi
         TARGET_WRITE_INTENT=1
     fi
@@ -7708,6 +7976,10 @@ preflight_tuxedo_uki()
     local kver initrd esp_free_kb uki_kb required_kb current=""
 
     validate_tuxedo_uki_target
+    # The vendor builder writes through the ESP without mounting it: clear any
+    # leaked read-only layer of the same ESP now, or fail closed before the
+    # initramfs rebuild when the stack is foreign/unsafe.
+    esp_writable_preflight clear
     kver="$(newest_tuxedo_kernel)"
     initrd="$TARGET_ROOT/boot/initrd.img-$kver"
     if [[ ! -s "$initrd" ]]; then
@@ -9367,6 +9639,12 @@ filesystem_release_all_mounts()
         [[ -n "$mountpath" ]] || continue
         if mountpoint -q "$mountpath" 2>/dev/null; then
             umount "$mountpath" 2>/dev/null || umount -l "$mountpath" 2>/dev/null || true
+            # A failed release must stay visible and keep its record instead of
+            # being dropped as if the mount were gone.
+            if mountpoint -q "$mountpath" 2>/dev/null; then
+                mount_cleanup_leak_evidence "$mountpath"
+                continue
+            fi
         fi
         unset 'MOUNTS[idx]'
     done
@@ -12212,10 +12490,9 @@ snapshot_unmount_target_keep_top()
         fi
     done
     set -e
-    MOUNTS=()
-    if mountpoint -q "$SNAPSHOT_TOP" 2>/dev/null; then
-        MOUNTS+=("$SNAPSHOT_TOP")
-    fi
+    # Everything except the Btrfs top was detached above; prune must keep the
+    # still-mounted top record instead of dropping it blindly.
+    mount_records_prune
     TARGET_DATA_MOUNTS=()
     TARGET_ROOT=""
     return 0
@@ -13002,12 +13279,10 @@ host_snapshot_rollback_plan()
 host_snapshot_unmount_scratch()
 {
     local idx path
-    local -a keep=()
     for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
         path="${MOUNTS[$idx]:-}"
         [[ -n "$path" ]] || continue
         if [[ "$path" == "$SNAPSHOT_TOP" ]]; then
-            keep+=("$path")
             continue
         fi
         if mountpoint -q "$path" 2>/dev/null; then
@@ -13017,11 +13292,9 @@ host_snapshot_unmount_scratch()
             umount "$path" 2>/dev/null || umount -l "$path" 2>/dev/null || return 1
         fi
     done
-    if ((${#keep[@]} > 0)); then
-        MOUNTS=("${keep[@]}")
-    else
-        MOUNTS=()
-    fi
+    # Keep only records that are still mounted (the scratch top when it was
+    # retained); never drop a live record.
+    mount_records_prune
     return 0
 }
 
@@ -15405,6 +15678,10 @@ run_tuxedo_uki_builder()
     local session_tag="${SESSION_DIR##*/}" guard_parent guard_dir wrapper real_efibootmgr="" rc
     local target_real parent_real
 
+    # The vendor script is the first writer and never mounts/remounts the ESP,
+    # so re-probe the effective mount and refuse before any write if a
+    # read-only or foreign layer appeared since the earlier preflight.
+    esp_writable_preflight check
     [[ "$session_tag" =~ ^session\.[[:alnum:]_-]+$ ]] \
         || fail "Unable to derive a safe request identifier for the temporary EFI guard."
     guard_parent="$TARGET_ROOT/usr/local/libexec"
@@ -15486,6 +15763,9 @@ rebuild_tuxedo_uki()
     local nvram_pre="" nvram_post="" nvram_map=""
 
     validate_tuxedo_uki_target
+    # Re-run the writability preflight immediately before the write path; the
+    # clear step is idempotent and refuses foreign/unsafe stacks.
+    esp_writable_preflight clear
     kver="$(newest_tuxedo_kernel)"
     uki="$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"
     if [[ -s "$uki" ]] && command -v sha256sum >/dev/null 2>&1; then

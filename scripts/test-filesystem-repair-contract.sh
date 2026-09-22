@@ -91,6 +91,53 @@ grep -q 'Online file system repair requires' "$HELPER"
 grep -q 'is not part of the resolved scope' "$HELPER"
 
 # ---------------------------------------------------------------------------
+# ESP writability static wiring.  The effective mount is the topmost findmnt
+# row, never the bottom/autofs row and never a reused mount ID; the leaked
+# preflight and its manual cleanup command are wired into the TUXEDO UKI path.
+# ---------------------------------------------------------------------------
+grep -q '^target_mount_stack()' "$HELPER"
+grep -q '^target_mount_top()' "$HELPER"
+grep -q '^esp_mount_probe()' "$HELPER"
+grep -q '^esp_writable_preflight()' "$HELPER"
+grep -q '^esp_mount_cleanup_command()' "$HELPER"
+grep -q '^mount_cleanup_leak_evidence()' "$HELPER"
+grep -q '^mount_records_prune()' "$HELPER"
+grep -q '^PREEXISTING_MOUNTS=()' "$HELPER"
+rw_probe_body="$(sed -n '/^target_path_is_mounted_rw()/,/^}/p' "$HELPER")"
+grep -q 'target_mount_top' <<<"$rw_probe_body" \
+    || { echo 'FAIL: target_path_is_mounted_rw does not use the topmost-mount probe' >&2; exit 1; }
+if grep -q 'head -n1' <<<"$rw_probe_body"; then
+    echo 'FAIL: target_path_is_mounted_rw still reads the bottom mount row (head -n1)' >&2
+    exit 1
+fi
+stack_body="$(sed -n '/^target_mount_stack()/,/^}/p' "$HELPER")"
+if grep -Eq 'sort|max' <<<"$stack_body"; then
+    echo 'FAIL: target_mount_stack must not order mounts by ID' >&2
+    exit 1
+fi
+top_body="$(sed -n '/^target_mount_top()/,/^}/p' "$HELPER")"
+grep -Fq 'tail -n1' <<<"$top_body" \
+    || { echo 'FAIL: target_mount_top must select the last (topmost) row' >&2; exit 1; }
+grep -Fq 'dest="$(target_path "$mp")"' "$HELPER" \
+    || { echo 'FAIL: mount_target_boot_entry bypasses target_path for the host join' >&2; exit 1; }
+preflight_uki_body="$(sed -n '/^preflight_tuxedo_uki()/,/^}/p' "$HELPER")"
+grep -Fq 'esp_writable_preflight clear' <<<"$preflight_uki_body" \
+    || { echo 'FAIL: preflight_tuxedo_uki does not run the ESP writability preflight' >&2; exit 1; }
+rebuild_uki_body="$(sed -n '/^rebuild_tuxedo_uki()/,/^}/p' "$HELPER")"
+grep -Fq 'esp_writable_preflight clear' <<<"$rebuild_uki_body" \
+    || { echo 'FAIL: rebuild_tuxedo_uki does not run the ESP writability preflight' >&2; exit 1; }
+builder_body="$(sed -n '/^run_tuxedo_uki_builder()/,/^}/p' "$HELPER")"
+grep -Fq 'esp_writable_preflight check' <<<"$builder_body" \
+    || { echo 'FAIL: run_tuxedo_uki_builder does not re-probe before the vendor script' >&2; exit 1; }
+host_prepare_body="$(sed -n '/^prepare_running_host()/,/^}/p' "$HELPER")"
+grep -Fq 'esp_writable_preflight clear' <<<"$host_prepare_body" \
+    || { echo 'FAIL: prepare_running_host does not run the ESP writability preflight' >&2; exit 1; }
+if grep -Fq 'target_path_is_mounted_rw "$TARGET_ESP_MOUNT"' <<<"$host_prepare_body"; then
+    echo 'FAIL: prepare_running_host still gates the ESP on the bottom-row probe' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
 # Live harness.  Mock tools and a generated harness script source the helper
 # (without main) and override only mount/topology plumbing.  No real block
 # device, mount or filesystem is ever touched.
@@ -198,6 +245,19 @@ if [[ "$columns" == "SOURCE,TARGET" ]]; then
     awk '$1 != "" { print $2, $1 }' "$FAKE_FINDMNT_DB"
     exit 0
 fi
+# TARGET,SOURCE,OPTIONS,ID rows carry the stack order (bottom-most first) that
+# findmnt --target publishes.  Fields 4/5 default to rw/0 so older fixtures
+# keep working; mount IDs are deliberately not unique across fixtures.
+if [[ "$columns" == "TARGET,SOURCE,OPTIONS,ID" ]]; then
+    awk -v t="$target" '
+        $1 == t {
+            options = ($4 == "" ? "rw" : $4)
+            id = ($5 == "" ? "0" : $5)
+            print $1, $2, options, id
+        }
+    ' "$FAKE_FINDMNT_DB"
+    exit 0
+fi
 # Every stacked mount for the target is printed, matching findmnt --target:
 # a systemd automount unit can publish a synthetic autofs source before the
 # real filesystem, and the resolver must skip it instead of treating the
@@ -230,12 +290,23 @@ cat > "$sandbox/mockbin/umount" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 target="${!#}"
+if [[ -n "${FAKE_UMOUNT_LOG:-}" ]]; then
+    printf '%s\n' "$target" >> "$FAKE_UMOUNT_LOG"
+fi
+if [[ -n "${FAKE_UMOUNT_FAIL:-}" && "$target" == *"$FAKE_UMOUNT_FAIL"* ]]; then
+    exit 1
+fi
 if [[ -n "${FAKE_MOUNTPOINT_DB:-}" && -f "$FAKE_MOUNTPOINT_DB" ]]; then
     grep -Fxv -- "$target" "$FAKE_MOUNTPOINT_DB" > "$FAKE_MOUNTPOINT_DB.tmp" 2>/dev/null || true
     mv "$FAKE_MOUNTPOINT_DB.tmp" "$FAKE_MOUNTPOINT_DB"
 fi
 if [[ -n "${FAKE_FINDMNT_DB:-}" && -f "$FAKE_FINDMNT_DB" ]]; then
-    awk -v t="$target" '$1 != t' "$FAKE_FINDMNT_DB" > "$FAKE_FINDMNT_DB.tmp"
+    # Stacked mounts share the mountpoint: umount detaches the topmost mount,
+    # so remove only the last matching row (findmnt order is bottom-to-top).
+    awk -v t="$target" '
+        { line[NR] = $0; if ($1 == t) last = NR }
+        END { for (i = 1; i <= NR; ++i) if (i != last) print line[i] }
+    ' "$FAKE_FINDMNT_DB" > "$FAKE_FINDMNT_DB.tmp"
     mv "$FAKE_FINDMNT_DB.tmp" "$FAKE_FINDMNT_DB"
 fi
 exit 0
@@ -313,11 +384,13 @@ export FAKE_LSBLK_DB="$sandbox/devices.db"
 export FAKE_FINDMNT_DB="$sandbox/findmnt.db"
 export FAKE_MOUNTPOINT_DB="$sandbox/mountpoints.txt"
 export FAKE_MOUNT_LOG="$sandbox/mount.log"
+export FAKE_UMOUNT_LOG="$sandbox/umount.log"
 export FAKE_TOOL_LOG="$sandbox/tools.log"
 export FAKE_DEV_DIR="$sandbox"
 : > "$FAKE_FINDMNT_DB"
 : > "$FAKE_MOUNTPOINT_DB"
 : > "$FAKE_MOUNT_LOG"
+: > "$FAKE_UMOUNT_LOG"
 : > "$FAKE_TOOL_LOG"
 
 # Generated harness: sources the helper without main and replaces only the
@@ -340,6 +413,9 @@ prepare_target() {
     SESSION_LOG="$sandbox/session.log"
     : > "\$SESSION_LOG"
 }
+# Keep the real entry function available for the ESP host-path join contract;
+# the simulation below replaces it for the filesystem-scope tests.
+real_mount_target_boot_entry="\$(declare -f mount_target_boot_entry)"
 mount_target_boot_entry() {
     local mp="\${1:-}"
     [[ -n "\$mp" ]] || return 0
@@ -1240,5 +1316,296 @@ run_snapshots inspect 1
 fi
 grep -Fq 'Snapshot inspection requires a Btrfs repair root; detected ext4.' <<<"$snapshot_inspect" \
     || { echo 'FAIL: non-Btrfs snapshot inspect refusal reason changed' >&2; printf '%s\n' "$snapshot_inspect" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 11: ESP writability.  The effective mount is the topmost findmnt row
+# (never the bottom/autofs row, never a reused mount ID); a leaked read-only
+# layer may only be cleared when it is the selected ESP above a writable
+# same-device mount; cleanup must leave rw/foreign mounts untouched and report
+# leaks instead of swallowing them.
+# ---------------------------------------------------------------------------
+esp_dir="$sandbox/target/boot/efi"
+mkdir -p "$esp_dir/EFI/BOOT" "$sandbox/target/home"
+
+# 11a: topmost-row probe.  The bottom autofs row is rw, but the effective top
+# is the last ro vfat row, so the rw gate must refuse while target_mount_top
+# selects the topmost row.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir systemd-1 autofs rw 164
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-efi vfat ro 1477
+$esp_dir /dev/test-efi vfat ro 1416
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+topmost="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+EFI_ESP_SOURCE=/dev/test-efi
+printf "TOP:%s\n" "$(target_mount_top "'"$esp_dir"'")"
+if target_path_is_mounted_rw "'"$esp_dir"'"; then echo RW:PASS; else echo RW:REFUSED; fi
+')"
+grep -Fqx "TOP:$esp_dir /dev/test-efi ro 1416" <<<"$topmost" \
+    || { echo 'FAIL: target_mount_top did not select the topmost row' >&2; printf '%s\n' "$topmost" >&2; exit 1; }
+grep -Fqx 'RW:REFUSED' <<<"$topmost" \
+    || { echo 'FAIL: the rw gate accepted a read-only-topped ESP stack' >&2; printf '%s\n' "$topmost" >&2; exit 1; }
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir systemd-1 autofs rw 164
+$esp_dir /dev/test-efi vfat rw 612
+MNT
+top_rw="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+EFI_ESP_SOURCE=/dev/test-efi
+if target_path_is_mounted_rw "'"$esp_dir"'"; then echo RW:PASS; else echo RW:REFUSED; fi
+')"
+grep -Fqx 'RW:PASS' <<<"$top_rw" \
+    || { echo 'FAIL: a writable topmost ESP row was refused' >&2; printf '%s\n' "$top_rw" >&2; exit 1; }
+
+# 11b: leaked read-only preflight refusal.  check mode must fail closed with
+# the topmost evidence, the leaked-layer count and the exact cleanup command,
+# and must not unmount anything.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir systemd-1 autofs rw 164
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-efi vfat ro 1477
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+if leaked_check="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight check
+' 2>&1)"; then
+    echo 'FAIL: the check-only ESP preflight accepted a leaked read-only layer' >&2
+    exit 1
+fi
+grep -Fq "ESP mount preflight: target=$esp_dir stack=3 top-source=/dev/test-efi top-options=ro top-id=1477 verdict=ro-leaked leaked-ro=1" <<<"$leaked_check" \
+    || { echo 'FAIL: leaked preflight evidence line missing or wrong' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
+grep -Fq 'leaked read-only layers: 1' <<<"$leaked_check" \
+    || { echo 'FAIL: leaked preflight did not report the leaked layer count' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
+grep -Fq "findmnt -T $esp_dir -o TARGET,SOURCE,OPTIONS,ID" <<<"$leaked_check" \
+    || { echo 'FAIL: leaked preflight did not print the inspection command' >&2; exit 1; }
+grep -Fq "umount $esp_dir" <<<"$leaked_check" \
+    || { echo 'FAIL: leaked preflight did not print the manual cleanup command' >&2; exit 1; }
+[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
+    || { echo 'FAIL: the check-only preflight unmounted a layer' >&2; exit 1; }
+
+# 11c: foreign refusal.  A mount that is not the selected ESP must never be
+# unmounted; clear mode refuses with the cleanup command.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-outside ext4 ro 900
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+if foreign_clear="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight clear
+' 2>&1)"; then
+    echo 'FAIL: the ESP preflight cleared a foreign topmost mount' >&2
+    exit 1
+fi
+grep -Fq "top-source=/dev/test-outside top-options=ro top-id=900 verdict=foreign" <<<"$foreign_clear" \
+    || { echo 'FAIL: foreign preflight evidence line missing or wrong' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
+grep -Fq 'not the selected EFI System Partition' <<<"$foreign_clear" \
+    || { echo 'FAIL: foreign preflight did not refuse' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
+grep -Fq "findmnt -T $esp_dir -o TARGET,SOURCE,OPTIONS,ID" <<<"$foreign_clear" \
+    || { echo 'FAIL: foreign preflight did not print the inspection command' >&2; exit 1; }
+[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
+    || { echo 'FAIL: the foreign preflight unmounted a mount' >&2; exit 1; }
+
+# The real vendor-builder entry re-probes and refuses before any target write.
+: > "$FAKE_UMOUNT_LOG"
+if builder_refusal="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_DIR="'"$sandbox"'/session.contract"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+run_tuxedo_uki_builder "Contract vendor run" /bin/true
+' 2>&1)"; then
+    echo 'FAIL: run_tuxedo_uki_builder accepted a foreign ESP stack' >&2
+    exit 1
+fi
+grep -Fq 'verdict=foreign' <<<"$builder_refusal" \
+    || { echo 'FAIL: the vendor-builder preflight did not report the foreign stack' >&2; printf '%s\n' "$builder_refusal" >&2; exit 1; }
+[[ ! -e "$sandbox/target/usr/local/libexec" ]] \
+    || { echo 'FAIL: the vendor builder created target files before the ESP check' >&2; exit 1; }
+[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
+    || { echo 'FAIL: the vendor-builder check unmounted a mount' >&2; exit 1; }
+
+# rebuild_tuxedo_uki refuses the same foreign stack before the vendor builder.
+: > "$sandbox/vendor.log"
+if rebuild_refusal="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+validate_tuxedo_uki_target() { :; }
+newest_tuxedo_kernel() { printf "6.1.0-tuxedo-amd64\n"; }
+uefi_nvram_writable() { return 1; }
+run_tuxedo_uki_builder() { printf "vendor\n" >> "'"$sandbox"'/vendor.log"; }
+rebuild_tuxedo_uki
+' 2>&1)"; then
+    echo 'FAIL: rebuild_tuxedo_uki accepted a foreign ESP stack' >&2
+    exit 1
+fi
+grep -Fq 'verdict=foreign' <<<"$rebuild_refusal" \
+    || { echo 'FAIL: rebuild_tuxedo_uki did not report the foreign stack' >&2; printf '%s\n' "$rebuild_refusal" >&2; exit 1; }
+[[ ! -s "$sandbox/vendor.log" ]] \
+    || { echo 'FAIL: rebuild_tuxedo_uki invoked the vendor builder on a foreign stack' >&2; exit 1; }
+
+# A foreign layer in between the leaked ESP layer and its writable base must
+# refuse before the first unmount, never partially dismantling the stack.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-outside ext4 ro 900
+$esp_dir /dev/test-efi vfat ro 1477
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+if sandwiched_clear="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight clear
+' 2>&1)"; then
+    echo 'FAIL: the ESP preflight cleared a stack with a foreign layer in between' >&2
+    exit 1
+fi
+grep -Fq 'verdict=ro-leaked leaked-ro=1' <<<"$sandwiched_clear" \
+    || { echo 'FAIL: sandwiched preflight did not report the leaked layer' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
+grep -Fq 'not directly bounded by a writable mount of the selected ESP' <<<"$sandwiched_clear" \
+    || { echo 'FAIL: sandwiched preflight did not refuse before unmounting' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
+[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
+    || { echo 'FAIL: the sandwiched preflight unmounted a layer' >&2; exit 1; }
+
+# 11d: safe cleanup.  Only the two ro layers of the selected ESP above the rw
+# base are unmounted; the rw ESP mount and the foreign mount below it stay.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir systemd-1 autofs rw 164
+$esp_dir /dev/test-outside ext4 ro 900
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-efi vfat ro 1477
+$esp_dir /dev/test-efi vfat ro 1416
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+: > "$FAKE_MOUNT_LOG"
+safe_clear="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight clear
+')"
+grep -Fq "ESP mount preflight: target=$esp_dir stack=5 top-source=/dev/test-efi top-options=ro top-id=1416 verdict=ro-leaked leaked-ro=2" <<<"$safe_clear" \
+    || { echo 'FAIL: safe-cleanup preflight evidence line missing or wrong' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
+[[ "$(grep -c 'ESP mount cleanup: unmounted leaked ro layer' <<<"$safe_clear")" -eq 2 ]] \
+    || { echo 'FAIL: expected two leaked-ro cleanup evidence lines' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
+grep -Fq "ESP mount preflight: target=$esp_dir stack=3 top-source=/dev/test-efi top-options=rw top-id=612 verdict=rw leaked-ro=0" <<<"$safe_clear" \
+    || { echo 'FAIL: safe cleanup did not report a writable ESP afterwards' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
+[[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
+    || { echo 'FAIL: safe cleanup unmounted the wrong number of layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
+[[ "$(sort -u "$FAKE_UMOUNT_LOG")" == "$esp_dir" ]] \
+    || { echo 'FAIL: safe cleanup unmounted a path other than the ESP mountpoint' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
+grep -Fq "$esp_dir /dev/test-outside ext4 ro 900" "$FAKE_FINDMNT_DB" \
+    || { echo 'FAIL: safe cleanup unmounted the foreign mount' >&2; exit 1; }
+grep -Fq "$esp_dir /dev/test-efi vfat rw 612" "$FAKE_FINDMNT_DB" \
+    || { echo 'FAIL: safe cleanup unmounted the writable ESP mount' >&2; exit 1; }
+[[ ! -s "$FAKE_MOUNT_LOG" ]] \
+    || { echo 'FAIL: the ESP preflight mounted something' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+
+# 11e: successful rebuild after cleanup.  The fixture is already rw once the
+# leaked layers are detached; the vendor stub writes a changed TUX.EFI and the
+# rebuild reports the verified change.
+printf 'old-image\n' > "$esp_dir/EFI/BOOT/TUX.EFI"
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir systemd-1 autofs rw 164
+$esp_dir /dev/test-outside ext4 ro 900
+$esp_dir /dev/test-efi vfat rw 612
+$esp_dir /dev/test-efi vfat ro 1477
+$esp_dir /dev/test-efi vfat ro 1416
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+rebuild_ok="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+validate_tuxedo_uki_target() { :; }
+newest_tuxedo_kernel() { printf "6.1.0-tuxedo-amd64\n"; }
+uefi_nvram_writable() { return 1; }
+run_tuxedo_uki_builder() { printf "new-image\n" > "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"; }
+rebuild_tuxedo_uki
+')"
+grep -Fq 'ESP mount cleanup: unmounted leaked ro layer' <<<"$rebuild_ok" \
+    || { echo 'FAIL: rebuild did not clear the leaked ESP layers' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
+grep -Fq 'PASS: vendor UKI command produced a changed TUX.EFI image.' <<<"$rebuild_ok" \
+    || { echo 'FAIL: rebuild did not report the changed TUX.EFI' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
+[[ "$(cat "$esp_dir/EFI/BOOT/TUX.EFI")" == 'new-image' ]] \
+    || { echo 'FAIL: the vendor stub did not write TUX.EFI' >&2; exit 1; }
+[[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
+    || { echo 'FAIL: rebuild did not clear exactly the two leaked layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
+
+# 11f: host-path join.  With TARGET_ROOT="/" the real mount entry must resolve
+# /boot/efi (not //boot/efi), record the pre-existing systemd mount and never
+# mount over it.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+/boot/efi /dev/test-efi vfat rw 612
+MNT
+printf '/boot/efi\n' > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_MOUNT_LOG"
+join_out="$(run_harness '
+TARGET_ROOT="/"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+fstab_entry_for_mountpoint() { printf "/dev/test-efi\tvfat\tdefaults\t0 2\n"; }
+resolve_fstab_source() { printf "/dev/test-efi\n"; }
+same_single_top_disk() { return 0; }
+realpath_existing() { printf "%s\n" "$1"; }
+eval "$real_mount_target_boot_entry"
+mount_target_boot_entry "/boot/efi" ro
+printf "JOIN:%s\n" "$(target_path "/boot/efi")"
+printf "PREEXISTING:%s\n" "${PREEXISTING_MOUNTS[*]}"
+')"
+grep -Fqx 'JOIN:/boot/efi' <<<"$join_out" \
+    || { echo 'FAIL: the host-path join produced a double slash' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
+grep -Fqx 'PREEXISTING:/boot/efi|/dev/test-efi|rw|612' <<<"$join_out" \
+    || { echo 'FAIL: the pre-existing ESP mount was not recorded' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
+[[ ! -s "$FAKE_MOUNT_LOG" ]] \
+    || { echo 'FAIL: mount_target_boot_entry mounted over the pre-existing mount' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+
+# 11g: cleanup leak evidence.  An unmount that fails must emit MOUNT_LEAK, keep
+# the record in the process-independent state file and never be swallowed.
+printf '%s\n' "$sandbox/target/home" > "$FAKE_MOUNTPOINT_DB"
+printf '%s /dev/test-home xfs rw 77\n' "$sandbox/target/home" > "$FAKE_FINDMNT_DB"
+rm -f "$sandbox/state/mount-leaks.log"
+leak_out="$(FAKE_UMOUNT_FAIL="$sandbox/target/home" run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+MOUNTS=("'"$sandbox"'/target/home")
+cleanup
+' 2>&1 || true)"
+grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" <<<"$leak_out" \
+    || { echo 'FAIL: cleanup did not emit MOUNT_LEAK evidence' >&2; printf '%s\n' "$leak_out" >&2; exit 1; }
+grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" "$sandbox/state/mount-leaks.log" \
+    || { echo 'FAIL: the leaked mount was not persisted under STATE_ROOT' >&2; exit 1; }
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."
