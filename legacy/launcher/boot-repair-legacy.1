@@ -1,0 +1,97 @@
+.TH BOOT-REPAIR-LEGACY 1 "2026-09-21" "Boot Bitch 0.2.25" "User Commands"
+.SH NAME
+boot-repair-legacy \- legacy Boot Bitch recovery launcher and console menu
+.SH SYNOPSIS
+.B boot-repair-legacy
+[\fIoptions\fR] [\fIhelper-command\fR [\fIargs\fR...]]
+.SH DESCRIPTION
+.B boot-repair-legacy
+is the legacy launcher for the ported
+.B boot-repair-legacy-helper
+on Debian 4.0
+.RI ( "etch" )
+and KDE 3.5-era systems. With no arguments it opens a dialog/console menu for
+the documented read-only and safe-repair commands; with a helper command it
+elevates and runs that command directly. The helper keeps all of its own
+runtime preflights and the modern
+.B "Repair tool"
+/
+.B "Repair change status"
+evidence contract; this launcher only selects commands and elevates.
+.PP
+Elevation uses
+.BR gksu " --sudo-mode, " gksudo ,
+.BR sudo ,
+or a plain
+.B su
+TTY prompt, in that order; no passphrase is ever placed on the command line.
+The helper is resolved from
+.BR --helper ,
+then the
+.B BOOT_REPAIR_LEGACY_HELPER
+environment variable, then the installed path
+.IR /usr/sbin/boot-repair-legacy-helper .
+.SH OPTIONS
+.TP
+.BR \-h ", " \-\-help
+Show usage.
+.TP
+.BR \-V ", " \-\-version
+Print the launcher version.
+.TP
+.BR \-l ", " \-\-list\-commands
+List the documented helper commands.
+.TP
+.BR \-t ", " \-\-tui
+Force the console/dialog menu.
+.TP
+.B \-\-print\-helper
+Print the resolved helper path and exit.
+.TP
+.BI \-\-helper " PATH"
+Use PATH as the helper.
+.TP
+.BI \-\-terminal " PATH"
+Terminal emulator used by the desktop launch path.
+.TP
+.B \-\-no\-elevate
+Run without elevation (the caller must already be root).
+.TP
+.BR \-n ", " \-\-dry\-run
+Print the helper command that would run, then exit.
+.SH COMMANDS
+.TP
+.B validate <disk> <root>
+Confirm the selected root is a supported target.
+.TP
+.B diagnose <disk> <root> all
+Read-only diagnostics and capability probes.
+.TP
+.B fs-inspect <disk> <root>
+Read-only filesystem inspection.
+.TP
+.B repair <disk> <root> fix-broken
+Safe repair: restore broken package state.
+.TP
+.B repair <disk> <root> dpkg-configure
+Safe repair: finish pending dpkg configuration.
+.TP
+.B repair <disk> <root> initramfs
+Safe repair: rebuild the target initramfs.
+.TP
+.B repair <disk> <root> apt-update
+Safe repair: refresh package metadata (mirror-gated).
+.SH FILES
+.TP
+.I /usr/bin/boot-repair-legacy
+This launcher.
+.TP
+.I /usr/sbin/boot-repair-legacy-helper
+The ported privileged helper.
+.TP
+.I /usr/share/applications/boot-repair-legacy.desktop
+Desktop entry.
+.SH SEE ALSO
+.BR dialog (1),
+.BR gksu (1),
+.BR sudo (8)

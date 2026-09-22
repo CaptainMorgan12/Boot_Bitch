@@ -1,0 +1,21 @@
+Package: boot-repair-legacy
+Version: @VERSION@
+Section: admin
+Priority: optional
+Architecture: @ARCH@
+Depends: libqt3-mt | libqt3c102-mt, bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup
+Recommends: dialog, dosfstools, lvm2, mdadm, initramfs-tools, rsync
+Suggests: kdelibs4c2a, konsole | xterm
+Installed-Size: @INSTALLED_SIZE@
+Maintainer: CaptainMorgan12 <CaptainMorgan12@users.noreply.github.com>
+Description: legacy Boot Bitch recovery helper and launcher (Debian Etch era)
+ Legacy Boot Bitch frontend for Debian 4.0 (Etch) and KDE 3.5-era systems:
+ a gksu/sudo launcher with a dialog/console menu around the ported
+ boot-repair-legacy-helper. The helper keeps the modern Boot Bitch command
+ surface and the Repair tool / Repair change status evidence contract, but
+ runs on bash 3.1 and pre-systemd userlands. Read-only diagnostics are the
+ default; every repair stage stays behind the helper's own runtime
+ preflights.
+ .
+ This package is a separate experimental artifact (version line 0.2.25-etch1);
+ it is not the modern Qt6 boot-repair package.

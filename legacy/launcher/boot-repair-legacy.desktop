@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Version=1.0
+Name=Boot Repair (Legacy)
+GenericName=Linux Recovery Utility (Legacy)
+Comment=Inspect and repair boot problems on Debian Etch-era (KDE 3.5) systems
+Exec=boot-repair-legacy
+Terminal=false
+Categories=System;
+Keywords=boot;repair;recovery;legacy;grub;luks;disk;
+StartupNotify=true

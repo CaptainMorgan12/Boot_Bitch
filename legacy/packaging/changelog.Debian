@@ -1,0 +1,8 @@
+boot-repair-legacy (0.2.25-etch1) unstable; urgency=low
+
+  * Initial legacy helper + gksu/dialog launcher package for Debian 4.0
+    (Etch) / KDE 3.5-era systems. Helper-only milestone: the ported
+    boot-repair-helper-legacy keeps the modern command surface and the
+    Repair tool / Repair change status evidence contract.
+
+ -- CaptainMorgan12 <CaptainMorgan12@users.noreply.github.com>  Mon, 21 Sep 2026 00:00:00 +0000

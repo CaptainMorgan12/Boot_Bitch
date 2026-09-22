@@ -3501,6 +3501,94 @@ run_host_command_isolated()
     ' boot-repair-host-command "${args[@]}"
 }
 
+# ---------------------------------------------------------------------------
+# Repair-log noise filtering
+# ---------------------------------------------------------------------------
+# TPM2/LUKS systems (tpm2-tools is commonly installed on TUXEDO/Debian
+# targets) make the initramfs tooling print a verbose enrollment dump after
+# every image build: tpm2-* policy fields, multi-line hex blobs, and
+# cryptsetup keyslot and digest hex.  The transcript is useful evidence, but
+# the dumps bury the actual repair lines, so collapse each recognized block
+# into one concise summary line.  The filter is deliberately conservative:
+# only recognized verbose lines are suppressed, any error/warning line inside
+# a block passes through verbatim, and every other line is untouched.
+repair_log_filter()
+{
+    awk '
+    function is_hex_bytes(line) {
+        return line ~ /^[[:space:]]*([0-9a-fA-F][0-9a-fA-F][[:space:]]+)*[0-9a-fA-F][0-9a-fA-F][[:space:]]*$/
+    }
+    function is_block_start(line) {
+        return line ~ /^[[:space:]]*tpm2-[a-z0-9-]+:/ || line ~ /^[[:space:]]*Keyslot:[[:space:]]/ || line ~ /^[[:space:]]*Digests:[[:space:]]*$/ || line ~ /^[[:space:]]*[0-9]+: pbkdf2[[:space:]]*$/
+    }
+    function is_block_content(line) {
+        return is_block_start(line) || line ~ /^[[:space:]]*(Hash|Iterations|Salt|Digest|PBKDF2|Key|Cipher|Mode|Version|UUID):[[:space:]]/ || line ~ /^[[:space:]]*\(null\)[[:space:]]*$/ || line ~ /^[[:space:]]*$/ || is_hex_bytes(line)
+    }
+    function is_error_line(line) {
+        return line ~ /[Ee]rror|[Ff]ail|[Ww]arn|[Ff]atal|[Dd]enied|[Rr]efus|[Cc]annot/
+    }
+    function field_value(line,    value) {
+        value = line
+        sub(/^[[:space:]]*[^:]+:[[:space:]]*/, "", value)
+        sub(/[[:space:]]+$/, "", value)
+        return value
+    }
+    function emit_summary(    parts) {
+        parts = ""
+        if (hash_pcrs != "") { parts = parts " tpm2-hash-pcrs=" hash_pcrs }
+        if (pcr_bank != "") { parts = parts " tpm2-pcr-bank=" pcr_bank }
+        if (primary_alg != "") { parts = parts " tpm2-primary-alg=" primary_alg }
+        if (keyslot != "") { parts = parts " keyslot=" keyslot }
+        if (parts == "") {
+            printf "TPM2/LUKS verbose output filtered (%d line(s) suppressed)\n", suppressed
+        } else {
+            printf "TPM2/LUKS verbose output filtered:%s (%d line(s) suppressed)\n", parts, suppressed
+        }
+    }
+    BEGIN {
+        in_block = 0
+        suppressed = 0
+        hash_pcrs = ""
+        pcr_bank = ""
+        primary_alg = ""
+        keyslot = ""
+    }
+    {
+        line = $0
+        if (!in_block && is_block_start(line) && !is_error_line(line)) {
+            in_block = 1
+        }
+        if (in_block) {
+            if (is_error_line(line)) {
+                print line
+                next
+            }
+            if (is_block_content(line)) {
+                if (line ~ /^[[:space:]]*tpm2-hash-pcrs:/) { hash_pcrs = field_value(line) }
+                else if (line ~ /^[[:space:]]*tpm2-pcr-bank:/) { pcr_bank = field_value(line) }
+                else if (line ~ /^[[:space:]]*tpm2-primary-alg:/) { primary_alg = field_value(line) }
+                else if (line ~ /^[[:space:]]*Keyslot:/) { keyslot = field_value(line) }
+                suppressed++
+                next
+            }
+            emit_summary()
+            in_block = 0
+            suppressed = 0
+            hash_pcrs = ""
+            pcr_bank = ""
+            primary_alg = ""
+            keyslot = ""
+        }
+        print line
+    }
+    END {
+        if (in_block && suppressed > 0) {
+            emit_summary()
+        }
+    }
+    '
+}
+
 # Run a labelled command in the target chroot with a clean noninteractive
 # environment, tee the transcript into the session log and fail with the
 # command's exit code while preserving the stage context.
@@ -3519,7 +3607,7 @@ run_chroot()
         PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         DEBIAN_FRONTEND=noninteractive \
         APT_LISTCHANGES_FRONTEND=none \
-        "$@" 2>&1 | tee -a "$SESSION_LOG"
+        "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
     local rc=${PIPESTATUS[0]}
     set -e
     ((rc == 0)) || fail "$label failed with exit code $rc"
@@ -4389,7 +4477,7 @@ run_chroot_try()
 
     CHROOT_TRY_OUTPUT="$output"
     CHROOT_TRY_RC=$rc
-    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    printf '%s\n' "$output" | repair_log_filter | tee -a "$SESSION_LOG"
     log "TRY exit code: $rc ($label)" | tee -a "$SESSION_LOG"
     return 0
 }
@@ -14845,6 +14933,48 @@ efi_entry_destination_role()
     fi
 }
 
+# Canonical per-entry policy class shared by selected-ESP destination
+# maintenance, BootOrder grouping and the read-only per-drive inventory.  It
+# keeps the managed destinations apart from firmware-owned device paths:
+#   uki                  managed \EFI\BOOT\TUX.EFI destination
+#   fallback             managed \EFI\BOOT\BOOTX64.EFI destination
+#   wfai                 managed iPXE/WebFAI recovery destination
+#   shim                 signed shim route (legacy or canonical)
+#   loader               other vendor loader file
+#   fallback-device-path firmware-generated partition-only record
+#   other                undecodable or unrecognized entry
+efi_entry_policy_role()
+{
+    local line="$1" loader basename label_key
+    loader="$(efi_entry_loader_line "$line" || true)"
+    loader="${loader,,}"
+    basename="${loader##*\\}"
+    if [[ -n "$loader" ]]; then
+        case "$loader" in
+            '\efi\boot\tux.efi')
+                printf 'uki\n' ;;
+            '\efi\boot\bootx64.efi')
+                printf 'fallback\n' ;;
+            *)
+                if [[ "$basename" == ipxe.efi ]]; then
+                    printf 'wfai\n'
+                elif [[ "$basename" == shim*.efi ]]; then
+                    printf 'shim\n'
+                else
+                    printf 'loader\n'
+                fi
+                ;;
+        esac
+        return 0
+    fi
+    label_key="$(efi_label_match_text <<<"$(efi_entry_label_line "$line")")"
+    if [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]]; then
+        printf 'fallback-device-path\n'
+    else
+        printf 'other\n'
+    fi
+}
+
 efi_selected_wfai_loader()
 {
     local efi_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI" path relative
@@ -14984,16 +15114,22 @@ efi_ensure_selected_wfai_entry()
 }
 
 # Remove duplicate or legacy firmware destinations for the selected ESP while
-# keeping exactly one entry per destination class (UKI, fallback, WFAI and
-# vendor loader).  Active/next entries and unknown device paths are never
-# removed; the final NVRAM state is re-read and verified from firmware.
+# keeping exactly one managed entry per class (UKI, fallback, WFAI and shim).
+# Firmware-generated device-path records are preserved exactly: they are not
+# managed fallback destinations and must never be counted against the
+# one-fallback-per-drive policy.  A shim route is kept when it is active, when
+# Secure Boot is not proven disabled, or when no direct UKI/loader route
+# exists; the legacy TUXEDO shim is pruned only when the running host proves
+# Secure Boot disabled and a direct route is present.  Active/next entries are
+# never removed; the final NVRAM state is re-read and verified from firmware.
 efi_prune_selected_duplicate_destinations()
 {
     local esp partuuid current_file line id loader label label_key basename key priority
     local current_id next_id order new_order="" removed_ids="" remove_id keep_id keep_priority
-    local verify_file verify_key verify_loader verify_basename verify_label_key
+    local verify_file verify_key verify_policy_key direct_route=0 shim_keep_id="" shim_final=0
     local -a ids=()
-    local -a legacy_shim_ids=()
+    local -a shim_ids=()
+    local -a tuxedo_shim_ids=()
     local -A destination_id=() destination_priority=()
     local -a remove_list=()
 
@@ -15009,11 +15145,11 @@ efi_prune_selected_duplicate_destinations()
     current_id="$(sed -nE 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' "$current_file" | head -n1 | tr '[:lower:]' '[:upper:]')"
     next_id="$(sed -nE 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' "$current_file" | head -n1 | tr '[:lower:]' '[:upper:]')"
 
-    # A destination is identified by selected ESP PARTUUID plus its decoded
-    # loader path. Firmware-generated partition-only fallback records are
-    # treated as the conventional BOOTX64.EFI destination only when their
-    # label clearly identifies a UEFI partition/OS entry. Unknown device paths
-    # remain untouched rather than being guessed.
+    # A managed destination is identified by selected ESP PARTUUID plus its
+    # decoded loader path.  Firmware-generated partition-only records (for
+    # example the `UEFI: <model>, Partition 1` entry firmware creates for a
+    # drive) are preserved exactly: they are not file-path fallbacks and must
+    # never displace the managed BOOTX64.EFI entry.
     while IFS= read -r line; do
         id="$(efi_entry_id_line "$line")"
         [[ -n "$id" ]] || continue
@@ -15026,40 +15162,44 @@ efi_prune_selected_duplicate_destinations()
             loader="${loader,,}"
             basename="${loader##*\\}"
             case "$loader" in
-                '\efi\boot\tux.efi') key="uki"; priority=0 ;;
-                '\efi\boot\bootx64.efi') key="fallback"; priority=0 ;;
+                '\efi\boot\tux.efi')
+                    key="uki"
+                    priority=0
+                    direct_route=1
+                    ;;
+                '\efi\boot\bootx64.efi')
+                    key="fallback"
+                    priority=0
+                    ;;
                 *)
                     if [[ "$basename" == ipxe.efi ]]; then
                         key="wfai"
                         priority=0
-                    elif [[ "${TARGET_OS_ID,,}" == tuxedo && "$basename" == shimx64.efi \
-                          && "$loader" == *"\tuxedo\shimx64.efi" ]]; then
-                        # Once a verified TUXEDO UKI exists, the old signed
-                        # shim route is a legacy route for the same system.
-                        key="legacy-tuxedo-shim"
-                        priority=5
+                    elif [[ "$basename" == shim*.efi ]]; then
+                        # Shim routes are decided together after every entry has
+                        # been classified: exactly one shim entry per drive is
+                        # retained, and the legacy TUXEDO shim is removed only
+                        # when a direct route makes it redundant.
+                        shim_ids+=("$id")
+                        if [[ "${TARGET_OS_ID,,}" == tuxedo && "$loader" == *'\tuxedo\shimx64.efi' ]]; then
+                            tuxedo_shim_ids+=("$id")
+                        fi
+                        continue
                     else
                         key="loader:$loader"
                         priority=0
+                        direct_route=1
                     fi
                     ;;
             esac
         else
             label_key="$(efi_label_match_text <<<"$label")"
             if [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]]; then
-                key="fallback"
-                priority=1
+                # Firmware-owned device-path record: preserve exactly.
+                continue
             fi
         fi
         [[ -n "$key" ]] || continue
-
-        if [[ "$key" == legacy-tuxedo-shim ]]; then
-            # Defer this decision until every selected-ESP entry has been
-            # inspected. A firmware order can list the legacy shim before the
-            # canonical UKI; the final pass removes it once that UKI is known.
-            legacy_shim_ids+=("$id")
-            continue
-        fi
 
         keep_id="${destination_id[$key]:-}"
         if [[ -z "$keep_id" ]]; then
@@ -15083,13 +15223,34 @@ efi_prune_selected_duplicate_destinations()
         fi
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
 
-    # A TUXEDO UKI and the old signed shim are two ways into the same target
-    # installation. Keep the shim only when no UKI exists, or while firmware
-    # is actively using it and deleting it would disrupt the current boot.
-    if [[ -n "${destination_id[uki]:-}" ]]; then
-        for id in "${legacy_shim_ids[@]}"; do
-            [[ "$id" == "$current_id" || "$id" == "$next_id" ]] || remove_list+=("$id")
+    # Shim decision: exactly one shim entry per drive.  The active shim is
+    # always kept and extra shims are duplicates.  The kept legacy TUXEDO shim
+    # is pruned only when the running host proves Secure Boot disabled and a
+    # direct UKI/loader destination exists, because under Secure Boot (or an
+    # unknown target Secure Boot state) the shim chain may be the only route.
+    if ((${#shim_ids[@]} > 0)); then
+        shim_keep_id="${shim_ids[0]}"
+        for id in "${shim_ids[@]}"; do
+            if [[ "$id" == "$current_id" || "$id" == "$next_id" ]]; then
+                shim_keep_id="$id"
+                break
+            fi
         done
+        for id in "${shim_ids[@]}"; do
+            [[ "$id" == "$shim_keep_id" ]] && continue
+            [[ "$id" == "$current_id" || "$id" == "$next_id" ]] && continue
+            remove_list+=("$id")
+        done
+        if [[ "$shim_keep_id" != "$current_id" && "$shim_keep_id" != "$next_id" ]] \
+           && [[ "$RUNNING_HOST_MODE" == 1 && "$direct_route" == 1 ]] \
+           && [[ "$(host_secure_boot_state 2>/dev/null || printf 'unknown')" == disabled ]]; then
+            for id in "${tuxedo_shim_ids[@]}"; do
+                if [[ "$id" == "$shim_keep_id" ]]; then
+                    remove_list+=("$id")
+                    break
+                fi
+            done
+        fi
     fi
 
     ((${#remove_list[@]} > 0)) || {
@@ -15147,21 +15308,15 @@ efi_prune_selected_duplicate_destinations()
         id="$(efi_entry_id_line "$line")"
         [[ -n "$id" ]] || continue
         [[ "$(efi_entry_partuuid_line "$line")" == "$partuuid" ]] || continue
-        verify_loader="$(efi_entry_loader_line "$line" || true)"
-        verify_loader="${verify_loader,,}"
-        verify_basename="${verify_loader##*\\}"
-        verify_key=""
-        case "$verify_loader" in
-            '\efi\boot\tux.efi') verify_key="uki" ;;
-            '\efi\boot\bootx64.efi') verify_key="fallback" ;;
-            *) [[ "$verify_basename" == ipxe.efi ]] && verify_key="wfai" ;;
+        verify_policy_key="$(efi_entry_policy_role "$line")"
+        case "$verify_policy_key" in
+            uki|fallback|wfai)
+                final_destination_count["$verify_policy_key"]=$(( ${final_destination_count[$verify_policy_key]:-0} + 1 ))
+                ;;
+            shim)
+                shim_final=$((shim_final + 1))
+                ;;
         esac
-        if [[ -z "$verify_key" && -z "$verify_loader" ]]; then
-            verify_label_key="$(efi_label_match_text <<<"$(efi_entry_label_line "$line")")"
-            [[ "$verify_label_key" == "uefi os" || ( "$verify_label_key" == uefi\ * && "$verify_label_key" == *partition* ) ]] && verify_key="fallback"
-        fi
-        [[ -n "$verify_key" ]] || continue
-        final_destination_count["$verify_key"]=$(( ${final_destination_count[$verify_key]:-0} + 1 ))
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$verify_file")
     for verify_key in uki fallback wfai; do
         (( ${final_destination_count[$verify_key]:-0} <= 1 )) || {
@@ -15169,17 +15324,28 @@ efi_prune_selected_duplicate_destinations()
             return 1
         }
     done
+    (( shim_final <= 1 )) || {
+        log "ERROR: selected ESP still has duplicate shim destinations after maintenance." | tee -a "$SESSION_LOG" >&2
+        return 1
+    }
     log "PASS: selected ESP firmware destinations reconciled; removed Boot$removed_ids." | tee -a "$SESSION_LOG"
 }
 
-# Reorder BootOrder so each disk's entries are grouped by normal boot use
-# (host ESP first, then repair ESP, then foreign), with UKI before vendor
-# loader, fallback and WFAI.  Entries intentionally omitted from BootOrder and
-# all unknown paths are preserved exactly.
+# Reorder BootOrder so every drive's entries stay contiguous: the host ESP
+# group first, then the selected repair ESP when distinct, then each other
+# drive/ESP in its existing relative order, with entries that carry no
+# PARTUUID (USB/removable device paths) last.  Inside one drive the managed
+# routes are ordered UKI, vendor loader, shim, fallback, WebFAI, then
+# firmware-owned device paths and unknowns.  Entries intentionally omitted
+# from BootOrder and all unrecognized paths are preserved exactly; the sort
+# never invents or drops a firmware ID.
 efi_group_firmware_boot_order()
 {
-    local current_file line id part loader basename role_key group rank seq current_order sorted_order candidate_file label_key
+    local current_file line id part role_key group rank seq current_order sorted_order candidate_file
+    local drive_index drive_found next_group=10 order_id
     local -a ids=()
+    local -a drive_keys=() drive_groups=()
+    local -a order_ids=()
     local -A order_index=() seen=()
 
     command -v efibootmgr >/dev/null 2>&1 || return 0
@@ -15195,14 +15361,35 @@ efi_group_firmware_boot_order()
             id="${id^^}"
             [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
             order_index["$id"]="$seq"
+            order_ids+=("$id")
             seq=$((seq + 1))
         done
     fi
 
-    # Sort complete ESP groups without inventing any new paths. UKI is the
-    # primary route where present, followed by the conventional vendor
-    # loader, the firmware fallback, and WebFAI. Unknown entries retain their
-    # membership and are placed after recognized routes for that ESP.
+    # Assign one contiguous group number per drive in existing BootOrder
+    # order, so a removable/USB entry can never split another drive's group.
+    for order_id in "${order_ids[@]}"; do
+        line="$(grep -E "^Boot${order_id}\*?[[:space:]]" "$current_file" | head -n1 || true)"
+        [[ -n "$line" ]] || continue
+        part="$(efi_entry_partuuid_line "$line")"
+        [[ -n "$part" ]] || continue
+        if [[ "$part" == "${EFI_HOST_ESP_PARTUUID,,}" || "$part" == "${EFI_TARGET_ESP_PARTUUID,,}" ]]; then
+            continue
+        fi
+        drive_found=0
+        for ((drive_index = 0; drive_index < ${#drive_keys[@]}; drive_index++)); do
+            if [[ "${drive_keys[drive_index]}" == "$part" ]]; then
+                drive_found=1
+                break
+            fi
+        done
+        if (( drive_found == 0 )); then
+            drive_keys+=("$part")
+            drive_groups+=("$next_group")
+            next_group=$((next_group + 10))
+        fi
+    done
+
     candidate_file="$SESSION_DIR/efi-nvram-grouped-candidates.tsv"
     : > "$candidate_file"
     seq=0
@@ -15216,51 +15403,53 @@ efi_group_firmware_boot_order()
             continue
         fi
         part="$(efi_entry_partuuid_line "$line")"
-        loader="$(efi_entry_loader_line "$line" || true)"
-        loader="${loader,,}"
-        basename="${loader##*\\}"
-        role_key="other"
-        if [[ "$loader" == '\efi\boot\tux.efi' ]]; then
-            role_key="uki"
-        elif [[ "$basename" == bootx64.efi ]]; then
-            role_key="fallback"
-        elif [[ "$basename" == ipxe.efi ]]; then
-            role_key="wfai"
-        elif [[ -n "$loader" ]]; then
-            role_key="loader"
-        else
-            label_key="$(efi_label_match_text <<<"$(efi_entry_label_line "$line")")"
-            [[ "$label_key" == "uefi os" || ( "$label_key" == uefi\ * && "$label_key" == *partition* ) ]] \
-                && role_key="fallback"
-        fi
+        role_key="$(efi_entry_policy_role "$line")"
 
         if [[ -n "$part" && "$part" == "${EFI_HOST_ESP_PARTUUID,,}" ]]; then
             group=0
         elif [[ -n "$part" && "$part" == "${EFI_TARGET_ESP_PARTUUID,,}" ]]; then
             group=1
+        elif [[ -n "$part" ]]; then
+            group=""
+            for ((drive_index = 0; drive_index < ${#drive_keys[@]}; drive_index++)); do
+                if [[ "${drive_keys[drive_index]}" == "$part" ]]; then
+                    group="${drive_groups[drive_index]}"
+                    break
+                fi
+            done
+            if [[ -z "$group" ]]; then
+                drive_keys+=("$part")
+                group="$next_group"
+                drive_groups+=("$group")
+                next_group=$((next_group + 10))
+            fi
         else
-            group=2
+            # Entries whose device path carries no GPT PARTUUID (removable or
+            # MBR media) form their own trailing group.
+            group=999999
         fi
         case "$role_key" in
             uki) rank=0 ;;
             loader) rank=1 ;;
-            fallback) rank=2 ;;
-            wfai) rank=3 ;;
-            *) rank=4 ;;
+            shim) rank=2 ;;
+            fallback) rank=3 ;;
+            wfai) rank=4 ;;
+            fallback-device-path) rank=5 ;;
+            *) rank=6 ;;
         esac
         if [[ -z "${order_index[$id]:-}" ]]; then
             order_index["$id"]=$((100000 + seq))
         fi
-        printf '%03d\t%06d\t%s\n' "$((group * 10 + rank))" "${order_index[$id]}" "$id" >> "$candidate_file"
+        printf '%d\t%03d\t%06d\t%s\n' "$group" "$rank" "${order_index[$id]}" "$id" >> "$candidate_file"
         seq=$((seq + 1))
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
 
-    sorted_order="$(sort -n -k1,1 -k2,2 "$candidate_file" | cut -f3 | paste -sd, -)"
+    sorted_order="$(sort -n -k1,1 -k2,2 -k3,3 "$candidate_file" | cut -f4 | paste -sd, -)"
     [[ -n "$sorted_order" && "$sorted_order" != "$current_order" ]] || {
-        log "PASS: EFI BootOrder already groups each ESP's vendor destinations by normal use." | tee -a "$SESSION_LOG"
+        log "PASS: EFI BootOrder already groups each drive's firmware destinations by normal use." | tee -a "$SESSION_LOG"
         return 0
     }
-    log "Grouping EFI BootOrder by ESP and normal boot use: $sorted_order" | tee -a "$SESSION_LOG"
+    log "Grouping EFI BootOrder by drive and normal boot use: $sorted_order" | tee -a "$SESSION_LOG"
     efibootmgr -o "$sorted_order" 2>&1 | tee -a "$SESSION_LOG" || return 1
     log "PASS: EFI BootOrder grouped by drive; all retained firmware entries remain present." | tee -a "$SESSION_LOG"
 }
@@ -15440,6 +15629,9 @@ efi_set_inventory_esp_ids()
 efi_print_firmware_inventory()
 {
     local nvram="$1" line id class part label loader role selected_label="repair-ESP"
+    local drive_part drive_class drive_index drive_found
+    local entries uki fallback wfai shim devpath loader_count other
+    local -a drive_order=()
     [[ -s "$nvram" ]] || return 0
     efi_set_inventory_esp_ids
     [[ "$RUNNING_HOST_MODE" == 1 ]] && selected_label="selected-system-ESP"
@@ -15457,7 +15649,59 @@ efi_print_firmware_inventory()
         role="$(efi_entry_destination_role "$line")"
         printf '  Boot%s class=%s role=%s partuuid=%s label=%s loader=%s\n' \
             "$id" "$class" "$role" "${part:-unknown}" "$label" "${loader:-device-path-only}"
+        drive_part="${part:-unknown}"
+        drive_found=0
+        for ((drive_index = 0; drive_index < ${#drive_order[@]}; drive_index++)); do
+            if [[ "${drive_order[drive_index]}" == "$drive_part" ]]; then
+                drive_found=1
+                break
+            fi
+        done
+        if (( drive_found == 0 )); then
+            drive_order+=("$drive_part")
+        fi
     done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+
+    # Read-only per-drive policy evidence: one summary line per detected
+    # drive/ESP so the one-UKI/one-fallback/one-WFAI/optional-shim policy and
+    # the preserved firmware device-path records are visible at a glance.
+    for drive_part in "${drive_order[@]}"; do
+        entries=0
+        uki=0
+        fallback=0
+        wfai=0
+        shim=0
+        devpath=0
+        loader_count=0
+        other=0
+        while IFS= read -r line; do
+            id="$(efi_entry_id_line "$line")"
+            [[ -n "$id" ]] || continue
+            part="$(efi_entry_partuuid_line "$line")"
+            [[ "${part:-unknown}" == "$drive_part" ]] || continue
+            entries=$((entries + 1))
+            case "$(efi_entry_policy_role "$line")" in
+                uki) uki=$((uki + 1)) ;;
+                fallback) fallback=$((fallback + 1)) ;;
+                wfai) wfai=$((wfai + 1)) ;;
+                shim) shim=$((shim + 1)) ;;
+                fallback-device-path) devpath=$((devpath + 1)) ;;
+                loader) loader_count=$((loader_count + 1)) ;;
+                *) other=$((other + 1)) ;;
+            esac
+        done < <(sed -nE '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$nvram")
+        if [[ "$drive_part" == "unknown" ]]; then
+            drive_class=unknown
+        elif [[ "$drive_part" == "${EFI_HOST_ESP_PARTUUID,,}" ]]; then
+            drive_class=host
+        elif [[ -n "$EFI_TARGET_ESP_PARTUUID" && "$drive_part" == "${EFI_TARGET_ESP_PARTUUID,,}" ]]; then
+            drive_class=repair
+        else
+            drive_class=foreign
+        fi
+        printf 'EFI drive summary: partuuid=%s class=%s entries=%d uki=%d fallback=%d wfai=%d shim=%d device-path=%d loader=%d other=%d\n' \
+            "$drive_part" "$drive_class" "$entries" "$uki" "$fallback" "$wfai" "$shim" "$devpath" "$loader_count" "$other"
+    done
 }
 
 efi_find_entry_by_key()
@@ -15890,14 +16134,14 @@ EOF
             PATH="/usr/local/libexec/boot-repair-efi-guard.$session_tag:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
-            "$@" 2>&1 | tee -a "$SESSION_LOG"
+            "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
     else
         run_selected_chroot /usr/bin/env \
             HOME=/root \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
-            "$@" 2>&1 | tee -a "$SESSION_LOG"
+            "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
     fi
     rc=${PIPESTATUS[0]}
     set -e

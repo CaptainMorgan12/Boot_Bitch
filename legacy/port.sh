@@ -1,0 +1,458 @@
+#!/usr/bin/env bash
+# legacy/port.sh — deterministic bash-3.1 port of the modern helper.
+#
+#   legacy/port.sh [--check] [--quiet]
+#
+# Generates legacy/boot-repair-helper.sh from scripts/boot-repair-helper.sh by
+# applying the reviewed transformation set below, embedding legacy/compat.sh as
+# a prelude and appending legacy/overlay.sh.  --check regenerates to a
+# temporary file, lists every transformation with its count and fails when the
+# committed file differs (drift gate).
+#
+# This script runs on Etch too (scripts/package-legacy.sh calls it), so it must
+# stay bash 3.1-clean: no mapfile, no declare -A, no ${v,,}/${v^^}/${v^}.
+set -Eeuo pipefail
+
+SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR="$(dirname -- "$SCRIPT_DIR")"
+MODERN="$ROOT_DIR/scripts/boot-repair-helper.sh"
+COMPAT="$SCRIPT_DIR/compat.sh"
+OVERLAY="$SCRIPT_DIR/overlay.sh"
+OUTPUT="$SCRIPT_DIR/boot-repair-helper.sh"
+
+CHECK=0
+QUIET=0
+
+usage()
+{
+    cat <<'USAGE'
+Usage: legacy/port.sh [--check] [--quiet]
+
+  --check   regenerate to a temporary file, print the transformation summary
+            and fail when legacy/boot-repair-helper.sh is not byte-identical
+  --quiet   only print the final result line
+  -h, --help
+USAGE
+}
+
+while (( $# > 0 )); do
+    case "$1" in
+        --check) CHECK=1 ;;
+        --quiet) QUIET=1 ;;
+        -h|--help) usage; exit 0 ;;
+        *) usage >&2; exit 2 ;;
+    esac
+    shift
+done
+
+note()
+{
+    if (( QUIET == 0 )); then
+        printf '  %-42s %s\n' "$1" "$2"
+    fi
+}
+
+count_literal()
+{
+    grep -oF -- "$1" "$2" 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+count_regex()
+{
+    grep -oE -- "$1" "$2" 2>/dev/null | wc -l | tr -d '[:space:]'
+}
+
+apply_sed()
+{
+    local file="$1"
+    shift
+    local tmp
+    tmp="$(mktemp "${TMPDIR:-/tmp}/port-sed.XXXXXX")" || return 1
+    if sed "$@" "$file" > "$tmp"; then
+        mv -- "$tmp" "$file"
+    else
+        rm -f -- "$tmp"
+        return 1
+    fi
+}
+
+# Literal multi-line replacement (awk line-array matching).  Old/new are exact
+# text blocks without a trailing newline.
+replace_block()
+{
+    local file="$1" old="$2" new="$3" tmp oldfile newfile
+    tmp="$(mktemp "${TMPDIR:-/tmp}/port-block.XXXXXX")" || return 1
+    oldfile="$(mktemp "${TMPDIR:-/tmp}/port-old.XXXXXX")" || { rm -f -- "$tmp"; return 1; }
+    newfile="$(mktemp "${TMPDIR:-/tmp}/port-new.XXXXXX")" || { rm -f -- "$tmp" "$oldfile"; return 1; }
+    printf '%s' "$old" > "$oldfile"
+    printf '%s' "$new" > "$newfile"
+    awk -v oldfile="$oldfile" -v newfile="$newfile" '
+        function load(path, arr,   line, n) {
+            n = 0
+            while ((getline line < path) > 0) {
+                n++
+                arr[n] = line
+            }
+            close(path)
+            return n
+        }
+        BEGIN {
+            oldn = load(oldfile, old)
+            newn = load(newfile, new)
+        }
+        { lines[NR] = $0 }
+        END {
+            i = 1
+            while (i <= NR) {
+                found = 1
+                if (i + oldn - 1 > NR) {
+                    found = 0
+                } else {
+                    for (j = 1; j <= oldn; j++) {
+                        if (lines[i + j - 1] != old[j]) {
+                            found = 0
+                            break
+                        }
+                    }
+                }
+                if (found) {
+                    for (j = 1; j <= newn; j++) {
+                        print new[j]
+                    }
+                    i += oldn
+                } else {
+                    print lines[i]
+                    i++
+                }
+            }
+        }
+    ' "$file" > "$tmp"
+    mv -- "$tmp" "$file"
+    rm -f -- "$oldfile" "$newfile"
+}
+
+# Rewrite every access to one associative array into legacy_assoc_* calls.
+rewrite_assoc()
+{
+    local file="$1" name="$2"
+    apply_sed "$file" \
+        -e "s/\"\\\${!${name}\[@\]}\"/\\\$(legacy_assoc_keys ${name})/g" \
+        -e "s/\\\${!${name}\[@\]}/\\\$(legacy_assoc_keys ${name})/g" \
+        -e "s/\\\${${name}\[\"\([^\"]*\)\"\]:-0}/\\\$(legacy_assoc_get_num ${name} \"\\1\")/g" \
+        -e "s/\\\${${name}\[\"\([^\"]*\)\"\]:-}/\\\$(legacy_assoc_get ${name} \"\\1\")/g" \
+        -e "s/\\\${${name}\[\([^]]*\)\]:-0}/\\\$(legacy_assoc_get_num ${name} \"\\1\")/g" \
+        -e "s/\\\${${name}\[\([^]]*\)\]:-}/\\\$(legacy_assoc_get ${name} \"\\1\")/g" \
+        -e "s/\\\${${name}\[\"\([^\"]*\)\"\]}/\\\$(legacy_assoc_get ${name} \"\\1\")/g" \
+        -e "s/\\\${${name}\[\([^]]*\)\]}/\\\$(legacy_assoc_get ${name} \"\\1\")/g" \
+        -e "s/${name}\[\"\([^\"]*\)\"\]=/legacy_assoc_set ${name} \"\1\" /g" \
+        -e "s/${name}\[\([^]]*\)\]=/legacy_assoc_set ${name} \"\1\" /g"
+}
+
+# 1. Bash-4 syntax rewrites on the modern body.
+transform_syntax()
+{
+    local file="$1"
+
+    note "assoc declarations (declare/local -A)" "$(count_regex '^[[:space:]]*(declare|local) -A ' "$file")"
+    apply_sed "$file" \
+        -e 's/^\([[:space:]]*\)local -A seen=()$/\1local -a seen=() seen_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A seen_destination_names=()$/\1local -a seen_destination_names=() seen_destination_names_keys=()/' \
+        -e 's/^declare -A FS_SCOPE_DEVICE_INDEX=()$/declare -a FS_SCOPE_DEVICE_INDEX=() FS_SCOPE_DEVICE_INDEX_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A reasons=()$/\1local -a reasons=() reasons_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A destination_id=() destination_priority=()$/\1local -a destination_id=() destination_id_keys=() destination_priority=() destination_priority_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A removed_seen=()$/\1local -a removed_seen=() removed_seen_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A final_destination_count=()$/\1local -a final_destination_count=() final_destination_count_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A order_index=() seen=()$/\1local -a order_index=() order_index_keys=() seen=() seen_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A current_by_id=() current_by_key=() current_by_partition_label=()$/\1local -a current_by_id=() current_by_id_keys=() current_by_key=() current_by_key_keys=() current_by_partition_label=() current_by_partition_label_keys=()/' \
+        -e 's/^\([[:space:]]*\)FS_SCOPE_DEVICE_INDEX=()$/\1FS_SCOPE_DEVICE_INDEX=() FS_SCOPE_DEVICE_INDEX_keys=()/' \
+        -e 's/^\([[:space:]]*\)current_by_id=()$/\1current_by_id=() current_by_id_keys=()/' \
+        -e 's/^\([[:space:]]*\)current_by_key=()$/\1current_by_key=() current_by_key_keys=()/' \
+        -e 's/^\([[:space:]]*\)current_by_partition_label=()$/\1current_by_partition_label=() current_by_partition_label_keys=()/'
+
+    local name
+    for name in seen seen_destination_names reasons destination_id destination_priority \
+        removed_seen final_destination_count order_index current_by_id current_by_key \
+        current_by_partition_label FS_SCOPE_DEVICE_INDEX; do
+        note "assoc accesses: ${name}" \
+            "$(( $(count_regex "[$][{]${name}[[]" "$file") + $(count_regex "^[[:space:]]*${name}[[]" "$file") ))"
+        rewrite_assoc "$file" "$name"
+    done
+
+    # ${NAME[$k]+present} has no accessor shape: rewrite the single condition.
+    replace_block "$file" \
+        '        if [[ -n "$current_order" && -z "${order_index[$id]+present}" ]]; then' \
+        '        if [[ -n "$current_order" && -z "$(legacy_assoc_has order_index "$id" && printf present)" ]]; then'
+
+    note "case conversion ,," "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*,,|\$\{[0-9]+,,' "$file")"
+    note "case conversion ^^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\^|\$\{[0-9]+\^\^' "$file")"
+    note "case conversion ^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\}|\$\{[0-9]+\^\}' "$file")"
+    apply_sed "$file" \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\),,}/$(legacy_lc "$\1")/g' \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\)\^\^}/$(legacy_uc "$\1")/g' \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\)\^}/$(legacy_ucfirst "$\1")/g'
+
+    note "array [@] expansions (all forms)" "$(count_literal '[@]}' "$file")"
+    apply_sed "$file" -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[@\]}/${\1[@]:-}/g'
+
+    note "mapfile call sites" "$(count_literal 'mapfile ' "$file")"
+    apply_sed "$file" -e 's/\bmapfile /legacy_readarray /g'
+
+    note "sed -i -E" "$(count_literal 'sed -i -E ' "$file")"
+    note "sed -nE" "$(count_literal 'sed -nE ' "$file")"
+    note "sed -E" "$(count_literal 'sed -E ' "$file")"
+    apply_sed "$file" \
+        -e 's/sed -i -E /legacy_sed_ext -i /g' \
+        -e 's/sed -nE /legacy_sed_ext -n /g' \
+        -e 's/sed -E /legacy_sed_ext /g'
+
+    note "sort -V" "$(count_literal 'sort -V' "$file")"
+    apply_sed "$file" -e 's/sort -V/legacy_sort_versions/g'
+
+    note "date --iso-8601" "$(count_literal '$(date --iso-8601=seconds 2>/dev/null || date)' "$file")"
+    apply_sed "$file" -e 's#\$(date --iso-8601=seconds 2>/dev/null || date)#$(legacy_date_iso)#g'
+}
+
+# 1b. bash 3.1 rejects an unquoted `(` or `|` in the `[[ =~ ]]` operand
+# (bash 3.2+ accepts it).  Hoist those regex literals into a variable, which is
+# the portable idiom on 3.1 and on modern bash alike.
+transform_regex_compat()
+{
+    local file="$1" count=0
+
+    regex_replacement()
+    {
+        local old="$1" new="$2"
+        replace_block "$file" "$old" "$new"
+        count=$((count + 1))
+    }
+
+    regex_replacement \
+        '        while [[ "$rest" =~ ([A-Z]+)=\"([^\"]*)\" ]]; do' \
+        '        __legacy_re='"'"'([A-Z]+)=\"([^\"]*)\"'"'"'
+        while [[ "$rest" =~ $__legacy_re ]]; do'
+
+    regex_replacement \
+        '    [[ "$TARGET_OS_ID" =~ ^(debian|ubuntu|tuxedo|linuxmint|pop)$ ]] || [[ " $TARGET_OS_LIKE " == *" debian "* ]] || [[ " $TARGET_OS_LIKE " == *" ubuntu "* ]]' \
+        '    __legacy_re='"'"'^(debian|ubuntu|tuxedo|linuxmint|pop)$'"'"'
+    [[ "$TARGET_OS_ID" =~ $__legacy_re ]] || [[ " $TARGET_OS_LIKE " == *" debian "* ]] || [[ " $TARGET_OS_LIKE " == *" ubuntu "* ]]'
+
+    regex_replacement \
+        '    [[ "$TARGET_OS_ID" =~ ^(arch|manjaro|endeavouros|garuda|artix)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" arch "* ]]' \
+        '    __legacy_re='"'"'^(arch|manjaro|endeavouros|garuda|artix)$'"'"'
+    [[ "$TARGET_OS_ID" =~ $__legacy_re ]] \
+        || [[ " $TARGET_OS_LIKE " == *" arch "* ]]'
+
+    regex_replacement \
+        '    elif [[ "$TARGET_OS_ID" =~ ^(fedora|rhel|rocky|almalinux)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" fedora "* ]] \
+        || [[ " $TARGET_OS_LIKE " == *" rhel "* ]]; then' \
+        '    elif __legacy_re='"'"'^(fedora|rhel|rocky|almalinux)$'"'"'; [[ "$TARGET_OS_ID" =~ $__legacy_re ]] \
+        || [[ " $TARGET_OS_LIKE " == *" fedora "* ]] \
+        || [[ " $TARGET_OS_LIKE " == *" rhel "* ]]; then'
+
+    regex_replacement \
+        '    elif [[ "$TARGET_OS_ID" =~ ^(opensuse|opensuse-tumbleweed|suse)$ ]] \
+        || [[ " $TARGET_OS_LIKE " == *" suse "* ]]; then' \
+        '    elif __legacy_re='"'"'^(opensuse|opensuse-tumbleweed|suse)$'"'"'; [[ "$TARGET_OS_ID" =~ $__legacy_re ]] \
+        || [[ " $TARGET_OS_LIKE " == *" suse "* ]]; then'
+
+    regex_replacement \
+        '            if [[ "$line" =~ ^[[:space:]]+([^[:space:]]+) ]]; then' \
+        '            __legacy_re='"'"'^[[:space:]]+([^[:space:]]+)'"'"'
+            if [[ "$line" =~ $__legacy_re ]]; then'
+
+    regex_replacement \
+        '        if [[ "$line" =~ (^|[[:space:]])([0-9]+)[[:space:]]+not[[:space:]]+upgraded\.?[[:space:]]*$ ]]; then' \
+        '        __legacy_re='"'"'(^|[[:space:]])([0-9]+)[[:space:]]+not[[:space:]]+upgraded\.?[[:space:]]*$'"'"'
+        if [[ "$line" =~ $__legacy_re ]]; then'
+
+    regex_replacement \
+        '        if [[ "$line" =~ ^[[:space:]]*Skipping[[:space:]]+packages[[:space:]]+with[[:space:]]+(conflicts|broken[[:space:]]+dependencies):[[:space:]]*$ ]]; then' \
+        '        __legacy_re='"'"'^[[:space:]]*Skipping[[:space:]]+packages[[:space:]]+with[[:space:]]+(conflicts|broken[[:space:]]+dependencies):[[:space:]]*$'"'"'
+        if [[ "$line" =~ $__legacy_re ]]; then'
+
+    regex_replacement \
+        '        if [[ "$line" =~ ^[[:space:]]*Skipping:[[:space:]]+([0-9]+)[[:space:]]+packages?[[:space:]]*$ ]]; then' \
+        '        __legacy_re='"'"'^[[:space:]]*Skipping:[[:space:]]+([0-9]+)[[:space:]]+packages?[[:space:]]*$'"'"'
+        if [[ "$line" =~ $__legacy_re ]]; then'
+
+    regex_replacement \
+        '        [[ "$line" =~ ^[[:space:]]*([^[:space:]]+) ]] || continue' \
+        '        __legacy_re='"'"'^[[:space:]]*([^[:space:]]+)'"'"'
+        [[ "$line" =~ $__legacy_re ]] || continue'
+
+    regex_replacement \
+        '        if [[ "$line" =~ ^[[:space:]][[:space:]]+replacing[[:space:]]+([^[:space:]]+) ]]; then' \
+        '        __legacy_re='"'"'^[[:space:]][[:space:]]+replacing[[:space:]]+([^[:space:]]+)'"'"'
+        if [[ "$line" =~ $__legacy_re ]]; then'
+
+    note "=~ regex literal hoists" "$count"
+}
+
+# 2. Legacy root evidence gates and dpkg status fallbacks.
+transform_legacy_behaviour()
+{
+    local file="$1"
+
+    note "os-release gates" "$(count_literal '[[ ! -f "$TARGET_ROOT/etc/os-release" ]]' "$file")"
+    replace_block "$file" \
+        '    if [[ ! -f "$TARGET_ROOT/etc/os-release" && "$fstype" == "btrfs" ]]; then' \
+        '    if ! legacy_root_evidence_present "$TARGET_ROOT" && [[ "$fstype" == "btrfs" ]]; then'
+    replace_block "$file" \
+        '    if [[ ! -f "$TARGET_ROOT/etc/os-release" ]]; then' \
+        '    if ! legacy_root_evidence_present "$TARGET_ROOT"; then'
+    replace_block "$file" \
+        '    [[ -f "$probe_dir/etc/os-release" ]] && found=0' \
+        '    legacy_root_evidence_present "$probe_dir" && found=0'
+
+    note "dpkg db:Status sites" "$(count_literal 'db:Status' "$file")"
+    replace_block "$file" \
+        '        desktop_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            dpkg-query -W -f='"'"'${db:Status-Status}'"'"' tuxedoos-desktop 2>/dev/null || true)"' \
+        '        desktop_status="$(legacy_dpkg_status_field tuxedoos-desktop)"'
+    replace_block "$file" \
+        '            status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                dpkg-query -W -f='"'"'${db:Status-Status} ${Version}'"'"' "$pkg" 2>/dev/null || true)"' \
+        '            status="$(legacy_dpkg_status_version "$pkg")"'
+}
+
+# 3. Rename the modern definitions the overlay wraps or replaces.
+transform_renames()
+{
+    local file="$1"
+    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair"
+    local func count=0
+    for func in $funcs; do
+        grep -qE "^${func}\(\)$" "$file" || {
+            printf 'ERROR: expected function definition not found: %s()\n' "$func" >&2
+            return 1
+        }
+        count=$((count + 1))
+    done
+    note "wrapped/replaced modern functions" "$count"
+    for func in $funcs; do
+        apply_sed "$file" -e "s/^${func}()$/${func}_modern()/"
+    done
+}
+
+assemble()
+{
+    local out="$1" body="$2" prelude="$3" overlay="$4"
+    local path_line prelude_lines overlay_lines total body_lines
+    path_line="$(awk '/^export PATH$/{print NR; exit}' "$body")"
+    [[ -n "$path_line" ]] || { printf 'ERROR: export PATH anchor not found\n' >&2; return 1; }
+    total="$(wc -l < "$body" | tr -d '[:space:]')"
+    [[ "$(sed -n "${total}p" "$body")" == 'main "$@"' ]] \
+        || { printf 'ERROR: last line is not main "$@"\n' >&2; return 1; }
+    body_lines=$((total - 1))
+    prelude_lines="$(wc -l < "$prelude" | tr -d '[:space:]')"
+    overlay_lines="$(wc -l < "$overlay" | tr -d '[:space:]')"
+    note "prelude (legacy/compat.sh)" "${prelude_lines} lines"
+    note "overlay (legacy/overlay.sh)" "${overlay_lines} lines"
+    {
+        # The generated body assigns arrays through legacy_readarray and
+        # legacy_assoc_* and converts case through legacy_lc/uc/ucfirst, which
+        # ShellCheck cannot follow; the file-wide directive must sit directly
+        # after the shebang and before any command.  The port source files
+        # (compat.sh, overlay.sh, port.sh) stay ShellCheck-clean.
+        head -n 1 "$body"
+        printf '# shellcheck disable=SC2034,SC2120,SC2154,SC2155\n'
+        printf '# Generated by legacy/port.sh: dynamic array assignment and probed\n'
+        printf '# case conversion are invisible to ShellCheck; see legacy/compat.sh.\n'
+        sed -n "2,${path_line}p" "$body"
+        printf '\n'
+        printf '# ===========================================================================\n'
+        printf '# Legacy compatibility prelude — generated from legacy/compat.sh by legacy/port.sh.\n'
+        printf '# ===========================================================================\n'
+        cat "$prelude"
+        printf '# ===========================================================================\n'
+        printf '# End legacy compatibility prelude.\n'
+        printf '# ===========================================================================\n'
+        tail -n "+$((path_line + 1))" "$body" | head -n "$((body_lines - path_line))"
+        printf '\n'
+        printf '# ===========================================================================\n'
+        printf '# Legacy-only behaviour — generated from legacy/overlay.sh by legacy/port.sh.\n'
+        printf '# ===========================================================================\n'
+        cat "$overlay"
+        printf 'main "$@"\n'
+    } > "$out"
+}
+
+verify_no_bash4()
+{
+    local file="$1" rc=0 pattern
+    local code
+    code="$(grep -vE '^[[:space:]]*#' "$file")"
+    for pattern in 'mapfile' 'declare -A' 'local -A' 'coproc' 'printf -v' '&>>'; do
+        if printf '%s\n' "$code" | grep -qF -- "$pattern"; then
+            printf 'ERROR: bash-4 construct remains in %s: %s\n' "$file" "$pattern" >&2
+            rc=1
+        fi
+    done
+    if printf '%s\n' "$code" | grep -qE '(^|[^_[:alnum:]])readarray([^_[:alnum:]]|$)'; then
+        printf 'ERROR: bash-4 construct remains in %s: readarray\n' "$file" >&2
+        rc=1
+    fi
+    if printf '%s\n' "$code" | grep -qE '[$][{][A-Za-z_][A-Za-z0-9_]*,,|[$][{][0-9]+,,|[$][{][A-Za-z_][A-Za-z0-9_]*\^\^|[$][{][0-9]+\^\^|[$][{][A-Za-z_][A-Za-z0-9_]*\^\}|[$][{][0-9]+\^}'; then
+        printf 'ERROR: bash-4 case conversion remains in %s\n' "$file" >&2
+        rc=1
+    fi
+    if printf '%s\n' "$code" | grep -qE '(^|[^_[:alnum:]])wait[[:space:]]+-n([^_[:alnum:]]|$)|(^|[^_[:alnum:]])local[[:space:]]+-n([^_[:alnum:]]|$)'; then
+        printf 'ERROR: bash-4 wait -n / local -n remains in %s\n' "$file" >&2
+        rc=1
+    fi
+    return "$rc"
+}
+
+generate()
+{
+    local out="$1" work
+    work="$(mktemp "${TMPDIR:-/tmp}/port-body.XXXXXX")" || return 1
+    cp -- "$MODERN" "$work"
+    transform_syntax "$work"
+    transform_regex_compat "$work"
+    transform_legacy_behaviour "$work"
+    transform_renames "$work"
+    assemble "$out" "$work" "$COMPAT" "$OVERLAY"
+    rm -f -- "$work"
+    verify_no_bash4 "$out"
+    chmod 0755 "$out" 2>/dev/null || true
+}
+
+main()
+{
+    local target="" rc=0
+    [[ -f "$MODERN" && -f "$COMPAT" && -f "$OVERLAY" ]] \
+        || { printf 'ERROR: missing input file (modern helper, compat.sh or overlay.sh)\n' >&2; exit 1; }
+
+    if (( CHECK )); then
+        printf 'port-helper-legacy: checking %s\n' "${OUTPUT#"$ROOT_DIR"/}"
+        target="$(mktemp "${TMPDIR:-/tmp}/boot-repair-helper-legacy.XXXXXX")" || exit 1
+        if ! generate "$target"; then
+            rm -f -- "$target"
+            printf 'port-helper-legacy: GENERATION FAILED\n' >&2
+            exit 1
+        fi
+        if [[ -f "$OUTPUT" ]] && cmp -s "$OUTPUT" "$target"; then
+            printf 'port-helper-legacy: in sync (%s bytes)\n' "$(wc -c < "$OUTPUT" | tr -d '[:space:]')"
+        else
+            printf 'port-helper-legacy: DRIFT — regenerate with legacy/port.sh\n' >&2
+            if [[ -f "$OUTPUT" ]]; then
+                diff -u "$OUTPUT" "$target" | head -n 60 >&2 || true
+            else
+                printf '  %s is missing\n' "${OUTPUT#"$ROOT_DIR"/}" >&2
+            fi
+            rc=1
+        fi
+        rm -f -- "$target"
+        return "$rc"
+    fi
+
+    printf 'port-helper-legacy: generating %s\n' "${OUTPUT#"$ROOT_DIR"/}"
+    generate "$OUTPUT"
+    printf 'port-helper-legacy: wrote %s (%s bytes)\n' \
+        "${OUTPUT#"$ROOT_DIR"/}" "$(wc -c < "$OUTPUT" | tr -d '[:space:]')"
+}
+
+main "$@"

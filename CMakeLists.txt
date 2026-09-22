@@ -320,10 +320,23 @@ add_test(NAME boot-repair-host-snapshot-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-snapshot-contract.sh)
 add_test(NAME boot-repair-host-default-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-default-contract.sh)
+add_test(NAME boot-repair-efi-entry-policy-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-efi-entry-policy-contract.sh)
+add_test(NAME boot-repair-repair-log-filter-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-repair-log-filter-contract.sh)
 add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
+# Legacy (Debian Etch / bash 3.1) helper port: test-registration-only edit.
+# The legacy tree is generated from the modern helper by legacy/port.sh; these
+# tests keep the port deterministic and the modern helper untouched.
+add_test(NAME boot-repair-legacy-port-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-port-contract.sh)
+add_test(NAME boot-repair-legacy-smoke
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-smoke.sh)
+add_test(NAME boot-repair-legacy-package-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-legacy-package-contract.sh)
 
 add_test(NAME boot-repair-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
@@ -353,9 +366,19 @@ set_tests_properties(boot-repair-host-snapshot-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-host-default-contract
     PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-efi-entry-policy-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-repair-log-filter-contract
+    PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-icon-atlas-contract
     PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-legacy-package-contract
+    PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-efi-label-update
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-legacy-port-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-legacy-smoke
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-backend-profile-contract
     PROPERTIES LABELS "slow")

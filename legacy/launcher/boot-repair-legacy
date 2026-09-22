@@ -1,0 +1,417 @@
+#!/bin/sh
+# boot-repair-legacy - legacy Boot Bitch launcher and console/dialog menu.
+#
+# Runs the ported privileged helper (boot-repair-legacy-helper) through
+# gksu/gksudo when a graphical session is available, falling back to sudo or a
+# TTY su prompt. The helper keeps its own runtime preflights; this launcher
+# only selects documented commands and elevates, and never passes a secret on
+# the command line.
+#
+# Compatibility target: Debian 4.0 "Etch" / KDE 3.5-era systems. The script is
+# POSIX sh and bash 3.1 clean.
+#
+# The package build substitutes the project version and the installed helper
+# path into the installed copy (see scripts/package-legacy.sh). An unstaged
+# source-tree copy still runs; its VERSION then reports "source".
+set -u
+
+PROGRAM='boot-repair-legacy'
+VERSION='@VERSION@'
+DEFAULT_HELPER='@HELPER_PATH@'
+
+case "$VERSION" in
+    @*@) VERSION='source' ;;
+esac
+
+SELF="$0"
+SELF_DIR=''
+case "$0" in
+    */*)
+        SELF_DIR="$(cd -- "$(dirname -- "$0")" >/dev/null 2>&1 && pwd)" || SELF_DIR=''
+        ;;
+esac
+if [ -n "$SELF_DIR" ]; then
+    SELF="$SELF_DIR/${0##*/}"
+fi
+
+HELPER_OVERRIDE=''
+TERMINAL_OVERRIDE=''
+FORCE_TUI=0
+NO_ELEVATE=0
+DRY_RUN=0
+ELEVATE_KIND=''
+TARGET_DISK=''
+ROOT_DEVICE=''
+
+err()
+{
+    printf '%s: %s\n' "$PROGRAM" "$*" >&2
+}
+
+die()
+{
+    err "$*"
+    exit 1
+}
+
+usage()
+{
+    cat <<EOF
+Usage: $PROGRAM [options] [helper-command [args...]]
+
+Legacy Boot Bitch launcher for Debian Etch / KDE 3.5-era systems. With no
+arguments it opens the dialog/console menu; with a helper command it elevates
+and runs the ported helper directly.
+
+Options:
+  -h, --help            show this help
+  -V, --version         print the launcher version
+  -l, --list-commands   list the documented helper commands
+  -t, --tui             force the console/dialog menu
+      --print-helper    print the resolved helper path and exit
+      --helper PATH     use PATH as the helper (overrides discovery)
+      --terminal PATH   terminal emulator used by the desktop launch path
+      --no-elevate      run without elevation (must already be root)
+  -n, --dry-run         print the helper command that would run, then exit
+
+Elevation order: gksu --sudo-mode, gksudo, sudo, su (TTY prompt). The helper
+keeps its own runtime preflights; this launcher never weakens them and never
+puts a passphrase on argv. Helper discovery order: --helper, then
+BOOT_REPAIR_LEGACY_HELPER, then the installed path, then source-tree paths.
+
+Documented commands:
+$(list_commands | sed 's/^/  /')
+EOF
+}
+
+list_commands()
+{
+    cat <<'EOF'
+validate <disk> <root>                confirm the selected root is supported
+diagnose <disk> <root> all            read-only diagnostics (capability probes)
+fs-inspect <disk> <root>              read-only filesystem inspection
+repair <disk> <root> fix-broken       safe repair: restore broken package state
+repair <disk> <root> dpkg-configure   safe repair: finish pending dpkg configuration
+repair <disk> <root> initramfs        safe repair: rebuild the target initramfs
+repair <disk> <root> apt-update       safe repair: refresh package metadata (mirror-gated)
+EOF
+}
+
+helper_path()
+{
+    if [ -n "$HELPER_OVERRIDE" ]; then
+        printf '%s\n' "$HELPER_OVERRIDE"
+        return 0
+    fi
+    if [ -n "${BOOT_REPAIR_LEGACY_HELPER:-}" ]; then
+        printf '%s\n' "$BOOT_REPAIR_LEGACY_HELPER"
+        return 0
+    fi
+    for _candidate in \
+        "$DEFAULT_HELPER" \
+        /usr/sbin/boot-repair-legacy-helper \
+        /usr/libexec/boot-repair/boot-repair-helper-legacy
+    do
+        case "$_candidate" in
+            ''|@*) continue ;;
+        esac
+        if [ -x "$_candidate" ]; then
+            printf '%s\n' "$_candidate"
+            return 0
+        fi
+    done
+    if [ -n "$SELF_DIR" ]; then
+        for _candidate in \
+            "$SELF_DIR/boot-repair-legacy-helper" \
+            "$SELF_DIR/helper/boot-repair-helper-legacy.sh" \
+            "$SELF_DIR/../helper/boot-repair-helper-legacy.sh" \
+            "$SELF_DIR/../boot-repair-helper.sh" \
+            "$SELF_DIR/../boot-repair-helper-legacy.sh"
+        do
+            if [ -x "$_candidate" ]; then
+                printf '%s\n' "$_candidate"
+                return 0
+            fi
+        done
+    fi
+    return 1
+}
+
+# Elevation is decided once: graphical gksu when an X session is present,
+# sudo/su otherwise. su is the plain TTY prompt fallback.
+detect_elevation()
+{
+    if [ "$(id -u)" -eq 0 ] || [ "$NO_ELEVATE" -eq 1 ]; then
+        ELEVATE_KIND='none'
+        return 0
+    fi
+    if [ -n "${DISPLAY:-}" ] && command -v gksu >/dev/null 2>&1; then
+        if command -v sudo >/dev/null 2>&1; then
+            ELEVATE_KIND='gksu-sudo'
+        else
+            ELEVATE_KIND='gksu-su'
+        fi
+        return 0
+    fi
+    if [ -n "${DISPLAY:-}" ] && command -v gksudo >/dev/null 2>&1; then
+        ELEVATE_KIND='gksudo'
+        return 0
+    fi
+    if command -v sudo >/dev/null 2>&1; then
+        ELEVATE_KIND='sudo'
+        return 0
+    fi
+    if command -v su >/dev/null 2>&1; then
+        ELEVATE_KIND='su'
+        return 0
+    fi
+    return 1
+}
+
+# POSIX single-quote an argument list for the su -c shell string.
+quote_args()
+{
+    _quoted=''
+    for _arg in "$@"; do
+        _escaped="$(printf '%s' "$_arg" | sed "s/'/'\\\\''/g")"
+        _quoted="$_quoted '$_escaped'"
+    done
+    printf '%s\n' "$_quoted"
+}
+
+run_as_root()
+{
+    case "$ELEVATE_KIND" in
+        none) "$@" ;;
+        gksu-sudo) gksu --sudo-mode "$@" ;;
+        gksu-su) gksu --su-mode "$@" ;;
+        gksudo) gksudo "$@" ;;
+        sudo) sudo "$@" ;;
+        su) su -c "$(quote_args "$@")" ;;
+        *) err 'no elevation method available'; return 127 ;;
+    esac
+}
+
+run_helper()
+{
+    _helper="$(helper_path)" || die 'legacy helper not found; set BOOT_REPAIR_LEGACY_HELPER or pass --helper PATH'
+    if ! detect_elevation; then
+        if [ "$DRY_RUN" -eq 1 ]; then
+            ELEVATE_KIND='unavailable'
+        else
+            die 'no elevation tool found; install gksu or sudo'
+        fi
+    fi
+    if [ "$DRY_RUN" -eq 1 ]; then
+        printf 'helper: %s\n' "$_helper"
+        printf 'elevate: %s\n' "$ELEVATE_KIND"
+        printf 'command: %s' "$_helper"
+        for _arg in "$@"; do
+            printf ' %s' "$_arg"
+        done
+        printf '\n'
+        return 0
+    fi
+    run_as_root "$_helper" "$@"
+}
+
+ask_value()
+{
+    _prompt="$1"
+    _default="${2:-}"
+    if [ -t 0 ] && command -v dialog >/dev/null 2>&1; then
+        dialog --stdout --inputbox "$_prompt" 0 0 "$_default"
+        return $?
+    fi
+    printf '%s [%s]: ' "$_prompt" "$_default" >&2
+    IFS= read -r _answer || return 1
+    if [ -z "$_answer" ]; then
+        _answer="$_default"
+    fi
+    printf '%s\n' "$_answer"
+}
+
+confirm()
+{
+    _question="$1"
+    if [ -t 0 ] && command -v dialog >/dev/null 2>&1; then
+        dialog --yesno "$_question" 0 0
+        return $?
+    fi
+    printf '%s [y/N]: ' "$_question" >&2
+    IFS= read -r _answer || return 1
+    case "$_answer" in
+        [yY]*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+pause()
+{
+    printf '\n--- press Enter to continue ---\n' >&2
+    IFS= read -r _dummy || :
+}
+
+ensure_targets()
+{
+    if [ -z "$TARGET_DISK" ]; then
+        TARGET_DISK="$(ask_value 'Target disk (for example /dev/hdb)' '')" || return 1
+    fi
+    case "$TARGET_DISK" in
+        /dev/*) ;;
+        *)
+            err "target disk must be an absolute /dev path: $TARGET_DISK"
+            TARGET_DISK=''
+            return 1
+            ;;
+    esac
+    if [ -z "$ROOT_DEVICE" ]; then
+        ROOT_DEVICE="$(ask_value 'Target root device (for example /dev/hdb1)' '')" || return 1
+    fi
+    case "$ROOT_DEVICE" in
+        /dev/*) ;;
+        *)
+            err "root device must be an absolute /dev path: $ROOT_DEVICE"
+            ROOT_DEVICE=''
+            return 1
+            ;;
+    esac
+    return 0
+}
+
+run_helper_interactive()
+{
+    run_helper "$@"
+    _rc=$?
+    pause
+    return $_rc
+}
+
+tui_main()
+{
+    while :; do
+        _choice=''
+        if [ -t 0 ] && command -v dialog >/dev/null 2>&1; then
+            _choice="$(dialog --stdout --backtitle "$PROGRAM $VERSION" \
+                --title 'Legacy recovery' \
+                --menu 'Select an operation (run read-only diagnostics first)' \
+                0 0 0 \
+                1 'Validate target root' \
+                2 'Diagnose (read-only)' \
+                3 'Filesystem inspect (read-only)' \
+                4 'Safe repair: fix broken packages' \
+                5 'Safe repair: finish dpkg configuration' \
+                6 'Safe repair: rebuild initramfs' \
+                7 'Safe repair: refresh package metadata' \
+                8 'Show documented helper commands' \
+                9 'Quit')" || _choice=''
+        else
+            printf '\n%s %s - legacy recovery\n' "$PROGRAM" "$VERSION" >&2
+            printf '  1) Validate target root\n' >&2
+            printf '  2) Diagnose (read-only)\n' >&2
+            printf '  3) Filesystem inspect (read-only)\n' >&2
+            printf '  4) Safe repair: fix broken packages\n' >&2
+            printf '  5) Safe repair: finish dpkg configuration\n' >&2
+            printf '  6) Safe repair: rebuild initramfs\n' >&2
+            printf '  7) Safe repair: refresh package metadata\n' >&2
+            printf '  8) Show documented helper commands\n' >&2
+            printf '  9) Quit\n' >&2
+            printf 'Select [1-9]: ' >&2
+            IFS= read -r _choice || _choice=''
+        fi
+        case "$_choice" in
+            1) ensure_targets && run_helper_interactive validate "$TARGET_DISK" "$ROOT_DEVICE" ;;
+            2) ensure_targets && run_helper_interactive diagnose "$TARGET_DISK" "$ROOT_DEVICE" all ;;
+            3) ensure_targets && run_helper_interactive fs-inspect "$TARGET_DISK" "$ROOT_DEVICE" ;;
+            4) ensure_targets && confirm 'Run safe repair: fix broken packages?' \
+                   && run_helper_interactive repair "$TARGET_DISK" "$ROOT_DEVICE" fix-broken ;;
+            5) ensure_targets && confirm 'Run safe repair: finish dpkg configuration?' \
+                   && run_helper_interactive repair "$TARGET_DISK" "$ROOT_DEVICE" dpkg-configure ;;
+            6) ensure_targets && confirm 'Run safe repair: rebuild the target initramfs?' \
+                   && run_helper_interactive repair "$TARGET_DISK" "$ROOT_DEVICE" initramfs ;;
+            7) ensure_targets && confirm 'Run safe repair: refresh package metadata?' \
+                   && run_helper_interactive repair "$TARGET_DISK" "$ROOT_DEVICE" apt-update ;;
+            8) list_commands; pause ;;
+            9|'') return 0 ;;
+            *) ;;
+        esac
+    done
+}
+
+run_tui()
+{
+    detect_elevation || die 'no elevation tool found; install gksu or sudo'
+    if [ "$ELEVATE_KIND" != 'none' ]; then
+        run_as_root "$SELF" --tui --no-elevate
+        return $?
+    fi
+    if [ ! -t 0 ]; then
+        die "the console menu needs a terminal; run '$PROGRAM --tui' in one"
+    fi
+    tui_main
+}
+
+# Desktop launch path: no TTY, so open the menu inside a terminal emulator.
+launch_terminal()
+{
+    _term="$TERMINAL_OVERRIDE"
+    if [ -z "$_term" ]; then
+        for _candidate in x-terminal-emulator konsole xterm; do
+            if command -v "$_candidate" >/dev/null 2>&1; then
+                _term="$_candidate"
+                break
+            fi
+        done
+    fi
+    if [ -z "$_term" ]; then
+        die "no terminal emulator found; run '$PROGRAM --tui' from a terminal"
+    fi
+    exec "$_term" -e "$SELF" --tui
+}
+
+main()
+{
+    while [ $# -gt 0 ]; do
+        case "$1" in
+            -h|--help) usage; exit 0 ;;
+            -V|--version) printf '%s %s\n' "$PROGRAM" "$VERSION"; exit 0 ;;
+            -l|--list-commands) list_commands; exit 0 ;;
+            -t|--tui) FORCE_TUI=1 ;;
+            --print-helper)
+                helper_path || exit 1
+                exit 0
+                ;;
+            --helper)
+                shift
+                [ $# -gt 0 ] || die '--helper requires a path'
+                HELPER_OVERRIDE="$1"
+                ;;
+            --helper=*) HELPER_OVERRIDE="${1#--helper=}" ;;
+            --terminal)
+                shift
+                [ $# -gt 0 ] || die '--terminal requires a path'
+                TERMINAL_OVERRIDE="$1"
+                ;;
+            --terminal=*) TERMINAL_OVERRIDE="${1#--terminal=}" ;;
+            --no-elevate) NO_ELEVATE=1 ;;
+            -n|--dry-run) DRY_RUN=1 ;;
+            --) shift; break ;;
+            -*) usage >&2; die "unknown option: $1" ;;
+            *) break ;;
+        esac
+        shift
+    done
+
+    if [ $# -gt 0 ]; then
+        run_helper "$@"
+        exit $?
+    fi
+
+    if [ "$FORCE_TUI" -eq 1 ] || [ -t 0 ]; then
+        run_tui
+    else
+        launch_terminal
+    fi
+}
+
+main "$@"
