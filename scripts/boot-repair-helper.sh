@@ -63,6 +63,10 @@ EFI_HOST_ESP_SOURCE=""
 EFI_HOST_ESP_PARTUUID=""
 EFI_HOST_ESP_MOUNT=""
 EFI_TARGET_ESP_PARTUUID=""
+# Actionable command left by the last ESP auto-mount attempt; consumed by the
+# fail-closed writability preflight message when the ESP could not be brought
+# up.  Repair paths only.
+ESP_MOUNT_HINT=""
 EFI_GRUB_INSTALL_PATH=""
 EFI_BOOTLOADER_ID=""
 SNAPSHOT_TOP=""
@@ -651,16 +655,145 @@ mount_row_is_rw()
     esac
 }
 
-# Exact inspection/cleanup command for a leaked read-only ESP stack.  The
-# systemd automount unit is named after its mount path (for example
-# /boot/efi -> boot-efi.mount).
-esp_mount_cleanup_command()
+# systemd unit name for a mount path (for example /boot/efi -> boot-efi.mount).
+# The matching automount unit is the same name with .automount.
+esp_mount_unit_name()
 {
     local path="$1" unit
     unit="${path#/}"
     unit="${unit//\//-}.mount"
+    printf '%s\n' "$unit"
+}
+
+# Exact inspection/cleanup command for a leaked read-only ESP stack.
+esp_mount_cleanup_command()
+{
+    local path="$1" unit
+    unit="$(esp_mount_unit_name "$path")"
     printf 'inspect: findmnt -T %s -o TARGET,SOURCE,OPTIONS,ID; clear: umount %s (repeat until one /dev row remains); or for the systemd automount: umount -R %s && systemctl start %s' \
         "$path" "$path" "$path" "$unit"
+}
+
+# True when systemd knows an automount unit for the supplied mount unit name.
+esp_automount_unit_present()
+{
+    local automount_unit="$1"
+    command -v systemctl >/dev/null 2>&1 || return 1
+    systemctl list-unit-files --no-legend -- "$automount_unit" 2>/dev/null \
+        | grep -q "^${automount_unit}[[:space:]]"
+}
+
+# Bring up the selected ESP when it is configured but currently unmounted.
+# Repair paths only: the caller is esp_writable_preflight() or the
+# running-host repair/default preparation, never a read-only diagnostic.  Only
+# an fstab entry for the ESP mountpoint whose device is a block device on the
+# selected target disk may be auto-mounted; a systemd automount
+# (x-systemd.automount or an existing automount unit) is triggered first,
+# otherwise the fstab-backed `mount <path>` is used.  The effective source is
+# re-read after the mount and must be a FAT filesystem on the selected target
+# disk before the writability probe is allowed to pass.  Evidence:
+#   ESP mount: mounted target=<dir> source=<dev> method=automount|mount
+#   ESP mount: auto-mount failed: target=<dir> reason=<...> hint=<...>
+esp_auto_mount_if_configured()
+{
+    local esp_dir="$1" mp entry spec fstype options resolved source mounted_fstype
+    local unit automount_unit method="mount" reason="" hint="" guard_ok=false
+
+    mountpoint -q "$esp_dir" 2>/dev/null && return 0
+
+    mp="${TARGET_ESP_MOUNT:-}"
+    [[ -n "$mp" && "$mp" != "unresolved" ]] || mp="/boot/efi"
+    unit="$(esp_mount_unit_name "$mp")"
+    automount_unit="${unit%.mount}.automount"
+    hint="mount $esp_dir"
+
+    entry="$(fstab_entry_for_mountpoint "$mp")"
+    if [[ -n "$entry" ]]; then
+        IFS=$'\t' read -r spec fstype options <<< "$entry"
+        resolved="$(resolve_fstab_source "$spec")"
+        if [[ -z "$resolved" ]] || ! is_block_device "$resolved"; then
+            reason="fstab entry $spec does not resolve to a block device"
+        elif ! same_single_top_disk "$TARGET_DISK" "$resolved"; then
+            reason="fstab entry $spec resolves outside the selected target disk"
+        elif [[ -n "$EFI_ESP_SOURCE" ]]; then
+            local resolved_canon esp_canon
+            resolved_canon="$(canonical_block "$resolved" 2>/dev/null || printf '%s' "$resolved")"
+            esp_canon="$(canonical_block "$EFI_ESP_SOURCE" 2>/dev/null || printf '%s' "$EFI_ESP_SOURCE")"
+            [[ "$resolved_canon" == "$esp_canon" ]] \
+                || reason="fstab entry $spec is not the selected ESP device"
+        fi
+        [[ -n "$reason" ]] || guard_ok=true
+    fi
+
+    if [[ -n "$reason" ]]; then
+        # The fstab guard refused: never attempt a mount.
+        ESP_MOUNT_HINT="$hint"
+        log "ESP mount: auto-mount failed: target=$esp_dir reason=$reason hint=$hint" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+
+    # A systemd automount unit is configuration evidence on its own, so a
+    # "known mountpoint" without an fstab entry may still be brought up by
+    # systemd on the running host.
+    if [[ "$TARGET_ROOT" == "/" ]] && command -v systemctl >/dev/null 2>&1 \
+        && { [[ ",${options:-}," == *,x-systemd.automount,* ]] \
+             || esp_automount_unit_present "$automount_unit"; }; then
+        method="automount"
+        hint="systemctl start $automount_unit"
+        systemctl start "$automount_unit" >/dev/null 2>&1 || true
+        # Starting the automount unit only arms the mount; the kernel performs
+        # it on first access, so touch the path explicitly.
+        ls -d "$esp_dir" >/dev/null 2>&1 || true
+        if ! mountpoint -q "$esp_dir" 2>/dev/null; then
+            # An absent or inactive automount can still be satisfied by the
+            # matching .mount unit, the same action the manual hint prints.
+            hint="systemctl start $unit"
+            systemctl start "$unit" >/dev/null 2>&1 || true
+        fi
+        mountpoint -q "$esp_dir" 2>/dev/null \
+            || reason="systemctl start $unit did not mount the ESP"
+    elif [[ "$guard_ok" == true ]]; then
+        mount -- "$esp_dir" 2>/dev/null \
+            || reason="mount $esp_dir failed"
+    else
+        reason="no fstab entry for $mp and no systemd automount unit"
+    fi
+
+    if [[ -n "$reason" ]]; then
+        ESP_MOUNT_HINT="$hint"
+        log "ESP mount: auto-mount failed: target=$esp_dir reason=$reason hint=$hint" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+
+    # Identify the new mount from the effective mount table; a mount that is
+    # not a FAT filesystem on the selected target disk must never satisfy the
+    # writability preflight.
+    read -r source mounted_fstype < <(
+        findmnt -rn -o SOURCE,FSTYPE --target "$esp_dir" 2>/dev/null \
+            | awk '$1 ~ /^\/dev\// {print $1, $2; exit}'
+    ) || true
+    if [[ -z "$source" ]] || ! is_block_device "$source" \
+        || ! same_single_top_disk "$TARGET_DISK" "$source"; then
+        ESP_MOUNT_HINT="$hint"
+        log "ESP mount: auto-mount failed: target=$esp_dir reason=mounted source ${source:-unknown} is not a block device on the selected target disk hint=$hint" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    case "${mounted_fstype,,}" in
+        vfat|fat|fat16|fat32|msdos) ;;
+        *)
+            ESP_MOUNT_HINT="$hint"
+            log "ESP mount: auto-mount failed: target=$esp_dir reason=mounted source $source is ${mounted_fstype:-unknown}, not FAT hint=$hint" | tee -a "$SESSION_LOG"
+            return 1
+            ;;
+    esac
+
+    if [[ -z "$EFI_ESP_SOURCE" ]]; then
+        EFI_ESP_SOURCE="$source"
+        EFI_ESP_FSTYPE="$mounted_fstype"
+    fi
+    ESP_MOUNT_HINT="$hint"
+    log "ESP mount: mounted target=$esp_dir source=$source method=$method" | tee -a "$SESSION_LOG"
+    return 0
 }
 
 # Probe the effective ESP mount and log the stable evidence line.  Sets:
@@ -725,7 +858,13 @@ esp_writable_preflight()
     [[ "$mode" == "check" || "$mode" == "clear" ]] || fail "Internal ESP preflight mode error: $mode"
     esp_dir="$(esp_mount_path)"
     if ! mountpoint -q "$esp_dir" 2>/dev/null; then
-        fail "EFI System Partition is not mounted at $esp_dir; mount it read-write before repair."
+        # Repair paths only: bring up a configured-but-unmounted ESP (fstab
+        # entry or systemd automount) before refusing.  Read-only diagnostics
+        # never call this preflight, so a diagnostic run still never mounts.
+        esp_auto_mount_if_configured "$esp_dir" || true
+    fi
+    if ! mountpoint -q "$esp_dir" 2>/dev/null; then
+        fail "EFI System Partition is not mounted at $esp_dir; auto-mount did not succeed. Run '${ESP_MOUNT_HINT:-mount $esp_dir}' (or start the systemd mount unit), then re-run the repair."
     fi
     esp_mount_probe "$esp_dir"
     case "$ESP_VERDICT" in
@@ -2674,6 +2813,13 @@ prepare_running_host()
 
     if [[ "$fstype" == "btrfs" ]]; then
         TARGET_SUBVOL="$(current_btrfs_subvol 2>/dev/null || true)"
+    fi
+    # Repair/default paths only: a configured but unmounted ESP is brought up
+    # before the identity/detection probes so the running-host scope sees the
+    # real ESP instead of failing the later repair preflight.  Read-only
+    # diagnostics take the require_rw=no branch and never reach this call.
+    if [[ "$require_rw" == yes ]]; then
+        esp_auto_mount_if_configured "$(esp_mount_path)" || true
     fi
     read_target_os
     EFI_ESP_SOURCE=""

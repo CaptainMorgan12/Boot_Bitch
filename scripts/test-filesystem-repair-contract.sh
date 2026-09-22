@@ -100,9 +100,28 @@ grep -q '^target_mount_top()' "$HELPER"
 grep -q '^esp_mount_probe()' "$HELPER"
 grep -q '^esp_writable_preflight()' "$HELPER"
 grep -q '^esp_mount_cleanup_command()' "$HELPER"
+grep -q '^esp_mount_unit_name()' "$HELPER"
+grep -q '^esp_automount_unit_present()' "$HELPER"
+grep -q '^esp_auto_mount_if_configured()' "$HELPER"
 grep -q '^mount_cleanup_leak_evidence()' "$HELPER"
 grep -q '^mount_records_prune()' "$HELPER"
 grep -q '^PREEXISTING_MOUNTS=()' "$HELPER"
+
+# Auto-mount wiring: the writability preflight brings up a configured-but-
+# unmounted ESP and keeps the actionable hint in its refusal, while every
+# read-only diagnostic entry point stays free of any mount attempt.
+preflight_body="$(sed -n '/^esp_writable_preflight()/,/^}/p' "$HELPER")"
+grep -Fq 'esp_auto_mount_if_configured' <<<"$preflight_body" \
+    || { echo 'FAIL: esp_writable_preflight does not auto-mount a configured unmounted ESP' >&2; exit 1; }
+grep -Fq 'ESP_MOUNT_HINT' <<<"$preflight_body" \
+    || { echo 'FAIL: esp_writable_preflight refusal does not carry the auto-mount hint' >&2; exit 1; }
+for diag_fn in run_host_diagnostic run_target_diagnostic diagnostic_uki; do
+    diag_body="$(sed -n "/^${diag_fn}()/,/^}/p" "$HELPER")"
+    if grep -Fq 'esp_auto_mount_if_configured' <<<"$diag_body"; then
+        echo "FAIL: read-only ${diag_fn} calls the ESP auto-mount" >&2
+        exit 1
+    fi
+done
 rw_probe_body="$(sed -n '/^target_path_is_mounted_rw()/,/^}/p' "$HELPER")"
 grep -q 'target_mount_top' <<<"$rw_probe_body" \
     || { echo 'FAIL: target_path_is_mounted_rw does not use the topmost-mount probe' >&2; exit 1; }
@@ -132,6 +151,10 @@ grep -Fq 'esp_writable_preflight check' <<<"$builder_body" \
 host_prepare_body="$(sed -n '/^prepare_running_host()/,/^}/p' "$HELPER")"
 grep -Fq 'esp_writable_preflight clear' <<<"$host_prepare_body" \
     || { echo 'FAIL: prepare_running_host does not run the ESP writability preflight' >&2; exit 1; }
+grep -Fq 'esp_auto_mount_if_configured' <<<"$host_prepare_body" \
+    || { echo 'FAIL: prepare_running_host does not auto-mount a configured unmounted ESP' >&2; exit 1; }
+grep -Fq 'require_rw" == yes' <<<"$host_prepare_body" \
+    || { echo 'FAIL: prepare_running_host auto-mount is not gated on the repair write intent' >&2; exit 1; }
 if grep -Fq 'target_path_is_mounted_rw "$TARGET_ESP_MOUNT"' <<<"$host_prepare_body"; then
     echo 'FAIL: prepare_running_host still gates the ESP on the bottom-row probe' >&2
     exit 1
@@ -283,6 +306,47 @@ cat > "$sandbox/mockbin/mount" <<'MOCK'
 #!/usr/bin/env bash
 set -euo pipefail
 [[ -n "${FAKE_MOUNT_LOG:-}" ]] && printf '%s\n' "$*" >> "$FAKE_MOUNT_LOG"
+if [[ -n "${FAKE_MOUNT_FAIL:-}" ]]; then
+    printf 'mount: %s: mount failed\n' "${!#}" >&2
+    exit 1
+fi
+# A successful mount becomes visible to mountpoint/findmnt so the helper's
+# post-mount verification exercises the real follow-up probes.
+if [[ -n "${FAKE_MOUNT_ADD_POINT:-}" && -n "${FAKE_MOUNTPOINT_DB:-}" ]]; then
+    printf '%s\n' "$FAKE_MOUNT_ADD_POINT" >> "$FAKE_MOUNTPOINT_DB"
+fi
+if [[ -n "${FAKE_MOUNT_ADD_ROW:-}" && -n "${FAKE_FINDMNT_DB:-}" ]]; then
+    printf '%s\n' "$FAKE_MOUNT_ADD_ROW" >> "$FAKE_FINDMNT_DB"
+fi
+exit 0
+MOCK
+
+# systemd stub for the automount trigger.  list-unit-files publishes the
+# configured unit names; start records the call and can publish the mount the
+# kernel automount would create on first access.
+cat > "$sandbox/mockbin/systemctl" <<'MOCK'
+#!/usr/bin/env bash
+set -euo pipefail
+[[ -n "${FAKE_SYSTEMCTL_LOG:-}" ]] && printf '%s\n' "$*" >> "$FAKE_SYSTEMCTL_LOG"
+case "${1:-}" in
+    list-unit-files)
+        [[ -n "${FAKE_SYSTEMCTL_UNITS:-}" ]] && printf '%s\n' "$FAKE_SYSTEMCTL_UNITS"
+        exit 0
+        ;;
+    start)
+        if [[ -n "${FAKE_SYSTEMCTL_FAIL:-}" ]]; then
+            printf 'Failed to start %s\n' "${2:-}" >&2
+            exit 1
+        fi
+        if [[ -n "${FAKE_SYSTEMCTL_ADD_POINT:-}" && -n "${FAKE_MOUNTPOINT_DB:-}" ]]; then
+            printf '%s\n' "$FAKE_SYSTEMCTL_ADD_POINT" >> "$FAKE_MOUNTPOINT_DB"
+        fi
+        if [[ -n "${FAKE_SYSTEMCTL_ADD_ROW:-}" && -n "${FAKE_FINDMNT_DB:-}" ]]; then
+            printf '%s\n' "$FAKE_SYSTEMCTL_ADD_ROW" >> "$FAKE_FINDMNT_DB"
+        fi
+        exit 0
+        ;;
+esac
 exit 0
 MOCK
 
@@ -385,12 +449,14 @@ export FAKE_FINDMNT_DB="$sandbox/findmnt.db"
 export FAKE_MOUNTPOINT_DB="$sandbox/mountpoints.txt"
 export FAKE_MOUNT_LOG="$sandbox/mount.log"
 export FAKE_UMOUNT_LOG="$sandbox/umount.log"
+export FAKE_SYSTEMCTL_LOG="$sandbox/systemctl.log"
 export FAKE_TOOL_LOG="$sandbox/tools.log"
 export FAKE_DEV_DIR="$sandbox"
 : > "$FAKE_FINDMNT_DB"
 : > "$FAKE_MOUNTPOINT_DB"
 : > "$FAKE_MOUNT_LOG"
 : > "$FAKE_UMOUNT_LOG"
+: > "$FAKE_SYSTEMCTL_LOG"
 : > "$FAKE_TOOL_LOG"
 
 # Generated harness: sources the helper without main and replaces only the
@@ -1561,12 +1627,14 @@ grep -Fq 'PASS: vendor UKI command produced a changed TUX.EFI image.' <<<"$rebui
     || { echo 'FAIL: rebuild did not clear exactly the two leaked layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
 
 # 11f: host-path join.  With TARGET_ROOT="/" the real mount entry must resolve
-# /boot/efi (not //boot/efi), record the pre-existing systemd mount and never
-# mount over it.
+# /boot (not //boot), record the pre-existing systemd mount and never mount
+# over it.  /boot is used instead of /boot/efi because every rig (including the
+# BIOS Alpine guest that runs this contract during the package check phase) has
+# it, while a BIOS rig has no /boot/efi directory for the mount probe to stat.
 cat > "$FAKE_FINDMNT_DB" <<MNT
-/boot/efi /dev/test-efi vfat rw 612
+/boot /dev/test-efi vfat rw 612
 MNT
-printf '/boot/efi\n' > "$FAKE_MOUNTPOINT_DB"
+printf '/boot\n' > "$FAKE_MOUNTPOINT_DB"
 : > "$FAKE_MOUNT_LOG"
 join_out="$(run_harness '
 TARGET_ROOT="/"
@@ -1580,18 +1648,130 @@ resolve_fstab_source() { printf "/dev/test-efi\n"; }
 same_single_top_disk() { return 0; }
 realpath_existing() { printf "%s\n" "$1"; }
 eval "$real_mount_target_boot_entry"
-mount_target_boot_entry "/boot/efi" ro
-printf "JOIN:%s\n" "$(target_path "/boot/efi")"
+mount_target_boot_entry "/boot" ro
+printf "JOIN:%s\n" "$(target_path "/boot")"
 printf "PREEXISTING:%s\n" "${PREEXISTING_MOUNTS[*]}"
 ')"
-grep -Fqx 'JOIN:/boot/efi' <<<"$join_out" \
+grep -Fqx 'JOIN:/boot' <<<"$join_out" \
     || { echo 'FAIL: the host-path join produced a double slash' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
-grep -Fqx 'PREEXISTING:/boot/efi|/dev/test-efi|rw|612' <<<"$join_out" \
+grep -Fqx 'PREEXISTING:/boot|/dev/test-efi|rw|612' <<<"$join_out" \
     || { echo 'FAIL: the pre-existing ESP mount was not recorded' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
 [[ ! -s "$FAKE_MOUNT_LOG" ]] \
     || { echo 'FAIL: mount_target_boot_entry mounted over the pre-existing mount' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
 
-# 11g: cleanup leak evidence.  An unmount that fails must emit MOUNT_LEAK, keep
+# 11g: unmounted fstab ESP.  The ESP is configured in the target fstab but not
+# mounted; the preflight must mount it, re-run the writability probe and pass
+# only after the new mount is verified as the ESP on the selected target disk.
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+/dev/test-root  /          ext4  defaults  0 1
+/dev/test-boot  /boot      ext4  defaults  0 2
+/dev/test-efi   /boot/efi  vfat  defaults  0 2
+FSTAB
+: > "$FAKE_FINDMNT_DB"
+: > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_SYSTEMCTL_LOG"
+unmounted_ok="$(FAKE_MOUNT_ADD_POINT="$esp_dir" FAKE_MOUNT_ADD_ROW="$esp_dir /dev/test-efi vfat rw 900" run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_DISK=/dev/test-disk
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight clear
+')"
+grep -Fq "ESP mount: mounted target=$esp_dir source=/dev/test-efi method=mount" <<<"$unmounted_ok" \
+    || { echo 'FAIL: unmounted fstab ESP was not auto-mounted with evidence' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
+grep -Fq "ESP mount preflight: target=$esp_dir stack=1 top-source=/dev/test-efi top-options=rw top-id=900 verdict=rw leaked-ro=0" <<<"$unmounted_ok" \
+    || { echo 'FAIL: auto-mount did not re-run the writability probe on the new mount' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
+grep -Fq -- "-- $esp_dir" "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: auto-mount did not use the fstab-backed mount path' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+[[ "$(wc -l < "$FAKE_MOUNT_LOG")" -eq 1 ]] \
+    || { echo 'FAIL: auto-mount mounted more than the configured ESP' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+[[ ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
+    || { echo 'FAIL: the target-scope auto-mount triggered systemd' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
+
+# 11h: systemd automount trigger on the running host.  The fstab entry carries
+# x-systemd.automount; the preflight must trigger the automount unit instead
+# of calling mount, then verify the mount the kernel creates on access.  /boot
+# is used for the same every-rig existence reason as 11f.
+: > "$FAKE_FINDMNT_DB"
+: > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_SYSTEMCTL_LOG"
+automount_ok="$(FAKE_SYSTEMCTL_ADD_POINT=/boot FAKE_SYSTEMCTL_ADD_ROW='/boot /dev/test-efi vfat rw 901' run_harness '
+TARGET_ROOT="/"
+TARGET_DISK=/dev/test-disk
+TARGET_ESP_MOUNT=/boot
+EFI_ESP_SOURCE=
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+fstab_entry_for_mountpoint() { printf "/dev/test-efi\tvfat\tdefaults,x-systemd.automount\n"; }
+esp_writable_preflight clear
+')"
+grep -Fq 'ESP mount: mounted target=/boot source=/dev/test-efi method=automount' <<<"$automount_ok" \
+    || { echo 'FAIL: the systemd automount was not triggered with evidence' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
+grep -Fq 'ESP mount preflight: target=/boot stack=1 top-source=/dev/test-efi top-options=rw top-id=901 verdict=rw leaked-ro=0' <<<"$automount_ok" \
+    || { echo 'FAIL: the automount trigger did not re-run the writability probe' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
+grep -Fq 'start boot.automount' "$FAKE_SYSTEMCTL_LOG" \
+    || { echo 'FAIL: the automount unit was not started' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
+[[ ! -s "$FAKE_MOUNT_LOG" ]] \
+    || { echo 'FAIL: the automount path called mount directly' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+
+# 11i: auto-mount failure refusal.  A configured ESP whose mount fails must
+# fail closed with the auto-mount evidence and the actionable hint, never
+# continue to the repair.
+: > "$FAKE_FINDMNT_DB"
+: > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_SYSTEMCTL_LOG"
+if unmounted_fail="$(FAKE_MOUNT_FAIL=1 run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_DISK=/dev/test-disk
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight clear
+' 2>&1)"; then
+    echo 'FAIL: the preflight passed although the ESP auto-mount failed' >&2
+    exit 1
+fi
+grep -Fq "ESP mount: auto-mount failed: target=$esp_dir reason=mount $esp_dir failed hint=mount $esp_dir" <<<"$unmounted_fail" \
+    || { echo 'FAIL: the auto-mount failure evidence line is missing or wrong' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
+grep -Fq "auto-mount did not succeed. Run 'mount $esp_dir'" <<<"$unmounted_fail" \
+    || { echo 'FAIL: the preflight refusal does not carry the actionable hint' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
+[[ ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
+    || { echo 'FAIL: the failed target-scope auto-mount triggered systemd' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
+
+# 11j: already-mounted ESP no-op.  A writable topmost ESP mount must pass
+# without any mount or systemctl call.
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir /dev/test-efi vfat rw 902
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_SYSTEMCTL_LOG"
+mounted_noop="$(run_harness '
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_DISK=/dev/test-disk
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+esp_writable_preflight check
+')"
+grep -Fq "ESP mount preflight: target=$esp_dir stack=1 top-source=/dev/test-efi top-options=rw top-id=902 verdict=rw leaked-ro=0" <<<"$mounted_noop" \
+    || { echo 'FAIL: an already-mounted writable ESP did not pass the probe' >&2; printf '%s\n' "$mounted_noop" >&2; exit 1; }
+if grep -Fq 'ESP mount:' <<<"$mounted_noop"; then
+    echo 'FAIL: an already-mounted ESP emitted auto-mount evidence' >&2
+    printf '%s\n' "$mounted_noop" >&2
+    exit 1
+fi
+[[ ! -s "$FAKE_MOUNT_LOG" && ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
+    || { echo 'FAIL: an already-mounted ESP triggered mount/systemctl' >&2; exit 1; }
+
+# 11k: cleanup leak evidence.  An unmount that fails must emit MOUNT_LEAK, keep
 # the record in the process-independent state file and never be swallowed.
 printf '%s\n' "$sandbox/target/home" > "$FAKE_MOUNTPOINT_DB"
 printf '%s /dev/test-home xfs rw 77\n' "$sandbox/target/home" > "$FAKE_FINDMNT_DB"
