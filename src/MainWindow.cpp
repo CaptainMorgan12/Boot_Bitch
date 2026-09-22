@@ -11839,15 +11839,16 @@ void MainWindow::runSelectedDiagnostic()
         } else {
             m_targetDiagnosticCache.insert(key, diagnosticBody);
             m_targetDiagnosticTimes.insert(key, capturedAt);
-            // Merge the fresh section into the cached combined report. A
-            // report captured by an older helper (or no report at all) is left
-            // untouched; updateDiagnosticDetails() then shows the explicit
-            // re-run notice instead of a blank Full report pane.
-            mergeDiagnosticReportSection(false, key, reportSection, capturedAt);
             if (ok && !diagnosticBody.trimmed().isEmpty()) {
                 // A successful manual re-run satisfies this section's
-                // invalidation; the other stale sections stay stale.
+                // invalidation; the other stale sections stay stale. Merge the
+                // fresh section into the cached combined report so the Full
+                // report stays usable. A failed run never replaces a good
+                // embedded section; a report captured by an older helper (or
+                // no report at all) is left untouched and the Diagnostics pane
+                // shows the explicit re-run notice instead of a blank pane.
                 m_targetDiagnosticsStaleSections.remove(key);
+                mergeDiagnosticReportSection(false, key, reportSection, capturedAt);
             }
             if (!capabilityPreamble.isEmpty()) {
                 m_targetDiagnosticCache.insert(QStringLiteral("capabilities"), capabilityPreamble);
@@ -11863,11 +11864,11 @@ void MainWindow::runSelectedDiagnostic()
         } else {
             m_hostDiagnosticCache.insert(key, diagnosticBody);
             m_hostDiagnosticTimes.insert(key, capturedAt);
-            // See the target branch: keep the cached Full report usable by
-            // merging the freshly captured section into it.
-            mergeDiagnosticReportSection(true, key, reportSection, capturedAt);
             if (ok && !diagnosticBody.trimmed().isEmpty()) {
+                // See the target branch: a successful re-run keeps the cached
+                // Full report usable by merging the fresh section into it.
                 m_hostDiagnosticsStaleSections.remove(key);
+                mergeDiagnosticReportSection(true, key, reportSection, capturedAt);
             }
             if (!capabilityPreamble.isEmpty()) {
                 m_hostDiagnosticCache.insert(QStringLiteral("capabilities"), capabilityPreamble);
