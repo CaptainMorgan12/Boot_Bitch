@@ -69,7 +69,11 @@ package_available()
 {
     local package="$1"
     case "$family" in
-        debian) apt-cache show "$package" >/dev/null 2>&1 ;;
+        # apt-cache show also succeeds for packages whose candidate is gone
+        # (for example Debian trixie's transitional ntfsprogs or the
+        # contrib-only zfsutils-linux); installing those would fail the whole
+        # apt-get transaction, so require a real candidate.
+        debian) apt-cache policy "$package" 2>/dev/null | grep -q '^  Candidate: [^()]' ;;
         arch) pacman -Si "$package" >/dev/null 2>&1 ;;
         alpine) apk search --exact --quiet "$package" 2>/dev/null | grep -q . ;;
         rpm) dnf -q list --available "$package" >/dev/null 2>&1 ;;

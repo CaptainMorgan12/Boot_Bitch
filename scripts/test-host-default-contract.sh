@@ -423,7 +423,14 @@ efibootmgr()
                 esac
             done
             [[ -n "${EFI_TEST_CREATE_LOADER_OVERRIDE:-}" ]] && loader="$EFI_TEST_CREATE_LOADER_OVERRIDE"
-            printf 'Boot%s* %s HD(1,GPT,%s,0x1000,0x200000)/%s\n' "$id" "$label" "$partuuid" "$loader" >> "$EFI_TEST_STATE"
+            if [[ "${EFI_TEST_CREATE_FILE_WRAP:-0}" == 1 ]]; then
+                # Debian's efibootmgr 18 package renders the created file path
+                # as `HD(...)/File(\EFI\...)`; keep that form for the D1
+                # regression fixture.
+                printf 'Boot%s* %s HD(1,GPT,%s,0x1000,0x200000)/File(%s)\n' "$id" "$label" "$partuuid" "$loader" >> "$EFI_TEST_STATE"
+            else
+                printf 'Boot%s* %s HD(1,GPT,%s,0x1000,0x200000)/%s\n' "$id" "$label" "$partuuid" "$loader" >> "$EFI_TEST_STATE"
+            fi
             ;;
         -o)
             sed -i -E "s/^BootOrder:.*/BootOrder: $2/" "$EFI_TEST_STATE"
@@ -1612,6 +1619,49 @@ grep -Eq "^Boot0003\* alpine TestModel HD\(1,GPT,$FOREIGN_PARTUUID" "$EFI_TEST_S
     || fail_test 'G9 pruned or relabeled the foreign same-path entry'
 [[ "$(grep -c '/\\EFI\\alpine\\grubx64.efi' "$EFI_TEST_STATE" || true)" -eq 2 ]] \
     || fail_test 'G9 lost one of the two same-loader entries'
+
+# ---------------------------------------------------------------------------
+# D1 (Debian): efibootmgr 18 on Debian renders a decoded file path as
+# `HD(...)/File(\EFI\...)` instead of `HD(...)/\EFI\...`. The canonical
+# identity lookup, label parsing and the created-entry verification must accept
+# that form, promote the canonical EFI/arch/grubx64.efi entry and stay
+# idempotent without rewriting the Debian device-path shape.
+# ---------------------------------------------------------------------------
+reset_generic_fixture
+EFI_TEST_CREATE_FILE_WRAP=1
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0002
+BootOrder: 0002,0001
+Boot0001* tuxedo HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/File(\\EFI\\tuxedo\\shimx64.efi)
+Boot0002* UEFI OS HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/File(\\EFI\\BOOT\\BOOTX64.EFI)
+EOF
+if ! ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/d1.out" 2>&1; then
+    cat "$WORK_ROOT/d1.out" >&2
+    fail_test 'D1 Debian File() run_host_default failed'
+fi
+grep -Fq "Host default: entry=Boot0009 label='arch TestModel' loader=\\EFI\\arch\\grubx64.efi action=created" "$WORK_ROOT/d1.out" \
+    || fail_test 'D1 did not create the canonical arch entry from the Debian File() form'
+grep -Eq '^BootOrder: 0009,0002,0001$' "$EFI_TEST_STATE" \
+    || fail_test 'D1 did not promote the canonical entry while retaining the fallback/foreign entries'
+grep -Eq "^Boot0009\* arch TestModel HD\(1,GPT,$HOST_PARTUUID,0x1000,0x200000\)/File\(\\\\EFI\\\\arch\\\\grubx64\.efi\)$" "$EFI_TEST_STATE" \
+    || fail_test 'D1 did not keep the created Debian File() entry intact'
+grep -Fq 'Repair change status host-default: changed' "$WORK_ROOT/d1.out" \
+    || fail_test 'D1 change status is not changed'
+
+# D1 idempotence: the second run parses the Debian File() entry for identity
+# and reports unchanged with zero mutations.
+cp -- "$EFI_TEST_STATE" "$WORK_ROOT/d1-before-second.txt"
+if ! ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/d1b.out" 2>&1; then
+    cat "$WORK_ROOT/d1b.out" >&2
+    fail_test 'D1 second run_host_default failed'
+fi
+grep -Fq "Host default: entry=Boot0009 label='arch TestModel' loader=\\EFI\\arch\\grubx64.efi action=reused" "$WORK_ROOT/d1b.out" \
+    || fail_test 'D1 second run did not reuse the Debian File() entry'
+grep -Fq 'Repair change status host-default: unchanged' "$WORK_ROOT/d1b.out" \
+    || fail_test 'D1 second run was not idempotent/unchanged'
+cmp -s "$WORK_ROOT/d1-before-second.txt" "$EFI_TEST_STATE" \
+    || fail_test 'D1 second run changed the firmware state'
+EFI_TEST_CREATE_FILE_WRAP=0
 
 # F8: next_entry and prev_saved_entry are deliberate state owned by GRUB and
 # must survive the guarded saved_entry write untouched.

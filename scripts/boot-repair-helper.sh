@@ -14659,9 +14659,14 @@ efi_entry_id_line()
         | tr '[:lower:]' '[:upper:]'
 }
 
+# Normalize one efibootmgr Boot#### definition line.  Debian's efibootmgr 18
+# package renders a decoded file path as `HD(...)/File(\EFI\...)`, while most
+# distributions render the same path as `HD(...)/\EFI\...`; normalize the
+# wrapped form (including the closing parenthesis) so every parser below sees
+# one device-path shape.
 efi_entry_definition_line()
 {
-    sed -E 's/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]+//; s/[[:space:]]+/ /g; s/^ //; s/ $//' <<<"$1"
+    sed -E 's/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]+//; s/[[:space:]]+/ /g; s/^ //; s/ $//; s#\)/[Ff]ile\(([^)]*)\)#)/\1#g' <<<"$1"
 }
 
 efi_entry_label_line()
@@ -14686,8 +14691,9 @@ efi_entry_partuuid_line()
 
 efi_entry_loader_line()
 {
-    local line="$1" loader_re='HD\([^)]*\)/([^[:space:]]+)'
-    if [[ "$line" =~ $loader_re ]]; then
+    local line="$1" definition loader_re='HD\([^)]*\)/([^[:space:]]+)'
+    definition="$(efi_entry_definition_line "$line")"
+    if [[ "$definition" =~ $loader_re ]]; then
         # efibootmgr appends optional-data bytes (commonly `0000424f`) after
         # a normal `.EFI` file path. They are not part of the loader name and
         # cannot be passed back through --loader, so preserve the path while
@@ -17124,15 +17130,15 @@ host_default_rollback()
     fi
 
     if [[ -n "$old_order" ]]; then
-        efibootmgr -o "$old_order" 2>&1 | tee -a "$SESSION_LOG" || true
+        efibootmgr -o "$old_order" 2>&1 | tee -a "$SESSION_LOG" >&2 || true
     fi
     if [[ -n "$created_id" ]]; then
-        efibootmgr -b "$created_id" -B 2>&1 | tee -a "$SESSION_LOG" || true
+        efibootmgr -b "$created_id" -B 2>&1 | tee -a "$SESSION_LOG" >&2 || true
     fi
     if [[ -n "$old_next" ]]; then
-        efibootmgr -n "$old_next" 2>&1 | tee -a "$SESSION_LOG" || true
+        efibootmgr -n "$old_next" 2>&1 | tee -a "$SESSION_LOG" >&2 || true
     elif grep -q '^BootNext:' "$pre"; then
-        efibootmgr -N 2>&1 | tee -a "$SESSION_LOG" || true
+        efibootmgr -N 2>&1 | tee -a "$SESSION_LOG" >&2 || true
     fi
 
     current_file="$SESSION_DIR/efi-nvram-host-default-rollback.txt"
