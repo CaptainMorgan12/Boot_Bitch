@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+- Rank grouped EFI `BootOrder` entries by boot-use class before drive: each
+  drive's primary destinations (UKI, then the managed fallback and the
+  firmware-owned fallback-device-path record) stay contiguous, the WebFAI
+  recovery entries follow drive-major, then the remaining managed entries
+  (shim, vendor loader, other), removable no-PARTUUID records are always last,
+  and drives keep host-first first-seen order. The read-only EFI inventory
+  annotates firmware-created device-path options (for example a USB stick's
+  `UEFI: <media>, Partition 1` record) as no-managed-OS entries preserved
+  untouched and reports a per-drive `removable` count.
 - Fix the AppImage administrator-authorization failure where Unlock and Host
   Maintenance reported `Permission denied` for
   `/tmp/.mount_*/usr/libexec/boot-repair/boot-repair-helper`: an AppImage is

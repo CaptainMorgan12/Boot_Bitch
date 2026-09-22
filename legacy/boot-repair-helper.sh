@@ -16367,6 +16367,24 @@ efi_entry_policy_role()
     fi
 }
 
+# Read-only inventory annotation for firmware-created device-path options.
+# They have no managed OS behind them: a `UEFI: <media>, Partition 1` record
+# is what the firmware writes for a USB stick (or any device-path media) with
+# an EFI partition, and a partition-only record with a GPT PARTUUID is the
+# drive's firmware-owned fallback record.  Both are preserved exactly, never
+# pruned or relabeled, so the inventory names them explicitly.
+efi_entry_device_path_note()
+{
+    local line="$1" part role
+    part="$(efi_entry_partuuid_line "$line")"
+    role="$(efi_entry_policy_role "$line")"
+    if [[ -z "$part" ]]; then
+        printf ' [firmware-created device-path option for removable/device-path media (e.g. a USB stick with an EFI partition); no managed OS; preserved untouched]'
+    elif [[ "$role" == fallback-device-path ]]; then
+        printf ' [firmware-created device-path record; no managed OS; preserved untouched]'
+    fi
+}
+
 efi_selected_wfai_loader()
 {
     local efi_root="$TARGET_ROOT${TARGET_ESP_MOUNT:-/boot/efi}/EFI" path relative
@@ -16723,17 +16741,20 @@ efi_prune_selected_duplicate_destinations()
     log "PASS: selected ESP firmware destinations reconciled; removed Boot$removed_ids." | tee -a "$SESSION_LOG"
 }
 
-# Reorder BootOrder so every drive's entries stay contiguous: the host ESP
-# group first, then the selected repair ESP when distinct, then each other
-# drive/ESP in its existing relative order, with entries that carry no
-# PARTUUID (USB/removable device paths) last.  Inside one drive the managed
-# routes are ordered UKI, vendor loader, shim, fallback, WebFAI, then
-# firmware-owned device paths and unknowns.  Entries intentionally omitted
-# from BootOrder and all unrecognized paths are preserved exactly; the sort
-# never invents or drops a firmware ID.
+# Reorder BootOrder by boot-use class before drive: class primary = each
+# drive's UKI, then its fallback (managed BOOTX64.EFI, then the firmware-owned
+# device-path record); class WebFAI = iPXE/WebFAI recovery entries, drive-major
+# in the same host-first drive order; class managed = shim, vendor loader and
+# other PARTUUID-bound entries; class removable last for entries whose device
+# path carries no GPT PARTUUID (USB/removable media or undecodable
+# firmware-created device paths).  Drives are ordered host ESP first, then the
+# selected repair ESP when distinct, then every other ESP in its existing
+# first-seen order.  Entries intentionally omitted from BootOrder and all
+# unrecognized paths are preserved exactly; the sort never invents or drops a
+# firmware ID.
 efi_group_firmware_boot_order()
 {
-    local current_file line id part role_key group rank seq current_order sorted_order candidate_file
+    local current_file line id part role_key policy_class group rank seq current_order sorted_order candidate_file
     local drive_index drive_found next_group=10 order_id
     local -a ids=()
     local -a drive_keys=() drive_groups=()
@@ -16797,46 +16818,51 @@ efi_group_firmware_boot_order()
         part="$(efi_entry_partuuid_line "$line")"
         role_key="$(efi_entry_policy_role "$line")"
 
-        if [[ -n "$part" && "$part" == "$(legacy_lc "$EFI_HOST_ESP_PARTUUID")" ]]; then
-            group=0
-        elif [[ -n "$part" && "$part" == "$(legacy_lc "$EFI_TARGET_ESP_PARTUUID")" ]]; then
-            group=1
-        elif [[ -n "$part" ]]; then
-            group=""
-            for ((drive_index = 0; drive_index < ${#drive_keys[@]}; drive_index++)); do
-                if [[ "${drive_keys[drive_index]}" == "$part" ]]; then
-                    group="${drive_groups[drive_index]}"
-                    break
-                fi
-            done
-            if [[ -z "$group" ]]; then
-                drive_keys+=("$part")
-                group="$next_group"
-                drive_groups+=("$group")
-                next_group=$((next_group + 10))
-            fi
-        else
+        if [[ -z "$part" ]]; then
             # Entries whose device path carries no GPT PARTUUID (removable or
-            # MBR media) form their own trailing group.
-            group=999999
+            # MBR media, undecodable firmware-created device paths) always sort
+            # last, in first-seen order, and are preserved exactly.
+            policy_class=3
+            group=0
+            rank=0
+        else
+            if [[ "$part" == "$(legacy_lc "$EFI_HOST_ESP_PARTUUID")" ]]; then
+                group=0
+            elif [[ "$part" == "$(legacy_lc "$EFI_TARGET_ESP_PARTUUID")" ]]; then
+                group=1
+            else
+                group=""
+                for ((drive_index = 0; drive_index < ${#drive_keys[@]}; drive_index++)); do
+                    if [[ "${drive_keys[drive_index]}" == "$part" ]]; then
+                        group="${drive_groups[drive_index]}"
+                        break
+                    fi
+                done
+                if [[ -z "$group" ]]; then
+                    drive_keys+=("$part")
+                    group="$next_group"
+                    drive_groups+=("$group")
+                    next_group=$((next_group + 10))
+                fi
+            fi
+            case "$role_key" in
+                uki) policy_class=0; rank=0 ;;
+                fallback) policy_class=0; rank=1 ;;
+                fallback-device-path) policy_class=0; rank=2 ;;
+                wfai) policy_class=1; rank=0 ;;
+                shim) policy_class=2; rank=0 ;;
+                loader) policy_class=2; rank=1 ;;
+                *) policy_class=2; rank=2 ;;
+            esac
         fi
-        case "$role_key" in
-            uki) rank=0 ;;
-            loader) rank=1 ;;
-            shim) rank=2 ;;
-            fallback) rank=3 ;;
-            wfai) rank=4 ;;
-            fallback-device-path) rank=5 ;;
-            *) rank=6 ;;
-        esac
         if [[ -z "$(legacy_assoc_get order_index "$id")" ]]; then
             legacy_assoc_set order_index "$id" $((100000 + seq))
         fi
-        printf '%d\t%03d\t%06d\t%s\n' "$group" "$rank" "$(legacy_assoc_get order_index "$id")" "$id" >> "$candidate_file"
+        printf '%d\t%d\t%03d\t%06d\t%s\n' "$policy_class" "$group" "$rank" "$(legacy_assoc_get order_index "$id")" "$id" >> "$candidate_file"
         seq=$((seq + 1))
     done < <(legacy_sed_ext -n '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' "$current_file")
 
-    sorted_order="$(sort -n -k1,1 -k2,2 -k3,3 "$candidate_file" | cut -f4 | paste -sd, -)"
+    sorted_order="$(sort -n -k1,1 -k2,2 -k3,3 -k4,4 "$candidate_file" | cut -f5 | paste -sd, -)"
     [[ -n "$sorted_order" && "$sorted_order" != "$current_order" ]] || {
         log "PASS: EFI BootOrder already groups each drive's firmware destinations by normal use." | tee -a "$SESSION_LOG"
         return 0
@@ -17022,7 +17048,7 @@ efi_print_firmware_inventory()
 {
     local nvram="$1" line id class part label loader role selected_label="repair-ESP"
     local drive_part drive_class drive_index drive_found
-    local entries uki fallback wfai shim devpath loader_count other
+    local entries uki fallback wfai shim devpath loader_count other removable
     local -a drive_order=()
     [[ -s "$nvram" ]] || return 0
     efi_set_inventory_esp_ids
@@ -17039,8 +17065,9 @@ efi_print_firmware_inventory()
         label="$(efi_entry_label_line "$line")"
         loader="$(efi_entry_loader_line "$line" || true)"
         role="$(efi_entry_destination_role "$line")"
-        printf '  Boot%s class=%s role=%s partuuid=%s label=%s loader=%s\n' \
-            "$id" "$class" "$role" "${part:-unknown}" "$label" "${loader:-device-path-only}"
+        printf '  Boot%s class=%s role=%s partuuid=%s label=%s loader=%s%s\n' \
+            "$id" "$class" "$role" "${part:-unknown}" "$label" "${loader:-device-path-only}" \
+            "$(efi_entry_device_path_note "$line")"
         drive_part="${part:-unknown}"
         drive_found=0
         for ((drive_index = 0; drive_index < ${#drive_order[@]}; drive_index++)); do
@@ -17056,7 +17083,10 @@ efi_print_firmware_inventory()
 
     # Read-only per-drive policy evidence: one summary line per detected
     # drive/ESP so the one-UKI/one-fallback/one-WFAI/optional-shim policy and
-    # the preserved firmware device-path records are visible at a glance.
+    # the preserved firmware device-path records are visible at a glance.  The
+    # trailing `removable` count names entries whose device path carries no GPT
+    # PARTUUID (removable/device-path media such as a USB stick with an EFI
+    # partition); they are preserved untouched and never get a managed OS.
     for drive_part in "${drive_order[@]:-}"; do
         entries=0
         uki=0
@@ -17066,12 +17096,14 @@ efi_print_firmware_inventory()
         devpath=0
         loader_count=0
         other=0
+        removable=0
         while IFS= read -r line; do
             id="$(efi_entry_id_line "$line")"
             [[ -n "$id" ]] || continue
             part="$(efi_entry_partuuid_line "$line")"
             [[ "${part:-unknown}" == "$drive_part" ]] || continue
             entries=$((entries + 1))
+            [[ -n "$part" ]] || removable=$((removable + 1))
             case "$(efi_entry_policy_role "$line")" in
                 uki) uki=$((uki + 1)) ;;
                 fallback) fallback=$((fallback + 1)) ;;
@@ -17091,8 +17123,8 @@ efi_print_firmware_inventory()
         else
             drive_class=foreign
         fi
-        printf 'EFI drive summary: partuuid=%s class=%s entries=%d uki=%d fallback=%d wfai=%d shim=%d device-path=%d loader=%d other=%d\n' \
-            "$drive_part" "$drive_class" "$entries" "$uki" "$fallback" "$wfai" "$shim" "$devpath" "$loader_count" "$other"
+        printf 'EFI drive summary: partuuid=%s class=%s entries=%d uki=%d fallback=%d wfai=%d shim=%d device-path=%d loader=%d other=%d removable=%d\n' \
+            "$drive_part" "$drive_class" "$entries" "$uki" "$fallback" "$wfai" "$shim" "$devpath" "$loader_count" "$other" "$removable"
     done
 }
 

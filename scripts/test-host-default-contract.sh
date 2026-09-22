@@ -557,7 +557,10 @@ grep -Eq "^Boot0009\* TUXEDO UKI TestModel .*HD\(1,GPT,$HOST_PARTUUID" "$EFI_TES
     || fail_test 'T1 did not create the host UKI entry with the host PARTUUID'
 grep -Fq '/\EFI\BOOT\TUX.EFI' "$EFI_TEST_STATE" \
     || fail_test 'T1 created entry does not reference TUX.EFI'
-grep -q '^BootOrder: 0009,0002,0001,0003' "$EFI_TEST_STATE" \
+# Primary class first (host UKI, host fallback, foreign fallback-device-path),
+# then the foreign shim: a fallback record is a primary destination, a shim is
+# a managed entry after the WebFAI class.
+grep -q '^BootOrder: 0009,0002,0003,0001' "$EFI_TEST_STATE" \
     || fail_test 'T1 did not promote the UKI first while preserving every other ID'
 for id in 0001 0002 0003; do
     grep -Eq "^Boot${id}\*?[[:space:]]" "$EFI_TEST_STATE" \

@@ -10,8 +10,11 @@
 #   * firmware-generated device-path records are preserved exactly and never
 #     displace the managed BOOTX64.EFI fallback;
 #   * foreign-drive entries are preserved untouched;
-#   * BootOrder groups every drive's entries contiguously, with removable
-#     (no-PARTUUID) entries last.
+#   * BootOrder ranks each drive's primary destinations first (UKI, then the
+#     managed fallback and the firmware-owned fallback-device-path record),
+#     then the WebFAI recovery entries drive-major in the same host-first
+#     drive order, then the remaining managed entries (shim, vendor loader,
+#     other), with removable (no-PARTUUID) entries last.
 #
 # The helper under test is sourced dynamically and its globals are set
 # directly, so ShellCheck cannot track their use.
@@ -203,7 +206,8 @@ host_role_count()
 # P1: the TUXEDO log state.  A managed fallback and a firmware device-path
 # fallback coexist on the host ESP: annotate relabels the managed entry, prune
 # must keep it (the observed regression removed it) and preserve the
-# device-path record, and grouping keeps each drive's entries contiguous.
+# device-path record, and grouping ranks each drive's primary pair first, the
+# WebFAI entries after them, and the removable USB record last.
 # ---------------------------------------------------------------------------
 reset_fixture
 cat > "$EFI_TEST_STATE" <<EOF
@@ -238,17 +242,22 @@ grep -Eq "^Boot0004\* WFAI TestModel HD\(1,GPT,$HOST_PARTUUID" "$EFI_TEST_STATE"
 assert_no_create P1
 cmp -s <(grep -E '^Boot000[156]' "$EFI_TEST_STATE") "$WORK_ROOT/p1-foreign-before.txt" \
     || fail_test 'P1 touched a foreign-drive entry'
-grep -q '^BootOrder: 0000,0007,0004,0002,0005,0006,0001,0003$' "$EFI_TEST_STATE" \
+grep -q '^BootOrder: 0000,0007,0002,0005,0001,0004,0006,0003$' "$EFI_TEST_STATE" \
     || fail_test "P1 BootOrder is not grouped per drive: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
 
-# Per-drive read-only evidence names the policy counts.
+# Per-drive read-only evidence names the policy counts, including the
+# preserved removable/device-path entries.
 inventory="$(efi_print_firmware_inventory "$EFI_TEST_STATE")"
-grep -Fq "EFI drive summary: partuuid=$HOST_PARTUUID class=host entries=4 uki=1 fallback=1 wfai=1 shim=0 device-path=1 loader=0 other=0" <<<"$inventory" \
+grep -Fq "EFI drive summary: partuuid=$HOST_PARTUUID class=host entries=4 uki=1 fallback=1 wfai=1 shim=0 device-path=1 loader=0 other=0 removable=0" <<<"$inventory" \
     || { printf '%s\n' "$inventory" >&2; fail_test 'P1 host drive summary is wrong'; }
-grep -Fq "EFI drive summary: partuuid=$FOREIGN_PARTUUID class=foreign entries=3 uki=1 fallback=0 wfai=1 shim=0 device-path=1 loader=0 other=0" <<<"$inventory" \
+grep -Fq "EFI drive summary: partuuid=$FOREIGN_PARTUUID class=foreign entries=3 uki=1 fallback=0 wfai=1 shim=0 device-path=1 loader=0 other=0 removable=0" <<<"$inventory" \
     || { printf '%s\n' "$inventory" >&2; fail_test 'P1 foreign drive summary is wrong'; }
-grep -Fq 'EFI drive summary: partuuid=unknown class=unknown entries=1 uki=0 fallback=0 wfai=0 shim=0 device-path=1 loader=0 other=0' <<<"$inventory" \
+grep -Fq 'EFI drive summary: partuuid=unknown class=unknown entries=1 uki=0 fallback=0 wfai=0 shim=0 device-path=1 loader=0 other=0 removable=1' <<<"$inventory" \
     || { printf '%s\n' "$inventory" >&2; fail_test 'P1 removable drive summary is wrong'; }
+grep -Fq "Boot0002 class=host role=fallback-device-path partuuid=$HOST_PARTUUID label=UEFI: Host Disk, Partition 1 loader=device-path-only [firmware-created device-path record; no managed OS; preserved untouched]" <<<"$inventory" \
+    || { printf '%s\n' "$inventory" >&2; fail_test 'P1 did not annotate the host device-path record'; }
+grep -Fq 'Boot0003 class=unknown role=fallback-device-path partuuid=unknown label=UEFI: USB Stick, Partition 1 loader=device-path-only [firmware-created device-path option for removable/device-path media (e.g. a USB stick with an EFI partition); no managed OS; preserved untouched]' <<<"$inventory" \
+    || { printf '%s\n' "$inventory" >&2; fail_test 'P1 did not annotate the removable device-path entry'; }
 
 # ---------------------------------------------------------------------------
 # P2: duplicate managed destinations on the host ESP are pruned to exactly
@@ -421,13 +430,17 @@ cmp -s <(grep -E '^Boot000[1-4]' "$EFI_TEST_STATE") <(grep -E '^Boot000[1-4]' "$
     || fail_test 'P4 modified a foreign-drive entry'
 
 # ---------------------------------------------------------------------------
-# P5: the observed interleaved BootOrder converges to per-drive groups with
-# the removable entry last.
+# P5: the exact reported host state (two NVMe drives each with a TUXEDO UKI,
+# a firmware fallback-device-path record and a WebFAI entry, plus one USB
+# stick with a BIOS-update FAT partition).  Each drive's primary pair (UKI
+# then the firmware fallback-device-path record) stays contiguous, host drive
+# first, then the foreign drive; the WebFAI entries follow drive-major; the
+# removable USB record is last.
 # ---------------------------------------------------------------------------
 reset_fixture
 cat > "$EFI_TEST_STATE" <<EOF
 BootCurrent: 0002
-BootOrder: 0000,0002,0004,0005,0001,0003,0006
+BootOrder: 0000,0004,0002,0005,0006,0001,0003
 Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
 Boot0001* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
 Boot0002* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
@@ -440,11 +453,127 @@ efi_group_firmware_boot_order > "$WORK_ROOT/p5.out" 2>&1 || {
     cat "$WORK_ROOT/p5.out" >&2
     fail_test 'P5 grouping failed'
 }
-grep -q '^BootOrder: 0000,0004,0002,0005,0006,0001,0003$' "$EFI_TEST_STATE" \
-    || fail_test "P5 BootOrder is not grouped per drive: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
-# The foreign drive's entries stay contiguous and the USB entry is last.
+grep -q '^BootOrder: 0000,0002,0005,0001,0004,0006,0003$' "$EFI_TEST_STATE" \
+    || fail_test "P5 BootOrder is not ranked by primary/WebFAI/removable: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+# Each drive's primary pair stays contiguous and the USB entry is last.
 order="$(sed -n 's/^BootOrder: //p' "$EFI_TEST_STATE" | head -n1)"
-[[ "$order" == *'0005,0006,0001,0003' ]] \
-    || fail_test 'P5 split the foreign drive group with the removable entry'
+[[ "$order" == *'0000,0002,0005,0001'* ]] \
+    || fail_test 'P5 split a drive primary pair or mis-ranked the drives'
+[[ "$order" == *'0004,0006,0003' ]] \
+    || fail_test 'P5 did not keep the WebFAI entries drive-major before the removable entry'
+# The read-only inventory names the USB record as a preserved removable
+# device-path option and counts it in the unknown drive summary.
+inventory="$(efi_print_firmware_inventory "$EFI_TEST_STATE")"
+grep -Fq 'Boot0003 class=unknown role=fallback-device-path partuuid=unknown label=UEFI: USB Stick, Partition 1 loader=device-path-only [firmware-created device-path option for removable/device-path media (e.g. a USB stick with an EFI partition); no managed OS; preserved untouched]' <<<"$inventory" \
+    || { printf '%s\n' "$inventory" >&2; fail_test 'P5 did not annotate the removable USB device-path entry'; }
+grep -Fq 'EFI drive summary: partuuid=unknown class=unknown entries=1 uki=0 fallback=0 wfai=0 shim=0 device-path=1 loader=0 other=0 removable=1' <<<"$inventory" \
+    || { printf '%s\n' "$inventory" >&2; fail_test 'P5 unknown drive summary is wrong'; }
+# A second pass is idempotent: the ranked order is already stable.
+efi_group_firmware_boot_order > "$WORK_ROOT/p5b.out" 2>&1 || {
+    cat "$WORK_ROOT/p5b.out" >&2
+    fail_test 'P5 second grouping pass failed'
+}
+grep -q '^BootOrder: 0000,0002,0005,0001,0004,0006,0003$' "$EFI_TEST_STATE" \
+    || fail_test 'P5 grouping is not idempotent'
 
-echo "PASS: EFI entry policy (one per drive, reuse/relabel, shim decision, foreign preservation, grouping) holds."
+# ---------------------------------------------------------------------------
+# P6: a retained shim follows every drive's primary destinations and every
+# WebFAI recovery entry, but stays ahead of the removable/unknown device-path
+# entries.  Shim and vendor loader are managed entries in the same class,
+# shim first.
+# ---------------------------------------------------------------------------
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0005,0004,0003,0002,0001,0000,0006
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* TUXEDO HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\tuxedo\\shimx64.efi
+Boot0003* WFAI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0004* WFAI Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0005* Vendor Loader TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\arch\\grubx64.efi
+Boot0006* UEFI: USB Stick, Partition 1 PciRoot(0x0)/HD(1,MBR,0xad2510c3,0x800,0x39c2800)0000424f
+EOF
+efi_group_firmware_boot_order > "$WORK_ROOT/p6.out" 2>&1 || {
+    cat "$WORK_ROOT/p6.out" >&2
+    fail_test 'P6 grouping failed'
+}
+grep -q '^BootOrder: 0000,0001,0003,0004,0002,0005,0006$' "$EFI_TEST_STATE" \
+    || fail_test "P6 did not rank shim/loader after WebFAI: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+order="$(sed -n 's/^BootOrder: //p' "$EFI_TEST_STATE" | head -n1)"
+[[ "$order" == *'0004,0002,0005,0006' ]] \
+    || fail_test 'P6 did not keep the shim after the WebFAI entries and before the removable entry'
+[[ "$order" == *'0002,0005'* ]] \
+    || fail_test 'P6 did not keep the shim ahead of the vendor loader'
+
+# ---------------------------------------------------------------------------
+# P7: a drive without a UKI keeps its fallback-device-path record in the
+# primary class (host primary, then the foreign primary) while its WebFAI
+# entry stays drive-major in the WebFAI class.
+# ---------------------------------------------------------------------------
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0003,0002,0001,0000,0004
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* WFAI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0002* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* WFAI Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0004* UEFI: USB Stick, Partition 1 PciRoot(0x0)/HD(1,MBR,0xad2510c3,0x800,0x39c2800)0000424f
+EOF
+efi_group_firmware_boot_order > "$WORK_ROOT/p7.out" 2>&1 || {
+    cat "$WORK_ROOT/p7.out" >&2
+    fail_test 'P7 grouping failed'
+}
+grep -q '^BootOrder: 0000,0002,0001,0003,0004$' "$EFI_TEST_STATE" \
+    || fail_test "P7 did not keep the no-UKI drive's primary record ahead of the WebFAI entries: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+
+# ---------------------------------------------------------------------------
+# P8: a drive with a UKI but no fallback entry (neither the managed
+# BOOTX64.EFI destination nor a firmware fallback-device-path record) still
+# keeps its primary UKI first; the WebFAI entries follow drive-major, then the
+# remaining managed shim, then the removable entry.
+# ---------------------------------------------------------------------------
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0003,0002,0001,0000,0004
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* TUXEDO HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\tuxedo\\shimx64.efi
+Boot0002* WFAI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0003* WFAI Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0004* UEFI: USB Stick, Partition 1 PciRoot(0x0)/HD(1,MBR,0xad2510c3,0x800,0x39c2800)0000424f
+EOF
+efi_group_firmware_boot_order > "$WORK_ROOT/p8.out" 2>&1 || {
+    cat "$WORK_ROOT/p8.out" >&2
+    fail_test 'P8 grouping failed'
+}
+grep -q '^BootOrder: 0000,0002,0003,0001,0004$' "$EFI_TEST_STATE" \
+    || fail_test "P8 mis-ranked a no-fallback drive: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+
+# ---------------------------------------------------------------------------
+# P9: no-PARTUUID entries are removable regardless of their decoded role.  An
+# MBR ESP loader and a USB device-path record both sort last, after every
+# drive-bound primary, WebFAI and managed entry, and are preserved
+# byte-identically.
+# ---------------------------------------------------------------------------
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0002,0003,0001,0000
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* WFAI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+Boot0002* UEFI OS HD(1,MBR,0x1234abcd,0x800,0x100000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0003* UEFI: USB Stick, Partition 1 PciRoot(0x0)/HD(1,MBR,0xad2510c3,0x800,0x39c2800)0000424f
+EOF
+grep -E '^Boot000[23]' "$EFI_TEST_STATE" > "$WORK_ROOT/p9-removable-before.txt"
+efi_group_firmware_boot_order > "$WORK_ROOT/p9.out" 2>&1 || {
+    cat "$WORK_ROOT/p9.out" >&2
+    fail_test 'P9 grouping failed'
+}
+grep -q '^BootOrder: 0000,0001,0002,0003$' "$EFI_TEST_STATE" \
+    || fail_test "P9 did not keep no-PARTUUID entries last: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+cmp -s <(grep -E '^Boot000[23]' "$EFI_TEST_STATE") "$WORK_ROOT/p9-removable-before.txt" \
+    || fail_test 'P9 modified a removable/no-PARTUUID entry'
+
+echo "PASS: EFI entry policy (one per drive, reuse/relabel, shim decision, foreign preservation, primary/WebFAI/managed/removable ranking) holds."
