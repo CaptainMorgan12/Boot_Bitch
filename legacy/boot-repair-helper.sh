@@ -324,22 +324,36 @@ legacy_block_kname()
     return 1
 }
 
+# Kernel 2.6.18 has no /sys/block/<disk>/<part>/partition attribute; its
+# partitions are recognizable by the partition start sector instead.
+legacy_lsblk_is_partition()
+{
+    local k="$1" dir=""
+    dir="$(legacy_sys_block_dir "$k")"
+    [[ -f "$dir/partition" || -f "$dir/start" ]]
+}
+
 legacy_lsblk_type()
 {
-    local k="$1" uuid="" dir="" devid="" maj="" min=""
+    local k="$1" uuid="" dir="" name="" target=""
     dir="$(legacy_sys_block_dir "$k")"
-    if [[ -f "$dir/partition" ]]; then
+    if legacy_lsblk_is_partition "$k"; then
         printf 'part\n'
         return 0
     fi
     if [[ -d "$dir/dm" || "$k" == dm-* ]]; then
+        # Modern kernels expose dm/uuid; 2.6.18 does not and its dmsetup only
+        # supports -o name, so read the target type from the device table.
         uuid="$(cat "$dir/dm/uuid" 2>/dev/null || true)"
-        if [[ -z "$uuid" && -r "$dir/dev" ]]; then
-            # Kernel 2.6.18 has no dm attribute directory; ask device-mapper.
-            devid="$(cat "$dir/dev" 2>/dev/null || true)"
-            maj="${devid%%:*}"
-            min="${devid#*:}"
-            uuid="$(dmsetup info -c --noheadings -o uuid -j "$maj" -m "$min" 2>/dev/null | head -n1 || true)"
+        if [[ -z "$uuid" ]]; then
+            name="$(legacy_lsblk_dm_name "$k" 2>/dev/null || true)"
+            if [[ -n "$name" ]] && command -v dmsetup >/dev/null 2>&1; then
+                target="$(dmsetup table "$name" 2>/dev/null | awk 'NR == 1 {print $3}' || true)"
+                case "$target" in
+                    crypt*) uuid="CRYPT-" ;;
+                    *) uuid="LVM-" ;;
+                esac
+            fi
         fi
         case "$uuid" in
             CRYPT-*) printf 'crypt\n' ;;
@@ -361,8 +375,8 @@ legacy_lsblk_type()
 legacy_lsblk_parent_kname()
 {
     local k="$1" dir="" resolved=""
+    legacy_lsblk_is_partition "$k" || return 1
     dir="$(legacy_sys_block_dir "$k")"
-    [[ -f "$dir/partition" ]] || return 1
     resolved="$(readlink -f -- "$dir" 2>/dev/null || true)"
     [[ -n "$resolved" ]] || return 1
     basename -- "$(dirname -- "$resolved")"
@@ -385,7 +399,7 @@ legacy_lsblk_children()
     local k="$1" dir="" entry=""
     dir="$(legacy_sys_block_dir "$k")"
     for entry in "$dir"/*; do
-        [[ -f "$entry/partition" ]] || continue
+        [[ -f "$entry/partition" || -f "$entry/start" ]] || continue
         basename -- "$entry"
     done
     if [[ -d "$dir/holders" ]]; then
@@ -450,7 +464,7 @@ legacy_lsblk_pttype()
         printf '%s\n' "$value"
         return 0
     fi
-    if [[ -f "$(legacy_sys_block_dir "$k")/partition" ]]; then
+    if legacy_lsblk_is_partition "$k"; then
         return 0
     fi
     # GPT magic at LBA 1, otherwise the MBR signature in LBA 0.

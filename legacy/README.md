@@ -65,15 +65,41 @@ a distribution check. On an Etch-era host the expected picture is:
 
 | Feature | Etch behaviour |
 | --- | --- |
-| `validate`, `diagnose`, `fs-inspect` | available (read-only) |
+| `validate`, `diagnose`, `fs-inspect` | available against an unlocked disposable target (read-only) |
+| `host-validate`, `host-diagnose`, `host-fs-inspect` | available read-only: the running-host probes mount nothing, so they need no `unshare` |
+| `host-repair` package stages (`dpkg-configure`, `fix-broken`, `apt-update`, `apt-upgrade`) | available on BIOS-only hosts: no EFI firmware variables exist to isolate; an EFI host keeps the fail-closed `unshare` guard |
 | `dpkg-configure`, `fix-broken` | available with simulation-first guards |
 | `apt-update`, `upgrade` | probe-gated; unavailable without a reachable, trusted APT source |
 | `initramfs` | available after validation (`update-initramfs` 0.85i) |
 | `grub` | available through the guarded GRUB-legacy branch (`update-grub` only; `menu.lst` backup, entry-preservation guard and rollback) |
 | `display` | read-only evidence only (sysvinit/KDM); repair not implemented |
 | `efi`, `dkms`, `extlinux`, `bootstack` | unavailable with the exact missing prerequisite as the reason |
-| `host-*`, `shell`, file copy, snapshots | unavailable on Etch (missing `unshare`/`timeout`/`rsync`/Btrfs evidence) |
+| `host-shell`, `host-default`, `host-snapshots`, `host-reboot`, `shell`, file copy, snapshots | unavailable on Etch (missing `unshare`/`timeout`/`rsync`/Btrfs evidence) |
 | LUKS `unlock` | available (cryptsetup 1.0.4, LUKS1); stdin only, never argv |
+
+The `lsblk`/`findmnt` fallbacks also cover kernel 2.6.18: it has no
+`/sys/class/block` class, no per-partition `partition` attribute and no
+`dm/name`, so device identity falls back to `/sys/block`, the partition
+`start` attribute and major:minor / `dmsetup` lookups. Target scope on the
+running host still fails closed through the shared running-system guard.
+
+### Validation on real Etch hardware (2026-09-22)
+
+The helper-only package was built and exercised on a real Debian 4.0 "Etch"
+guest (bash 3.1.17, kernel 2.6.18, LUKS1 + LVM root, GRUB legacy):
+
+- `scripts/package-legacy.sh` built `boot-repair-legacy_0.2.25-etch1_amd64.deb`
+  natively (dpkg-deb 1.13.26 + fakeroot 1.5.10); the `port.sh --check` drift
+  gate passed under bash 3.1 and the installed helper was byte-identical to the
+  generated tree helper.
+- `host-diagnose all` emitted the 13 `Repair tool` lines with `efi`, `dkms`,
+  `display`, `extlinux` and `bootstack` unavailable for their probe reasons,
+  plus the legacy feature gating for the unsupported host actions.
+- `host-repair apt-update` reported `changed`; `host-repair fix-broken`
+  reported `unchanged|simulated fix-broken transaction proposed no package
+  changes`.
+- The launcher ran `--tui` through its console fallback (no `dialog`) with
+  `sudo` elevation (`gksu`/`gksudo` are not installed on Etch).
 
 ## Packaging
 
