@@ -1,3 +1,8 @@
+// MainWindow.h pulls in QFileDialog (through <filesystem>/<sstream>); include
+// it before the private-access override so the standard headers are not
+// rewritten with "private" redefined.
+#include <QFileDialog>
+
 #define private public
 #include "MainWindow.h"
 #undef private
@@ -18,6 +23,7 @@
 #include <QInputDialog>
 #include <QLayout>
 #include <QFileDialog>
+#include <QFileSystemModel>
 #include <QGroupBox>
 #include <QHeaderView>
 #include <QListWidget>
@@ -50,6 +56,7 @@
 #include <QTimer>
 #include <QTreeWidget>
 #include <QToolButton>
+#include <QUrl>
 #include <QtTest>
 
 #ifdef BOOT_REPAIR_HAVE_DBUS
@@ -73,6 +80,16 @@ public:
         qputenv(m_name.constData(), value);
     }
 
+    // Unset constructor: hides an inherited variable for the scope (for
+    // example an AppImage terminal's APPIMAGE) without losing its value.
+    explicit ScopedEnvironmentVariable(const char *name)
+        : m_name(name)
+        , m_hadValue(qEnvironmentVariableIsSet(name))
+        , m_original(qgetenv(name))
+    {
+        qunsetenv(m_name.constData());
+    }
+
     ~ScopedEnvironmentVariable()
     {
         if (m_hadValue) {
@@ -86,6 +103,26 @@ private:
     QByteArray m_name;
     bool m_hadValue = false;
     QByteArray m_original;
+};
+
+// Restores the process-wide native-dialog attribute on scope exit, so a
+// failing assertion cannot leak the AppImage dialog policy into later tests.
+class ScopedNativeDialogAttribute
+{
+public:
+    explicit ScopedNativeDialogAttribute(bool enabled)
+        : m_previous(QCoreApplication::testAttribute(Qt::AA_DontUseNativeDialogs))
+    {
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, enabled);
+    }
+
+    ~ScopedNativeDialogAttribute()
+    {
+        QCoreApplication::setAttribute(Qt::AA_DontUseNativeDialogs, m_previous);
+    }
+
+private:
+    bool m_previous = false;
 };
 
 QPushButton *buttonWithText(MainWindow &window, const QString &text)
@@ -2167,6 +2204,7 @@ private slots:
     void helperPathResolutionPrefersInstalledUnlessOverridden();
     void helperPathResolutionStagesAppImageCopy();
     void helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths();
+    void appImageFileDialogsStayNonNativeAndListFolders();
     void stageLabelsTrackBackendFamilyWithoutLeaking();
     void mixedPackageManagerLabelsStayGeneric();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
@@ -8882,6 +8920,84 @@ void MainWindowUiTest::helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths()
     window.cleanupStagedHelpers();
     QVERIFY(!QFileInfo::exists(sessionHelper));
     QVERIFY(window.m_stagedHelperPaths.isEmpty());
+}
+
+// Portable AppImage runs bundle only part of the desktop integration: the
+// platform themes' native file dialogs (KDE/KIO, GTK3/portal) need worker and
+// portal services the image does not carry, so their listings come up empty
+// and sidebar places resolve against the process working directory. The
+// AppImage must therefore force Qt's own file dialog, while installed builds
+// keep the desktop's native dialogs.
+void MainWindowUiTest::appImageFileDialogsStayNonNativeAndListFolders()
+{
+    // The ambient environment may itself be an AppImage terminal (which
+    // exports APPIMAGE to its children), so hide both runtime variables for
+    // the installed-build baseline.
+    ScopedEnvironmentVariable ambientAppImage("APPIMAGE");
+    ScopedEnvironmentVariable ambientAppDir("APPDIR");
+    QVERIFY(!MainWindow::runsFromAppImage());
+    QVERIFY(!MainWindow::portableFileDialogOptions().testFlag(QFileDialog::DontUseNativeDialog));
+
+    // An inherited APPIMAGE without the matching runtime mount must not switch
+    // an installed build away from its native dialogs.
+    {
+        ScopedEnvironmentVariable inheritedAppImage(
+            "APPIMAGE", QByteArrayLiteral("/home/user/Downloads/ghostty.appimage"));
+        QVERIFY(!MainWindow::runsFromAppImage());
+        QVERIFY(!MainWindow::portableFileDialogOptions().testFlag(QFileDialog::DontUseNativeDialog));
+    }
+
+    ScopedNativeDialogAttribute attributeGuard(false);
+    ScopedEnvironmentVariable appImageEnv("APPIMAGE",
+                                          QByteArrayLiteral("/tmp/boot-repair-ui-test.AppImage"));
+    // A real AppImage puts the executable under the runtime mount, for example
+    // $APPDIR/usr/bin/boot-repair.
+    ScopedEnvironmentVariable appDirEnv(
+        "APPDIR", QFileInfo(QCoreApplication::applicationDirPath()).absolutePath().toUtf8());
+    QVERIFY(MainWindow::runsFromAppImage());
+    const QFileDialog::Options options = MainWindow::portableFileDialogOptions();
+    QVERIFY2(options.testFlag(QFileDialog::DontUseNativeDialog),
+             "AppImage mode must request Qt's own file dialog");
+
+    {
+        MainWindow window;
+        QVERIFY2(QApplication::testAttribute(Qt::AA_DontUseNativeDialogs),
+                 "constructing the window in AppImage mode must force Qt's own dialogs");
+    }
+
+    // The forced dialog lists a real fixture directory and keeps absolute
+    // sidebar paths, which the incomplete native KIO/GTK integration could
+    // not do inside the image.
+    QTemporaryDir fixture;
+    QVERIFY(fixture.isValid());
+    QVERIFY(QDir().mkpath(fixture.filePath(QStringLiteral("alpha"))));
+    QVERIFY(QDir().mkpath(fixture.filePath(QStringLiteral("beta"))));
+
+    QFileDialog dialog;
+    dialog.setOptions(options | QFileDialog::ShowDirsOnly);
+    dialog.setFileMode(QFileDialog::Directory);
+    dialog.setDirectory(fixture.path());
+    dialog.setSidebarUrls({QUrl::fromLocalFile(fixture.path())});
+    QVERIFY2(dialog.testOption(QFileDialog::DontUseNativeDialog),
+             "the dialog must carry the AppImage non-native option");
+
+    QCOMPARE(dialog.sidebarUrls().size(), 1);
+    const QUrl sidebarUrl = dialog.sidebarUrls().constFirst();
+    QVERIFY(sidebarUrl.isLocalFile());
+    QVERIFY(QFileInfo(sidebarUrl.toLocalFile()).isAbsolute());
+    QCOMPARE(QDir::cleanPath(sidebarUrl.toLocalFile()), QDir::cleanPath(fixture.path()));
+
+    QFileSystemModel *model = dialog.findChild<QFileSystemModel *>();
+    QVERIFY2(model, "the forced Qt dialog must expose its filesystem model");
+    const QModelIndex fixtureIndex = model->index(fixture.path());
+    QVERIFY(fixtureIndex.isValid());
+    QTRY_VERIFY(model->rowCount(fixtureIndex) >= 2);
+    QStringList entries;
+    for (int row = 0; row < model->rowCount(fixtureIndex); ++row) {
+        entries << model->index(row, 0, fixtureIndex).data(Qt::DisplayRole).toString();
+    }
+    QVERIFY(entries.contains(QStringLiteral("alpha")));
+    QVERIFY(entries.contains(QStringLiteral("beta")));
 }
 
 // The family-specific stage labels are applied per backend and reset for

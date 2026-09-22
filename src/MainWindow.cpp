@@ -3730,11 +3730,49 @@ void FilesystemRepairDialog::updateRepairButtonState()
 // windows continue the same run instead of starting or adopting a session.
 QString MainWindow::s_activeSessionPath;
 
+bool MainWindow::runsFromAppImage()
+{
+    // The AppImage runtime mounts the payload at APPDIR and exports APPIMAGE
+    // with the image path; the portable build then ships its own Qt plugins
+    // instead of the host's. A child process of an AppImage terminal inherits
+    // APPIMAGE without running from that image, so the executable must also
+    // live inside the runtime's mount before the AppImage policy applies.
+    const QString imagePath = qEnvironmentVariable("APPIMAGE");
+    const QString mountedAppDir = qEnvironmentVariable("APPDIR");
+    if (imagePath.isEmpty() || mountedAppDir.isEmpty()) {
+        return false;
+    }
+    const QString appDir = QDir::cleanPath(QCoreApplication::applicationDirPath());
+    const QString mountRoot = QDir::cleanPath(mountedAppDir);
+    return appDir == mountRoot || appDir.startsWith(mountRoot + QLatin1Char('/'));
+}
+
+QFileDialog::Options MainWindow::portableFileDialogOptions()
+{
+    return runsFromAppImage() ? QFileDialog::Options(QFileDialog::DontUseNativeDialog)
+                              : QFileDialog::Options();
+}
+
+void MainWindow::applyPortableFileDialogPolicy()
+{
+    if (!runsFromAppImage()) {
+        return;
+    }
+    // Qt checks this attribute when a dialog is constructed, so setting it
+    // here (before the window opens its first dialog) is effective even though
+    // the QApplication already exists. The explicit DontUseNativeDialog
+    // options passed at the QFileDialog call sites keep the file dialogs
+    // deterministic even when a platform theme evaluated the attribute first.
+    QApplication::setAttribute(Qt::AA_DontUseNativeDialogs, true);
+}
+
 MainWindow::MainWindow(QWidget *parent)
     : QMainWindow(parent)
     , m_scanner(new SystemScanner(this))
     , m_settings(new QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"), this))
 {
+    applyPortableFileDialogPolicy();
+
     setWindowTitle(QStringLiteral("Boot Bitch"));
     setWindowIcon(QApplication::windowIcon());
     setMinimumSize(480, 500);
@@ -9077,7 +9115,9 @@ void MainWindow::browseFileCopyDestination()
 
     const bool repairToHost = m_fileCopyDirectionCombo->currentIndex() == 1;
     if (repairToHost) {
-        const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("Choose host destination folder"), QDir::homePath());
+        const QString path = QFileDialog::getExistingDirectory(
+            this, QStringLiteral("Choose host destination folder"), QDir::homePath(),
+            portableFileDialogOptions() | QFileDialog::ShowDirsOnly);
         if (!path.isEmpty()) {
             m_destinationEdit->setText(path);
             m_destinationEdit->setToolTip(path);
@@ -9366,7 +9406,9 @@ void MainWindow::addSourceFiles()
         return;
     }
 
-    const QStringList paths = QFileDialog::getOpenFileNames(this, QStringLiteral("Select host files"), QDir::homePath());
+    const QStringList paths = QFileDialog::getOpenFileNames(
+        this, QStringLiteral("Select host files"), QDir::homePath(), QString(),
+        nullptr, portableFileDialogOptions());
     for (const QString &path : paths) {
         if (m_sourceList->findItems(path, Qt::MatchExactly).isEmpty()) {
             auto *item = new QListWidgetItem(path, m_sourceList);
@@ -9411,7 +9453,9 @@ void MainWindow::addSourceFolder()
         return;
     }
 
-    const QString path = QFileDialog::getExistingDirectory(this, QStringLiteral("Select host folder"), QDir::homePath());
+    const QString path = QFileDialog::getExistingDirectory(
+        this, QStringLiteral("Select host folder"), QDir::homePath(),
+        portableFileDialogOptions() | QFileDialog::ShowDirsOnly);
     if (!path.isEmpty() && m_sourceList->findItems(path, Qt::MatchExactly).isEmpty()) {
         auto *item = new QListWidgetItem(path, m_sourceList);
         item->setToolTip(path);
@@ -12297,7 +12341,8 @@ void MainWindow::saveDiagnosticResults()
         this,
         QStringLiteral("Save diagnostic results"),
         QDir::homePath() + QStringLiteral("/boot-repair-diagnostics.txt"),
-        QStringLiteral("Text files (*.txt *.log);;All files (*)"));
+        QStringLiteral("Text files (*.txt *.log);;All files (*)"),
+        nullptr, portableFileDialogOptions());
 
     if (path.isEmpty()) {
         return;
@@ -12319,7 +12364,10 @@ void MainWindow::saveDiagnosticResults()
 void MainWindow::saveLogAs()
 {
     const QString defaultPath = QDir::homePath() + QStringLiteral("/boot-repair.log");
-    const QString path = QFileDialog::getSaveFileName(this, QStringLiteral("Save application log"), defaultPath, QStringLiteral("Log files (*.log *.txt);;All files (*)"));
+    const QString path = QFileDialog::getSaveFileName(
+        this, QStringLiteral("Save application log"), defaultPath,
+        QStringLiteral("Log files (*.log *.txt);;All files (*)"),
+        nullptr, portableFileDialogOptions());
     if (path.isEmpty()) {
         return;
     }

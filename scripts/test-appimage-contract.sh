@@ -8,7 +8,11 @@
 #   2. the matching .zsync update metadata (Filename/URL/SHA-1) next to it;
 #   3. the sha256-verified private helper staging that lets pkexec run the
 #      bundled helper from an owner-only AppImage FUSE mount or a noexec
-#      filesystem.
+#      filesystem;
+#   4. the AppImage-mode file dialog policy: the image does not carry the
+#      KIO/GTK worker and portal services the platform themes' native file
+#      dialogs need, so AppImage runs force Qt's own dialog while installed
+#      builds keep the desktop's native dialogs.
 # The static checks always run; the built artifact is inspected when
 # build-release/ holds the current version's AppImage (readelf, sha1sum and
 # unsquashfs are optional tooling).
@@ -97,6 +101,18 @@ require_fragment "$MAINWINDOW" 'QStandardPaths::RuntimeLocation' \
     "MainWindow no longer stages the helper copy under the user runtime directory"
 require_fragment "$MAINWINDOW" 'privilegedSessionHelper' \
     "MainWindow no longer exposes the privileged-session helper staging"
+
+# ---------------------------------------------------------------------------
+# Static contract: the GUI forces Qt's own file dialogs in AppImage mode and
+# keys the policy off the runtime mount, not just the inherited APPIMAGE
+# variable (an AppImage terminal exports APPIMAGE to installed children).
+# ---------------------------------------------------------------------------
+require_fragment "$MAINWINDOW" 'Qt::AA_DontUseNativeDialogs' \
+    "MainWindow no longer forces Qt's own file dialogs in AppImage mode"
+require_fragment "$MAINWINDOW" 'QFileDialog::DontUseNativeDialog' \
+    "MainWindow no longer applies the non-native file dialog option"
+require_fragment "$MAINWINDOW" 'qEnvironmentVariable("APPDIR")' \
+    "MainWindow no longer ties the AppImage dialog policy to the runtime mount"
 
 # ---------------------------------------------------------------------------
 # Artifact contract: inspect the built AppImage when it is present.

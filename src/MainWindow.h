@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QDialog>
+#include <QFileDialog>
 #include <QHash>
 #include <QIcon>
 #include <QList>
@@ -242,6 +243,20 @@ public:
     // layer GNOME's Settings portal wraps around them. Public so the UI suite
     // can pin the parsing independently of a running portal.
     static ColorSchemeValue colorSchemeFromPortalValue(const QVariant &value);
+
+    // Portable AppImage runs bundle only part of the desktop integration: the
+    // platform themes' native file dialogs (KDE/KIO, GTK3/portal) need worker
+    // and portal services the image does not carry, so their listings can come
+    // up empty and sidebar places resolve against the process working
+    // directory. AppImage runs therefore force Qt's own file dialog through
+    // the application attribute and the per-dialog option; installed builds
+    // keep the desktop's native dialogs. Public so the UI suite can pin the
+    // policy with and without the AppImage runtime's APPIMAGE/APPDIR
+    // variables, including the inherited-variable case of an AppImage
+    // terminal launching an installed build.
+    static bool runsFromAppImage();
+    static QFileDialog::Options portableFileDialogOptions();
+    static void applyPortableFileDialogPolicy();
 
 signals:
     void busyStateChanged(bool busy, const QString &label);

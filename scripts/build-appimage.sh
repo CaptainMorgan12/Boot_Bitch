@@ -43,9 +43,12 @@ UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot
 EXTRA_QT_MODULES="${EXTRA_QT_MODULES:-svg}"
 # The Qt platform themes and widget styles must come from the build host. Keep
 # the deployment on by default so the release AppImage carries the desktop
-# integration (KDE/GNOME/GTK dialogs and file pickers); set
-# DEPLOY_PLATFORM_THEMES=0 to opt out. linuxdeploy-plugin-qt only checks
-# whether the variable is present, so "0" must not be exported to it.
+# integration (KDE/GNOME/GTK widget styling); set DEPLOY_PLATFORM_THEMES=0 to
+# opt out. The themes' native file dialogs are deliberately not used inside the
+# image: they need KIO/GTK worker and portal services linuxdeploy does not
+# bundle, so MainWindow forces Qt's own file dialog whenever it runs from an
+# AppImage. linuxdeploy-plugin-qt only checks whether the variable is present,
+# so "0" must not be exported to it.
 DEPLOY_PLATFORM_THEMES="${DEPLOY_PLATFORM_THEMES:-1}"
 
 # Prefer the disposable local development install when no system tool was

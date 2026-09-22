@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+- Fix the AppImage file dialogs (File Copy → Add Folder) listing no folders
+  and resolving sidebar places such as Documents against the process working
+  directory: the image loads the build host's Qt platform theme, whose native
+  KDE/KIO (or GTK/portal) file dialog needs worker and portal services the
+  image does not bundle. The GUI now forces Qt's own file dialog whenever it
+  runs from an AppImage (application attribute plus explicit
+  `DontUseNativeDialog` options on every `QFileDialog` call), keyed off the
+  AppImage runtime's mount so an installed build launched from an AppImage
+  terminal does not inherit the policy, while installed builds keep their
+  native dialogs. The UI suite pins the policy and a non-empty listing with
+  absolute sidebar paths, and `scripts/test-appimage-contract.sh` guards the
+  policy fragments.
 - Rank grouped EFI `BootOrder` entries by boot-use class before drive: each
   drive's primary destinations (UKI, then the managed fallback and the
   firmware-owned fallback-device-path record) stay contiguous, the WebFAI
