@@ -2198,6 +2198,9 @@ private slots:
     void hostMaintenanceRequestsPrivilegedSessionOnce();
     void concurrentAuthorizationRequestsCoalesce();
     void authorizationFailureSurfacesPolkitAgentHint();
+    void authorizationHintTracksDetectedBackendFamily();
+    void authorizeNowRetriesAndSurfacesFreshFailure();
+    void authorizeNowClickIgnoredWhileRequestPending();
     void repairTargetConfirmationRequestsPrivilegedSessionOnce();
     void activePrivilegedSessionIsNotRequestedAgain();
     void authorizationCancelKeepsScopeWithoutReprompting();
@@ -10986,6 +10989,48 @@ void MainWindowUiTest::concurrentAuthorizationRequestsCoalesce()
     window.m_uiTestPrivilegedSessionDelayMs = 0;
 }
 
+namespace {
+
+// Attaches a finished session process whose merged output carries the pkexec
+// textual-agent failure, so ensurePrivilegedSession() maps it through the
+// production failure composer and the distribution-aware hint. Returns the
+// process (parented to the window) or null when the process could not start.
+QProcess *attachTextualAgentFailureSession(MainWindow &window)
+{
+    auto *session = new QProcess(&window);
+    session->setProcessChannelMode(QProcess::MergedChannels);
+    session->start(QStringLiteral("/bin/sh"),
+                   {QStringLiteral("-c"), QStringLiteral("cat >&2; exit 126")});
+    if (!session->waitForStarted(5000)) {
+        delete session;
+        return nullptr;
+    }
+    session->write(QByteArrayLiteral(
+        "Error creating textual authentication agent: Error opening current "
+        "controlling terminal for the process (`/dev/tty'): No such device or address\n"));
+    session->closeWriteChannel();
+    if (!session->waitForFinished(5000)) {
+        delete session;
+        return nullptr;
+    }
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = false;
+    window.m_uiTestPrivilegedSessionGranted = false;
+    return session;
+}
+
+// Detaches and disposes the failed session process so the next attempt reads
+// only its own output.
+void detachFailureSession(MainWindow &window, QProcess *session)
+{
+    window.m_privilegedSession = nullptr;
+    if (session) {
+        session->deleteLater();
+    }
+}
+
+} // namespace
+
 void MainWindowUiTest::authorizationFailureSurfacesPolkitAgentHint()
 {
     MainWindow window;
@@ -10993,22 +11038,16 @@ void MainWindowUiTest::authorizationFailureSurfacesPolkitAgentHint()
     QTest::qWait(50);
 
     // Reuse the session-process test seam: a finished process whose merged
-    // output carries the pkexec textual-agent failure. The UI-test
-    // authorization branch must surface the actionable Alpine hint through the
-    // same composition the production pkexec path uses.
-    auto *session = new QProcess(&window);
-    session->setProcessChannelMode(QProcess::MergedChannels);
-    session->start(QStringLiteral("/bin/sh"),
-                   {QStringLiteral("-c"), QStringLiteral("cat >&2; exit 126")});
-    QVERIFY2(session->waitForStarted(5000), "the failing session process must start");
-    session->write(QByteArrayLiteral(
-        "Error creating textual authentication agent: Error opening current "
-        "controlling terminal for the process (`/dev/tty'): No such device or address\n"));
-    session->closeWriteChannel();
-    QVERIFY2(session->waitForFinished(5000), "the failing session process must finish");
-    window.m_privilegedSession = session;
-    window.m_privilegedSessionReady = false;
-    window.m_uiTestPrivilegedSessionGranted = false;
+    // output carries the pkexec textual-agent failure. The cached Alpine
+    // backend profile must select the Alpine hint through the same
+    // composition the production pkexec path uses.
+    prepareRepairScope(window);
+    cacheRepairEvidence(window,
+                        QStringLiteral("Distribution family: alpine\n"
+                                       "Package manager backend: apk\n"
+                                       "Package manager backends: apk\n"));
+    QProcess *session = attachTextualAgentFailureSession(window);
+    QVERIFY2(session, "the failing session process must start and finish");
 
     QString error;
     QVERIFY2(!window.ensurePrivilegedSession(&error),
@@ -11031,11 +11070,215 @@ void MainWindowUiTest::authorizationFailureSurfacesPolkitAgentHint()
 
     // A plain cancellation with no pkexec detail keeps the exact generic
     // message and gains no misleading agent hint.
-    window.m_privilegedSession = nullptr;
-    session->deleteLater();
+    detachFailureSession(window, session);
     QString cancelledError;
     QVERIFY(!window.ensurePrivilegedSession(&cancelledError));
     QCOMPARE(cancelledError, QStringLiteral("Administrator authorization session was not established."));
+}
+
+void MainWindowUiTest::authorizationHintTracksDetectedBackendFamily()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+
+    struct HintCase {
+        QString family;
+        QString manager;
+        QString desktop;
+        QString expected;
+        QStringList forbidden;
+    };
+    const QList<HintCase> cases = {
+        {QStringLiteral("debian"), QStringLiteral("apt/dpkg"), QStringLiteral("XFCE"),
+         QStringLiteral("sudo apt install xfce-polkit"),
+         {QStringLiteral("pacman"), QStringLiteral("apk add"), QStringLiteral("dnf install")}},
+        {QStringLiteral("debian"), QStringLiteral("apt/dpkg"), QStringLiteral("MATE"),
+         QStringLiteral("sudo apt install mate-polkit"),
+         {QStringLiteral("xfce-polkit"), QStringLiteral("pacman"), QStringLiteral("apk add")}},
+        {QStringLiteral("debian"), QStringLiteral("apt/dpkg"), QStringLiteral("LXDE"),
+         QStringLiteral("sudo apt install lxpolkit"),
+         {QStringLiteral("xfce-polkit"), QStringLiteral("pacman"), QStringLiteral("apk add")}},
+        {QStringLiteral("debian"), QStringLiteral("apt/dpkg"), QStringLiteral("GNOME"),
+         QStringLiteral("sudo apt install policykit-1-gnome"),
+         {QStringLiteral("xfce-polkit"), QStringLiteral("pacman"), QStringLiteral("apk add")}},
+        {QStringLiteral("arch"), QStringLiteral("pacman"), QStringLiteral("XFCE"),
+         QStringLiteral("sudo pacman -S xfce-polkit"),
+         {QStringLiteral("apt install"), QStringLiteral("apk add"), QStringLiteral("dnf install")}},
+        {QStringLiteral("arch"), QStringLiteral("pacman"), QStringLiteral("GNOME"),
+         QStringLiteral("sudo pacman -S polkit-gnome"),
+         {QStringLiteral("apt install"), QStringLiteral("apk add"), QStringLiteral("dnf install")}},
+        {QStringLiteral("fedora"), QStringLiteral("rpm"), QStringLiteral("GNOME"),
+         QStringLiteral("sudo dnf install polkit-gnome"),
+         {QStringLiteral("apt install"), QStringLiteral("apk add"), QStringLiteral("pacman -S")}},
+        {QStringLiteral("fedora"), QStringLiteral("rpm"), QStringLiteral("XFCE"),
+         QStringLiteral("sudo dnf install xfce-polkit"),
+         {QStringLiteral("apt install"), QStringLiteral("apk add"), QStringLiteral("pacman -S")}},
+        {QStringLiteral("alpine"), QStringLiteral("apk"), QStringLiteral("XFCE"),
+         QStringLiteral("apk add polkit-elogind xfce-polkit"),
+         {QStringLiteral("apt install"), QStringLiteral("pacman -S"), QStringLiteral("dnf install")}},
+    };
+
+    for (const HintCase &testCase : cases) {
+        cacheRepairEvidence(window, QStringLiteral("Distribution family: %1\n"
+                                                   "Package manager backend: %2\n"
+                                                   "Package manager backends: %2\n")
+                                          .arg(testCase.family, testCase.manager));
+        ScopedEnvironmentVariable xdgDesktop("XDG_CURRENT_DESKTOP", testCase.desktop.toUtf8());
+        ScopedEnvironmentVariable xdgSessionDesktop("XDG_SESSION_DESKTOP",
+                                                    testCase.desktop.toUtf8());
+        ScopedEnvironmentVariable desktopSession("DESKTOP_SESSION", testCase.desktop.toUtf8());
+        QProcess *session = attachTextualAgentFailureSession(window);
+        QVERIFY2(session, qPrintable(testCase.family));
+        QString error;
+        QVERIFY2(!window.ensurePrivilegedSession(&error), qPrintable(testCase.family));
+        QVERIFY2(error.contains(testCase.expected),
+                 qPrintable(QStringLiteral("%1: missing '%2' in '%3'")
+                                .arg(testCase.family, testCase.expected, error)));
+        for (const QString &forbidden : testCase.forbidden) {
+            QVERIFY2(!error.contains(forbidden),
+                     qPrintable(QStringLiteral("%1: leaked '%2' in '%3'")
+                                    .arg(testCase.family, forbidden, error)));
+        }
+        detachFailureSession(window, session);
+    }
+
+    // No backend profile and no recognized host family keep the generic,
+    // package-free wording instead of guessing a distribution.
+    window.m_targetDiagnosticCache.clear();
+    window.m_targetDiagnosticCacheIdentity = window.currentTargetDiagnosticCacheIdentity();
+    QTemporaryDir unknownReleaseDir;
+    QVERIFY(unknownReleaseDir.isValid());
+    const QString unknownReleasePath = unknownReleaseDir.path() + QStringLiteral("/os-release");
+    {
+        QFile file(unknownReleasePath);
+        QVERIFY(file.open(QIODevice::WriteOnly | QIODevice::Text));
+        QTextStream stream(&file);
+        stream << "ID=gentoo\n"
+               << "PRETTY_NAME=\"Gentoo Linux\"\n";
+    }
+    ScopedEnvironmentVariable unknownRelease("BOOT_REPAIR_OS_RELEASE", unknownReleasePath.toLocal8Bit());
+    ScopedEnvironmentVariable xdgDesktop("XDG_CURRENT_DESKTOP", "KDE");
+    ScopedEnvironmentVariable xdgSessionDesktop("XDG_SESSION_DESKTOP", "KDE");
+    ScopedEnvironmentVariable desktopSession("DESKTOP_SESSION", "plasma");
+    QProcess *session = attachTextualAgentFailureSession(window);
+    QVERIFY(session);
+    QString error;
+    QVERIFY(!window.ensurePrivilegedSession(&error));
+    QVERIFY2(error.contains(QStringLiteral("No working Polkit authentication agent was found")),
+             qPrintable(error));
+    QVERIFY2(error.contains(QStringLiteral(
+                 "Install and start a Polkit authentication agent for your desktop")),
+             qPrintable(error));
+    for (const QString &command : {QStringLiteral("apt install"), QStringLiteral("pacman"),
+                                   QStringLiteral("apk add"), QStringLiteral("dnf install")}) {
+        QVERIFY2(!error.contains(command),
+                 qPrintable(QStringLiteral("the generic hint leaked '%1': %2").arg(command, error)));
+    }
+    detachFailureSession(window, session);
+}
+
+void MainWindowUiTest::authorizeNowRetriesAndSurfacesFreshFailure()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_uiTestPrivilegedSessionGranted = false;
+    window.m_privilegedSessionRequestCount = 0;
+    window.m_snapshotPreloadScheduled = true;
+
+    // The deferred state for the current scope plus a stale failure text from
+    // a previous attempt must never mask the explicit retry.
+    window.m_authorizationDeferredScope = QStringLiteral("target:/dev/test-system");
+    window.m_authorizationFailureText = QStringLiteral("stale failure text");
+    window.m_authorizationScopeRequested.clear();
+    window.updateAuthorizationAffordance();
+    QVERIFY(!window.m_authorizeNowButton->isHidden());
+    QVERIFY(window.m_authorizeNowButton->isEnabled());
+    QCOMPARE(window.m_authorizationStatusLabel->toolTip(), QStringLiteral("stale failure text"));
+
+    window.m_authorizeNowButton->click();
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY(!window.m_privilegedSessionReady);
+    // The failed attempt publishes the fresh scope and error, never the stale
+    // deferral or the stale failure text.
+    QCOMPARE(window.m_authorizationDeferredScope, QStringLiteral("target:/dev/test-system"));
+    QVERIFY2(window.m_authorizationFailureText.startsWith(
+                 QStringLiteral("Administrator authorization session was not established.")),
+             qPrintable(window.m_authorizationFailureText));
+    QVERIFY2(window.m_authorizationFailureText != QStringLiteral("stale failure text"),
+             "the failed attempt must publish only its own fresh error text");
+    QVERIFY(!window.m_authorizationStatusLabel->isHidden());
+    QVERIFY(window.m_authorizationStatusLabel->text().contains(QStringLiteral("failed"),
+                                                               Qt::CaseInsensitive));
+    QCOMPARE(window.m_authorizationStatusLabel->toolTip(), window.m_authorizationFailureText);
+    QVERIFY(!window.m_authorizeNowButton->isHidden());
+    QVERIFY(window.m_authorizeNowButton->isEnabled());
+    QVERIFY2(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(
+                 QStringLiteral("Authorization retry failed: "
+                                "Administrator authorization session was not established.")),
+             "the fresh retry failure must be surfaced in the session log");
+    QVERIFY2(window.m_activeBusyOperations.isEmpty(),
+             "the failed attempt must not leave the busy indicator claimed");
+
+    // The explicit button always re-attempts, even after a failure.
+    window.m_authorizeNowButton->click();
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(2));
+    QVERIFY(!window.m_privilegedSessionReady);
+
+    // A later successful retry clears the deferred and failure state.
+    window.m_uiTestPrivilegedSessionGranted = true;
+    window.m_authorizeNowButton->click();
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(3));
+    QVERIFY(window.m_privilegedSessionReady);
+    QVERIFY(window.m_authorizationDeferredScope.isEmpty());
+    QVERIFY(window.m_authorizationFailureText.isEmpty());
+    QVERIFY(window.m_authorizationStatusLabel->isHidden());
+    QVERIFY(window.m_authorizeNowButton->isHidden());
+}
+
+void MainWindowUiTest::authorizeNowClickIgnoredWhileRequestPending()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_uiTestPrivilegedSessionGranted = true;
+    window.m_uiTestPrivilegedSessionDelayMs = 120;
+    window.m_privilegedSessionRequestCount = 0;
+    window.m_authorizationDeferredScope = QStringLiteral("target:/dev/test-system");
+    window.updateAuthorizationAffordance();
+    QVERIFY(window.m_authorizeNowButton->isEnabled());
+
+    bool buttonDisabledWhilePending = false;
+    bool labelShownWhilePending = false;
+    bool clickWasIgnored = false;
+    QTimer probe;
+    probe.setSingleShot(true);
+    probe.setInterval(30);
+    QObject::connect(&probe, &QTimer::timeout, &window, [&] {
+        buttonDisabledWhilePending = !window.m_authorizeNowButton->isEnabled();
+        labelShownWhilePending = window.m_authorizationStatusLabel->text().contains(
+            QStringLiteral("Requesting administrator authorization"));
+        window.m_authorizeNowButton->click();
+        clickWasIgnored = window.m_privilegedSessionRequestCount == 1;
+    });
+    probe.start();
+    window.authorizePrivilegedSessionNow();
+    QVERIFY(window.m_privilegedSessionReady);
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY2(buttonDisabledWhilePending,
+             "the Authorize button must be disabled while the request is pending");
+    QVERIFY2(labelShownWhilePending,
+             "the pending authorization must stay visible while it runs");
+    QVERIFY2(clickWasIgnored,
+             "a click while the request is pending must not start a second request");
+    QVERIFY(window.m_authorizationStatusLabel->isHidden());
+    QVERIFY(window.m_authorizeNowButton->isHidden());
+    window.m_uiTestPrivilegedSessionDelayMs = 0;
 }
 
 void MainWindowUiTest::repairTargetConfirmationRequestsPrivilegedSessionOnce()

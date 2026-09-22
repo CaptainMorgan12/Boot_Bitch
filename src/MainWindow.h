@@ -414,6 +414,25 @@ private:
     // ...) parsed from the cached display evidence; empty when the evidence
     // names no specific manager.
     QString detectedDisplayManagerName() const;
+    // Package-manager family key ("debian", "arch", "fedora", "alpine") for
+    // the missing-Polkit-agent hint. The active scope's detected backend
+    // profile is authoritative; the running host's own /etc/os-release is the
+    // fallback so a failure before the first diagnostic run still names the
+    // local package manager. Empty means no supported family was detected and
+    // the hint must stay generic.
+    QString detectedAuthorizationFamily() const;
+    // Desktop environment key ("xfce", "mate", "lxde", "gnome") from the
+    // running session's environment. The Polkit agent is a desktop-session
+    // component, so this evidence is deliberately host-local and never taken
+    // from the repair target's profile.
+    QString authorizationDesktopKey() const;
+    // Distribution/desktop-aware fix appended to a missing-agent
+    // authorization failure. Never names another distribution's package
+    // command; no detected family keeps the generic package-free wording.
+    QString authorizationAgentHint() const;
+    // Composes the user-facing authorization failure (stable prefix, last
+    // pkexec output line, agent hint) for the current scope.
+    QString authorizationFailureMessage(const QString &detail) const;
     bool adoptActiveSessionLog();
     void restoreSessionScopeFromLog(const QString &logText);
     void flushPendingSessionEntries();
@@ -493,6 +512,10 @@ private:
 
     // ---- Privileged session and authorization --------------------------------
 
+    // True when a usable privileged helper session exists: the ready flag is
+    // set and any attached session process is still running. The UI-test seam
+    // grants a session without a QProcess, so a missing process stays usable.
+    bool privilegedSessionUsable() const;
     bool ensurePrivilegedSession(QString *errorMessage = nullptr);
     void requestPrivilegedSessionForScope(const QString &scopeKey);
     void authorizePrivilegedSessionNow();
@@ -1188,6 +1211,10 @@ private:
     QPushButton *m_authorizeNowButton = nullptr;
     QString m_authorizationScopeRequested;
     QString m_authorizationDeferredScope;
+    // Last explicit Authorize retry failure, surfaced in the scope controls so
+    // a failed click can never look like a no-op. Cleared when a new attempt
+    // starts or a session becomes usable.
+    QString m_authorizationFailureText;
     bool m_authorizationRequestInFlight = false;
     quint64 m_privilegedSessionRequestCount = 0;
     bool m_uiTestPrivilegedSessionGranted = false;

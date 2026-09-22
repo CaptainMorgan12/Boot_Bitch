@@ -6522,24 +6522,33 @@ bool looksLikePolkitAgentFailure(const QString &detail)
         || lower.contains(QStringLiteral("error registering authentication agent"));
 }
 
+} // namespace
+
 // Composes the user-facing authorization failure. The stable prefix is kept
 // first so existing callers and messages stay compatible; the last pkexec
-// output line and, for the known agent failure, the actionable fix follow.
-QString authorizationFailureMessage(const QString &detail)
+// output line and, for the known agent failure, the distribution-aware fix
+// follow.
+QString MainWindow::authorizationFailureMessage(const QString &detail) const
 {
     QString message = QStringLiteral("Administrator authorization session was not established.");
     if (!detail.isEmpty()) {
         message += QStringLiteral(" Last authorization output: %1").arg(detail);
     }
     if (looksLikePolkitAgentFailure(detail)) {
-        message += QStringLiteral(
-            " No working Polkit authentication agent was found. On Alpine install/start one "
-            "(apk add polkit-elogind xfce-polkit) and retry.");
+        message += authorizationAgentHint();
     }
     return message;
 }
 
-} // namespace
+// True when a usable privileged helper session exists: the ready flag is set
+// and any attached session process is still running. The UI-test seam grants a
+// session without a QProcess, so a missing process stays usable. A ready flag
+// whose process already exited must never swallow a retry.
+bool MainWindow::privilegedSessionUsable() const
+{
+    return m_privilegedSessionReady
+        && (!m_privilegedSession || m_privilegedSession->state() != QProcess::NotRunning);
+}
 
 // Returns true when a usable privileged helper session exists, launching one
 // pkexec/Polkit conversation when needed. Concurrent callers coalesce onto the
@@ -6553,14 +6562,7 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         }
     };
 
-    const auto sessionUsable = [this] {
-        // The UI-test seam grants the session without a QProcess, so a ready
-        // flag alone is sufficient when no process exists.
-        return m_privilegedSessionReady
-            && (!m_privilegedSession || m_privilegedSession->state() != QProcess::NotRunning);
-    };
-
-    if (sessionUsable()) {
+    if (privilegedSessionUsable()) {
         m_authorizationDeferredScope.clear();
         updateAuthorizationAffordance();
         setError(QString());
@@ -6574,11 +6576,11 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     // that request instead of launching a second pkexec dialog. The wait ends
     // as soon as the shared request publishes its outcome.
     if (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight) {
-        while (!sessionUsable() && !m_privilegedSessionRequestFailed
+        while (!privilegedSessionUsable() && !m_privilegedSessionRequestFailed
                && (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight)) {
             QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
         }
-        if (sessionUsable()) {
+        if (privilegedSessionUsable()) {
             m_authorizationDeferredScope.clear();
             updateAuthorizationAffordance();
             setError(QString());
@@ -6589,11 +6591,28 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     }
 
     // This call now owns the single authorization request for its duration.
+    // The affordance follows the in-flight flag immediately so the Authorize
+    // button is visibly disabled (and a click cannot be swallowed into a
+    // second coalesced request) while the one Polkit conversation runs.
     struct InFlightReset {
-        explicit InFlightReset(bool *target) : flag(target) { *flag = true; }
-        ~InFlightReset() { *flag = false; }
+        InFlightReset(bool *target, MainWindow *window)
+            : flag(target), window(window)
+        {
+            *flag = true;
+            if (window) {
+                window->updateAuthorizationAffordance();
+            }
+        }
+        ~InFlightReset()
+        {
+            *flag = false;
+            if (window) {
+                window->updateAuthorizationAffordance();
+            }
+        }
         bool *flag;
-    } inFlightReset(&m_privilegedSessionRequestInFlight);
+        MainWindow *window;
+    } inFlightReset(&m_privilegedSessionRequestInFlight, this);
 
     BusyOperationScope busy(this, QStringLiteral("Requesting administrator authorization"));
 
@@ -6876,6 +6895,9 @@ void MainWindow::requestPrivilegedSessionForScope(const QString &scopeKey)
     }
 
     m_authorizationScopeRequested = scopeKey;
+    // A new automatic request starts a fresh attempt: a previous explicit
+    // retry's failure text must not leak into this scope's affordance.
+    m_authorizationFailureText.clear();
     m_authorizationRequestInFlight = true;
     updateAuthorizationAffordance();
 
@@ -6904,21 +6926,51 @@ void MainWindow::requestPrivilegedSessionForScope(const QString &scopeKey)
 
 void MainWindow::authorizePrivilegedSessionNow()
 {
-    if (m_privilegedSessionReady) {
+    // Re-check the live session state, never only the cached ready flag: a
+    // helper that exited since the last refresh must not swallow the retry.
+    if (privilegedSessionUsable()) {
+        m_authorizationDeferredScope.clear();
+        m_authorizationFailureText.clear();
+        updateAuthorizationAffordance();
+        return;
+    }
+
+    // The single Polkit conversation already owns the prompt. The Authorize
+    // button is disabled while a request is pending, so this guard is a
+    // defensive no-op for programmatic clicks: it never starts a second prompt
+    // and never blocks on the in-flight request.
+    if (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight) {
         updateAuthorizationAffordance();
         return;
     }
 
     // An explicit user action may always request authorization again, even
-    // after a cancellation for the same scope.
+    // after a cancellation for the same scope. Clear the previous attempt's
+    // deferred/failure bookkeeping first so a stale scope can never mask this
+    // retry and the fresh outcome is what the affordance publishes.
+    m_authorizationDeferredScope.clear();
+    m_authorizationFailureText.clear();
     m_authorizationScopeRequested = currentPrivilegedScopeKey();
+    updateAuthorizationAffordance();
+
     QString error;
     if (ensurePrivilegedSession(&error)) {
         m_authorizationDeferredScope.clear();
+        m_authorizationFailureText.clear();
     } else {
         m_authorizationDeferredScope = m_authorizationScopeRequested;
+        m_authorizationFailureText = error;
         appendStatusLog(statusEntryIdentity(QStringLiteral("authorization-deferred")),
                         QStringLiteral("Administrator authorization was deferred; the next privileged action will request it again."));
+        if (!error.isEmpty()) {
+            // Surface the fresh failure text instead of leaving the click as a
+            // no-op. The windowless contract stays intact: the reason lands in
+            // the scope controls, the status bar and the session log rather
+            // than a second application dialog.
+            appendLog(QStringLiteral("Authorization retry failed: %1").arg(error),
+                      QStringLiteral("WARNING"), LogEntryKind::Repair);
+            statusBar()->showMessage(error, 8000);
+        }
     }
     updateAuthorizationAffordance();
 }
@@ -6940,27 +6992,44 @@ void MainWindow::updateAuthorizationAffordance()
         return;
     }
 
-    if (m_privilegedSessionReady) {
+    if (privilegedSessionUsable()) {
+        m_authorizationFailureText.clear();
         m_authorizationStatusLabel->setVisible(false);
         m_authorizeNowButton->setVisible(false);
+        return;
+    }
+
+    // One Polkit conversation at a time: while it runs the Authorize button
+    // stays in place but disabled, so the affordance cannot be clicked into a
+    // second coalesced request and the button row does not jump.
+    if (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight) {
+        m_authorizationStatusLabel->setText(QStringLiteral("Requesting administrator authorization…"));
+        m_authorizationStatusLabel->setToolTip(QStringLiteral(
+            "The single Polkit authorization request is already running. The Authorize button re-enables when it finishes."));
+        m_authorizationStatusLabel->setVisible(true);
+        m_authorizeNowButton->setVisible(true);
+        m_authorizeNowButton->setEnabled(false);
         return;
     }
 
     const bool deferredForCurrentScope = !m_authorizationDeferredScope.isEmpty()
         && m_authorizationDeferredScope == currentPrivilegedScopeKey();
     if (deferredForCurrentScope) {
-        m_authorizationStatusLabel->setText(QStringLiteral(
-            "Administrator authorization deferred — diagnostics will regenerate after you authorize."));
+        if (m_authorizationFailureText.isEmpty()) {
+            m_authorizationStatusLabel->setText(QStringLiteral(
+                "Administrator authorization deferred — diagnostics will regenerate after you authorize."));
+            m_authorizationStatusLabel->setToolTip(QStringLiteral(
+                "Administrator authorization was deferred for the current scope. Diagnostics and repairs stay available; the next privileged action will request authorization again, or press Authorize to establish the session now."));
+        } else {
+            // A failed explicit retry publishes its fresh reason here and in
+            // the tooltip; the full text also went to the status bar and log.
+            m_authorizationStatusLabel->setText(QStringLiteral(
+                "Administrator authorization failed — press Authorize to retry."));
+            m_authorizationStatusLabel->setToolTip(m_authorizationFailureText);
+        }
         m_authorizationStatusLabel->setVisible(true);
         m_authorizeNowButton->setVisible(true);
         m_authorizeNowButton->setEnabled(true);
-        return;
-    }
-
-    if (m_authorizationRequestInFlight) {
-        m_authorizationStatusLabel->setText(QStringLiteral("Requesting administrator authorization…"));
-        m_authorizationStatusLabel->setVisible(true);
-        m_authorizeNowButton->setVisible(false);
         return;
     }
 
@@ -6973,6 +7042,7 @@ void MainWindow::closePrivilegedSession()
     QProcess *session = m_privilegedSession;
     m_privilegedSession = nullptr;
     m_privilegedSessionReady = false;
+    m_authorizationFailureText.clear();
     if (m_lockAuthorizationAction) {
         m_lockAuthorizationAction->setEnabled(false);
     }
@@ -12252,6 +12322,154 @@ QString MainWindow::detectedDisplayManagerName() const
         return QStringLiteral("Ly");
     }
     return QString();
+}
+
+// Package-manager family key for the missing-Polkit-agent hint. The active
+// scope's detected backend profile is authoritative (it is the same evidence
+// the stage labels use); the running host's own /etc/os-release is the
+// fallback so an authorization failure before the first diagnostic run still
+// names the local package manager. An explicitly detected but unsupported
+// family (for example openSUSE) keeps the generic wording instead of being
+// guessed into another distribution.
+QString MainWindow::detectedAuthorizationFamily() const
+{
+    const QString family = detectedDistributionFamily().trimmed().toLower();
+    if (!family.isEmpty() && family != QStringLiteral("unknown")) {
+        if (family.contains(QStringLiteral("debian"))
+            || family.contains(QStringLiteral("ubuntu"))) {
+            return QStringLiteral("debian");
+        }
+        if (family.contains(QStringLiteral("arch"))) {
+            return QStringLiteral("arch");
+        }
+        if (family.contains(QStringLiteral("alpine"))) {
+            return QStringLiteral("alpine");
+        }
+        if (family.contains(QStringLiteral("fedora"))
+            || family.contains(QStringLiteral("rhel"))) {
+            return QStringLiteral("fedora");
+        }
+        return QString();
+    }
+    for (const QString &manager : detectedPackageManagers()) {
+        const QString lower = manager.trimmed().toLower();
+        if (lower == QStringLiteral("apt/dpkg") || lower == QStringLiteral("apt")
+            || lower == QStringLiteral("dpkg")) {
+            return QStringLiteral("debian");
+        }
+        if (lower == QStringLiteral("pacman")) {
+            return QStringLiteral("arch");
+        }
+        if (lower == QStringLiteral("apk")) {
+            return QStringLiteral("alpine");
+        }
+        if (lower == QStringLiteral("rpm") || lower == QStringLiteral("dnf")) {
+            return QStringLiteral("fedora");
+        }
+    }
+    // The Polkit agent is a running-host component, so the host's own
+    // os-release is the last non-generic evidence source.
+    const QString host = CapabilityChecker::packageManagerLabel().toLower();
+    if (host.contains(QStringLiteral("apt")) || host.contains(QStringLiteral("dpkg"))) {
+        return QStringLiteral("debian");
+    }
+    if (host.contains(QStringLiteral("pacman"))) {
+        return QStringLiteral("arch");
+    }
+    if (host.contains(QStringLiteral("apk"))) {
+        return QStringLiteral("alpine");
+    }
+    if (host.contains(QStringLiteral("dnf")) || host.contains(QStringLiteral("rpm"))) {
+        return QStringLiteral("fedora");
+    }
+    return QString();
+}
+
+// Desktop environment key for the package choice within a family. The Polkit
+// agent runs in the user's desktop session, so the session environment is the
+// evidence source and is never taken from the repair target's profile.
+QString MainWindow::authorizationDesktopKey() const
+{
+    QString desktop = QString::fromLocal8Bit(qgetenv("XDG_CURRENT_DESKTOP")).toLower();
+    desktop += QLatin1Char(' ');
+    desktop += QString::fromLocal8Bit(qgetenv("XDG_SESSION_DESKTOP")).toLower();
+    desktop += QLatin1Char(' ');
+    desktop += QString::fromLocal8Bit(qgetenv("DESKTOP_SESSION")).toLower();
+    if (desktop.contains(QStringLiteral("xfce"))) {
+        return QStringLiteral("xfce");
+    }
+    if (desktop.contains(QStringLiteral("mate"))) {
+        return QStringLiteral("mate");
+    }
+    if (desktop.contains(QStringLiteral("lxde")) || desktop.contains(QStringLiteral("lxqt"))) {
+        return QStringLiteral("lxde");
+    }
+    if (desktop.contains(QStringLiteral("gnome"))) {
+        return QStringLiteral("gnome");
+    }
+    return QString();
+}
+
+// Actionable fix for the missing-agent authorization failure. The command
+// always belongs to the detected family: a Debian failure never names pacman,
+// apk or dnf packages, and vice versa. No detected family keeps the generic
+// package-free wording.
+QString MainWindow::authorizationAgentHint() const
+{
+    const QString family = detectedAuthorizationFamily();
+    const QString desktop = authorizationDesktopKey();
+    if (family == QStringLiteral("debian")) {
+        if (desktop == QStringLiteral("xfce")) {
+            return QStringLiteral(
+                " No working Polkit authentication agent was found. On Debian/Ubuntu install/start one "
+                "(sudo apt install xfce-polkit) and retry.");
+        }
+        if (desktop == QStringLiteral("mate")) {
+            return QStringLiteral(
+                " No working Polkit authentication agent was found. On Debian/Ubuntu install/start one "
+                "(sudo apt install mate-polkit) and retry.");
+        }
+        if (desktop == QStringLiteral("lxde")) {
+            return QStringLiteral(
+                " No working Polkit authentication agent was found. On Debian/Ubuntu install/start one "
+                "(sudo apt install lxpolkit) and retry.");
+        }
+        if (desktop == QStringLiteral("gnome")) {
+            return QStringLiteral(
+                " No working Polkit authentication agent was found. On Debian/Ubuntu install/start one "
+                "(sudo apt install policykit-1-gnome) and retry.");
+        }
+        // An unrecognized desktop still gets the Debian command family; the
+        // four Debian agents are named so the user can pick the one matching
+        // the desktop instead of being sent to another distribution.
+        return QStringLiteral(
+            " No working Polkit authentication agent was found. On Debian/Ubuntu install/start the "
+            "agent for your desktop (sudo apt install xfce-polkit, policykit-1-gnome, mate-polkit or lxpolkit) "
+            "and retry.");
+    }
+    if (family == QStringLiteral("arch")) {
+        const QString package = desktop == QStringLiteral("xfce")
+            ? QStringLiteral("xfce-polkit") : QStringLiteral("polkit-gnome");
+        return QStringLiteral(
+            " No working Polkit authentication agent was found. On Arch install/start one "
+            "(sudo pacman -S %1) and retry.").arg(package);
+    }
+    if (family == QStringLiteral("fedora")) {
+        const QString package = desktop == QStringLiteral("xfce")
+            ? QStringLiteral("xfce-polkit") : QStringLiteral("polkit-gnome");
+        return QStringLiteral(
+            " No working Polkit authentication agent was found. On Fedora install/start one "
+            "(sudo dnf install %1) and retry.").arg(package);
+    }
+    if (family == QStringLiteral("alpine")) {
+        // Alpine's OpenRC/elogind agent set keeps its established wording.
+        return QStringLiteral(
+            " No working Polkit authentication agent was found. On Alpine install/start one "
+            "(apk add polkit-elogind xfce-polkit) and retry.");
+    }
+    return QStringLiteral(
+        " No working Polkit authentication agent was found. Install and start a Polkit "
+        "authentication agent for your desktop, then retry.");
 }
 
 // True when the active scope's cached evidence describes an EFI/firmware
