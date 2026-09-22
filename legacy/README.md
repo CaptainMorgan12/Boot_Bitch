@@ -32,19 +32,29 @@ stays installed as the no-X fallback.
 
 `legacy/gui/` is a Qt3-only (`QMainWindow`/`QListView`/`QTextEdit`/
 `QTabWidget`/`QProcess`, no kdelibs) C++98 application; see
-`legacy/gui/README.md` for the full design and CLI. It renders the read-only
-kernel inventory plus the helper-confirmed target facts, lists the 13
-`Repair tool` capability lines with unavailable tools greyed and their probe
-reason shown verbatim, and enables only the legacy-supported commands
-(`validate`, `diagnose`, `fs-inspect`, `fix-broken`, `dpkg-configure`,
-`apt-update`, `apt-upgrade`, `initramfs`) whose cached capability line is
-`available` for the current scope. A repair that is not proven `unchanged`
+`legacy/gui/README.md` for the full design, the modern-GUI parity table and
+CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it:
+**Systems** renders the read-only kernel inventory, the helper-confirmed target
+facts and a LUKS **Unlock** control (passphrase over the helper's stdin only;
+disabled for the protected running host), **Diagnostics** lists the 13
+`Repair tool` capability lines with an all/available/unavailable filter and
+Run All, **Repair** shows the resolved elevation method with a re-check button
+and enables only the legacy-supported commands (`validate`, `diagnose`,
+`fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
+`initramfs`) whose cached capability line is `available` for the current
+scope, and **Logs** streams the helper output with an all/errors filter. A
+repair that is not proven `unchanged` (or an unlock that changes the topology)
 invalidates the cache and disables the gated actions until diagnostics run
-again. The helper keeps every runtime preflight.
+again. Unavailable tools and the modern-only features (Full Repair plan,
+snapshots, file copy, chroot shell, host default/reboot, EFI/UKI/extlinux,
+Settings) stay greyed with their probe/helper reasons. The helper keeps every
+runtime preflight.
 
 Build it natively on Etch with `qmake-qt3`/`make` (or through
 `scripts/package-legacy.sh`); `--print-config` and `--help` work without X and
-the no-X path is the launcher's `boot-repair-legacy --tui` menu.
+the no-X path is the launcher's `boot-repair-legacy --tui` menu (now with an
+unlock entry). `--smoke-test` also verifies the new controls and the
+1024x768 layout programmatically.
 
 ## Launcher
 
@@ -67,6 +77,8 @@ repair <disk> <root> fix-broken       safe repair: restore broken package state
 repair <disk> <root> dpkg-configure   safe repair: finish pending dpkg configuration
 repair <disk> <root> initramfs        safe repair: rebuild the target initramfs
 repair <disk> <root> apt-update       safe repair: refresh package metadata (mirror-gated)
+repair <disk> <root> apt-upgrade      safe repair: upgrade packages (mirror-gated)
+unlock <disk> <luks-device>           open the LUKS component (passphrase on stdin)
 ```
 
 Useful options: `--tui` (force the menu), `--helper PATH`,
@@ -133,6 +145,14 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
 - The launcher ran `--tui` through its console fallback (no `dialog`) with
   `sudo` elevation (`gksu`/`gksudo` are not installed on Etch); the GUI was
   validated as root because of that.
+- GUI polish pass (same day): the extended `--smoke-test` at 1024x768 reported
+  `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+  controls: ok; layout: ok (29 widgets checked)` (app rc 0). The layout
+  assertion failed on the pre-compaction layout (group panes and buttons below
+  the page bottom) and passes after the compaction; the Unlock control stays
+  disabled for the protected running host, the diagnostics/log filters were
+  exercised and the launcher documents `unlock <disk> <luks-device>`. Evidence:
+  `Development/release-0.2.25/etch-legacy/gui-polish-*`.
 
 ## Packaging
 
@@ -191,8 +211,11 @@ a package.
 compiles the Qt-free parser/inventory modules with plain `g++ -std=c++98
 -Werror`, runs the fixture assertions from `legacy/tests/gui-parser-test.cpp`
 (capability parsing, fail-closed gating, change-status invalidation, device
-inventory) and checks the Qt3-only source contract and the legacy command set.
-The full Qt3 compile is verified on the Etch guest by the packaging build.
+inventory, LUKS unlock-result markers) and checks the Qt3-only source contract,
+the legacy command set, the parity controls (unlock/elevation/filters/greyed
+features) and the layout guards. The full Qt3 compile and the extended
+`--smoke-test` (controls + 1024x768 layout assertions) are verified on the Etch
+guest by the packaging build.
 
 `legacy/tests/test-port-contract.sh` (fast `boot-repair-legacy-port-contract`)
 runs `legacy/port.sh --check`, asserts the generated helper is bash-3.1 syntax

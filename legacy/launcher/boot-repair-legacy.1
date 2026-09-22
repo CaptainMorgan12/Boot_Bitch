@@ -84,6 +84,11 @@ Safe repair: refresh package metadata (mirror-gated).
 .TP
 .B repair <disk> <root> apt-upgrade
 Safe repair: upgrade installed packages (mirror-gated).
+.TP
+.B unlock <disk> <luks-device>
+Open the selected LUKS component with cryptsetup through the helper. The
+passphrase is read from standard input only and is never placed on a command
+line or logged.
 .SH GUI
 The package also ships
 .BR boot-repair-legacy-gui ,
@@ -92,7 +97,13 @@ a Qt3 frontend that shows the read-only device inventory, the helper's
 capability lines (unavailable tools are greyed with their probe reason) and
 only enables the legacy-supported commands whose capability line is
 .BR available .
-Its
+The Systems tab carries a LUKS
+.B Unlock
+control (passphrase over the helper's standard input only), the Diagnostics
+tab an all/available/unavailable filter and the Logs tab an all/errors filter;
+the Repair tab shows the resolved elevation method (gksu/gksudo/sudo/su) with a
+re-check control and greys the modern-only features (snapshots, file copy,
+chroot shell, host default, EFI, Settings) with their reasons. Its
 .B \-\-help
 option documents
 .BR \-\-helper ,

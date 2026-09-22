@@ -285,6 +285,32 @@ void testDeviceParsers()
     }
 }
 
+void testUnlockHelpers()
+{
+    const std::string okTranscript =
+        "Unlocking LUKS target /dev/hda5\n"
+        "UNLOCKED=/dev/mapper/luks-etchroot\n";
+    check(legacy::unlockMapper(okTranscript) == "/dev/mapper/luks-etchroot",
+          "unlock mapper path extracted");
+    check(!legacy::unlockAuthFailed(okTranscript),
+          "successful unlock is not an auth failure");
+    check(legacy::unlockMapper("no marker here").empty(),
+          "missing unlock marker yields an empty mapper");
+
+    const std::string failedTranscript =
+        "UNLOCK_AUTH_FAILED=1\n"
+        "ERROR: LUKS passphrase was not accepted.\n";
+    check(legacy::unlockAuthFailed(failedTranscript),
+          "auth-failure marker detected");
+    check(legacy::unlockMapper(failedTranscript).empty(),
+          "failed unlock carries no mapper");
+
+    // The marker must be an exact line: prose that merely mentions it (for
+    // example the log line the GUI writes) must not trigger a retry.
+    check(!legacy::unlockAuthFailed("the UNLOCK_AUTH_FAILED=1 marker was not seen"),
+          "auth-failure marker requires an exact line");
+}
+
 void testStageMapping()
 {
     check(legacy::repairToolKeyForStage("fix-broken") == "fixbroken",
@@ -314,6 +340,7 @@ int main(int argc, char **argv)
     testTranscriptParsing(fixture);
     testCapabilityModel(fixture);
     testDeviceParsers();
+    testUnlockHelpers();
     testStageMapping();
 
     if (failures > 0) {

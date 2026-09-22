@@ -58,6 +58,15 @@ bool capabilityIsAvailable(const std::string &state, std::string *reason);
 // True for "unchanged" and "unchanged|<reason>" (proven no-op).
 bool changeStatusIsUnchanged(const std::string &status);
 
+// LUKS unlock result helpers (legacy helper `unlock` command):
+//   `UNLOCKED=<mapper-path>` on success (the mapper path is returned, "" when
+//   the transcript carries no such line);
+//   `UNLOCK_AUTH_FAILED=1` on a rejected passphrase (retry without treating it
+//   as a generic failure). Neither helper ever sees a passphrase: the helper
+//   prints only these markers.
+std::string unlockMapper(const std::string &text);
+bool unlockAuthFailed(const std::string &text);
+
 // Cached capability/evidence model for one selected scope identity.
 // Fail closed: availability requires a completed diagnostic run for the same
 // identity, an exact `available` line and no invalidating change status since.

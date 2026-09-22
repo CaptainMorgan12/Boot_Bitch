@@ -277,6 +277,32 @@ bool changeStatusIsUnchanged(const std::string &status)
     return status == "unchanged" || startsWith(status, "unchanged|");
 }
 
+std::string unlockMapper(const std::string &text)
+{
+    const std::vector<std::string> lines = splitLines(text);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string line = trim(lines[i]);
+        if (startsWith(line, "UNLOCKED=")) {
+            const std::string value = trim(line.substr(std::strlen("UNLOCKED=")));
+            if (!value.empty()) {
+                return value;
+            }
+        }
+    }
+    return std::string();
+}
+
+bool unlockAuthFailed(const std::string &text)
+{
+    const std::vector<std::string> lines = splitLines(text);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        if (trim(lines[i]) == "UNLOCK_AUTH_FAILED=1") {
+            return true;
+        }
+    }
+    return false;
+}
+
 CapabilityModel::CapabilityModel()
     : m_ran(false), m_stale(false)
 {

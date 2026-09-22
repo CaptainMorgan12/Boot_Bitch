@@ -95,6 +95,7 @@ repair <disk> <root> dpkg-configure   safe repair: finish pending dpkg configura
 repair <disk> <root> initramfs        safe repair: rebuild the target initramfs
 repair <disk> <root> apt-update       safe repair: refresh package metadata (mirror-gated)
 repair <disk> <root> apt-upgrade      safe repair: upgrade packages (mirror-gated)
+unlock <disk> <luks-device>           open the LUKS component (passphrase on stdin)
 EOF
 }
 
@@ -305,7 +306,8 @@ tui_main()
                 6 'Safe repair: rebuild initramfs' \
                 7 'Safe repair: refresh package metadata' \
                 8 'Show documented helper commands' \
-                9 'Quit')" || _choice=''
+                9 'Unlock LUKS target (passphrase on stdin)' \
+                0 'Quit')" || _choice=''
         else
             printf '\n%s %s - legacy recovery\n' "$PROGRAM" "$VERSION" >&2
             printf '  1) Validate target root\n' >&2
@@ -316,8 +318,9 @@ tui_main()
             printf '  6) Safe repair: rebuild initramfs\n' >&2
             printf '  7) Safe repair: refresh package metadata\n' >&2
             printf '  8) Show documented helper commands\n' >&2
-            printf '  9) Quit\n' >&2
-            printf 'Select [1-9]: ' >&2
+            printf '  9) Unlock LUKS target (passphrase on stdin)\n' >&2
+            printf '  0) Quit\n' >&2
+            printf 'Select [0-9]: ' >&2
             IFS= read -r _choice || _choice=''
         fi
         case "$_choice" in
@@ -333,7 +336,9 @@ tui_main()
             7) ensure_targets && confirm 'Run safe repair: refresh package metadata?' \
                    && run_helper_interactive repair "$TARGET_DISK" "$ROOT_DEVICE" apt-update ;;
             8) list_commands; pause ;;
-            9|'') return 0 ;;
+            9) ensure_targets && confirm 'Unlock the selected LUKS component?' \
+                   && run_helper_interactive unlock "$TARGET_DISK" "$ROOT_DEVICE" ;;
+            0|'') return 0 ;;
             *) ;;
         esac
     done

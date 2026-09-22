@@ -91,6 +91,8 @@ ACTION_BLOCK="$(sed -n '/^const ActionSpec actionSpecs\[\] = {/,/^};/p' "$WINDOW
 for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs; do
     grep -q "\"$stage\"" <<<"$ACTION_BLOCK" || fail "legacy stage missing from the GUI: $stage"
 done
+# `unlock` is a dedicated control (passphrase on stdin), never a repair stage;
+# the other modern-only stages stay forbidden in the action table.
 for forbidden in snapshots host-default host-shell fs-repair copy unlock; do
     grep -q "\"$forbidden\"" <<<"$ACTION_BLOCK" \
         && fail "unsupported stage exposed by the GUI: $forbidden"
@@ -99,6 +101,38 @@ grep -q 'host-validate' "$WINDOW" || fail "GUI lost the host-validate command fo
 grep -q 'host-diagnose' "$WINDOW" || fail "GUI lost the host-diagnose command form"
 grep -q 'host-repair' "$WINDOW" || fail "GUI lost the host-repair command form"
 pass "legacy command set only (validate/diagnose/fs-inspect/repairs)"
+
+# --- modern-GUI parity controls ---------------------------------------------
+grep -q '"unlock"' "$WINDOW" || fail "GUI lost the dedicated unlock command"
+grep -q 'm_unlockButton' "$WINDOW" || fail "GUI lost the Unlock button"
+grep -q 'QLineEdit::Password' "$WINDOW" || fail "unlock passphrase entry is not hidden"
+grep -q 'unlockAuthFailed' "$WINDOW" || fail "GUI lost the unlock retry path"
+grep -q 'UNLOCK_AUTH_FAILED' "$PARSER" || fail "parser lost the unlock auth-failure marker"
+grep -q 'protected running host cannot be unlocked' "$WINDOW" \
+    || fail "unlock is not fail-closed for the protected running host"
+grep -q 'writeToStdin' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner cannot send the passphrase over stdin"
+grep -q 'Re-check elevation' "$WINDOW" || fail "GUI lost the elevation re-check control"
+grep -q 'Elevation:' "$WINDOW" || fail "GUI lost the elevation state label"
+for filter in 'All tools' 'Available only' 'Unavailable only' 'All entries' 'Errors and warnings'; do
+    grep -q "$filter" "$WINDOW" || fail "GUI lost a filter option: $filter"
+done
+grep -q 'Modern features not available' "$WINDOW" \
+    || fail "GUI lost the greyed modern-features list"
+pass "parity controls (unlock, elevation, diagnostics/log filters, greyed features)"
+
+# --- layout guards and the extended smoke test ------------------------------
+grep -q 'QFontMetrics' "$WINDOW" || fail "GUI lost the title/button font-metric layout guard"
+grep -q 'setMinimumWidth' "$WINDOW" || fail "GUI lost the minimum-width layout guard"
+grep -q 'setMinimumHeight' "$WINDOW" || fail "GUI lost the minimum-height layout guard"
+grep -q 'setChildrenCollapsible(false)' "$WINDOW" \
+    || fail "splitter panes may collapse and clip their titles"
+grep -q 'setMinimumSize(820, 600)' "$WINDOW" || fail "window minimum size contract changed"
+grep -q 'verifyLayout' "$WINDOW" || fail "GUI lost the programmatic layout verification"
+grep -q 'verifySmokeControls' "$WINDOW" || fail "GUI lost the smoke control verification"
+grep -q 'controls: %3; layout: %4' "$WINDOW" \
+    || fail "--smoke-test does not report the controls/layout results"
+pass "layout guards and the extended --smoke-test coverage"
 
 # --- headless CLI before QApplication ---------------------------------------
 MAIN="$GUI_DIR/src/main.cpp"
@@ -113,6 +147,8 @@ pass "headless --help/--version/--print-config before QApplication"
 # --- launcher documents the same command set --------------------------------
 LAUNCHER="$ROOT_DIR/legacy/launcher/boot-repair-legacy"
 grep -q 'apt-upgrade' "$LAUNCHER" || fail "launcher command list is missing apt-upgrade"
+grep -q 'unlock <disk> <luks-device>' "$LAUNCHER" \
+    || fail "launcher command list is missing the unlock control"
 pass "launcher documents the GUI command set"
 
 echo "legacy GUI contract: PASS"

@@ -101,6 +101,16 @@ void HelperRunner::setNoElevate(bool noElevate)
     m_resolved = false;
 }
 
+void HelperRunner::resetElevation()
+{
+    m_resolved = false;
+}
+
+void HelperRunner::setInputData(const QByteArray &data)
+{
+    m_input = data;
+}
+
 bool HelperRunner::resolveElevation(QString *description)
 {
     if (m_resolved) {
@@ -209,11 +219,15 @@ bool HelperRunner::run(const QStringList &helperArgs)
     }
     QString elevationDescription;
     if (!resolveElevation(&elevationDescription)) {
+        m_input.fill('\0');
+        m_input = QByteArray();
         emitErrorLine(QString::fromLatin1("ERROR: ") + elevationDescription);
         emit finished(false, -1);
         return false;
     }
     if (m_helperPath.isEmpty()) {
+        m_input.fill('\0');
+        m_input = QByteArray();
         emitErrorLine(QString::fromLatin1("ERROR: no legacy helper path is configured."));
         emit finished(false, -1);
         return false;
@@ -238,12 +252,25 @@ bool HelperRunner::run(const QStringList &helperArgs)
     connect(m_process, SIGNAL(processExited()), this, SLOT(processExited()));
 
     if (!m_process->start()) {
+        m_input.fill('\0');
+        m_input = QByteArray();
         emitErrorLine(QString::fromLatin1("ERROR: failed to start helper: ")
                       + m_helperPath);
         delete m_process;
         m_process = 0;
         emit finished(false, -1);
         return false;
+    }
+
+    // LUKS passphrases (and only those) travel over the helper's standard
+    // input; the pipe is closed immediately so the helper reads exactly the
+    // submitted bytes and never waits for a newline. The buffer is wiped
+    // right after the write.
+    if (!m_input.isEmpty()) {
+        m_process->writeToStdin(m_input);
+        m_process->closeStdin();
+        m_input.fill('\0');
+        m_input = QByteArray();
     }
     return true;
 }

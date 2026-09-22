@@ -40,6 +40,15 @@ public:
     // readable choice ("root", "sudo -n", "gksu --sudo-mode", ...).
     bool resolveElevation(QString *description);
 
+    // Drops the cached elevation decision so the next resolveElevation()/run()
+    // probes the environment again (the GUI's "re-check elevation" control).
+    void resetElevation();
+
+    // Secret input for the next run(): written to the helper's standard input
+    // and closed immediately after start. Used for the LUKS passphrase, which
+    // is never placed in command arguments or logs. Cleared after use.
+    void setInputData(const QByteArray &data);
+
     bool isRunning() const;
 
     // Starts the helper with `helperArgs`. Returns false (and emits an error
@@ -71,6 +80,7 @@ private:
     QStringList m_prefix;
     QString m_description;
     QString m_buffer;
+    QByteArray m_input;
     bool m_reported;
 };
 
