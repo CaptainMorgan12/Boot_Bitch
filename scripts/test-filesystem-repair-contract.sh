@@ -1223,10 +1223,17 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 13 ]] \
     || { echo 'FAIL: combined report lost capability evidence lines' >&2; exit 1; }
-[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 14 ]] \
+[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 15 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }
+# The combined report embeds the same read-only File systems body the
+# individual fs-inspect command produces, so the section is cached on scope
+# entry/target selection like every other section.
+grep -Fqx 'Diagnostic: filesystem' <<<"$combined_report" \
+    || { echo 'FAIL: combined report lost the File systems diagnostic section' >&2; exit 1; }
+grep -Fq 'File system check summary:' <<<"$combined_report" \
+    || { echo 'FAIL: combined report File systems section did not run the read-only check' >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Part 9: target root-component confirmation fallback. When the committed

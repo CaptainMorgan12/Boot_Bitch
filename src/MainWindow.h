@@ -572,6 +572,14 @@ private:
     static void splitDiagnosticCapabilityPreamble(const QString &captured,
                                                   QString *body,
                                                   QString *preamble);
+    // Merges one freshly captured diagnostic section into the scope's cached
+    // combined report. The report keeps its shared capability preamble and
+    // every other section, so an individual re-run leaves the Full report
+    // usable instead of blank. A missing or key-less report is left untouched;
+    // the Diagnostics pane then shows the explicit re-run notice.
+    void mergeDiagnosticReportSection(bool hostScope, const QString &key,
+                                      const QString &section,
+                                      const QDateTime &capturedAt);
     // Ordered privileged-helper resolution candidates for one application
     // directory, each with the reason it would be chosen. Installed layouts
     // (/usr/bin, /usr/local/bin) prefer the libexec helper; build/portable

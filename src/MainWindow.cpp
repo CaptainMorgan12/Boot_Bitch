@@ -996,6 +996,86 @@ QStringList extractEmbeddedDiagnosticSections(const QString &entry, const QSet<Q
     return sections;
 }
 
+// Builds the section a combined report embeds for one diagnostic. The
+// privileged `diagnose <key>` output already carries the helper's frame
+// (divider, title, "Diagnostic:" header and metadata); the preamble-less
+// fs-inspect body behind the File systems diagnostic does not, so it is framed
+// here exactly like the helper's run_one_diagnostic would.
+QString diagnosticSectionForReport(const QString &key, const QString &title,
+                                   const QString &scope, const QString &body)
+{
+    const QString trimmed = body.trimmed();
+    if (trimmed.isEmpty()) {
+        return QString();
+    }
+    if (trimmed.contains(QStringLiteral("Diagnostic: %1\n").arg(key))) {
+        return trimmed;
+    }
+    return QStringLiteral(
+        "========================================\n"
+        "%1\n"
+        "========================================\n"
+        "Diagnostic: %2\n"
+        "Scope: %3\n"
+        "Time: %4\n\n%5")
+        .arg(title, key, scope,
+             QDateTime::currentDateTime().toString(Qt::ISODate), trimmed);
+}
+
+// Replaces one embedded section of a combined report with a freshly captured
+// section, matched by its "Diagnostic: <key>" header. The report's shared
+// capability preamble and every other section are preserved; only the captured
+// key is replaced, so an individual re-run keeps the Full report usable
+// instead of dropping the bundle. Returns the bundle unchanged when the key is
+// not embedded (or the bundle is empty), which lets the caller fall back to the
+// explicit re-run notice.
+QString mergeEmbeddedDiagnosticSection(const QString &bundle, const QString &key,
+                                       const QString &section)
+{
+    if (bundle.trimmed().isEmpty() || section.trimmed().isEmpty()) {
+        return bundle;
+    }
+    QStringList lines = bundle.split(QLatin1Char('\n'));
+    const QString headerPrefix = QStringLiteral("Diagnostic: ");
+    QList<int> headers;
+    for (int index = 0; index < lines.size(); ++index) {
+        if (lines.at(index).startsWith(headerPrefix)) {
+            headers.append(index);
+        }
+    }
+    int position = -1;
+    for (int index = 0; index < headers.size(); ++index) {
+        if (lines.at(headers.at(index)).mid(headerPrefix.size()).trimmed()
+                .compare(key, Qt::CaseInsensitive) == 0) {
+            position = index;
+            break;
+        }
+    }
+    if (position < 0) {
+        return bundle;
+    }
+    const int start = embeddedSectionStartLine(lines, headers.at(position));
+    const int end = position + 1 < headers.size()
+        ? embeddedSectionStartLine(lines, headers.at(position + 1))
+        : lines.size();
+    const QStringList replacement = section.trimmed().split(QLatin1Char('\n'));
+    QStringList merged;
+    merged.reserve(lines.size() - (end - start) + replacement.size() + 1);
+    for (int index = 0; index < start; ++index) {
+        merged.append(lines.at(index));
+    }
+    merged += replacement;
+    // Keep the blank separator that framed the replaced section so the next
+    // section's divider stays visually separated.
+    if (end < lines.size() && !merged.isEmpty() && !merged.constLast().isEmpty()) {
+        merged.append(QString());
+    }
+    for (int index = end; index < lines.size(); ++index) {
+        merged.append(lines.at(index));
+    }
+    return merged.join(QLatin1Char('\n'));
+}
+
 // Single truth log reader: every action gate parses the cached diagnostic
 // evidence through this helper, so the `Repair tool <key>` protocol is
 // implemented once instead of being re-checked in each action. `hadEvidence`
@@ -9982,11 +10062,26 @@ void MainWindow::updateDiagnosticDetails()
     const bool sectionInvalidated = targetScope
         ? (m_targetDiagnosticsNeedRegeneration || m_targetDiagnosticsStaleSections.contains(key))
         : m_hostDiagnosticsStaleSections.contains(key);
+    // Individual re-runs are merged into the cached combined report, but a
+    // report that was never run (or that an older helper captured without the
+    // section) has nothing to show. Keep the Full report pane actionable in
+    // that case: name the required re-run explicitly instead of going blank.
+    QString display = cached;
+    if (key == QStringLiteral("report") && cached.isEmpty() && !sectionInvalidated) {
+        for (auto it = cache.constBegin(); it != cache.constEnd(); ++it) {
+            if (it.key() != QStringLiteral("report")
+                && it.key() != QStringLiteral("capabilities")
+                && !it.value().trimmed().isEmpty()) {
+                display = QStringLiteral("Individual diagnostics have changed. Please re-run all diagnostics.");
+                break;
+            }
+        }
+    }
     if (m_diagnosticResults) {
-        m_diagnosticResults->setPlainText(cached.isEmpty() && sectionInvalidated
+        m_diagnosticResults->setPlainText(display.isEmpty() && sectionInvalidated
             ? QStringLiteral("The selected system changed after a repair action. Please re-run the %1 diagnostic before reviewing or running this repair action.")
                   .arg(m_diagnosticTitle->text())
-            : cached);
+            : display);
     }
     if (m_copyDiagnosticButton) {
         m_copyDiagnosticButton->setEnabled(!cached.isEmpty());
@@ -10265,7 +10360,8 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         static const QStringList keys = {
             QStringLiteral("environment"), QStringLiteral("backend"), QStringLiteral("boot"), QStringLiteral("kernel"),
             QStringLiteral("grub"), QStringLiteral("uki"), QStringLiteral("display"), QStringLiteral("errors"), QStringLiteral("usage"),
-            QStringLiteral("fstab"), QStringLiteral("btrfs"), QStringLiteral("mapper"), QStringLiteral("luks")
+            QStringLiteral("filesystem"), QStringLiteral("fstab"), QStringLiteral("btrfs"), QStringLiteral("mapper"),
+            QStringLiteral("luks")
         };
         QString combined;
         QTextStream combinedStream(&combined);
@@ -10662,6 +10758,24 @@ void MainWindow::cacheHostDiagnosticBundle(const QString &bundle)
 {
     clearHostDiagnosticCache();
     cacheDiagnosticBundle(m_hostDiagnosticCache, m_hostDiagnosticTimes, bundle);
+}
+
+void MainWindow::mergeDiagnosticReportSection(bool hostScope, const QString &key,
+                                              const QString &section,
+                                              const QDateTime &capturedAt)
+{
+    auto &cache = hostScope ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    auto &times = hostScope ? m_hostDiagnosticTimes : m_targetDiagnosticTimes;
+    const QString report = cache.value(QStringLiteral("report"));
+    const QString merged = mergeEmbeddedDiagnosticSection(report, key, section);
+    if (merged == report) {
+        // No cached combined report or the key is not embedded in it: keep the
+        // report untouched and let the Diagnostics pane show the explicit
+        // re-run notice instead of a blank or silently stale pane.
+        return;
+    }
+    cache.insert(QStringLiteral("report"), merged);
+    times.insert(QStringLiteral("report"), capturedAt);
 }
 
 bool MainWindow::currentDiagnosticScopeReady(QString *reason) const
@@ -11568,10 +11682,18 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
         QString capabilityPreamble;
         splitDiagnosticCapabilityPreamble(captured, &body, &capabilityPreamble);
         const QDateTime capturedAt = QDateTime::currentDateTime();
+        // Keep the cached combined report coherent with a scoped regeneration
+        // as well: replace just this section so the Full report never shows a
+        // stale copy of a section that was just regenerated.
+        const QString reportSection = diagnosticSectionForReport(
+            key, diagnosticSectionTitle(key),
+            targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
+            body);
         if (targetScope) {
             m_targetDiagnosticCache.insert(key, body);
             m_targetDiagnosticTimes.insert(key, capturedAt);
             m_targetDiagnosticsStaleSections.remove(key);
+            mergeDiagnosticReportSection(false, key, reportSection, capturedAt);
             if (!capabilityPreamble.isEmpty()) {
                 m_targetDiagnosticCache.insert(QStringLiteral("capabilities"), capabilityPreamble);
                 m_targetDiagnosticTimes.insert(QStringLiteral("capabilities"), capturedAt);
@@ -11580,6 +11702,7 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
             m_hostDiagnosticCache.insert(key, body);
             m_hostDiagnosticTimes.insert(key, capturedAt);
             m_hostDiagnosticsStaleSections.remove(key);
+            mergeDiagnosticReportSection(true, key, reportSection, capturedAt);
             if (!capabilityPreamble.isEmpty()) {
                 m_hostDiagnosticCache.insert(QStringLiteral("capabilities"), capabilityPreamble);
                 m_hostDiagnosticTimes.insert(QStringLiteral("capabilities"), capturedAt);
@@ -11664,11 +11787,12 @@ void MainWindow::runSelectedDiagnostic()
     };
     const QString preservedCapabilities = capabilityEvidence();
     // Per-section cache contract: running one diagnostic replaces only its own
-    // cached section (and drops the combined report bundle, which would mix
-    // generations). Every other section stays cached for the active scope until
-    // an explicit invalidation (scope/target change, repair action,
-    // authorization change) marks it stale; selecting another diagnostic must
-    // never discard it.
+    // cached section and merges that section into the cached combined report,
+    // so the Full report keeps its shared preamble and every other section and
+    // never goes blank after an individual re-run. Every other section stays
+    // cached for the active scope until an explicit invalidation (scope/target
+    // change, repair action, authorization change) marks it stale; selecting
+    // another diagnostic must never discard it.
     m_diagnosticResults->clear();
     m_copyDiagnosticButton->setEnabled(false);
     m_saveDiagnosticButton->setEnabled(false);
@@ -11691,6 +11815,15 @@ void MainWindow::runSelectedDiagnostic()
     if (key != QStringLiteral("report")) {
         splitDiagnosticCapabilityPreamble(result, &diagnosticBody, &capabilityPreamble);
     }
+    // The framed section the merged combined report embeds. The diagnose-based
+    // sections already carry the helper frame; the preamble-less fs-inspect
+    // body (File systems) is framed here.
+    const QString reportSection = key == QStringLiteral("report")
+        ? QString()
+        : diagnosticSectionForReport(key, diagnosticSectionTitle(key),
+                                     targetScope ? QStringLiteral("Repair Target")
+                                                 : QStringLiteral("Running Host"),
+                                     diagnosticBody);
 
     const QDateTime capturedAt = QDateTime::currentDateTime();
     if (targetScope) {
@@ -11704,10 +11837,13 @@ void MainWindow::runSelectedDiagnostic()
                 m_targetDiagnosticsNeedRegeneration = false;
             }
         } else {
-            m_targetDiagnosticCache.remove(QStringLiteral("report"));
-            m_targetDiagnosticTimes.remove(QStringLiteral("report"));
             m_targetDiagnosticCache.insert(key, diagnosticBody);
             m_targetDiagnosticTimes.insert(key, capturedAt);
+            // Merge the fresh section into the cached combined report. A
+            // report captured by an older helper (or no report at all) is left
+            // untouched; updateDiagnosticDetails() then shows the explicit
+            // re-run notice instead of a blank Full report pane.
+            mergeDiagnosticReportSection(false, key, reportSection, capturedAt);
             if (ok && !diagnosticBody.trimmed().isEmpty()) {
                 // A successful manual re-run satisfies this section's
                 // invalidation; the other stale sections stay stale.
@@ -11725,10 +11861,11 @@ void MainWindow::runSelectedDiagnostic()
         if (key == QStringLiteral("report")) {
             cacheHostDiagnosticBundle(result);
         } else {
-            m_hostDiagnosticCache.remove(QStringLiteral("report"));
-            m_hostDiagnosticTimes.remove(QStringLiteral("report"));
             m_hostDiagnosticCache.insert(key, diagnosticBody);
             m_hostDiagnosticTimes.insert(key, capturedAt);
+            // See the target branch: keep the cached Full report usable by
+            // merging the freshly captured section into it.
+            mergeDiagnosticReportSection(true, key, reportSection, capturedAt);
             if (ok && !diagnosticBody.trimmed().isEmpty()) {
                 m_hostDiagnosticsStaleSections.remove(key);
             }

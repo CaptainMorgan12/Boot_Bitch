@@ -353,7 +353,7 @@ Approval:
   sensitive-ok   Explicit GUI confirmation for target system paths such as /etc or /boot
 
 Diagnostics:
-  environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks report all
+  environment backend boot boot-evidence kernel grub uki display errors usage filesystem fstab btrfs mapper luks report all
 
 Config keys (guarded target read/write): fstab crypttab grub-defaults grub-config sddm gdm3 lightdm greetd ly initramfs
 
@@ -8355,6 +8355,7 @@ diagnostic_title()
         display)     printf '%s\n' "Graphical login / display manager" ;;
         errors)      printf '%s\n' "Boot errors" ;;
         usage)       printf '%s\n' "Disk usage" ;;
+        filesystem)  printf '%s\n' "File systems" ;;
         fstab)       printf '%s\n' "fstab" ;;
         btrfs)       printf '%s\n' "Btrfs status" ;;
         mapper)      printf '%s\n' "Mapper status" ;;
@@ -10212,6 +10213,17 @@ fs_inspect()
     log "File system inspection started (read-only; no repair tool is invoked)." | tee -a "$SESSION_LOG"
     fs_inspect_scope
     return 0
+}
+
+# The dedicated "File systems" diagnostic embeds the same read-only
+# fs_inspect_scope body the fs-inspect entry point runs, so the individual
+# `diagnose filesystem` command and the combined `all` report carry identical
+# evidence. It is the only diagnostic that releases the helper's read-only
+# mounts (the offline check tools need unmounted devices), which is why the
+# combined report runs it last.
+diagnostic_filesystem()
+{
+    fs_inspect_scope
 }
 
 # fs-repair entry point: re-resolve the scope, prove the requested device
@@ -12165,6 +12177,7 @@ run_one_diagnostic()
     case "$key" in
         environment) diagnostic_environment || rc=$? ;;
         backend)     diagnostic_backend_profile || rc=$? ;;
+        filesystem)  diagnostic_filesystem || rc=$? ;;
         boot)        diagnostic_boot || rc=$? ;;
         boot-evidence) diagnostic_boot_evidence || rc=$? ;;
         kernel)      diagnostic_kernel || rc=$? ;;
@@ -12205,7 +12218,10 @@ run_target_diagnostic()
         REPORT_SHARED_PREAMBLE=1
         diagnostic_repair_capabilities || true
         echo
-        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
+        # The File systems section runs last: its read-only check tools require
+        # the helper-owned mounts to be released, while every earlier section
+        # still reads the mounted target.
+        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks filesystem; do
             run_one_target_diagnostic "$key" || true
         done
         REPORT_SHARED_PREAMBLE=0
@@ -12235,7 +12251,9 @@ run_host_diagnostic()
         REPORT_SHARED_PREAMBLE=1
         diagnostic_repair_capabilities || true
         echo
-        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks; do
+        # See run_target_diagnostic: the File systems section is last because
+        # it releases the helper's read-only mounts for the offline check tools.
+        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
         done
         REPORT_SHARED_PREAMBLE=0

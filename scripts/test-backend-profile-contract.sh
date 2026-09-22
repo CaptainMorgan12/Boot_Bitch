@@ -511,6 +511,7 @@ stub_combined_diagnostic_sections()
     diagnostic_display() { printf 'SECTION display\n'; }
     diagnostic_errors() { printf 'SECTION errors\n'; }
     diagnostic_usage() { printf 'SECTION usage\n'; }
+    diagnostic_filesystem() { printf 'SECTION filesystem\n'; }
     diagnostic_fstab() { printf 'SECTION fstab\n'; }
     diagnostic_btrfs() { printf 'SECTION btrfs\n'; }
     diagnostic_mapper() { printf 'SECTION mapper\n'; }
@@ -535,10 +536,14 @@ assert_combined_report()
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 13 ]] \
         || { echo "FAIL: $label combined report lost capability evidence lines" >&2; exit 1; }
-    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 14 ]] \
+    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report did not run every diagnostic section" >&2; exit 1; }
-    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 14 ]] \
+    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report diagnostic section headers changed" >&2; exit 1; }
+    # The dedicated File systems section is part of the combined report and is
+    # generated and cached with every other section.
+    grep -Fqx 'Diagnostic: filesystem' <<<"$combined_report" \
+        || { echo "FAIL: $label combined report lost the File systems section" >&2; exit 1; }
     for cap_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
         [[ "$(grep -c "^Repair tool $cap_key: " <<<"$combined_report")" -eq 1 ]] \
             || { echo "FAIL: $label combined report does not contain exactly one 'Repair tool $cap_key' line" >&2; exit 1; }

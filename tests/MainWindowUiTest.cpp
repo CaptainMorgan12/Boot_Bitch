@@ -2160,6 +2160,8 @@ private slots:
     void themeDetectsDarkSchemeAfterStartup();
     void portalColorSchemeParsing();
     void filesystemDiagnosticUsesFsInspectAndKeepsFstabPure();
+    void filesystemDiagnosticCachedByScopeAutoRegeneration();
+    void individualDiagnosticKeepsFullReportUsable();
     void hostDiagnosticsRequireHostMaintenanceScope();
     void snapshotPreloadIsDeduplicatedAcrossScopeTransitions();
     void helperPathResolutionPrefersInstalledUnlessOverridden();
@@ -2439,12 +2441,19 @@ void MainWindowUiTest::diagnosticOutputIsMirroredToMainLog()
     QVERIFY(reportLog.contains(QStringLiteral("Diagnostic: environment")));
     QVERIFY(reportLog.contains(QStringLiteral("Diagnostic: report")));
 
-    // Re-running one diagnostic invalidates the prior aggregate report so
-    // repair actions cannot consume mixed-generation evidence.
+    // Re-running one diagnostic merges the fresh section into the cached
+    // aggregate report instead of dropping it, so the Full report stays usable
+    // after an individual re-run.
     window.m_diagnosticList->setCurrentRow(environmentRow);
     window.runSelectedDiagnostic();
     flushLogRefresh(window);
-    QVERIFY(!window.m_hostDiagnosticCache.contains(QStringLiteral("report")));
+    QVERIFY2(window.m_hostDiagnosticCache.contains(QStringLiteral("report")),
+             "an individual re-run must keep the cached Full report");
+    QVERIFY2(!window.m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty(),
+             "the merged Full report must not be blank");
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("report"))
+                 .contains(QStringLiteral("Diagnostic: environment")),
+             "the merged Full report must embed the re-run section");
 }
 
 void MainWindowUiTest::narrowRepairAndFileCopyScrollAreasStayStable()
@@ -8325,6 +8334,126 @@ void MainWindowUiTest::filesystemDiagnosticUsesFsInspectAndKeepsFstabPure()
         QCOMPARE(window.m_diagnosticList->item(familyFilesystemRow)->text(),
                  QStringLiteral("File systems"));
     }
+}
+
+// The File systems section belongs to the complete diagnostic set that scope
+// entry regenerates: entering Host Maintenance and selecting a repair target
+// must cache it exactly like every other section. It used to stay blank
+// because the combined helper `all` run omitted the fs-inspect body.
+void MainWindowUiTest::filesystemDiagnosticCachedByScopeAutoRegeneration()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(true);
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
+    window.m_privilegedSessionReady = true;
+
+    // Host Maintenance entry runs the complete running-host report.
+    prepareRepairScope(window, true);
+    window.m_hostMaintenanceMode = false;
+    window.selectHostForMaintenance();
+    QVERIFY(window.m_hostMaintenanceMode);
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !window.m_hostDiagnosticCache.value(QStringLiteral("filesystem")).trimmed().isEmpty(),
+        15000);
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))
+                 .contains(QStringLiteral("file system check"), Qt::CaseInsensitive),
+             qPrintable(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))));
+    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("report"))
+                 .contains(QStringLiteral("Diagnostic: filesystem")),
+             "the running-host combined report must embed the File systems section");
+
+    // Selecting a repair target runs the complete target report with the same
+    // File systems section.
+    prepareRepairScope(window);
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
+    window.m_privilegedSessionReady = true;
+    selectTopLevelDisk(window, window.m_previewTargetPath);
+    window.setPreviewTarget();
+    QTRY_VERIFY_WITH_TIMEOUT(
+        !window.m_targetDiagnosticCache.value(QStringLiteral("filesystem")).trimmed().isEmpty(),
+        15000);
+    QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("report"))
+                 .contains(QStringLiteral("Diagnostic: filesystem")),
+             "the target combined report must embed the File systems section");
+}
+
+// An individual diagnostic re-run must keep the Full report usable: the fresh
+// section is merged into the cached bundle (never dropped), and when no report
+// exists the pane shows the explicit re-run notice instead of a blank result.
+void MainWindowUiTest::individualDiagnosticKeepsFullReportUsable()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window);
+
+    const int grubRow = diagnosticRow(window, QStringLiteral("grub"));
+    const int reportRow = diagnosticRow(window, QStringLiteral("report"));
+    QVERIFY(grubRow >= 0);
+    QVERIFY(reportRow >= 0);
+
+    // A complete report exists first; the individual re-run merges into it.
+    window.runAllDiagnostics();
+    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty(),
+             "Run All must cache the combined report");
+
+    window.m_uiTestDiagnosticResults.insert(
+        QStringLiteral("grub"),
+        QStringLiteral("INDIVIDUAL_GRUB_MARKER: regenerated section body"));
+    window.m_diagnosticList->setCurrentRow(grubRow);
+    window.runSelectedDiagnostic();
+
+    const QString mergedReport = window.m_targetDiagnosticCache.value(QStringLiteral("report"));
+    QVERIFY2(!mergedReport.trimmed().isEmpty(),
+             "an individual re-run must never leave the Full report blank");
+    QVERIFY2(mergedReport.contains(QStringLiteral("INDIVIDUAL_GRUB_MARKER")),
+             "the merged Full report must carry the fresh section");
+    QVERIFY2(mergedReport.contains(QStringLiteral("Diagnostic: environment")),
+             "the other embedded sections must survive the merge");
+    QCOMPARE(mergedReport.count(QStringLiteral("Diagnostic: grub")), 1);
+
+    window.m_diagnosticList->setCurrentRow(reportRow);
+    const QString reportPane = window.m_diagnosticResults->toPlainText();
+    QVERIFY2(reportPane.contains(QStringLiteral("INDIVIDUAL_GRUB_MARKER")),
+             "the Full report pane must render the merged fresh section");
+    QVERIFY2(!reportPane.trimmed().isEmpty(), "the Full report pane must never go blank");
+    QVERIFY(window.m_runDiagnosticButton->isEnabled());
+    QVERIFY(window.m_runAllDiagnosticsButton->isEnabled());
+
+    // Without any cached report the pane names the required re-run explicitly.
+    MainWindow noticeWindow;
+    noticeWindow.show();
+    QTest::qWait(50);
+    noticeWindow.m_snapshotPreloadScheduled = true;
+    noticeWindow.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(noticeWindow, true);
+    enterHostDiagnosticScope(noticeWindow);
+
+    const int environmentRow = diagnosticRow(noticeWindow, QStringLiteral("environment"));
+    const int hostReportRow = diagnosticRow(noticeWindow, QStringLiteral("report"));
+    QVERIFY(environmentRow >= 0);
+    QVERIFY(hostReportRow >= 0);
+    noticeWindow.m_diagnosticList->setCurrentRow(environmentRow);
+    noticeWindow.runSelectedDiagnostic();
+
+    noticeWindow.m_diagnosticList->setCurrentRow(hostReportRow);
+    QCOMPARE(noticeWindow.m_diagnosticResults->toPlainText(),
+             QStringLiteral("Individual diagnostics have changed. Please re-run all diagnostics."));
+    QVERIFY2(noticeWindow.m_runDiagnosticButton->isEnabled(),
+             "the Full report re-run affordance must stay enabled");
+    QVERIFY2(noticeWindow.m_runAllDiagnosticsButton->isEnabled(),
+             "Run All must stay enabled");
 }
 
 // The Diagnostics scope is derived from the Systems page and can never be
