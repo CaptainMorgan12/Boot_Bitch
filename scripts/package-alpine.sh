@@ -62,13 +62,14 @@ mkdir -p -- "$BUILD_DIR"
 # they are committed. Build output, VCS state and the local Development area
 # are intentionally excluded from the source archive. List source directories
 # explicitly so a file such as scripts/build.sh is never mistaken for a
-# build-output path.
+# build-output path. The legacy (Debian Etch / bash 3.1) tree is public source
+# registered in the test suite, so it must be present for the check phase.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
-    src scripts tests data resources docs .github
+    src scripts tests data resources docs .github legacy
 SOURCE_SHA512="$(sha512sum "$SOURCE_ARCHIVE" | awk '{print $1}')"
 
 # Alpine package names for the runtime and optional dependencies. Alpine ships
