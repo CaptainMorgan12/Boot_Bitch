@@ -8384,8 +8384,11 @@ struct HelperStagingFixture {
         QDir().mkpath(mountRoot);
         helperPath = mountRoot + QStringLiteral("/boot-repair-helper");
         QFile helper(helperPath);
-        helper.open(QIODevice::WriteOnly | QIODevice::Text);
-        helper.write("#!/bin/sh\nprintf 'SESSION_READY\\t1\\n'\n");
+        if (!helper.open(QIODevice::WriteOnly | QIODevice::Text)
+            || helper.write("#!/bin/sh\nprintf 'SESSION_READY\\t1\\n'\n") < 0) {
+            helperPath.clear();
+            return;
+        }
         helper.close();
         QFile::setPermissions(helperPath,
                               QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
@@ -8464,6 +8467,7 @@ void MainWindowUiTest::helperPathResolutionStagesAppImageCopy()
 void MainWindowUiTest::helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths()
 {
     HelperStagingFixture noexecFixture("ext4", "rw,relatime,noexec");
+    QVERIFY(!noexecFixture.helperPath.isEmpty());
     QString reason;
     QVERIFY2(MainWindow::helperNeedsPrivateCopy(noexecFixture.helperPath,
                                                 noexecFixture.mountInfo, &reason),
