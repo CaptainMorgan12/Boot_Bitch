@@ -75,7 +75,7 @@ sudo apt update && sudo apt install --no-install-recommends -y \
 ./scripts/build.sh
 ```
 
-This performs a clean Release build, validates an isolated staged install and writes the artifacts under `build-release/`. On Debian-family build hosts it also creates the `.deb`; when `linuxdeploy`/`appimagetool` are available it creates the versioned AppImage. Nothing is installed.
+This performs a clean Release build, validates an isolated staged install and writes the artifacts under `build-release/`. On Debian-family build hosts it also creates the `.deb`; when `linuxdeploy`/`appimagetool` are available it creates the versioned AppImage with its `.zsync` update metadata, so Gear Lever/AppImageUpdate can detect new GitHub releases. Nothing is installed.
 
 ```bash
 ./build-release/boot-repair                   # run the build directly
@@ -102,7 +102,7 @@ Each packaging script stages a Release build and creates the artifact without in
 ./scripts/package-rpm.sh       # RPM (CPack/rpmbuild)
 ./scripts/package-alpine.sh    # signed APK (abuild, Alpine build user)
 ./scripts/package-tarball.sh   # package-manager-neutral TGZ
-./scripts/build-appimage.sh    # AppImage under build-release/
+./scripts/build-appimage.sh    # AppImage + .zsync under build-release/
 ```
 
 Validate generated packages without installing them:

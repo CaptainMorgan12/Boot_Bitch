@@ -2,7 +2,14 @@
 
 ## Unreleased
 
-- (no unreleased changes yet)
+- Add AppImage update metadata for Gear Lever/AppImageUpdate:
+  `scripts/build-appimage.sh` now embeds a `gh-releases-zsync` update
+  information string and writes the matching
+  `boot-repair_<version>_x86_64.AppImage.zsync` next to the AppImage (via
+  `zsyncmake`, with a clear failure when it cannot be found instead of
+  silently omitting the update metadata), and the release tooling captures,
+  mirrors, checksums and verifies the `.zsync` alongside the AppImage so the
+  GitHub source is detected automatically.
 
 ## 0.2.25 — 2026-09-19
 

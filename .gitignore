@@ -5,6 +5,7 @@
 /_CPack_Packages/
 *.deb
 *.AppImage
+*.zsync
 *.rpm
 *.pkg.tar.*
 *.tar.gz

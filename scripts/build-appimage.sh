@@ -4,8 +4,15 @@ set -euo pipefail
 # Build the portable AppImage with linuxdeploy/linuxdeploy-plugin-qt, falling
 # back to appimagetool-only packaging when those tools are not available.
 #
+# The AppImage embeds a gh-releases-zsync update-information string and a
+# matching .zsync file is written next to it, so Gear Lever/AppImageUpdate can
+# detect the GitHub release and fetch binary deltas. zsyncmake is required:
+# when it cannot be found the build fails with instructions instead of
+# silently producing an AppImage without update metadata.
+#
 # Overrides: BUILD_DIR, BUILD_TYPE, JOBS, ARCH, OUTPUT, APPIMAGETOOL,
-#            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE.
+#            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE,
+#            ZSYNCMAKE, UPDATE_INFORMATION.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-appimage}"
@@ -16,6 +23,10 @@ LINUXDEPLOY="${LINUXDEPLOY:-linuxdeploy}"
 LINUXDEPLOY_PLUGIN_QT="${LINUXDEPLOY_PLUGIN_QT:-linuxdeploy-plugin-qt}"
 APPIMAGE_RUNTIME_FILE="${APPIMAGE_RUNTIME_FILE:-}"
 QMAKE="${QMAKE:-$(command -v qmake6 2>/dev/null || command -v qmake 2>/dev/null || true)}"
+ZSYNCMAKE="${ZSYNCMAKE:-}"
+# The published release assets keep this version-agnostic name pattern; the
+# embedded string is what Gear Lever/AppImageUpdate resolve against GitHub.
+UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-repair_*_x86_64.AppImage.zsync}"
 
 # Prefer the disposable local development install when no system tool was
 # selected. This keeps AppImage tooling out of the host package manager while
@@ -54,6 +65,40 @@ run_appimagetool()
     PATH="$tool_dir:$PATH" run_tool "$tool" "$@"
 }
 
+# Print a usable zsyncmake path or return 1. Priority: explicit ZSYNCMAKE,
+# a binary in Development/tools/, PATH, then the copy bundled inside the
+# appimagetool AppImage (extracted into a temporary directory).
+resolve_zsyncmake()
+{
+    if [[ -n "$ZSYNCMAKE" ]]; then
+        [[ -x "$ZSYNCMAKE" ]] || {
+            echo "ZSYNCMAKE is not executable: $ZSYNCMAKE" >&2
+            exit 1
+        }
+        printf '%s\n' "$ZSYNCMAKE"
+        return 0
+    fi
+    if [[ -x "$ROOT_DIR/Development/tools/zsyncmake" ]]; then
+        printf '%s\n' "$ROOT_DIR/Development/tools/zsyncmake"
+        return 0
+    fi
+    if command -v zsyncmake >/dev/null 2>&1; then
+        command -v zsyncmake
+        return 0
+    fi
+    if [[ "$APPIMAGETOOL" == *.AppImage ]]; then
+        local extract_dir
+        extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-zsyncmake.XXXXXX")"
+        if (cd "$extract_dir" && "$APPIMAGETOOL" --appimage-extract 'usr/bin/zsyncmake' >/dev/null 2>&1) \
+                && [[ -x "$extract_dir/squashfs-root/usr/bin/zsyncmake" ]]; then
+            printf '%s\n' "$extract_dir/squashfs-root/usr/bin/zsyncmake"
+            return 0
+        fi
+        rm -rf -- "$extract_dir"
+    fi
+    return 1
+}
+
 need()
 {
     command -v "$1" >/dev/null 2>&1 || {
@@ -83,6 +128,17 @@ else
     echo "WARN: linuxdeploy and linuxdeploy-plugin-qt were not both found; creating an AppImage from the AppDir without bundling shared libraries." >&2
     echo "      Install linuxdeploy, linuxdeploy-plugin-qt, and appimagetool for a portable artifact." >&2
 fi
+
+ZSYNCMAKE="$(resolve_zsyncmake)" || {
+    cat >&2 <<'EOF'
+ERROR: zsyncmake was not found; the release AppImage needs it to generate the
+       .zsync update metadata that Gear Lever/AppImageUpdate read.
+       Install the zsync package (it provides zsyncmake), place a zsyncmake
+       binary at Development/tools/zsyncmake, set ZSYNCMAKE=/path/to/zsyncmake,
+       or use the appimagetool AppImage from Development/tools/ (it bundles one).
+EOF
+    exit 1
+}
 
 bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
 
@@ -139,6 +195,8 @@ if [[ -n "$APPIMAGE_RUNTIME_FILE" ]]; then
     runtime_args+=(--runtime-file "$APPIMAGE_RUNTIME_FILE")
 fi
 
+update_args=(--updateinformation "$UPDATE_INFORMATION")
+
 if (( USE_LINUXDEPLOY )); then
     # First let linuxdeploy populate the AppDir and bundle Qt. We invoke
     # appimagetool ourselves so APPIMAGE_RUNTIME_FILE can be supplied on hosts
@@ -165,18 +223,48 @@ PLUGIN_WRAPPER
         --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
         --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
         --plugin qt)
-    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
+    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"
 else
-    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "$APPDIR" "$OUTPUT"
+    ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"
 fi
 [[ -s "$OUTPUT" ]] || {
     echo "appimagetool completed but produced no AppImage: $OUTPUT" >&2
     exit 1
 }
 
+# The embedded .upd_info section is what Gear Lever/AppImageUpdate read from
+# the file itself; readelf is optional tooling, so the check is skipped when
+# it is unavailable (verify-release.sh re-checks the captured artifact).
+if command -v readelf >/dev/null 2>&1; then
+    embedded_update_info="$(readelf -p .upd_info "$OUTPUT" 2>/dev/null \
+        | sed -n 's/.*\]  //p' | head -n1)"
+    if [[ "$embedded_update_info" != "$UPDATE_INFORMATION" ]]; then
+        echo "ERROR: the AppImage .upd_info section does not carry the update information" >&2
+        echo "       expected: $UPDATE_INFORMATION" >&2
+        echo "       found:    ${embedded_update_info:-<empty>}" >&2
+        exit 1
+    fi
+fi
+
+# Write the .zsync next to the AppImage ourselves: appimagetool also invokes
+# zsyncmake, but under --appimage-extract-and-run it runs from the discarded
+# extraction directory. The relative URL matches what zsync clients resolve
+# against the published .zsync asset URL.
+ZSYNC_OUTPUT="$OUTPUT.zsync"
+"$ZSYNCMAKE" -u "$(basename -- "$OUTPUT")" -o "$ZSYNC_OUTPUT" "$OUTPUT"
+[[ -s "$ZSYNC_OUTPUT" ]] || {
+    echo "zsyncmake completed but produced no metadata: $ZSYNC_OUTPUT" >&2
+    exit 1
+}
+grep -qF "Filename: $(basename -- "$OUTPUT")" "$ZSYNC_OUTPUT" || {
+    echo "ERROR: $ZSYNC_OUTPUT does not reference $(basename -- "$OUTPUT")" >&2
+    exit 1
+}
+
 echo
 echo "AppImage created:"
 echo "  $OUTPUT"
+echo "  $ZSYNC_OUTPUT"
 echo
 echo "The AppImage still uses host pkexec/Polkit and repair utilities (mount, cryptsetup, btrfs, efibootmgr, and so on)."
 if (( ! USE_LINUXDEPLOY )); then

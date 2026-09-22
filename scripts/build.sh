@@ -201,10 +201,10 @@ else
     fi
 fi
 
-# Build the portable AppImage in the same release run. The dedicated script
-# gets a private build directory so it cannot disturb this build tree or the
-# generated .deb. Missing tooling is a warning; a failing build with tooling
-# present stays a hard error.
+# Build the portable AppImage (with its .zsync update metadata) in the same
+# release run. The dedicated script gets a private build directory so it cannot
+# disturb this build tree or the generated .deb. Missing tooling is a warning;
+# a failing build with tooling present stays a hard error.
 if appimagetool_available
 then
     PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
@@ -228,10 +228,15 @@ then
         echo "AppImage build completed but produced no artifact: $APPIMAGE_OUTPUT" >&2
         exit 1
     }
+    [[ -s "$APPIMAGE_OUTPUT.zsync" ]] || {
+        echo "AppImage build completed but produced no zsync update metadata: $APPIMAGE_OUTPUT.zsync" >&2
+        exit 1
+    }
 
     echo
     echo "AppImage created:"
     echo "  $APPIMAGE_OUTPUT"
+    echo "  $APPIMAGE_OUTPUT.zsync"
 else
     echo
     echo "WARN: AppImage tooling was not found; skipping the AppImage." >&2
