@@ -12,10 +12,15 @@
 #   4. the AppImage-mode file dialog policy: the image does not carry the
 #      KIO/GTK worker and portal services the platform themes' native file
 #      dialogs need, so AppImage runs force Qt's own dialog while installed
-#      builds keep the desktop's native dialogs.
+#      builds keep the desktop's native dialogs;
+#   5. the linuxdeploy portability preflight: RELR-aware patchelf selection,
+#      the NO_STRIP=1 strip fallback and APPIMAGE_EXTRACT_AND_RUN for
+#      musl/no-FUSE hosts, failing closed when no safe patchelf exists.
 # The static checks always run; the built artifact is inspected when
 # build-release/ holds the current version's AppImage (readelf, sha1sum and
-# unsquashfs are optional tooling).
+# unsquashfs are optional tooling). The portability decisions are also
+# exercised functionally against synthetic AppDirs through the script's
+# BUILD_APPIMAGE_PROBE hook.
 set -Eeuo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -86,6 +91,39 @@ require_fragment "$BUILD_SH" 'Filename: $(basename -- "$APPIMAGE_OUTPUT")' \
     "build.sh no longer verifies the zsync Filename header"
 
 # ---------------------------------------------------------------------------
+# Static contract: the linuxdeploy portability preflight keeps the automatic
+# fallbacks modern distro toolchains need (RELR-aware patchelf, NO_STRIP on a
+# strip that cannot parse RELR, self-extracting AppImages without FUSE) and
+# fails closed when no safe patchelf exists.
+# ---------------------------------------------------------------------------
+require_fragment "$BUILD_APPIMAGE" 'SHT_RELR' \
+    "build-appimage.sh no longer mentions the SHT_RELR section"
+require_fragment "$BUILD_APPIMAGE" 'relr_in_file' \
+    "build-appimage.sh no longer probes ELF files for .relr.dyn"
+require_fragment "$BUILD_APPIMAGE" 'linuxdeploy_excluded_library' \
+    "build-appimage.sh no longer excludes the C library/loader from the RELR probe"
+require_fragment "$BUILD_APPIMAGE" 'patchelf_handles_relr' \
+    "build-appimage.sh no longer checks patchelf for RELR support"
+require_fragment "$BUILD_APPIMAGE" 'export PATCHELF="$system_patchelf"' \
+    "build-appimage.sh no longer prefers a RELR-capable system patchelf"
+require_fragment "$BUILD_APPIMAGE" 'export NO_STRIP=1' \
+    "build-appimage.sh no longer falls back to NO_STRIP=1"
+require_fragment "$BUILD_APPIMAGE" 'host_is_musl' \
+    "build-appimage.sh no longer detects musl hosts"
+require_fragment "$BUILD_APPIMAGE" 'fuse_available' \
+    "build-appimage.sh no longer detects FUSE availability"
+require_fragment "$BUILD_APPIMAGE" 'export APPIMAGE_EXTRACT_AND_RUN=1' \
+    "build-appimage.sh no longer enables self-extracting AppImage mode"
+require_fragment "$BUILD_APPIMAGE" 'patchelf 0.18 or newer' \
+    "build-appimage.sh no longer fails with actionable patchelf instructions"
+require_fragment "$BUILD_APPIMAGE" 'BUILD_APPIMAGE_PROBE' \
+    "build-appimage.sh no longer exposes the portability probe hook"
+require_fragment "$BUILD_SH" 'PATCHELF' \
+    "build.sh no longer documents the PATCHELF pass-through"
+require_fragment "$BUILD_SH" 'APPIMAGE_EXTRACT_AND_RUN' \
+    "build.sh no longer documents the APPIMAGE_EXTRACT_AND_RUN pass-through"
+
+# ---------------------------------------------------------------------------
 # Static contract: the GUI stages a verified private helper copy for pkexec
 # whenever the bundled helper lives on an AppImage/FUSE mount or noexec
 # filesystem (the AppImage runtime path).
@@ -113,6 +151,112 @@ require_fragment "$MAINWINDOW" 'QFileDialog::DontUseNativeDialog' \
     "MainWindow no longer applies the non-native file dialog option"
 require_fragment "$MAINWINDOW" 'qEnvironmentVariable("APPDIR")' \
     "MainWindow no longer ties the AppImage dialog policy to the runtime mount"
+
+# ---------------------------------------------------------------------------
+# Functional contract: drive the portability preflight through the
+# BUILD_APPIMAGE_PROBE hook against synthetic AppDirs, so the fallback
+# decisions are exercised without a full linuxdeploy build. The RELR-specific
+# cases need a linker that understands -z pack-relative-relocs and are skipped
+# when the local toolchain cannot emit a .relr.dyn section.
+# ---------------------------------------------------------------------------
+probe_dir="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-appimage-probe.XXXXXX")"
+cleanup_probe_dir()
+{
+    [[ -n "${probe_dir:-}" ]] && rm -rf -- "$probe_dir"
+}
+trap cleanup_probe_dir EXIT
+
+probe_bin="$probe_dir/bin"
+mkdir -p "$probe_bin"
+
+has_relr_section()
+{
+    if command -v readelf >/dev/null 2>&1; then
+        readelf -S -- "$1" 2>/dev/null | grep -q '[.]relr[.]dyn'
+    else
+        grep -qF '.relr.dyn' -- "$1" 2>/dev/null
+    fi
+}
+
+# Run the build script's preflight against an AppDir with the bundled tools
+# shadowed by probe scripts on PATH. Extra KEY=VALUE arguments are exported.
+probe_run()
+{
+    local appdir="$1" output="$2"
+    shift 2
+    env -u PATCHELF -u NO_STRIP -u APPIMAGE_EXTRACT_AND_RUN "$@" \
+        PATH="$probe_bin:$PATH" QMAKE= LINUXDEPLOY=/bin/true APPDIR="$appdir" \
+        BUILD_APPIMAGE_PROBE=1 "$BUILD_APPIMAGE" >"$output" 2>&1
+}
+
+plain_appdir="$probe_dir/plain-appdir"
+mkdir -p "$plain_appdir/usr/bin"
+plain_ok=0
+if command -v c++ >/dev/null 2>&1 \
+        && printf 'int main(){return 0;}\n' | c++ -x c++ -o "$plain_appdir/usr/bin/boot-repair" - 2>/dev/null; then
+    plain_ok=1
+fi
+if (( plain_ok )); then
+    probe_run "$plain_appdir" "$probe_dir/plain.out" \
+        || fail "portability probe failed on a RELR-free AppDir"
+    grep -qF 'no SHT_RELR binaries detected' "$probe_dir/plain.out" \
+        || fail "portability probe did not report a RELR-free AppDir"
+    note "portability probe: RELR-free AppDir keeps the bundled tools"
+
+    probe_run "$plain_appdir" "$probe_dir/plain-extract.out" APPIMAGE_EXTRACT_AND_RUN=1 \
+        || fail "portability probe failed with APPIMAGE_EXTRACT_AND_RUN=1"
+    grep -qF 'caller provided APPIMAGE_EXTRACT_AND_RUN=1' "$probe_dir/plain-extract.out" \
+        || fail "portability probe did not honor APPIMAGE_EXTRACT_AND_RUN"
+    note "portability probe: APPIMAGE_EXTRACT_AND_RUN is honored"
+else
+    note "local c++ cannot compile the probe binary; skipping the portability probe"
+fi
+
+relr_appdir="$probe_dir/relr-appdir"
+mkdir -p "$relr_appdir/usr/bin"
+relr_ok=0
+if (( plain_ok )) \
+        && c++ -Wl,-z,pack-relative-relocs -x c++ -o "$relr_appdir/usr/bin/boot-repair" - <<<'int main(){return 0;}' 2>/dev/null \
+        && has_relr_section "$relr_appdir/usr/bin/boot-repair"; then
+    relr_ok=1
+fi
+if (( relr_ok )); then
+    cat > "$probe_bin/strip" <<'EOF'
+#!/bin/sh
+exit 1
+EOF
+    cat > "$probe_bin/patchelf" <<'EOF'
+#!/bin/sh
+echo "patchelf 0.18.0"
+EOF
+    chmod 755 "$probe_bin/strip" "$probe_bin/patchelf"
+    if ! probe_run "$relr_appdir" "$probe_dir/relr-capable.out"; then
+        fail "portability probe failed on a RELR AppDir with a capable patchelf"
+    fi
+    grep -qF 'preferring RELR-capable system patchelf' "$probe_dir/relr-capable.out" \
+        || fail "portability probe did not prefer the RELR-capable system patchelf"
+    grep -qF 'setting NO_STRIP=1' "$probe_dir/relr-capable.out" \
+        || fail "portability probe did not set NO_STRIP=1 when strip cannot parse RELR"
+    note "portability probe: RELR AppDir selects system patchelf and NO_STRIP=1"
+
+    cat > "$probe_bin/strip" <<'EOF'
+#!/bin/sh
+exit 0
+EOF
+    cat > "$probe_bin/patchelf" <<'EOF'
+#!/bin/sh
+echo "patchelf 0.15.0"
+EOF
+    chmod 755 "$probe_bin/strip" "$probe_bin/patchelf"
+    if probe_run "$relr_appdir" "$probe_dir/relr-old.out"; then
+        fail "portability probe accepted an old patchelf for a RELR AppDir"
+    fi
+    grep -qF 'patchelf 0.18 or newer' "$probe_dir/relr-old.out" \
+        || fail "portability probe did not fail with actionable patchelf instructions"
+    note "portability probe: RELR AppDir without a capable patchelf fails closed"
+else
+    note "local linker cannot emit SHT_RELR; skipping the RELR portability probe"
+fi
 
 # ---------------------------------------------------------------------------
 # Artifact contract: inspect the built AppImage when it is present.
@@ -210,7 +354,7 @@ if command -v unsquashfs >/dev/null 2>&1; then
     if command -v strings >/dev/null 2>&1; then
         extracted="$(mktemp)"
         extracted_strings="$extracted.strings"
-        trap 'rm -f -- "$extracted" "$extracted_strings"' EXIT
+        trap 'cleanup_probe_dir; rm -f -- "$extracted" "$extracted_strings"' EXIT
         unsquashfs -o "$offset" -cat "$IMAGE" usr/bin/boot-repair > "$extracted" 2>/dev/null \
             || fail "cannot extract usr/bin/boot-repair from $(basename -- "$IMAGE")"
         # QStringLiteral stores UTF-16, so scan the binary as little-endian

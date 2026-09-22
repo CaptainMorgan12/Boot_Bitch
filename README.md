@@ -117,6 +117,15 @@ and `scripts/build.sh` print a non-fatal warning on other hosts and when no
 platform theme was bundled, and `DEPLOY_PLATFORM_THEMES=0` opts out of theme
 bundling.
 
+The AppImage build probes the payload for the `.relr.dyn` relocations current
+distributions emit and picks safe fallbacks automatically: a system `patchelf`
+0.18 or newer when available, no stripping when the bundled strip cannot read
+the section, and self-extracting AppImage mode when FUSE is unavailable. This
+lets Arch, Fedora, Alpine and current Debian-family hosts build a working
+AppImage; the build stops with installation instructions only when no
+RELR-capable `patchelf` exists. `PATCHELF`, `NO_STRIP` and
+`APPIMAGE_EXTRACT_AND_RUN` override the detection.
+
 Validate generated packages without installing them:
 
 ```bash

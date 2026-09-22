@@ -19,7 +19,18 @@ set -euo pipefail
 # Overrides: BUILD_DIR, BUILD_TYPE, JOBS, ARCH, OUTPUT, APPIMAGETOOL,
 #            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE,
 #            ZSYNCMAKE, UPDATE_INFORMATION, EXTRA_QT_MODULES,
-#            DEPLOY_PLATFORM_THEMES.
+#            DEPLOY_PLATFORM_THEMES, PATCHELF, NO_STRIP,
+#            APPIMAGE_EXTRACT_AND_RUN.
+#
+# Portability: linuxdeploy bundles binutils 2.35 strip and patchelf 0.15,
+# which cannot process SHT_RELR (".relr.dyn") sections emitted by modern
+# Arch/Fedora/Alpine toolchains. The script probes the payload and applies
+# safe fallbacks automatically: a system patchelf >= 0.18 through
+# linuxdeploy's $PATCHELF override when available, NO_STRIP=1 when the strip
+# linuxdeploy would use cannot parse RELR, and APPIMAGE_EXTRACT_AND_RUN=1 on
+# musl or FUSE-less hosts so linuxdeploy and linuxdeploy-plugin-qt run in
+# self-extracting mode. It fails with install instructions only when RELR is
+# present and no RELR-capable patchelf exists.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-appimage}"
@@ -121,6 +132,262 @@ resolve_zsyncmake()
     fi
     return 1
 }
+
+# ---------------------------------------------------------------------------
+# linuxdeploy portability preflight.
+#
+# linuxdeploy 1-alpha bundles binutils 2.35 strip and patchelf 0.15. Both
+# predate SHT_RELR (".relr.dyn") support: the bundled strip rejects such
+# binaries ("unknown type [0x13] section `.relr.dyn`"), and the bundled
+# patchelf corrupts RELR-carrying binaries. Modern Arch, Fedora and Alpine
+# toolchains emit RELR in their system libraries, so before linuxdeploy runs
+# the script probes the payload and applies safe fallbacks:
+#
+#   - prefer a system patchelf >= 0.18 (RELR-aware) through linuxdeploy's
+#     $PATCHELF override; fail with install instructions when RELR is present
+#     and no RELR-capable patchelf exists;
+#   - set NO_STRIP=1 when the strip linuxdeploy would use cannot parse RELR
+#     (the payload is already stripped by `cmake --install --strip`);
+#   - set APPIMAGE_EXTRACT_AND_RUN=1 on musl or FUSE-less hosts so linuxdeploy
+#     and linuxdeploy-plugin-qt run in self-extracting mode.
+#
+# Callers keep control: an exported PATCHELF, NO_STRIP or
+# APPIMAGE_EXTRACT_AND_RUN is honored and only reported.
+# ---------------------------------------------------------------------------
+PORTABILITY_TEMP_DIRS=()
+cleanup_portability_temps()
+{
+    (( ${#PORTABILITY_TEMP_DIRS[@]} == 0 )) || rm -rf -- "${PORTABILITY_TEMP_DIRS[@]}"
+}
+trap cleanup_portability_temps EXIT
+
+host_is_musl()
+{
+    [[ -e /lib/ld-musl-x86_64.so.1 || -e /lib/ld-musl-aarch64.so.1 ]] && return 0
+    command -v ldd >/dev/null 2>&1 && ldd --version 2>&1 | grep -qi musl
+}
+
+fuse_available()
+{
+    [[ -c /dev/fuse && -r /dev/fuse && -w /dev/fuse ]] || return 1
+    command -v fusermount3 >/dev/null 2>&1 || command -v fusermount >/dev/null 2>&1
+}
+
+# True when the ELF file carries a SHT_RELR section. readelf ships with
+# binutils; the grep fallback matches the section-name string in the ELF
+# header tables when readelf is unavailable.
+relr_in_file()
+{
+    local file="$1"
+    [[ -f "$file" ]] || return 1
+    if command -v readelf >/dev/null 2>&1; then
+        readelf -S -- "$file" 2>/dev/null | grep -q '[.]relr[.]dyn'
+    else
+        grep -qF '.relr.dyn' -- "$file" 2>/dev/null
+    fi
+}
+
+# Print the resolved library paths of ldd output for the given files.
+ldd_paths()
+{
+    local file
+    for file in "$@"; do
+        [[ -f "$file" ]] || continue
+        ldd "$file" 2>/dev/null | awk '/=> \// { print $3 } /^\// { print $1 }'
+    done
+    return 0
+}
+
+# True for libraries linuxdeploy never bundles (the C library and dynamic
+# loader family). They can carry SHT_RELR on a build host even when every
+# bundled library is RELR-free, so they must not drive the fallback decision.
+linuxdeploy_excluded_library()
+{
+    local name
+    name="$(basename -- "$1")"
+    case "$name" in
+        libc.so.*|ld-linux*.so.*|ld-*.so.*|libanl.so.*|libBrokenLocale.so.*| \
+        libdl.so.*|libm.so.*|libmvec.so.*|libnsl.so.*|libnss_*.so.*| \
+        libpthread.so.*|libresolv.so.*|librt.so.*|libthread_db.so.*| \
+        libutil.so.*|libcidn.so.*|libc_malloc_debug.so.*|libmemusage.so*| \
+        libpcprofile.so*)
+            return 0 ;;
+    esac
+    return 1
+}
+
+# Print the ELF files linuxdeploy may copy, strip or patch: the AppDir
+# payload, the shared-library closure of the GUI and the Qt libraries and
+# plugins linuxdeploy-plugin-qt deploys from the build host.
+collect_linuxdeploy_candidates()
+{
+    local appdir="$1" qt_libs qt_plugins
+    find "$appdir" -type f 2>/dev/null
+    if command -v ldd >/dev/null 2>&1; then
+        ldd_paths "$appdir/usr/bin/boot-repair" "$appdir/usr/libexec/boot-repair/boot-repair-helper"
+        if [[ -n "${QMAKE:-}" ]] && command -v "$QMAKE" >/dev/null 2>&1; then
+            qt_libs="$("$QMAKE" -query QT_INSTALL_LIBS 2>/dev/null || true)"
+            if [[ -n "$qt_libs" && -d "$qt_libs" ]]; then
+                ldd_paths "$qt_libs"/libQt6*.so*
+            fi
+            qt_plugins="$("$QMAKE" -query QT_INSTALL_PLUGINS 2>/dev/null || true)"
+            if [[ -n "$qt_plugins" && -d "$qt_plugins" ]]; then
+                ldd_paths "$qt_plugins"/*/*.so
+            fi
+        fi
+    fi
+    return 0
+}
+
+# Extract the linuxdeploy AppImage payload once (strip and patchelf) and cache
+# the directory. --appimage-extract does not need FUSE, so it also works on
+# guests where the AppImages cannot be mounted.
+linuxdeploy_bundled_tool()
+{
+    local tool="$1" extract_dir
+    [[ "$LINUXDEPLOY" == *.AppImage ]] || return 1
+    if [[ -n "${_LINUXDEPLOY_EXTRACT_DIR:-}" && -d "$_LINUXDEPLOY_EXTRACT_DIR" ]]; then
+        extract_dir="$_LINUXDEPLOY_EXTRACT_DIR"
+    else
+        extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-linuxdeploy.XXXXXX")"
+        if ! (cd "$extract_dir" && "$LINUXDEPLOY" --appimage-extract 'usr/bin/*' >/dev/null 2>&1); then
+            rm -rf -- "$extract_dir"
+            return 1
+        fi
+        _LINUXDEPLOY_EXTRACT_DIR="$extract_dir"
+        PORTABILITY_TEMP_DIRS+=("$extract_dir")
+    fi
+    [[ -x "$extract_dir/squashfs-root/$tool" ]] || return 1
+    printf '%s\n' "$extract_dir/squashfs-root/$tool"
+}
+
+resolve_linuxdeploy_strip()
+{
+    local tool
+    if tool="$(linuxdeploy_bundled_tool usr/bin/strip)"; then
+        printf '%s\n' "$tool"
+        return 0
+    fi
+    command -v strip 2>/dev/null
+}
+
+patchelf_handles_relr()
+{
+    local version major minor
+    version="$("$1" --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+' | head -n1)"
+    [[ -n "$version" ]] || return 1
+    IFS=. read -r major minor <<<"$version"
+    if (( major > 0 || (major == 0 && minor >= 18) )); then
+        return 0
+    fi
+    return 1
+}
+
+apply_linuxdeploy_portability()
+{
+    local appdir="$1"
+    local candidate relr_file="" strip_path="" system_patchelf="" bundled_patchelf="" version
+
+    if [[ -n "${PATCHELF:-}" ]]; then
+        echo "linuxdeploy portability: caller provided PATCHELF=$PATCHELF."
+    else
+        system_patchelf="$(command -v patchelf 2>/dev/null || true)"
+        if [[ -n "$system_patchelf" ]] && patchelf_handles_relr "$system_patchelf"; then
+            export PATCHELF="$system_patchelf"
+            version="$("$PATCHELF" --version 2>/dev/null | head -n1)"
+            echo "linuxdeploy portability: preferring RELR-capable system patchelf ($version)."
+        fi
+    fi
+    if [[ -n "${NO_STRIP:-}" ]]; then
+        echo "linuxdeploy portability: caller provided NO_STRIP=$NO_STRIP; stripping stays disabled."
+    fi
+
+    while IFS= read -r candidate; do
+        linuxdeploy_excluded_library "$candidate" && continue
+        if relr_in_file "$candidate"; then
+            relr_file="$candidate"
+            break
+        fi
+    done < <(collect_linuxdeploy_candidates "$appdir" | sort -u)
+
+    if [[ -z "$relr_file" ]]; then
+        echo "linuxdeploy portability: no SHT_RELR binaries detected; linuxdeploy's bundled patchelf is safe."
+    else
+        echo "linuxdeploy portability: SHT_RELR detected (first: $relr_file)."
+        if [[ -z "${PATCHELF:-}" ]]; then
+            if bundled_patchelf="$(linuxdeploy_bundled_tool usr/bin/patchelf)" \
+                    && patchelf_handles_relr "$bundled_patchelf"; then
+                echo "linuxdeploy portability: linuxdeploy's bundled patchelf is RELR-capable."
+            else
+                if [[ -n "$system_patchelf" ]]; then
+                    version="$("$system_patchelf" --version 2>/dev/null | head -n1)"
+                else
+                    version="not found"
+                fi
+                cat >&2 <<EOF
+ERROR: SHT_RELR (.relr.dyn) relocations were found (for example in
+       $relr_file), but no RELR-capable patchelf is available: linuxdeploy's
+       bundled patchelf 0.15 corrupts such binaries. System patchelf: $version.
+       Install patchelf 0.18 or newer (the 'patchelf' package on Arch, Fedora,
+       Alpine and Debian-family systems) or set PATCHELF=/path/to/patchelf,
+       then re-run the build.
+EOF
+                exit 1
+            fi
+        fi
+    fi
+
+    # Probe the strip linuxdeploy would use even without RELR: on musl hosts
+    # the bundled glibc strip may not run at all. A failed probe falls back to
+    # NO_STRIP=1, which is always safe (the AppDir payload is already stripped
+    # by `cmake --install --strip`).
+    if [[ -z "${NO_STRIP:-}" ]]; then
+        local probe_target="$relr_file" probe_file
+        if [[ -z "$probe_target" ]]; then
+            probe_target="$appdir/usr/bin/boot-repair"
+        fi
+        strip_path="$(resolve_linuxdeploy_strip 2>/dev/null || true)"
+        if [[ -f "$probe_target" ]]; then
+            probe_file="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-strip-probe.XXXXXX")"
+            cp -- "$probe_target" "$probe_file"
+            if [[ -n "$strip_path" ]] && "$strip_path" "$probe_file" >/dev/null 2>&1; then
+                if [[ -n "$relr_file" ]]; then
+                    echo "linuxdeploy portability: $strip_path can parse SHT_RELR; stripping stays enabled."
+                fi
+            else
+                export NO_STRIP=1
+                if [[ -n "$relr_file" ]]; then
+                    echo "linuxdeploy portability: strip (${strip_path:-not found}) cannot parse SHT_RELR; setting NO_STRIP=1 (the payload is already stripped by cmake --install --strip)."
+                else
+                    echo "linuxdeploy portability: strip (${strip_path:-not found}) cannot process the AppDir payload; setting NO_STRIP=1 (the payload is already stripped by cmake --install --strip)."
+                fi
+            fi
+            rm -f -- "$probe_file"
+        fi
+    fi
+
+    if [[ "${APPIMAGE_EXTRACT_AND_RUN:-}" == "1" ]]; then
+        echo "linuxdeploy portability: caller provided APPIMAGE_EXTRACT_AND_RUN=1; AppImages run self-extracting."
+    elif host_is_musl; then
+        export APPIMAGE_EXTRACT_AND_RUN=1
+        echo "linuxdeploy portability: musl host detected; setting APPIMAGE_EXTRACT_AND_RUN=1 for linuxdeploy and linuxdeploy-plugin-qt."
+    elif ! fuse_available; then
+        export APPIMAGE_EXTRACT_AND_RUN=1
+        echo "linuxdeploy portability: FUSE is unavailable; setting APPIMAGE_EXTRACT_AND_RUN=1 for linuxdeploy and linuxdeploy-plugin-qt."
+    fi
+}
+
+# Hidden probe used by scripts/test-appimage-contract.sh: run only the
+# portability preflight against a caller-provided AppDir and print the
+# decisions, without configuring or building anything.
+if [[ "${BUILD_APPIMAGE_PROBE:-0}" == "1" ]]; then
+    [[ -n "${APPDIR:-}" && -d "${APPDIR:-}" ]] || {
+        echo "BUILD_APPIMAGE_PROBE=1 requires APPDIR=<existing AppDir>" >&2
+        exit 1
+    }
+    apply_linuxdeploy_portability "$APPDIR"
+    exit 0
+fi
 
 need()
 {
@@ -298,7 +565,11 @@ if (( USE_LINUXDEPLOY )); then
     output_dir="$(dirname -- "$OUTPUT")"
     deploy_dir="$(mktemp -d "$output_dir/.appimage-output.XXXXXX")"
     plugin_dir="$(mktemp -d "$output_dir/.appimage-plugin.XXXXXX")"
-    trap 'rm -rf -- "$deploy_dir" "$plugin_dir"' EXIT
+    trap 'cleanup_portability_temps; rm -rf -- "$deploy_dir" "$plugin_dir"' EXIT
+    # Probe the installed payload for SHT_RELR before linuxdeploy touches it
+    # and pick the safe strip/patchelf/FUSE fallbacks (see the preflight
+    # section above).
+    apply_linuxdeploy_portability "$APPDIR"
     # linuxdeploy discovers plugins by the canonical linuxdeploy-plugin-*
     # name. This also supports a downloaded, architecture-suffixed AppImage
     # supplied through LINUXDEPLOY_PLUGIN_QT.

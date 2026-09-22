@@ -10,9 +10,12 @@ set -euo pipefail
 #              LINUXDEPLOY_PLUGIN_QT/APPIMAGE_RUNTIME_FILE, and the AppImage
 #              bundling knobs EXTRA_QT_MODULES (default svg) and
 #              DEPLOY_PLATFORM_THEMES (default on) are passed through to
-#              build-appimage.sh. Build the release AppImage on a Debian-family
-#              desktop (reference host: TUXEDO OS) so the Qt platform themes
-#              and SVG icon engine can be bundled; other hosts warn.
+#              build-appimage.sh. Its portability preflight honors PATCHELF
+#              (RELR-capable patchelf), NO_STRIP and APPIMAGE_EXTRACT_AND_RUN
+#              and otherwise picks the safe fallbacks automatically. Build the
+#              release AppImage on a Debian-family desktop (reference host:
+#              TUXEDO OS) so the Qt platform themes and SVG icon engine can be
+#              bundled; other hosts warn.
 
 # Package/staged-install modes must not depend on the builder's umask: a
 # restrictive agent umask (for example 077) would otherwise package 0700
