@@ -10,9 +10,16 @@ set -euo pipefail
 # when it cannot be found the build fails with instructions instead of
 # silently producing an AppImage without update metadata.
 #
+# The reference build host is a Debian-family desktop (TUXEDO OS) with the Qt
+# platform theme packages installed: linuxdeploy can only bundle the platform
+# themes, widget styles and the SVG icon engine that the build host provides,
+# so dialogs and file pickers match the desktop only when the release AppImage
+# is built there. Other hosts still build, with a non-fatal warning.
+#
 # Overrides: BUILD_DIR, BUILD_TYPE, JOBS, ARCH, OUTPUT, APPIMAGETOOL,
 #            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE,
-#            ZSYNCMAKE, UPDATE_INFORMATION.
+#            ZSYNCMAKE, UPDATE_INFORMATION, EXTRA_QT_MODULES,
+#            DEPLOY_PLATFORM_THEMES.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-appimage}"
@@ -27,6 +34,19 @@ ZSYNCMAKE="${ZSYNCMAKE:-}"
 # The published release assets keep this version-agnostic name pattern; the
 # embedded string is what Gear Lever/AppImageUpdate resolve against GitHub.
 UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-repair_*_x86_64.AppImage.zsync}"
+
+# The GUI's semantic icon atlas is SVG. Qt loads it through the SVG icon
+# engine plugin (iconengines/libqsvgicon.so), which linuxdeploy-plugin-qt only
+# deploys when it detects the "svg" module among the AppDir libraries. The GUI
+# links no QtSvg library directly, so request the module explicitly; without it
+# QIcon silently degrades to generic style icons.
+EXTRA_QT_MODULES="${EXTRA_QT_MODULES:-svg}"
+# The Qt platform themes and widget styles must come from the build host. Keep
+# the deployment on by default so the release AppImage carries the desktop
+# integration (KDE/GNOME/GTK dialogs and file pickers); set
+# DEPLOY_PLATFORM_THEMES=0 to opt out. linuxdeploy-plugin-qt only checks
+# whether the variable is present, so "0" must not be exported to it.
+DEPLOY_PLATFORM_THEMES="${DEPLOY_PLATFORM_THEMES:-1}"
 
 # Prefer the disposable local development install when no system tool was
 # selected. This keeps AppImage tooling out of the host package manager while
@@ -111,6 +131,29 @@ for cmd in cmake ninja c++; do
     need "$cmd"
 done
 
+# The reference AppImage build host is a Debian-family desktop (TUXEDO OS) with
+# plasma-integration, qt6-gtk-platformtheme, qgnomeplatform-qt6 and
+# qt6-svg-plugins installed: linuxdeploy can only bundle the Qt platform
+# themes, widget styles and the SVG icon engine the host provides. Warn, never
+# fail, on other hosts so a local smoke-test AppImage can still be produced.
+host_is_debian=0
+if [[ -r /etc/os-release ]]; then
+    . /etc/os-release
+    case "${ID:-}" in
+        debian|ubuntu|tuxedo|linuxmint|pop|elementary|zorin) host_is_debian=1 ;;
+        *)
+            if [[ " ${ID_LIKE:-} " == *" debian "* || " ${ID_LIKE:-} " == *" ubuntu "* ]]; then
+                host_is_debian=1
+            fi
+            ;;
+    esac
+fi
+if (( ! host_is_debian )); then
+    echo "WARN: this is not a Debian-family host; linuxdeploy can only bundle the Qt platform theme plugins the build host provides." >&2
+    echo "      Build the release AppImage on a Debian-family desktop (reference host: TUXEDO OS) with plasma-integration, qt6-gtk-platformtheme, qgnomeplatform-qt6 and qt6-svg-plugins installed," >&2
+    echo "      or dialogs and file pickers fall back to Qt's default theme." >&2
+fi
+
 # linuxdeploy bundles the Qt and system libraries needed by the executable.
 # Keep appimagetool-only mode as a useful fallback for local smoke testing, but
 # call it out because that mode packages the AppDir without copying libraries.
@@ -185,6 +228,34 @@ assert_appdir_executables()
 
 assert_appdir_executables
 
+# The GUI depends on Qt plugins that are loaded at runtime, so linuxdeploy can
+# only bundle them when it is told to: the SVG icon engine (the whole icon
+# atlas is SVG) and the platform themes/widget styles the build host provides.
+# A missing icon engine breaks the icons and fails the build; a missing
+# platform theme only means Qt's fallback dialogs, so it stays a warning that
+# names the reference build host.
+assert_appdir_qt_plugins()
+{
+    local icon_engine="$APPDIR/usr/plugins/iconengines/libqsvgicon.so"
+    [[ -f "$icon_engine" ]] || {
+        echo "ERROR: the AppDir is missing the Qt SVG icon engine plugin: $icon_engine" >&2
+        echo "       Install the host Qt SVG plugin package (for example qt6-svg-plugins on Debian) so linuxdeploy can bundle it." >&2
+        exit 1
+    }
+    local theme themes=()
+    if [[ -d "$APPDIR/usr/plugins/platformthemes" ]]; then
+        for theme in "$APPDIR"/usr/plugins/platformthemes/*.so; do
+            [[ -f "$theme" ]] && themes+=("$(basename -- "$theme")")
+        done
+    fi
+    if (( ${#themes[@]} == 0 )); then
+        echo "WARN: no Qt platform theme plugins were bundled; dialogs and file pickers will use Qt's fallback theme." >&2
+        echo "      Build the release AppImage on a Debian-family desktop (reference host: TUXEDO OS) with plasma-integration, qt6-gtk-platformtheme and qgnomeplatform-qt6 installed." >&2
+    else
+        echo "Bundled Qt platform themes: ${themes[*]}"
+    fi
+}
+
 # AppImage launches through this small wrapper so the image can be mounted at
 # any path. The GUI itself remains unprivileged; privileged operations still
 # use the host's pkexec/Polkit and system tools. The type2 runtime mounts the
@@ -238,14 +309,29 @@ PLUGIN_WRAPPER
     else
         ln -s "$plugin_path" "$plugin_dir/linuxdeploy-plugin-qt"
     fi
-    (cd "$deploy_dir" && PATH="$plugin_dir:$PATH" ARCH="$ARCH" QMAKE="$QMAKE" run_tool "$LINUXDEPLOY" \
-        --appdir "$APPDIR" \
-        --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
-        --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
-        --plugin qt)
+    (
+        cd "$deploy_dir"
+        # linuxdeploy-plugin-qt reads these from the environment; the export is
+        # scoped to this subshell so the rest of the build stays unaffected.
+        export EXTRA_QT_MODULES
+        if [[ "$DEPLOY_PLATFORM_THEMES" == "0" ]]; then
+            # A caller may have exported DEPLOY_PLATFORM_THEMES=0; the plugin
+            # only checks presence, so remove it instead of passing "0".
+            unset DEPLOY_PLATFORM_THEMES
+        else
+            export DEPLOY_PLATFORM_THEMES=1
+        fi
+        PATH="$plugin_dir:$PATH" ARCH="$ARCH" QMAKE="$QMAKE" run_tool "$LINUXDEPLOY" \
+            --appdir "$APPDIR" \
+            --desktop-file "$APPDIR/org.bootrepair.BootRepair.desktop" \
+            --icon-file "$APPDIR/org.bootrepair.BootRepair.png" \
+            --plugin qt
+    )
     # linuxdeploy may rewrite AppDir entries; never package a helper without
-    # the executable bit.
+    # the executable bit, and never package without the runtime-loaded Qt
+    # plugins the GUI needs.
     assert_appdir_executables
+    assert_appdir_qt_plugins
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"
 else
     ARCH="$ARCH" run_appimagetool "$APPIMAGETOOL" "${runtime_args[@]}" "${update_args[@]}" "$APPDIR" "$OUTPUT"

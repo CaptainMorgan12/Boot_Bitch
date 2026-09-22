@@ -7,8 +7,12 @@ set -euo pipefail
 #
 # Environment: BUILD_DIR (default build-release), BUILD_TYPE (Release), JOBS,
 #              ARCH (default x86_64), APPIMAGETOOL/LINUXDEPLOY/
-#              LINUXDEPLOY_PLUGIN_QT/APPIMAGE_RUNTIME_FILE (passed through to
-#              build-appimage.sh).
+#              LINUXDEPLOY_PLUGIN_QT/APPIMAGE_RUNTIME_FILE, and the AppImage
+#              bundling knobs EXTRA_QT_MODULES (default svg) and
+#              DEPLOY_PLATFORM_THEMES (default on) are passed through to
+#              build-appimage.sh. Build the release AppImage on a Debian-family
+#              desktop (reference host: TUXEDO OS) so the Qt platform themes
+#              and SVG icon engine can be bundled; other hosts warn.
 
 # Package/staged-install modes must not depend on the builder's umask: a
 # restrictive agent umask (for example 077) would otherwise package 0700
@@ -201,10 +205,11 @@ else
     fi
 fi
 
-# Build the portable AppImage (with its .zsync update metadata) in the same
-# release run. The dedicated script gets a private build directory so it cannot
-# disturb this build tree or the generated .deb. Missing tooling is a warning;
-# a failing build with tooling present stays a hard error.
+# Build the portable AppImage (with its .zsync update metadata and the bundled
+# Qt SVG icon engine/platform themes) in the same release run. The dedicated
+# script gets a private build directory so it cannot disturb this build tree or
+# the generated .deb. Missing tooling is a warning; a failing build with
+# tooling present stays a hard error.
 if appimagetool_available
 then
     PROJECT_VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
@@ -230,6 +235,13 @@ then
     }
     [[ -s "$APPIMAGE_OUTPUT.zsync" ]] || {
         echo "AppImage build completed but produced no zsync update metadata: $APPIMAGE_OUTPUT.zsync" >&2
+        exit 1
+    }
+    # The .zsync must pair with this exact AppImage: zsync clients resolve the
+    # relative URL against the .zsync asset location, so the Filename header
+    # stays the release asset basename.
+    grep -qF "Filename: $(basename -- "$APPIMAGE_OUTPUT")" "$APPIMAGE_OUTPUT.zsync" || {
+        echo "AppImage zsync update metadata does not target $(basename -- "$APPIMAGE_OUTPUT"): $APPIMAGE_OUTPUT.zsync" >&2
         exit 1
     }
 

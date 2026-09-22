@@ -32,7 +32,7 @@ Download the artifact for your system from the GitHub release page and verify it
 
 The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-repair/boot-repair-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
 
-Launch the installed command as `boot-repair`. On GNOME, install the optional `qt6-gtk-platformtheme` and `qt6-xdgdesktopportal-platformtheme` packages for GTK-like controls and native file dialogs; KDE uses its normal Qt platform theme. The AppImage uses the same privilege boundary and is intended for portable use, not as a replacement for the native package.
+Launch the installed command as `boot-repair`. On GNOME, install the optional `qt6-gtk-platformtheme` and `qt6-xdgdesktopportal-platformtheme` packages for GTK-like controls and native file dialogs; KDE uses its normal Qt platform theme. The AppImage uses the same privilege boundary and is intended for portable use, not as a replacement for the native package; it bundles the SVG icon engine and the desktop integration (Qt platform themes and widget styles) present on its build host, so the release AppImage is built on a Debian-family desktop (see [Build packages](#build-packages)).
 
 `./scripts/install.sh` detects the host package family and installs a locally built `.deb`, RPM, Arch package or APK after an explicit `INSTALL` confirmation. `./scripts/install.sh --source` installs a staged CMake build under `/usr/local` (or another absolute `PREFIX`), and `./scripts/uninstall.sh` removes a detected native package or the source install after an explicit `UNINSTALL` confirmation.
 
@@ -104,6 +104,15 @@ Each packaging script stages a Release build and creates the artifact without in
 ./scripts/package-tarball.sh   # package-manager-neutral TGZ
 ./scripts/build-appimage.sh    # AppImage + .zsync under build-release/
 ```
+
+Build the release AppImage on a Debian-family desktop (the reference host is
+TUXEDO OS) with `qt6-svg-plugins`, `plasma-integration`,
+`qt6-gtk-platformtheme` and `qgnomeplatform-qt6` installed: `linuxdeploy` can
+only bundle the Qt SVG icon engine and the platform themes/widget styles the
+build host provides, so dialogs and file pickers match the desktop only when
+the AppImage is built there. `scripts/build-appimage.sh` and `scripts/build.sh`
+print a non-fatal warning on other hosts and when no platform theme was
+bundled, and `DEPLOY_PLATFORM_THEMES=0` opts out of theme bundling.
 
 Validate generated packages without installing them:
 

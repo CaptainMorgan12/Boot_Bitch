@@ -40,6 +40,18 @@
   audits that SVG-plugin dependency across the deb, RPM, Arch and APK package
   profiles, and `scripts/test-deb.sh` / `scripts/test-rpm.sh` assert it in the
   built package metadata.
+- Bundle the AppImage's runtime Qt integration and guard it with a contract:
+  `scripts/build-appimage.sh` now forces the Qt SVG icon engine
+  (`EXTRA_QT_MODULES=svg`, otherwise the SVG icon atlas silently degrades to
+  generic style icons) and bundles the build host's Qt platform themes and
+  widget styles (`DEPLOY_PLATFORM_THEMES`, on by default) so dialogs and file
+  pickers match the desktop; it fails when the icon engine is missing, warns
+  non-fatally on non-Debian hosts and when no platform theme was bundled, and
+  TUXEDO OS is documented as the reference AppImage build host. The new fast
+  `scripts/test-appimage-contract.sh` asserts the embedded `.upd_info` string,
+  the `.zsync` `Filename`/`URL`/`SHA-1` pairing, the bundled executable helper
+  and the helper-staging messages; `verify-release.sh` re-checks the bundled
+  icon engine, platform theme and helper in the capture.
 
 ## 0.2.25 — 2026-09-19
 

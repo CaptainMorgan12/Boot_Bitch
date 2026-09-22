@@ -328,6 +328,8 @@ add_test(NAME boot-repair-packaging-profile-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-packaging-profile-contract.sh)
 add_test(NAME boot-repair-icon-atlas-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/check-icon-atlas.sh)
+add_test(NAME boot-repair-appimage-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-appimage-contract.sh)
 # Legacy (Debian Etch / bash 3.1) helper port: test-registration-only edit.
 # The legacy tree is generated from the modern helper by legacy/port.sh; these
 # tests keep the port deterministic and the modern helper untouched.
@@ -371,6 +373,8 @@ set_tests_properties(boot-repair-efi-entry-policy-contract
 set_tests_properties(boot-repair-repair-log-filter-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-icon-atlas-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-appimage-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-legacy-package-contract
     PROPERTIES LABELS "fast")
