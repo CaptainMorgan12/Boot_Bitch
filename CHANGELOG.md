@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Align the legacy Qt3 GUI with the modern Boot Bitch layout and fix the
+  reported Diagnostics/modal defects: the Diagnostics tab no longer shows the
+  "Repair tool / State / Reason" capability list or the availability filter
+  (the modern page has neither; the cached capability lines still gate the
+  Repair tab) and now uses the modern Run All/checks/results structure; the
+  **Edit Target File...** row is shown only for a committed repair target and
+  never for Host Maintenance, lists the Etch-era files (`fstab`, `inittab`,
+  GRUB-legacy `menu.lst`, `crypttab`, `modules`, `interfaces`, `sources.list`,
+  `apt.conf`) and greys/omits absent files with the helper's read-only
+  `Legacy config <key>:` probe reason (the legacy helper gained those guarded
+  `config-read`/`config-write` keys and the probe report; a saved edit
+  invalidates diagnostics); the long hidden-input administrator/LUKS modals
+  are now width-constrained with word-wrapped text; and Systems/Repair/Settings
+  group order plus the unlock-status placement were aligned with the Qt6
+  pages (comparison note in `legacy/gui/README.md`). Validated on the Etch
+  guest with the native qmake-qt3 build and the Xvfb `--smoke-test`.
 - Automate the legacy Etch build+install workflow and prove user access:
   `scripts/package-legacy.sh --install-vm` (Etch guest only, run as root)
   removes the previously installed package with `dpkg -r`, installs the new

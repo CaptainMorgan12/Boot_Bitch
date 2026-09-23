@@ -9,6 +9,7 @@
 #include <qclipboard.h>
 #include <qcombobox.h>
 #include <qdatetime.h>
+#include <qdialog.h>
 #include <qdir.h>
 #include <qfiledialog.h>
 #include <qfile.h>
@@ -18,7 +19,6 @@
 #include <qglobal.h>
 #include <qgrid.h>
 #include <qgroupbox.h>
-#include <qinputdialog.h>
 #include <qlabel.h>
 #include <qlayout.h>
 #include <qlineedit.h>
@@ -57,6 +57,16 @@ const int kGroupTitlePadding = 34;
 const int kButtonTextPadding = 40;
 const int kListHeaderPadding = 26;
 const int kLastColumnGutter = 8;
+
+// Hidden-input dialogs (administrator authorization, LUKS passphrase) are
+// width-constrained and word-wrapped: the long explanatory text used to size
+// the modal to its single unwrapped line and produced an unusably wide window.
+const int kHiddenInputMaximumWidth = 440;
+
+// The guarded `config-write` verb transports the edited file as one argv
+// element; Etch's 2.6.18 kernel caps argv at 128 KiB, so the editor refuses
+// anything larger instead of failing the exec opaquely.
+const int kConfigEditMaximumBytes = 65536;
 
 struct ActionSpec {
     const char *stage;
@@ -160,13 +170,83 @@ const DiagnosticSpec diagnosticSpecs[] = {
 };
 const int diagnosticSpecCount = sizeof(diagnosticSpecs) / sizeof(diagnosticSpecs[0]);
 
-// Read-only target configuration keys accepted by `config-read` (the helper
-// rejects anything else).
-const char *const configKeys[] = {
-    "fstab", "crypttab", "grub-defaults", "grub-config", "sddm", "gdm3",
-    "gdm", "lightdm", "greetd", "ly", "initramfs"
+// Etch-era target configuration files offered by the Diagnostics tab's
+// "Edit Target File..." control. The keys match the legacy helper's guarded
+// `config-read`/`config-write` keys (legacy/overlay.sh); per-target
+// availability comes from the helper's read-only `Legacy config <key>:`
+// diagnostics probe, so absent files are omitted with the helper's reason.
+struct ConfigSpec {
+    const char *key;
+    const char *path;
 };
-const int configKeyCount = sizeof(configKeys) / sizeof(configKeys[0]);
+const ConfigSpec configSpecs[] = {
+    { "fstab", "/etc/fstab" },
+    { "inittab", "/etc/inittab" },
+    { "menu-lst", "/boot/grub/menu.lst" },
+    { "crypttab", "/etc/crypttab" },
+    { "modules", "/etc/modules" },
+    { "interfaces", "/etc/network/interfaces" },
+    { "sources-list", "/etc/apt/sources.list" },
+    { "apt-conf", "/etc/apt/apt.conf" }
+};
+const int configSpecCount = sizeof(configSpecs) / sizeof(configSpecs[0]);
+
+// Maps a combo entry (a display path) back to its helper key ("" when the
+// path is not one of the Etch configuration files).
+QString configKeyForPath(const QString &path)
+{
+    for (int i = 0; i < configSpecCount; ++i) {
+        if (path == QString::fromLatin1(configSpecs[i].path)) {
+            return QString::fromLatin1(configSpecs[i].key);
+        }
+    }
+    return QString::null;
+}
+
+// Modal hidden-input prompt with a width-constrained, word-wrapped label.
+// Qt3's QInputDialog sizes itself to the unwrapped text, which made the long
+// administrator-authorization wording produce an unusably wide dialog.
+QString promptHiddenPassword(QWidget *parent, const QString &title,
+                             const QString &text, bool *ok)
+{
+    QDialog dialog(parent, "legacy-hidden-input", true);
+    dialog.setCaption(title);
+    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
+    QLabel *label = new QLabel(text, &dialog);
+    label->setWordWrap(true);
+    label->setMaximumWidth(kHiddenInputMaximumWidth);
+    layout->addWidget(label);
+
+    QLineEdit *edit = new QLineEdit(&dialog);
+    edit->setEchoMode(QLineEdit::Password);
+    edit->setText(QString::null);
+    layout->addWidget(edit);
+
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->setSpacing(6);
+    buttons->addStretch();
+    QPushButton *cancel = new QPushButton(QString::fromLatin1("Cancel"), &dialog);
+    QPushButton *accept = new QPushButton(QString::fromLatin1("OK"), &dialog);
+    accept->setDefault(true);
+    buttons->addWidget(cancel);
+    buttons->addWidget(accept);
+    QObject::connect(cancel, SIGNAL(clicked()), &dialog, SLOT(reject()));
+    QObject::connect(accept, SIGNAL(clicked()), &dialog, SLOT(accept()));
+    QObject::connect(edit, SIGNAL(returnPressed()), &dialog, SLOT(accept()));
+    dialog.setMinimumWidth(360);
+    dialog.setMaximumWidth(kHiddenInputMaximumWidth + 40);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        if (ok) {
+            *ok = false;
+        }
+        return QString::null;
+    }
+    if (ok) {
+        *ok = true;
+    }
+    return edit->text();
+}
 
 QString fromStd(const std::string &text)
 {
@@ -201,20 +281,6 @@ bool ensureDirectory(const QString &path)
         }
     }
     return true;
-}
-
-QString describeState(const std::string &state)
-{
-    if (state.empty()) {
-        return QString::fromLatin1("not reported");
-    }
-    if (state == "available") {
-        return QString::fromLatin1("available");
-    }
-    if (state.size() >= 12 && state.compare(0, 12, "unavailable|") == 0) {
-        return QString::fromLatin1("unavailable");
-    }
-    return QString::fromLatin1("unrecognised");
 }
 
 bool logLineIsError(const QString &line)
@@ -342,17 +408,14 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_diskCombo(0),
       m_rootCombo(0),
       m_unlockCombo(0),
-      m_diagFilterCombo(0),
       m_logFilterCombo(0),
       m_configCombo(0),
       m_deviceList(0),
       m_detailList(0),
-      m_capabilityList(0),
       m_diagnosticList(0),
       m_unsupportedList(0),
       m_sessionLogList(0),
       m_rawView(0),
-      m_configView(0),
       m_logView(0),
       m_unlockStatusView(0),
       m_logSearchEdit(0),
@@ -363,6 +426,8 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_gateHint(0),
       m_elevationLabel(0),
       m_targetSummary(0),
+      m_configLabel(0),
+      m_configReasonLabel(0),
       m_chrootReasonLabel(0),
       m_fileCopyReasonLabel(0),
       m_settingsHelperLabel(0),
@@ -395,6 +460,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_targetCommitted(false),
       m_hostMaintenance(false),
       m_viewingPriorLog(false),
+      m_pendingConfigWrite(false),
       m_smokeMode(false),
       m_smokeStep(0),
       m_smokeDiagnoseOk(false),
@@ -677,7 +743,22 @@ QWidget *LegacyMainWindow::buildTargetsTab()
 
     leftLayout->addWidget(target, 2);
 
-    // ---- Right column: selected drive details + unlock status ----------------
+    // Unlock status sits in the left pane below the target controls, exactly
+    // like the modern Systems page; the right pane is the selected-drive
+    // details panel.
+    QGroupBox *unlock = new QGroupBox(QString::fromLatin1("Unlock status"), left);
+    QToolTip::add(unlock, QString::fromLatin1(
+        "Unlock state for the selected drive; the LUKS passphrase is never logged."));
+    QVBoxLayout *unlockLayout = new QVBoxLayout(unlock, 8, 4);
+    m_unlockStatusView = new QTextEdit(unlock);
+    m_unlockStatusView->setReadOnly(true);
+    m_unlockStatusView->setTextFormat(Qt::PlainText);
+    m_unlockStatusView->setWordWrap(QTextEdit::WidgetWidth);
+    m_unlockStatusView->setMinimumHeight(110);
+    unlockLayout->addWidget(m_unlockStatusView, 1);
+    leftLayout->addWidget(unlock, 2);
+
+    // ---- Right column: selected drive details --------------------------------
     QWidget *right = new QWidget(splitter);
     QVBoxLayout *rightLayout = new QVBoxLayout(right, 8, 6);
 
@@ -694,24 +775,12 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     m_detailList->setResizeMode(QListView::LastColumn);
     m_detailList->setMinimumHeight(140);
     detailsLayout->addWidget(m_detailList, 1);
-    rightLayout->addWidget(details, 3);
-
-    QGroupBox *unlock = new QGroupBox(QString::fromLatin1("Unlock status"), right);
-    QToolTip::add(unlock, QString::fromLatin1(
-        "Unlock state for the selected drive; the LUKS passphrase is never logged."));
-    QVBoxLayout *unlockLayout = new QVBoxLayout(unlock, 8, 4);
-    m_unlockStatusView = new QTextEdit(unlock);
-    m_unlockStatusView->setReadOnly(true);
-    m_unlockStatusView->setTextFormat(Qt::PlainText);
-    m_unlockStatusView->setWordWrap(QTextEdit::WidgetWidth);
-    m_unlockStatusView->setMinimumHeight(110);
-    unlockLayout->addWidget(m_unlockStatusView, 1);
-    rightLayout->addWidget(unlock, 2);
+    rightLayout->addWidget(details, 1);
 
     registerGroupBox(devices);
     registerGroupBox(target);
-    registerGroupBox(details);
     registerGroupBox(unlock);
+    registerGroupBox(details);
 
     QValueList<int> sizes;
     sizes.append(620);
@@ -722,56 +791,60 @@ QWidget *LegacyMainWindow::buildTargetsTab()
 
 QWidget *LegacyMainWindow::buildDiagnosticsTab()
 {
-    QSplitter *splitter = new QSplitter(Qt::Vertical, m_tabs);
-    splitter->setChildrenCollapsible(false);
+    // Modern parity: action row, target-configuration row (committed target
+    // only), then a horizontal splitter with the diagnostic checks list on the
+    // left and the results pane on the right. The modern GUI has no
+    // capability list/filter on Diagnostics; the cached capability lines stay
+    // the gating evidence for the Repair tab but are not duplicated here.
+    QWidget *page = new QWidget(m_tabs);
+    QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
-    QGroupBox *capabilities = new QGroupBox(
-        QString::fromLatin1("Repair capability lines"), splitter);
-    QToolTip::add(capabilities, QString::fromLatin1(
-        "Unavailable tools are greyed with the helper's probe reason; a "
-        "missing line keeps the tool disabled (fail closed)."));
-    QVBoxLayout *capLayout = new QVBoxLayout(capabilities, 8, 4);
-
-    QHBoxLayout *filterRow = new QHBoxLayout(capLayout);
-    filterRow->setSpacing(6);
-    filterRow->addWidget(new QLabel(QString::fromLatin1("Filter:"), capabilities));
-    m_diagFilterCombo = new QComboBox(capabilities);
-    m_diagFilterCombo->insertItem(QString::fromLatin1("All tools"));
-    m_diagFilterCombo->insertItem(QString::fromLatin1("Available only"));
-    m_diagFilterCombo->insertItem(QString::fromLatin1("Unavailable only"));
-    connect(m_diagFilterCombo, SIGNAL(activated(int)), this, SLOT(diagnosticsFilterChanged()));
-    filterRow->addWidget(m_diagFilterCombo);
-    filterRow->addStretch();
-    m_diagnosticsButton = makeButton(QString::fromLatin1("Run All diagnostics (read-only)"), capabilities);
+    QHBoxLayout *actionRow = new QHBoxLayout(layout);
+    actionRow->setSpacing(6);
+    actionRow->addStretch();
+    m_diagnosticsButton = makeButton(QString::fromLatin1("Run All diagnostics (read-only)"), page);
     connect(m_diagnosticsButton, SIGNAL(clicked()), this, SLOT(runDiagnostics()));
-    filterRow->addWidget(m_diagnosticsButton);
-    m_cancelButton = makeButton(QString::fromLatin1("Cancel running command"), capabilities);
+    actionRow->addWidget(m_diagnosticsButton);
+    m_cancelButton = makeButton(QString::fromLatin1("Cancel running command"), page);
     m_cancelButton->setEnabled(false);
     connect(m_cancelButton, SIGNAL(clicked()), this, SLOT(cancelRun()));
-    filterRow->addWidget(m_cancelButton);
+    actionRow->addWidget(m_cancelButton);
 
-    m_capabilityList = new QListView(capabilities);
-    addListViewColumn(m_capabilityList, QString::fromLatin1("Repair tool"), 130);
-    addListViewColumn(m_capabilityList, QString::fromLatin1("State"), 100);
-    addListViewColumn(m_capabilityList, QString::fromLatin1("Reason / evidence"), 500);
-    m_capabilityList->setAllColumnsShowFocus(true);
-    m_capabilityList->setResizeMode(QListView::LastColumn);
-    m_capabilityList->setMinimumHeight(90);
-    capLayout->addWidget(m_capabilityList, 1);
+    QHBoxLayout *configRow = new QHBoxLayout(layout);
+    configRow->setSpacing(6);
+    m_configLabel = new QLabel(QString::fromLatin1("Target configuration:"), page);
+    configRow->addWidget(m_configLabel);
+    m_configCombo = new QComboBox(page);
+    m_configCombo->setMinimumWidth(220);
+    QToolTip::add(m_configCombo, QString::fromLatin1(
+        "Etch-era target configuration files; availability is probed read-only "
+        "by the helper's diagnostics."));
+    configRow->addWidget(m_configCombo, 1);
+    m_configButton = makeButton(QString::fromLatin1("Edit Target File..."), page);
+    connect(m_configButton, SIGNAL(clicked()), this, SLOT(editTargetConfigFile()));
+    configRow->addWidget(m_configButton);
+
+    m_configReasonLabel = new QLabel(page);
+    m_configReasonLabel->setTextFormat(Qt::PlainText);
+    m_configReasonLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    layout->addWidget(m_configReasonLabel);
+
+    QSplitter *splitter = new QSplitter(Qt::Horizontal, page);
+    splitter->setChildrenCollapsible(false);
 
     QGroupBox *checks = new QGroupBox(
         QString::fromLatin1("Diagnostic checks (read-only, per key)"), splitter);
     QToolTip::add(checks, QString::fromLatin1(
         "Runs one read-only diagnostic for the selected scope through the "
-        "helper (`diagnose <key>` / `host-diagnose <key>`). Run All above "
-        "remains the combined report."));
+        "helper (`diagnose <key>` / `host-diagnose <key>`); Run All is the "
+        "combined report."));
     QVBoxLayout *checksLayout = new QVBoxLayout(checks, 8, 4);
     m_diagnosticList = new QListView(checks);
-    addListViewColumn(m_diagnosticList, QString::fromLatin1("Check"), 150);
-    addListViewColumn(m_diagnosticList, QString::fromLatin1("Reads"), 520);
+    addListViewColumn(m_diagnosticList, QString::fromLatin1("Check"), 130);
+    addListViewColumn(m_diagnosticList, QString::fromLatin1("Reads"), 300);
     m_diagnosticList->setAllColumnsShowFocus(true);
     m_diagnosticList->setResizeMode(QListView::LastColumn);
-    m_diagnosticList->setMinimumHeight(90);
+    m_diagnosticList->setMinimumHeight(180);
     connect(m_diagnosticList, SIGNAL(selectionChanged()),
             this, SLOT(diagnosticSelectionChanged()));
     const std::vector<std::string> diagKeys = legacy::diagnosticKeys();
@@ -784,66 +857,39 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
         m_diagnosticList->setCurrentItem(m_diagnosticList->firstChild());
     }
     checksLayout->addWidget(m_diagnosticList, 1);
-    QHBoxLayout *checkButtons = new QHBoxLayout(checksLayout);
-    checkButtons->setSpacing(6);
-    m_runDiagnosticButton = makeButton(QString::fromLatin1("Run selected diagnostic"), checks);
+
+    QGroupBox *results = new QGroupBox(
+        QString::fromLatin1("Results (read-only)"), splitter);
+    QToolTip::add(results, QString::fromLatin1(
+        "The transcript of the selected diagnostic run; Run All keeps the "
+        "combined report here too."));
+    QVBoxLayout *resultsLayout = new QVBoxLayout(results, 8, 4);
+    QHBoxLayout *resultButtons = new QHBoxLayout(resultsLayout);
+    resultButtons->setSpacing(6);
+    m_runDiagnosticButton = makeButton(QString::fromLatin1("Run selected diagnostic"), results);
     connect(m_runDiagnosticButton, SIGNAL(clicked()), this, SLOT(runSelectedDiagnostic()));
-    checkButtons->addWidget(m_runDiagnosticButton);
-    m_copyResultsButton = makeButton(QString::fromLatin1("Copy results"), checks);
+    resultButtons->addWidget(m_runDiagnosticButton);
+    m_copyResultsButton = makeButton(QString::fromLatin1("Copy results"), results);
     connect(m_copyResultsButton, SIGNAL(clicked()), this, SLOT(copyResults()));
-    checkButtons->addWidget(m_copyResultsButton);
-    checkButtons->addStretch();
+    resultButtons->addWidget(m_copyResultsButton);
+    resultButtons->addStretch();
 
-    QGroupBox *config = new QGroupBox(
-        QString::fromLatin1("Target configuration (read-only viewer)"), splitter);
-    QToolTip::add(config, QString::fromLatin1(
-        "Reads one target configuration file through the helper's read-only "
-        "`config-read` verb; the helper never writes here."));
-    QVBoxLayout *configLayout = new QVBoxLayout(config, 8, 4);
-    QHBoxLayout *configRow = new QHBoxLayout(configLayout);
-    configRow->setSpacing(6);
-    configRow->addWidget(new QLabel(QString::fromLatin1("Configuration file:"), config));
-    m_configCombo = new QComboBox(config);
-    for (int i = 0; i < configKeyCount; ++i) {
-        m_configCombo->insertItem(QString::fromLatin1(configKeys[i]));
-    }
-    configRow->addWidget(m_configCombo, 1);
-    m_configButton = makeButton(QString::fromLatin1("View target file (read-only)"), config);
-    connect(m_configButton, SIGNAL(clicked()), this, SLOT(viewConfigFile()));
-    configRow->addWidget(m_configButton);
-    m_configView = new QTextEdit(config);
-    m_configView->setReadOnly(true);
-    m_configView->setTextFormat(Qt::PlainText);
-    m_configView->setWordWrap(QTextEdit::NoWrap);
-    m_configView->setMinimumHeight(80);
-    m_configView->setText(QString::fromLatin1(
-        "Commit an offline repair target, then choose a configuration file and "
-        "View target file (read-only). Running-host configuration is not "
-        "exposed by the legacy helper."));
-    configLayout->addWidget(m_configView, 1);
-
-    QGroupBox *raw = new QGroupBox(
-        QString::fromLatin1("Raw helper evidence (read-only diagnostics)"), splitter);
-    QVBoxLayout *rawLayout = new QVBoxLayout(raw, 8, 4);
-    m_rawView = new QTextEdit(raw);
+    m_rawView = new QTextEdit(results);
     m_rawView->setReadOnly(true);
     m_rawView->setTextFormat(Qt::LogText);
     m_rawView->setWordWrap(QTextEdit::NoWrap);
-    m_rawView->setMinimumHeight(70);
-    rawLayout->addWidget(m_rawView);
+    m_rawView->setMinimumHeight(180);
+    resultsLayout->addWidget(m_rawView, 1);
 
-    registerGroupBox(capabilities);
     registerGroupBox(checks);
-    registerGroupBox(config);
-    registerGroupBox(raw);
+    registerGroupBox(results);
 
     QValueList<int> sizes;
-    sizes.append(190);
-    sizes.append(180);
-    sizes.append(140);
-    sizes.append(170);
+    sizes.append(300);
+    sizes.append(700);
     splitter->setSizes(sizes);
-    return splitter;
+    layout->addWidget(splitter, 1);
+    return page;
 }
 
 QWidget *LegacyMainWindow::buildActionsTab()
@@ -851,19 +897,9 @@ QWidget *LegacyMainWindow::buildActionsTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
-    QGroupBox *elevation = new QGroupBox(
-        QString::fromLatin1("Privilege elevation"), page);
-    QVBoxLayout *elevationLayout = new QVBoxLayout(elevation, 8, 4);
-    m_elevationLabel = new QLabel(elevation);
-    m_elevationLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    elevationLayout->addWidget(m_elevationLabel);
-    QHBoxLayout *elevationButtons = new QHBoxLayout(elevationLayout);
-    elevationButtons->setSpacing(6);
-    m_elevateButton = makeButton(QString::fromLatin1("Re-check elevation"), elevation);
-    connect(m_elevateButton, SIGNAL(clicked()), this, SLOT(recheckElevation()));
-    elevationButtons->addWidget(m_elevateButton);
-    elevationButtons->addStretch();
-
+    // Modern parity: the scope/gate line comes first (the modern Repair page
+    // opens with its scope label and hint), then the individual tools, then
+    // the legacy-only elevation frame.
     m_gateHint = new QLabel(page);
     m_gateHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
     layout->addWidget(m_gateHint);
@@ -883,6 +919,20 @@ QWidget *LegacyMainWindow::buildActionsTab()
         grid->addWidget(button, i / 2, i % 2);
     }
     layout->addWidget(actions);
+
+    QGroupBox *elevation = new QGroupBox(
+        QString::fromLatin1("Privilege elevation"), page);
+    QVBoxLayout *elevationLayout = new QVBoxLayout(elevation, 8, 4);
+    m_elevationLabel = new QLabel(elevation);
+    m_elevationLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    elevationLayout->addWidget(m_elevationLabel);
+    QHBoxLayout *elevationButtons = new QHBoxLayout(elevationLayout);
+    elevationButtons->setSpacing(6);
+    m_elevateButton = makeButton(QString::fromLatin1("Re-check elevation"), elevation);
+    connect(m_elevateButton, SIGNAL(clicked()), this, SLOT(recheckElevation()));
+    elevationButtons->addWidget(m_elevateButton);
+    elevationButtons->addStretch();
+    layout->addWidget(elevation);
 
     QLabel *note = new QLabel(
         QString::fromLatin1(
@@ -1114,41 +1164,9 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
-    QGroupBox *application = new QGroupBox(
-        QString::fromLatin1("Application configuration"), page);
-    QGridLayout *appGrid = new QGridLayout(application, 5, 2, 8, 4);
-    appGrid->setColStretch(1, 1);
-    m_settingsHelperLabel = new QLabel(application);
-    m_settingsElevationLabel = new QLabel(application);
-    m_settingsLogDirLabel = new QLabel(application);
-    m_settingsSessionLabel = new QLabel(application);
-    m_settingsVersionLabel = new QLabel(QString::fromLatin1(LEGACY_VERSION), application);
-    QLabel *valueLabels[] = { m_settingsHelperLabel, m_settingsElevationLabel,
-                              m_settingsLogDirLabel, m_settingsSessionLabel,
-                              m_settingsVersionLabel };
-    const char *fieldNames[] = { "Helper:", "Elevation:", "Log directory:",
-                                 "Current session log:", "Version:" };
-    for (int i = 0; i < 5; ++i) {
-        valueLabels[i]->setTextFormat(Qt::PlainText);
-        valueLabels[i]->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-        appGrid->addWidget(new QLabel(QString::fromLatin1(fieldNames[i]), application), i, 0);
-        appGrid->addWidget(valueLabels[i], i, 1);
-    }
-    layout->addWidget(application);
-
-    QGroupBox *diagnostics = new QGroupBox(QString::fromLatin1("Diagnostics"), page);
-    QVBoxLayout *diagnosticsLayout = new QVBoxLayout(diagnostics, 8, 4);
-    QCheckBox *autoRefresh = new QCheckBox(
-        QString::fromLatin1("Automatically regenerate read-only diagnostics after repairs or target changes"),
-        diagnostics);
-    autoRefresh->setChecked(true);
-    autoRefresh->setEnabled(false);
-    QToolTip::add(autoRefresh, QString::fromLatin1(
-        "Not available on the legacy frontend: the helper has no persistent "
-        "privileged session, so diagnostics must be re-run manually."));
-    diagnosticsLayout->addWidget(autoRefresh);
-    layout->addWidget(diagnostics);
-
+    // Modern parity: the modern Settings page opens with device discovery and
+    // diagnostics and closes with the mandatory safety list; the legacy-only
+    // read-only application configuration follows them.
     QGroupBox *discovery = new QGroupBox(QString::fromLatin1("Device discovery"), page);
     QVBoxLayout *discoveryLayout = new QVBoxLayout(discovery, 8, 4);
     const char *discoveryItems[] = {
@@ -1166,6 +1184,19 @@ QWidget *LegacyMainWindow::buildSettingsTab()
         discoveryLayout->addWidget(check);
     }
     layout->addWidget(discovery);
+
+    QGroupBox *diagnostics = new QGroupBox(QString::fromLatin1("Diagnostics"), page);
+    QVBoxLayout *diagnosticsLayout = new QVBoxLayout(diagnostics, 8, 4);
+    QCheckBox *autoRefresh = new QCheckBox(
+        QString::fromLatin1("Automatically regenerate read-only diagnostics after repairs or target changes"),
+        diagnostics);
+    autoRefresh->setChecked(true);
+    autoRefresh->setEnabled(false);
+    QToolTip::add(autoRefresh, QString::fromLatin1(
+        "Not available on the legacy frontend: the helper has no persistent "
+        "privileged session, so diagnostics must be re-run manually."));
+    diagnosticsLayout->addWidget(autoRefresh);
+    layout->addWidget(diagnostics);
 
     QGroupBox *logs = new QGroupBox(QString::fromLatin1("Logs"), page);
     QVBoxLayout *logsLayout = new QVBoxLayout(logs, 8, 4);
@@ -1196,13 +1227,35 @@ QWidget *LegacyMainWindow::buildSettingsTab()
         safetyLayout->addWidget(check);
     }
     layout->addWidget(safety);
+
+    QGroupBox *application = new QGroupBox(
+        QString::fromLatin1("Application configuration"), page);
+    QGridLayout *appGrid = new QGridLayout(application, 5, 2, 8, 4);
+    appGrid->setColStretch(1, 1);
+    m_settingsHelperLabel = new QLabel(application);
+    m_settingsElevationLabel = new QLabel(application);
+    m_settingsLogDirLabel = new QLabel(application);
+    m_settingsSessionLabel = new QLabel(application);
+    m_settingsVersionLabel = new QLabel(QString::fromLatin1(LEGACY_VERSION), application);
+    QLabel *valueLabels[] = { m_settingsHelperLabel, m_settingsElevationLabel,
+                              m_settingsLogDirLabel, m_settingsSessionLabel,
+                              m_settingsVersionLabel };
+    const char *fieldNames[] = { "Helper:", "Elevation:", "Log directory:",
+                                 "Current session log:", "Version:" };
+    for (int i = 0; i < 5; ++i) {
+        valueLabels[i]->setTextFormat(Qt::PlainText);
+        valueLabels[i]->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+        appGrid->addWidget(new QLabel(QString::fromLatin1(fieldNames[i]), application), i, 0);
+        appGrid->addWidget(valueLabels[i], i, 1);
+    }
+    layout->addWidget(application);
     layout->addStretch();
 
-    registerGroupBox(application);
-    registerGroupBox(diagnostics);
     registerGroupBox(discovery);
+    registerGroupBox(diagnostics);
     registerGroupBox(logs);
     registerGroupBox(safety);
+    registerGroupBox(application);
     return page;
 }
 
@@ -1225,8 +1278,8 @@ QWidget *LegacyMainWindow::buildAboutTab()
             "<tt>sudo -S -v</tt> over a pipe.<br><br>"
             "<b>Modern GUI parity:</b> Systems (inventory, selected drive "
             "details, scope/target commit, Host Maintenance, unlock status), "
-            "Diagnostics (Run All + per-key runs, a read-only target "
-            "configuration viewer and the all/available/unavailable filter), "
+            "Diagnostics (Run All + per-key runs and the target-only "
+            "Edit Target File control with the Etch-era configuration files), "
             "Repair (gated tools, including the guarded GRUB-legacy "
             "regeneration, + elevation state), Chroot Shell and File Copy "
             "(greyed with the helper's <tt>Legacy feature</tt> probe reasons), "
@@ -1671,38 +1724,123 @@ void LegacyMainWindow::diagnosticSelectionChanged()
     updateActionStates();
 }
 
-void LegacyMainWindow::viewConfigFile()
+// Modern parity: the target configuration row is target-only. Host
+// Maintenance never shows it and never enables target-file editing, and the
+// helper refuses to read or write a running-host configuration path.
+void LegacyMainWindow::editTargetConfigFile()
 {
     if (m_running) {
         return;
     }
-    if (hostScope()) {
-        QMessageBox::information(this, QString::fromLatin1("Target configuration viewer"),
+    if (!targetCommitted() || hostMaintenanceActive()) {
+        QMessageBox::information(
+            this, QString::fromLatin1("Repair target required"),
+            targetCommitted() ? scopeReadyReason()
+                              : QString::fromLatin1(
+                                    "Target file editing needs a committed repair "
+                                    "target. Running-host maintenance has no "
+                                    "target-file editing; commit an offline target "
+                                    "first."),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    const QString path = m_configCombo ? m_configCombo->currentText().stripWhiteSpace()
+                                       : QString::null;
+    const QString key = configKeyForPath(path);
+    if (key.isEmpty()) {
+        QMessageBox::information(this, QString::fromLatin1("Configuration file required"),
                                  QString::fromLatin1(
-                                     "The read-only configuration viewer reads an "
-                                     "offline repair target. Running-host "
-                                     "configuration is not exposed by the legacy "
-                                     "helper; commit an offline target first."),
+                                     "Select a target configuration file first."),
                                  QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    if (!targetCommitted()) {
-        QMessageBox::information(this, QString::fromLatin1("Repair target required"),
-                                 scopeReadyReason(),
-                                 QMessageBox::Ok, QMessageBox::NoButton);
-        return;
-    }
-    const QString key = m_configCombo ? m_configCombo->currentText().stripWhiteSpace()
-                                      : QString::null;
+    m_pendingConfigKey = key;
+    m_pendingConfigPath = path;
+    QStringList args;
+    args << QString::fromLatin1("config-read") << selectedDisk() << selectedRoot() << key;
+    startCommand(args, false, QString::fromLatin1("config-read %1").arg(path), false, true);
+}
+
+// Opens the modal editor with the helper's read-only `config-read` content.
+// Saving writes through the guarded `config-write` verb and invalidates the
+// cached diagnostics, exactly like the modern Edit Target File dialog.
+void LegacyMainWindow::openConfigEditor(const QString &content, const QString &key,
+                                        const QString &path)
+{
     if (key.isEmpty()) {
         return;
     }
-    QStringList args;
-    args << QString::fromLatin1("config-read") << selectedDisk() << selectedRoot() << key;
-    if (m_configView) {
-        m_configView->setText(QString::fromLatin1("Reading %1 (read-only)...").arg(key));
+    QDialog dialog(this, "legacy-config-editor", true);
+    dialog.setCaption(QString::fromLatin1("Edit target %1").arg(path));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
+    QLabel *info = new QLabel(
+        QString::fromLatin1(
+            "Edit this target file through the guarded administrator helper. A "
+            "successful save invalidates cached diagnostics; rerun diagnostics "
+            "before repair. Generated files such as /boot/grub/menu.lst may be "
+            "replaced by the next bootloader update."),
+        &dialog);
+    info->setWordWrap(true);
+    info->setMaximumWidth(640);
+    layout->addWidget(info);
+
+    QTextEdit *editor = new QTextEdit(&dialog);
+    editor->setTextFormat(Qt::PlainText);
+    editor->setText(content);
+    editor->setWordWrap(QTextEdit::NoWrap);
+    QFont mono(QString::fromLatin1("monospace"));
+    mono.setStyleHint(QFont::TypeWriter);
+    editor->setFont(mono);
+    layout->addWidget(editor, 1);
+
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->setSpacing(6);
+    buttons->addStretch();
+    QPushButton *cancel = new QPushButton(QString::fromLatin1("Cancel"), &dialog);
+    QPushButton *save = new QPushButton(QString::fromLatin1("Save Target File"), &dialog);
+    save->setDefault(true);
+    buttons->addWidget(cancel);
+    buttons->addWidget(save);
+    QObject::connect(cancel, SIGNAL(clicked()), &dialog, SLOT(reject()));
+    QObject::connect(save, SIGNAL(clicked()), &dialog, SLOT(accept()));
+    dialog.resize(760, 520);
+
+    if (dialog.exec() != QDialog::Accepted) {
+        return;
     }
-    startCommand(args, false, QString::fromLatin1("config-read %1").arg(key), false, true);
+    const QString edited = editor->text();
+    if (edited == content) {
+        statusBar()->message(QString::fromLatin1("No changes to %1.").arg(path), 3000);
+        return;
+    }
+    if (edited.local8Bit().size() > kConfigEditMaximumBytes) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("File too large"),
+            QString::fromLatin1(
+                "The edited file is larger than %1 KiB. The guarded write "
+                "transports the content on the command line, which Etch's "
+                "kernel cannot accept; edit the file from a console instead.")
+                .arg(kConfigEditMaximumBytes / 1024),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    const int answer = QMessageBox::question(
+        this, QString::fromLatin1("Write target configuration"),
+        QString::fromLatin1(
+            "Write the edited contents to %1? This modifies the repair target "
+            "and invalidates cached diagnostics.").arg(path),
+        QMessageBox::Yes, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+
+    m_pendingConfigKey = key;
+    m_pendingConfigPath = path;
+    m_pendingConfigWrite = true;
+    QStringList args;
+    args << QString::fromLatin1("config-write") << selectedDisk() << selectedRoot()
+         << key << edited;
+    startCommand(args, false, QString::fromLatin1("config-write %1").arg(path), false, true);
 }
 
 void LegacyMainWindow::copyResults()
@@ -1772,13 +1910,13 @@ void LegacyMainWindow::runUnlock()
     }
 
     bool ok = false;
-    QString passphrase = QInputDialog::getText(
-        QString::fromLatin1("Unlock LUKS repair target"),
-        QString::fromLatin1("Enter the passphrase for %1.\n"
+    QString passphrase = promptHiddenPassword(
+        this, QString::fromLatin1("Unlock LUKS repair target"),
+        QString::fromLatin1("Enter the passphrase for %1.\n\n"
                             "It is sent only to cryptsetup over the helper's "
                             "standard input and is never logged or placed on a "
                             "command line.").arg(luks),
-        QLineEdit::Password, QString::null, &ok, this);
+        &ok);
     if (!ok) {
         return;
     }
@@ -1828,11 +1966,6 @@ void LegacyMainWindow::recheckElevation()
                                  "root).").arg(description),
                              QMessageBox::Ok, QMessageBox::NoButton);
     }
-}
-
-void LegacyMainWindow::diagnosticsFilterChanged()
-{
-    updateCapabilityView();
 }
 
 void LegacyMainWindow::logFilterChanged()
@@ -2050,8 +2183,8 @@ bool LegacyMainWindow::ensureAdministratorSession(const QString &context)
     const char *userEnv = ::getenv("USER");
     const QString user = userEnv ? QString::fromLocal8Bit(userEnv) : QString::null;
     bool ok = false;
-    QString password = QInputDialog::getText(
-        QString::fromLatin1("Administrator authorization"),
+    QString password = promptHiddenPassword(
+        this, QString::fromLatin1("Administrator authorization"),
         QString::fromLatin1(
             "Administrator authorization is required for %1.\n\n"
             "Enter the password for %2 (sudo). It is used only for this sudo "
@@ -2060,7 +2193,7 @@ bool LegacyMainWindow::ensureAdministratorSession(const QString &context)
             "and reused by diagnostics and repairs.")
             .arg(context)
             .arg(user.isEmpty() ? QString::fromLatin1("your account") : user),
-        QLineEdit::Password, QString::null, &ok, this);
+        &ok);
     if (!ok) {
         appendLog(QString::fromLatin1(
             "Administrator authorization was cancelled; the command was not started."));
@@ -2108,6 +2241,7 @@ void LegacyMainWindow::startCommand(const QStringList &args,
         // A modal password prompt would hang the headless smoke: fail with the
         // exact remedy instead.
         m_smokeMode = false;
+        m_pendingConfigWrite = false;
         emit smokeFinished(false, QString::fromLatin1(
             "elevation requires an interactive sudo password; run the smoke as "
             "root or after `sudo -S -v` with --elevate 'sudo -n'"));
@@ -2133,6 +2267,9 @@ void LegacyMainWindow::startCommand(const QStringList &args,
         }
         // Never leave a collected secret behind when authorization is missing.
         m_runner->setInputData(QByteArray());
+        m_pendingConfigWrite = false;
+        m_pendingConfigKey = QString::null;
+        m_pendingConfigPath = QString::null;
         return;
     }
     m_transcript = QString::null;
@@ -2194,10 +2331,13 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     const std::string transcript = toStd(m_transcript);
     const ParsedTranscript parsed = parseTranscript(transcript);
     const bool wasConfig = m_pendingConfig;
+    const bool wasConfigWrite = m_pendingConfigWrite;
+    const QString configKey = m_pendingConfigKey;
+    const QString configPath = m_pendingConfigPath;
     const bool wasShell = m_pendingShell;
+    QString configReadContent;
     if (m_pendingDiagnostic) {
         m_model.applyDiagnosticTranscript(toStd(m_pendingIdentity), transcript, ok);
-        updateCapabilityView();
         m_rawView->setText(m_transcript);
         if (ok) {
             updateFactView(parsed);
@@ -2206,10 +2346,24 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     } else {
         m_model.applyCommandTranscript(transcript);
         reportChangeStatuses(parsed);
-        if (wasConfig && m_configView) {
-            // The helper's `config-read` output is the read-only viewer's only
-            // content; a failed run shows the helper's own error transcript.
-            m_configView->setText(m_transcript);
+        if (wasConfig && !wasConfigWrite && ok) {
+            // The helper's `config-read` output carries a small read-only
+            // preamble; the editor receives the file content only.
+            configReadContent = m_transcript;
+            const QString marker = QString::fromLatin1("Inspection is read-only.\n\n");
+            const int markerPos = configReadContent.find(marker);
+            if (markerPos >= 0) {
+                configReadContent = configReadContent.mid(markerPos + marker.size());
+            }
+        }
+        if (wasConfig && wasConfigWrite && ok) {
+            // A target configuration write can change mount, initramfs and
+            // boot behavior: the complete cached target diagnostics are
+            // invalidated, exactly like the modern Edit Target File dialog.
+            m_model.reset();
+            appendLog(QString::fromLatin1(
+                "STALE DIAGNOSTICS: target configuration edited: %1. "
+                "Regenerate diagnostics before the next repair.").arg(configPath));
         }
         if (wasShell && m_shellOutput) {
             // The shell command's transcript is the tab's only content; the
@@ -2227,12 +2381,43 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     m_pendingDiagnostic = false;
     m_pendingUnlock = false;
     m_pendingConfig = false;
+    m_pendingConfigWrite = false;
+    m_pendingConfigKey = QString::null;
+    m_pendingConfigPath = QString::null;
     m_pendingShell = false;
     m_pendingLabel = QString::null;
     m_cancelButton->setEnabled(false);
     updateActionStates();
     updateStatus();
     updateDriveDetails();
+
+    // Config read/write follow-ups run after the run state is reset, so the
+    // editor can start the guarded write without hitting the m_running guard.
+    if (wasConfig && !wasConfigWrite) {
+        if (ok) {
+            openConfigEditor(configReadContent, configKey, configPath);
+        } else {
+            std::string error = unlockErrorLine(transcript);
+            if (error.empty()) {
+                error = toStd(m_transcript).substr(0, 400);
+            }
+            appendLog(QString::fromLatin1("Configuration read failed: %1")
+                          .arg(fromStd(error)));
+            QMessageBox::warning(this, QString::fromLatin1("Configuration unavailable"),
+                                 QString::fromLatin1(
+                                     "The helper could not read %1:\n\n%2")
+                                     .arg(configPath).arg(fromStd(error)),
+                                 QMessageBox::Ok, QMessageBox::NoButton);
+        }
+    } else if (wasConfig && wasConfigWrite && !ok) {
+        std::string error = unlockErrorLine(transcript);
+        if (error.empty()) {
+            error = toStd(m_transcript).substr(0, 400);
+        }
+        QMessageBox::warning(this, QString::fromLatin1("Configuration write failed"),
+                             QString::fromLatin1("%1").arg(fromStd(error)),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+    }
 
     if (wasUnlock) {
         handleUnlockFinished(ok, transcript, unlockDevice, unlockDisk);
@@ -2278,7 +2463,6 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
         // Opening the mapper changes the target topology: cached diagnostics
         // for the old identity no longer describe the selected scope.
         m_model.reset();
-        updateCapabilityView();
         appendLog(QString::fromLatin1(
             "LUKS volume unlocked; the target topology changed, so cached "
             "diagnostics were invalidated. Run diagnostics again."));
@@ -2455,10 +2639,6 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("elevation control missing or empty"));
         ok = false;
     }
-    if (!m_diagFilterCombo || m_diagFilterCombo->count() != 3) {
-        problems->append(QString::fromLatin1("diagnostics filter missing (all/available/unavailable)"));
-        ok = false;
-    }
     if (!m_logFilterCombo || m_logFilterCombo->count() != 2) {
         problems->append(QString::fromLatin1("log filter missing (all/errors)"));
         ok = false;
@@ -2474,12 +2654,8 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             .arg(m_diagnosticList ? m_diagnosticList->childCount() : -1));
         ok = false;
     }
-    if (!m_configCombo || m_configCombo->count() != configKeyCount) {
-        problems->append(QString::fromLatin1("read-only configuration key list missing or incomplete"));
-        ok = false;
-    }
-    if (!m_configView) {
-        problems->append(QString::fromLatin1("read-only configuration viewer missing"));
+    if (!m_configCombo || !m_configButton || !m_configLabel || !m_configReasonLabel) {
+        problems->append(QString::fromLatin1("target configuration controls missing"));
         ok = false;
     }
     if (!m_runDiagnosticButton || !m_copyResultsButton) {
@@ -2563,6 +2739,18 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("Run selected diagnostic disabled while Host Maintenance is active"));
         ok = false;
     }
+    // Modern parity: the target configuration row (and Edit Target File) is
+    // never shown or enabled for Host Maintenance.
+    if (m_configCombo && !m_configCombo->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "target configuration row shown for Host Maintenance"));
+        ok = false;
+    }
+    if (m_configButton && m_configButton->isEnabled()) {
+        problems->append(QString::fromLatin1(
+            "Edit Target File enabled for Host Maintenance"));
+        ok = false;
+    }
     m_hostMaintenance = false;
     m_targetCommitted = true;
     m_committedDisk = selectedDisk();
@@ -2572,8 +2760,23 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("Run Diagnostic disabled for a committed repair target"));
         ok = false;
     }
+    if (m_configCombo && m_configCombo->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "target configuration row hidden for a committed repair target"));
+        ok = false;
+    }
+    if (m_configCombo && m_configCombo->count() != configSpecCount) {
+        problems->append(QString::fromLatin1(
+            "target configuration list incomplete for an unprobed target (count=%1)")
+            .arg(m_configCombo->count()));
+        ok = false;
+    }
     if (m_configButton && !m_configButton->isEnabled()) {
-        problems->append(QString::fromLatin1("configuration viewer disabled for a committed repair target"));
+        problems->append(QString::fromLatin1("Edit Target File disabled for a committed repair target"));
+        ok = false;
+    }
+    if (m_configCombo && !m_configCombo->isHidden()
+        && !comboTextFits(m_configCombo, QString::fromLatin1("configuration combo"), problems)) {
         ok = false;
     }
     m_targetCommitted = false;
@@ -2582,8 +2785,14 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("Run Diagnostic enabled for an uncommitted target"));
         ok = false;
     }
+    if (m_configCombo && !m_configCombo->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "target configuration row shown for an uncommitted target"));
+        ok = false;
+    }
     if (m_configButton && m_configButton->isEnabled()) {
-        problems->append(QString::fromLatin1("configuration viewer enabled for an uncommitted target"));
+        problems->append(QString::fromLatin1(
+            "Edit Target File enabled for an uncommitted target"));
         ok = false;
     }
     // Restore the running-host scope the smoke's helper commands used.
@@ -2723,35 +2932,45 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         }
     }
 
-    // Diagnostics filter: exact counts for all/available/unavailable.
-    if (m_diagFilterCombo && m_capabilityList) {
-        int available = 0;
-        const std::vector<std::string> keys = capabilityKeys();
-        for (std::size_t i = 0; i < keys.size(); ++i) {
-            if (m_model.state(keys[i]) == "available") {
-                ++available;
-            }
+    // Target configuration probe: after the running-host diagnostics the
+    // target identity still has no cached `Legacy config` lines, so the row
+    // lists every Etch key and the reason label asks for diagnostics; a
+    // committed target with a cached unavailable line must omit that file and
+    // show the helper's exact reason instead.
+    if (m_configCombo && m_configReasonLabel) {
+        static const char *const expectedKeys[] = {
+            "fstab", "inittab", "menu-lst", "crypttab", "modules", "interfaces",
+            "sources-list", "apt-conf"
+        };
+        const std::vector<std::string> keys = legacy::configFileKeys();
+        bool keysMatch = keys.size() == 8;
+        for (std::size_t i = 0; keysMatch && i < keys.size(); ++i) {
+            keysMatch = keys[i] == expectedKeys[i];
         }
-        const int total = static_cast<int>(keys.size());
-        m_diagFilterCombo->setCurrentItem(0);
-        updateCapabilityView();
-        const int shownAll = m_capabilityList->childCount();
-        m_diagFilterCombo->setCurrentItem(1);
-        updateCapabilityView();
-        const int shownAvailable = m_capabilityList->childCount();
-        m_diagFilterCombo->setCurrentItem(2);
-        updateCapabilityView();
-        const int shownUnavailable = m_capabilityList->childCount();
-        m_diagFilterCombo->setCurrentItem(0);
-        updateCapabilityView();
-        if (shownAll != total || shownAvailable != available
-            || shownUnavailable != total - available) {
+        if (!keysMatch) {
             problems->append(QString::fromLatin1(
-                "diagnostics filter counts wrong: all=%1 available=%2 unavailable=%3 (expected %4/%5/%6)")
-                .arg(shownAll).arg(shownAvailable).arg(shownUnavailable)
-                .arg(total).arg(available).arg(total - available));
+                "Etch configuration key list changed (expected 8 fixed keys)"));
             ok = false;
         }
+        m_hostMaintenance = false;
+        m_targetCommitted = true;
+        m_committedDisk = selectedDisk();
+        m_committedRoot = selectedRoot();
+        updateActionStates();
+        if (m_configCombo->count() != static_cast<int>(keys.size())) {
+            problems->append(QString::fromLatin1(
+                "unprobed target configuration list is incomplete (count=%1)")
+                .arg(m_configCombo->count()));
+            ok = false;
+        }
+        if (m_configReasonLabel->text().find(QString::fromLatin1("Run diagnostics")) < 0) {
+            problems->append(QString::fromLatin1(
+                "unprobed target configuration reason does not ask for diagnostics"));
+            ok = false;
+        }
+        m_targetCommitted = false;
+        m_hostMaintenance = true;
+        updateActionStates();
     }
 
     // Log filter: only error/warning lines under the errors filter, and every
@@ -2904,29 +3123,12 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
                 ok = false;
             }
         }
-        if (m_capabilityList->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (!listColumnsFit(m_capabilityList, QString::fromLatin1("capability list"), problems)) {
-                ok = false;
-            }
-            if (!listLastColumnFills(m_capabilityList, QString::fromLatin1("capability list"), problems)) {
-                ok = false;
-            }
-        }
         if (m_diagnosticList && m_diagnosticList->isVisibleTo(m_tabs)) {
             ++checkedCount;
             if (!listColumnsFit(m_diagnosticList, QString::fromLatin1("diagnostic list"), problems)) {
                 ok = false;
             }
             if (!listLastColumnFills(m_diagnosticList, QString::fromLatin1("diagnostic list"), problems)) {
-                ok = false;
-            }
-        }
-        if (m_configView && m_configView->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (m_configView->width() < 320) {
-                problems->append(QString::fromLatin1(
-                    "configuration viewer is too narrow (%1px)").arg(m_configView->width()));
                 ok = false;
             }
         }
@@ -2996,35 +3198,80 @@ void LegacyMainWindow::cancelRun()
     }
 }
 
-void LegacyMainWindow::updateCapabilityView()
+// Rebuilds the target configuration row from the helper's read-only
+// `Legacy config <key>:` probe. The row is only visible for a committed
+// repair target (never Host Maintenance); files the probe reports absent are
+// omitted from the combo and their exact reason is shown below it, while an
+// unprobed identity lists every Etch key so the guarded read can decide.
+void LegacyMainWindow::updateConfigView()
 {
-    const int filter = m_diagFilterCombo ? m_diagFilterCombo->currentItem() : 0;
-    m_capabilityList->clear();
-    const std::vector<std::string> keys = capabilityKeys();
-    for (std::size_t i = 0; i < keys.size(); ++i) {
-        const std::string &key = keys[i];
-        const std::string state = m_model.state(key);
-        const bool available = state == "available";
-        if ((filter == 1 && !available) || (filter == 2 && available)) {
-            continue;
-        }
-        QString reason;
-        if (state.empty()) {
-            reason = QString::fromLatin1("No 'Repair tool %1:' line cached; fail closed.")
-                         .arg(fromStd(key));
-        } else if (available) {
-            const std::string detail = m_model.evidence(key);
-            reason = detail.empty()
-                ? QString::fromLatin1("available (no evidence line)")
-                : fromStd(detail);
+    const bool show = targetCommitted() && !hostMaintenanceActive();
+    if (m_configLabel) {
+        m_configLabel->setVisible(show);
+    }
+    if (m_configCombo) {
+        m_configCombo->setVisible(show);
+    }
+    if (m_configButton) {
+        m_configButton->setVisible(show);
+    }
+    if (m_configReasonLabel) {
+        m_configReasonLabel->setVisible(show);
+    }
+    if (!show || !m_configCombo) {
+        return;
+    }
+
+    const QString previousPath = m_configCombo->currentText().stripWhiteSpace();
+    const bool probed = m_model.hasDiagnostics(toStd(identity()))
+        && !m_model.diagnosticsStale();
+    QStringList absent;
+    m_configCombo->clear();
+    for (int i = 0; i < configSpecCount; ++i) {
+        const ConfigSpec &spec = configSpecs[i];
+        const std::string state = probed
+            ? m_model.configFileState(spec.key) : std::string();
+        if (state == "available") {
+            m_configCombo->insertItem(QString::fromLatin1(spec.path));
+        } else if (state.size() >= 12 && state.compare(0, 12, "unavailable|") == 0) {
+            absent.append(QString::fromLatin1("%1 - %2")
+                              .arg(QString::fromLatin1(spec.path))
+                              .arg(fromStd(state.substr(12))));
         } else {
-            std::string detail;
-            capabilityIsAvailable(state, &detail);
-            reason = fromStd(detail);
+            // Not probed yet (or an unrecognised state): list the file and let
+            // the helper's guarded read decide (fail closed at the helper).
+            m_configCombo->insertItem(QString::fromLatin1(spec.path));
         }
-        QListViewItem *item = new QListViewItem(
-            m_capabilityList, fromStd(key), describeState(state), reason);
-        item->setEnabled(available);
+    }
+    if (!previousPath.isEmpty()) {
+        for (int i = 0; i < m_configCombo->count(); ++i) {
+            if (m_configCombo->text(i) == previousPath) {
+                m_configCombo->setCurrentItem(i);
+                break;
+            }
+        }
+    }
+    if (m_configReasonLabel) {
+        if (m_configCombo->count() == 0) {
+            m_configReasonLabel->setText(
+                QString::fromLatin1(
+                    "The read-only probe found no editable target configuration "
+                    "file in this target. %1")
+                    .arg(absent.isEmpty() ? QString::fromLatin1("")
+                                          : absent.join(QString::fromLatin1("; "))));
+        } else if (!absent.isEmpty()) {
+            m_configReasonLabel->setText(
+                QString::fromLatin1("Not present in the selected target (omitted): %1")
+                    .arg(absent.join(QString::fromLatin1("; "))));
+        } else if (!probed) {
+            m_configReasonLabel->setText(QString::fromLatin1(
+                "Run diagnostics to probe which target configuration files "
+                "exist; the helper's read-only probe decides the list."));
+        } else {
+            m_configReasonLabel->setText(QString::fromLatin1(
+                "Probed read-only by the helper; a saved edit invalidates the "
+                "cached diagnostics."));
+        }
     }
 }
 
@@ -3494,13 +3741,27 @@ void LegacyMainWindow::updateActionStates()
                             : QString::fromLatin1("Select a target and wait for any running command first."))));
     }
     if (m_configButton) {
-        const bool configEnabled = complete && idle && !hostScope() && targetCommitted();
+        // Modern parity: Edit Target File is target-only (never Host
+        // Maintenance) and needs a probed, selectable file in the combo.
+        const bool configShown = targetCommitted() && !hostMaintenanceActive();
+        const bool configEnabled = configShown && idle
+            && m_configCombo && m_configCombo->count() > 0;
         m_configButton->setEnabled(configEnabled);
         QToolTip::add(m_configButton, configEnabled
-            ? QString::fromLatin1("Read the selected target configuration file through the helper (read-only).")
-            : (hostScope()
-                ? QString::fromLatin1("The configuration viewer is target-only; the legacy helper exposes no running-host config read.")
-                : QString::fromLatin1("Commit an offline repair target first.")));
+            ? QString::fromLatin1(
+                  "Read or edit the selected target configuration file through "
+                  "the guarded helper; a saved edit invalidates cached diagnostics.")
+            : (hostMaintenanceActive()
+                ? QString::fromLatin1(
+                      "Host Maintenance has no target-file editing; commit an "
+                      "offline repair target first.")
+                : (!targetCommitted()
+                    ? QString::fromLatin1("Commit an offline repair target first.")
+                    : (!idle
+                        ? QString::fromLatin1("A helper command is already running.")
+                        : QString::fromLatin1(
+                              "No target configuration file is available for this "
+                              "target; run diagnostics to probe the list.")))));
     }
     if (m_scanButton) {
         m_scanButton->setEnabled(idle);
@@ -3605,6 +3866,7 @@ void LegacyMainWindow::updateActionStates()
         }
     }
 
+    updateConfigView();
     updateLegacyFeatureView();
 }
 

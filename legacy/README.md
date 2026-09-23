@@ -39,10 +39,13 @@ details** panel (drive, detected target/component, model/label, status, size,
 connection, filesystem, UUID, mounts, protection), the target controls with
 explicit **Set as repair target** / **Host Maintenance** commit and a
 dedicated **Unlock status** frame (locked/unlocked, component, mapper, method,
-errors; disabled for the protected running host), **Diagnostics** lists the 13
-`Repair tool` capability lines with an all/available/unavailable filter, Run
-All, per-key diagnostic runs, a read-only `config-read` viewer and the raw
-evidence pane, **Repair** shows the resolved elevation method with a re-check
+errors; disabled for the protected running host), **Diagnostics** mirrors the
+modern page (Run All/Cancel, per-key diagnostic checks with the results pane,
+and the target-only **Edit Target File...** control with the Etch-era file
+list — probe-based availability, guarded `config-read`/`config-write`, edits
+invalidate the cached diagnostics; no capability list or filter is duplicated,
+the cached capability lines gate the Repair tab), **Repair** shows the
+resolved elevation method with a re-check
 button and enables only the legacy-supported commands (`validate`, `diagnose`,
 `fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
 `initramfs` and the guarded `grub` regeneration) whose cached capability line

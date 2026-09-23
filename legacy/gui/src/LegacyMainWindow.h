@@ -3,9 +3,10 @@
 // Layout mirrors the modern Boot Bitch Qt6 information hierarchy where Qt3
 // allows it: Systems (read-only kernel inventory, helper-confirmed target
 // facts, the selected-drive details panel, LUKS unlock with its status),
-// Diagnostics (13 `Repair tool` capability lines with an
-// all/available/unavailable filter, per-diagnostic runs, a read-only target
-// configuration viewer, greyed probe reasons and raw evidence), Repair
+// Diagnostics (the modern Run All / diagnostic checks / results structure:
+// per-key read-only runs, the target-only `Edit Target File...` control with
+// the Etch-era configuration key list probed through the helper's read-only
+// `Legacy config` lines, and the raw evidence pane), Repair
 // (privilege-elevation state, only the legacy-supported commands gated by the
 // cached capability lines, including the guarded GRUB-legacy regeneration,
 // plus the greyed modern-only feature list driven by the helper's
@@ -92,14 +93,13 @@ private slots:
     void runDiagnostics();
     void runSelectedDiagnostic();
     void diagnosticSelectionChanged();
-    void viewConfigFile();
+    void editTargetConfigFile();
     void copyResults();
     void runAction();
     void runChrootShell();
     void clearChrootOutput();
     void runUnlock();
     void recheckElevation();
-    void diagnosticsFilterChanged();
     void logFilterChanged();
     void logSearchChanged();
     void sessionLogSelectionChanged();
@@ -144,7 +144,9 @@ private:
     void updateStatus();
     void updateActionStates();
     void updateElevationLabel();
-    void updateCapabilityView();
+    void updateConfigView();
+    void openConfigEditor(const QString &content, const QString &key,
+                          const QString &path);
     void updateLegacyFeatureView();
     void updateFeatureTab(QGroupBox *group, QLabel *label, const char *feature,
                           const QString &title);
@@ -177,17 +179,14 @@ private:
     QComboBox *m_diskCombo;
     QComboBox *m_rootCombo;
     QComboBox *m_unlockCombo;
-    QComboBox *m_diagFilterCombo;
     QComboBox *m_logFilterCombo;
     QComboBox *m_configCombo;
     QListView *m_deviceList;
     QListView *m_detailList;
-    QListView *m_capabilityList;
     QListView *m_diagnosticList;
     QListView *m_unsupportedList;
     QListView *m_sessionLogList;
     QTextEdit *m_rawView;
-    QTextEdit *m_configView;
     QTextEdit *m_logView;
     QTextEdit *m_unlockStatusView;
     QLineEdit *m_logSearchEdit;
@@ -198,6 +197,8 @@ private:
     QLabel *m_gateHint;
     QLabel *m_elevationLabel;
     QLabel *m_targetSummary;
+    QLabel *m_configLabel;
+    QLabel *m_configReasonLabel;
     QLabel *m_chrootReasonLabel;
     QLabel *m_fileCopyReasonLabel;
     QLabel *m_settingsHelperLabel;
@@ -256,6 +257,9 @@ private:
     bool m_viewingPriorLog;
     QString m_pendingIdentity;
     QString m_pendingLabel;
+    QString m_pendingConfigKey;
+    QString m_pendingConfigPath;
+    bool m_pendingConfigWrite;
 
     bool m_smokeMode;
     int m_smokeStep;

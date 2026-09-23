@@ -42,22 +42,35 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   and travels only over the helper's standard input (never argv/logs), a
   rejected passphrase offers a retry, and a successful unlock invalidates the
   cached diagnostics because the target topology changed.
-- **Diagnostics** lists the 13 `Repair tool <key>: available|unavailable|<reason>`
-  lines with an **all/available/unavailable filter**; unavailable rows are
-  greyed and show the helper's probe reason verbatim. `Repair capability
-  evidence` lines feed the reason/tooltip; **Run All diagnostics** is the
-  combined read-only evidence source and **Cancel** stops a running command.
-  The per-key **Diagnostic checks** list runs one read-only `diagnose <key>` /
-  `host-diagnose <key>` through the helper, **Copy results** copies the raw
-  evidence pane and the **Target configuration** group is a read-only viewer
-  for the helper's `config-read` keys (11 files; target scope only). A plain
-  interactive `sudo` is authorized **once per scope** through the modal
-  hidden-input **Administrator authorization** dialog when Host Maintenance is
-  entered or a repair target is committed; the password is fed to `sudo -S -v`
-  over a pipe (never argv, never the transcript) and the cached session is
-  reused by every later command, so **Run All never prompts**. A cancelled or
-  failed authorization never starts the command, and an expired session fails
-  closed with the exact remedy (re-commit the target or re-enter maintenance).
+- **Diagnostics** mirrors the modern Qt6 page: an action row with **Run All
+  diagnostics (read-only)** and **Cancel running command**, a target
+  configuration row, then a horizontal splitter with the per-key
+  **Diagnostic checks** list on the left and the **Results** pane (plus
+  **Run selected diagnostic** / **Copy results**) on the right. There is no
+  capability list and no availability filter, exactly like the modern page:
+  the cached `Repair tool` lines remain the Repair tab's gating evidence.
+  The target configuration row shows **Target configuration:** + a combo with
+  the **Etch-era files** (`/etc/fstab`, `/etc/inittab`, `/boot/grub/menu.lst`,
+  `/etc/crypttab`, `/etc/modules`, `/etc/network/interfaces`,
+  `/etc/apt/sources.list`, `/etc/apt/apt.conf`) + **Edit Target File...**,
+  and it is visible **only for a committed repair target** — Host Maintenance
+  never shows or enables it (host repair has no target-file editing).
+  Availability is probe-based: the helper's read-only diagnostics emit
+  `Legacy config <key>: available|unavailable|<reason>` lines for the mounted
+  target, so absent files are omitted from the combo with the helper's exact
+  reason shown below it; before the first diagnostics run the row lists every
+  Etch key and asks for a diagnostics run. **Edit Target File...** opens the
+  modal editor with the helper's guarded `config-read` content; **Save Target
+  File** confirms, writes through the guarded `config-write` verb (mode/owner
+  preserved, no symlinks, no creation) and invalidates the cached diagnostics.
+  A plain interactive `sudo` is authorized **once per scope** through the
+  modal hidden-input **Administrator authorization** dialog when Host
+  Maintenance is entered or a repair target is committed; the password is fed
+  to `sudo -S -v` over a pipe (never argv, never the transcript) and the
+  cached session is reused by every later command, so **Run All never
+  prompts**. A cancelled or failed authorization never starts the command,
+  and an expired session fails closed with the exact remedy (re-commit the
+  target or re-enter maintenance).
 - **Repair** shows the resolved **elevation state** (`gksu --sudo-mode`,
   `gksudo`, `sudo -n`, `su`, root or unavailable) with a **Re-check elevation**
   button that re-probes and surfaces the exact error, and exposes only the
@@ -108,7 +121,7 @@ The Qt6 Boot Bitch tabs map onto this frontend where Qt3 allows it:
 | Modern GUI | Legacy Qt3 | Notes |
 | --- | --- | --- |
 | Systems (device tree, selected drive details, Unlock status, Select Target/Unlock/Authorize) | Systems (inventory, details panel, target, Host Maintenance, unlock + status) | target is typed/selected then committed; modal sudo authorization replaces Polkit "Authorize" and is requested on commit/maintenance only |
-| Diagnostics (check list, Run All/Run Diagnostic, results) | Diagnostics (capability list + Run All + per-key runs, read-only config viewer, raw evidence, Copy results) | capability/feature lines are the legacy evidence source; gated by committed target/Host Maintenance; the cached session means Run All never prompts |
+| Diagnostics (check list, Run All/Run Diagnostic, target config combo + Edit Target File…, results) | Diagnostics (Run All/Cancel, per-key checks + results, target-only Edit Target File with the Etch key list, raw evidence, Copy results) | same structure; the config probe is a legacy-only `Legacy config` diagnostics report, absent files are omitted with the helper's reason, and no capability list/filter is duplicated (the cached capability lines gate the Repair tab) |
 | Repair (Full Repair plan, individual tools, gating) | Repair (individual gated tools incl. guarded GRUB-legacy regeneration) | no combined plan on the legacy helper |
 | Snapshots | — | deliberately omitted; the greyed row follows `Legacy feature snapshots:` |
 | Chroot Shell | Chroot Shell | wired to the helper's `shell`/`host-shell` behind the scope probe + session; greyed with the probe reason when unavailable |
@@ -123,6 +136,27 @@ rows for features the helper probes (`snapshots`, `file-copy`, `shell`,
 `host-default`) show the cached `Legacy feature` state and reason, fail closed
 when the line is missing, and never claim "unavailable" for a feature the
 helper reports available.
+
+### Modern layout comparison (2026-09-22)
+
+Side-by-side review of the Qt6 pages (`src/MainWindow.cpp`) and the Qt3 tabs.
+"Match" means the section order, group placement and 8px page margin / 6-8px
+spacing are aligned as far as Qt3's fixed-margin layouts and `QListView`
+columns allow; "deviation" is deliberate and kept because Qt3 or the legacy
+helper cannot express the modern behavior.
+
+| Tab | Matches | Deliberate deviations |
+| --- | --- | --- |
+| Systems | Devices tree first, scope/target controls below it, **Unlock status** in the left pane and **Selected drive details** as the right pane, same details field order, protected running-host exclusion | no separate protected-host card/ranking/sort; **Rescan devices** replaces **Refresh Devices**; **Set as repair target** / **Host Maintenance** replace Select Target + Polkit **Authorize** (authorization is the modal `sudo -S -v` dialog, once per scope) |
+| Diagnostics | Run All / Cancel action row, target configuration row above the splitter, checks list left + results right, target config hidden outside a committed target | Qt3 list carries the check description in a **Reads** column instead of a separate selected-diagnostic pane; **Save Results…** is not offered (Save log covers the transcript); the config probe is the legacy-only `Legacy config` report |
+| Repair | scope/gate hint first, individual tools next, elevation frame after (legacy-only) | no Full Repair plan/Configure Plan; 8 fixed action buttons instead of a 13-tool tree with a selected-tool pane; tooltips carry the capability reasons; unsupported list documents the omissions |
+| Chroot Shell | one command field + run button + output pane + clear | the whole group stays greyed on Etch (no `unshare`/`timeout --foreground`) and the group title carries the `Legacy feature` probe state |
+| File Copy | source list, destination, add/remove/copy controls | every control greyed with the `Legacy feature file-copy:` probe reason (rsync without `--chown`) |
+| Logs | **Search log:** + filter + session list + save/clear | filter is all/errors (no section/workflow kinds); prior sessions are read-only; no add-note/delete/refresh management beyond **Refresh** |
+| Settings | device discovery, diagnostics and mandatory-safety groups in the modern order | no Full Repair plan editor, no host capability table and no persistence; the legacy-only read-only **Application configuration** group closes the page |
+
+Frame titles, buttons, list columns and combos are still covered by the
+programmatic 1024x768 layout assertion in `--smoke-test`.
 
 ## Build
 
@@ -157,7 +191,8 @@ boot-repair-legacy-gui --help | --version | --print-config
 helper, verifies the details/unlock/session/search/gating controls, the
 scope-less target eligibility (a synthetic non-running-host disk is
 committable, the running host is not), the per-diagnostic check list, the
-read-only config viewer, the probe-based `Legacy feature` gating (rows, the
+target-only configuration row (hidden for Host Maintenance, the 8 Etch keys
+for an unprobed committed target), the probe-based `Legacy feature` gating (rows, the
 Chroot Shell tab and the host-maintenance-gated actions) and the 1024x768
 layout (group titles, button text, list columns, the stretched last column and
 combos are checked with font metrics and widget geometry) and prints the
@@ -177,14 +212,15 @@ passphrase uses stdin only.
 `boot-repair-legacy-gui-contract`) compiles the Qt-free parser/inventory
 modules with plain `g++ -std=c++98 -Werror`, runs the fixture assertions in
 `legacy/tests/gui-parser-test.cpp` (capability parsing, fail-closed gating,
-`Legacy feature` parsing/gating, change-status invalidation, device inventory
-with UUID/label/transport and the resolved dm chain, unlock-result/error
-markers) and checks the Qt3-only source contract, the legacy command set
-(including `grub`), the parity controls (tabs, details panel, unlock status,
-session/search, settings, scope-less gating, authorization on
-commit/maintenance but never on Run All, the SIGPIPE guard, per-diagnostic
-runs, read-only config viewer, probe-based feature gating, Chroot Shell
-wiring) and the layout guards. It also runs
+`Legacy feature` parsing/gating, `Legacy config` parsing/probing, change-status
+invalidation, device inventory with UUID/label/transport and the resolved dm
+chain, unlock-result/error markers) and checks the Qt3-only source contract,
+the legacy command set (including `grub`), the parity controls (tabs, details
+panel, unlock status, session/search, settings, scope-less gating,
+authorization on commit/maintenance but never on Run All, the SIGPIPE guard,
+per-diagnostic runs, the target-only **Edit Target File...** control with the
+Etch key list, the width-constrained hidden-input modal, probe-based feature
+gating, Chroot Shell wiring) and the layout guards. It also runs
 `legacy/tests/test-auth-pipe.sh`, the Qt3 console harness that proves the
 password-pipe write survives a sudo that exits without reading stdin (the
 SIGPIPE crash); the modern host skips it without `qmake-qt3`, the Etch guest

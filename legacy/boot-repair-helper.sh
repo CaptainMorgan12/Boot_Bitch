@@ -13663,7 +13663,7 @@ run_host_diagnostic_modern()
 # ---------------------------------------------------------------------------
 # Guarded target configuration read/write
 # ---------------------------------------------------------------------------
-config_path_for_key()
+config_path_for_key_modern()
 {
     case "${1:-}" in
         fstab)          printf '%s\n' '/etc/fstab' ;;
@@ -20083,6 +20083,64 @@ legacy_require_feature()
     fail "$feature is unavailable: $reason"
 }
 
+# ---------------------------------------------------------------------------
+# Etch-era target configuration keys (probe-based availability)
+# ---------------------------------------------------------------------------
+# The modern key list targets systemd/GRUB2-era files that do not exist on
+# Etch, so the legacy helper adds the Etch equivalents (inittab, GRUB legacy
+# menu.lst, modules, network interfaces, APT sources and APT configuration).
+# `config-read`/`config-write` stay the same guarded verbs; only the key to
+# path resolution changes, and every path keeps the modern guards (within the
+# mounted target, no symlink, no creation).  Availability is reported by a
+# read-only probe appended to the target diagnostics, so the GUI can grey or
+# omit absent files with the helper's exact reason; the report is never
+# emitted for the running-host scope, where target-file editing stays hidden.
+
+legacy_config_path_for_key()
+{
+    case "${1:-}" in
+        fstab)        printf '%s\n' '/etc/fstab' ;;
+        inittab)      printf '%s\n' '/etc/inittab' ;;
+        menu-lst)     printf '%s\n' '/boot/grub/menu.lst' ;;
+        crypttab)     printf '%s\n' '/etc/crypttab' ;;
+        modules)      printf '%s\n' '/etc/modules' ;;
+        interfaces)   printf '%s\n' '/etc/network/interfaces' ;;
+        sources-list) printf '%s\n' '/etc/apt/sources.list' ;;
+        apt-conf)     printf '%s\n' '/etc/apt/apt.conf' ;;
+        *) return 1 ;;
+    esac
+}
+
+config_path_for_key()
+{
+    local key="${1:-}" path=""
+    if path="$(legacy_config_path_for_key "$key")"; then
+        printf '%s\n' "$path"
+        return 0
+    fi
+    config_path_for_key_modern "$@"
+}
+
+legacy_config_file_report()
+{
+    local key="" path=""
+    # Target scope only: Host Maintenance has no target-file editing.
+    (( RUNNING_HOST_MODE == 0 )) || return 0
+    echo "Legacy configuration files (read-only probe):"
+    for key in fstab inittab menu-lst crypttab modules interfaces sources-list apt-conf; do
+        path="$(legacy_config_path_for_key "$key")"
+        if [[ -L "$TARGET_ROOT$path" ]]; then
+            printf 'Legacy config %s: unavailable|%s is a symbolic link; the guarded reader refuses links\n' \
+                "$key" "$path"
+        elif [[ -f "$TARGET_ROOT$path" && -r "$TARGET_ROOT$path" ]]; then
+            printf 'Legacy config %s: available\n' "$key"
+        else
+            printf 'Legacy config %s: unavailable|%s is not a readable regular file in the selected target\n' \
+                "$key" "$path"
+        fi
+    done
+}
+
 # The modern guard installs an efibootmgr shim and proves efivarfs can be
 # remounted read-only inside a private mount namespace; both need unshare,
 # which Etch does not have.  On a host without EFI firmware there is no
@@ -20100,11 +20158,14 @@ prepare_host_command_guard()
 }
 
 # The 13-key gating contract is emitted by the modern function; the legacy
-# report is appended so the 13 keys and their evidence lines stay untouched.
+# reports are appended so the 13 keys and their evidence lines stay untouched.
+# The configuration probe only runs for a mounted repair target (never for the
+# running host), matching the GUI's target-only Edit Target File control.
 diagnostic_repair_capabilities()
 {
     diagnostic_repair_capabilities_modern "$@"
     legacy_feature_gating_report
+    legacy_config_file_report
 }
 
 # ---------------------------------------------------------------------------

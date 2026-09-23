@@ -8,9 +8,10 @@
 #   - asserts the GUI sources use Qt3 widgets/QProcess and the stable evidence
 #     prefixes, expose only the legacy-supported command set (including the
 #     guarded GRUB-legacy stage), consume the helper's probe-based
-#     `Legacy feature` lines for gating/greyed reasons, provide the
-#     per-diagnostic runs and the read-only configuration viewer, and keep
-#     --help/--print-config usable before QApplication is created
+#     `Legacy feature` and `Legacy config` lines for gating/reasons, provide
+#     the per-diagnostic runs and the target-only Edit Target File control
+#     with the Etch-era configuration key list, and keep --help/--print-config
+#     usable before QApplication is created
 #
 # The full Qt3 build runs natively on the Etch guest via scripts/package-legacy.sh;
 # this test never builds a package, installs anything or touches a disk.
@@ -74,6 +75,8 @@ grep -q 'Repair change status ' "$PARSER" \
     || fail "parser lost the 'Repair change status' prefix"
 grep -q 'Legacy feature ' "$PARSER" \
     || fail "parser lost the 'Legacy feature' prefix"
+grep -q 'Legacy config ' "$PARSER" \
+    || fail "parser lost the 'Legacy config' prefix"
 for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
     grep -q "\"$key\"" "$PARSER" || fail "capability key missing from the parser: $key"
 done
@@ -85,7 +88,12 @@ for key in environment backend boot boot-evidence kernel grub uki display errors
 done
 grep -q 'legacyFeatureAvailable' "$PARSER" || fail "parser lost the fail-closed legacy feature gate"
 grep -q 'legacyFeatureIsAvailable' "$PARSER" || fail "parser lost the legacy feature state helper"
-pass "13-key evidence contract + 6 legacy feature probes + 16 diagnostic keys"
+for key in fstab inittab menu-lst crypttab modules interfaces sources-list apt-conf; do
+    grep -q "\"$key\"" "$PARSER" || fail "Etch configuration key missing from the parser: $key"
+done
+grep -q 'configFileAvailable' "$PARSER" || fail "parser lost the fail-closed configuration probe gate"
+grep -q 'configFileState' "$PARSER" || fail "parser lost the configuration state helper"
+pass "13-key evidence contract + 6 legacy feature probes + 8 Etch config keys + 16 diagnostic keys"
 
 # --- Qt3 widget/toolkit usage ------------------------------------------------
 for symbol in QMainWindow QListView QTextEdit QTabWidget QProcess; do
@@ -128,20 +136,35 @@ grep -q 'writeToStdin' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner cannot send the passphrase over stdin"
 grep -q 'Re-check elevation' "$WINDOW" || fail "GUI lost the elevation re-check control"
 grep -q 'Elevation:' "$WINDOW" || fail "GUI lost the elevation state label"
-for filter in 'All tools' 'Available only' 'Unavailable only' 'All entries' 'Errors and warnings'; do
-    grep -q "$filter" "$WINDOW" || fail "GUI lost a filter option: $filter"
+for filter in 'All entries' 'Errors and warnings'; do
+    grep -q "$filter" "$WINDOW" || fail "GUI lost a log filter option: $filter"
+done
+# Modern parity: the Diagnostics tab has no capability list and no filter.
+for removed in 'm_diagFilterCombo' 'm_capabilityList' 'All tools' \
+    'Reason / evidence' 'View target file (read-only)' 'm_configView'; do
+    grep -q "$removed" "$WINDOW" && fail "removed Diagnostics element still present: $removed"
 done
 grep -q 'Modern features not available' "$WINDOW" \
     || fail "GUI lost the greyed modern-features list"
-# Per-diagnostic runs + read-only config viewer (parity G1/G2).
+# Per-diagnostic runs (parity G1) and the target-only Edit Target File control
+# (parity G2) with the Etch-era configuration key list.
 for marker in 'm_diagnosticList' 'm_runDiagnosticButton' 'Run selected diagnostic' \
     'runSelectedDiagnostic' 'diagnosticKeys' 'Copy results' 'm_copyResultsButton'; do
     grep -q "$marker" "$WINDOW" || fail "per-diagnostic control missing: $marker"
 done
-for marker in 'm_configCombo' 'm_configButton' 'View target file (read-only)' \
-    'viewConfigFile' 'config-read' 'm_configView'; do
-    grep -q "$marker" "$WINDOW" || fail "read-only config viewer marker missing: $marker"
+for marker in 'm_configCombo' 'm_configButton' 'Edit Target File...' \
+    'editTargetConfigFile' 'openConfigEditor' 'config-read' 'config-write' \
+    'Save Target File' 'm_configReasonLabel' 'configSpecs' \
+    'configKeyForPath'; do
+    grep -q "$marker" "$WINDOW" || fail "Edit Target File marker missing: $marker"
 done
+for key in fstab inittab menu-lst crypttab modules interfaces sources-list apt-conf; do
+    grep -q "\"$key\"" "$WINDOW" || fail "Etch configuration key missing from the GUI: $key"
+done
+# The target configuration row follows the modern visibility rule exactly:
+# committed repair target only, never Host Maintenance.
+grep -q 'targetCommitted() && !hostMaintenanceActive()' "$WINDOW" \
+    || fail "target configuration row lost the committed-target-only gate"
 grep -q 'grub' <<<"$ACTION_BLOCK" || fail "guarded GRUB action missing"
 # Probe-based legacy feature gating (fail closed) replaces hardcoded reasons.
 for marker in 'legacyFeatureAvailable' 'legacyFeatureState' 'legacyFeatureDisplay' \
@@ -225,6 +248,13 @@ pass "tab parity (details/unlock/session/search/settings/gating)"
 grep -q 'elevationNeedsPassword' "$WINDOW" || fail "GUI does not pre-check an interactive elevation"
 grep -q 'authenticateElevation' "$WINDOW" || fail "GUI does not authenticate interactive elevation"
 grep -q 'Administrator authorization' "$WINDOW" || fail "GUI lost the modal authorization dialog"
+# The hidden-input modal must be width-constrained and word-wrapped (the
+# reported defect was the unwrapped long text sizing the dialog too wide).
+grep -q 'promptHiddenPassword' "$WINDOW" || fail "GUI lost the width-constrained hidden-input prompt"
+grep -q 'setWordWrap(true)' "$WINDOW" || fail "hidden-input modal text is not word-wrapped"
+grep -q 'setMaximumWidth(kHiddenInputMaximumWidth)' "$WINDOW" \
+    || fail "hidden-input modal is not width-constrained"
+grep -q 'QInputDialog::getText' "$WINDOW" && fail "GUI still uses the self-sizing QInputDialog prompt"
 grep -q 'elevationNeedsPassword' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner lost the interactive-elevation check"
 grep -q 'authenticateElevation' "$GUI_DIR/src/HelperRunner.cpp" \

@@ -200,6 +200,19 @@ std::vector<std::string> legacyFeatureKeys()
     return result;
 }
 
+std::vector<std::string> configFileKeys()
+{
+    static const char *const keys[] = {
+        "fstab", "inittab", "menu-lst", "crypttab", "modules", "interfaces",
+        "sources-list", "apt-conf"
+    };
+    std::vector<std::string> result;
+    for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
+        result.push_back(keys[i]);
+    }
+    return result;
+}
+
 std::string repairToolKeyForStage(const std::string &stage)
 {
     if (stage == "dpkg-configure") return "dpkg";
@@ -213,7 +226,8 @@ std::string repairToolKeyForStage(const std::string &stage)
 
 ParsedTranscript::ParsedTranscript()
     : capabilityLineCount(0), unknownCapabilityLineCount(0),
-      legacyFeatureLineCount(0), unknownLegacyFeatureLineCount(0)
+      legacyFeatureLineCount(0), unknownLegacyFeatureLineCount(0),
+      configFileLineCount(0), unknownConfigFileLineCount(0)
 {
 }
 
@@ -225,6 +239,8 @@ ParsedTranscript parseTranscript(const std::string &text)
     std::set<std::string> knownKeys(keys.begin(), keys.end());
     const std::vector<std::string> features = legacyFeatureKeys();
     std::set<std::string> knownFeatures(features.begin(), features.end());
+    const std::vector<std::string> configFiles = configFileKeys();
+    std::set<std::string> knownConfigFiles(configFiles.begin(), configFiles.end());
     std::set<std::string> seenPaths;
 
     for (std::size_t i = 0; i < lines.size(); ++i) {
@@ -252,6 +268,14 @@ ParsedTranscript parseTranscript(const std::string &text)
                 ++parsed.unknownLegacyFeatureLineCount;
             }
             parsed.legacyFeatures.push_back(std::make_pair(key, value));
+            continue;
+        }
+        if (parseEvidenceLine(line, "Legacy config ", &key, &value)) {
+            ++parsed.configFileLineCount;
+            if (knownConfigFiles.find(key) == knownConfigFiles.end()) {
+                ++parsed.unknownConfigFileLineCount;
+            }
+            parsed.configFiles.push_back(std::make_pair(key, value));
             continue;
         }
         if (parseEvidenceLine(line, "Repair change status ", &key, &value)) {
@@ -386,6 +410,7 @@ void CapabilityModel::clearCapabilities()
     m_capabilities.clear();
     m_evidence.clear();
     m_legacyFeatures.clear();
+    m_configFiles.clear();
 }
 
 void CapabilityModel::reset()
@@ -428,6 +453,9 @@ void CapabilityModel::applyDiagnosticTranscript(const std::string &identity,
     for (std::size_t i = 0; i < parsed.legacyFeatures.size(); ++i) {
         // Same last-line-wins rule as the capability map.
         m_legacyFeatures[parsed.legacyFeatures[i].first] = parsed.legacyFeatures[i].second;
+    }
+    for (std::size_t i = 0; i < parsed.configFiles.size(); ++i) {
+        m_configFiles[parsed.configFiles[i].first] = parsed.configFiles[i].second;
     }
     m_ran = true;
     m_stale = false;
@@ -576,6 +604,62 @@ bool CapabilityModel::legacyFeatureAvailable(const std::string &feature,
     return legacyFeatureIsAvailable(it->second, reason);
 }
 
+bool CapabilityModel::configFileAvailable(const std::string &key,
+                                          const std::string &identity,
+                                          std::string *reason) const
+{
+    const std::vector<std::string> keys = configFileKeys();
+    bool known = false;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] == key) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        if (reason) {
+            *reason = "Unknown target configuration key '" + key + "'; fail closed.";
+        }
+        return false;
+    }
+    if (!m_ran || m_identity != identity) {
+        if (reason) {
+            *reason = "Run diagnostics for the selected scope first.";
+        }
+        return false;
+    }
+    if (m_stale) {
+        if (reason) {
+            *reason = "Diagnostics are stale; run diagnostics again before "
+                      "editing a target configuration file.";
+        }
+        return false;
+    }
+    const std::map<std::string, std::string>::const_iterator it =
+        m_configFiles.find(key);
+    if (it == m_configFiles.end()) {
+        if (reason) {
+            *reason = "No 'Legacy config " + key + ":' line was cached; run "
+                      "diagnostics for the selected target (fail closed).";
+        }
+        return false;
+    }
+    if (it->second == "available") {
+        if (reason) {
+            reason->clear();
+        }
+        return true;
+    }
+    if (reason) {
+        if (startsWith(it->second, "unavailable|")) {
+            *reason = it->second.substr(std::strlen("unavailable|"));
+        } else {
+            *reason = "unrecognised configuration state '" + it->second + "'";
+        }
+    }
+    return false;
+}
+
 std::string CapabilityModel::state(const std::string &key) const
 {
     const std::map<std::string, std::string>::const_iterator it =
@@ -595,6 +679,13 @@ std::string CapabilityModel::legacyFeatureState(const std::string &feature) cons
     const std::map<std::string, std::string>::const_iterator it =
         m_legacyFeatures.find(feature);
     return it == m_legacyFeatures.end() ? std::string() : it->second;
+}
+
+std::string CapabilityModel::configFileState(const std::string &key) const
+{
+    const std::map<std::string, std::string>::const_iterator it =
+        m_configFiles.find(key);
+    return it == m_configFiles.end() ? std::string() : it->second;
 }
 
 std::vector<std::string> CapabilityModel::invalidatingKeys() const

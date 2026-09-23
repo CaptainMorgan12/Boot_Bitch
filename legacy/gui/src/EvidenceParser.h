@@ -10,6 +10,8 @@
 //   - `Legacy feature <feature>: available|unavailable|<reason>` decides the
 //     legacy-only workflows (file copy, shell, host-shell, host-maintenance,
 //     snapshots, host-default) with the same fail-closed rule,
+//   - `Legacy config <key>: available|unavailable|<reason>` decides which
+//     Etch target configuration files the GUI may offer for editing,
 //   - `Repair change status <key>: unchanged|...` is a proven no-op, anything
 //     else invalidates the cached diagnostics.
 //
@@ -37,6 +39,13 @@ std::vector<std::string> diagnosticKeys();
 // legacy-side list.
 std::vector<std::string> legacyFeatureKeys();
 
+// The Etch-era target configuration keys accepted by the legacy helper's
+// guarded `config-read`/`config-write` verbs. The helper reports their
+// per-target availability with read-only `Legacy config <key>:` lines during
+// target diagnostics (never for the running host); the GUI uses that probe to
+// grey/omit absent files with the helper's exact reason.
+std::vector<std::string> configFileKeys();
+
 // Stable mapping from helper repair stage to capability key, mirroring
 // MainWindow::repairToolKeyForStage.
 std::string repairToolKeyForStage(const std::string &stage);
@@ -52,6 +61,9 @@ struct ParsedTranscript {
     // `Legacy feature <feature>: <state>` lines in order; state is the
     // verbatim text after the colon ("available" or "unavailable|<reason>").
     std::vector<std::pair<std::string, std::string> > legacyFeatures;
+    // `Legacy config <key>: <state>` lines in order; state is the verbatim
+    // text after the colon ("available" or "unavailable|<reason>").
+    std::vector<std::pair<std::string, std::string> > configFiles;
     // `Repair change status <key>: <state>` lines in order.
     std::vector<std::pair<std::string, std::string> > changeStatuses;
     // Recognised target/validation fact lines, verbatim (trimmed).
@@ -64,6 +76,9 @@ struct ParsedTranscript {
     // Number of `Legacy feature` lines seen and how many had an unknown key.
     int legacyFeatureLineCount;
     int unknownLegacyFeatureLineCount;
+    // Number of `Legacy config` lines seen and how many had an unknown key.
+    int configFileLineCount;
+    int unknownConfigFileLineCount;
 };
 
 // Parses a helper transcript; tolerant, never throws.
@@ -133,12 +148,20 @@ public:
                                 const std::string &identity,
                                 std::string *reason) const;
 
+    // Fail-closed availability for an Etch target configuration key from the
+    // helper's read-only `Legacy config <key>:` probe. A missing, unknown or
+    // unrecognised line keeps the file out of the editable list.
+    bool configFileAvailable(const std::string &key, const std::string &identity,
+                             std::string *reason) const;
+
     // Verbatim state line for a key ("" when absent).
     std::string state(const std::string &key) const;
     // Verbatim evidence line for a key ("" when absent).
     std::string evidence(const std::string &key) const;
     // Verbatim legacy feature state line ("" when absent).
     std::string legacyFeatureState(const std::string &feature) const;
+    // Verbatim legacy configuration state line ("" when absent).
+    std::string configFileState(const std::string &key) const;
     // Capability keys with an invalidating change status, in first-seen order.
     std::vector<std::string> invalidatingKeys() const;
     // Diagnostics must be regenerated (a non-unchanged status was seen).
@@ -156,6 +179,7 @@ private:
     std::map<std::string, std::string> m_capabilities;
     std::map<std::string, std::string> m_evidence;
     std::map<std::string, std::string> m_legacyFeatures;
+    std::map<std::string, std::string> m_configFiles;
     std::map<std::string, std::string> m_changes;
     std::vector<std::string> m_invalidatingKeys;
 };

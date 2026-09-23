@@ -58,6 +58,8 @@ void testTranscriptParsing(const std::string &fixture)
     check(parsed.legacyFeatureLineCount == 6, "6 Legacy feature lines parsed");
     check(parsed.unknownLegacyFeatureLineCount == 0, "no unknown legacy feature keys");
     check(parsed.legacyFeatures.size() == 6, "all legacy feature lines retained");
+    check(parsed.configFileLineCount == 0,
+          "running-host fixture carries no target configuration probe");
     check(parsed.changeStatuses.size() == 1, "change status parsed");
 
     std::string reason;
@@ -187,6 +189,76 @@ void testCapabilityModel(const std::string &fixture)
           "a transcript without capability lines is not diagnostics evidence");
     check(!empty.isAvailable("grub", identity, &reason),
           "missing capability lines keep actions disabled");
+}
+
+// The Etch target configuration probe: `Legacy config <key>:` lines from a
+// target diagnostic run decide which files the GUI may offer for editing.
+void testConfigFileProbe()
+{
+    const std::vector<std::string> keys = legacy::configFileKeys();
+    check(keys.size() == 8, "8 Etch configuration keys");
+    bool sawInittab = false;
+    bool sawMenuLst = false;
+    bool sawAptConf = false;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] == "inittab") sawInittab = true;
+        if (keys[i] == "menu-lst") sawMenuLst = true;
+        if (keys[i] == "apt-conf") sawAptConf = true;
+    }
+    check(sawInittab && sawMenuLst && sawAptConf,
+          "Etch-specific keys present (inittab, menu-lst, apt-conf)");
+
+    const std::string transcript =
+        "Repair tool validate: available\n"
+        "Legacy config fstab: available\n"
+        "Legacy config inittab: unavailable|/etc/inittab is not a readable "
+        "regular file in the selected target\n"
+        "Legacy config menu-lst: available\n"
+        "Legacy config crypttab: available\n"
+        "Legacy config modules: unavailable|/etc/modules is not a readable "
+        "regular file in the selected target\n"
+        "Legacy config interfaces: available\n"
+        "Legacy config sources-list: available\n"
+        "Legacy config apt-conf: unavailable|/etc/apt/apt.conf is not a "
+        "readable regular file in the selected target\n"
+        "Legacy config mystery: available\n";
+    const legacy::ParsedTranscript parsed = legacy::parseTranscript(transcript);
+    check(parsed.configFileLineCount == 9, "9 Legacy config lines parsed");
+    check(parsed.unknownConfigFileLineCount == 1, "one unknown config key counted");
+    check(parsed.configFiles.size() == 9, "all config lines retained");
+
+    const std::string identity = "target|/dev/hdb|/dev/hdb1";
+    legacy::CapabilityModel model;
+    std::string reason;
+    check(!model.configFileAvailable("fstab", identity, &reason),
+          "no diagnostics -> config file stays unavailable (fail closed)");
+    check(contains(reason, "Run diagnostics"), "config no-diagnostics reason is explicit");
+
+    model.applyDiagnosticTranscript(identity, transcript, true);
+    check(model.configFileAvailable("fstab", identity, &reason),
+          "available config probe unlocks the file");
+    check(!model.configFileAvailable("inittab", identity, &reason),
+          "absent config file stays unavailable");
+    check(reason == "/etc/inittab is not a readable regular file in the selected target",
+          "config reason is the helper's probe reason verbatim");
+    check(!model.configFileAvailable("mystery", identity, &reason),
+          "unknown config key fails closed");
+    check(!model.configFileAvailable("fstab", "host|/dev/hda|/dev/mapper/root", &reason),
+          "config probe for another identity never unlocks this one");
+    check(model.configFileState("menu-lst") == "available",
+          "config state cached verbatim");
+
+    model.applyCommandTranscript("Repair change status fixbroken: changed\n");
+    check(!model.configFileAvailable("fstab", identity, &reason),
+          "stale diagnostics keep the config editor closed");
+    check(contains(reason, "stale"), "stale config reason is explicit");
+
+    legacy::CapabilityModel noProbe;
+    noProbe.applyDiagnosticTranscript(identity, "Repair tool validate: available\n", true);
+    check(!noProbe.configFileAvailable("fstab", identity, &reason),
+          "missing Legacy config line fails closed");
+    check(contains(reason, "No 'Legacy config fstab:' line was cached"),
+          "missing config reason names the exact line");
 }
 
 void testDeviceParsers()
@@ -421,6 +493,7 @@ int main(int argc, char **argv)
     const std::string fixture = readFile(argv[1]);
     testTranscriptParsing(fixture);
     testCapabilityModel(fixture);
+    testConfigFileProbe();
     testDeviceParsers();
     testUnlockHelpers();
     testStageMapping();

@@ -86,8 +86,8 @@ printf '%s\n' "$check_out" | grep -qE 'sed -nE +61' \
     || fail "port summary sed -nE count is not 61"
 printf '%s\n' "$check_out" | grep -qE '=~ regex literal hoists +11' \
     || fail "port summary regex-hoist count is not 11"
-printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +23' \
-    || fail "port summary wrapped-function count is not 23"
+printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +24' \
+    || fail "port summary wrapped-function count is not 24"
 pass "port --check in sync and lists every transformation"
 
 # --- generated helper has no bash-4 syntax ----------------------------------
@@ -107,7 +107,9 @@ pass "generated helper is bash-3.1 syntax clean"
 # --- overlay wiring and gating surface --------------------------------------
 for symbol in read_target_os_modern grub_unavailable_reason_modern \
     adaptive_grub_repair_modern diagnostic_repair_capabilities_modern \
-    mount_special_modern legacy_dpkg_status_field legacy_dpkg_status_version \
+    config_path_for_key_modern legacy_config_path_for_key \
+    legacy_config_file_report mount_special_modern \
+    legacy_dpkg_status_field legacy_dpkg_status_version \
     legacy_grub_repair legacy_grub_legacy_target legacy_feature_gating_report \
     legacy_feature_reason legacy_require_feature legacy_root_evidence_present \
     legacy_mount_special legacy_sort_versions legacy_b64e legacy_b64d \
@@ -321,6 +323,38 @@ gating_checks()
     out="$(PATH=/nonexistent run_host_shell /dev/null /dev/null true 2>&1)"
     [[ $? -ne 0 ]] || fail "run_host_shell must refuse on a legacy host"
     [[ "$out" == *'unavailable|host-shell:'* ]] || fail "run_host_shell refusal: $out"
+
+    # Etch target configuration keys and the read-only availability report.
+    [[ "$(config_path_for_key fstab)" == /etc/fstab ]] \
+        || fail "config_path_for_key fstab"
+    [[ "$(config_path_for_key menu-lst)" == /boot/grub/menu.lst ]] \
+        || fail "config_path_for_key menu-lst"
+    [[ "$(config_path_for_key grub-config)" == /boot/grub/grub.cfg ]] \
+        || fail "config_path_for_key delegates the modern keys"
+    legacy_config_path_for_key mystery >/dev/null 2>&1 \
+        && fail "legacy_config_path_for_key accepted an unknown key"
+
+    local target_fixture
+    target_fixture="$(mktemp -d "${TMPDIR:-/tmp}/legacy-config-target.XXXXXX")"
+    mkdir -p "$target_fixture/etc/apt"
+    printf 'proc /proc proc defaults 0 0\n' > "$target_fixture/etc/fstab"
+    printf 'id:3:initdefault:\n' > "$target_fixture/etc/inittab"
+    printf 'loop\n' > "$target_fixture/etc/modules"
+    TARGET_ROOT="$target_fixture"
+    RUNNING_HOST_MODE=0
+    out="$(legacy_config_file_report)"
+    [[ "$(printf '%s\n' "$out" | grep -c '^Legacy config ')" -eq 8 ]] \
+        || fail "config report must list 8 keys: $out"
+    printf '%s\n' "$out" | grep -q '^Legacy config fstab: available$' \
+        || fail "config report fstab availability"
+    printf '%s\n' "$out" | grep -q '^Legacy config inittab: available$' \
+        || fail "config report inittab availability"
+    printf '%s\n' "$out" | grep -q '^Legacy config menu-lst: unavailable|/boot/grub/menu.lst ' \
+        || fail "config report menu-lst reason"
+    RUNNING_HOST_MODE=1
+    out="$(legacy_config_file_report)"
+    [[ -z "$out" ]] || fail "config report must stay target-scope only: $out"
+    rm -rf -- "$target_fixture"
     return 0
 }
 ( gating_checks ) || fail "legacy feature gating"
