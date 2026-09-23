@@ -2467,6 +2467,22 @@ bool compareExplicitSortKeys(const QVariant &left, const QVariant &right, int *c
     return true;
 }
 
+// The final visible column fills the viewport edge instead of leaving an
+// empty gutter. stretchLastSection() keeps every section Interactive, so the
+// dividers stay draggable and only the trailing edge belongs to the view. Qt
+// remembers the last section's width at the moment the stretch is enabled as
+// a floor; resetting that floor to the minimum lets a narrow pane shrink the
+// column instead of forcing a horizontal scrollbar. Call after the section
+// resize modes and the minimum section size are configured.
+void stretchLastColumnToViewport(QHeaderView *header)
+{
+    if (!header || header->count() <= 0) {
+        return;
+    }
+    header->setStretchLastSection(true);
+    header->resizeSection(header->count() - 1, header->minimumSectionSize());
+}
+
 // Re-applies the header's active sort after a table or tree was repopulated.
 // Qt sorts only when asked, so rows added while a sort is active would
 // otherwise remain in insertion order. defaultColumn/defaultOrder apply when
@@ -4812,14 +4828,17 @@ QWidget *MainWindow::buildRepairPage()
     m_repairToolTree->setVerticalScrollBarPolicy(Qt::ScrollBarAlwaysOn);
     installCopyAction(m_repairToolTree);
     m_repairToolTree->setMinimumHeight(165);
-    // Both columns are user-resizable. Stretch/ResizeToContents lock the
-    // section widths and elided the long "Unavailable: …" reasons, so the
-    // sections stay Interactive and receive sensible defaults once the tool
-    // rows are populated below.
+    // Both columns are user-resizable and the final Full Repair column fills
+    // the viewport edge, so no empty gutter remains beside it. Stretch/
+    // ResizeToContents lock the section widths and elided the long
+    // "Unavailable: …" reasons, so the sections stay Interactive and only the
+    // trailing section is stretched; its remembered floor is reset to the
+    // minimum so a narrow pane can shrink it instead of forcing a horizontal
+    // scrollbar.
     m_repairToolTree->header()->setSectionResizeMode(0, QHeaderView::Interactive);
     m_repairToolTree->header()->setSectionResizeMode(1, QHeaderView::Interactive);
-    m_repairToolTree->header()->setStretchLastSection(false);
     m_repairToolTree->header()->setMinimumSectionSize(72);
+    stretchLastColumnToViewport(m_repairToolTree->header());
     // Header-click sorting is available, but the curated Full Repair workflow
     // order stays the default until the user picks a column (the hidden
     // indicator). Clicking a header sorts by that column and toggles
@@ -4856,9 +4875,10 @@ QWidget *MainWindow::buildRepairPage()
         item->setToolTip(0, item->text(0));
         item->setToolTip(1, QStringLiteral("Mirrors the corresponding Settings → Full Repair plan checkbox. Individual tools remain runnable independently."));
     }
-    // Default widths: the Tool column fits the longest complete tool name and
-    // the Full Repair column starts wide enough for a full availability
-    // reason. Both dividers remain draggable from these defaults.
+    // Default width: the Tool column fits the longest complete tool name; the
+    // Full Repair column owns the remaining viewport width (stretch), so a
+    // full availability reason is visible at the default window size. The
+    // divider between them remains draggable from this default.
     {
         const QFontMetrics toolMetrics(m_repairToolTree->font());
         int toolColumnWidth = 0;
@@ -4868,7 +4888,6 @@ QWidget *MainWindow::buildRepairPage()
         }
         toolColumnWidth = qMax(200, toolColumnWidth + m_repairToolTree->indentation() + 24);
         m_repairToolTree->header()->resizeSection(0, toolColumnWidth);
-        m_repairToolTree->header()->resizeSection(1, qMax(360, toolColumnWidth));
     }
     toolLayout->addWidget(m_repairToolTree, 1);
 
@@ -5724,21 +5743,24 @@ QWidget *MainWindow::buildSettingsPage()
     m_capabilityTable->setLineWidth(1);
     installCopyAction(m_capabilityTable);
     // Same user-resizable contract as the repair tools table: every section is
-    // Interactive with a sensible default, so a long capability note can be
-    // widened by dragging instead of being locked to its content width.
+    // Interactive with a sensible default, and the final Notes column fills
+    // the viewport edge so a long capability note has no empty gutter beside
+    // it. Dragging the divider before Notes still widens or narrows the note
+    // column (Notes absorbs the remaining width), and its remembered floor is
+    // reset to the minimum so a narrow pane can shrink it instead of forcing a
+    // horizontal scrollbar.
     QHeaderView *capabilityHeader = m_capabilityTable->horizontalHeader();
     for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
         capabilityHeader->setSectionResizeMode(column, QHeaderView::Interactive);
     }
-    capabilityHeader->setStretchLastSection(false);
     capabilityHeader->setMinimumSectionSize(72);
+    stretchLastColumnToViewport(capabilityHeader);
     const QFontMetrics capabilityMetrics(m_capabilityTable->font());
     capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Feature")) + 24));
     capabilityHeader->resizeSection(1, qMax(160, capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version")) + 24));
     capabilityHeader->resizeSection(2, qMax(90, capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target")) + 24));
     capabilityHeader->resizeSection(3, qMax(110, capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable")) + 24));
     capabilityHeader->resizeSection(4, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Suggested package")) + 24));
-    capabilityHeader->resizeSection(5, qMax(280, capabilityMetrics.horizontalAdvance(QStringLiteral("Notes")) + 24));
     // Keep rows content-sized across desktop styles.  Wrapped rows are
     // explicitly enlarged by resizeCapabilityRows(); all others stay at the
     // compact one-line height.

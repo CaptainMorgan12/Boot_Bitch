@@ -316,6 +316,31 @@ QPoint headerSectionCenter(QHeaderView *header, int section)
                   header->height() / 2);
 }
 
+// Returns a failure description when the final visible column does not end
+// exactly at the viewport's right edge (an empty gutter) or when the view
+// needs a horizontal scrollbar despite the sections fitting. An empty string
+// means the last column fills the viewport as intended.
+QString lastColumnGutterFailure(QHeaderView *header, QAbstractScrollArea *view)
+{
+    if (!header || !view) {
+        return QStringLiteral("missing header or view");
+    }
+    const int lastSection = header->count() - 1;
+    if (lastSection < 0) {
+        return QStringLiteral("the header has no sections");
+    }
+    const int rightEdge = header->sectionViewportPosition(lastSection) + header->sectionSize(lastSection);
+    if (rightEdge != view->viewport()->width()) {
+        return QStringLiteral("last section ends at %1 px but the viewport is %2 px wide")
+            .arg(rightEdge)
+            .arg(view->viewport()->width());
+    }
+    if (view->horizontalScrollBar()->isVisible()) {
+        return QStringLiteral("a horizontal scrollbar is visible although the sections fit");
+    }
+    return QString();
+}
+
 // Selects a rendered device row exactly like a user click and lets the
 // selection handler update the details panel.
 void selectDeviceTreeItem(MainWindow &window, QTreeWidgetItem *item)
@@ -2096,6 +2121,7 @@ private slots:
     void repairSplitterDefaultsFavorToolListWidth();
     void repairSplitterHandleDragsBothPanes();
     void repairToolColumnsAreUserResizable();
+    void tableLastColumnsFillViewportAtNormalAndWideWidths();
     void applicationDialogsFollowConsistentLayout();
     void snapshotRowsFitSingleLineContent();
     void snapshotsSectionUsesFramedContainer();
@@ -2852,21 +2878,23 @@ void MainWindowUiTest::repairToolColumnsAreUserResizable()
     QVERIFY(header);
     QCOMPARE(header->sectionResizeMode(0), QHeaderView::Interactive);
     QCOMPARE(header->sectionResizeMode(1), QHeaderView::Interactive);
-    QVERIFY2(!header->stretchLastSection(),
-             "the Full Repair section must stay draggable instead of stretching");
+    QVERIFY2(header->stretchLastSection(),
+             "the Full Repair section must stretch to the viewport edge");
+    QString gutterFailure = lastColumnGutterFailure(header, tree);
+    QVERIFY2(gutterFailure.isEmpty(), qPrintable(gutterFailure));
 
-    // The Full Repair column starts wide enough for a complete availability
-    // reason, so long "Unavailable: …" texts are not truncated by default.
+    // The Full Repair column fills the viewport remainder at the default
+    // window size, so long "Unavailable: …" texts are not truncated by
+    // default.
     QVERIFY2(header->sectionSize(1) >= 320,
              qPrintable(QStringLiteral("Full Repair default width is only %1 px")
                             .arg(header->sectionSize(1))));
 
     // Drag the Tool/Full Repair divider left: the Tool section shrinks and the
-    // Full Repair section shifts left with the divider, exactly like a user
-    // resize of the first column.
+    // Full Repair section absorbs the freed width while still filling the
+    // viewport, exactly like a user resize of the first column.
     const int toolBefore = header->sectionSize(0);
     const int fullBefore = header->sectionSize(1);
-    const int fullPositionBefore = header->sectionViewportPosition(1);
     const QPoint divider(header->sectionViewportPosition(0) + toolBefore - 1, header->height() / 2);
     QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), divider);
     QTest::mouseMove(header->viewport(), divider - QPoint(50, 0));
@@ -2875,36 +2903,37 @@ void MainWindowUiTest::repairToolColumnsAreUserResizable()
     QVERIFY2(header->sectionSize(0) < toolBefore,
              qPrintable(QStringLiteral("dragging the divider left did not shrink the Tool column (%1 -> %2)")
                             .arg(toolBefore).arg(header->sectionSize(0))));
-    QVERIFY2(header->sectionViewportPosition(1) < fullPositionBefore,
-             qPrintable(QStringLiteral("the Full Repair column did not follow the divider (%1 -> %2)")
-                            .arg(fullPositionBefore).arg(header->sectionViewportPosition(1))));
-    QCOMPARE(header->sectionSize(1), fullBefore);
+    QVERIFY2(header->sectionSize(1) > fullBefore,
+             qPrintable(QStringLiteral("the Full Repair column did not absorb the freed width (%1 -> %2)")
+                            .arg(fullBefore).arg(header->sectionSize(1))));
+    gutterFailure = lastColumnGutterFailure(header, tree);
+    QVERIFY2(gutterFailure.isEmpty(), qPrintable(gutterFailure));
 
-    // The Full Repair column's own trailing divider is draggable in both
-    // directions: shrink it and then widen it past its default so a long
-    // "Unavailable: …" reason can be revealed in full.
-    const int fullEdgeBefore = header->sectionSize(1);
-    const QPoint trailing(header->sectionViewportPosition(1) + fullEdgeBefore - 1, header->height() / 2);
-    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailing);
-    QTest::mouseMove(header->viewport(), trailing - QPoint(40, 0));
-    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailing - QPoint(40, 0));
+    // Drag the divider back to the right: the Tool column widens again and
+    // Full Repair gives up the width, still filling the viewport. The user can
+    // reveal a long "Unavailable: …" reason by widening the trailing section.
+    const int toolAfterShrink = header->sectionSize(0);
+    const int fullAfterShrink = header->sectionSize(1);
+    const QPoint dividerAgain(header->sectionViewportPosition(0) + toolAfterShrink - 1, header->height() / 2);
+    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), dividerAgain);
+    QTest::mouseMove(header->viewport(), dividerAgain + QPoint(80, 0));
+    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), dividerAgain + QPoint(80, 0));
     QCoreApplication::processEvents();
-    QVERIFY2(header->sectionSize(1) < fullEdgeBefore,
-             qPrintable(QStringLiteral("dragging the trailing divider left did not shrink Full Repair (%1 -> %2)")
-                            .arg(fullEdgeBefore).arg(header->sectionSize(1))));
+    QVERIFY2(header->sectionSize(0) > toolAfterShrink,
+             qPrintable(QStringLiteral("dragging the divider right did not widen the Tool column (%1 -> %2)")
+                            .arg(toolAfterShrink).arg(header->sectionSize(0))));
+    QVERIFY2(header->sectionSize(1) < fullAfterShrink,
+             qPrintable(QStringLiteral("the Full Repair column did not yield width (%1 -> %2)")
+                            .arg(fullAfterShrink).arg(header->sectionSize(1))));
+    gutterFailure = lastColumnGutterFailure(header, tree);
+    QVERIFY2(gutterFailure.isEmpty(), qPrintable(gutterFailure));
 
-    const int shrunkFull = header->sectionSize(1);
-    const QPoint trailingAgain(header->sectionViewportPosition(1) + shrunkFull - 1, header->height() / 2);
-    QTest::mousePress(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailingAgain);
-    QTest::mouseMove(header->viewport(), trailingAgain + QPoint(80, 0));
-    QTest::mouseRelease(header->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), trailingAgain + QPoint(80, 0));
+    // The capability table shares the pattern and must follow the same
+    // user-resizable contract: every section Interactive with the final Notes
+    // column stretching to the viewport edge.
+    window.m_tabs->setCurrentIndex(7); // Settings
     QCoreApplication::processEvents();
-    QVERIFY2(header->sectionSize(1) > fullEdgeBefore,
-             qPrintable(QStringLiteral("dragging the trailing divider right did not widen Full Repair (%1 -> %2)")
-                            .arg(shrunkFull).arg(header->sectionSize(1))));
-
-    // The capability/diagnostics table shares the pattern and must follow the
-    // same user-resizable contract.
+    QTest::qWait(20);
     QTableWidget *capability = window.m_capabilityTable;
     QVERIFY(capability);
     QHeaderView *capabilityHeader = capability->horizontalHeader();
@@ -2912,16 +2941,111 @@ void MainWindowUiTest::repairToolColumnsAreUserResizable()
     for (int column = 0; column < capability->columnCount(); ++column) {
         QCOMPARE(capabilityHeader->sectionResizeMode(column), QHeaderView::Interactive);
     }
-    QVERIFY2(!capabilityHeader->stretchLastSection(),
-             "the capability Notes section must stay draggable");
+    QVERIFY2(capabilityHeader->stretchLastSection(),
+             "the capability Notes section must stretch to the viewport edge");
+    gutterFailure = lastColumnGutterFailure(capabilityHeader, capability);
+    QVERIFY2(gutterFailure.isEmpty(), qPrintable(gutterFailure));
     const int notesColumn = capability->columnCount() - 1;
     const int notesBefore = capabilityHeader->sectionSize(notesColumn);
     QVERIFY2(notesBefore >= 200,
              qPrintable(QStringLiteral("Notes default width is only %1 px").arg(notesBefore)));
-    capabilityHeader->resizeSection(notesColumn, notesBefore + 80);
+
+    // The divider before Notes stays draggable: dragging it left shrinks the
+    // Suggested package column and Notes absorbs the width without leaving a
+    // gutter.
+    const int packageColumn = notesColumn - 1;
+    const int packageBefore = capabilityHeader->sectionSize(packageColumn);
+    const QPoint packageDivider(capabilityHeader->sectionViewportPosition(packageColumn)
+                                    + packageBefore - 1,
+                                capabilityHeader->height() / 2);
+    QTest::mousePress(capabilityHeader->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), packageDivider);
+    QTest::mouseMove(capabilityHeader->viewport(), packageDivider - QPoint(40, 0));
+    QTest::mouseRelease(capabilityHeader->viewport(), Qt::LeftButton, Qt::KeyboardModifiers(), packageDivider - QPoint(40, 0));
     QCoreApplication::processEvents();
+    QVERIFY2(capabilityHeader->sectionSize(packageColumn) < packageBefore,
+             qPrintable(QStringLiteral("the capability divider did not resize the previous column (%1 -> %2)")
+                            .arg(packageBefore).arg(capabilityHeader->sectionSize(packageColumn))));
     QVERIFY2(capabilityHeader->sectionSize(notesColumn) > notesBefore,
-             "the capability table must accept a user section resize");
+             qPrintable(QStringLiteral("the Notes column did not absorb the freed width (%1 -> %2)")
+                            .arg(notesBefore).arg(capabilityHeader->sectionSize(notesColumn))));
+    gutterFailure = lastColumnGutterFailure(capabilityHeader, capability);
+    QVERIFY2(gutterFailure.isEmpty(), qPrintable(gutterFailure));
+}
+
+// The final visible column of the Repair and capability tables owns the
+// viewport's right edge at normal and wide window widths, so no empty gutter
+// remains; the sections stay Interactive and no horizontal scrollbar appears
+// while the columns fit.
+void MainWindowUiTest::tableLastColumnsFillViewportAtNormalAndWideWidths()
+{
+    // Exercise the built-in defaults, not a state saved by another test.
+    QSettings settings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+    settings.remove(QStringLiteral("repair/splitterStateV3"));
+    settings.sync();
+
+    MainWindow window;
+    window.resize(1180, 760);
+    window.show();
+    QTest::qWait(50);
+
+    const auto showRepairTab = [&window] {
+        window.m_tabs->setCurrentIndex(2); // Repair
+        QCoreApplication::processEvents();
+        QTest::qWait(20);
+    };
+    const auto showSettingsTab = [&window] {
+        window.m_tabs->setCurrentIndex(7); // Settings
+        QCoreApplication::processEvents();
+        QTest::qWait(20);
+    };
+    const auto assertLastColumnsFill = [&](const QString &widthLabel) {
+        showRepairTab();
+        QTreeWidget *tree = window.m_repairToolTree;
+        QVERIFY(tree);
+        QString failure = lastColumnGutterFailure(tree->header(), tree);
+        QVERIFY2(failure.isEmpty(),
+                 qPrintable(QStringLiteral("%1: repair tools: %2").arg(widthLabel, failure)));
+
+        showSettingsTab();
+        QTableWidget *table = window.m_capabilityTable;
+        QVERIFY(table);
+        failure = lastColumnGutterFailure(table->horizontalHeader(), table);
+        QVERIFY2(failure.isEmpty(),
+                 qPrintable(QStringLiteral("%1: capabilities: %2").arg(widthLabel, failure)));
+    };
+
+    assertLastColumnsFill(QStringLiteral("normal width"));
+    showRepairTab();
+    const int normalFullRepair = window.m_repairToolTree->header()->sectionSize(1);
+    showSettingsTab();
+    const int normalNotes = window.m_capabilityTable->horizontalHeader()->sectionSize(
+        window.m_capabilityTable->columnCount() - 1);
+
+    // Widen the window: the last columns must grow into the new space instead
+    // of leaving a wider gutter beside the earlier columns.
+    window.resize(1640, 900);
+    QTest::qWait(80);
+    assertLastColumnsFill(QStringLiteral("wide width"));
+    showRepairTab();
+    QVERIFY2(window.m_repairToolTree->header()->sectionSize(1) > normalFullRepair,
+             qPrintable(QStringLiteral("the Full Repair column did not grow with the window (%1 -> %2)")
+                            .arg(normalFullRepair)
+                            .arg(window.m_repairToolTree->header()->sectionSize(1))));
+    showSettingsTab();
+    QVERIFY2(window.m_capabilityTable->horizontalHeader()->sectionSize(
+                 window.m_capabilityTable->columnCount() - 1) > normalNotes,
+             qPrintable(QStringLiteral("the Notes column did not grow with the window (%1 -> %2)")
+                            .arg(normalNotes)
+                            .arg(window.m_capabilityTable->horizontalHeader()->sectionSize(
+                                window.m_capabilityTable->columnCount() - 1))));
+
+    // Every section stays Interactive at both widths.
+    for (int column = 0; column < window.m_repairToolTree->columnCount(); ++column) {
+        QCOMPARE(window.m_repairToolTree->header()->sectionResizeMode(column), QHeaderView::Interactive);
+    }
+    for (int column = 0; column < window.m_capabilityTable->columnCount(); ++column) {
+        QCOMPARE(window.m_capabilityTable->horizontalHeader()->sectionResizeMode(column), QHeaderView::Interactive);
+    }
 }
 
 void MainWindowUiTest::applicationDialogsFollowConsistentLayout()

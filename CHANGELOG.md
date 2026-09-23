@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+- Stretch the final visible column of the modern GUI tables to the viewport
+  edge: the Repair individual-tools "Full Repair" column and the Settings
+  capability table's "Notes" column now fill the window's right edge instead
+  of leaving an empty gutter, while every section stays `Interactive` and
+  draggable, the header-click sorting is unchanged, and a narrow pane shrinks
+  the trailing column to its minimum rather than forcing a horizontal
+  scrollbar.
 - Add the Qt3 legacy frontend for Debian Etch / KDE 3.5-era systems:
   `legacy/gui` is a Qt3-only C++98 frontend with the modern Boot Bitch layout
   (Systems Selected drive details, diagnostics/log filters, LUKS Unlock over
