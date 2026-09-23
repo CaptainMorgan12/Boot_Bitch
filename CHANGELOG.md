@@ -2,6 +2,72 @@
 
 ## Unreleased
 
+- Add the Qt3 legacy frontend for Debian Etch / KDE 3.5-era systems:
+  `legacy/gui` is a Qt3-only C++98 frontend with the modern Boot Bitch layout
+  (Systems Selected drive details, diagnostics/log filters, LUKS Unlock over
+  the helper's stdin, modal `sudo -S -v` authorization, greyed modern-only
+  tabs), fail-closed gating from the helper's probe-based `Legacy feature
+  <key>:` evidence, per-key diagnostic runs, a read-only config-read viewer
+  and the guarded GRUB-legacy action. `scripts/package-legacy.sh` builds and
+  packages it with `libqt3-mt` and drops the shell-only TUI launcher; the
+  generated bash-3.1 helper resolves the kernel 2.6.18 `/sys/block` layout,
+  partitions by the `start` attribute, major:minor mapper aliases and
+  `dmsetup` output; the legacy tree ships in the Alpine and Arch source
+  archives so their `check()` phases run the legacy contracts.
+- Extend Make Default across every supported boot chain: firmware entries are
+  identified by PARTUUID plus decoded loader path (never by label) and
+  selected-ESP labels are annotated with the drive model when present; Fedora
+  BIOS `saved_entry` is written only for the running non-rescue BLS id with
+  every other grubenv key and the rescue entry preserved (byte-identical
+  rollback on failure); the Alpine extlinux default is ensured with a
+  config-only `overwrite=0` trial, entry-preservation guard, MENU DEFAULT
+  verification, byte-identical backup/rollback and read-only stale-default
+  diagnostics. The fast host-default contract covers the cross-distro matrix.
+- Auto-mount a configured but unmounted ESP before the writability preflight
+  refuses, and probe the effective (topmost) mount row instead of a reused
+  mount ID: a fail-closed `esp_writable_preflight` clears only read-only
+  layers of the selected ESP (idempotent, logged, foreign/rw layers
+  untouched) or refuses with the exact cleanup command; pre-existing
+  systemd/foreign boot-entry mounts are recorded and never claimed,
+  unmounted or remounted; post-cleanup leaks are verified, reported as
+  `MOUNT_LEAK` evidence and persisted instead of swallowed.
+- Generate the read-only File systems section in the combined `diagnose all`/
+  `host-diagnose all` report (fs-inspect runs last, after the helper's
+  read-only mounts are released) and cache it on scope entry and target
+  selection like every other section; an individual re-run is merged into the
+  cached Full report instead of replacing it, and only a successful capture
+  replaces its section, so the Full report stays coherent and otherwise shows
+  the explicit "re-run all diagnostics" notice.
+- Make the AppImage build portable across modern distributions:
+  `scripts/build-appimage.sh` probes the payload for SHT_RELR sections,
+  prefers a system `patchelf` 0.18 or newer, sets `NO_STRIP=1` when
+  linuxdeploy's bundled strip cannot parse RELR and
+  `APPIMAGE_EXTRACT_AND_RUN=1` on musl or FUSE-less hosts, and fails with
+  install instructions only when no RELR-capable `patchelf` exists; the
+  validated matrix covers Arch, Fedora 44, Alpine 3.24 and Debian 13.
+- Debian-native support and UI fixes: normalize efibootmgr 18's
+  `File(\EFI\...)` device-path form so canonical-loader identity, labels and
+  BootOrder reconciliation work on Debian 13 and keep the rollback's output
+  off stdout; require a real apt candidate before installing optional
+  development packages; make the missing-Polkit hint follow the detected
+  backend family and make Authorize re-check the live session (no silent
+  no-op, no cross-distribution package names); unlock the Individual repair
+  tools and capability column dividers with content-derived defaults, and use
+  one Select Target eligibility predicate (blank/non-Linux data disks
+  selectable for inspection, locked LUKS unlock-only, optical/live media
+  excluded, running host protected).
+- Packaging and CI hardening: `umask 022` in the build/packaging wrappers,
+  sanitized Arch `.BUILDINFO`, signed-APK and world-traversable-RPM hygiene
+  gates, Alpine/apk dev-environment support, and the public-tree hygiene
+  guard that runs in CI.
+- Fix Debian 13/trixie log filtering and Arch package ownership metadata: the
+  helper's `package_log_filter` no longer uses unbounded awk interval
+  expressions (mawk 1.3.4 masks short hex runs and drops real error text); the
+  backend-profile contract fails on any `{n,}` interval and pins a fixture
+  where long hashes are masked while short hex words survive; the sanitized
+  Arch package forces `--uid 0 --gid 0` in its regenerated `.MTREE` and fails
+  the build unless the metadata records root ownership, so `pacman -Qkk` no
+  longer flags every installed file.
 - Fix the AppImage file dialogs (File Copy → Add Folder) listing no folders
   and resolving sidebar places such as Documents against the process working
   directory: the image loads the build host's Qt platform theme, whose native
@@ -14,15 +80,23 @@
   native dialogs. The UI suite pins the policy and a non-empty listing with
   absolute sidebar paths, and `scripts/test-appimage-contract.sh` guards the
   policy fragments.
-- Rank grouped EFI `BootOrder` entries by boot-use class before drive: each
-  drive's primary destinations (UKI, then the managed fallback and the
-  firmware-owned fallback-device-path record) stay contiguous, the WebFAI
-  recovery entries follow drive-major, then the remaining managed entries
-  (shim, vendor loader, other), removable no-PARTUUID records are always last,
-  and drives keep host-first first-seen order. The read-only EFI inventory
-  annotates firmware-created device-path options (for example a USB stick's
-  `UEFI: <media>, Partition 1` record) as no-managed-OS entries preserved
-  untouched and reports a per-drive `removable` count.
+- Enforce per-drive EFI entry policy and rank grouped `BootOrder` entries by
+  boot-use class before drive: the boot-stack reconcile keeps exactly one
+  managed UKI, fallback and WebFAI destination per selected drive and at most
+  one shim entry, relabels/reuses existing entries instead of recreating
+  them, preserves firmware-created device-path records exactly and leaves
+  foreign-drive entries untouched; each drive's primary destinations (UKI,
+  then the managed fallback and the firmware-owned fallback-device-path
+  record) stay contiguous, the WebFAI recovery entries follow drive-major,
+  then the remaining managed entries (shim, vendor loader, other), removable
+  no-PARTUUID records are always last, and drives keep host-first first-seen
+  order. The read-only EFI inventory annotates firmware-created device-path
+  options (for example a USB stick's `UEFI: <media>, Partition 1` record) as
+  no-managed-OS entries preserved untouched and reports a per-drive
+  `removable` count. Repair transcripts collapse the verbose
+  tpm2-tools/LUKS enrollment dumps (tpm2-* fields, hex blobs, keyslot and
+  digest details) into one summary line while passing every error, warning
+  and unrelated line through unchanged.
 - Fix the AppImage administrator-authorization failure where Unlock and Host
   Maintenance reported `Permission denied` for
   `/tmp/.mount_*/usr/libexec/boot-repair/boot-repair-helper`: an AppImage is
