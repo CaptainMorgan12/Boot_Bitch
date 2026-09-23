@@ -7,7 +7,9 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
 > Qt3 note: the `Q3MainWindow`/`Q3ListView`/`Q3TextEdit`/`Q3TabWidget` class
 > names belong to Qt4's Qt3-support module. Qt3 itself provides
 > `QMainWindow`/`QListView`/`QTextEdit`/`QTabWidget`, which is what this
-> frontend uses.
+> frontend uses. Qt 3.3.7 also has no `QLabel::setWordWrap` (labels wrap via
+> the `Qt::WordBreak` alignment) and no `QWidget::setVisible(bool)` (widgets
+> are shown/hidden with `show()`/`hide()`).
 
 ## Layout
 
@@ -296,3 +298,23 @@ drill and its `xtype` helper are captured under
 `Development/release-0.2.25/etch-legacy/gui-defects-20260922/`; the interactive
 modal still cannot be exercised on the host (no Qt3), so it is validated in
 the guest through Xvfb + XTest rather than headlessly on the maintainer host.
+
+Layout-alignment pass (same day, later): the reported Diagnostics/modal
+defects were fixed and validated on the real Etch guest. The Diagnostics tab
+no longer shows the capability list/filter; the target configuration row
+(`Target configuration:` + Etch file combo + `Edit Target File...`) is
+target-only and probe-based from the helper's `Legacy config` lines; the
+hidden-input administrator/LUKS modals are width-constrained and wrapped with
+the Qt3 `Qt::WordBreak` idiom; Systems (Unlock status in the left pane),
+Repair (gate hint before the tools) and Settings (discovery → diagnostics →
+logs → mandatory safety → read-only application configuration) follow the
+modern group order. Built natively and installed with
+`Development/scripts/local-refresh.sh --legacy-vm` (`INSTALL-VM OK:
+boot-repair-legacy 0.2.25-etch1`, modes gui=755 desktop=644, installed
+GUI/helper hashes equal to the artifact payload); artifact sha256
+`789acac4…`, installed GUI `47c7e2e0…` / helper `9e80ed46…`; the Xvfb smoke
+reports `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate:
+ok; controls: ok; layout: ok (53 widgets checked)` (rc 0); host-scope
+diagnostics carry the six `Legacy feature` lines and no `Legacy config` line
+(target-only probe). Evidence:
+`Development/release-0.2.25/etch-legacy/gui-align-20260922/`.

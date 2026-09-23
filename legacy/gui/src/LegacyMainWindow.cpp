@@ -203,6 +203,16 @@ QString configKeyForPath(const QString &path)
     return QString::null;
 }
 
+// Qt3 has no QLabel::setWordWrap (that API is Qt4); `Qt::WordBreak` alignment
+// is the Qt3 idiom that makes a QLabel wrap its text, and the explicit
+// maximum width keeps the dialog from sizing itself to one unwrapped line.
+void enableLabelWordWrap(QLabel *label)
+{
+    if (label) {
+        label->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    }
+}
+
 // Modal hidden-input prompt with a width-constrained, word-wrapped label.
 // Qt3's QInputDialog sizes itself to the unwrapped text, which made the long
 // administrator-authorization wording produce an unusably wide dialog.
@@ -213,7 +223,7 @@ QString promptHiddenPassword(QWidget *parent, const QString &title,
     dialog.setCaption(title);
     QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
     QLabel *label = new QLabel(text, &dialog);
-    label->setWordWrap(true);
+    enableLabelWordWrap(label);
     label->setMaximumWidth(kHiddenInputMaximumWidth);
     layout->addWidget(label);
 
@@ -1780,7 +1790,7 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
             "before repair. Generated files such as /boot/grub/menu.lst may be "
             "replaced by the next bootloader update."),
         &dialog);
-    info->setWordWrap(true);
+    enableLabelWordWrap(info);
     info->setMaximumWidth(640);
     layout->addWidget(info);
 
@@ -1813,7 +1823,7 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
         statusBar()->message(QString::fromLatin1("No changes to %1.").arg(path), 3000);
         return;
     }
-    if (edited.local8Bit().size() > kConfigEditMaximumBytes) {
+    if (static_cast<int>(edited.local8Bit().size()) > kConfigEditMaximumBytes) {
         QMessageBox::warning(
             this, QString::fromLatin1("File too large"),
             QString::fromLatin1(
@@ -2353,7 +2363,7 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
             const QString marker = QString::fromLatin1("Inspection is read-only.\n\n");
             const int markerPos = configReadContent.find(marker);
             if (markerPos >= 0) {
-                configReadContent = configReadContent.mid(markerPos + marker.size());
+                configReadContent = configReadContent.mid(markerPos + marker.length());
             }
         }
         if (wasConfig && wasConfigWrite && ok) {
@@ -3206,17 +3216,18 @@ void LegacyMainWindow::cancelRun()
 void LegacyMainWindow::updateConfigView()
 {
     const bool show = targetCommitted() && !hostMaintenanceActive();
+    // Qt3 QWidget has no setVisible(bool); show()/hide() are the Qt3 API.
     if (m_configLabel) {
-        m_configLabel->setVisible(show);
+        if (show) { m_configLabel->show(); } else { m_configLabel->hide(); }
     }
     if (m_configCombo) {
-        m_configCombo->setVisible(show);
+        if (show) { m_configCombo->show(); } else { m_configCombo->hide(); }
     }
     if (m_configButton) {
-        m_configButton->setVisible(show);
+        if (show) { m_configButton->show(); } else { m_configButton->hide(); }
     }
     if (m_configReasonLabel) {
-        m_configReasonLabel->setVisible(show);
+        if (show) { m_configReasonLabel->show(); } else { m_configReasonLabel->hide(); }
     }
     if (!show || !m_configCombo) {
         return;

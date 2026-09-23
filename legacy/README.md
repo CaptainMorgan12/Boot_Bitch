@@ -230,6 +230,17 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   (`MODAL-AUTH DRILL: PASS`). `--smoke-test --elevate sudo` still fails closed
   with the exact remedy. Evidence:
   `Development/release-0.2.25/etch-legacy/gui-defects-20260922/`.
+- Layout-alignment pass (same day, later): Diagnostics lost the capability
+  list/filter (modern structure only), the target-only **Edit Target File...**
+  row lists the Etch files with the helper's read-only `Legacy config` probe
+  reasons, the hidden-input modals wrap within a constrained width, and the
+  Systems/Repair/Settings group order follows the Qt6 pages (comparison note
+  in `legacy/gui/README.md`). Built and installed with
+  `Development/scripts/local-refresh.sh --legacy-vm`
+  (`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256 `789acac4…`; installed
+  GUI `47c7e2e0…`, helper `9e80ed46…`); Xvfb smoke
+  `SMOKE OK: … controls: ok; layout: ok (53 widgets checked)` rc 0. Evidence:
+  `Development/release-0.2.25/etch-legacy/gui-align-20260922/`.
 
 ## Packaging
 

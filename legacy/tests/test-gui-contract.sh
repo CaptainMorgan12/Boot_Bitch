@@ -250,8 +250,11 @@ grep -q 'authenticateElevation' "$WINDOW" || fail "GUI does not authenticate int
 grep -q 'Administrator authorization' "$WINDOW" || fail "GUI lost the modal authorization dialog"
 # The hidden-input modal must be width-constrained and word-wrapped (the
 # reported defect was the unwrapped long text sizing the dialog too wide).
+# Qt3 has no QLabel::setWordWrap, so the wrapping idiom is `Qt::WordBreak`
+# alignment plus an explicit maximum width.
 grep -q 'promptHiddenPassword' "$WINDOW" || fail "GUI lost the width-constrained hidden-input prompt"
-grep -q 'setWordWrap(true)' "$WINDOW" || fail "hidden-input modal text is not word-wrapped"
+grep -q 'enableLabelWordWrap' "$WINDOW" || fail "hidden-input modal text is not word-wrapped"
+grep -q 'Qt::WordBreak' "$WINDOW" || fail "hidden-input modal lost the Qt3 wrap alignment"
 grep -q 'setMaximumWidth(kHiddenInputMaximumWidth)' "$WINDOW" \
     || fail "hidden-input modal is not width-constrained"
 grep -q 'QInputDialog::getText' "$WINDOW" && fail "GUI still uses the self-sizing QInputDialog prompt"
