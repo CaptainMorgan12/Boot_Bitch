@@ -11,6 +11,14 @@
 #
 # Usage:
 #   scripts/package-legacy.sh [--output DIR] [--stage-dir DIR] [--dry-run]
+#                             [--install-vm]
+#
+# --install-vm additionally installs the freshly built .deb inside the Etch
+# guest after a successful build: the previously installed package is removed
+# with dpkg -r, the new artifact is installed with dpkg -i, and the installed
+# GUI/helper hashes, the desktop entry and the executable modes are verified
+# against the artifact payload. It must run as root (sudo) in the guest and
+# keeps the same off-Etch refusal as a real build.
 #
 # The Qt3 GUI (legacy/gui/) is built natively with qmake-qt3 + make when
 # qmake-qt3 is available; --dry-run on a host without Qt3 stages a placeholder
@@ -47,6 +55,8 @@ ARCH="${LEGACY_ARCH:-amd64}"
 OUTPUT_DIR="${LEGACY_OUTPUT_DIR:-$ROOT_DIR/Development/build-legacy-package}"
 STAGE_DIR_OVERRIDE="${LEGACY_STAGE_DIR:-}"
 DRY_RUN=0
+INSTALL_VM=0
+PAYLOAD_DIR=''
 
 HELPER_SRC_ENV="${LEGACY_HELPER_SRC:-}"
 GUI_BUILD_DIR_OVERRIDE="${LEGACY_GUI_BUILD_DIR:-}"
@@ -76,6 +86,10 @@ Options:
   --output DIR     write the .deb (and the default stage tree) under DIR
   --stage-dir DIR  stage the package tree at DIR instead of <output>/stage
   --dry-run        validate and stage only; never invoke dpkg-deb/fakeroot
+  --install-vm     after a successful build, dpkg -r the previous package and
+                   dpkg -i the new artifact, then verify the installed
+                   GUI/helper hashes, desktop entry and executable modes
+                   (Etch guest only, run as root)
   -h, --help       show this help
 
 Environment:
@@ -273,6 +287,81 @@ validate_artifact()
     sha256sum "$_deb"
 }
 
+cleanup_install_payload()
+{
+    if [ -n "${PAYLOAD_DIR:-}" ] && [ -d "$PAYLOAD_DIR" ]; then
+        rm -rf -- "$PAYLOAD_DIR"
+    fi
+}
+
+# Install the freshly built artifact inside this Etch guest. The old package
+# is removed first (a missing or config-files-only installation is fine), the
+# new artifact is installed, and the installed payload is compared with the
+# artifact contents so "the newest package is installed" is proven, not
+# assumed. Requires root because dpkg does.
+install_built_package()
+{
+    _deb="$1"
+
+    [ "$(id -u)" -eq 0 ] \
+        || fail '--install-vm installs with dpkg and must run as root (sudo ./scripts/package-legacy.sh --install-vm).'
+    command -v dpkg >/dev/null 2>&1 \
+        || fail 'missing required install command: dpkg'
+
+    _version="$PROJECT_VERSION-$PKG_RELEASE"
+
+    if dpkg -l "$PKG_NAME" >/dev/null 2>&1; then
+        printf 'Removing the previously installed %s...\n' "$PKG_NAME"
+        dpkg -r "$PKG_NAME" || fail "dpkg -r $PKG_NAME failed"
+    else
+        printf 'No previous %s installation found.\n' "$PKG_NAME"
+    fi
+
+    printf 'Installing %s...\n' "$_deb"
+    dpkg -i "$_deb" || fail "dpkg -i failed for $_deb"
+
+    _installed="$(dpkg -l "$PKG_NAME" 2>/dev/null | awk '/^ii/ { print $3 }')"
+    [ "$_installed" = "$_version" ] \
+        || fail "installed version is '${_installed:-none}', expected '$_version'"
+
+    PAYLOAD_DIR="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-payload.XXXXXX")" \
+        || fail 'unable to create a payload extraction directory'
+    dpkg-deb -x "$_deb" "$PAYLOAD_DIR" || fail "unable to extract $_deb"
+
+    _gui_hash=''
+    _helper_hash=''
+    for _pair in "usr/bin/$GUI_NAME" "usr/sbin/boot-repair-legacy-helper"; do
+        _want="$(sha256sum "$PAYLOAD_DIR/$_pair" | awk '{print $1}')"
+        _got="$(sha256sum "/$_pair" | awk '{print $1}')"
+        [ -n "$_want" ] && [ "$_want" = "$_got" ] \
+            || fail "installed $_pair hash '$_got' does not match the built package '$_want'"
+        case "$_pair" in
+            usr/bin/*) _gui_hash="$_got" ;;
+            *) _helper_hash="$_got" ;;
+        esac
+    done
+
+    _gui_mode="$(stat -c %a "/usr/bin/$GUI_NAME")"
+    _desktop_mode="$(stat -c %a "/usr/share/applications/$GUI_NAME.desktop")"
+    [ "$_gui_mode" = '755' ] \
+        || fail "installed GUI mode is '$_gui_mode', expected 755"
+    [ "$_desktop_mode" = '644' ] \
+        || fail "installed desktop entry mode is '$_desktop_mode', expected 644"
+    [ -r "/usr/share/applications/$GUI_NAME.desktop" ] \
+        || fail 'installed desktop entry is not readable'
+    grep -q "^Exec=$GUI_NAME\$" "/usr/share/applications/$GUI_NAME.desktop" \
+        || fail "installed desktop entry Exec is not the PATH-resolved $GUI_NAME"
+    command -v "$GUI_NAME" >/dev/null 2>&1 \
+        || fail "installed $GUI_NAME is not in PATH"
+    [ -x "/usr/bin/$GUI_NAME" ] \
+        || fail "installed $GUI_NAME is not executable"
+
+    printf 'INSTALL-VM OK: %s %s\n' "$PKG_NAME" "$_version"
+    printf 'INSTALL-VM gui: %s\n' "$_gui_hash"
+    printf 'INSTALL-VM helper: %s\n' "$_helper_hash"
+    printf 'INSTALL-VM modes: gui=%s desktop=%s\n' "$_gui_mode" "$_desktop_mode"
+}
+
 main()
 {
     while [ $# -gt 0 ]; do
@@ -289,6 +378,7 @@ main()
                 STAGE_DIR_OVERRIDE="$1"
                 ;;
             --stage-dir=*) STAGE_DIR_OVERRIDE="${1#--stage-dir=}" ;;
+            --install-vm) INSTALL_VM=1 ;;
             -n|--dry-run) DRY_RUN=1 ;;
             -h|--help) usage; exit 0 ;;
             *) usage >&2; fail "unknown option: $1" ;;
@@ -318,13 +408,14 @@ main()
         if ! is_etch_host; then
             cat >&2 <<'EOF'
 This legacy package must be built natively inside the Debian 4.0 "etch" guest
-(dpkg-deb 1.13.26 + fakeroot), never on a modern host. Nothing was built.
-Use --dry-run here to validate the staging tree and control metadata without
-building; run this script without --dry-run in the Etch guest.
+(dpkg-deb 1.13.26 + fakeroot), never on a modern host. Nothing was built or
+installed. Use --dry-run here to validate the staging tree and control
+metadata without building; run this script without --dry-run (and with
+--install-vm to also install it) in the Etch guest.
 EOF
             exit 2
         fi
-        for _cmd in dpkg-deb fakeroot gzip sed install du awk sha256sum qmake-qt3 make; do
+        for _cmd in dpkg dpkg-deb fakeroot gzip sed install du awk sha256sum qmake-qt3 make; do
             command -v "$_cmd" >/dev/null 2>&1 \
                 || fail "missing required Etch packaging command: $_cmd"
         done
@@ -355,6 +446,9 @@ EOF
 
     if [ "$DRY_RUN" -eq 1 ]; then
         printf '\nDRY RUN complete: staged tree validated, no .deb built.\n'
+        if [ "$INSTALL_VM" -eq 1 ]; then
+            printf 'DRY RUN: --install-vm skipped (nothing was built or installed).\n'
+        fi
         printf 'Control metadata:\n'
         sed 's/^/  /' "$STAGE/DEBIAN/control"
         exit 0
@@ -363,8 +457,17 @@ EOF
     fakeroot dpkg-deb --build "$STAGE" "$DEB_PATH"
     validate_artifact "$DEB_PATH"
 
+    if [ "$INSTALL_VM" -eq 1 ]; then
+        trap cleanup_install_payload EXIT HUP INT TERM
+        install_built_package "$DEB_PATH"
+    fi
+
     printf '\nBuilt %s\n' "$DEB_PATH"
-    printf 'Nothing was installed.\n'
+    if [ "$INSTALL_VM" -eq 1 ]; then
+        printf 'Installed the built artifact in this Etch guest (see INSTALL-VM OK above).\n'
+    else
+        printf 'Nothing was installed.\n'
+    fi
 }
 
 main "$@"

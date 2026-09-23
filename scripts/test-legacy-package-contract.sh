@@ -3,9 +3,13 @@
 #   - scripts/package-legacy.sh syntax and bash 3.1 cleanliness
 #   - --dry-run staging layout, control fields and exact dependency list,
 #     including the Qt3 GUI binary/desktop/icon layout
+#   - the staged GUI/helper/desktop-entry modes stay user-accessible (0755
+#     binary in PATH, 0644 readable system-wide desktop entry) so the
+#     unprivileged guest user can launch the GUI from the KDE menu and a shell
 #   - the shell-only boot-repair-legacy TUI launcher (and its desktop entry
 #     and man page) is deliberately NOT shipped: the GUI is the entry point
-#   - the off-Etch refusal and the missing-helper failure stay clear and safe
+#   - the off-Etch refusal (including --install-vm) and the missing-helper
+#     failure stay clear and safe
 #
 # Uses a fixture helper, so it runs on any host without the ported helper and
 # never builds or installs a package. When qmake-qt3 is unavailable the dry run
@@ -95,6 +99,24 @@ done
 cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
     || fail "staged helper does not match its source"
 
+# User access: the system-wide desktop entry and the GUI binary must be
+# readable/executable by every user (the guest's unprivileged user launches
+# the GUI from the KDE menu and a shell; the menu resolves Exec through PATH).
+[[ "$(stat -c %a "$STAGE/usr/bin/boot-repair-legacy-gui")" == '755' ]] \
+    || fail "staged GUI binary mode is not 0755"
+[[ "$(stat -c %a "$STAGE/usr/sbin/boot-repair-legacy-helper")" == '755' ]] \
+    || fail "staged helper mode is not 0755"
+[[ "$(stat -c %a "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop")" == '644' ]] \
+    || fail "staged desktop entry mode is not 0644"
+[[ -r "$STAGE/usr/share/applications/boot-repair-legacy-gui.desktop" ]] \
+    || fail "staged desktop entry is not readable"
+for _size in 16 22 32 48; do
+    [[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-repair-legacy.png")" == '644' ]] \
+        || fail "staged ${_size}x${_size} icon mode is not 0644"
+done
+[[ "$(stat -c %a "$STAGE/usr/share/doc/boot-repair-legacy/copyright")" == '644' ]] \
+    || fail "staged copyright mode is not 0644"
+
 # The shell-only TUI launcher, its desktop entry and its man page are gone.
 for path in \
     "$STAGE/usr/bin/boot-repair-legacy" \
@@ -182,7 +204,40 @@ fi
 grep -q 'LEGACY_HELPER_SRC' "$TMP/missing.log" \
     || fail "missing-helper error does not name the documented LEGACY_HELPER_SRC variable"
 
+# --- --install-vm: documented, dry-run safe, off-Etch refused ---------------
 "$PKG" --help | grep -q -- '--dry-run' || fail "package-legacy.sh --help is missing --dry-run"
 "$PKG" --help | grep -q -- '--output' || fail "package-legacy.sh --help is missing --output"
+"$PKG" --help | grep -q -- '--install-vm' || fail "package-legacy.sh --help is missing --install-vm"
 
-echo "PASS: legacy package staging, GUI entry point, control metadata and dry-run/off-Etch guards are wired."
+if ! LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --dry-run --install-vm \
+        --stage-dir "$TMP/stage-install" --output "$TMP/out-install" \
+        > "$TMP/dry-run-install.log" 2>&1; then
+    cat "$TMP/dry-run-install.log" >&2
+    fail "scripts/package-legacy.sh --dry-run --install-vm failed"
+fi
+grep -q 'DRY RUN: --install-vm skipped' "$TMP/dry-run-install.log" \
+    || fail "--dry-run --install-vm does not report that nothing was installed"
+if find "$TMP/out-install" -name '*.deb' -print | grep -q .; then
+    fail "--dry-run --install-vm produced a .deb"
+fi
+
+if LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --install-vm --output "$TMP/offetch-install" \
+        > "$TMP/offetch-install.log" 2>&1; then
+    fail "package-legacy.sh attempted a real --install-vm build off-Etch"
+fi
+grep -qi 'etch' "$TMP/offetch-install.log" \
+    || fail "off-Etch --install-vm refusal does not name Etch"
+grep -qi 'installed' "$TMP/offetch-install.log" \
+    || fail "off-Etch --install-vm refusal does not state that nothing was installed"
+if find "$TMP/offetch-install" -name '*.deb' -print 2>/dev/null | grep -q .; then
+    fail "off-Etch --install-vm refusal still produced a .deb"
+fi
+
+# The install path must never be reachable without the Etch guard: the real
+# install is wired after the build and refuses a non-root caller.
+grep -q 'must run as root' "$PKG" \
+    || fail "package-legacy.sh --install-vm does not require root"
+grep -q 'INSTALL-VM OK' "$PKG" \
+    || fail "package-legacy.sh --install-vm does not report the verified installation"
+
+echo "PASS: legacy package staging, GUI entry point, user-accessible modes, control metadata and dry-run/off-Etch guards are wired."

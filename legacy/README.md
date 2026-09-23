@@ -237,17 +237,34 @@ Build the `.deb` **inside the Etch guest** (native `dpkg-deb` 1.13.26 +
 scripts/package-legacy.sh                  # -> Development/build-legacy-package/boot-repair-legacy_0.2.25-etch1_amd64.deb
 scripts/package-legacy.sh --output DIR
 scripts/package-legacy.sh --dry-run        # stage + validate only; works on any host
+sudo scripts/package-legacy.sh --install-vm  # build, then install + verify in the Etch guest
 ```
 
 The script refuses a real build off-Etch with a clear message and never
-installs anything; `--dry-run` stages the tree and prints the generated
-control metadata (on a host without `qmake-qt3` it stages a documented
-placeholder GUI binary so the layout contract still validates). It builds the
-Qt3 GUI with `qmake-qt3` + `make` in `<output>/gui-build`, runs
-`legacy/port.sh --check` (drift gate) when that tool is present, and runs
-`bash -n` on the staged helper. The shell-only TUI launcher, its desktop entry
-and its man page are deliberately **not staged**: the package ships the GUI as
-its only entry point.
+installs anything unless `--install-vm` is given inside the Etch guest;
+`--dry-run` stages the tree and prints the generated control metadata (on a
+host without `qmake-qt3` it stages a documented placeholder GUI binary so the
+layout contract still validates). It builds the Qt3 GUI with `qmake-qt3` +
+`make` in `<output>/gui-build`, runs `legacy/port.sh --check` (drift gate) when
+that tool is present, and runs `bash -n` on the staged helper. The shell-only
+TUI launcher, its desktop entry and its man page are deliberately **not
+staged**: the package ships the GUI as its only entry point.
+
+**`--install-vm`** (Etch guest only, run as root) turns a successful build into
+the installed artifact: the previously installed package is removed with
+`dpkg -r`, the new `.deb` is installed with `dpkg -i`, and the installed
+`boot-repair-legacy-gui` / `boot-repair-legacy-helper` sha256 hashes are
+compared against the artifact payload before the script prints
+`INSTALL-VM OK: boot-repair-legacy <version>` plus the `INSTALL-VM gui:`,
+`INSTALL-VM helper:` and `INSTALL-VM modes:` lines. It also asserts the
+user-access contract: the GUI binary is mode 0755 and resolvable in `PATH`,
+and the system-wide `/usr/share/applications/boot-repair-legacy-gui.desktop`
+entry is mode 0644, readable by every user, with a PATH-resolved
+`Exec=boot-repair-legacy-gui`. Off-Etch the install request hits the same
+clear refusal as a real build (`Nothing was built or installed.`). The
+maintainer-side `Development/scripts/local-refresh.sh --legacy-vm` automates
+the whole path (offline `/boot` transfer, serial unlock/build/install, user
+launch check, artifact copy-back and host-side hash verification).
 
 **Helper source coordination.** The port agent owns the generated helper. The
 packager's default discovery order is
@@ -276,10 +293,12 @@ runtime, so `libqt3-mt` is a hard dependency.
 
 `scripts/test-legacy-package-contract.sh` (registered as the fast
 `boot-repair-legacy-package-contract` ctest) checks the staging layout
-(including the GUI binary, desktop entry and hicolor icons), the control
-fields and dependency list, the absence of the removed launcher/desktop/man
-paths, and the dry-run path, using a fixture helper so it runs anywhere. It
-never builds or installs a package.
+(including the GUI binary, desktop entry and hicolor icons), the
+user-accessible modes (0755 GUI/helper in `PATH`, 0644 readable desktop entry
+and icons), the control fields and dependency list, the absence of the removed
+launcher/desktop/man paths, and the dry-run/off-Etch guards including
+`--install-vm`, using a fixture helper so it runs anywhere. It never builds or
+installs a package.
 
 `legacy/tests/test-gui-contract.sh` (fast `boot-repair-legacy-gui-contract`)
 compiles the Qt-free parser/inventory modules with plain `g++ -std=c++98

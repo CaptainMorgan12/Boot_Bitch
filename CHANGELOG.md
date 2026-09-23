@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Automate the legacy Etch build+install workflow and prove user access:
+  `scripts/package-legacy.sh --install-vm` (Etch guest only, run as root)
+  removes the previously installed package with `dpkg -r`, installs the new
+  artifact with `dpkg -i` and verifies the installed GUI/helper sha256 hashes,
+  the 0755 binary/0644 desktop-entry modes and the PATH-resolved desktop entry
+  against the artifact payload; off-Etch it keeps the clear
+  "Nothing was built or installed." refusal. The maintainer path
+  `Development/scripts/local-refresh.sh --legacy-vm` drives the whole flow
+  over the Etch pty serial console (offline guestmount `/boot` source
+  transfer, LUKS unlock + login, in-guest build/install, unprivileged
+  `Xvfb --print-config` and `kbuildsycoca --menutest` user checks, `.deb`
+  copy-back and host-side installed-vs-artifact hash comparison). The legacy
+  package contract also asserts the user-accessible modes now.
 - Fix the reported legacy Qt3 GUI defects: remove the Systems `Scope:`
   dropdown (scope follows the committed repair target or Host Maintenance, so
   any selectable non-running-host disk — including a second Etch disk — can be
