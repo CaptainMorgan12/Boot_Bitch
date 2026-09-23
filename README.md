@@ -472,3 +472,5 @@ they are not presented as public GitHub releases.
 ## License
 
 Boot Bitch is released under the MIT License. See `LICENSE`.
+
+Boot Bitch comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law.

@@ -310,3 +310,5 @@ Project code is MIT (see `LICENSE`). The Qt3 GUI links Qt 3.3.x, which is
 GPL-2, so the linked `boot-repair-legacy-gui` binary carries the Qt3 GPL-2
 notice (see `legacy/packaging/copyright`). This artifact stays experimental
 and separate from the modern release asset set until explicitly approved.
+
+Boot Bitch comes with ABSOLUTELY NO WARRANTY, to the extent permitted by applicable law.
