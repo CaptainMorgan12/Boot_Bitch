@@ -11990,7 +11990,11 @@ collapse_similar_journal_lines()
             sub(/^[A-Z][a-z][a-z] [ 0-9][0-9] [0-9:]+ [^ ]+ /, "", s)
             gsub(/\[[0-9]+\]/, "[]", s)
             gsub(/0[xX][0-9a-fA-F]+/, "#", s)
-            gsub(/[0-9a-fA-F]{8,}/, "#", s)
+            # mawk 1.3.4 (Debian 13) mishandles unbounded awk intervals
+            # (missing upper bound): it masks short hex runs and corrupts real
+            # text.  Explicit repetition is portable across mawk/gawk/busybox
+            # awk (see scripts/test-backend-profile-contract.sh).
+            gsub(/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]+/, "#", s)
             gsub(/[0-9]+/, "#", s)
             gsub(/\.[[:alnum:]_-]+$/, ".#", s)
             return s
@@ -13334,7 +13338,7 @@ package_log_filter()
             gsub(/\[[0-9]+\]/, "[<pid>]", s)
             gsub(/(https?|ftp):\/\/[^ )]+/, "<url>", s)
             gsub(/\(IP: [0-9a-fA-F:.]+\)/, "(IP: <ip>)", s)
-            gsub(/[0-9a-fA-F]{16,}/, "<hash>", s)
+            gsub(/[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]+/, "<hash>", s)
             gsub(/[[:space:]]+/, " ", s)
             sub(/^ /, "", s)
             sub(/ $/, "", s)

@@ -175,10 +175,15 @@ sanitize_arch_package()
 
     (
         cd -- "$extract" || exit 1
-        # Match makepkg's mtime normalization and .MTREE generation.
+        # Match makepkg's mtime normalization and .MTREE generation.  Force
+        # root ownership in the .MTREE metadata too: the tar payload below is
+        # repacked --uid 0 --gid 0, and makepkg runs under fakeroot, so a plain
+        # regeneration would record the unprivileged builder's uid/gid and
+        # `pacman -Qkk`-style checks would flag every installed file.
         find . -exec touch -h -d "@$builddate" {} +
         list_package_files | LANG=C bsdtar -cnf - --format=mtree \
             --options='!all,use-set,type,uid,gid,mode,time,size,sha256,link' \
+            --uid 0 --gid 0 \
             --null --files-from - --exclude .MTREE | gzip -c -f -n > .MTREE
         touch -d "@$builddate" .MTREE
         list_package_files | LANG=C bsdtar --no-fflags --no-read-sparse \
@@ -198,6 +203,20 @@ sanitize_arch_package()
     if bsdtar --zstd -xOf "$work/package.pkg.tar.zst" .BUILDINFO |
             grep -qE '^(builddir|startdir) = |/home/'; then
         echo "Sanitized Arch package still records a build path in .BUILDINFO." >&2
+        rm -rf -- "$work"
+        return 1
+    fi
+    # The .MTREE metadata must describe the root-owned payload, otherwise
+    # pacman -Qkk reports ownership mismatches for every installed file.
+    if ! bsdtar --zstd -xOf "$work/package.pkg.tar.zst" .MTREE | gzip -dc \
+            | grep -qE '^/set .*uid=0 gid=0'; then
+        echo "Sanitized Arch package .MTREE does not record root ownership (uid=0 gid=0)." >&2
+        rm -rf -- "$work"
+        return 1
+    fi
+    if bsdtar --zstd -xOf "$work/package.pkg.tar.zst" .MTREE | gzip -dc \
+            | grep -qE 'uid=[1-9][0-9]*|gid=[1-9][0-9]*'; then
+        echo "Sanitized Arch package .MTREE records a non-root uid/gid." >&2
         rm -rf -- "$work"
         return 1
     fi

@@ -225,6 +225,10 @@ grep -q '^post_install()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q '^post_upgrade()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'update-desktop-database -q /usr/share/applications' "$ROOT_DIR/scripts/package-arch.sh"
+# The sanitizer repacks the payload and regenerates .MTREE with root ownership;
+# otherwise pacman -Qkk reports UID/GID mismatches for every installed file.
+grep -q -- '--uid 0 --gid 0' "$ROOT_DIR/scripts/package-arch.sh"
+grep -q 'MTREE does not record root ownership' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q -- '--source' "$ROOT_DIR/scripts/install.sh"
 grep -q 'pacman -U' "$ROOT_DIR/scripts/install.sh"
 grep -q 'zypper --non-interactive install' "$ROOT_DIR/scripts/install.sh"

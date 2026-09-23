@@ -180,12 +180,16 @@ has_relr_section()
 
 # Run the build script's preflight against an AppDir with the bundled tools
 # shadowed by probe scripts on PATH. Extra KEY=VALUE arguments are exported.
+# QMAKE points at a path that cannot exist: an empty value falls back to the
+# host qmake, and the host Qt libraries can carry SHT_RELR themselves (Alpine
+# 3.24 builds Qt with RELR), which would make the synthetic RELR-free fixture
+# host-dependent.
 probe_run()
 {
     local appdir="$1" output="$2"
     shift 2
     env -u PATCHELF -u NO_STRIP -u APPIMAGE_EXTRACT_AND_RUN "$@" \
-        PATH="$probe_bin:$PATH" QMAKE= LINUXDEPLOY=/bin/true APPDIR="$appdir" \
+        PATH="$probe_bin:$PATH" QMAKE=/nonexistent/qmake6 LINUXDEPLOY=/bin/true APPDIR="$appdir" \
         BUILD_APPIMAGE_PROBE=1 "$BUILD_APPIMAGE" >"$output" 2>&1
 }
 

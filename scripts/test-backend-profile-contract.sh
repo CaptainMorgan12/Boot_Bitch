@@ -156,6 +156,13 @@ grep -q -- '--target=i386-pc --boot-directory=/boot --recheck' "$HELPER"
 grep -q '^diagnostic_package_manager_logs()' "$HELPER"
 grep -q 'dnf5 package-manager log errors' "$HELPER"
 grep -q '^package_log_filter()' "$HELPER"
+# Debian 13's mawk 1.3.4 mishandles awk interval expressions without an upper
+# bound: it masks short hex runs (`Failed` -> `<hash>iled`) and corrupts real
+# error text.  The helper's log masking must use explicit repetition instead.
+if grep -nE '\{[0-9]+,\}' "$HELPER"; then
+    echo 'FAIL: helper uses an unbounded awk interval expression (mawk 1.3.4 corrupts it)' >&2
+    exit 1
+fi
 grep -q '^target_journal_evidence_present()' "$HELPER"
 grep -q '^apt_lists_fingerprint()' "$HELPER"
 grep -q '^rpm_metadata_cache_fingerprint()' "$HELPER"
@@ -1580,11 +1587,16 @@ package_log_input="$(cat <<'PKGLOG'
 /run/mount/var/log/dnf5.log.1:2026-09-20T05:51:59+0000 [2392] INFO [librepo] Error during transfer: Status code: 404 for http://mirror-b.example/fedora/x.rpm (IP: 192.0.2.2)
 /run/mount/var/log/dnf5.log:2026-09-20T06:00:00+0000 [7] ERROR Command returned error: Failed to download packages
 /run/mount/var/log/dnf5.log:2026-09-20T06:00:01+0000 [7] TRACE Sync check: failed for repo "updates", sha256 checksum mismatch
+/run/mount/var/log/dnf5.log:2026-09-20T06:00:02+0000 [7] ERROR GPG signature check failed for package deadbeefcafebabe1234567890abcdef (sha256 deadbeefcafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef)
 PKGLOG
 )"
 package_log_out="$(package_log_filter <<<"$package_log_input")"
 grep -Fq 'dnf5.log:<time> [<pid>] ERROR Command returned error: Failed to download packages' <<<"$package_log_out" \
     || { echo 'FAIL: real package-manager error was dropped' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
+# Long hex hashes are still masked to <hash> while short hex words (sha256)
+# survive: the mawk 1.3.4 interval bug corrupted both.
+grep -Fq 'dnf5.log:<time> [<pid>] ERROR GPG signature check failed for package <hash> (sha256 <hash>)' <<<"$package_log_out" \
+    || { echo 'FAIL: long hex hashes were not normalized or short hex words were masked' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
 grep -Fq 'TRACE Sync check: failed for repo "updates", sha256 checksum mismatch' <<<"$package_log_out" \
     || { echo 'FAIL: checksum mismatch was dropped' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
 if grep -Fq 'Error during transfer' <<<"$package_log_out"; then
