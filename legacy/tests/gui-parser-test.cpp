@@ -269,13 +269,14 @@ void testDeviceParsers()
         "   3     0    8388608 hda\n"
         "   3     1     104391 hda1\n"
         "   3     2    2097152 hda2\n"
+        "   3     5    4194304 hda5\n"
         " 253     0    2097152 dm-0\n"
         " 253     1    4194304 dm-1\n"
         "  11     0    2097152 sr0\n"
         "   7     0      10240 loop0\n";
     const std::vector<legacy::PartitionRecord> records =
         legacy::parseProcPartitions(partitions);
-    check(records.size() == 7, "partition records parsed");
+    check(records.size() == 8, "partition records parsed");
     check(records[0].name == "hda" && records[0].blocks == 8388608ULL,
           "disk record parsed");
     check(records[1].name == "hda1" && records[1].majorNumber == 3,
@@ -334,6 +335,11 @@ void testDeviceParsers()
     uuidByPath["/dev/mapper/root"] = "uuid-root";
     std::map<std::string, std::string> labelByPath;
     labelByPath["/dev/hda1"] = "boot";
+    // udev metadata: hda1 is an unmounted ext3 /boot and hda5 a locked LUKS
+    // container; hda2 is swap and the mappers are mounted.
+    std::map<std::string, std::string> probedFsByPath;
+    probedFsByPath["/dev/hda1"] = "ext3";
+    probedFsByPath["/dev/hda5"] = "crypto_LUKS";
     std::map<std::string, legacy::MountRecord> mountRows;
     legacy::MountRecord rootMount;
     rootMount.source = "/dev/mapper/root";
@@ -343,7 +349,7 @@ void testDeviceParsers()
 
     const std::vector<legacy::DeviceRow> rows = legacy::buildDeviceRows(
         records, mountRows, swapMap, diskNames, attributes, mapperLinks,
-        uuidByPath, labelByPath);
+        uuidByPath, labelByPath, probedFsByPath);
 
     bool sawDisk = false;
     bool sawPart = false;
@@ -352,6 +358,7 @@ void testDeviceParsers()
     bool sawOptical = false;
     bool sawLoop = false;
     bool sawDm = false;
+    bool sawLockedLuks = false;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const legacy::DeviceRow &row = rows[i];
         if (row.path == "/dev/hda") {
@@ -371,6 +378,14 @@ void testDeviceParsers()
             check(!row.disk && row.parent == "hda", "/dev/hda1 parent resolved");
             check(row.uuid == "1111-2222", "/dev/hda1 UUID linked");
             check(row.label == "boot", "/dev/hda1 label linked");
+            check(row.probedFstype == "ext3" && !row.encrypted,
+                  "/dev/hda1 udev filesystem probed");
+        }
+        if (row.path == "/dev/hda5") {
+            sawLockedLuks = true;
+            check(row.probedFstype == "crypto_LUKS" && row.encrypted,
+                  "/dev/hda5 locked LUKS container probed");
+            check(row.mountpoint.empty(), "/dev/hda5 is not mounted");
         }
         if (row.path == "/dev/mapper/root") {
             sawMapper = true;
@@ -393,6 +408,7 @@ void testDeviceParsers()
     check(sawMapper, "/dev/mapper/root listed from /dev/mapper");
     check(sawCrypt, "/dev/mapper/crypt listed");
     check(sawOptical, "/dev/sr0 listed");
+    check(sawLockedLuks, "/dev/hda5 listed as a locked LUKS container");
     check(!sawLoop, "loop devices are not offered");
     check(!sawDm, "raw dm-N nodes are not duplicated as rows");
 
@@ -426,6 +442,50 @@ void testDeviceParsers()
     } else {
         std::printf("skip - no /dev-backed root mount on this host\n");
     }
+}
+
+// The world-readable udev metadata probe: Etch's /dev/.udev/db records and
+// the modern /run/udev/data format share the "E:<KEY>=<value>" lines. The
+// filesystem-name helpers mirror the modern Linux-capable list and the
+// crypto_LUKS detection used by the Unlock control.
+void testUdevMetadata()
+{
+    const std::string record =
+        "N:hda5\n"
+        "S:disk/by-uuid/11111111-2222-3333-4444-555555555555\n"
+        "M:3:5\n"
+        "E:ID_TYPE=disk\n"
+        "E:ID_FS_USAGE=crypto\n"
+        "E:ID_FS_TYPE=crypto_LUKS\n"
+        "E:ID_FS_UUID=11111111-2222-3333-4444-555555555555\n"
+        "E:ID_FS_LABEL=\n";
+    const std::map<std::string, std::string> properties =
+        legacy::parseUdevDatabase(record);
+    check(properties.size() == 5, "udev E: properties parsed");
+    check(properties.find("ID_FS_TYPE") != properties.end()
+              && properties.find("ID_FS_TYPE")->second == "crypto_LUKS",
+          "udev ID_FS_TYPE parsed");
+    check(properties.find("ID_FS_UUID") != properties.end()
+              && properties.find("ID_FS_UUID")->second
+                     == "11111111-2222-3333-4444-555555555555",
+          "udev ID_FS_UUID parsed");
+    check(legacy::parseUdevDatabase("").empty(), "empty udev record yields no properties");
+    check(legacy::parseUdevDatabase("garbage\nN:hda\n").empty(),
+          "malformed udev lines are ignored");
+
+    check(legacy::isLinuxFileSystemName("ext3"), "ext3 is Linux-capable");
+    check(legacy::isLinuxFileSystemName("EXT4"), "ext4 is case-insensitive");
+    check(legacy::isLinuxFileSystemName("btrfs"), "btrfs is Linux-capable");
+    check(legacy::isLinuxFileSystemName("xfs"), "xfs is Linux-capable");
+    check(legacy::isLinuxFileSystemName("f2fs"), "f2fs is Linux-capable");
+    check(!legacy::isLinuxFileSystemName("ntfs"), "ntfs is not a Linux root candidate");
+    check(!legacy::isLinuxFileSystemName("crypto_LUKS"), "crypto_LUKS is not a filesystem");
+    check(!legacy::isLinuxFileSystemName(""), "empty filesystem is not Linux-capable");
+
+    check(legacy::looksLikeLuks("crypto_LUKS"), "crypto_LUKS detected");
+    check(legacy::looksLikeLuks("CRYPTO_LUKS"), "crypto_LUKS detection is case-insensitive");
+    check(!legacy::looksLikeLuks("ext3"), "ext3 is not LUKS");
+    check(!legacy::looksLikeLuks(""), "empty filesystem is not LUKS");
 }
 
 void testUnlockHelpers()
@@ -495,6 +555,7 @@ int main(int argc, char **argv)
     testCapabilityModel(fixture);
     testConfigFileProbe();
     testDeviceParsers();
+    testUdevMetadata();
     testUnlockHelpers();
     testStageMapping();
 

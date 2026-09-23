@@ -19,12 +19,14 @@
 #include <qglobal.h>
 #include <qgrid.h>
 #include <qgroupbox.h>
+#include <qimage.h>
 #include <qlabel.h>
 #include <qlayout.h>
 #include <qlineedit.h>
 #include <qlistview.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
+#include <qpixmap.h>
 #include <qpopupmenu.h>
 #include <qpushbutton.h>
 #include <qsplitter.h>
@@ -57,6 +59,7 @@ const int kGroupTitlePadding = 34;
 const int kButtonTextPadding = 40;
 const int kListHeaderPadding = 26;
 const int kLastColumnGutter = 8;
+const int kSectionTitlePadding = 10;
 
 // Hidden-input dialogs (administrator authorization, LUKS passphrase) are
 // width-constrained and word-wrapped: the long explanatory text used to size
@@ -67,6 +70,10 @@ const int kHiddenInputMaximumWidth = 440;
 // element; Etch's 2.6.18 kernel caps argv at 128 KiB, so the editor refuses
 // anything larger instead of failing the exec opaquely.
 const int kConfigEditMaximumBytes = 65536;
+
+// The global header icon is kept compact so the eight tabs still fit at the
+// 1024x768 layout contract size.
+const int kHeaderIconSize = 32;
 
 struct ActionSpec {
     const char *stage;
@@ -84,31 +91,32 @@ struct ActionSpec {
 // The legacy-supported command set only (task contract): validate, diagnose,
 // fs-inspect, fix-broken, dpkg-configure, apt-update, apt-upgrade, initramfs
 // and the guarded GRUB-legacy regeneration. Every stage maps to the
-// capability key of MainWindow::repairToolKeyForStage.
+// capability key of MainWindow::repairToolKeyForStage; the visible button text
+// mirrors the modern individual-tool wording.
 const ActionSpec actionSpecs[] = {
     { "validate", "validate",
-      "Validate selection (read-only)", "Validate running host (read-only)",
+      "Validate", "Validate running host",
       false, false, 0 },
     { "fs-inspect", "filesystem",
-      "Inspect filesystems (read-only)", "Inspect running-host filesystems (read-only)",
+      "Check File Systems", "Check running-host file systems",
       false, false, 0 },
     { "fix-broken", "fixbroken",
-      "Repair broken packages (fix-broken)", "Repair broken packages on the running host (fix-broken)",
+      "Repair Dependencies", "Repair running-host dependencies",
       true, false, "Run the guarded fix-broken repair? The helper keeps its simulation-first preflight and runtime guards." },
     { "dpkg-configure", "dpkg",
-      "Finish dpkg configuration (dpkg-configure)", "Finish dpkg configuration on the running host (dpkg-configure)",
+      "Complete Configuration", "Complete running-host configuration",
       true, false, "Run the guarded dpkg-configure repair? The helper keeps its package-lock and runtime preflights." },
     { "apt-update", "aptupdate",
-      "Refresh package metadata (apt-update)", "Refresh running-host package metadata (apt-update)",
+      "Refresh Metadata", "Refresh running-host metadata",
       true, false, "Refresh package metadata for the selected scope? The helper requires a reachable, trusted APT source." },
     { "apt-upgrade", "upgrade",
-      "Upgrade installed packages (apt-upgrade)", "Upgrade running-host packages (apt-upgrade)",
+      "Simulate and Upgrade", "Upgrade running-host packages",
       true, false, "Run the guarded apt-upgrade transaction? The helper keeps its simulation-first and source guards." },
     { "initramfs", "initramfs",
-      "Rebuild initramfs (initramfs)", "Rebuild running-host initramfs (initramfs)",
+      "Rebuild Initramfs", "Rebuild running-host initramfs",
       true, true, "Rebuild the initramfs for the selected scope? The helper keeps its mapper/crypttab and backup preflights." },
     { "grub", "grub",
-      "Regenerate GRUB configuration (grub)", "Regenerate running-host GRUB configuration (grub)",
+      "Regenerate GRUB", "Regenerate running-host GRUB",
       true, true, "Regenerate the GRUB configuration? The helper backs up the target menu/configuration, preserves every existing boot entry and rolls back on any failure." }
 };
 const int actionSpecCount = sizeof(actionSpecs) / sizeof(actionSpecs[0]);
@@ -145,28 +153,47 @@ const int unsupportedSpecCount = sizeof(unsupportedSpecs) / sizeof(unsupportedSp
 
 // Read-only diagnostic descriptions for the per-check list; the key list
 // itself comes from legacy::diagnosticKeys() so the parser test and the GUI
-// cannot drift.
+// cannot drift. The list column carries the stable helper key (the evidence
+// name used in the command and the log) while the Selected diagnostic pane
+// shows the modern friendly title and description.
 struct DiagnosticSpec {
     const char *key;
+    const char *title;
     const char *description;
 };
 const DiagnosticSpec diagnosticSpecs[] = {
-    { "environment", "OS, kernel and boot-mount identity" },
-    { "backend", "Package/service/display/initramfs/bootloader backends" },
-    { "boot", "Bootloader configuration and boot entries" },
-    { "boot-evidence", "GRUB/EFI/extlinux evidence" },
-    { "kernel", "Installed kernels and initramfs images" },
-    { "grub", "GRUB configuration review" },
-    { "uki", "UKI layout evidence" },
-    { "display", "Display manager backend" },
-    { "errors", "Boot and system error evidence" },
-    { "usage", "Disk and filesystem usage" },
-    { "filesystem", "Filesystem check tools and state" },
-    { "fstab", "/etc/fstab review" },
-    { "btrfs", "Btrfs filesystem/subvolume evidence" },
-    { "mapper", "Device-mapper ancestry" },
-    { "luks", "LUKS/crypttab evidence" },
-    { "report", "Full combined report (same as Run All)" }
+    { "environment", "Environment validation",
+      "Summarizes the selected system, protection state, mounted identity and inspection readiness." },
+    { "backend", "Distribution and boot backend profile",
+      "Identifies the distribution family, package manager, initramfs generator, bootloader and current guarded repair capability." },
+    { "boot", "Boot diagnostics",
+      "Shows boot mounts and /boot contents plus storage evidence without changing the selected system." },
+    { "boot-evidence", "Boot evidence and selection history",
+      "Correlates the detected boot chain, bootloader selection, kernel/initramfs and unlock evidence." },
+    { "kernel", "Kernel / initramfs",
+      "Reviews kernel files and verifies matching initramfs images through a read-only inspection." },
+    { "grub", "GRUB configuration",
+      "Reviews the GRUB configuration without changing boot files." },
+    { "uki", "EFI / UKI boot state",
+      "Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason." },
+    { "display", "Graphical login / display manager",
+      "Reviews the configured display manager and recent boot evidence without starting the GUI." },
+    { "errors", "Boot errors",
+      "Reads recent error-priority entries from the running host or selected repair system when available." },
+    { "usage", "Disk usage",
+      "Summarizes filesystem capacity and free space for the running host or read-only repair target." },
+    { "filesystem", "File systems",
+      "Runs the read-only file system check for the selected system's root, /boot and other filesystems." },
+    { "fstab", "/etc/fstab review",
+      "Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only." },
+    { "btrfs", "Btrfs status",
+      "Shows Btrfs filesystem and subvolume information when the target uses Btrfs." },
+    { "mapper", "Device-mapper ancestry",
+      "Shows selected mapper ancestry and device-mapper state when available." },
+    { "luks", "LUKS / crypttab evidence",
+      "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references." },
+    { "report", "Full diagnostic report",
+      "Combines all read-only diagnostics for the selected scope (same as Run All)." }
 };
 const int diagnosticSpecCount = sizeof(diagnosticSpecs) / sizeof(diagnosticSpecs[0]);
 
@@ -322,6 +349,94 @@ QString diagnosticDescription(const QString &key)
     return QString::fromLatin1("read-only helper diagnostic");
 }
 
+QString diagnosticTitle(const QString &key)
+{
+    for (int i = 0; i < diagnosticSpecCount; ++i) {
+        if (key == QString::fromLatin1(diagnosticSpecs[i].key)) {
+            return QString::fromLatin1(diagnosticSpecs[i].title);
+        }
+    }
+    return key;
+}
+
+// The filesystem name shown in the inventory/details: the mounted filesystem
+// first, then the read-only udev probe (so an unmounted ext3 or a locked
+// crypto_LUKS component is still visible without opening the device).
+QString displayFsType(const DeviceRow &row)
+{
+    if (!row.fstype.empty()) {
+        return fromStd(row.fstype);
+    }
+    return fromStd(row.probedFstype);
+}
+
+// Loads the packaged PNG icon with a graceful fallback: the installed hicolor
+// path first, then the source tree next to the binary, then no icon at all.
+QPixmap legacyHeaderPixmap()
+{
+    QStringList candidates;
+    candidates.append(QString::fromLatin1(
+        "/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png"));
+    candidates.append(QString::fromLatin1(
+        "/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png"));
+    candidates.append(QString::fromLatin1(
+        "/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png"));
+    candidates.append(QString::fromLatin1(
+        "/usr/share/pixmaps/boot-repair-legacy.png"));
+    if (qApp) {
+        const QString appDir = qApp->applicationDirPath();
+        candidates.append(appDir
+            + QString::fromLatin1("/../share/icons/hicolor/32x32/apps/boot-repair-legacy.png"));
+        candidates.append(appDir
+            + QString::fromLatin1("/../share/icons/hicolor/48x48/apps/boot-repair-legacy.png"));
+        candidates.append(appDir
+            + QString::fromLatin1("/data/boot-repair-legacy-32x32.png"));
+    }
+    for (QStringList::ConstIterator it = candidates.begin(); it != candidates.end(); ++it) {
+        if (!QFile::exists(*it)) {
+            continue;
+        }
+        QImage image(*it);
+        if (image.isNull()) {
+            continue;
+        }
+        if (image.width() != kHeaderIconSize || image.height() != kHeaderIconSize) {
+            image = image.smoothScale(kHeaderIconSize, kHeaderIconSize,
+                                      QImage::ScaleMin);
+        }
+        QPixmap pixmap(image);
+        if (!pixmap.isNull()) {
+            return pixmap;
+        }
+    }
+    return QPixmap();
+}
+
+// True when a failed command transcript actually shows a sudo session problem
+// (expired timestamp, no tty for a prompt, rejected password). A mere
+// "sudo:" substring in unrelated target log output must not drop the cached
+// authorization.
+bool transcriptSuggestsAuthFailure(const QString &transcript)
+{
+    static const char *const markers[] = {
+        "a password is required",
+        "no tty present",
+        "a terminal is required",
+        "incorrect password",
+        "Sorry, try again",
+        "authentication failure",
+        "must have a tty",
+        "not allowed to execute",
+        "is not in the sudoers"
+    };
+    for (int i = 0; i < static_cast<int>(sizeof(markers) / sizeof(markers[0])); ++i) {
+        if (transcript.find(QString::fromLatin1(markers[i])) >= 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The list view must be wide enough for every declared column, otherwise the
 // Qt3 header clips the last column. `problems` receives one line per issue.
 bool listColumnsFit(QListView *list, const QString &name, QString *problems)
@@ -415,9 +530,6 @@ bool rootBelongsToDisk(const QMap<QString, DeviceRow> &rows,
 LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     : QMainWindow(parent, name),
       m_tabs(0),
-      m_diskCombo(0),
-      m_rootCombo(0),
-      m_unlockCombo(0),
       m_logFilterCombo(0),
       m_configCombo(0),
       m_deviceList(0),
@@ -432,7 +544,23 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_shellCommandEdit(0),
       m_shellOutput(0),
       m_logWrapCheck(0),
-      m_scopeHint(0),
+      m_headerTitle(0),
+      m_headerSubtitle(0),
+      m_headerBadge(0),
+      m_systemsHeading(0),
+      m_targetsHeading(0),
+      m_repairHeading(0),
+      m_repairScopeLabel(0),
+      m_diagHeading(0),
+      m_scopeLabel(0),
+      m_diagTitle(0),
+      m_diagDescription(0),
+      m_diagAvailability(0),
+      m_chrootHeading(0),
+      m_chrootScopeLabel(0),
+      m_fileCopyHeading(0),
+      m_logsHeading(0),
+      m_settingsHeading(0),
       m_gateHint(0),
       m_elevationLabel(0),
       m_targetSummary(0),
@@ -440,6 +568,8 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_configReasonLabel(0),
       m_chrootReasonLabel(0),
       m_fileCopyReasonLabel(0),
+      m_authStatusLabel(0),
+      m_repairAuthStatusLabel(0),
       m_settingsHelperLabel(0),
       m_settingsElevationLabel(0),
       m_settingsLogDirLabel(0),
@@ -449,18 +579,21 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_diagnosticsButton(0),
       m_runDiagnosticButton(0),
       m_copyResultsButton(0),
+      m_saveResultsButton(0),
       m_configButton(0),
-      m_cancelButton(0),
       m_unlockButton(0),
       m_elevateButton(0),
       m_setTargetButton(0),
       m_hostMaintenanceButton(0),
+      m_authorizeButton(0),
+      m_repairAuthorizeButton(0),
       m_shellRunButton(0),
       m_shellClearButton(0),
       m_chrootGroup(0),
       m_fileCopyGroup(0),
+      m_chrootTab(0),
       m_runner(new HelperRunner(this)),
-      m_updatingCombos(false),
+      m_updatingSelection(false),
       m_running(false),
       m_pendingDiagnostic(false),
       m_pendingUnlock(false),
@@ -477,16 +610,68 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_smokeValidateOk(false)
 {
     setCaption(QString::fromLatin1("Boot Bitch Legacy (Etch / KDE 3.5 era)"));
-    // Every group title/button/list column must stay fully visible at the
-    // 1024x768 contract size; the layouts only need a modest floor below it.
+    // Every section title/group title/button/list column must stay fully
+    // visible at the 1024x768 contract size; the layouts only need a modest
+    // floor below it.
     setMinimumSize(820, 600);
 
-    m_tabs = new QTabWidget(this);
-    setCentralWidget(m_tabs);
+    // Global header, mirroring the modern Qt6 window: packaged icon, the
+    // 1.65x bold "Boot Bitch" title, the subtle recovery subtitle and the
+    // right-aligned guarded-repair badge. The icon falls back gracefully when
+    // the PNG is not installed (source-tree or headless runs).
+    QWidget *central = new QWidget(this);
+    QVBoxLayout *mainLayout = new QVBoxLayout(central, 8, 6);
+
+    QHBoxLayout *headerLayout = new QHBoxLayout(mainLayout);
+    headerLayout->setSpacing(8);
+    QLabel *iconLabel = new QLabel(central);
+    const QPixmap headerPixmap = legacyHeaderPixmap();
+    if (!headerPixmap.isNull()) {
+        iconLabel->setPixmap(headerPixmap);
+        iconLabel->setFixedSize(kHeaderIconSize, kHeaderIconSize);
+        iconLabel->setAlignment(Qt::AlignCenter);
+    } else {
+        iconLabel->hide();
+    }
+    headerLayout->addWidget(iconLabel);
+
+    QVBoxLayout *titleColumn = new QVBoxLayout();
+    titleColumn->setSpacing(1);
+    m_headerTitle = new QLabel(QString::fromLatin1("Boot Bitch"), central);
+    QFont titleFont = m_headerTitle->font();
+    titleFont.setPointSizeFloat(titleFont.pointSizeFloat() * 1.65);
+    titleFont.setBold(true);
+    m_headerTitle->setFont(titleFont);
+    titleColumn->addWidget(m_headerTitle);
+    m_headerSubtitle = new QLabel(
+        QString::fromLatin1("Linux recovery and boot-repair utility"), central);
+    titleColumn->addWidget(m_headerSubtitle);
+    headerLayout->addLayout(titleColumn, 1);
+
+    m_headerBadge = new QLabel(
+        QString::fromLatin1("GUARDED REPAIR  ") + QChar(0x2022)
+            + QString::fromLatin1("  ") + QString::fromLatin1(LEGACY_VERSION),
+        central);
+    QFont badgeFont = m_headerBadge->font();
+    badgeFont.setBold(true);
+    m_headerBadge->setFont(badgeFont);
+    m_headerBadge->setFrameShape(QFrame::StyledPanel);
+    m_headerBadge->setMargin(5);
+    m_headerBadge->setAlignment(Qt::AlignCenter);
+    QToolTip::add(m_headerBadge, QString::fromLatin1(
+        "Ordinary repairs require an explicitly selected non-host target. The "
+        "protected running host has a separate deliberate maintenance mode with "
+        "the same guarded repair stages and requires privilege authorization."));
+    headerLayout->addWidget(m_headerBadge, 0, Qt::AlignTop);
+
+    m_tabs = new QTabWidget(central);
+    mainLayout->addWidget(m_tabs, 1);
+    setCentralWidget(central);
     m_tabs->addTab(buildTargetsTab(), QString::fromLatin1("Systems"));
     m_tabs->addTab(buildDiagnosticsTab(), QString::fromLatin1("Diagnostics"));
     m_tabs->addTab(buildActionsTab(), QString::fromLatin1("Repair"));
-    m_tabs->addTab(buildChrootShellTab(), QString::fromLatin1("Chroot Shell"));
+    m_chrootTab = buildChrootShellTab();
+    m_tabs->addTab(m_chrootTab, QString::fromLatin1("Chroot Shell"));
     m_tabs->addTab(buildFileCopyTab(), QString::fromLatin1("File Copy"));
     m_tabs->addTab(buildLogTab(), QString::fromLatin1("Logs"));
     m_tabs->addTab(buildSettingsTab(), QString::fromLatin1("Settings"));
@@ -505,6 +690,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     updateElevationLabel();
     updateDriveDetails();
     updateUnlockStatus();
+    updateDiagnosticDetails();
     refreshSessionLogList();
     appendLog(QString::fromLatin1(
         "Boot Bitch legacy GUI ready. Every privileged command runs through the "
@@ -514,6 +700,18 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     updateStatus();
     updateActionStates();
     resize(1024, 768);
+}
+
+void LegacyMainWindow::closeEvent(QCloseEvent *event)
+{
+    // The Cancel button is gone (modern parity); closing the window is the
+    // only remaining path that stops a running helper command.
+    if (m_runner && m_runner->isRunning()) {
+        appendLog(QString::fromLatin1(
+            "Window closed while a helper command was running; cancelling it."));
+        m_runner->cancel();
+    }
+    QMainWindow::closeEvent(event);
 }
 
 void LegacyMainWindow::setHelperPath(const QString &path)
@@ -552,51 +750,49 @@ void LegacyMainWindow::setLogDirectory(const QString &path)
 
 void LegacyMainWindow::setTarget(const QString &disk, const QString &root)
 {
-    m_updatingCombos = true;
-    if (!disk.isEmpty()) {
-        if (m_diskCombo->currentText() != disk) {
-            int index = m_diskCombo->currentItem();
-            bool found = false;
-            for (int i = 0; i < m_diskCombo->count(); ++i) {
-                if (m_diskCombo->text(i) == disk) {
-                    index = i;
-                    found = true;
-                    break;
-                }
-            }
-            if (found) {
-                m_diskCombo->setCurrentItem(index);
-            } else {
-                m_diskCombo->insertItem(disk);
-                m_diskCombo->setCurrentItem(m_diskCombo->count() - 1);
-            }
-        }
-    }
-    if (!root.isEmpty()) {
-        if (m_rootCombo->currentText() != root) {
-            int index = m_rootCombo->currentItem();
-            bool found = false;
-            for (int i = 0; i < m_rootCombo->count(); ++i) {
-                if (m_rootCombo->text(i) == root) {
-                    index = i;
-                    found = true;
-                    break;
-                }
-            }
-            if (found) {
-                m_rootCombo->setCurrentItem(index);
-            } else {
-                m_rootCombo->insertItem(root);
-                m_rootCombo->setCurrentItem(m_rootCombo->count() - 1);
-            }
-        }
-    }
-    m_updatingCombos = false;
-    refreshRootCombo();
+    setSelection(disk, QString::null, root);
+    selectInventoryRow(disk);
     updateStatus();
     updateActionStates();
     updateDriveDetails();
     updateUnlockStatus();
+}
+
+// Programmatic selection used by setTarget() and the smoke test. `rootOverride`
+// is remembered for `disk` and wins over the inventory auto-resolution until
+// the user selects a different row.
+void LegacyMainWindow::setSelection(const QString &disk, const QString &component,
+                                    const QString &rootOverride)
+{
+    m_updatingSelection = true;
+    m_selectedDisk = disk.stripWhiteSpace();
+    m_selectedComponent = component.stripWhiteSpace();
+    m_rootOverrideDisk = rootOverride.isEmpty() ? QString::null : m_selectedDisk;
+    m_rootOverrideRoot = rootOverride.stripWhiteSpace();
+    m_updatingSelection = false;
+}
+
+// Selects the inventory row for `disk` (and then the component row when one
+// is set) without re-entering the selection handler.
+void LegacyMainWindow::selectInventoryRow(const QString &disk)
+{
+    if (!m_deviceList) {
+        return;
+    }
+    m_updatingSelection = true;
+    QListViewItem *match = 0;
+    for (QListViewItem *item = m_deviceList->firstChild(); item;
+         item = item->nextSibling()) {
+        if (item->text(0) == disk) {
+            match = item;
+            break;
+        }
+    }
+    if (match) {
+        m_deviceList->setSelected(match, true);
+        m_deviceList->setCurrentItem(match);
+    }
+    m_updatingSelection = false;
 }
 
 QPushButton *LegacyMainWindow::makeButton(const QString &text, QWidget *parent)
@@ -608,6 +804,34 @@ QPushButton *LegacyMainWindow::makeButton(const QString &text, QWidget *parent)
     button->setMinimumHeight(QMAX(button->minimumHeight(), metrics.height() + 14));
     m_buttons.push_back(button);
     return button;
+}
+
+void LegacyMainWindow::updateButtonText(QPushButton *button, const QString &text)
+{
+    if (!button) {
+        return;
+    }
+    button->setText(text);
+    QFontMetrics metrics(button->font());
+    button->setMinimumWidth(QMAX(40, metrics.width(text) + kButtonTextPadding));
+}
+
+// Modern sectionTitle() parity: 1.2x point size, bold. Qt3 spells the font
+// size accessors pointSizeFloat()/setPointSizeFloat() (Qt4's pointSizeF()/
+// setPointSizeF() do not exist here). The font-metric floor and the page
+// containment check are asserted by the 1024x768 smoke layout gate.
+QLabel *LegacyMainWindow::makeSectionTitle(const QString &text, QWidget *parent)
+{
+    QLabel *label = new QLabel(text, parent);
+    QFont font = label->font();
+    font.setPointSizeFloat(font.pointSizeFloat() * 1.2);
+    font.setBold(true);
+    label->setFont(font);
+    QFontMetrics metrics(label->font());
+    label->setMinimumWidth(metrics.width(text) + kSectionTitlePadding);
+    label->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+    m_sectionTitles.push_back(label);
+    return label;
 }
 
 // Qt3 list columns are fixed-width by default, so a header wider than its
@@ -652,22 +876,46 @@ void LegacyMainWindow::buildMenus()
 
 QWidget *LegacyMainWindow::buildTargetsTab()
 {
-    QSplitter *splitter = new QSplitter(Qt::Horizontal, m_tabs);
+    QWidget *page = new QWidget(m_tabs);
+    QVBoxLayout *pageLayout = new QVBoxLayout(page, 8, 6);
+
+    // Modern Systems page heading: title left, Refresh Devices right.
+    QHBoxLayout *headingRow = new QHBoxLayout(pageLayout);
+    headingRow->setSpacing(6);
+    m_systemsHeading = makeSectionTitle(QString::fromLatin1("Systems"), page);
+    headingRow->addWidget(m_systemsHeading);
+    headingRow->addStretch();
+    m_scanButton = makeButton(QString::fromLatin1("Refresh Devices"), page);
+    QToolTip::add(m_scanButton, QString::fromLatin1(
+        "Re-read the read-only kernel inventory (/proc/partitions, /proc/mounts, "
+        "/proc/swaps, /sys/block, /dev/mapper, /dev/disk/by-* and the udev "
+        "metadata database). No block device is opened and nothing is written."));
+    connect(m_scanButton, SIGNAL(clicked()), this, SLOT(scanDevices()));
+    headingRow->addWidget(m_scanButton, 0, Qt::AlignTop);
+
+    // "Available repair targets" section title above the drive list (modern
+    // candidateRow). The list itself is the read-only kernel inventory.
+    QHBoxLayout *targetsRow = new QHBoxLayout(pageLayout);
+    targetsRow->setSpacing(6);
+    m_targetsHeading = makeSectionTitle(
+        QString::fromLatin1("Available repair targets"), page);
+    targetsRow->addWidget(m_targetsHeading);
+    targetsRow->addStretch();
+    QLabel *sortHint = new QLabel(QString::fromLatin1("Most likely first"), page);
+    QToolTip::add(sortHint, QString::fromLatin1(
+        "Drives are listed by the read-only inventory. Select a row to inspect "
+        "it; Select Target commits the selected non-host drive with its "
+        "auto-resolved Linux root component."));
+    targetsRow->addWidget(sortHint);
+
+    QSplitter *splitter = new QSplitter(Qt::Horizontal, page);
     splitter->setChildrenCollapsible(false);
 
-    // ---- Left column: read-only inventory + the selected scope/target -------
+    // ---- Left column: inventory, action row, Unlock status ------------------
     QWidget *left = new QWidget(splitter);
-    QVBoxLayout *leftLayout = new QVBoxLayout(left, 8, 6);
+    QVBoxLayout *leftLayout = new QVBoxLayout(left, 0, 6);
 
-    QGroupBox *devices = new QGroupBox(
-        QString::fromLatin1("Devices - read-only kernel inventory"), left);
-    QToolTip::add(devices, QString::fromLatin1(
-        "Sources: /proc/partitions, /proc/mounts, /proc/swaps, /sys/block, "
-        "/dev/mapper and /dev/disk/by-*. No block device is opened and nothing "
-        "is written."));
-    QVBoxLayout *devicesLayout = new QVBoxLayout(devices, 8, 4);
-
-    m_deviceList = new QListView(devices);
+    m_deviceList = new QListView(left);
     addListViewColumn(m_deviceList, QString::fromLatin1("Device"), 100);
     addListViewColumn(m_deviceList, QString::fromLatin1("Size"), 60);
     addListViewColumn(m_deviceList, QString::fromLatin1("Type"), 80);
@@ -678,84 +926,49 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     m_deviceList->setShowSortIndicator(true);
     m_deviceList->setMultiSelection(false);
     m_deviceList->setResizeMode(QListView::LastColumn);
-    m_deviceList->setMinimumHeight(80);
+    m_deviceList->setMinimumHeight(70);
     connect(m_deviceList, SIGNAL(selectionChanged()), this, SLOT(deviceSelectionChanged()));
-    devicesLayout->addWidget(m_deviceList, 1);
+    leftLayout->addWidget(m_deviceList, 1);
 
-    QHBoxLayout *deviceButtons = new QHBoxLayout(devicesLayout);
-    deviceButtons->setSpacing(6);
-    m_scanButton = makeButton(QString::fromLatin1("Rescan devices"), devices);
-    connect(m_scanButton, SIGNAL(clicked()), this, SLOT(scanDevices()));
-    deviceButtons->addWidget(m_scanButton);
-    deviceButtons->addStretch();
-
-    QLabel *deviceHint = new QLabel(
-        QString::fromLatin1("A disk fills the drive field; a partition or mapper fills the root field."),
-        devices);
-    deviceHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    devicesLayout->addWidget(deviceHint);
-    leftLayout->addWidget(devices, 3);
-
-    QGroupBox *target = new QGroupBox(
-        QString::fromLatin1("Selected scope and target"), left);
-    QToolTip::add(target, QString::fromLatin1(
-        "Confirmed by the helper's read-only diagnostics; the GUI never reads "
-        "a block device itself. There is no separate scope selector: the "
-        "scope follows the committed repair target or Host Maintenance."));
-    QGridLayout *targetLayout = new QGridLayout(target, 6, 2, 10, 6);
-    targetLayout->setColStretch(1, 1);
-
-    targetLayout->addWidget(new QLabel(QString::fromLatin1("Physical drive:"), target), 0, 0);
-    m_diskCombo = new QComboBox(true, target);
-    connect(m_diskCombo, SIGNAL(textChanged(const QString &)), this, SLOT(targetEdited()));
-    targetLayout->addWidget(m_diskCombo, 0, 1);
-
-    targetLayout->addWidget(new QLabel(QString::fromLatin1("Root component:"), target), 1, 0);
-    m_rootCombo = new QComboBox(true, target);
-    connect(m_rootCombo, SIGNAL(textChanged(const QString &)), this, SLOT(targetEdited()));
-    targetLayout->addWidget(m_rootCombo, 1, 1);
-
-    targetLayout->addWidget(new QLabel(QString::fromLatin1("LUKS component:"), target), 2, 0);
-    m_unlockCombo = new QComboBox(true, target);
-    QToolTip::add(m_unlockCombo, QString::fromLatin1(
-        "The encrypted component the helper should open with cryptsetup. It is "
-        "verified against the selected drive by the helper's own preflights."));
-    targetLayout->addWidget(m_unlockCombo, 2, 1);
-
-    m_unlockButton = makeButton(QString::fromLatin1("Unlock encrypted target..."), target);
-    m_unlockButton->setEnabled(false);
-    connect(m_unlockButton, SIGNAL(clicked()), this, SLOT(runUnlock()));
-    targetLayout->addWidget(m_unlockButton, 3, 0, Qt::AlignLeft);
-
-    m_hostMaintenanceButton = makeButton(QString::fromLatin1("Host Maintenance"), target);
-    m_hostMaintenanceButton->setEnabled(false);
-    connect(m_hostMaintenanceButton, SIGNAL(clicked()), this, SLOT(toggleHostMaintenance()));
-    targetLayout->addWidget(m_hostMaintenanceButton, 3, 1, Qt::AlignLeft);
-
-    m_setTargetButton = makeButton(QString::fromLatin1("Set as repair target"), target);
+    // Modern button row: Select Target, Unlock, Host Maintenance, the
+    // deferred-authorization status + Authorize affordance, then the
+    // right-aligned committed-target summary.
+    QHBoxLayout *buttonRow = new QHBoxLayout(leftLayout);
+    buttonRow->setSpacing(6);
+    m_setTargetButton = makeButton(QString::fromLatin1("Select Target"), left);
     m_setTargetButton->setEnabled(false);
     connect(m_setTargetButton, SIGNAL(clicked()), this, SLOT(setRepairTarget()));
-    targetLayout->addWidget(m_setTargetButton, 4, 0, Qt::AlignLeft);
+    buttonRow->addWidget(m_setTargetButton);
 
-    m_targetSummary = new QLabel(QString::fromLatin1("Committed target: none"), target);
+    m_unlockButton = makeButton(QString::fromLatin1("Unlock"), left);
+    m_unlockButton->setEnabled(false);
+    connect(m_unlockButton, SIGNAL(clicked()), this, SLOT(runUnlock()));
+    buttonRow->addWidget(m_unlockButton);
+
+    m_hostMaintenanceButton = makeButton(QString::fromLatin1("Host Maintenance"), left);
+    m_hostMaintenanceButton->setEnabled(false);
+    connect(m_hostMaintenanceButton, SIGNAL(clicked()), this, SLOT(toggleHostMaintenance()));
+    buttonRow->addWidget(m_hostMaintenanceButton);
+
+    m_authStatusLabel = new QLabel(left);
+    m_authStatusLabel->setTextFormat(Qt::PlainText);
+    m_authStatusLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
+    buttonRow->addWidget(m_authStatusLabel, 1);
+
+    m_authorizeButton = makeButton(QString::fromLatin1("Authorize"), left);
+    m_authorizeButton->setEnabled(false);
+    QToolTip::add(m_authorizeButton, QString::fromLatin1(
+        "Establish the privileged helper session for the current scope now "
+        "instead of waiting for the next privileged action."));
+    connect(m_authorizeButton, SIGNAL(clicked()), this, SLOT(authorizeNow()));
+    buttonRow->addWidget(m_authorizeButton, 0, Qt::AlignVCenter);
+
+    m_targetSummary = new QLabel(QString::fromLatin1("Committed target: none"), left);
     m_targetSummary->setTextFormat(Qt::PlainText);
-    m_targetSummary->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
-    targetLayout->addWidget(m_targetSummary, 4, 1);
+    m_targetSummary->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    buttonRow->addWidget(m_targetSummary, 0, Qt::AlignRight | Qt::AlignVCenter);
 
-    m_scopeHint = new QLabel(
-        QString::fromLatin1(
-            "Scope follows the committed repair target, or Host Maintenance for "
-            "the protected running host. Any selectable disk except the running "
-            "host can be committed."),
-        target);
-    m_scopeHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    targetLayout->addMultiCellWidget(m_scopeHint, 5, 5, 0, 1);
-
-    leftLayout->addWidget(target, 2);
-
-    // Unlock status sits in the left pane below the target controls, exactly
-    // like the modern Systems page; the right pane is the selected-drive
-    // details panel.
+    // Unlock status sits directly below the button row, exactly like modern.
     QGroupBox *unlock = new QGroupBox(QString::fromLatin1("Unlock status"), left);
     QToolTip::add(unlock, QString::fromLatin1(
         "Unlock state for the selected drive; the LUKS passphrase is never logged."));
@@ -764,13 +977,13 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     m_unlockStatusView->setReadOnly(true);
     m_unlockStatusView->setTextFormat(Qt::PlainText);
     m_unlockStatusView->setWordWrap(QTextEdit::WidgetWidth);
-    m_unlockStatusView->setMinimumHeight(110);
+    m_unlockStatusView->setMinimumHeight(96);
     unlockLayout->addWidget(m_unlockStatusView, 1);
-    leftLayout->addWidget(unlock, 2);
+    leftLayout->addWidget(unlock, 1);
 
     // ---- Right column: selected drive details --------------------------------
     QWidget *right = new QWidget(splitter);
-    QVBoxLayout *rightLayout = new QVBoxLayout(right, 8, 6);
+    QVBoxLayout *rightLayout = new QVBoxLayout(right, 0, 6);
 
     QGroupBox *details = new QGroupBox(
         QString::fromLatin1("Selected drive details"), right);
@@ -783,12 +996,10 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     addListViewColumn(m_detailList, QString::fromLatin1("Value"), 220);
     m_detailList->setAllColumnsShowFocus(true);
     m_detailList->setResizeMode(QListView::LastColumn);
-    m_detailList->setMinimumHeight(140);
+    m_detailList->setMinimumHeight(120);
     detailsLayout->addWidget(m_detailList, 1);
     rightLayout->addWidget(details, 1);
 
-    registerGroupBox(devices);
-    registerGroupBox(target);
     registerGroupBox(unlock);
     registerGroupBox(details);
 
@@ -796,29 +1007,37 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     sizes.append(620);
     sizes.append(380);
     splitter->setSizes(sizes);
-    return splitter;
+    pageLayout->addWidget(splitter, 1);
+    return page;
 }
 
 QWidget *LegacyMainWindow::buildDiagnosticsTab()
 {
-    // Modern parity: action row, target-configuration row (committed target
-    // only), then a horizontal splitter with the diagnostic checks list on the
-    // left and the results pane on the right. The modern GUI has no
-    // capability list/filter on Diagnostics; the cached capability lines stay
-    // the gating evidence for the Repair tab but are not duplicated here.
+    // Modern parity: heading row (title, scope label, Run All), the
+    // target-configuration row (committed target only), then a horizontal
+    // splitter with the diagnostic checks list on the left and the Selected
+    // diagnostic pane (title, description, availability, Results + Run
+    // Diagnostic, results text, Copy/Save Results) on the right.
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
-    QHBoxLayout *actionRow = new QHBoxLayout(layout);
-    actionRow->setSpacing(6);
-    actionRow->addStretch();
-    m_diagnosticsButton = makeButton(QString::fromLatin1("Run All diagnostics (read-only)"), page);
+    QHBoxLayout *headingRow = new QHBoxLayout(layout);
+    headingRow->setSpacing(6);
+    m_diagHeading = makeSectionTitle(QString::fromLatin1("Diagnostics"), page);
+    headingRow->addWidget(m_diagHeading);
+    headingRow->addStretch();
+    m_scopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
+    m_scopeLabel->setTextFormat(Qt::PlainText);
+    m_scopeLabel->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    QToolTip::add(m_scopeLabel, QString::fromLatin1(
+        "Diagnostics follow the committed repair target, or the protected "
+        "running host while Host Maintenance is active."));
+    headingRow->addWidget(m_scopeLabel, 0, Qt::AlignVCenter);
+    m_diagnosticsButton = makeButton(QString::fromLatin1("Run All"), page);
+    QToolTip::add(m_diagnosticsButton, QString::fromLatin1(
+        "Run All - run every available read-only diagnostic for the current scope."));
     connect(m_diagnosticsButton, SIGNAL(clicked()), this, SLOT(runDiagnostics()));
-    actionRow->addWidget(m_diagnosticsButton);
-    m_cancelButton = makeButton(QString::fromLatin1("Cancel running command"), page);
-    m_cancelButton->setEnabled(false);
-    connect(m_cancelButton, SIGNAL(clicked()), this, SLOT(cancelRun()));
-    actionRow->addWidget(m_cancelButton);
+    headingRow->addWidget(m_diagnosticsButton, 0, Qt::AlignVCenter);
 
     QHBoxLayout *configRow = new QHBoxLayout(layout);
     configRow->setSpacing(6);
@@ -843,7 +1062,7 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     splitter->setChildrenCollapsible(false);
 
     QGroupBox *checks = new QGroupBox(
-        QString::fromLatin1("Diagnostic checks (read-only, per key)"), splitter);
+        QString::fromLatin1("Diagnostic checks"), splitter);
     QToolTip::add(checks, QString::fromLatin1(
         "Runs one read-only diagnostic for the selected scope through the "
         "helper (`diagnose <key>` / `host-diagnose <key>`); Run All is the "
@@ -851,16 +1070,15 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     QVBoxLayout *checksLayout = new QVBoxLayout(checks, 8, 4);
     m_diagnosticList = new QListView(checks);
     addListViewColumn(m_diagnosticList, QString::fromLatin1("Check"), 130);
-    addListViewColumn(m_diagnosticList, QString::fromLatin1("Reads"), 300);
     m_diagnosticList->setAllColumnsShowFocus(true);
     m_diagnosticList->setResizeMode(QListView::LastColumn);
-    m_diagnosticList->setMinimumHeight(180);
+    m_diagnosticList->setShowToolTips(true);
+    m_diagnosticList->setMinimumHeight(150);
     connect(m_diagnosticList, SIGNAL(selectionChanged()),
             this, SLOT(diagnosticSelectionChanged()));
     const std::vector<std::string> diagKeys = legacy::diagnosticKeys();
     for (std::size_t i = 0; i < diagKeys.size(); ++i) {
-        new QListViewItem(m_diagnosticList, fromStd(diagKeys[i]),
-                          diagnosticDescription(fromStd(diagKeys[i])));
+        new QListViewItem(m_diagnosticList, fromStd(diagKeys[i]));
     }
     if (m_diagnosticList->firstChild()) {
         m_diagnosticList->setSelected(m_diagnosticList->firstChild(), true);
@@ -868,31 +1086,53 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     }
     checksLayout->addWidget(m_diagnosticList, 1);
 
-    QGroupBox *results = new QGroupBox(
-        QString::fromLatin1("Results (read-only)"), splitter);
-    QToolTip::add(results, QString::fromLatin1(
-        "The transcript of the selected diagnostic run; Run All keeps the "
-        "combined report here too."));
-    QVBoxLayout *resultsLayout = new QVBoxLayout(results, 8, 4);
-    QHBoxLayout *resultButtons = new QHBoxLayout(resultsLayout);
-    resultButtons->setSpacing(6);
-    m_runDiagnosticButton = makeButton(QString::fromLatin1("Run selected diagnostic"), results);
-    connect(m_runDiagnosticButton, SIGNAL(clicked()), this, SLOT(runSelectedDiagnostic()));
-    resultButtons->addWidget(m_runDiagnosticButton);
-    m_copyResultsButton = makeButton(QString::fromLatin1("Copy results"), results);
-    connect(m_copyResultsButton, SIGNAL(clicked()), this, SLOT(copyResults()));
-    resultButtons->addWidget(m_copyResultsButton);
-    resultButtons->addStretch();
+    QGroupBox *detail = new QGroupBox(
+        QString::fromLatin1("Selected diagnostic"), splitter);
+    QVBoxLayout *detailLayout = new QVBoxLayout(detail, 8, 6);
+    m_diagTitle = makeSectionTitle(QString::fromLatin1("Select a diagnostic"), detail);
+    detailLayout->addWidget(m_diagTitle);
+    m_diagDescription = new QLabel(
+        QString::fromLatin1("Choose a diagnostic from the list."), detail);
+    m_diagDescription->setTextFormat(Qt::PlainText);
+    m_diagDescription->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    detailLayout->addWidget(m_diagDescription);
+    m_diagAvailability = new QLabel(QString::fromLatin1("Ready"), detail);
+    m_diagAvailability->setTextFormat(Qt::PlainText);
+    QFont availabilityFont = m_diagAvailability->font();
+    availabilityFont.setBold(true);
+    m_diagAvailability->setFont(availabilityFont);
+    detailLayout->addWidget(m_diagAvailability);
 
-    m_rawView = new QTextEdit(results);
+    QHBoxLayout *resultsHeader = new QHBoxLayout(detailLayout);
+    resultsHeader->setSpacing(6);
+    QLabel *resultsTitle = makeSectionTitle(QString::fromLatin1("Results"), detail);
+    resultsHeader->addWidget(resultsTitle);
+    resultsHeader->addStretch();
+    m_runDiagnosticButton = makeButton(QString::fromLatin1("Run Diagnostic"), detail);
+    QToolTip::add(m_runDiagnosticButton, QString::fromLatin1(
+        "Run Diagnostic - run the selected read-only diagnostic for the current scope."));
+    connect(m_runDiagnosticButton, SIGNAL(clicked()), this, SLOT(runSelectedDiagnostic()));
+    resultsHeader->addWidget(m_runDiagnosticButton, 0, Qt::AlignVCenter);
+
+    m_rawView = new QTextEdit(detail);
     m_rawView->setReadOnly(true);
     m_rawView->setTextFormat(Qt::LogText);
     m_rawView->setWordWrap(QTextEdit::NoWrap);
-    m_rawView->setMinimumHeight(180);
-    resultsLayout->addWidget(m_rawView, 1);
+    m_rawView->setMinimumHeight(150);
+    detailLayout->addWidget(m_rawView, 1);
+
+    QHBoxLayout *resultButtons = new QHBoxLayout(detailLayout);
+    resultButtons->setSpacing(6);
+    resultButtons->addStretch();
+    m_copyResultsButton = makeButton(QString::fromLatin1("Copy Results"), detail);
+    connect(m_copyResultsButton, SIGNAL(clicked()), this, SLOT(copyResults()));
+    resultButtons->addWidget(m_copyResultsButton);
+    m_saveResultsButton = makeButton(QString::fromLatin1("Save Results..."), detail);
+    connect(m_saveResultsButton, SIGNAL(clicked()), this, SLOT(saveResults()));
+    resultButtons->addWidget(m_saveResultsButton);
 
     registerGroupBox(checks);
-    registerGroupBox(results);
+    registerGroupBox(detail);
 
     QValueList<int> sizes;
     sizes.append(300);
@@ -907,9 +1147,19 @@ QWidget *LegacyMainWindow::buildActionsTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
-    // Modern parity: the scope/gate line comes first (the modern Repair page
-    // opens with its scope label and hint), then the individual tools, then
-    // the legacy-only elevation frame.
+    // Modern parity: page heading with the right-aligned scope label, then the
+    // scope/gate line, the individual tools, and the legacy-only elevation
+    // frame (which also carries the deferred-authorization Authorize control).
+    QHBoxLayout *headingRow = new QHBoxLayout(layout);
+    headingRow->setSpacing(6);
+    m_repairHeading = makeSectionTitle(QString::fromLatin1("Repair"), page);
+    headingRow->addWidget(m_repairHeading);
+    headingRow->addStretch();
+    m_repairScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
+    m_repairScopeLabel->setTextFormat(Qt::PlainText);
+    m_repairScopeLabel->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    headingRow->addWidget(m_repairScopeLabel, 0, Qt::AlignVCenter);
+
     m_gateHint = new QLabel(page);
     m_gateHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
     layout->addWidget(m_gateHint);
@@ -941,7 +1191,17 @@ QWidget *LegacyMainWindow::buildActionsTab()
     m_elevateButton = makeButton(QString::fromLatin1("Re-check elevation"), elevation);
     connect(m_elevateButton, SIGNAL(clicked()), this, SLOT(recheckElevation()));
     elevationButtons->addWidget(m_elevateButton);
-    elevationButtons->addStretch();
+    m_repairAuthStatusLabel = new QLabel(elevation);
+    m_repairAuthStatusLabel->setTextFormat(Qt::PlainText);
+    m_repairAuthStatusLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
+    elevationButtons->addWidget(m_repairAuthStatusLabel, 1);
+    m_repairAuthorizeButton = makeButton(QString::fromLatin1("Authorize"), elevation);
+    m_repairAuthorizeButton->setEnabled(false);
+    QToolTip::add(m_repairAuthorizeButton, QString::fromLatin1(
+        "Re-establish the privileged helper session for the current scope "
+        "without leaving the Repair tab."));
+    connect(m_repairAuthorizeButton, SIGNAL(clicked()), this, SLOT(authorizeNow()));
+    elevationButtons->addWidget(m_repairAuthorizeButton, 0, Qt::AlignVCenter);
     layout->addWidget(elevation);
 
     QLabel *note = new QLabel(
@@ -964,7 +1224,7 @@ QWidget *LegacyMainWindow::buildActionsTab()
     addListViewColumn(m_unsupportedList, QString::fromLatin1("Reason"), 420);
     m_unsupportedList->setAllColumnsShowFocus(true);
     m_unsupportedList->setResizeMode(QListView::LastColumn);
-    m_unsupportedList->setMinimumHeight(80);
+    m_unsupportedList->setMinimumHeight(70);
     for (int i = 0; i < unsupportedSpecCount; ++i) {
         QListViewItem *item = new QListViewItem(
             m_unsupportedList,
@@ -987,19 +1247,30 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 10, 8);
 
-    m_chrootGroup = new QGroupBox(
-        QString::fromLatin1("Chroot shell (helper probe: not reported)"),
-        page);
-    QVBoxLayout *shellLayout = new QVBoxLayout(m_chrootGroup, 10, 6);
+    // Modern parity: the heading and tab label switch between "Chroot shell"
+    // (offline target) and "Host shell" (Host Maintenance) in
+    // updateChrootShellMode(); the scope label mirrors the modern page.
+    QHBoxLayout *headingRow = new QHBoxLayout(layout);
+    headingRow->setSpacing(6);
+    m_chrootHeading = makeSectionTitle(QString::fromLatin1("Chroot shell"), page);
+    headingRow->addWidget(m_chrootHeading);
+    headingRow->addStretch();
+    m_chrootScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
+    m_chrootScopeLabel->setTextFormat(Qt::PlainText);
+    m_chrootScopeLabel->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    headingRow->addWidget(m_chrootScopeLabel, 0, Qt::AlignVCenter);
 
     m_chrootReasonLabel = new QLabel(
         QString::fromLatin1(
             "No 'Legacy feature shell:' line is cached; run diagnostics for "
             "the selected scope to evaluate the helper's chroot/timeout "
             "containment probes (fail closed)."),
-        m_chrootGroup);
+        page);
     m_chrootReasonLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    shellLayout->addWidget(m_chrootReasonLabel);
+    layout->addWidget(m_chrootReasonLabel);
+
+    m_chrootGroup = new QGroupBox(QString::fromLatin1("Command"), page);
+    QVBoxLayout *shellLayout = new QVBoxLayout(m_chrootGroup, 8, 6);
 
     QHBoxLayout *commandRow = new QHBoxLayout(shellLayout);
     commandRow->setSpacing(6);
@@ -1011,11 +1282,11 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
         "One reviewed command string, passed to the helper as a single "
         "argument (no shell interpolation by the GUI)."));
     commandRow->addWidget(m_shellCommandEdit, 1);
-    m_shellRunButton = makeButton(QString::fromLatin1("Run in chroot"), m_chrootGroup);
+    m_shellRunButton = makeButton(QString::fromLatin1("Run Command"), m_chrootGroup);
     m_shellRunButton->setEnabled(false);
     connect(m_shellRunButton, SIGNAL(clicked()), this, SLOT(runChrootShell()));
     commandRow->addWidget(m_shellRunButton);
-    m_shellClearButton = makeButton(QString::fromLatin1("Clear output"), m_chrootGroup);
+    m_shellClearButton = makeButton(QString::fromLatin1("Clear Output"), m_chrootGroup);
     m_shellClearButton->setEnabled(false);
     connect(m_shellClearButton, SIGNAL(clicked()), this, SLOT(clearChrootOutput()));
     commandRow->addWidget(m_shellClearButton);
@@ -1023,7 +1294,7 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     m_shellOutput = new QTextEdit(m_chrootGroup);
     m_shellOutput->setReadOnly(true);
     m_shellOutput->setTextFormat(Qt::LogText);
-    m_shellOutput->setMinimumHeight(140);
+    m_shellOutput->setMinimumHeight(120);
     m_shellOutput->setText(QString::fromLatin1(
         "The helper exposes `shell <disk> <root> <command>` for an offline "
         "target chroot and `host-shell <disk> <root> <command>` for the "
@@ -1041,6 +1312,9 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
 {
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
+
+    m_fileCopyHeading = makeSectionTitle(QString::fromLatin1("File copy"), page);
+    layout->addWidget(m_fileCopyHeading);
 
     m_fileCopyGroup = new QGroupBox(
         QString::fromLatin1("File copy (helper probe: not reported)"),
@@ -1095,6 +1369,9 @@ QWidget *LegacyMainWindow::buildLogTab()
 {
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 4);
+
+    m_logsHeading = makeSectionTitle(QString::fromLatin1("Logs"), page);
+    layout->addWidget(m_logsHeading);
 
     QSplitter *splitter = new QSplitter(Qt::Horizontal, page);
     splitter->setChildrenCollapsible(false);
@@ -1173,6 +1450,9 @@ QWidget *LegacyMainWindow::buildSettingsTab()
 {
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
+
+    m_settingsHeading = makeSectionTitle(QString::fromLatin1("Settings"), page);
+    layout->addWidget(m_settingsHeading);
 
     // Modern parity: the modern Settings page opens with device discovery and
     // diagnostics and closes with the mandatory safety list; the legacy-only
@@ -1286,12 +1566,15 @@ QWidget *LegacyMainWindow::buildAboutTab()
             "travels only over the helper's standard input; a plain sudo "
             "password is requested in a modal hidden-input dialog and fed to "
             "<tt>sudo -S -v</tt> over a pipe.<br><br>"
-            "<b>Modern GUI parity:</b> Systems (inventory, selected drive "
-            "details, scope/target commit, Host Maintenance, unlock status), "
-            "Diagnostics (Run All + per-key runs and the target-only "
+            "<b>Modern GUI parity:</b> Systems (Available repair targets, "
+            "Select Target with an auto-resolved Linux root, Unlock, Host "
+            "Maintenance, Authorize, selected drive details, unlock status), "
+            "Diagnostics (Run All + per-key checks, Selected diagnostic pane, "
+            "Results with Copy/Save, and the target-only "
             "Edit Target File control with the Etch-era configuration files), "
             "Repair (gated tools, including the guarded GRUB-legacy "
-            "regeneration, + elevation state), Chroot Shell and File Copy "
+            "regeneration, + elevation state and Authorize), Chroot Shell / "
+            "Host Shell and File Copy "
             "(greyed with the helper's <tt>Legacy feature</tt> probe reasons), "
             "Logs (search, all/errors filter and session list) and Settings "
             "(read-only configuration + greyed modern options) mirror the Qt6 "
@@ -1322,7 +1605,7 @@ void LegacyMainWindow::scanDevices()
     m_deviceList->clear();
     m_rows.clear();
 
-    QString diskSelection = m_diskCombo->currentText();
+    const QString previousDisk = m_selectedDisk;
     for (std::size_t i = 0; i < rows.size(); ++i) {
         const DeviceRow &row = rows[i];
         QString type;
@@ -1340,13 +1623,18 @@ void LegacyMainWindow::scanDevices()
                 note = QString::fromLatin1("on ") + fromStd(row.parent);
             }
         }
+        if (row.encrypted) {
+            note = QString::fromLatin1("LUKS container") +
+                (note.isEmpty() ? QString::fromLatin1("")
+                                : QString::fromLatin1("; ") + note);
+        }
         new QListViewItem(m_deviceList, fromStd(row.path), fromStd(row.size),
-                          type, fromStd(row.fstype), fromStd(row.mountpoint),
+                          type, displayFsType(row), fromStd(row.mountpoint),
                           note);
         m_rows.insert(fromStd(row.path), row);
     }
-    if (!diskSelection.isEmpty()) {
-        setTarget(diskSelection, m_rootCombo->currentText());
+    if (!previousDisk.isEmpty() && m_rows.contains(previousDisk)) {
+        selectInventoryRow(previousDisk);
     }
     updateStatus();
     updateActionStates();
@@ -1354,8 +1642,14 @@ void LegacyMainWindow::scanDevices()
     updateUnlockStatus();
 }
 
+// Modern parity: selecting a drive row inspects the drive and resolves its
+// best Linux root automatically; selecting a partition/mapper row inspects
+// that component while keeping its owning drive as the target candidate.
 void LegacyMainWindow::deviceSelectionChanged()
 {
+    if (m_updatingSelection) {
+        return;
+    }
     QListViewItem *item = m_deviceList->currentItem();
     if (!item) {
         return;
@@ -1367,23 +1661,11 @@ void LegacyMainWindow::deviceSelectionChanged()
     }
     const DeviceRow &row = it.data();
     if (row.disk) {
-        setTarget(path, m_rootCombo->currentText());
-        refreshRootCombo();
+        setSelection(path, QString::null, QString::null);
     } else {
-        setTarget(m_diskCombo->currentText(), path);
+        const QString disk = owningDiskFor(row);
+        setSelection(disk, path, QString::null);
     }
-    updateStatus();
-    updateActionStates();
-    updateDriveDetails();
-    updateUnlockStatus();
-}
-
-void LegacyMainWindow::targetEdited()
-{
-    if (m_updatingCombos) {
-        return;
-    }
-    refreshRootCombo();
     updateStatus();
     updateActionStates();
     updateDriveDetails();
@@ -1392,22 +1674,47 @@ void LegacyMainWindow::targetEdited()
 
 void LegacyMainWindow::setRepairTarget()
 {
-    if (!selectionComplete()) {
+    const QString disk = selectedDisk();
+    if (disk.isEmpty()) {
         QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
-                             QString::fromLatin1("Select a physical drive and a root component first."),
+                             QString::fromLatin1("Select a physical drive in the Available repair targets list first."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    if (!runningHostDisk().isEmpty() && selectedDisk() == runningHostDisk()) {
+    if (!runningHostDisk().isEmpty() && disk == runningHostDisk()) {
         QMessageBox::warning(this, QString::fromLatin1("Protected system"),
                              QString::fromLatin1(
                                  "The running system cannot be selected as a repair "
                                  "target. Use Host Maintenance for the protected "
-                                 "running host or choose the disposable repair disk."),
+                                 "running host or choose another disk."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    // Committing a repair target is the authorization point: the modal
+    const QString root = selectedRoot();
+    if (root.isEmpty()) {
+        QMessageBox::warning(this, QString::fromLatin1("No Linux root component"),
+                             QString::fromLatin1(
+                                 "No Linux root component was detected on %1. "
+                                 "Unlock the encrypted volume first; Select Target "
+                                 "becomes available after a Linux filesystem is "
+                                 "detected.").arg(disk),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    // Never resolve the protected running host as a target, even through an
+    // inherited component path.
+    const QString hostRoot = runningHostRoot();
+    if (!hostRoot.isEmpty() && root == hostRoot) {
+        QMessageBox::warning(this, QString::fromLatin1("Protected system"),
+                             QString::fromLatin1(
+                                 "The selected root component (%1) belongs to the "
+                                 "running system and cannot be committed as a "
+                                 "repair target. Use Host Maintenance for the "
+                                 "protected running host.").arg(root),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    // Committing a repair target is an authorization point: the modal
     // hidden-input dialog is requested here once and the cached session is
     // reused by every later command (never on Run All).
     if (!ensureAdministratorSession(QString::fromLatin1("repair target commit"))) {
@@ -1416,14 +1723,14 @@ void LegacyMainWindow::setRepairTarget()
     if (m_hostMaintenance) {
         m_hostMaintenance = false;
         if (m_hostMaintenanceButton) {
-            m_hostMaintenanceButton->setText(QString::fromLatin1("Host Maintenance"));
+            updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Host Maintenance"));
         }
         appendLog(QString::fromLatin1(
             "Host Maintenance left; the committed repair target is now the active scope."));
     }
     m_targetCommitted = true;
-    m_committedDisk = selectedDisk();
-    m_committedRoot = selectedRoot();
+    m_committedDisk = disk;
+    m_committedRoot = root;
     appendLog(QString::fromLatin1("Repair target committed: %1 + %2. Diagnostics and gated repairs now target this scope.")
                   .arg(m_committedDisk).arg(m_committedRoot));
     updateStatus();
@@ -1437,7 +1744,7 @@ void LegacyMainWindow::toggleHostMaintenance()
     if (m_hostMaintenance) {
         m_hostMaintenance = false;
         if (m_hostMaintenanceButton) {
-            m_hostMaintenanceButton->setText(QString::fromLatin1("Host Maintenance"));
+            updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Host Maintenance"));
         }
         appendLog(QString::fromLatin1(
             "Running-host maintenance deselected; commit an offline repair target to run diagnostics."));
@@ -1462,14 +1769,17 @@ void LegacyMainWindow::toggleHostMaintenance()
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    setTarget(fromStd(disk), fromStd(root));
+    m_hostDetectedDisk = fromStd(disk);
+    m_hostDetectedRoot = fromStd(root);
+    setSelection(m_hostDetectedDisk, QString::null, m_hostDetectedRoot);
+    selectInventoryRow(m_hostDetectedDisk);
     if (!ensureAdministratorSession(QString::fromLatin1("Host Maintenance"))) {
         return;
     }
     m_targetCommitted = false;
     m_hostMaintenance = true;
     if (m_hostMaintenanceButton) {
-        m_hostMaintenanceButton->setText(QString::fromLatin1("Exit Host Maintenance"));
+        updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Exit Host Maintenance"));
     }
     appendLog(QString::fromLatin1(
         "Running-host maintenance activated; diagnostics and gated repairs now "
@@ -1481,92 +1791,149 @@ void LegacyMainWindow::toggleHostMaintenance()
     updateUnlockStatus();
 }
 
-void LegacyMainWindow::refreshRootCombo()
+// Best Linux root component for a drive, resolved from the read-only
+// inventory plus the helper-confirmed facts. Order mirrors the modern page:
+// a dm/mapper device on the disk with a Linux filesystem first, then a
+// partition with a Linux filesystem, then the disk itself. An explicit
+// override (main.cpp --host-root or the smoke test) and the helper-confirmed
+// component win over the inventory resolution.
+QString LegacyMainWindow::autoResolvedRoot(const QString &disk) const
 {
-    if (m_updatingCombos) {
-        return;
+    if (disk.isEmpty()) {
+        return QString::null;
     }
-    m_updatingCombos = true;
-    const QString disk = m_diskCombo->currentText();
-    const QString currentRoot = m_rootCombo->currentText();
-    const QString currentUnlock = m_unlockCombo->currentText();
-    m_rootCombo->clear();
-    m_unlockCombo->clear();
+    if (m_rootOverrideDisk == disk && !m_rootOverrideRoot.isEmpty()
+        && m_rootOverrideRoot.startsWith(QString::fromLatin1("/dev/"))) {
+        return m_rootOverrideRoot;
+    }
+    if (m_helperDisk == disk && !m_helperComponent.isEmpty()
+        && m_helperComponent.startsWith(QString::fromLatin1("/dev/"))) {
+        return m_helperComponent;
+    }
+    const QString diskName = disk.startsWith(QString::fromLatin1("/dev/"))
+        ? disk.mid(5) : disk;
 
-    // Partitions of the selected disk plus the mappers whose resolved backing
-    // chain belongs to it (kernel 2.6.18 has no dm/name, so mapper backing
-    // devices are resolved best-effort). A mapper with an unresolved backing
-    // stays listed; a mapper/partition that clearly belongs to another disk is
-    // excluded so a second disk can be committed without inheriting the
-    // running host's root component.
+    QString partitionCandidate;
+    for (QMap<QString, DeviceRow>::const_iterator it = m_rows.begin();
+         it != m_rows.end(); ++it) {
+        const DeviceRow &row = it.data();
+        const bool linuxFs = legacy::isLinuxFileSystemName(row.fstype)
+            || legacy::isLinuxFileSystemName(row.probedFstype);
+        if (!linuxFs) {
+            continue;
+        }
+        if (row.mapper && rootBelongsToDisk(m_rows, it.key(), diskName)) {
+            return it.key();
+        }
+        if (!row.disk && !row.mapper && row.parent == diskName
+            && partitionCandidate.isEmpty()) {
+            partitionCandidate = it.key();
+        }
+    }
+    if (!partitionCandidate.isEmpty()) {
+        return partitionCandidate;
+    }
+    // A locked LUKS container has no visible Linux filesystem yet: do not
+    // fall back to the disk itself, because committing it would store an
+    // unusable component (modern "Unlock required before selection").
+    if (!autoResolvedLuks(disk).isEmpty()) {
+        return QString::null;
+    }
+    // Whole-disk filesystem or blank/data disk: the disk itself is the only
+    // candidate, exactly like the modern fallback.
+    return disk;
+}
+
+// First locked LUKS component visible on `disk` (a partition or whole-device
+// crypto_LUKS row that has no unlocked mapper child yet), or "" when none is
+// known. Detection uses the world-readable udev metadata; it fails closed
+// (no candidate) when the probe data is unavailable.
+QString LegacyMainWindow::autoResolvedLuks(const QString &disk) const
+{
+    if (disk.isEmpty()) {
+        return QString::null;
+    }
     const QString diskName = disk.startsWith(QString::fromLatin1("/dev/"))
         ? disk.mid(5) : disk;
     for (QMap<QString, DeviceRow>::const_iterator it = m_rows.begin();
          it != m_rows.end(); ++it) {
         const DeviceRow &row = it.data();
-        if (row.mapper) {
-            if (rootBelongsToDisk(m_rows, it.key(), diskName)) {
-                m_rootCombo->insertItem(it.key());
+        if (!row.encrypted) {
+            continue;
+        }
+        const bool onDisk = row.disk ? (row.name == diskName)
+                                     : (row.parent == diskName);
+        if (!onDisk) {
+            continue;
+        }
+        // An encrypted container with a visible Linux mapper child is already
+        // unlocked; Boot Bitch reuses that mapping and does not reopen it.
+        bool unlockedChild = false;
+        for (QMap<QString, DeviceRow>::const_iterator child = m_rows.begin();
+             child != m_rows.end(); ++child) {
+            const DeviceRow &candidate = child.data();
+            if (candidate.mapper && candidate.parent == row.name
+                && (legacy::isLinuxFileSystemName(candidate.fstype)
+                    || legacy::isLinuxFileSystemName(candidate.probedFstype))) {
+                unlockedChild = true;
+                break;
             }
-        } else if (!row.disk && !row.parent.empty() && row.parent == diskName) {
-            m_rootCombo->insertItem(it.key());
-            m_unlockCombo->insertItem(it.key());
+        }
+        if (!unlockedChild) {
+            return it.key();
         }
     }
+    return QString::null;
+}
 
-    // Preserve the current root (including an explicitly typed one) unless it
-    // is known to belong to another disk; then fall back to the first
-    // candidate of the selected disk.
-    bool keepCurrent = !currentRoot.isEmpty();
-    if (keepCurrent && m_rows.contains(currentRoot)
-        && !rootBelongsToDisk(m_rows, currentRoot, diskName)) {
-        keepCurrent = false;
-    }
-    if (keepCurrent) {
-        bool found = false;
-        for (int i = 0; i < m_rootCombo->count(); ++i) {
-            if (m_rootCombo->text(i) == currentRoot) {
-                m_rootCombo->setCurrentItem(i);
-                found = true;
-                break;
+// The component the Unlock action should open: the inspected row when it is
+// itself a locked encrypted container (modern inspectedNode preference),
+// otherwise the first locked LUKS component on the drive.
+QString LegacyMainWindow::unlockCandidateFor(const QString &disk) const
+{
+    const QString inspected = selectedComponent();
+    if (!inspected.isEmpty()) {
+        const QMap<QString, DeviceRow>::const_iterator row = m_rows.find(inspected);
+        if (row != m_rows.end() && row.data().encrypted) {
+            bool unlockedChild = false;
+            for (QMap<QString, DeviceRow>::const_iterator child = m_rows.begin();
+                 child != m_rows.end(); ++child) {
+                const DeviceRow &candidate = child.data();
+                if (candidate.mapper && candidate.parent == row.data().name
+                    && (legacy::isLinuxFileSystemName(candidate.fstype)
+                        || legacy::isLinuxFileSystemName(candidate.probedFstype))) {
+                    unlockedChild = true;
+                    break;
+                }
+            }
+            if (!unlockedChild) {
+                return inspected;
             }
         }
-        if (!found) {
-            m_rootCombo->insertItem(currentRoot);
-            m_rootCombo->setCurrentItem(m_rootCombo->count() - 1);
-        }
-    } else if (m_rootCombo->count() > 0) {
-        m_rootCombo->setCurrentItem(0);
     }
+    return autoResolvedLuks(disk);
+}
 
-    // The unlock candidate defaults to the root component when that component
-    // is a partition (a mapper is already open); the helper still verifies the
-    // LUKS container and drive ownership before touching anything.
-    const QString rootNow = m_rootCombo->currentText();
-    const QString unlockWanted = keepCurrent ? currentUnlock : rootNow;
-    if (!unlockWanted.isEmpty()) {
-        bool found = false;
-        for (int i = 0; i < m_unlockCombo->count(); ++i) {
-            if (m_unlockCombo->text(i) == unlockWanted) {
-                m_unlockCombo->setCurrentItem(i);
-                found = true;
-                break;
-            }
-        }
-        if (!found && !unlockWanted.startsWith(QString::fromLatin1("/dev/mapper/"))) {
-            m_unlockCombo->insertItem(unlockWanted);
-            m_unlockCombo->setCurrentItem(m_unlockCombo->count() - 1);
-        }
-    } else if (!rootNow.isEmpty()
-               && !rootNow.startsWith(QString::fromLatin1("/dev/mapper/"))) {
-        for (int i = 0; i < m_unlockCombo->count(); ++i) {
-            if (m_unlockCombo->text(i) == rootNow) {
-                m_unlockCombo->setCurrentItem(i);
-                break;
-            }
-        }
+// The physical disk that owns an inspected partition/mapper row (walking the
+// resolved dm chain for mappers).
+QString LegacyMainWindow::owningDiskFor(const DeviceRow &row) const
+{
+    if (row.disk) {
+        return QString::fromLatin1("/dev/") + fromStd(row.name);
     }
-    m_updatingCombos = false;
+    QString parent = fromStd(row.parent);
+    for (int depth = 0; depth < 8 && !parent.isEmpty(); ++depth) {
+        const QMap<QString, DeviceRow>::const_iterator candidate =
+            m_rows.find(QString::fromLatin1("/dev/") + parent);
+        if (candidate == m_rows.end()) {
+            break;
+        }
+        if (candidate.data().disk) {
+            return candidate.key();
+        }
+        parent = fromStd(candidate.data().parent);
+    }
+    return QString::null;
 }
 
 void LegacyMainWindow::autoDetectHostTarget()
@@ -1575,6 +1942,7 @@ void LegacyMainWindow::autoDetectHostTarget()
     std::string disk;
     if (detectRunningHostTarget(&root, &disk)) {
         m_hostDetectedDisk = fromStd(disk);
+        m_hostDetectedRoot = fromStd(root);
     }
     if (selectionComplete()) {
         return;
@@ -1598,12 +1966,17 @@ bool LegacyMainWindow::hostScope() const
 
 QString LegacyMainWindow::selectedDisk() const
 {
-    return m_diskCombo->currentText().stripWhiteSpace();
+    return m_selectedDisk.stripWhiteSpace();
+}
+
+QString LegacyMainWindow::selectedComponent() const
+{
+    return m_selectedComponent.stripWhiteSpace();
 }
 
 QString LegacyMainWindow::selectedRoot() const
 {
-    return m_rootCombo->currentText().stripWhiteSpace();
+    return autoResolvedRoot(selectedDisk());
 }
 
 bool LegacyMainWindow::selectionComplete() const
@@ -1620,6 +1993,19 @@ QString LegacyMainWindow::runningHostDisk() const
     std::string disk;
     if (detectRunningHostTarget(&root, &disk)) {
         return fromStd(disk);
+    }
+    return QString::null;
+}
+
+QString LegacyMainWindow::runningHostRoot() const
+{
+    if (!m_hostDetectedRoot.isEmpty()) {
+        return m_hostDetectedRoot;
+    }
+    std::string root;
+    std::string disk;
+    if (detectRunningHostTarget(&root, &disk)) {
+        return fromStd(root);
     }
     return QString::null;
 }
@@ -1653,33 +2039,45 @@ QString LegacyMainWindow::scopeReadyReason() const
             "Host Maintenance is active; diagnostics and gated repairs target "
             "the protected running host.");
     }
-    if (!selectionComplete()) {
+    if (selectedDisk().isEmpty()) {
         return QString::fromLatin1(
-            "Select a physical drive and a root component first.");
+            "Select a physical drive in the Available repair targets list on the "
+            "Systems tab first, or use Host Maintenance for the protected "
+            "running host.");
+    }
+    if (!runningHostDisk().isEmpty() && selectedDisk() == runningHostDisk()) {
+        return QString::fromLatin1(
+            "The selected drive (%1) is the protected running host. Choose Host "
+            "Maintenance on the Systems tab to run read-only host diagnostics "
+            "and guarded host repairs; ordinary target repairs stay disabled.")
+            .arg(selectedDisk());
     }
     if (!m_targetCommitted) {
         return QString::fromLatin1(
-            "No repair target is committed. Choose Set as repair target on the "
-            "Systems tab (or Host Maintenance for the protected running host) "
-            "first.");
+            "No repair target is committed. Choose Select Target on the Systems "
+            "tab (or Host Maintenance for the protected running host) first.");
     }
     return QString::fromLatin1(
-        "The selection changed after the target was committed. Choose Set as "
-        "repair target again.");
+        "The selection changed after the target was committed. Choose Select "
+        "Target again.");
 }
 
 void LegacyMainWindow::runDiagnostics()
 {
-    if (!selectionComplete()) {
-        QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
-                             QString::fromLatin1("Select a physical drive and a root component first."),
-                             QMessageBox::Ok, QMessageBox::NoButton);
-        return;
-    }
     if (!diagnosticsScopeReady()) {
         QMessageBox::information(this, QString::fromLatin1("Diagnostics scope required"),
                                  scopeReadyReason(),
                                  QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    if (!selectionComplete()) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Diagnostics scope unresolved"),
+            QString::fromLatin1(
+                "The running host target could not be resolved; use Refresh "
+                "Devices and commit a repair target or re-enter Host "
+                "Maintenance."),
+            QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
     const bool host = hostScope();
@@ -1696,16 +2094,20 @@ void LegacyMainWindow::runSelectedDiagnostic()
     if (m_running) {
         return;
     }
-    if (!selectionComplete()) {
-        QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
-                             QString::fromLatin1("Select a physical drive and a root component first."),
-                             QMessageBox::Ok, QMessageBox::NoButton);
-        return;
-    }
     if (!diagnosticsScopeReady()) {
         QMessageBox::information(this, QString::fromLatin1("Diagnostics scope required"),
                                  scopeReadyReason(),
                                  QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    if (!selectionComplete()) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Diagnostics scope unresolved"),
+            QString::fromLatin1(
+                "The running host target could not be resolved; use Refresh "
+                "Devices and commit a repair target or re-enter Host "
+                "Maintenance."),
+            QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
     QListViewItem *item = m_diagnosticList ? m_diagnosticList->currentItem() : 0;
@@ -1731,6 +2133,7 @@ void LegacyMainWindow::runSelectedDiagnostic()
 
 void LegacyMainWindow::diagnosticSelectionChanged()
 {
+    updateDiagnosticDetails();
     updateActionStates();
 }
 
@@ -1867,6 +2270,41 @@ void LegacyMainWindow::copyResults()
     statusBar()->message(QString::fromLatin1("Diagnostic results copied to the clipboard."), 3000);
 }
 
+// Modern parity: Save Results... writes the current read-only results pane to
+// a user-chosen file (no helper interaction, no secret can be present).
+void LegacyMainWindow::saveResults()
+{
+    if (!m_rawView) {
+        return;
+    }
+    const QString text = m_rawView->text();
+    if (text.stripWhiteSpace().isEmpty()) {
+        statusBar()->message(QString::fromLatin1("No diagnostic results to save yet."), 3000);
+        return;
+    }
+    const QString path = QFileDialog::getSaveFileName(
+        QString::null,
+        QString::fromLatin1("Text files (*.txt);;All files (*)"),
+        this, "save-results", QString::fromLatin1("Save diagnostic results"));
+    if (path.isEmpty()) {
+        return;
+    }
+    QFile file(path);
+    if (!file.open(IO_WriteOnly)) {
+        QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
+                             QString::fromLatin1("Could not write %1.").arg(path),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    QTextStream stream(&file);
+    stream << text;
+    if (!text.endsWith(QString::fromLatin1("\n"))) {
+        stream << "\n";
+    }
+    file.close();
+    statusBar()->message(QString::fromLatin1("Diagnostic results saved to %1").arg(path), 4000);
+}
+
 void LegacyMainWindow::runUnlock()
 {
     if (m_running) {
@@ -1877,20 +2315,25 @@ void LegacyMainWindow::runUnlock()
         QMessageBox::warning(this, QString::fromLatin1("Unlock not available"),
                              QString::fromLatin1(
                                  "The protected running host cannot be unlocked. "
-                                 "Select the offline repair target scope first."),
+                                 "Use Host Maintenance for the protected running "
+                                 "host, or select an offline repair target."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    if (!selectionComplete()) {
+    if (selectedDisk().isEmpty()) {
         QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
-                             QString::fromLatin1("Select a physical drive and a root component first."),
+                             QString::fromLatin1("Select a physical drive in the Available repair targets list first."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const QString luks = m_unlockCombo->currentText().stripWhiteSpace();
+    // Auto-resolve the locked LUKS component from the read-only inventory; the
+    // helper's own cryptsetup preflights verify it again before opening it.
+    const QString luks = unlockCandidateFor(selectedDisk());
     if (luks.isEmpty()) {
         QMessageBox::warning(this, QString::fromLatin1("Unlock not available"),
-                             QString::fromLatin1("Select or type the LUKS component to unlock first."),
+                             QString::fromLatin1(
+                                 "No locked LUKS component is currently visible on "
+                                 "this selected drive."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
@@ -2047,16 +2490,19 @@ void LegacyMainWindow::runAction()
         if (stage != QString::fromLatin1(spec.stage)) {
             continue;
         }
-        if (!selectionComplete()) {
-            QMessageBox::warning(this, QString::fromLatin1("Boot Bitch Legacy"),
-                                 QString::fromLatin1("Select a physical drive and a root component first."),
-                                 QMessageBox::Ok, QMessageBox::NoButton);
-            return;
-        }
         if (!diagnosticsScopeReady()) {
             QMessageBox::information(this, QString::fromLatin1("Scope required"),
                                      scopeReadyReason(),
                                      QMessageBox::Ok, QMessageBox::NoButton);
+            return;
+        }
+        if (!selectionComplete()) {
+            QMessageBox::warning(
+                this, QString::fromLatin1("Scope unresolved"),
+                QString::fromLatin1(
+                    "The selected scope has no resolved root component; use "
+                    "Refresh Devices and commit the repair target again."),
+                QMessageBox::Ok, QMessageBox::NoButton);
             return;
         }
         if (spec.write) {
@@ -2110,9 +2556,10 @@ void LegacyMainWindow::runChrootShell()
             this, QString::fromLatin1("Administrator authorization required"),
             QString::fromLatin1(
                 "No administrator session is active.\n\n"
-                "Enter Host Maintenance or commit a repair target on the Systems "
-                "tab to authorize this session; the chroot shell then reuses the "
-                "cached authorization."),
+                "Press Authorize on the Systems or Repair tab to establish the "
+                "session, or enter Host Maintenance / commit a repair target on "
+                "the Systems tab; the chroot shell then reuses the cached "
+                "authorization."),
             QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
@@ -2168,6 +2615,45 @@ bool LegacyMainWindow::administratorSessionActive() const
     // sudo), `sudo -n`, or an elevation method that prompts on its own
     // (gksu/gksudo).
     return !m_runner->elevationNeedsPassword(0);
+}
+
+// The cached decision plus a live, non-blocking timestamp probe. A plain-sudo
+// timestamp can expire between commands; probing here (stdin closed, so an
+// expired sudo gets EOF instead of blocking on a password read) lets the GUI
+// fail closed with the Authorize remedy instead of hanging.
+bool LegacyMainWindow::sessionStillCurrent()
+{
+    if (!administratorSessionActive()) {
+        return false;
+    }
+    if (m_runner->sessionIsCurrent()) {
+        return true;
+    }
+    m_runner->resetElevation();
+    appendLog(QString::fromLatin1(
+        "The cached administrator authorization expired or was refused; press "
+        "Authorize (Systems or Repair tab) to re-establish the session."));
+    updateElevationLabel();
+    updateActionStates();
+    return false;
+}
+
+void LegacyMainWindow::authorizeNow()
+{
+    if (m_running) {
+        return;
+    }
+    if (!diagnosticsScopeReady()) {
+        QMessageBox::information(this, QString::fromLatin1("Authorization scope required"),
+                                 scopeReadyReason(),
+                                 QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    if (ensureAdministratorSession(QString::fromLatin1("administrator authorization"))) {
+        appendLog(QString::fromLatin1(
+            "Administrator session authorized from the Authorize control."));
+    }
+    updateActionStates();
 }
 
 // Authorization is requested exactly once per scope: on entering Host
@@ -2258,24 +2744,50 @@ void LegacyMainWindow::startCommand(const QStringList &args,
         return;
     }
     if (!administratorSessionActive()) {
-        // Authorization is established on Host Maintenance entry or target
-        // commit, never here: fail closed with the exact remedy instead of
-        // opening a password prompt on Run All.
+        // Authorization is established on Host Maintenance entry, target
+        // commit or the explicit Authorize control, never here: fail closed
+        // with the exact remedy instead of opening a password prompt on Run All.
         appendLog(QString::fromLatin1(
-            "ERROR: administrator authorization is required for %1; enter Host "
-            "Maintenance or commit a repair target to authorize this session.")
+            "ERROR: administrator authorization is required for %1; press "
+            "Authorize (Systems or Repair tab), enter Host Maintenance or commit "
+            "a repair target to authorize this session.")
             .arg(label));
         if (!m_smokeMode) {
             QMessageBox::warning(
                 this, QString::fromLatin1("Administrator authorization required"),
                 QString::fromLatin1(
                     "No administrator session is active for %1.\n\n"
-                    "Enter Host Maintenance or commit a repair target on the "
-                    "Systems tab to authorize this session; diagnostics and "
-                    "repairs then reuse the cached authorization.").arg(label),
+                    "Press Authorize on the Systems or Repair tab to establish "
+                    "the session now, or enter Host Maintenance / commit a repair "
+                    "target on the Systems tab; diagnostics and repairs then "
+                    "reuse the cached authorization.").arg(label),
                 QMessageBox::Ok, QMessageBox::NoButton);
         }
         // Never leave a collected secret behind when authorization is missing.
+        m_runner->setInputData(QByteArray());
+        m_pendingConfigWrite = false;
+        m_pendingConfigKey = QString::null;
+        m_pendingConfigPath = QString::null;
+        return;
+    }
+    // A cached plain-sudo timestamp can expire between commands. Probe it
+    // without blocking and fail closed with the Authorize remedy when it did;
+    // otherwise the GUI would either prompt mid-command or hang on sudo's
+    // password read.
+    if (!sessionStillCurrent()) {
+        appendLog(QString::fromLatin1(
+            "ERROR: the administrator session for %1 is no longer valid; the "
+            "command was not started.").arg(label));
+        if (!m_smokeMode) {
+            QMessageBox::warning(
+                this, QString::fromLatin1("Administrator authorization expired"),
+                QString::fromLatin1(
+                    "The cached administrator authorization for %1 expired or "
+                    "was refused.\n\nPress Authorize on the Systems or Repair "
+                    "tab to re-establish the session, then run the command "
+                    "again. No command was started.").arg(label),
+                QMessageBox::Ok, QMessageBox::NoButton);
+        }
         m_runner->setInputData(QByteArray());
         m_pendingConfigWrite = false;
         m_pendingConfigKey = QString::null;
@@ -2290,7 +2802,6 @@ void LegacyMainWindow::startCommand(const QStringList &args,
     m_pendingIdentity = identity();
     m_pendingLabel = label;
     m_running = true;
-    m_cancelButton->setEnabled(true);
     updateActionStates();
 
     QString elevation;
@@ -2305,7 +2816,6 @@ void LegacyMainWindow::startCommand(const QStringList &args,
         // HelperRunner emitted finished(false, -1) synchronously.
         return;
     }
-    m_cancelButton->setEnabled(m_runner->isRunning());
     updateStatus();
 }
 
@@ -2326,15 +2836,15 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
                   .arg(ok ? QString::fromLatin1("finished") : QString::fromLatin1("failed"))
                   .arg(exitCode));
 
-    // A cached sudo authorization can expire between commands: drop the cached
-    // decision so the next command asks for the password again.
-    if (!ok
-        && (m_transcript.contains(QString::fromLatin1("sudo:"))
-            || m_transcript.contains(QString::fromLatin1("a password is required")))) {
+    // A cached sudo authorization can expire or be refused between commands:
+    // drop the cached decision so the explicit Authorize control re-establishes
+    // it. Only a transcript that actually shows a sudo session problem resets
+    // it (a mere "sudo:" substring in unrelated target log output must not).
+    if (!ok && transcriptSuggestsAuthFailure(m_transcript)) {
         m_runner->resetElevation();
         appendLog(QString::fromLatin1(
-            "The sudo authorization expired or was refused; the next privileged "
-            "command will request the password again."));
+            "The sudo authorization expired or was refused; press Authorize "
+            "(Systems or Repair tab) to re-establish the session."));
         updateElevationLabel();
     }
 
@@ -2396,7 +2906,6 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     m_pendingConfigPath = QString::null;
     m_pendingShell = false;
     m_pendingLabel = QString::null;
-    m_cancelButton->setEnabled(false);
     updateActionStates();
     updateStatus();
     updateDriveDetails();
@@ -2540,7 +3049,7 @@ void LegacyMainWindow::runSmokeStep()
         }
         m_hostMaintenance = true;
         if (m_hostMaintenanceButton) {
-            m_hostMaintenanceButton->setText(QString::fromLatin1("Exit Host Maintenance"));
+            updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Exit Host Maintenance"));
         }
         QStringList args;
         args << QString::fromLatin1("host-diagnose") << selectedDisk() << selectedRoot()
@@ -2608,8 +3117,11 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("tab set missing (expected 8 tabs)"));
         ok = false;
     } else {
+        // The Chroot Shell tab label switches to "Host Shell" in host mode
+        // (modern updateChrootShellMode); the smoke runs with Host Maintenance
+        // active, so expect the host label here.
         const char *expectedTabs[] = {
-            "Systems", "Diagnostics", "Repair", "Chroot Shell", "File Copy",
+            "Systems", "Diagnostics", "Repair", "Host Shell", "File Copy",
             "Logs", "Settings", "About"
         };
         for (int i = 0; i < 8; ++i) {
@@ -2620,6 +3132,29 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 ok = false;
             }
         }
+    }
+    // Global header (modern parity): title, subtitle and guarded-repair badge.
+    if (!m_headerTitle || m_headerTitle->text() != QString::fromLatin1("Boot Bitch")) {
+        problems->append(QString::fromLatin1("global header title missing"));
+        ok = false;
+    }
+    if (!m_headerSubtitle
+        || m_headerSubtitle->text() != QString::fromLatin1("Linux recovery and boot-repair utility")) {
+        problems->append(QString::fromLatin1("global header subtitle missing"));
+        ok = false;
+    }
+    if (!m_headerBadge
+        || !m_headerBadge->text().contains(QString::fromLatin1("GUARDED REPAIR"))
+        || !m_headerBadge->text().contains(QString::fromLatin1(LEGACY_VERSION))) {
+        problems->append(QString::fromLatin1("guarded-repair version badge missing"));
+        ok = false;
+    }
+    // Section titles: Systems, Available repair targets, Diagnostics, Repair,
+    // Chroot shell, File copy, Logs, Settings.
+    if (m_sectionTitles.size() < 8) {
+        problems->append(QString::fromLatin1("section titles missing (found %1)")
+                             .arg(static_cast<int>(m_sectionTitles.size())));
+        ok = false;
     }
     if (!m_detailList || m_detailList->childCount() < 10) {
         problems->append(QString::fromLatin1("selected-drive details panel missing or incomplete"));
@@ -2641,8 +3176,13 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("log wrap setting missing"));
         ok = false;
     }
-    if (!m_unlockButton || !m_unlockCombo) {
-        problems->append(QString::fromLatin1("unlock controls missing"));
+    if (!m_unlockButton || !m_setTargetButton || !m_hostMaintenanceButton) {
+        problems->append(QString::fromLatin1("target/unlock/host-maintenance controls missing"));
+        ok = false;
+    }
+    if (!m_authorizeButton || !m_authStatusLabel
+        || !m_repairAuthorizeButton || !m_repairAuthStatusLabel) {
+        problems->append(QString::fromLatin1("deferred-authorization controls missing"));
         ok = false;
     }
     if (!m_elevationLabel || m_elevationLabel->text().isEmpty() || !m_elevateButton) {
@@ -2664,55 +3204,144 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             .arg(m_diagnosticList ? m_diagnosticList->childCount() : -1));
         ok = false;
     }
+    if (m_diagnosticList && m_diagnosticList->columns() != 1) {
+        problems->append(QString::fromLatin1(
+            "diagnostic check list must carry the single Check column"));
+        ok = false;
+    }
     if (!m_configCombo || !m_configButton || !m_configLabel || !m_configReasonLabel) {
         problems->append(QString::fromLatin1("target configuration controls missing"));
         ok = false;
     }
-    if (!m_runDiagnosticButton || !m_copyResultsButton) {
-        problems->append(QString::fromLatin1("per-diagnostic run/copy controls missing"));
+    if (!m_runDiagnosticButton || !m_copyResultsButton || !m_saveResultsButton) {
+        problems->append(QString::fromLatin1("diagnostic run/copy/save controls missing"));
         ok = false;
     }
-    if (!m_setTargetButton || !m_hostMaintenanceButton) {
-        problems->append(QString::fromLatin1("target commit / Host Maintenance controls missing"));
+    if (!m_scopeLabel || !m_diagTitle || !m_diagDescription || !m_diagAvailability) {
+        problems->append(QString::fromLatin1("selected-diagnostic pane missing"));
+        ok = false;
+    }
+    if (m_runDiagnosticButton
+        && m_runDiagnosticButton->text() != QString::fromLatin1("Run Diagnostic")) {
+        problems->append(QString::fromLatin1("Run Diagnostic button text changed: '%1'")
+                             .arg(m_runDiagnosticButton->text()));
+        ok = false;
+    }
+    if (m_diagnosticsButton
+        && m_diagnosticsButton->text() != QString::fromLatin1("Run All")) {
+        problems->append(QString::fromLatin1("Run All button text changed: '%1'")
+                             .arg(m_diagnosticsButton->text()));
+        ok = false;
+    }
+    if (m_setTargetButton
+        && m_setTargetButton->text() != QString::fromLatin1("Select Target")) {
+        problems->append(QString::fromLatin1("Select Target button text changed: '%1'")
+                             .arg(m_setTargetButton->text()));
+        ok = false;
+    }
+    if (m_scanButton
+        && m_scanButton->text() != QString::fromLatin1("Refresh Devices")) {
+        problems->append(QString::fromLatin1("Refresh Devices button text changed: '%1'")
+                             .arg(m_scanButton->text()));
         ok = false;
     }
 
-    // Fail closed for the protected running host: Unlock must stay disabled
-    // and the protected running-host disk must never be committable.
+    // Read-only udev metadata probe: a locked LUKS container must be visible in
+    // the inventory with its probed type (the GUI never opens the device).
+    if (m_deviceList) {
+        for (QMap<QString, DeviceRow>::const_iterator it = m_rows.begin();
+             it != m_rows.end(); ++it) {
+            const DeviceRow &row = it.data();
+            if (!row.encrypted || !row.fstype.empty()) {
+                continue;
+            }
+            for (QListViewItem *item = m_deviceList->firstChild(); item;
+                 item = item->nextSibling()) {
+                if (item->text(0) != it.key()) {
+                    continue;
+                }
+                if (item->text(3) != QString::fromLatin1("crypto_LUKS")) {
+                    problems->append(QString::fromLatin1(
+                        "locked LUKS device %1 is not shown with its probed type (row: '%2')")
+                        .arg(it.key()).arg(item->text(3)));
+                    ok = false;
+                }
+                break;
+            }
+        }
+    }
+
+    // Fail closed for the protected running host: Unlock and Select Target must
+    // stay disabled and their tooltips must name Host Maintenance as the path.
     const QString hostDisk = runningHostDisk();
     m_hostMaintenance = false;
     if (m_hostMaintenanceButton) {
-        m_hostMaintenanceButton->setText(QString::fromLatin1("Host Maintenance"));
+        updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Host Maintenance"));
+    }
+    if (!hostDisk.isEmpty()) {
+        setTarget(hostDisk, selectedRoot());
     }
     updateActionStates();
     if (m_unlockButton && m_unlockButton->isEnabled()) {
         problems->append(QString::fromLatin1("unlock button enabled for the running host scope"));
         ok = false;
     }
+    if (!hostDisk.isEmpty() && m_unlockButton
+        && QToolTip::textFor(m_unlockButton).find(QString::fromLatin1("Host Maintenance")) < 0) {
+        problems->append(QString::fromLatin1(
+            "unlock tooltip for the protected host does not name Host Maintenance"));
+        ok = false;
+    }
+    if (!hostDisk.isEmpty() && m_setTargetButton
+        && QToolTip::textFor(m_setTargetButton).find(QString::fromLatin1("Host Maintenance")) < 0) {
+        problems->append(QString::fromLatin1(
+            "Select Target tooltip for the protected host does not name Host Maintenance"));
+        ok = false;
+    }
+    if (!hostDisk.isEmpty() && m_setTargetButton && m_setTargetButton->isEnabled()) {
+        problems->append(QString::fromLatin1(
+            "Select Target enabled for the protected running-host disk"));
+        ok = false;
+    }
+    // The protected host must be shown as protected in the details pane.
+    if (!hostDisk.isEmpty() && m_detailList) {
+        bool protectedShown = false;
+        for (QListViewItem *item = m_detailList->firstChild(); item;
+             item = item->nextSibling()) {
+            if (item->text(0) == QString::fromLatin1("Protection:")
+                && item->text(1).contains(QString::fromLatin1("PROTECTED"))) {
+                protectedShown = true;
+                break;
+            }
+        }
+        if (!protectedShown) {
+            problems->append(QString::fromLatin1(
+                "protected running host is not shown as PROTECTED in the details pane"));
+            ok = false;
+        }
+    }
 
-    // Modern gating: Run Diagnostic needs a committed repair target or active
-    // Host Maintenance, never just an auto-filled selection.
+    // Modern gating: Run All needs a committed repair target or active Host
+    // Maintenance, never just an auto-filled selection.
     if (m_diagnosticsButton->isEnabled()) {
-        problems->append(QString::fromLatin1("Run Diagnostic enabled without a committed target or Host Maintenance"));
+        problems->append(QString::fromLatin1("Run All enabled without a committed target or Host Maintenance"));
         ok = false;
     }
     if (m_configButton && m_configButton->isEnabled()) {
         problems->append(QString::fromLatin1("configuration viewer enabled for the running host scope"));
         ok = false;
     }
+    if (m_scopeLabel
+        && m_scopeLabel->text() != QString::fromLatin1("Target: none selected")) {
+        problems->append(QString::fromLatin1(
+            "scope label is '%1', expected 'Target: none selected'")
+            .arg(m_scopeLabel->text()));
+        ok = false;
+    }
 
     // Target eligibility without a scope selector: any selectable
     // non-running-host disk can be committed, the protected running-host disk
     // stays excluded.
-    if (!hostDisk.isEmpty()) {
-        setTarget(hostDisk, selectedRoot());
-        updateActionStates();
-        if (m_setTargetButton && m_setTargetButton->isEnabled()) {
-            problems->append(QString::fromLatin1(
-                "Set as repair target enabled for the protected running-host disk"));
-            ok = false;
-        }
-    }
     const QString previousDisk = selectedDisk();
     const QString previousRoot = selectedRoot();
     setTarget(QString::fromLatin1("/dev/bootrepair-smoke-target"),
@@ -2720,7 +3349,12 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     updateActionStates();
     if (m_setTargetButton && !m_setTargetButton->isEnabled()) {
         problems->append(QString::fromLatin1(
-            "Set as repair target disabled for a selectable non-host disk"));
+            "Select Target disabled for a selectable non-host disk"));
+        ok = false;
+    }
+    if (m_unlockButton && m_unlockButton->isEnabled()) {
+        problems->append(QString::fromLatin1(
+            "Unlock enabled for a disk without a locked LUKS component"));
         ok = false;
     }
     if (administratorSessionActive()) {
@@ -2730,6 +3364,12 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         if (!targetCommitted() || !m_diagnosticsButton->isEnabled()) {
             problems->append(QString::fromLatin1(
                 "committing a selectable non-host disk did not enable diagnostics"));
+            ok = false;
+        }
+        if (m_scopeLabel
+            && !m_scopeLabel->text().contains(QString::fromLatin1("Target: /dev/bootrepair-smoke-target"))) {
+            problems->append(QString::fromLatin1(
+                "committed scope label is '%1'").arg(m_scopeLabel->text()));
             ok = false;
         }
         m_targetCommitted = false;
@@ -2742,11 +3382,30 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     m_hostMaintenance = true;
     updateActionStates();
     if (!m_diagnosticsButton->isEnabled()) {
-        problems->append(QString::fromLatin1("Run Diagnostic disabled while Host Maintenance is active"));
+        problems->append(QString::fromLatin1("Run All disabled while Host Maintenance is active"));
         ok = false;
     }
     if (!m_runDiagnosticButton->isEnabled()) {
-        problems->append(QString::fromLatin1("Run selected diagnostic disabled while Host Maintenance is active"));
+        problems->append(QString::fromLatin1("Run Diagnostic disabled while Host Maintenance is active"));
+        ok = false;
+    }
+    if (m_scopeLabel
+        && !m_scopeLabel->text().startsWith(QString::fromLatin1("Host maintenance: "))) {
+        problems->append(QString::fromLatin1(
+            "host scope label is '%1'").arg(m_scopeLabel->text()));
+        ok = false;
+    }
+    // Modern parity: the Chroot Shell heading/tab/button switch to host mode.
+    if (m_chrootHeading && m_chrootHeading->text() != QString::fromLatin1("Host shell")) {
+        problems->append(QString::fromLatin1("Chroot Shell heading did not switch to Host shell"));
+        ok = false;
+    }
+    if (m_shellRunButton && m_shellRunButton->text() != QString::fromLatin1("Run on Host")) {
+        problems->append(QString::fromLatin1("shell run button did not switch to Run on Host"));
+        ok = false;
+    }
+    if (m_tabs && m_tabs->label(3) != QString::fromLatin1("Host Shell")) {
+        problems->append(QString::fromLatin1("Chroot Shell tab label did not switch to Host Shell"));
         ok = false;
     }
     // Modern parity: the target configuration row (and Edit Target File) is
@@ -2767,7 +3426,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     m_committedRoot = selectedRoot();
     updateActionStates();
     if (!m_diagnosticsButton->isEnabled()) {
-        problems->append(QString::fromLatin1("Run Diagnostic disabled for a committed repair target"));
+        problems->append(QString::fromLatin1("Run All disabled for a committed repair target"));
         ok = false;
     }
     if (m_configCombo && m_configCombo->isHidden()) {
@@ -2789,10 +3448,16 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         && !comboTextFits(m_configCombo, QString::fromLatin1("configuration combo"), problems)) {
         ok = false;
     }
+    if (m_scopeLabel
+        && !m_scopeLabel->text().contains(QString::fromLatin1("Target: "))) {
+        problems->append(QString::fromLatin1(
+            "committed scope label is '%1'").arg(m_scopeLabel->text()));
+        ok = false;
+    }
     m_targetCommitted = false;
     updateActionStates();
     if (m_diagnosticsButton->isEnabled()) {
-        problems->append(QString::fromLatin1("Run Diagnostic enabled for an uncommitted target"));
+        problems->append(QString::fromLatin1("Run All enabled for an uncommitted target"));
         ok = false;
     }
     if (m_configCombo && !m_configCombo->isHidden()) {
@@ -2808,7 +3473,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     // Restore the running-host scope the smoke's helper commands used.
     m_hostMaintenance = true;
     if (m_hostMaintenanceButton) {
-        m_hostMaintenanceButton->setText(QString::fromLatin1("Exit Host Maintenance"));
+        updateButtonText(m_hostMaintenanceButton, QString::fromLatin1("Exit Host Maintenance"));
     }
     updateActionStates();
 
@@ -2817,6 +3482,11 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     if (!administratorSessionActive()) {
         problems->append(QString::fromLatin1(
             "smoke session is not authorized although helper commands ran"));
+        ok = false;
+    }
+    if (m_authStatusLabel
+        && m_authStatusLabel->text().find(QString::fromLatin1("Authorization")) < 0) {
+        problems->append(QString::fromLatin1("authorization status label is empty"));
         ok = false;
     }
 
@@ -3168,24 +3838,6 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
                 ok = false;
             }
         }
-        if (m_diskCombo->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (!comboTextFits(m_diskCombo, QString::fromLatin1("drive combo"), problems)) {
-                ok = false;
-            }
-        }
-        if (m_rootCombo->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (!comboTextFits(m_rootCombo, QString::fromLatin1("root combo"), problems)) {
-                ok = false;
-            }
-        }
-        if (m_unlockCombo->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (!comboTextFits(m_unlockCombo, QString::fromLatin1("LUKS combo"), problems)) {
-                ok = false;
-            }
-        }
         if (m_configCombo && m_configCombo->isVisibleTo(m_tabs)) {
             ++checkedCount;
             if (!comboTextFits(m_configCombo, QString::fromLatin1("configuration combo"), problems)) {
@@ -3194,18 +3846,64 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
         }
     }
     m_tabs->setCurrentPage(originalPage);
+
+    // Section titles (modern sectionTitle parity): no clipped title text and
+    // every title must stay inside its page. The titles are page-level labels
+    // (not group boxes), so they are checked separately.
+    for (std::size_t i = 0; i < m_sectionTitles.size(); ++i) {
+        QLabel *title = m_sectionTitles[i];
+        if (!title || !title->isVisibleTo(this)) {
+            continue;
+        }
+        ++checkedCount;
+        QFontMetrics metrics(title->font());
+        if (title->width() < metrics.width(title->text()) + 8) {
+            problems->append(QString::fromLatin1(
+                "section title clipped: '%1' (%2px needed, %3px available)")
+                .arg(title->text()).arg(metrics.width(title->text()) + 8)
+                .arg(title->width()));
+            ok = false;
+        }
+        QWidget *pageWidget = title->parentWidget();
+        while (pageWidget && m_tabs->indexOf(pageWidget) < 0
+               && pageWidget != m_tabs) {
+            pageWidget = pageWidget->parentWidget();
+        }
+        if (pageWidget && pageWidget != m_tabs) {
+            const QRect pageRect = pageWidget->rect();
+            const QRect mapped(title->mapTo(pageWidget, QPoint(0, 0)), title->size());
+            if (!pageRect.contains(mapped)) {
+                problems->append(QString::fromLatin1(
+                    "section title '%1' is clipped by its page").arg(title->text()));
+                ok = false;
+            }
+        }
+    }
+    // Global header: the title, subtitle and badge must fit the 1024x768
+    // contract without clipping.
+    if (m_headerTitle && m_headerTitle->isVisibleTo(this)) {
+        ++checkedCount;
+        QFontMetrics metrics(m_headerTitle->font());
+        if (m_headerTitle->width() < metrics.width(m_headerTitle->text()) + 4) {
+            problems->append(QString::fromLatin1("global header title is clipped"));
+            ok = false;
+        }
+    }
+    if (m_headerBadge && m_headerBadge->isVisibleTo(this)) {
+        ++checkedCount;
+        QFontMetrics metrics(m_headerBadge->font());
+        if (m_headerBadge->width() < metrics.width(m_headerBadge->text()) + 12) {
+            problems->append(QString::fromLatin1(
+                "guarded-repair badge is clipped (%1px needed, %2px available)")
+                .arg(metrics.width(m_headerBadge->text()) + 12)
+                .arg(m_headerBadge->width()));
+            ok = false;
+        }
+    }
     if (checked) {
         *checked = checkedCount;
     }
     return ok;
-}
-
-void LegacyMainWindow::cancelRun()
-{
-    if (m_runner->isRunning()) {
-        appendLog(QString::fromLatin1("Cancelling the running helper command..."));
-        m_runner->cancel();
-    }
 }
 
 // Rebuilds the target configuration row from the helper's read-only
@@ -3348,6 +4046,47 @@ void LegacyMainWindow::updateFeatureTab(QGroupBox *group, QLabel *label,
     label->setText(text);
 }
 
+// Modern updateChrootShellMode() parity: the heading, tab label, notice,
+// command button and warning follow the active scope (Host Shell while Host
+// Maintenance is active, Chroot Shell for a committed offline target).
+void LegacyMainWindow::updateChrootShellMode()
+{
+    const bool host = hostScope();
+    if (m_chrootHeading) {
+        m_chrootHeading->setText(host
+            ? QString::fromLatin1("Host shell")
+            : QString::fromLatin1("Chroot shell"));
+    }
+    if (m_chrootScopeLabel) {
+        m_chrootScopeLabel->setText(host
+            ? QString::fromLatin1("Host maintenance: %1")
+                  .arg(selectedDisk().isEmpty() ? QString::fromLatin1("unresolved")
+                                                : selectedDisk())
+            : (targetCommitted()
+                ? QString::fromLatin1("Target: %1 + %2")
+                      .arg(m_committedDisk).arg(m_committedRoot)
+                : QString::fromLatin1("Target: none selected")));
+    }
+    if (m_shellRunButton) {
+        updateButtonText(m_shellRunButton, host
+            ? QString::fromLatin1("Run on Host")
+            : QString::fromLatin1("Run Command"));
+    }
+    if (m_chrootGroup) {
+        m_chrootGroup->setTitle(host
+            ? QString::fromLatin1("Host command")
+            : QString::fromLatin1("Command"));
+    }
+    if (m_tabs && m_chrootTab) {
+        m_tabs->setTabLabel(m_chrootTab,
+                            host ? QString::fromLatin1("Host Shell")
+                                 : QString::fromLatin1("Chroot Shell"));
+        m_tabs->setTabToolTip(m_chrootTab, host
+            ? QString::fromLatin1("Execute a command on the running host as root.")
+            : QString::fromLatin1("Execute a command inside the selected repair system as root."));
+    }
+}
+
 // Chroot Shell follows the active scope's own helper probe (`host-shell` for
 // Host Maintenance, `shell` for a committed repair target) plus the cached
 // administrator session. When any prerequisite is missing every control stays
@@ -3357,16 +4096,12 @@ void LegacyMainWindow::updateChrootShellState()
     if (!m_chrootGroup || !m_chrootReasonLabel) {
         return;
     }
+    updateChrootShellMode();
     const bool host = hostScope();
     const char *feature = host ? "host-shell" : "shell";
     QString state;
     QString probeReason;
     legacyFeatureDisplay(feature, &state, &probeReason);
-    const QString title = host
-        ? QString::fromLatin1("Host shell (running host, no chroot)")
-        : QString::fromLatin1("Chroot shell (offline repair target)");
-    m_chrootGroup->setTitle(QString::fromLatin1("%1 (helper probe: %2)")
-                                .arg(title).arg(state));
 
     QString reason;
     bool enabled = false;
@@ -3376,8 +4111,9 @@ void LegacyMainWindow::updateChrootShellState()
         reason = scopeReadyReason();
     } else if (!administratorSessionActive()) {
         reason = QString::fromLatin1(
-            "Administrator authorization is required; enter Host Maintenance "
-            "or commit a repair target to authorize this session.");
+            "Administrator authorization is required; press Authorize on the "
+            "Systems or Repair tab (or re-enter Host Maintenance / re-commit the "
+            "repair target) to authorize this session.");
     } else {
         std::string featureReason;
         if (!m_model.legacyFeatureAvailable(feature, toStd(identity()),
@@ -3491,36 +4227,53 @@ void LegacyMainWindow::updateDriveDetails()
     const DeviceRow *selected = row == m_rows.end() ? 0 : &row.data();
     const bool helperConfirmed = !disk.isEmpty() && m_helperDisk == disk;
 
+    // Modern parity: the inspected row (a child component when one is
+    // selected, otherwise the drive) supplies the details; the Drive field
+    // always names the top-level drive.
+    QString inspectedPath = selectedComponent();
+    if (inspectedPath.isEmpty()) {
+        inspectedPath = disk;
+    }
+    QMap<QString, DeviceRow>::const_iterator inspectedRow = m_rows.find(inspectedPath);
+    const DeviceRow *inspected = inspectedRow == m_rows.end() ? selected : &inspectedRow.data();
+    const bool inspectingChild = !selectedComponent().isEmpty()
+        && selectedComponent() != disk;
+
     QString model;
     QString size;
     QString transport;
     QString fstype;
     QString uuid;
     QString mounts;
-    if (selected) {
-        model = fromStd(selected->model);
+    if (inspected) {
+        model = fromStd(inspected->model);
         if (model.isEmpty()) {
-            model = fromStd(selected->label);
-        } else if (!selected->label.empty()) {
-            model += QString::fromLatin1(" (") + fromStd(selected->label) + QString::fromLatin1(")");
+            model = fromStd(inspected->label);
+        } else if (!inspected->label.empty()) {
+            model += QString::fromLatin1(" (") + fromStd(inspected->label) + QString::fromLatin1(")");
         }
-        size = fromStd(selected->size);
-        transport = fromStd(selected->transport);
-        fstype = fromStd(selected->fstype);
-        uuid = fromStd(selected->uuid);
-        mounts = fromStd(selected->mountpoint);
+        size = fromStd(inspected->size);
+        transport = fromStd(inspected->transport);
+        fstype = displayFsType(*inspected);
+        uuid = fromStd(inspected->uuid);
+        mounts = fromStd(inspected->mountpoint);
     }
     if (fstype.isEmpty() && helperConfirmed) {
         fstype = mapValue(m_factMap, QString::fromLatin1("Filesystem:"));
     }
 
-    QString component = selectedRoot();
+    QString component = selectedComponent();
+    if (component.isEmpty()) {
+        component = autoResolvedRoot(disk);
+    }
     if (component.isEmpty() && helperConfirmed) {
         component = m_helperComponent;
     }
     QString status;
     if (disk.isEmpty()) {
         status = QString::fromLatin1("Select a drive to see its details.");
+    } else if (inspectingChild) {
+        status = QString::fromLatin1("Inspecting the selected component.");
     } else if (helperConfirmed) {
         status = QString::fromLatin1("Helper-confirmed by the last read-only diagnostics.");
     } else {
@@ -3535,6 +4288,8 @@ void LegacyMainWindow::updateDriveDetails()
         protection = QString::fromLatin1("Live / installer media - not selectable");
     } else if (hostScope()) {
         protection = QString::fromLatin1("PROTECTED - running host scope");
+    } else if (!autoResolvedLuks(disk).isEmpty() && component.isEmpty()) {
+        protection = QString::fromLatin1("Unlock required before selection");
     } else {
         protection = QString::fromLatin1("Eligible repair candidate");
     }
@@ -3563,15 +4318,16 @@ void LegacyMainWindow::updateUnlockStatus()
         m_unlockStatusView->setText(QString::fromLatin1("Select a drive to see unlock status."));
         return;
     }
+    const QString component = unlockCandidateFor(disk);
     if (hostScope() || (!runningHostDisk().isEmpty() && disk == runningHostDisk())) {
         m_unlockStatusView->setText(QString::fromLatin1(
             "State: protected\n"
             "Component: %1\n"
             "The protected running host cannot be unlocked or modified; unlock "
-            "is available for an offline repair target only.")
-            .arg(m_unlockCombo->currentText().stripWhiteSpace().isEmpty()
-                     ? QString::fromLatin1("(none selected)")
-                     : m_unlockCombo->currentText().stripWhiteSpace()));
+            "is available for an offline repair target only. Use Host "
+            "Maintenance for the protected running host.")
+            .arg(component.isEmpty() ? QString::fromLatin1("(none detected)")
+                                     : component));
         return;
     }
     const QMap<QString, QString>::const_iterator cached = m_unlockStatusCache.find(disk);
@@ -3580,18 +4336,29 @@ void LegacyMainWindow::updateUnlockStatus()
         return;
     }
     const QString mapper = visibleMapperForDisk(disk);
-    const QString component = m_unlockCombo->currentText().stripWhiteSpace();
     const bool helperUnlocked = !m_helperComponent.isEmpty()
         && m_helperComponent.startsWith(QString::fromLatin1("/dev/mapper/"))
         && !m_helperDisk.isEmpty() && m_helperDisk == disk;
-    if (!mapper.isEmpty()) {
+    if (!component.isEmpty()) {
+        m_unlockStatusView->setText(QString::fromLatin1(
+            "State: locked\n"
+            "Component: %1\n"
+            "Method: helper unlock (cryptsetup; passphrase on stdin only)\n"
+            "A locked LUKS container is visible on this drive; press Unlock to "
+            "open it for this recovery session.")
+            .arg(component));
+    } else if (!mapper.isEmpty()) {
+        const QString shownComponent = selectedComponent().isEmpty()
+            ? (m_helperComponent.isEmpty() ? QString::fromLatin1("(visible mapper)")
+                                           : m_helperComponent)
+            : selectedComponent();
         m_unlockStatusView->setText(QString::fromLatin1(
             "State: unlocked\n"
             "Component: %1\n"
             "Mapper: %2\n"
             "Method: already open before this session (visible mapper; Boot "
             "Bitch will reuse it and will not close it).")
-            .arg(component.isEmpty() ? QString::fromLatin1("(none selected)") : component)
+            .arg(shownComponent)
             .arg(mapper));
     } else if (helperUnlocked) {
         m_unlockStatusView->setText(QString::fromLatin1(
@@ -3599,15 +4366,17 @@ void LegacyMainWindow::updateUnlockStatus()
             "Component: %1\n"
             "Mapper: %2\n"
             "Method: helper-confirmed mapping from the last read-only diagnostics.")
-            .arg(component.isEmpty() ? QString::fromLatin1("(none selected)") : component)
+            .arg(m_helperComponent.startsWith(QString::fromLatin1("/dev/mapper/"))
+                     ? QString::fromLatin1("(mapper)")
+                     : m_helperComponent)
             .arg(m_helperComponent));
     } else {
         m_unlockStatusView->setText(QString::fromLatin1(
             "State: locked or no encrypted component detected\n"
-            "Component: %1\n"
+            "Component: (none detected)\n"
             "Method: helper unlock (cryptsetup; passphrase on stdin only)\n"
-            "No unlock operation recorded for this drive in the current session.")
-            .arg(component.isEmpty() ? QString::fromLatin1("(none selected)") : component));
+            "No locked LUKS component and no unlock operation were recorded for "
+            "this drive in the current session."));
     }
 }
 
@@ -3690,6 +4459,121 @@ void LegacyMainWindow::updateElevationLabel()
     }
 }
 
+// Modern scope label parity: the Diagnostics/Repair/Shell pages show the
+// committed target, the protected running host while Host Maintenance is
+// active, or "Target: none selected".
+void LegacyMainWindow::updateScopeLabel()
+{
+    QString text;
+    if (hostMaintenanceActive()) {
+        text = QString::fromLatin1("Host maintenance: %1")
+                   .arg(selectedDisk().isEmpty() ? QString::fromLatin1("unresolved")
+                                                 : selectedDisk());
+    } else if (targetCommitted()) {
+        text = QString::fromLatin1("Target: %1 + %2")
+                   .arg(m_committedDisk).arg(m_committedRoot);
+    } else {
+        text = QString::fromLatin1("Target: none selected");
+    }
+    if (m_scopeLabel) {
+        m_scopeLabel->setText(text);
+    }
+    if (m_repairScopeLabel) {
+        m_repairScopeLabel->setText(text);
+    }
+    if (m_chrootScopeLabel) {
+        m_chrootScopeLabel->setText(text);
+    }
+}
+
+// Deferred-authorization affordance (modern m_authorizationStatusLabel /
+// Authorize): the status text and the button state on the Systems and Repair
+// pages. The modal hidden-input dialog is opened by authorizeNow().
+void LegacyMainWindow::updateAuthorizationAffordance()
+{
+    const bool ready = diagnosticsScopeReady();
+    const bool active = administratorSessionActive();
+    const bool idle = !m_running;
+
+    QString text;
+    bool canAuthorize = false;
+    if (!ready) {
+        text = QString::fromLatin1(
+            "Authorization: select a repair target or Host Maintenance first.");
+    } else if (active) {
+        QString description;
+        m_runner->resolveElevation(&description);
+        if (description.find(QString::fromLatin1("gksu")) >= 0
+            || description.find(QString::fromLatin1("gksudo")) >= 0) {
+            text = QString::fromLatin1("Authorization: %1 provides it per command.")
+                       .arg(description);
+        } else {
+            text = QString::fromLatin1("Authorization: administrator session active (%1).")
+                       .arg(description);
+        }
+    } else if (!idle) {
+        text = QString::fromLatin1("Authorization: a helper command is running.");
+    } else {
+        text = QString::fromLatin1(
+            "Authorization required: diagnostics and repairs fail closed until "
+            "you press Authorize.");
+        canAuthorize = true;
+    }
+    if (m_authStatusLabel) {
+        m_authStatusLabel->setText(text);
+    }
+    if (m_authorizeButton) {
+        m_authorizeButton->setEnabled(canAuthorize);
+        QToolTip::add(m_authorizeButton, canAuthorize
+            ? QString::fromLatin1(
+                  "Re-establish the privileged helper session for the current "
+                  "scope now. The password is requested in the hidden-input "
+                  "modal and is never logged.")
+            : text);
+    }
+    if (m_repairAuthStatusLabel) {
+        m_repairAuthStatusLabel->setText(text);
+    }
+    if (m_repairAuthorizeButton) {
+        m_repairAuthorizeButton->setEnabled(canAuthorize);
+        QToolTip::add(m_repairAuthorizeButton, canAuthorize
+            ? QString::fromLatin1(
+                  "Re-establish the privileged helper session without leaving "
+                  "the Repair tab. The password is requested in the "
+                  "hidden-input modal and is never logged.")
+            : text);
+    }
+}
+
+// Selected-diagnostic pane: modern title/description/availability text plus
+// the list tooltip. The list keeps the stable helper keys; the pane shows the
+// modern friendly title and description.
+void LegacyMainWindow::updateDiagnosticDetails()
+{
+    if (!m_diagTitle || !m_diagDescription || !m_diagAvailability) {
+        return;
+    }
+    QListViewItem *item = m_diagnosticList ? m_diagnosticList->currentItem() : 0;
+    if (!item) {
+        m_diagTitle->setText(QString::fromLatin1("Select a diagnostic"));
+        m_diagDescription->setText(QString::fromLatin1("Choose a diagnostic from the list."));
+        m_diagAvailability->setText(QString::fromLatin1("Unavailable"));
+        return;
+    }
+    const QString key = item->text(0).stripWhiteSpace();
+    const QString description = diagnosticDescription(key);
+    m_diagTitle->setText(diagnosticTitle(key));
+    m_diagDescription->setText(description);
+    QToolTip::add(m_diagnosticList, description);
+    if (m_running) {
+        m_diagAvailability->setText(QString::fromLatin1("Running..."));
+    } else if (!diagnosticsScopeReady()) {
+        m_diagAvailability->setText(QString::fromLatin1("Scope required"));
+    } else {
+        m_diagAvailability->setText(QString::fromLatin1("Ready"));
+    }
+}
+
 void LegacyMainWindow::updateActionStates()
 {
     const bool complete = selectionComplete();
@@ -3706,7 +4590,9 @@ void LegacyMainWindow::updateActionStates()
         bool enabled = complete && idle && ready;
         QString reason;
         if (!complete) {
-            reason = QString::fromLatin1("Select a physical drive and a root component first.");
+            reason = selectedDisk().isEmpty()
+                ? QString::fromLatin1("Select a physical drive in the Available repair targets list first.")
+                : QString::fromLatin1("No Linux root component is resolved for this drive yet.");
         } else if (!idle) {
             reason = QString::fromLatin1("A helper command is already running.");
         } else if (!ready) {
@@ -3737,9 +4623,9 @@ void LegacyMainWindow::updateActionStates()
         m_diagnosticsButton->setEnabled(diagnosticsEnabled);
         QToolTip::add(m_diagnosticsButton,
                       diagnosticsEnabled
-                          ? QString::fromLatin1("Run the read-only diagnostics for the selected scope; this unlocks the gated actions.")
-                          : (complete ? scopeReadyReason()
-                                      : QString::fromLatin1("Select a target and wait for any running command first.")));
+                          ? QString::fromLatin1("Run All - run every available read-only diagnostic for the current scope; this unlocks the gated actions.")
+                          : (ready ? QString::fromLatin1("Select a target and wait for any running command first.")
+                                   : scopeReadyReason()));
     }
     if (m_runDiagnosticButton) {
         const bool hasCheck = m_diagnosticList && m_diagnosticList->currentItem() != 0;
@@ -3747,9 +4633,9 @@ void LegacyMainWindow::updateActionStates()
         QToolTip::add(m_runDiagnosticButton, !hasCheck
             ? QString::fromLatin1("Select a diagnostic check in the list first.")
             : (diagnosticsEnabled
-                ? QString::fromLatin1("Run the selected read-only diagnostic through the helper.")
-                : (complete ? scopeReadyReason()
-                            : QString::fromLatin1("Select a target and wait for any running command first."))));
+                ? QString::fromLatin1("Run Diagnostic - run the selected read-only diagnostic through the helper.")
+                : (ready ? QString::fromLatin1("Select a target and wait for any running command first.")
+                         : scopeReadyReason())));
     }
     if (m_configButton) {
         // Modern parity: Edit Target File is target-only (never Host
@@ -3780,47 +4666,74 @@ void LegacyMainWindow::updateActionStates()
 
     // Unlock mirrors the modern GUI: it is offered only for an offline target
     // (never the protected running host, whether or not Host Maintenance is
-    // active) and needs the helper's own cryptsetup preflights at runtime.
+    // active) and only when a locked LUKS component is visible on the selected
+    // drive; the helper's own cryptsetup preflights verify it at runtime.
     if (m_unlockButton) {
         const bool onRunningHost = !runningHostDisk().isEmpty()
             && selectedDisk() == runningHostDisk();
-        const bool unlockEnabled = complete && idle && !hostScope()
-            && !onRunningHost;
+        const QString luks = onRunningHost ? QString::null
+                                           : unlockCandidateFor(selectedDisk());
+        const bool unlockEnabled = idle && !hostScope() && !onRunningHost
+            && !selectedDisk().isEmpty() && !luks.isEmpty();
         m_unlockButton->setEnabled(unlockEnabled);
         if (hostScope() || onRunningHost) {
             QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "The protected running host cannot be unlocked; select the offline repair target scope."));
-        } else if (!complete) {
+                "The protected running host cannot be unlocked; use Host "
+                "Maintenance for the protected running host."));
+        } else if (selectedDisk().isEmpty()) {
             QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "Select a physical drive and the LUKS component first."));
+                "Select a physical drive in the Available repair targets list first."));
         } else if (!idle) {
             QToolTip::add(m_unlockButton, QString::fromLatin1(
                 "A helper command is already running."));
+        } else if (luks.isEmpty()) {
+            QToolTip::add(m_unlockButton, QString::fromLatin1(
+                "No locked LUKS component is currently visible on this selected "
+                "drive."));
         } else {
             QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "Run the helper's unlock for the selected LUKS component; the "
-                "passphrase is sent on standard input only."));
+                "Unlock %1 using cryptsetup through the privileged helper. The "
+                "passphrase is sent on standard input and is never placed in "
+                "command arguments or logs.").arg(luks));
         }
     }
     if (m_elevateButton) {
         m_elevateButton->setEnabled(idle);
     }
     if (m_setTargetButton) {
-        const bool canCommit = complete && idle
-            && !(!runningHostDisk().isEmpty() && selectedDisk() == runningHostDisk());
+        const bool onRunningHost = !runningHostDisk().isEmpty()
+            && selectedDisk() == runningHostDisk();
+        QMap<QString, DeviceRow>::const_iterator selectedRow =
+            m_rows.find(selectedDisk());
+        const bool optical = selectedRow != m_rows.end()
+            && selectedRow.data().optical;
+        const QString root = autoResolvedRoot(selectedDisk());
+        const bool canCommit = idle && !selectedDisk().isEmpty() && !onRunningHost
+            && !optical && !root.isEmpty();
         m_setTargetButton->setEnabled(canCommit);
-        if (!complete) {
+        if (selectedDisk().isEmpty()) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                "Select a physical drive and a root component first."));
-        } else if (!runningHostDisk().isEmpty() && selectedDisk() == runningHostDisk()) {
+                "Select a physical drive in the Available repair targets list first."));
+        } else if (onRunningHost) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "The protected running system cannot be selected as a repair "
-                "target; use Host Maintenance for it."));
+                "target; use Host Maintenance for the protected running host."));
+        } else if (optical) {
+            QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                "Live / installer media is read-only boot media and cannot be "
+                "selected as a repair target."));
+        } else if (root.isEmpty()) {
+            QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                "Unlock the encrypted volume first; Select Target becomes "
+                "available after a Linux filesystem is detected."));
+        } else if (!idle) {
+            QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                "A helper command is already running."));
         } else {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                "Commit this drive + root component as the repair target for "
-                "diagnostics and gated repairs; the administrator authorization "
-                "is requested here once and cached for the session."));
+                "Commit %1 + %2 as the repair target for diagnostics and gated "
+                "repairs; the administrator authorization is requested here once "
+                "and cached for the session.").arg(selectedDisk()).arg(root));
         }
     }
     if (m_hostMaintenanceButton) {
@@ -3849,19 +4762,17 @@ void LegacyMainWindow::updateActionStates()
     }
 
     if (m_gateHint) {
-        if (!complete) {
-            m_gateHint->setText(QString::fromLatin1(
-                "Select a disk and a root component, then commit the target or "
-                "enter Host Maintenance. Actions are unlocked only by the "
-                "helper's cached capability lines."));
-        } else if (!ready) {
+        if (!ready) {
             m_gateHint->setText(scopeReadyReason());
+        } else if (!complete) {
+            m_gateHint->setText(QString::fromLatin1(
+                "The selected scope has no resolved Linux root component; "
+                "Refresh Devices and commit the repair target again."));
         } else if (!administratorSessionActive()) {
             m_gateHint->setText(QString::fromLatin1(
-                "No administrator session is active; enter Host Maintenance or "
-                "commit the repair target again to re-authorize this session. "
-                "Run All reuses the cached authorization and never prompts by "
-                "itself."));
+                "No administrator session is active; press Authorize on the "
+                "Systems or Repair tab to re-establish it. Run All reuses the "
+                "cached authorization and never prompts by itself."));
         } else if (!m_model.hasDiagnostics(toStd(id))) {
             m_gateHint->setText(QString::fromLatin1(
                 "Run diagnostics for this scope to unlock the gated actions. "
@@ -3877,6 +4788,9 @@ void LegacyMainWindow::updateActionStates()
         }
     }
 
+    updateScopeLabel();
+    updateAuthorizationAffordance();
+    updateDiagnosticDetails();
     updateConfigView();
     updateLegacyFeatureView();
 }

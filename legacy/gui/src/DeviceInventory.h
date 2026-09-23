@@ -46,11 +46,13 @@ struct DeviceRow {
     bool disk;
     bool mapper;
     bool optical;
+    bool encrypted;         // udev reports ID_FS_TYPE=crypto_LUKS
     unsigned long long blocks;
     std::string size;       // human-readable, from formatSizeKb
     std::string model;      // disks only, from sysfs
     std::string fstype;     // mounted or swapped filesystem, else ""
     std::string mountpoint; // mount target, else "" / "[swap]"
+    std::string probedFstype; // udev ID_FS_TYPE (world-readable metadata), else ""
     std::string uuid;       // /dev/disk/by-uuid link value, else ""
     std::string label;      // /dev/disk/by-label link value, else ""
     std::string transport;  // IDE/SATA/USB/... best-effort, else ""
@@ -61,6 +63,20 @@ std::vector<PartitionRecord> parseProcPartitions(const std::string &text);
 std::map<std::string, MountRecord> parseProcMounts(const std::string &text);
 std::map<std::string, std::string> parseProcSwaps(const std::string &text);
 
+// Parses a udev database record (Etch's /dev/.udev/db/block@<name> or a
+// modern /run/udev/data/b<major>:<minor> file): lines of the form
+// "E:<KEY>=<value>" become map entries with the E: prefix stripped. Tolerant
+// and never throws; unknown/malformed lines are ignored. This is
+// world-readable metadata, never a block-device read.
+std::map<std::string, std::string> parseUdevDatabase(const std::string &text);
+
+// True for the Linux root-capable filesystem names (mirrors the modern
+// SystemScanner::isLinuxCapableFileSystem list). Case-insensitive.
+bool isLinuxFileSystemName(const std::string &fstype);
+
+// True when a probed filesystem name identifies a LUKS container.
+bool looksLikeLuks(const std::string &fstype);
+
 // Builds the display rows from already-read inputs. `diskNames` are the entries
 // of /sys/block that are whole disks; `attributes` maps "<name>/<attr>" to the
 // file contents (size in 512-byte sectors, device/model, removable,
@@ -68,7 +84,8 @@ std::map<std::string, std::string> parseProcSwaps(const std::string &text);
 // `mapperLinks` maps "/dev/mapper/<name>" to the dm kernel name (dm-0).
 // `uuidByPath`/`labelByPath` map a resolved /dev path (/dev/hda1,
 // /dev/mapper/root, /dev/dm-0) to its /dev/disk/by-uuid or /dev/disk/by-label
-// entry value; they may be empty.
+// entry value; they may be empty. `probedFsByPath` maps a /dev path to the
+// udev-reported ID_FS_TYPE; it is read-only metadata and may be empty.
 std::vector<DeviceRow> buildDeviceRows(
     const std::vector<PartitionRecord> &partitions,
     const std::map<std::string, MountRecord> &mounts,
@@ -79,6 +96,8 @@ std::vector<DeviceRow> buildDeviceRows(
     const std::map<std::string, std::string> &uuidByPath =
         std::map<std::string, std::string>(),
     const std::map<std::string, std::string> &labelByPath =
+        std::map<std::string, std::string>(),
+    const std::map<std::string, std::string> &probedFsByPath =
         std::map<std::string, std::string>());
 
 // Reads the live kernel metadata and returns the rows (read-only).

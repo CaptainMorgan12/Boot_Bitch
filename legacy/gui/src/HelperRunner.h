@@ -46,6 +46,15 @@ public:
     // execution never need the password here (gksu/gksudo prompt themselves).
     bool elevationNeedsPassword(QString *description = 0);
 
+    // True when a privileged command can start right now without a password
+    // prompt: direct execution, gksu/gksudo (they prompt themselves), a
+    // `sudo -n` prefix that still passes its own non-interactive probe, or a
+    // plain-sudo session whose timestamp is still valid. The plain-sudo case
+    // probes `sudo -S -v` with stdin closed so an expired timestamp fails fast
+    // (EOF) instead of blocking on a password read; it never prompts and never
+    // logs a secret. This is the GUI's pre-command expiry check.
+    bool sessionIsCurrent();
+
     // Authenticates the cached interactive `sudo` with `secret` by running
     // `sudo -S -p '' -v`; the password travels over a pipe, never argv/env and
     // never into the helper transcript. On success the cached prefix becomes

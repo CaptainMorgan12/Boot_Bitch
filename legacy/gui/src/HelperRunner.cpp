@@ -103,6 +103,42 @@ bool probeCommand(const char *const argv[])
     return WIFEXITED(status) && WEXITSTATUS(status) == 0;
 }
 
+// Same as probeCommand, but the child's stdin is /dev/null. `sudo -S -v`
+// reads its password from stdin, so an invalid/expired timestamp gets an
+// immediate EOF and fails fast instead of blocking the GUI forever on a
+// password read; a valid timestamp exits 0 without reading.
+bool probeCommandWithStdinNull(const char *const argv[])
+{
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        return false;
+    }
+    if (pid == 0) {
+        const int devnullIn = ::open("/dev/null", O_RDONLY);
+        if (devnullIn >= 0) {
+            ::dup2(devnullIn, 0);
+            if (devnullIn > 2) {
+                ::close(devnullIn);
+            }
+        }
+        const int devnull = ::open("/dev/null", O_WRONLY);
+        if (devnull >= 0) {
+            ::dup2(devnull, 1);
+            ::dup2(devnull, 2);
+            if (devnull > 2) {
+                ::close(devnull);
+            }
+        }
+        ::execvp(argv[0], const_cast<char *const *>(argv));
+        ::_exit(127);
+    }
+    int status = 0;
+    while (::waitpid(pid, &status, 0) < 0) {
+        // retry on EINTR
+    }
+    return WIFEXITED(status) && WEXITSTATUS(status) == 0;
+}
+
 } // namespace
 
 HelperRunner::HelperRunner(QObject *parent, const char *name)
@@ -268,6 +304,37 @@ bool HelperRunner::elevationNeedsPassword(QString *description)
         }
     }
     return true;
+}
+
+bool HelperRunner::sessionIsCurrent()
+{
+    if (!m_resolved) {
+        resolveElevation(0);
+    }
+    if (m_direct || m_prefix.isEmpty()) {
+        return true;
+    }
+    // gksu/gksudo/su provide their own prompt (or the caller is root); only
+    // sudo carries a cacheable, non-interactive session here.
+    if (m_prefix.first() != QString::fromLatin1("sudo")) {
+        return true;
+    }
+    bool nonInteractive = false;
+    for (QStringList::ConstIterator it = m_prefix.begin(); it != m_prefix.end(); ++it) {
+        if (*it == QString::fromLatin1("-n")) {
+            nonInteractive = true;
+            break;
+        }
+    }
+    if (nonInteractive) {
+        static const char *const sudoProbe[] = { "sudo", "-n", "true", 0 };
+        return probeCommand(sudoProbe);
+    }
+    // Etch's sudo 1.6.8 has no -n: `sudo -S -v` validates the cached timestamp
+    // without reading stdin when it is still valid, and gets an immediate EOF
+    // when it expired.
+    static const char *const sudoTimestampProbe[] = { "sudo", "-S", "-v", 0 };
+    return probeCommandWithStdinNull(sudoTimestampProbe);
 }
 
 bool HelperRunner::authenticateElevation(const QByteArray &secret, QString *error)

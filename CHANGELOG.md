@@ -2,6 +2,53 @@
 
 ## Unreleased
 
+- Bring the legacy Qt3 GUI to modern-GUI parity and fix the reported
+  functional defects. The window now carries the modern global header (packaged
+  icon, "Boot Bitch" in the 1.65x bold title font, the "Linux recovery and
+  boot-repair utility" subtitle and the right-aligned "GUARDED REPAIR • 0.2.25"
+  framed badge) and section-title headings on Systems, Diagnostics, Repair,
+  Chroot Shell, File Copy, Logs and Settings. Systems replaces the
+  "Devices - read-only kernel inventory" frame, the scope/target combo grid and
+  the "Set as repair target" wording with the modern page: an "Available repair
+  targets" list, an action row of **Select Target** / **Unlock** / **Host
+  Maintenance** plus the deferred **Authorize** control and the right-aligned
+  "Committed target:" summary, the **Unlock status** frame directly below it and
+  the **Selected drive details** pane. Drive selection comes from the list row
+  and the best Linux root component is auto-resolved from the read-only
+  inventory plus udev metadata (mapper with a Linux filesystem first, then a
+  Linux partition, then the disk itself); the protected running host is shown
+  as `PROTECTED` and its Select Target/Unlock tooltips name Host Maintenance.
+  Unlock auto-resolves the first locked `crypto_LUKS` component on a non-host
+  drive (read-only udev `ID_FS_TYPE` probe, never a block-device read) and
+  opens it through the helper's stdin-only passphrase flow; a locked LUKS disk
+  without a visible Linux filesystem stays "Unlock required before selection".
+  Diagnostics now matches the modern page (heading + scope label + **Run All**,
+  a single-column **Diagnostic checks** list, the **Selected diagnostic** pane
+  with title/description/availability, a **Results** heading with the
+  right-aligned **Run Diagnostic**, and **Copy Results** / **Save Results...**
+  below the pane); the "Cancel running command" button and the "Reads" column
+  are gone (window close keeps the runner's cancel path), and the target
+  configuration row is unchanged and still target-only/probe-based. Chroot
+  Shell switches its heading, tab label ("Host Shell"), notice and button
+  ("Run on Host") with Host Maintenance exactly like `updateChrootShellMode`,
+  and the individual Repair tools now use the modern button wording
+  (Validate, Check File Systems, Repair Dependencies, Complete Configuration,
+  Refresh Metadata, Simulate and Upgrade, Rebuild Initramfs, Regenerate GRUB).
+  Authentication carries forward: the cached `sudo -S -v` session is probed
+  non-blockingly (stdin closed) before every privileged command, an expired or
+  refused session fails closed with the explicit **Authorize** remedy instead
+  of asking the user to re-commit the target, and only a transcript that
+  actually shows a sudo session problem drops the cached decision. The
+  `--smoke-test` layout/control assertions cover the new widget set (header,
+  section titles, action row, scope labels, Selected diagnostic pane,
+  Copy/Save, host-mode shell labels) at 1024x768. Validated on the real Etch
+  guest with `local-refresh.sh --legacy-vm`: `SMOKE OK: ... controls: ok;
+  layout: ok (54 widgets checked)`, the extended Qt3 auth harness reports
+  `AUTH-PIPE OK` plus `SESSION-EXPIRY OK` (the expired cached sudo is detected
+  non-blockingly and `resetElevation()` restores the Authorize path), the
+  in-guest `legacy GUI contract: PASS`, and the guest udev record confirms the
+  `crypto_LUKS` probe used by Unlock. The first guest build also caught a
+  clipped runtime button and a Qt3 layout double-parent crash, both fixed.
 - Align the legacy Qt3 GUI with the modern Boot Bitch layout and fix the
   reported Diagnostics/modal defects: the Diagnostics tab no longer shows the
   "Repair tool / State / Reason" capability list or the availability filter

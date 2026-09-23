@@ -212,6 +212,41 @@ std::string identityValueFor(const DeviceRow &row,
     return std::string();
 }
 
+// Reads the udev database record for one kernel device. Etch's udev stores
+// "block@<disk>@<part>" (partitions) and "block@<disk>" (whole disks) under
+// /dev/.udev/db; modern udev uses /run/udev/data/b<major>:<minor>. Both are
+// world-readable metadata; no block device is opened. Returns "" when no
+// record is available (fail closed: no filesystem type is claimed).
+std::string parentOf(const std::string &name);
+
+std::string udevFsTypeFor(const PartitionRecord &record)
+{
+    std::string text;
+    const std::string parent = parentOf(record.name);
+    bool haveRecord = false;
+    if (!parent.empty()) {
+        haveRecord = readFile("/dev/.udev/db/block@" + parent + "@" + record.name,
+                              &text)
+            || readFile("/dev/.udev/db/block@" + record.name, &text);
+    } else {
+        haveRecord = readFile("/dev/.udev/db/block@" + record.name, &text);
+    }
+    if (!haveRecord) {
+        char key[64];
+        std::snprintf(key, sizeof(key), "/run/udev/data/b%u:%u",
+                      static_cast<unsigned int>(record.majorNumber),
+                      static_cast<unsigned int>(record.minorNumber));
+        haveRecord = readFile(key, &text);
+    }
+    if (!haveRecord) {
+        return std::string();
+    }
+    const std::map<std::string, std::string> properties = parseUdevDatabase(text);
+    const std::map<std::string, std::string>::const_iterator type =
+        properties.find("ID_FS_TYPE");
+    return type == properties.end() ? std::string() : trim(type->second);
+}
+
 // Strips the trailing partition index from a kernel name (hda1 -> hda,
 // cciss/c0d0p1 -> cciss/c0d0, nvme0n1p1 -> nvme0n1). Returns "" when the name
 // has no index.
@@ -324,7 +359,7 @@ MountRecord::MountRecord()
 }
 
 DeviceRow::DeviceRow()
-    : disk(false), mapper(false), optical(false), blocks(0)
+    : disk(false), mapper(false), optical(false), encrypted(false), blocks(0)
 {
 }
 
@@ -412,6 +447,74 @@ std::map<std::string, std::string> parseProcSwaps(const std::string &text)
     return swaps;
 }
 
+std::map<std::string, std::string> parseUdevDatabase(const std::string &text)
+{
+    std::map<std::string, std::string> properties;
+    std::istringstream stream(text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        if (line.size() < 3 || line.compare(0, 2, "E:") != 0) {
+            continue;
+        }
+        const std::string::size_type equals = line.find('=', 2);
+        if (equals == std::string::npos) {
+            continue;
+        }
+        const std::string key = line.substr(2, equals - 2);
+        if (key.empty()) {
+            continue;
+        }
+        properties[key] = trim(line.substr(equals + 1));
+    }
+    return properties;
+}
+
+bool isLinuxFileSystemName(const std::string &fstype)
+{
+    static const char *const names[] = {
+        "btrfs", "ext2", "ext3", "ext4", "xfs", "f2fs"
+    };
+    for (std::size_t i = 0; i < sizeof(names) / sizeof(names[0]); ++i) {
+        const std::string name = names[i];
+        if (fstype.size() != name.size()) {
+            continue;
+        }
+        bool match = true;
+        for (std::size_t j = 0; j < name.size(); ++j) {
+            char c = fstype[j];
+            if (c >= 'A' && c <= 'Z') {
+                c = static_cast<char>(c - 'A' + 'a');
+            }
+            if (c != name[j]) {
+                match = false;
+                break;
+            }
+        }
+        if (match) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool looksLikeLuks(const std::string &fstype)
+{
+    const std::string name = "crypto_luks";
+    if (fstype.size() != name.size()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < name.size(); ++i) {
+        char c = fstype[i];
+        if (c >= 'A' && c <= 'Z') {
+            c = static_cast<char>(c - 'A' + 'a');
+        }
+        if (c != name[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 bool isMdName(const std::string &name)
 {
     if (name.size() < 3 || name.compare(0, 2, "md") != 0) {
@@ -447,7 +550,8 @@ std::vector<DeviceRow> buildDeviceRows(
     const std::map<std::string, std::string> &attributes,
     const std::map<std::string, std::string> &mapperLinks,
     const std::map<std::string, std::string> &uuidByPath,
-    const std::map<std::string, std::string> &labelByPath)
+    const std::map<std::string, std::string> &labelByPath,
+    const std::map<std::string, std::string> &probedFsByPath)
 {
     std::vector<DeviceRow> rows;
     std::map<std::string, bool> diskSet;
@@ -498,6 +602,12 @@ std::vector<DeviceRow> buildDeviceRows(
                 row.mountpoint = "[swap]";
             }
         }
+        const std::map<std::string, std::string>::const_iterator probed =
+            probedFsByPath.find(row.path);
+        if (probed != probedFsByPath.end()) {
+            row.probedFstype = probed->second;
+        }
+        row.encrypted = looksLikeLuks(row.fstype) || looksLikeLuks(row.probedFstype);
         rows.push_back(row);
     }
 
@@ -530,6 +640,12 @@ std::vector<DeviceRow> buildDeviceRows(
                 row.mountpoint = "[swap]";
             }
         }
+        const std::map<std::string, std::string>::const_iterator probed =
+            probedFsByPath.find(row.path);
+        if (probed != probedFsByPath.end()) {
+            row.probedFstype = probed->second;
+        }
+        row.encrypted = looksLikeLuks(row.fstype) || looksLikeLuks(row.probedFstype);
         rows.push_back(row);
     }
 
@@ -678,8 +794,21 @@ std::vector<DeviceRow> scanDevices()
         readIdentityLinks("/dev/disk/by-uuid");
     const std::map<std::string, std::string> labelByPath =
         readIdentityLinks("/dev/disk/by-label");
+
+    // Read-only udev metadata (ID_FS_TYPE) for every kernel device. This is
+    // what lets the GUI show an unmounted filesystem's type and recognise a
+    // locked crypto_LUKS component without ever opening a block device; when
+    // no record exists the type stays unknown and the LUKS unlock control
+    // fails closed.
+    std::map<std::string, std::string> probedFsByPath;
+    for (std::size_t i = 0; i < partitions.size(); ++i) {
+        const std::string fstype = udevFsTypeFor(partitions[i]);
+        if (!fstype.empty()) {
+            probedFsByPath["/dev/" + partitions[i].name] = fstype;
+        }
+    }
     return buildDeviceRows(partitions, mounts, swaps, diskNames, attributes,
-                           mapperLinks, uuidByPath, labelByPath);
+                           mapperLinks, uuidByPath, labelByPath, probedFsByPath);
 }
 
 bool detectRunningHostTarget(std::string *rootPath, std::string *diskPath)
