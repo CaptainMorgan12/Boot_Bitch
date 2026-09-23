@@ -50,13 +50,19 @@ Diagnostic, Results and Copy/Save Results, and the target-only **Edit Target
 File...** control with the Etch-era file list — probe-based availability,
 guarded `config-read`/`config-write`, edits invalidate the cached
 diagnostics; no capability list or filter is duplicated, the cached
-capability lines gate the Repair tab), **Repair** shows the resolved elevation
-method with a re-check button and the deferred **Authorize** control and
-enables only the legacy-supported commands (`validate`, `diagnose`,
+capability lines gate the Repair tab), **Repair** mirrors the modern page with
+the plan paragraph, the **Full Repair plan** section (six legacy stages,
+**Configure Plan...** / **Run Full Repair**, count/readiness labels), the
+13-row **Individual repair tools** list with the **Selected tool** pane and the
+modern-style result popup, plus the resolved elevation
+method with a re-check button and the deferred **Authorize** control; only the
+legacy-supported commands (`validate`, `diagnose`,
 `fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
-`initramfs` and the guarded `grub` regeneration) whose cached capability line
+`initramfs` and the guarded `grub` regeneration) can run and only when their
+cached capability line
 is `available` for the current scope (host `initramfs`/`grub` also need the
-`Legacy feature host-maintenance:` probe), **Chroot Shell / Host Shell** runs
+`Legacy feature host-maintenance:` probe; the DKMS/display/EFI/extlinux/
+boot-stack rows are display-only with the exact reason), **Chroot Shell / Host Shell** runs
 one reviewed command through the helper's guarded `shell` (offline target) /
 `host-shell` (running host) verbs when the scope is committed, the session is
 authorized and the scope's `Legacy feature` probe is available (the heading,
@@ -90,17 +96,23 @@ blocking. The SIGPIPE-safe password write survives a sudo that exits without
 reading stdin (an already-valid timestamp). A repair that is not proven
 `unchanged` (or an unlock that changes the topology) invalidates the cache and
 disables the gated actions until diagnostics run again. The deliberately
-omitted modern-only features (Full Repair plan, snapshots, host default/reboot,
-EFI/UKI/extlinux) stay greyed; where the helper emits a `Legacy feature` probe
-the row state and reason come from that cached line and fail closed when it is
-missing or unrecognised. The helper keeps every runtime preflight.
+omitted modern-only features (snapshots, host default/reboot,
+EFI/UKI/extlinux repair) stay display-only with the exact reason; where the
+helper emits a `Legacy feature` probe
+the state and reason come from that cached line and fail closed when it is
+missing or unrecognised. Every group frame is titleless with a
+`sectionTitle` label because the Etch Qt3 style clips `QGroupBox` titles. The
+helper keeps every runtime preflight.
 
 Build it natively on Etch with `qmake-qt3`/`make` (or through
 `scripts/package-legacy.sh`); `--print-config` and `--help` work without X.
 `--smoke-test` also verifies the global header, the section headings, the
 details/unlock/session/search/gating controls, the File/View/Help menus, the
-Logs session-management controls and prior-log banner, the functional
-device-discovery filters, the diagnostics auto-refresh toggle and the host
+Repair plan controls, the 13-tool list and Selected tool pane (including the
+display-only DKMS row and the plan-column mirroring), the Logs
+session-management controls and prior-log banner, the functional
+device-discovery filters, the Full Repair plan checkboxes, the diagnostics
+auto-refresh toggle and the host
 capabilities group, the scope-less target eligibility (with the auto-resolved
 root), the per-key diagnostic list and Selected diagnostic pane, Copy/Save
 Results, the target-only configuration row, the probe-based feature gating,

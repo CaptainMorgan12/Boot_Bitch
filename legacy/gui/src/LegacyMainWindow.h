@@ -54,6 +54,7 @@
 class QCheckBox;
 class QCloseEvent;
 class QComboBox;
+class QDialog;
 class QGroupBox;
 class QLabel;
 class QLineEdit;
@@ -106,7 +107,11 @@ private slots:
     void editTargetConfigFile();
     void copyResults();
     void saveResults();
-    void runAction();
+    void toolSelectionChanged();
+    void runSelectedTool();
+    void configurePlan();
+    void runFullRepair();
+    void planCheckboxChanged();
     void runChrootShell();
     void clearChrootOutput();
     void runUnlock();
@@ -191,12 +196,22 @@ private:
     void updateScopeLabel();
     void updateElevationLabel();
     void updateCapabilityView();
+    void updatePlanView();
+    void updateToolDetails();
+    int selectedToolIndex() const;
+    bool toolRunReady(int toolIndex, QString *reason) const;
+    bool planStageSelected(int planIndex) const;
+    bool planStageAvailable(int planIndex, QString *reason) const;
+    QStringList selectedPlanStages() const;
+    QStringList selectedPlanTitles() const;
+    bool planRunReady(QString *reason) const;
+    void showRepairResultDialog(const QString &title);
+    QWidget *layoutBoundFor(QWidget *widget, QWidget *pageWidget) const;
     void updateConfigView();
     void openConfigEditor(const QString &content, const QString &key,
                           const QString &path);
     void updateLegacyFeatureView();
-    void updateFeatureTab(QGroupBox *group, QLabel *label, const char *feature,
-                          const QString &title);
+    void updateFeatureTab(QLabel *label, const char *feature);
     void updateChrootShellState();
     void updateChrootShellMode();
     void legacyFeatureDisplay(const char *feature, QString *state,
@@ -216,7 +231,7 @@ private:
     bool ensureAdministratorSession(const QString &context);
     bool administratorSessionActive() const;
     bool sessionStillCurrent();
-    void startCommand(const QStringList &args, bool diagnostic,
+    bool startCommand(const QStringList &args, bool diagnostic,
                       const QString &label, bool unlock = false,
                       bool config = false, bool shell = false,
                       bool quiet = false);
@@ -243,7 +258,8 @@ private:
     QListView *m_deviceList;
     QListView *m_detailList;
     QListView *m_diagnosticList;
-    QListView *m_unsupportedList;
+    QListView *m_planStageList;
+    QListView *m_toolList;
     QListView *m_sessionLogList;
     QTextEdit *m_rawView;
     QTextEdit *m_logView;
@@ -275,6 +291,13 @@ private:
     QLabel *m_logsHeading;
     QLabel *m_settingsHeading;
     QLabel *m_gateHint;
+    QLabel *m_planParagraph;
+    QLabel *m_planCountLabel;
+    QLabel *m_planReadinessLabel;
+    QLabel *m_toolTitle;
+    QLabel *m_toolDescription;
+    QLabel *m_toolPlanStatus;
+    QLabel *m_resultStatus;
     QLabel *m_elevationLabel;
     QLabel *m_targetSummary;
     QLabel *m_configLabel;
@@ -307,6 +330,10 @@ private:
     QPushButton *m_hostMaintenanceButton;
     QPushButton *m_authorizeButton;
     QPushButton *m_repairAuthorizeButton;
+    QPushButton *m_configurePlanButton;
+    QPushButton *m_runFullRepairButton;
+    QPushButton *m_toolRunButton;
+    QPushButton *m_resultCloseButton;
     QPushButton *m_shellRunButton;
     QPushButton *m_shellClearButton;
     QPushButton *m_newSessionLogButton;
@@ -317,7 +344,11 @@ private:
     QGroupBox *m_fileCopyGroup;
     QWidget *m_chrootTab;
     QWidget *m_settingsContent;
-    QMap<QString, QPushButton *> m_actionButtons;
+    QWidget *m_repairContent;
+    QDialog *m_resultDialog;
+    QTextEdit *m_resultView;
+    QLabel *m_chrootCommandHeading;
+    std::vector<QCheckBox *> m_planChecks;
     std::vector<QPushButton *> m_buttons;
     std::vector<QGroupBox *> m_groupBoxes;
     std::vector<QLabel *> m_sectionTitles;

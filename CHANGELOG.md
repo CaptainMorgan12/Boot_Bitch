@@ -2,6 +2,39 @@
 
 ## Unreleased
 
+- Rebuild the legacy Qt3 Repair tab to mirror the modern page and fix the
+  clipped section titles. The Repair tab now opens with the modern plan
+  paragraph, then the **Full Repair plan** section (selected-stage count, the
+  numbered stage list, the modern readiness text, **Configure Plan...** which
+  switches to Settings, and **Run Full Repair**), followed by the 13 modern
+  individual tools as a list (columns **Tool** | **Full Repair**) with a
+  **Selected tool** pane (dynamic title, per-tool run button, description and
+  plan status). The legacy-runnable tools (Validate, Check File Systems,
+  Repair Dependencies, Complete Configuration, Refresh Metadata, Simulate and
+  Upgrade, Rebuild Initramfs, Regenerate GRUB) keep their exact helper command
+  set and fail-closed gating; DKMS, display, EFI, extlinux and boot-stack are
+  display-only rows whose run button stays disabled with the exact reason, and
+  the old "Modern features not available" section is gone. The Full Repair
+  plan runs the six legacy stages (dpkg-configure, fix-broken, apt-update,
+  apt-upgrade, initramfs, grub) in helper rank order in one invocation, driven
+  by the new Settings **Full Repair plan** checkboxes (modern labels,
+  persisted under the modern `repair/*` QSettings keys); Run Full Repair is
+  enabled only with a ready scope, an active administrator session, fresh
+  cached diagnostics and every selected stage's capability line `available`
+  (plus the host-maintenance probe for host initramfs/grub). Starting an
+  individual tool or the plan opens a modern-style result popup (tool title, a
+  bold status line, the streamed helper transcript and a Close button enabled
+  on finish) while the Logs tab keeps the complete transcript. Every tab's
+  group frame is now titleless with a `sectionTitle` label because the Etch
+  Qt3 style clips `QGroupBox` titles at the top, the Repair page scrolls like
+  Settings, and the smoke layout assertion checks the section titles for
+  clipping. The `--smoke-test` controls/layout gates cover the new Repair
+  widgets, the plan/tool behavior and the display-only reasons, and the layout
+  gate now iterates every tab (a clip on a non-active page fails the smoke);
+  the Selected tool pane keeps a 300px floor and its dynamic title wraps with
+  the Qt3 `Qt::WordBreak` alignment, and every tool title plus the placeholder
+  is re-verified against the pane at 1024x768. The display-only plan status
+  no longer starts with a cosmetic blank line.
 - Complete the legacy Qt3 GUI's modern-GUI parity for menus, Logs, Settings
   and the Diagnostics check list. The menus now mirror the modern structure:
   **File** carries **Refresh Devices**, **Lock Administrator Session** (drops

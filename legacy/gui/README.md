@@ -124,29 +124,72 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   session fails closed with the exact Authorize remedy, and only a transcript
   that actually shows a sudo session problem drops the cached decision. A
   cancelled or failed authorization never starts the command.
-- **Repair** shows a **Repair** heading with the shared scope label, the
-  scope/gate hint, the individual tools with the modern button wording
+- **Repair** mirrors the modern page structure. A **Repair** heading with the
+  shared scope label opens the page, followed by the modern plan paragraph
+  verbatim ("Choose Full Repair stages in Settings..."), the **Full Repair
+  plan** section (count label **No stages selected** / **N stages selected**,
+  the numbered selected-stage list, the readiness text and **Configure Plan...**
+  / **Run Full Repair**), then a horizontal splitter with the **Individual
+  repair tools** list (columns **Tool** | **Full Repair**) on the left and the
+  **Selected tool** pane (dynamic title, per-tool button, description and plan
+  status) on the right; the pane has a 300px floor and the dynamic title wraps
+  with the Qt3 `Qt::WordBreak` alignment (there is no `QLabel::setWordWrap` in
+  Qt 3.3.7), so every tool title fits at 1024x768 without clipping. The legacy-only **Privilege elevation** frame with
+  **Re-check elevation** and the deferred **Authorize** control, the scope/gate
+  hint and the confirmation note close the page. The tools list shows all 13
+  modern tools in the modern order; the 8 legacy-runnable stages
   (**Validate**, **Check File Systems**, **Repair Dependencies**, **Complete
   Configuration**, **Refresh Metadata**, **Simulate and Upgrade**, **Rebuild
-  Initramfs**, **Regenerate GRUB**), the resolved **elevation state**
-  (`gksu --sudo-mode`, `gksudo`, `sudo -n`, `su`, root or unavailable) with a
-  **Re-check elevation** button and the Authorize control, and the greyed
-  modern-only feature list. A button is enabled only when the scope is ready
-  (committed target or Host Maintenance), the cached capability line for its
-  key says `available` for the *current* selection and no repair has
-  invalidated the cache; host `initramfs`/`grub` additionally require the
-  helper's `Legacy feature host-maintenance:` probe. Otherwise the tooltip
-  names the exact reason. Write actions ask for confirmation; the helper keeps
-  its runtime preflights. Where the helper emits a `Legacy feature` probe, the
-  greyed row's state and reason come from that cached line and fail closed
-  when it is missing or unrecognised.
+  Initramfs**, **Regenerate GRUB**) run through the helper, while
+  DKMS / display / EFI / extlinux / boot-stack are display-only rows whose run
+  button stays disabled with the exact reason (the cached capability reason or
+  the frontend omission). The **File system repair** tool is the legacy
+  read-only `fs-inspect` check and its plan status reads
+  **Read-only check - not part of the Full Repair plan**. The Full Repair
+  column mirrors the Settings **Full Repair plan** checkboxes
+  (**Enabled in Settings** / **Disabled in Settings - enable it to include this
+  stage**), the validate tool reads **Always preflight**, boot-stack reads
+  **Manual recovery tool**, and any unavailable capability overrides the status
+  with **Unavailable: <reason>**. A tool runs only when the scope is ready
+  (committed target or Host Maintenance), no command is running, the
+  administrator session is active and the cached capability line for its key
+  says `available` for the *current* selection (host `initramfs`/`grub`
+  additionally require the helper's `Legacy feature host-maintenance:` probe);
+  otherwise the tooltip and the pane name the exact reason. Write actions ask
+  for confirmation, the helper keeps its runtime preflights, and a repair that
+  is not proven `unchanged` invalidates the cache.
+- **Full Repair plan** runs the six legacy stages in helper rank order
+  (`dpkg-configure`, `fix-broken`, `apt-update`, `apt-upgrade`, `initramfs`,
+  `grub`) in one `repair <disk> <root> <stages...>` / `host-repair ...`
+  invocation. The Settings checkboxes use the modern labels and persist through
+  Qt3 `QSettings` under the modern-compatible keys (`repair/dpkgConfigure`,
+  `repair/fixBroken`, `repair/refreshMetadata`, `repair/upgradePackages`,
+  `repair/initramfs`, `repair/grub`); **Configure Plan...** switches to
+  Settings. **Run Full Repair** is enabled only when at least one checked stage
+  is available, the scope is ready, no command is running, the administrator
+  session is active and the cached read-only diagnostics are fresh; otherwise
+  the readiness label and the tooltip name the exact reason (the default text
+  is the modern "Run All diagnostics..." string and the ready text is the
+  modern "Ready: required cached read-only diagnostics..." string). The
+  confirmation dialog lists the stages in execution order first; a stage that
+  fails stops the plan, and the helper keeps every runtime preflight.
+- **Repair result popup**: starting an individual tool or Run Full Repair opens
+  a modal Qt3 dialog titled with the tool name (or **Full Repair**) with a
+  bold status line, the streamed helper transcript in a read-only monospace
+  pane and a **Close** button that is enabled when the command finishes
+  (success: "Privileged operation completed successfully. Administrator
+  authorization remains active for this session."; failure: "Privileged
+  operation stopped with an error..."). Closing the popup early leaves the
+  command running; the Logs tab always receives the complete transcript. The
+  popup is never opened by `--smoke-test`, and diagnostics keep their in-tab
+  **Results** behavior.
 - **Chroot Shell / Host Shell** runs one reviewed command string through the
   helper's guarded `shell <disk> <root> <command>` (offline target) or
   `host-shell <disk> <root> <command>` (running host, with an explicit
   confirmation). The page heading, tab label, notice, button text
-  (**Run Command** / **Run on Host**) and group title switch with the scope,
-  exactly like the modern `updateChrootShellMode`; the command is passed as a
-  single argument (no shell interpolation by the GUI) and the controls are
+  (**Run Command** / **Run on Host**) and command heading switch with the
+  scope, exactly like the modern `updateChrootShellMode`; the command is passed
+  as a single argument (no shell interpolation by the GUI) and the controls are
   enabled only when the scope is committed, the cached administrator session
   is active and the scope's `Legacy feature shell:` / `host-shell:` probe
   reports `available`; otherwise every control stays greyed with the exact
@@ -206,20 +249,22 @@ The Qt6 Boot Bitch tabs map onto this frontend where Qt3 allows it:
 | Menus (File: Refresh Devices, Lock Administrator Session, Quit; View: tab shortcuts, Auto-size Device Columns, Wrap Log Lines; Help: Using Boot Bitch, About Boot Bitch) | same structure and wording | the usage dialog is width-constrained Qt3 text; no persistent geometry/tab/splitter state |
 | Systems (device tree, selected drive details, Unlock status, Select Target/Unlock/Authorize/Host Maintenance) | Systems (Available repair targets list, auto-resolved root, Select Target/Unlock/Host Maintenance/Authorize, details, unlock status) | row-selection inspection with auto-resolved Linux root; the modal `sudo -S -v` dialog replaces Polkit and the explicit **Authorize** control re-establishes it; no protected-host card/ranking/sort |
 | Diagnostics (check list, Run All/Run Diagnostic, Selected diagnostic pane, target config combo + Edit Target File…, Results Copy/Save) | Diagnostics (Run All + scope label, per-key checks with friendly titles, Selected diagnostic pane, target-only Edit Target File with the Etch key list, Results Copy/Save) | same structure; the stable helper key stays internal; the config probe is a legacy-only `Legacy config` diagnostics report and absent files are omitted with the helper's reason |
-| Repair (Full Repair plan, individual tools, gating) | Repair (modern button wording, individual gated tools incl. guarded GRUB-legacy regeneration, Authorize) | no combined plan on the legacy helper |
+| Repair (Full Repair plan, individual tools list + Selected tool pane, gating) | Repair (Full Repair plan with the six legacy stages, 13-tool list + Selected tool pane, per-tool run button, result popup, Authorize) | the plan runs only the six legacy package/initramfs/grub stages in one helper invocation; DKMS/display/EFI/extlinux/boot-stack are display-only rows with the exact reason; the filesystem tool is the read-only check; the elevation frame stays legacy-only |
 | Snapshots | — | deliberately omitted; the greyed row follows `Legacy feature snapshots:` |
 | Chroot Shell / Host Shell | Chroot Shell / Host Shell | wired to the helper's `shell`/`host-shell` behind the scope probe + session; heading/tab/button switch with Host Maintenance |
 | File Copy | File Copy (greyed) | helper exposes file copy; greyed with the `Legacy feature file-copy:` probe reason |
 | Logs (Save As…, Clear Register, session list with New/Clear/Delete/Refresh/Add Note, prior-log banner, search + filters) | Logs (Save As..., Clear Register, session list with New Session Log/Add Note/Delete/Refresh, prior-log banner, search + all/errors filter) | the legacy session list has no separate Clear (Clear Register clears the live register); no section/workflow filters; the stable session file naming is `yyyyMMdd-hhmmss.log` |
-| Settings (device filters, plan, diagnostics auto-refresh, safety list, host capabilities, persistence) | Settings (functional device filters, functional auto-refresh, safety list, read-only host capabilities + Refresh Capabilities, read-only application configuration) | no Full Repair plan editor and no install button (host installs are forbidden); filters/wrap/auto-refresh persist through Qt3 `QSettings` (no geometry/tab/splitter persistence) |
+| Settings (device filters, plan, diagnostics auto-refresh, safety list, host capabilities, persistence) | Settings (functional device filters, the six legacy Full Repair plan checkboxes, functional auto-refresh, safety list, read-only host capabilities + Refresh Capabilities, read-only application configuration) | the plan lists only the legacy-supported stages and has no per-stage tool pane; no install button (host installs are forbidden); filters/wrap/auto-refresh/plan persist through Qt3 `QSettings` (no geometry/tab/splitter persistence) |
 
-Deliberate omissions (documented, not hidden): Full Repair plan, snapshots,
+Deliberate omissions (documented, not hidden): snapshots,
 host default/reboot and EFI/UKI/extlinux repair. They never appear as enabled
-controls and the action table keeps the exact legacy command set. The greyed
+controls and the tool table keeps the exact legacy command set. The greyed
 rows for features the helper probes (`snapshots`, `file-copy`, `shell`,
 `host-default`) show the cached `Legacy feature` state and reason, fail closed
 when the line is missing, and never claim "unavailable" for a feature the
-helper reports available.
+helper reports available. The removed "Modern features not available" list is
+replaced by the display-only tool rows, which carry the same fail-closed
+reasons in the **Full Repair** column and the **Selected tool** pane.
 
 ### Modern layout comparison (2026-09-22, updated)
 
@@ -235,17 +280,36 @@ helper cannot express the modern behavior.
 | Menus | same File/View/Help structure and wording | the usage help is a width-constrained Qt3 dialog; geometry/tab/splitter state is not persisted |
 | Systems | page heading + **Refresh Devices**, **Available repair targets**, list first, action row below it, **Unlock status** directly below the row, **Selected drive details** as the right pane, same details field order, protected running-host exclusion | no separate protected-host card/ranking/sort; the action row adds the legacy-only **Host Maintenance**; the device list is flat (Device/Size/Type/Filesystem/Mount/Note) instead of a tree with Model/Status/Connection columns; the details list shows helper-confirmed facts rather than a wrapped form |
 | Diagnostics | heading + scope label + **Run All**, target configuration row above the splitter, **Diagnostic checks** left + **Selected diagnostic** right (title/description/availability, **Results** + **Run Diagnostic**, Copy/Save), target config hidden outside a committed target | the list shows the friendly titles but keeps the stable key internal; the description is the pane text and the list tooltip (Qt3 has no per-item tooltip); no Cancel button (window close cancels) |
-| Repair | heading + scope label, scope/gate hint first, individual tools next, elevation frame after (legacy-only) | no Full Repair plan/Configure Plan; 8 fixed action buttons instead of a 13-tool tree with a selected-tool pane; tooltips carry the capability reasons; unsupported list documents the omissions |
+| Repair | heading + scope label + plan paragraph, **Full Repair plan** with count/readiness/Configure Plan…/Run Full Repair and the numbered stage list, then **Individual repair tools** (Tool \| Full Repair) left + **Selected tool** right, elevation frame after (legacy-only) | the plan runs only the six legacy stages (dpkg-configure, fix-broken, apt-update, apt-upgrade, initramfs, grub) in one helper invocation; 5 of the 13 modern tools are display-only with the exact reason; the filesystem tool is the legacy read-only check; the result popup is the Qt3 modal dialog; no plan persistence beyond the checkboxes |
 | Chroot Shell | heading + scope label + notice + command row + output, **Run Command** / **Run on Host**, tab label **Host Shell** in host mode | the whole group stays greyed on Etch (no `unshare`/`timeout --foreground`); the notice carries the `Legacy feature` probe state/reason |
 | File Copy | heading + source list, destination, add/remove/copy controls | every control greyed with the `Legacy feature file-copy:` probe reason (rsync without `--chown`) |
 | Logs | page heading, **Save As…** / **Clear Register**, session list with **New Session Log** / **Add Note** / **Delete** / **Refresh**, prior-log banner, **Search log:** + filter | filter is all/errors (no section/workflow kinds); the live session has no separate Clear action (Clear Register covers it); prior sessions are read-only |
-| Settings | page heading, device discovery, diagnostics and mandatory-safety groups in the modern order, then the host capabilities group; the page scrolls like modern | no Full Repair plan editor, no install button (host installs are forbidden), no capability table (a compact read-only label group instead); only the filters/wrap/auto-refresh persist (Qt3 `QSettings`, no geometry/tab/splitter state); the legacy-only read-only **Application configuration** group closes the page |
+| Settings | page heading, device discovery, Full Repair plan, diagnostics and mandatory-safety groups in the modern order, then the host capabilities group; the page scrolls like modern | the plan lists only the six legacy stages; no install button (host installs are forbidden), no capability table (a compact read-only label group instead); the filters/wrap/auto-refresh/plan persist (Qt3 `QSettings`, no geometry/tab/splitter state); the legacy-only read-only **Application configuration** group closes the page |
 
 Frame titles, section headings, buttons, list columns and combos are still
 covered by the programmatic 1024x768 layout assertion in `--smoke-test`
 (group-title/button font metrics, section-title fit, header badge fit, list
 columns, the stretched last column, combos, the menu structure and the new
-Logs/Settings controls).
+Repair/Logs/Settings controls).
+
+### Frame titles on the Etch Qt3 style (clipping workaround)
+
+Qt3's KDE/Etch style draws a `QGroupBox` title on the upper frame line with its
+top half above the frame, which clipped the group titles at 1024x768 (the
+Systems **Available repair targets** section-title label was the only clean
+title). Every legacy group frame is therefore titleless and carries a
+`sectionTitle`-style label (1.2x bold) as its first row, using the same
+pattern as the Systems page; the Repair page is also wrapped in a Qt3
+`QScrollView` like Settings because the plan + tools + elevation sections
+exceed the contract height. `verifyLayout` iterates every tab
+(`setCurrentPage`) and checks each page's section-title labels for width and
+page/content containment — so a clip on a non-active tab fails the smoke too —
+while wrapping titles (`Qt::WordBreak`) are exempt from the single-line width
+check (they break onto a second line instead of clipping and still pass the
+containment check), and a non-empty future `QGroupBox`
+title must keep half a line of top clearance or the smoke fails. The smoke
+also re-verifies all 13 tool titles plus the `Select a repair tool`
+placeholder against the Selected tool pane.
 
 ## Build
 
@@ -280,19 +344,24 @@ boot-repair-legacy-gui --help | --version | --print-config
 helper, verifies the global header (title/subtitle/version badge), the
 section titles, the File/View/Help menus (including the Wrap Log Lines
 sync and the View tab shortcuts), the details/unlock/session/search/gating
-controls, the Logs session-management controls and prior-log banner, the
-functional Settings device filters, diagnostics auto-refresh toggle and host
-capabilities group, the scope-less target eligibility (a synthetic
-non-running-host disk is committable with its resolved root, the running host
-is not and its tooltips name Host Maintenance), the per-diagnostic check list
-(friendly titles) and Selected diagnostic pane, the Run All / Run Diagnostic /
-Copy Results / Save Results controls, the target-only configuration row
-(hidden for Host Maintenance, the 8 Etch keys for an unprobed committed
-target), the probe-based `Legacy feature` gating (rows, the Chroot Shell /
-Host Shell labels and the host-maintenance-gated actions) and the 1024x768
-layout (section/group titles, button text, header badge, list columns, the
-stretched last column and combos are checked with font metrics and widget
-geometry) and prints the combined result; it needs a
+controls, the Repair plan controls (paragraph, count/readiness labels, stage
+list, Configure Plan.../Run Full Repair), the 13-row tools list and Selected
+tool pane (title/button/status, display-only DKMS disabled with the exact
+reason, the Full Repair column mirroring the Settings plan checkbox), the Logs
+session-management controls and prior-log banner, the functional Settings
+device filters, the six Full Repair plan checkboxes, diagnostics auto-refresh
+toggle and host capabilities group, the scope-less target eligibility (a
+synthetic non-running-host disk is committable with its resolved root, the
+running host is not and its tooltips name Host Maintenance), the
+per-diagnostic check list (friendly titles) and Selected diagnostic pane, the
+Run All / Run Diagnostic / Copy Results / Save Results controls, the
+target-only configuration row (hidden for Host Maintenance, the 8 Etch keys
+for an unprobed committed target), the probe-based `Legacy feature` gating
+(the Chroot Shell / Host Shell labels, the file-copy reason and the
+host-maintenance-gated tools) and the 1024x768 layout (section/group titles,
+button text, header badge, list columns, the stretched last column and combos
+are checked with font metrics and widget geometry) and prints the combined
+result; it needs a
 display (Xvfb with a 1024x768 screen is sufficient). Elevation order is
 `sudo -n` (only when already authorized), `gksu --sudo-mode`, `gksudo`,
 `sudo`, `su`; `--no-elevate` runs the helper directly. A plain interactive
@@ -313,11 +382,13 @@ modules with plain `g++ -std=c++98 -Werror`, runs the fixture assertions in
 invalidation, device inventory with UUID/label/transport, the resolved dm
 chain and the read-only udev `ID_FS_TYPE`/`crypto_LUKS` metadata, the Linux
 filesystem classifier, unlock-result/error markers) and checks the Qt3-only
-source contract, the legacy command set (including `grub`), the parity
+source contract, the legacy command set (including `grub`), the six-stage
+Full Repair plan, the parity
 controls (global header, menus, Systems section titles and action row,
 Diagnostics scope label + friendly check titles + Selected diagnostic pane +
 Copy/Save Results, details panel, unlock status, session/search, Logs session
-management and prior-log banner, Settings filters/auto-refresh/capabilities,
+management and prior-log banner, the Repair plan/tools/Selected tool/result
+popup markers, Settings filters/plan checkboxes/auto-refresh/capabilities,
 scope-less gating, authorization on
 commit/maintenance plus the Authorize re-auth control but never on Run All,
 the non-blocking session-expiry probe and narrowed auth-failure detection, the

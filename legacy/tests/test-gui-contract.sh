@@ -107,22 +107,36 @@ pass "Qt3-only widget/toolkit usage (no kdelibs)"
 
 # --- only the legacy-supported command set ----------------------------------
 WINDOW="$GUI_DIR/src/LegacyMainWindow.cpp"
-ACTION_BLOCK="$(sed -n '/^const ActionSpec actionSpecs\[\] = {/,/^};/p' "$WINDOW")"
-[[ -n "$ACTION_BLOCK" ]] || fail "actionSpecs block not found"
+ACTION_BLOCK="$(sed -n '/^const ToolSpec toolSpecs\[\] = {/,/^};/p' "$WINDOW")"
+[[ -n "$ACTION_BLOCK" ]] || fail "toolSpecs block not found"
 for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs grub; do
     grep -q "\"$stage\"" <<<"$ACTION_BLOCK" || fail "legacy stage missing from the GUI: $stage"
 done
 # `unlock` is a dedicated control (passphrase on stdin), never a repair stage;
-# the other modern-only stages stay forbidden in the action table.
+# the other modern-only stages stay forbidden in the tool table. The
+# display-only tools carry an empty stage and can never run.
 for forbidden in snapshots host-default host-shell fs-repair copy unlock; do
     grep -q "\"$forbidden\"" <<<"$ACTION_BLOCK" \
-        && fail "unsupported stage exposed by the GUI: $forbidden"
+        && fail "unsupported stage exposed by the GUI tool table: $forbidden"
+done
+for key in dkms display efi extlinux bootstack; do
+    grep -qF "{ \"$key\", \"\"," <<<"$ACTION_BLOCK" \
+        || fail "display-only tool is not stage-less: $key"
 done
 grep -q 'host-validate' "$WINDOW" || fail "GUI lost the host-validate command form"
 grep -q 'host-diagnose' "$WINDOW" || fail "GUI lost the host-diagnose command form"
 grep -q 'host-repair' "$WINDOW" || fail "GUI lost the host-repair command form"
 grep -q 'hostMaintenance' "$WINDOW" || fail "GUI lost the host-maintenance feature gate"
-pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub)"
+# The Full Repair plan runs exactly the legacy helper stages in rank order.
+PLAN_BLOCK="$(sed -n '/^const PlanSpec planSpecs\[\] = {/,/^};/p' "$WINDOW")"
+[[ -n "$PLAN_BLOCK" ]] || fail "planSpecs block not found"
+for stage in dpkg-configure fix-broken apt-update apt-upgrade initramfs grub; do
+    grep -q "\"$stage\"" <<<"$PLAN_BLOCK" || fail "plan stage missing from the GUI: $stage"
+done
+grep -q 'repair/dpkgConfigure' "$WINDOW" || fail "plan settings key missing: repair/dpkgConfigure"
+grep -q 'repair/refreshMetadata' "$WINDOW" || fail "plan settings key missing: repair/refreshMetadata"
+grep -q 'repair/upgradePackages' "$WINDOW" || fail "plan settings key missing: repair/upgradePackages"
+pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub) + 6-stage plan"
 
 # --- modern-GUI parity controls ---------------------------------------------
 grep -q '"unlock"' "$WINDOW" || fail "GUI lost the dedicated unlock command"
@@ -144,8 +158,28 @@ for removed in 'm_diagFilterCombo' 'm_capabilityList' 'All tools' \
     'Reason / evidence' 'View target file (read-only)' 'm_configView'; do
     grep -q "$removed" "$WINDOW" && fail "removed Diagnostics element still present: $removed"
 done
-grep -q 'Modern features not available' "$WINDOW" \
-    || fail "GUI lost the greyed modern-features list"
+# Repair parity (cycle 3): the Full Repair plan section replaces the old
+# button grid, the unsupported-features list is gone, and the individual tools
+# are a list + Selected tool pane with the modern result popup.
+for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
+    'm_planStageList' 'm_configurePlanButton' 'm_runFullRepairButton' \
+    'Configure Plan...' 'Run Full Repair' 'configurePlan' 'runFullRepair' \
+    'updatePlanView' 'planRunReady' 'selectedPlanStages' \
+    'm_toolList' 'm_toolTitle' 'm_toolDescription' 'm_toolPlanStatus' \
+    'm_toolRunButton' 'runSelectedTool' 'updateToolDetails' 'toolRunReady' \
+    'showRepairResultDialog' 'm_resultStatus' 'm_resultView' \
+    'm_resultCloseButton' 'm_repairContent' 'QScrollView' \
+    'Choose Full Repair stages in Settings' \
+    'Always preflight' 'Manual recovery tool' \
+    'Read-only check - not part of the Full Repair plan' \
+    'Enabled in Settings' 'Disabled in Settings - enable it to include this stage' \
+    'Privileged operation completed successfully'; do
+    grep -q "$marker" "$WINDOW" || fail "Repair parity marker missing: $marker"
+done
+for removed in 'Modern features not available' 'm_unsupportedList' \
+    'unsupportedSpecs' 'm_actionButtons' 'actionSpecs'; do
+    grep -q "$removed" "$WINDOW" && fail "removed Repair element still present: $removed"
+done
 # Systems parity: page heading, Available repair targets list, Select Target /
 # Unlock / Host Maintenance / Authorize action row and the auto-resolved root.
 for marker in 'm_systemsHeading' 'm_targetsHeading' 'Available repair targets' \
@@ -204,7 +238,7 @@ grep -q 'targetCommitted() && !hostMaintenanceActive()' "$WINDOW" \
 grep -q 'grub' <<<"$ACTION_BLOCK" || fail "guarded GRUB action missing"
 # Probe-based legacy feature gating (fail closed) replaces hardcoded reasons.
 for marker in 'legacyFeatureAvailable' 'legacyFeatureState' 'legacyFeatureDisplay' \
-    'updateLegacyFeatureView' 'updateFeatureTab' 'helper probe:'; do
+    'updateLegacyFeatureView' 'updateFeatureTab'; do
     grep -q "$marker" "$WINDOW" || fail "legacy feature gating marker missing: $marker"
 done
 grep -q "the legacy helper exposes no chroot shell command" "$WINDOW" \
@@ -231,7 +265,7 @@ pass "no scope selector / standalone auth control; deferred Authorize affordance
 grep -q 'ensureAdministratorSession' "$WINDOW" || fail "GUI lost the session authorization entry point"
 grep -q 'administratorSessionActive' "$WINDOW" || fail "GUI lost the cached session check"
 grep -q 'sessionStillCurrent' "$WINDOW" || fail "GUI lost the pre-command session expiry check"
-START_BLOCK="$(sed -n '/^void LegacyMainWindow::startCommand/,/^}/p' "$WINDOW")"
+START_BLOCK="$(sed -n '/^bool LegacyMainWindow::startCommand/,/^}/p' "$WINDOW")"
 [[ -n "$START_BLOCK" ]] || fail "startCommand block not found"
 grep -q 'QInputDialog' <<<"$START_BLOCK" \
     && fail "Run All still opens the password prompt (must fail closed)"
@@ -306,7 +340,7 @@ done
 # insertion-order lists disable the default sort).
 grep -q 'm_wrapLogsMenuId >= 0\|m_wrapLogsMenuId < 0' "$WINDOW" \
     && fail "menu validity still keys on the Qt3 negative auto-id sign"
-for list in m_diagnosticList m_detailList m_unsupportedList; do
+for list in m_diagnosticList m_detailList m_planStageList m_toolList; do
     grep -q "$list->setSorting(-1)" "$WINDOW" \
         || fail "$list does not disable Qt3's default first-column sorting"
 done
@@ -314,7 +348,7 @@ done
 # lists must chain their items with the after-form constructor.
 for marker in 'm_diagnosticList, lastDiagnostic' \
     'm_detailList, lastDetail' \
-    'm_unsupportedList, lastUnsupported'; do
+    'm_toolList, lastTool'; do
     grep -qF "$marker" "$WINDOW" \
         || fail "list does not keep insertion order with the after-form constructor: $marker"
 done
