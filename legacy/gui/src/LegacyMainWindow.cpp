@@ -20,6 +20,7 @@
 #include <qgrid.h>
 #include <qgroupbox.h>
 #include <qimage.h>
+#include <qinputdialog.h>
 #include <qlabel.h>
 #include <qlayout.h>
 #include <qlineedit.h>
@@ -29,6 +30,8 @@
 #include <qpixmap.h>
 #include <qpopupmenu.h>
 #include <qpushbutton.h>
+#include <qscrollview.h>
+#include <qsettings.h>
 #include <qsplitter.h>
 #include <qstatusbar.h>
 #include <qtabwidget.h>
@@ -437,6 +440,50 @@ bool transcriptSuggestsAuthFailure(const QString &transcript)
     return false;
 }
 
+// Finds a menu item by its visible text (accelerator ampersands and the
+// accelerator shortcut after a tab are ignored; Qt3's text(id) returns
+// '&Refresh Devices\tF5'). Qt3 auto-generates NEGATIVE menu ids, so the sign
+// cannot indicate validity; the boolean return is the only validity signal.
+// Returns the id in *id when requested. Used by the smoke control
+// verification.
+bool menuItemId(QPopupMenu *menu, const QString &text, int *id)
+{
+    if (id) {
+        *id = -1;
+    }
+    if (!menu) {
+        return false;
+    }
+    for (uint i = 0; i < menu->count(); ++i) {
+        const int itemId = menu->idAt(static_cast<int>(i));
+        QString label = menu->text(itemId);
+        const int tab = label.find(QChar('\t'));
+        if (tab >= 0) {
+            label = label.left(tab);
+        }
+        label.remove(QChar('&'));
+        if (label == text) {
+            if (id) {
+                *id = itemId;
+            }
+            return true;
+        }
+    }
+    return false;
+}
+
+// True when `child` is `ancestor` or a descendant of it (Qt3 QWidget has no
+// isAncestorOf).
+bool isInsideWidget(const QWidget *child, const QWidget *ancestor)
+{
+    for (const QWidget *widget = child; widget; widget = widget->parentWidget()) {
+        if (widget == ancestor) {
+            return true;
+        }
+    }
+    return false;
+}
+
 // The list view must be wide enough for every declared column, otherwise the
 // Qt3 header clips the last column. `problems` receives one line per issue.
 bool listColumnsFit(QListView *list, const QString &name, QString *problems)
@@ -530,6 +577,11 @@ bool rootBelongsToDisk(const QMap<QString, DeviceRow> &rows,
 LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     : QMainWindow(parent, name),
       m_tabs(0),
+      m_fileMenu(0),
+      m_viewMenu(0),
+      m_helpMenu(0),
+      m_wrapLogsMenuValid(false),
+      m_wrapLogsMenuId(-1),
       m_logFilterCombo(0),
       m_configCombo(0),
       m_deviceList(0),
@@ -544,6 +596,11 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_shellCommandEdit(0),
       m_shellOutput(0),
       m_logWrapCheck(0),
+      m_showNonLinuxCheck(0),
+      m_showRemovableCheck(0),
+      m_showEncryptedCheck(0),
+      m_autoRefreshCheck(0),
+      m_priorLogBanner(0),
       m_headerTitle(0),
       m_headerSubtitle(0),
       m_headerBadge(0),
@@ -575,6 +632,13 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_settingsLogDirLabel(0),
       m_settingsSessionLabel(0),
       m_settingsVersionLabel(0),
+      m_capDistributionLabel(0),
+      m_capPackageManagerLabel(0),
+      m_capServiceLabel(0),
+      m_capDisplayLabel(0),
+      m_capInitramfsLabel(0),
+      m_capBootloaderLabel(0),
+      m_capLoggingLabel(0),
       m_scanButton(0),
       m_diagnosticsButton(0),
       m_runDiagnosticButton(0),
@@ -589,9 +653,14 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_repairAuthorizeButton(0),
       m_shellRunButton(0),
       m_shellClearButton(0),
+      m_newSessionLogButton(0),
+      m_addNoteButton(0),
+      m_deleteSessionLogButton(0),
+      m_refreshCapabilitiesButton(0),
       m_chrootGroup(0),
       m_fileCopyGroup(0),
       m_chrootTab(0),
+      m_settingsContent(0),
       m_runner(new HelperRunner(this)),
       m_updatingSelection(false),
       m_running(false),
@@ -603,6 +672,8 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_targetCommitted(false),
       m_hostMaintenance(false),
       m_viewingPriorLog(false),
+      m_logWrapEnabled(true),
+      m_autoRefreshEnabled(true),
       m_pendingConfigWrite(false),
       m_smokeMode(false),
       m_smokeStep(0),
@@ -678,6 +749,9 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     m_tabs->addTab(buildAboutTab(), QString::fromLatin1("About"));
 
     buildMenus();
+    // Load the persisted options before the first inventory scan so the
+    // device-list filters are applied to the initial population.
+    loadLegacySettings();
 
     connect(m_runner, SIGNAL(outputLine(const QString &)),
             this, SLOT(helperLine(const QString &)));
@@ -691,6 +765,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     updateDriveDetails();
     updateUnlockStatus();
     updateDiagnosticDetails();
+    updateCapabilityView();
     refreshSessionLogList();
     appendLog(QString::fromLatin1(
         "Boot Bitch legacy GUI ready. Every privileged command runs through the "
@@ -862,16 +937,171 @@ void LegacyMainWindow::registerGroupBox(QGroupBox *box)
 
 void LegacyMainWindow::buildMenus()
 {
-    QPopupMenu *fileMenu = new QPopupMenu(this);
-    menuBar()->insertItem(QString::fromLatin1("&File"), fileMenu);
-    fileMenu->insertItem(QString::fromLatin1("&Save log..."), this, SLOT(saveLog()));
-    fileMenu->insertItem(QString::fromLatin1("&Clear log"), this, SLOT(clearLog()));
-    fileMenu->insertSeparator();
-    fileMenu->insertItem(QString::fromLatin1("&Quit"), qApp, SLOT(quit()), CTRL + Key_Q);
+    // Modern menu structure (MainWindow::buildMenuBar): File (Refresh
+    // Devices, Lock Administrator Session, Quit), View (tab shortcuts,
+    // Auto-size Device Columns, checkable Wrap Log Lines) and Help (Using
+    // Boot Bitch, About Boot Bitch). The Logs save/clear actions live on the
+    // Logs tab only.
+    m_fileMenu = new QPopupMenu(this);
+    menuBar()->insertItem(QString::fromLatin1("&File"), m_fileMenu);
+    m_fileMenu->insertItem(QString::fromLatin1("&Refresh Devices"), this,
+                           SLOT(scanDevices()), Key_F5);
+    m_fileMenu->insertItem(QString::fromLatin1("&Lock Administrator Session"),
+                           this, SLOT(lockAdministratorSession()));
+    m_fileMenu->insertSeparator();
+    m_fileMenu->insertItem(QString::fromLatin1("&Quit"), qApp, SLOT(quit()),
+                           CTRL + Key_Q);
 
-    QPopupMenu *helpMenu = new QPopupMenu(this);
-    menuBar()->insertItem(QString::fromLatin1("&Help"), helpMenu);
-    helpMenu->insertItem(QString::fromLatin1("&About"), this, SLOT(showAbout()));
+    m_viewMenu = new QPopupMenu(this);
+    menuBar()->insertItem(QString::fromLatin1("&View"), m_viewMenu);
+    m_viewMenu->insertItem(QString::fromLatin1("&Systems"), this, SLOT(showSystemsTab()));
+    m_viewMenu->insertItem(QString::fromLatin1("&Diagnostics"), this, SLOT(showDiagnosticsTab()));
+    m_viewMenu->insertItem(QString::fromLatin1("&Logs"), this, SLOT(showLogsTab()));
+    m_viewMenu->insertItem(QString::fromLatin1("&Settings"), this, SLOT(showSettingsTab()));
+    m_viewMenu->insertSeparator();
+    m_viewMenu->insertItem(QString::fromLatin1("&Auto-size Device Columns"),
+                           this, SLOT(autoSizeDeviceColumns()));
+    m_wrapLogsMenuId = m_viewMenu->insertItem(QString::fromLatin1("&Wrap Log Lines"),
+                                              this, SLOT(toggleLogWrapFromMenu()));
+    // Qt3 auto-generates negative ids; remember that the item exists instead of
+    // testing the id's sign.
+    m_wrapLogsMenuValid = true;
+    m_viewMenu->setItemChecked(m_wrapLogsMenuId, m_logWrapEnabled);
+
+    m_helpMenu = new QPopupMenu(this);
+    menuBar()->insertItem(QString::fromLatin1("&Help"), m_helpMenu);
+    m_helpMenu->insertItem(QString::fromLatin1("&Using Boot Bitch"), this,
+                           SLOT(showUsageHelp()));
+    m_helpMenu->insertSeparator();
+    m_helpMenu->insertItem(QString::fromLatin1("&About Boot Bitch"), this,
+                           SLOT(showAbout()));
+}
+
+void LegacyMainWindow::showSystemsTab()
+{
+    if (m_tabs) {
+        m_tabs->setCurrentPage(0);
+    }
+}
+
+void LegacyMainWindow::showDiagnosticsTab()
+{
+    if (m_tabs) {
+        m_tabs->setCurrentPage(1);
+    }
+}
+
+void LegacyMainWindow::showLogsTab()
+{
+    if (m_tabs) {
+        m_tabs->setCurrentPage(5);
+    }
+}
+
+void LegacyMainWindow::showSettingsTab()
+{
+    if (m_tabs) {
+        m_tabs->setCurrentPage(6);
+    }
+}
+
+// Modern Auto-size Device Columns: size every column to the widest header or
+// cell text plus the header-safe padding floor. The QListView LastColumn
+// resize mode keeps stretching the final column to the viewport edge.
+void LegacyMainWindow::autoSizeDeviceColumns()
+{
+    if (!m_deviceList) {
+        return;
+    }
+    const QFontMetrics metrics(m_deviceList->font());
+    for (int column = 0; column < m_deviceList->columns(); ++column) {
+        int width = metrics.width(m_deviceList->columnText(column)) + kListHeaderPadding;
+        for (QListViewItem *item = m_deviceList->firstChild(); item;
+             item = item->nextSibling()) {
+            width = QMAX(width, metrics.width(item->text(column)) + kListHeaderPadding);
+        }
+        m_deviceList->setColumnWidth(column, width);
+    }
+    statusBar()->message(QString::fromLatin1(
+        "Device columns auto-sized. Drag headers to fine-tune widths."), 3500);
+}
+
+// The View menu item and the Settings checkbox are two views of one state;
+// this slot derives the new value from the cached flag (Qt3 QPopupMenu does
+// not guarantee an automatic check toggle) and toggleLogWrap() updates both
+// controls without re-entering their signals.
+void LegacyMainWindow::toggleLogWrapFromMenu()
+{
+    toggleLogWrap(!m_logWrapEnabled);
+}
+
+// Modern File -> Lock Administrator Session: drop the cached elevation
+// decision and best-effort clear the sudo timestamp without ever prompting or
+// blocking, then refresh the inventory/status so the next privileged action
+// asks for the password again.
+void LegacyMainWindow::lockAdministratorSession()
+{
+    if (m_running) {
+        statusBar()->message(QString::fromLatin1(
+            "A helper command is running; wait for it to finish before locking "
+            "the session."), 4000);
+        return;
+    }
+    const bool cleared = m_runner->clearSudoTimestamp();
+    m_runner->resetElevation();
+    appendLog(QString::fromLatin1(
+        "Administrator authorization session locked by the user; the cached "
+        "session was dropped and the next privileged action requests the "
+        "password again. Any LUKS mapping opened earlier remains open for this "
+        "recovery session (the legacy helper exposes no close verb)."));
+    if (!cleared) {
+        appendLog(QString::fromLatin1(
+            "Note: the cached sudo timestamp could not be cleared (sudo is not "
+            "installed or is not the elevation method); the cached decision is "
+            "still reset."));
+    }
+    updateElevationLabel();
+    updateActionStates();
+    scanDevices();
+    statusBar()->message(QString::fromLatin1(
+        "Administrator session locked; the next privileged action will request "
+        "authorization."), 6000);
+}
+
+// Modern Help -> Using Boot Bitch, adapted to the legacy frontend. The dialog
+// is width-constrained and word-wrapped (Qt3 has no QLabel::setWordWrap).
+void LegacyMainWindow::showUsageHelp()
+{
+    QDialog dialog(this, "legacy-usage-help", true);
+    dialog.setCaption(QString::fromLatin1("Using Boot Bitch"));
+    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
+    QLabel *text = new QLabel(QString::fromLatin1(
+        "Boot Bitch must run from a different booted Linux environment than the "
+        "system being repaired. Use a Linux live medium or another Linux "
+        "installation on a different physical drive.<br><br>"
+        "The running host is protected from ordinary repair-target selection, "
+        "but it can be explicitly selected through <b>Host Maintenance</b> for "
+        "guarded native diagnostics and supported maintenance stages.<br><br>"
+        "Diagnostics follow the Systems page: the committed repair drive while "
+        "Host Maintenance is off, or the protected running host while it is "
+        "active.<br><br>"
+        "The first privileged action requests administrator authorization once "
+        "for this Boot Bitch window; <b>File - Lock Administrator Session</b> "
+        "ends that helper session immediately. Every repair keeps the helper's "
+        "own runtime preflights."),
+        &dialog);
+    text->setTextFormat(Qt::RichText);
+    enableLabelWordWrap(text);
+    text->setMaximumWidth(560);
+    layout->addWidget(text);
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->addStretch();
+    QPushButton *close = new QPushButton(QString::fromLatin1("Close"), &dialog);
+    close->setDefault(true);
+    buttons->addWidget(close);
+    QObject::connect(close, SIGNAL(clicked()), &dialog, SLOT(accept()));
+    dialog.setMinimumWidth(360);
+    dialog.exec();
 }
 
 QWidget *LegacyMainWindow::buildTargetsTab()
@@ -996,6 +1226,9 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     addListViewColumn(m_detailList, QString::fromLatin1("Value"), 220);
     m_detailList->setAllColumnsShowFocus(true);
     m_detailList->setResizeMode(QListView::LastColumn);
+    // The documented details field order (Drive, Detected target, Model/label,
+    // ...) must not be alphabetized by Qt3's default first-column sorting.
+    m_detailList->setSorting(-1);
     m_detailList->setMinimumHeight(120);
     detailsLayout->addWidget(m_detailList, 1);
     rightLayout->addWidget(details, 1);
@@ -1073,12 +1306,26 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     m_diagnosticList->setAllColumnsShowFocus(true);
     m_diagnosticList->setResizeMode(QListView::LastColumn);
     m_diagnosticList->setShowToolTips(true);
+    // Qt3 sorts a QListView by the first column by default; disable it so the
+    // list keeps the legacy::diagnosticKeys() order (and the smoke's first-
+    // entry assertion stays meaningful).
+    m_diagnosticList->setSorting(-1);
     m_diagnosticList->setMinimumHeight(150);
     connect(m_diagnosticList, SIGNAL(selectionChanged()),
             this, SLOT(diagnosticSelectionChanged()));
     const std::vector<std::string> diagKeys = legacy::diagnosticKeys();
+    m_diagKeyByTitle.clear();
+    // Qt3 prepends a plain insertion when sorting is disabled, so every item is
+    // chained after the previous one (the after-form constructor) to keep the
+    // legacy::diagnosticKeys() order.
+    QListViewItem *lastDiagnostic = 0;
     for (std::size_t i = 0; i < diagKeys.size(); ++i) {
-        new QListViewItem(m_diagnosticList, fromStd(diagKeys[i]));
+        // Modern parity: the list shows the friendly diagnostic title; the
+        // stable helper key stays internal (commands and the log use it).
+        const QString key = fromStd(diagKeys[i]);
+        const QString title = diagnosticTitle(key);
+        m_diagKeyByTitle.insert(title, key);
+        lastDiagnostic = new QListViewItem(m_diagnosticList, lastDiagnostic, title);
     }
     if (m_diagnosticList->firstChild()) {
         m_diagnosticList->setSelected(m_diagnosticList->firstChild(), true);
@@ -1224,14 +1471,20 @@ QWidget *LegacyMainWindow::buildActionsTab()
     addListViewColumn(m_unsupportedList, QString::fromLatin1("Reason"), 420);
     m_unsupportedList->setAllColumnsShowFocus(true);
     m_unsupportedList->setResizeMode(QListView::LastColumn);
+    // Fixed spec order: Qt3's default first-column sorting would reorder the
+    // rows (and the smoke's per-feature row assertions), and a plain insertion
+    // with sorting disabled is prepended, so chain the items after each other.
+    m_unsupportedList->setSorting(-1);
     m_unsupportedList->setMinimumHeight(70);
+    QListViewItem *lastUnsupported = 0;
     for (int i = 0; i < unsupportedSpecCount; ++i) {
         QListViewItem *item = new QListViewItem(
-            m_unsupportedList,
+            m_unsupportedList, lastUnsupported,
             QString::fromLatin1(unsupportedSpecs[i].featureLabel),
             QString::fromLatin1("not reported"),
             QString::fromLatin1(unsupportedSpecs[i].frontendReason));
         item->setEnabled(false);
+        lastUnsupported = item;
     }
     unsupportedLayout->addWidget(m_unsupportedList);
     layout->addWidget(unsupported);
@@ -1382,18 +1635,38 @@ QWidget *LegacyMainWindow::buildLogTab()
     addListViewColumn(m_sessionLogList, QString::fromLatin1("Session"), 150);
     m_sessionLogList->setAllColumnsShowFocus(true);
     m_sessionLogList->setResizeMode(QListView::LastColumn);
-    m_sessionLogList->setMinimumHeight(120);
+    m_sessionLogList->setMinimumHeight(110);
     QToolTip::add(m_sessionLogList, QString::fromLatin1(
         "The first entry is the live session; earlier files in the log "
         "directory are listed read-only below it."));
     connect(m_sessionLogList, SIGNAL(selectionChanged()), this, SLOT(sessionLogSelectionChanged()));
     sessionLayout->addWidget(m_sessionLogList, 1);
-    QHBoxLayout *sessionButtons = new QHBoxLayout(sessionLayout);
-    sessionButtons->setSpacing(4);
+
+    // Modern session controls (two compact rows so the narrow frame fits):
+    // New Session Log, Add Note, Delete (prior files only) and Refresh.
+    QGridLayout *sessionButtons = new QGridLayout(sessionLayout, 2, 2, 4);
+    sessionButtons->setMargin(4);
+    m_newSessionLogButton = makeButton(QString::fromLatin1("New Session Log"), sessions);
+    QToolTip::add(m_newSessionLogButton, QString::fromLatin1(
+        "Close the active session file; it becomes a prior session and the next "
+        "log entry starts a new file."));
+    connect(m_newSessionLogButton, SIGNAL(clicked()), this, SLOT(startNewSessionLog()));
+    sessionButtons->addWidget(m_newSessionLogButton, 0, 0);
+    m_addNoteButton = makeButton(QString::fromLatin1("Add Note"), sessions);
+    QToolTip::add(m_addNoteButton, QString::fromLatin1(
+        "Append a NOTE entry to the live session register."));
+    connect(m_addNoteButton, SIGNAL(clicked()), this, SLOT(addSessionNote()));
+    sessionButtons->addWidget(m_addNoteButton, 0, 1);
+    m_deleteSessionLogButton = makeButton(QString::fromLatin1("Delete"), sessions);
+    m_deleteSessionLogButton->setEnabled(false);
+    QToolTip::add(m_deleteSessionLogButton, QString::fromLatin1(
+        "Delete the selected prior session file (the live session is never "
+        "deleted)."));
+    connect(m_deleteSessionLogButton, SIGNAL(clicked()), this, SLOT(deleteSelectedSessionLog()));
+    sessionButtons->addWidget(m_deleteSessionLogButton, 1, 0);
     QPushButton *refresh = makeButton(QString::fromLatin1("Refresh"), sessions);
     connect(refresh, SIGNAL(clicked()), this, SLOT(refreshSessionLogs()));
-    sessionButtons->addWidget(refresh);
-    sessionButtons->addStretch();
+    sessionButtons->addWidget(refresh, 1, 1);
 
     QGroupBox *applicationLog = new QGroupBox(
         QString::fromLatin1("Application log"), splitter);
@@ -1406,7 +1679,7 @@ QWidget *LegacyMainWindow::buildLogTab()
     m_logSearchEdit->setText(QString::null);
     QToolTip::add(m_logSearchEdit, QString::fromLatin1(
         "Type any characters to show matching log entries (case-insensitive). "
-        "Save log always writes every entry."));
+        "Save As always writes every entry."));
     connect(m_logSearchEdit, SIGNAL(textChanged(const QString &)), this, SLOT(logSearchChanged()));
     filterRow->addWidget(m_logSearchEdit, 1);
     filterRow->addWidget(new QLabel(QString::fromLatin1("Filter:"), applicationLog));
@@ -1414,24 +1687,36 @@ QWidget *LegacyMainWindow::buildLogTab()
     m_logFilterCombo->insertItem(QString::fromLatin1("All entries"));
     m_logFilterCombo->insertItem(QString::fromLatin1("Errors and warnings"));
     QToolTip::add(m_logFilterCombo, QString::fromLatin1(
-        "Filter the visible log; Save log always writes every entry."));
+        "Filter the visible log; Save As always writes every entry."));
     connect(m_logFilterCombo, SIGNAL(activated(int)), this, SLOT(logFilterChanged()));
     filterRow->addWidget(m_logFilterCombo);
+
+    // Modern prior-log banner: shown only while a prior session file is
+    // selected (read-only).
+    m_priorLogBanner = new QLabel(applicationLog);
+    m_priorLogBanner->setFrameShape(QFrame::StyledPanel);
+    m_priorLogBanner->setMargin(4);
+    m_priorLogBanner->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
+    m_priorLogBanner->hide();
+    logLayout->addWidget(m_priorLogBanner);
 
     m_logView = new QTextEdit(applicationLog);
     m_logView->setReadOnly(true);
     m_logView->setTextFormat(Qt::LogText);
-    m_logView->setWordWrap(QTextEdit::NoWrap);
-    m_logView->setMinimumHeight(120);
+    m_logView->setWordWrap(m_logWrapEnabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
+    m_logView->setMinimumHeight(110);
     logLayout->addWidget(m_logView, 1);
 
     QHBoxLayout *buttons = new QHBoxLayout(logLayout);
     buttons->setSpacing(4);
-    QPushButton *save = makeButton(QString::fromLatin1("Save log..."), applicationLog);
+    QPushButton *save = makeButton(QString::fromLatin1("Save As..."), applicationLog);
     QToolTip::add(save, QString::fromLatin1("Save the complete session log (all entries, not just the current filter)."));
     connect(save, SIGNAL(clicked()), this, SLOT(saveLog()));
     buttons->addWidget(save);
-    QPushButton *clear = makeButton(QString::fromLatin1("Clear log"), applicationLog);
+    QPushButton *clear = makeButton(QString::fromLatin1("Clear Register"), applicationLog);
+    QToolTip::add(clear, QString::fromLatin1(
+        "Clear the live register and view; prior session files are never "
+        "modified."));
     connect(clear, SIGNAL(clicked()), this, SLOT(clearLog()));
     buttons->addWidget(clear);
     buttons->addStretch();
@@ -1449,60 +1734,79 @@ QWidget *LegacyMainWindow::buildLogTab()
 QWidget *LegacyMainWindow::buildSettingsTab()
 {
     QWidget *page = new QWidget(m_tabs);
-    QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
+    QVBoxLayout *pageLayout = new QVBoxLayout(page, 8, 6);
 
     m_settingsHeading = makeSectionTitle(QString::fromLatin1("Settings"), page);
-    layout->addWidget(m_settingsHeading);
+    pageLayout->addWidget(m_settingsHeading);
 
-    // Modern parity: the modern Settings page opens with device discovery and
-    // diagnostics and closes with the mandatory safety list; the legacy-only
-    // read-only application configuration follows them.
-    QGroupBox *discovery = new QGroupBox(QString::fromLatin1("Device discovery"), page);
-    QVBoxLayout *discoveryLayout = new QVBoxLayout(discovery, 8, 4);
-    const char *discoveryItems[] = {
-        "Show devices without an identified Linux installation",
-        "Show removable and USB storage",
-        "Show encrypted devices before unlocking"
-    };
-    for (int i = 0; i < 3; ++i) {
-        QCheckBox *check = new QCheckBox(QString::fromLatin1(discoveryItems[i]), discovery);
-        check->setChecked(true);
-        check->setEnabled(false);
-        QToolTip::add(check, QString::fromLatin1(
-            "The legacy frontend always renders the complete read-only kernel "
-            "inventory; this modern filter is not implemented here."));
-        discoveryLayout->addWidget(check);
-    }
+    // Modern Settings is a scrollable page. Qt3 has no QScrollArea, so the
+    // Qt3 QScrollView hosts the content; AutoOneFit keeps the content at the
+    // viewport width and only scrolls vertically when the groups exceed the
+    // 1024x768 contract height.
+    QScrollView *scroll = new QScrollView(page);
+    scroll->setResizePolicy(QScrollView::AutoOneFit);
+    scroll->setVScrollBarMode(QScrollView::Auto);
+    scroll->setHScrollBarMode(QScrollView::AlwaysOff);
+    scroll->setFrameShape(QFrame::NoFrame);
+    pageLayout->addWidget(scroll, 1);
+
+    QWidget *content = new QWidget(scroll->viewport());
+    scroll->addChild(content);
+    m_settingsContent = content;
+    QVBoxLayout *layout = new QVBoxLayout(content, 6, 6);
+
+    // Modern parity: device discovery, diagnostics and the mandatory safety
+    // list in the modern order, then the host capabilities section; the
+    // legacy-only read-only application configuration closes the page.
+    QGroupBox *discovery = new QGroupBox(QString::fromLatin1("Device discovery"), content);
+    QVBoxLayout *discoveryLayout = new QVBoxLayout(discovery, 6, 3);
+    m_showNonLinuxCheck = new QCheckBox(
+        QString::fromLatin1("Show devices without an identified Linux installation"), discovery);
+    m_showRemovableCheck = new QCheckBox(
+        QString::fromLatin1("Show removable and USB storage"), discovery);
+    m_showEncryptedCheck = new QCheckBox(
+        QString::fromLatin1("Show encrypted devices before unlocking"), discovery);
+    QToolTip::add(m_showNonLinuxCheck, QString::fromLatin1(
+        "When off, drives without a visible Linux filesystem are hidden unless "
+        "they still contain an encrypted device and encrypted devices are shown."));
+    QToolTip::add(m_showRemovableCheck, QString::fromLatin1(
+        "When off, removable and USB drives are hidden from the repair-target list."));
+    QToolTip::add(m_showEncryptedCheck, QString::fromLatin1(
+        "When off, drives with an encrypted device are hidden until the volume "
+        "is unlocked."));
+    discoveryLayout->addWidget(m_showNonLinuxCheck);
+    discoveryLayout->addWidget(m_showRemovableCheck);
+    discoveryLayout->addWidget(m_showEncryptedCheck);
+    connect(m_showNonLinuxCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
+    connect(m_showRemovableCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
+    connect(m_showEncryptedCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
     layout->addWidget(discovery);
 
-    QGroupBox *diagnostics = new QGroupBox(QString::fromLatin1("Diagnostics"), page);
-    QVBoxLayout *diagnosticsLayout = new QVBoxLayout(diagnostics, 8, 4);
-    QCheckBox *autoRefresh = new QCheckBox(
+    QGroupBox *diagnostics = new QGroupBox(QString::fromLatin1("Diagnostics"), content);
+    QVBoxLayout *diagnosticsLayout = new QVBoxLayout(diagnostics, 6, 3);
+    m_autoRefreshCheck = new QCheckBox(
         QString::fromLatin1("Automatically regenerate read-only diagnostics after repairs or target changes"),
         diagnostics);
-    autoRefresh->setChecked(true);
-    autoRefresh->setEnabled(false);
-    QToolTip::add(autoRefresh, QString::fromLatin1(
-        "Not available on the legacy frontend: the helper has no persistent "
-        "privileged session, so diagnostics must be re-run manually."));
-    diagnosticsLayout->addWidget(autoRefresh);
+    QToolTip::add(m_autoRefreshCheck, QString::fromLatin1(
+        "Regenerates the cached read-only diagnostics for the current scope "
+        "after an operation that invalidates them (LUKS unlock, target "
+        "configuration edit). It runs only inside an already authorized "
+        "administrator session and never opens an authorization prompt by "
+        "itself."));
+    connect(m_autoRefreshCheck, SIGNAL(toggled(bool)), this, SLOT(autoRefreshToggled(bool)));
+    diagnosticsLayout->addWidget(m_autoRefreshCheck);
     layout->addWidget(diagnostics);
 
-    QGroupBox *logs = new QGroupBox(QString::fromLatin1("Logs"), page);
-    QVBoxLayout *logsLayout = new QVBoxLayout(logs, 8, 4);
+    QGroupBox *logs = new QGroupBox(QString::fromLatin1("Logs"), content);
+    QVBoxLayout *logsLayout = new QVBoxLayout(logs, 6, 3);
     m_logWrapCheck = new QCheckBox(QString::fromLatin1("Wrap long log lines"), logs);
     connect(m_logWrapCheck, SIGNAL(toggled(bool)), this, SLOT(toggleLogWrap(bool)));
     logsLayout->addWidget(m_logWrapCheck);
-    QLabel *saveNote = new QLabel(
-        QString::fromLatin1("Save log always writes every entry, independent of the search and filter controls."),
-        logs);
-    saveNote->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    logsLayout->addWidget(saveNote);
     layout->addWidget(logs);
 
     QGroupBox *safety = new QGroupBox(
-        QString::fromLatin1("Mandatory safety controls"), page);
-    QVBoxLayout *safetyLayout = new QVBoxLayout(safety, 8, 4);
+        QString::fromLatin1("Mandatory safety controls"), content);
+    QVBoxLayout *safetyLayout = new QVBoxLayout(safety, 6, 3);
     const char *safetyItems[] = {
         "Protect every physical device backing the running host root",
         "Require explicit confirmation before package installation or repair actions",
@@ -1518,9 +1822,53 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     }
     layout->addWidget(safety);
 
+    // Modern Host capabilities and dependencies (read-only): the identity and
+    // the helper's backend-profile lines parsed from the cached diagnostics.
+    QGroupBox *capability = new QGroupBox(
+        QString::fromLatin1("Host capabilities and dependencies"), content);
+    QGridLayout *capabilityGrid = new QGridLayout(capability, 10, 2, 6, 4);
+    capabilityGrid->setColStretch(1, 1);
+    m_capDistributionLabel = new QLabel(capability);
+    m_capPackageManagerLabel = new QLabel(capability);
+    m_capServiceLabel = new QLabel(capability);
+    m_capDisplayLabel = new QLabel(capability);
+    m_capInitramfsLabel = new QLabel(capability);
+    m_capBootloaderLabel = new QLabel(capability);
+    m_capLoggingLabel = new QLabel(capability);
+    QLabel *capValues[] = {
+        m_capDistributionLabel, m_capPackageManagerLabel, m_capServiceLabel,
+        m_capDisplayLabel, m_capInitramfsLabel, m_capBootloaderLabel,
+        m_capLoggingLabel
+    };
+    const char *capNames[] = {
+        "Distribution:", "Package manager family:", "Service manager:",
+        "Display manager backend:", "Initramfs backend(s):",
+        "Bootloader backend:", "Logging backend:"
+    };
+    for (int i = 0; i < 7; ++i) {
+        capValues[i]->setTextFormat(Qt::PlainText);
+        capValues[i]->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+        capabilityGrid->addWidget(new QLabel(QString::fromLatin1(capNames[i]), capability), i, 0);
+        capabilityGrid->addWidget(capValues[i], i, 1);
+    }
+    m_refreshCapabilitiesButton = makeButton(
+        QString::fromLatin1("Refresh Capabilities"), capability);
+    connect(m_refreshCapabilitiesButton, SIGNAL(clicked()), this, SLOT(runDiagnostics()));
+    capabilityGrid->addMultiCellWidget(m_refreshCapabilitiesButton, 7, 7, 0, 0,
+                                       Qt::AlignLeft);
+    QLabel *installNote = new QLabel(
+        QString::fromLatin1(
+            "Package installation is not offered: host installs are forbidden "
+            "in this frontend. Missing tools stay greyed with the helper's own "
+            "probe reason."),
+        capability);
+    installNote->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    capabilityGrid->addMultiCellWidget(installNote, 7, 7, 1, 1);
+    layout->addWidget(capability);
+
     QGroupBox *application = new QGroupBox(
-        QString::fromLatin1("Application configuration"), page);
-    QGridLayout *appGrid = new QGridLayout(application, 5, 2, 8, 4);
+        QString::fromLatin1("Application configuration"), content);
+    QGridLayout *appGrid = new QGridLayout(application, 5, 2, 6, 4);
     appGrid->setColStretch(1, 1);
     m_settingsHelperLabel = new QLabel(application);
     m_settingsElevationLabel = new QLabel(application);
@@ -1545,6 +1893,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     registerGroupBox(diagnostics);
     registerGroupBox(logs);
     registerGroupBox(safety);
+    registerGroupBox(capability);
     registerGroupBox(application);
     return page;
 }
@@ -1576,9 +1925,12 @@ QWidget *LegacyMainWindow::buildAboutTab()
             "regeneration, + elevation state and Authorize), Chroot Shell / "
             "Host Shell and File Copy "
             "(greyed with the helper's <tt>Legacy feature</tt> probe reasons), "
-            "Logs (search, all/errors filter and session list) and Settings "
-            "(read-only configuration + greyed modern options) mirror the Qt6 "
-            "hierarchy. Snapshots, host default/reboot and the Full Repair "
+            "Logs (search, all/errors filter, session management and prior-log "
+            "banner) and Settings (functional device filters, diagnostics "
+            "auto-refresh, read-only host capabilities and configuration) "
+            "mirror the Qt6 "
+            "hierarchy, and the File/View/Help menus follow the modern "
+            "structure. Snapshots, host default/reboot and the Full Repair "
             "plan stay deliberately omitted."),
         page);
     about->setAlignment(Qt::WordBreak | Qt::AlignLeft);
@@ -1601,13 +1953,37 @@ void LegacyMainWindow::scanDevices()
 {
     // The member slot shadows the namespace-level scanDevices(), so the
     // inventory function is called with its explicit namespace qualification.
-    const std::vector<DeviceRow> rows = legacy::scanDevices();
-    m_deviceList->clear();
+    // The complete inventory is cached in m_rows/m_inventory; the visible list
+    // is a filtered projection so a hidden row (device-discovery filter) can
+    // never invalidate the selected/committed target state.
+    m_inventory = legacy::scanDevices();
     m_rows.clear();
+    for (std::size_t i = 0; i < m_inventory.size(); ++i) {
+        m_rows.insert(fromStd(m_inventory[i].path), m_inventory[i]);
+    }
+    rebuildDeviceList();
+    updateStatus();
+    updateActionStates();
+    updateDriveDetails();
+    updateUnlockStatus();
+}
 
+// Rebuilds the visible device list from the cached inventory, applying the
+// Settings device-discovery filters. The selected disk is re-selected when it
+// is still visible; when its row is hidden the selection/commit state stays
+// intact (the details pane, target summary and gated actions keep working).
+void LegacyMainWindow::rebuildDeviceList()
+{
+    if (!m_deviceList) {
+        return;
+    }
     const QString previousDisk = m_selectedDisk;
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        const DeviceRow &row = rows[i];
+    m_deviceList->clear();
+    for (std::size_t i = 0; i < m_inventory.size(); ++i) {
+        const DeviceRow &row = m_inventory[i];
+        if (!deviceRowVisible(row)) {
+            continue;
+        }
         QString type;
         QString note = fromStd(row.model);
         if (row.disk) {
@@ -1631,15 +2007,87 @@ void LegacyMainWindow::scanDevices()
         new QListViewItem(m_deviceList, fromStd(row.path), fromStd(row.size),
                           type, displayFsType(row), fromStd(row.mountpoint),
                           note);
-        m_rows.insert(fromStd(row.path), row);
     }
-    if (!previousDisk.isEmpty() && m_rows.contains(previousDisk)) {
+    if (!previousDisk.isEmpty()) {
         selectInventoryRow(previousDisk);
     }
-    updateStatus();
-    updateActionStates();
-    updateDriveDetails();
-    updateUnlockStatus();
+}
+
+// Modern devicePassesTopLevelFilters() applied to the flat legacy list: the
+// filters act on the owning drive, so a hidden drive hides its partitions and
+// mappers too. A row whose owning drive cannot be resolved stays visible
+// (fail open for inspection only; gating is unaffected).
+bool LegacyMainWindow::deviceRowVisible(const DeviceRow &row) const
+{
+    if (!m_showNonLinuxCheck || !m_showRemovableCheck || !m_showEncryptedCheck) {
+        return true;
+    }
+    const QString diskPath = row.disk ? fromStd(row.path) : owningDiskFor(row);
+    if (diskPath.isEmpty()) {
+        return true;
+    }
+    const QMap<QString, DeviceRow>::const_iterator diskIt = m_rows.find(diskPath);
+    if (diskIt == m_rows.end()) {
+        return true;
+    }
+    const DeviceRow &disk = diskIt.data();
+    const bool removableOrUsb = disk.transport == std::string("removable")
+        || disk.transport == std::string("USB");
+    if (!m_showRemovableCheck->isChecked() && removableOrUsb) {
+        return false;
+    }
+    const bool encryptedTree = diskHasEncryptedRow(diskPath);
+    if (!m_showEncryptedCheck->isChecked() && encryptedTree) {
+        return false;
+    }
+    const bool linuxCandidate = diskHasLinuxCandidate(diskPath);
+    if (!m_showNonLinuxCheck->isChecked() && !linuxCandidate
+        && !(encryptedTree && m_showEncryptedCheck->isChecked())) {
+        return false;
+    }
+    return true;
+}
+
+bool LegacyMainWindow::rowBelongsToDisk(const DeviceRow &row, const QString &diskPath) const
+{
+    if (row.disk) {
+        return fromStd(row.path) == diskPath;
+    }
+    if (row.mapper) {
+        return owningDiskFor(row) == diskPath;
+    }
+    const QMap<QString, DeviceRow>::const_iterator diskIt = m_rows.find(diskPath);
+    if (diskIt == m_rows.end()) {
+        return false;
+    }
+    return row.parent == diskIt.data().name;
+}
+
+bool LegacyMainWindow::diskHasEncryptedRow(const QString &diskPath) const
+{
+    for (QMap<QString, DeviceRow>::const_iterator it = m_rows.begin();
+         it != m_rows.end(); ++it) {
+        if (it.data().encrypted && rowBelongsToDisk(it.data(), diskPath)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool LegacyMainWindow::diskHasLinuxCandidate(const QString &diskPath) const
+{
+    for (QMap<QString, DeviceRow>::const_iterator it = m_rows.begin();
+         it != m_rows.end(); ++it) {
+        const DeviceRow &row = it.data();
+        if (!rowBelongsToDisk(row, diskPath)) {
+            continue;
+        }
+        if (legacy::isLinuxFileSystemName(row.fstype)
+            || legacy::isLinuxFileSystemName(row.probedFstype)) {
+            return true;
+        }
+    }
+    return false;
 }
 
 // Modern parity: selecting a drive row inspects the drive and resolves its
@@ -2064,20 +2512,39 @@ QString LegacyMainWindow::scopeReadyReason() const
 
 void LegacyMainWindow::runDiagnostics()
 {
+    runDiagnosticsInternal(false);
+}
+
+// `quiet` is used by the automatic regeneration: it never opens a dialog and
+// never prompts for authorization, it only logs the skip reason.
+void LegacyMainWindow::runDiagnosticsInternal(bool quiet)
+{
     if (!diagnosticsScopeReady()) {
-        QMessageBox::information(this, QString::fromLatin1("Diagnostics scope required"),
-                                 scopeReadyReason(),
-                                 QMessageBox::Ok, QMessageBox::NoButton);
+        if (quiet) {
+            appendLog(QString::fromLatin1(
+                "Automatic read-only diagnostics regeneration skipped: %1")
+                .arg(scopeReadyReason()));
+        } else {
+            QMessageBox::information(this, QString::fromLatin1("Diagnostics scope required"),
+                                     scopeReadyReason(),
+                                     QMessageBox::Ok, QMessageBox::NoButton);
+        }
         return;
     }
     if (!selectionComplete()) {
-        QMessageBox::warning(
-            this, QString::fromLatin1("Diagnostics scope unresolved"),
-            QString::fromLatin1(
-                "The running host target could not be resolved; use Refresh "
-                "Devices and commit a repair target or re-enter Host "
-                "Maintenance."),
-            QMessageBox::Ok, QMessageBox::NoButton);
+        if (quiet) {
+            appendLog(QString::fromLatin1(
+                "Automatic read-only diagnostics regeneration skipped: the "
+                "running host target could not be resolved."));
+        } else {
+            QMessageBox::warning(
+                this, QString::fromLatin1("Diagnostics scope unresolved"),
+                QString::fromLatin1(
+                    "The running host target could not be resolved; use Refresh "
+                    "Devices and commit a repair target or re-enter Host "
+                    "Maintenance."),
+                QMessageBox::Ok, QMessageBox::NoButton);
+        }
         return;
     }
     const bool host = hostScope();
@@ -2086,7 +2553,8 @@ void LegacyMainWindow::runDiagnostics()
          << selectedDisk() << selectedRoot() << QString::fromLatin1("all");
     startCommand(args, true,
                  host ? QString::fromLatin1("host-diagnose all")
-                      : QString::fromLatin1("diagnose all"));
+                      : QString::fromLatin1("diagnose all"),
+                 false, false, false, quiet);
 }
 
 void LegacyMainWindow::runSelectedDiagnostic()
@@ -2118,7 +2586,8 @@ void LegacyMainWindow::runSelectedDiagnostic()
                                  QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const QString key = item->text(0).stripWhiteSpace();
+    const QString key = mapValue(m_diagKeyByTitle,
+                                 item->text(0).stripWhiteSpace());
     if (key.isEmpty()) {
         return;
     }
@@ -2444,6 +2913,12 @@ void LegacyMainWindow::sessionLogSelectionChanged()
         m_viewingPriorLog = false;
         m_priorLogPath = QString::null;
         m_priorLogLines.clear();
+        if (m_priorLogBanner) {
+            m_priorLogBanner->hide();
+        }
+        if (m_deleteSessionLogButton) {
+            m_deleteSessionLogButton->setEnabled(false);
+        }
         refreshLogView();
         return;
     }
@@ -2462,6 +2937,14 @@ void LegacyMainWindow::sessionLogSelectionChanged()
     }
     m_priorLogPath = path;
     m_viewingPriorLog = true;
+    if (m_priorLogBanner) {
+        m_priorLogBanner->setText(QString::fromLatin1(
+            "Viewing a prior session log (read-only): %1").arg(item->text(0)));
+        m_priorLogBanner->show();
+    }
+    if (m_deleteSessionLogButton) {
+        m_deleteSessionLogButton->setEnabled(true);
+    }
     refreshLogView();
 }
 
@@ -2473,9 +2956,242 @@ void LegacyMainWindow::refreshSessionLogs()
 
 void LegacyMainWindow::toggleLogWrap(bool enabled)
 {
+    m_logWrapEnabled = enabled;
     if (m_logView) {
         m_logView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
     }
+    // Keep the Settings checkbox and the View menu item in sync without
+    // re-entering their signals.
+    if (m_logWrapCheck && m_logWrapCheck->isChecked() != enabled) {
+        m_logWrapCheck->blockSignals(true);
+        m_logWrapCheck->setChecked(enabled);
+        m_logWrapCheck->blockSignals(false);
+    }
+    if (m_viewMenu && m_wrapLogsMenuValid
+        && m_viewMenu->isItemChecked(m_wrapLogsMenuId) != enabled) {
+        m_viewMenu->setItemChecked(m_wrapLogsMenuId, enabled);
+    }
+    saveLegacySettings();
+}
+
+// Modern New Session Log: close the active session file. It becomes a prior
+// session in the list; the next log entry creates a new timestamped file (the
+// legacy logger has no separate scope-identification step).
+void LegacyMainWindow::startNewSessionLog()
+{
+    const QString closed = m_logPath;
+    m_logPath = QString::null;
+    m_logLines.clear();
+    m_viewingPriorLog = false;
+    m_priorLogPath = QString::null;
+    m_priorLogLines.clear();
+    if (m_priorLogBanner) {
+        m_priorLogBanner->hide();
+    }
+    if (m_settingsSessionLabel) {
+        m_settingsSessionLabel->setText(QString::fromLatin1("(not created yet)"));
+    }
+    appendLog(QString::fromLatin1(
+        "Started a new session log; earlier files remain available in the "
+        "session list."));
+    if (!closed.isEmpty()) {
+        appendLog(QString::fromLatin1("Closed session log: %1").arg(closed));
+    }
+    refreshSessionLogList();
+    if (m_sessionLogList && m_sessionLogList->firstChild()) {
+        m_sessionLogList->setSelected(m_sessionLogList->firstChild(), true);
+        m_sessionLogList->setCurrentItem(m_sessionLogList->firstChild());
+    }
+    refreshLogView();
+}
+
+// Modern Add Note: a free-text NOTE entry in the live register.
+void LegacyMainWindow::addSessionNote()
+{
+    bool accepted = false;
+    const QString note = QInputDialog::getText(
+        QString::fromLatin1("Add Note"), QString::fromLatin1("Note:"),
+        QLineEdit::Normal, QString::null, &accepted, this);
+    if (!accepted) {
+        return;
+    }
+    const QString trimmed = note.stripWhiteSpace();
+    if (trimmed.isEmpty()) {
+        return;
+    }
+    appendLog(QString::fromLatin1("NOTE: %1").arg(trimmed));
+}
+
+// Modern Delete: only a selected prior session file inside the configured log
+// directory, never the live file, after a confirmation. The file-name and
+// canonical-path guards mirror the modern deleteSelectedSessionLog().
+void LegacyMainWindow::deleteSelectedSessionLog()
+{
+    if (!m_sessionLogList) {
+        return;
+    }
+    QListViewItem *item = m_sessionLogList->currentItem();
+    if (!item || item == m_sessionLogList->firstChild()) {
+        return;
+    }
+    const QString fileName = item->text(0);
+    if (fileName.isEmpty() || !fileName.endsWith(QString::fromLatin1(".log"))) {
+        return;
+    }
+    const QString path = m_logDirectory + QString::fromLatin1("/") + fileName;
+    if (m_logDirectory.isEmpty() || !path.startsWith(m_logDirectory)) {
+        return;
+    }
+    if (!m_logPath.isEmpty() && path == m_logPath) {
+        return;
+    }
+    // Canonical containment: never follow a symlink out of the log directory.
+    // Qt3 QFileInfo has no canonicalFilePath(), so canonicalize the directory
+    // and rebuild the candidate path from the plain file name.
+    const QString canonicalDirectory = QDir(m_logDirectory).canonicalPath();
+    if (canonicalDirectory.isEmpty()) {
+        return;
+    }
+    const QString canonicalPath = canonicalDirectory + QString::fromLatin1("/") + fileName;
+    QFileInfo fileInfo(canonicalPath);
+    if (!fileInfo.exists() || !fileInfo.isFile() || fileInfo.isSymLink()) {
+        return;
+    }
+    const int answer = QMessageBox::question(
+        this, QString::fromLatin1("Delete session log"),
+        QString::fromLatin1("Delete %1 permanently? This cannot be undone.")
+            .arg(fileName),
+        QMessageBox::Yes, QMessageBox::Cancel);
+    if (answer != QMessageBox::Yes) {
+        return;
+    }
+    if (!QFile::remove(canonicalPath)) {
+        QMessageBox::warning(this, QString::fromLatin1("Delete session log"),
+                             QString::fromLatin1("Unable to delete %1.").arg(fileName),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    appendLog(QString::fromLatin1("Deleted prior session log %1.").arg(fileName));
+    if (m_viewingPriorLog && m_priorLogPath == path) {
+        m_viewingPriorLog = false;
+        m_priorLogPath = QString::null;
+        m_priorLogLines.clear();
+        if (m_priorLogBanner) {
+            m_priorLogBanner->hide();
+        }
+    }
+    refreshSessionLogList();
+    refreshLogView();
+}
+
+// ---- persisted options (modern-compatible QSettings key names) -------------
+
+void LegacyMainWindow::loadLegacySettings()
+{
+    QSettings settings;
+    settings.setPath(QString::fromLatin1("boot-bitch.local"),
+                     QString::fromLatin1("boot-bitch-legacy"), QSettings::User);
+    const bool nonLinux = settings.readBoolEntry(
+        QString::fromLatin1("/devices/showNonLinux"), true);
+    const bool removable = settings.readBoolEntry(
+        QString::fromLatin1("/devices/showRemovable"), true);
+    const bool encrypted = settings.readBoolEntry(
+        QString::fromLatin1("/devices/showEncrypted"), true);
+    m_logWrapEnabled = settings.readBoolEntry(
+        QString::fromLatin1("/logs/wrapLines"), true);
+    m_autoRefreshEnabled = settings.readBoolEntry(
+        QString::fromLatin1("/diagnostics/autoRefreshStale"), true);
+
+    QCheckBox *checks[] = { m_showNonLinuxCheck, m_showRemovableCheck,
+                            m_showEncryptedCheck, m_autoRefreshCheck,
+                            m_logWrapCheck };
+    const bool values[] = { nonLinux, removable, encrypted,
+                            m_autoRefreshEnabled, m_logWrapEnabled };
+    for (int i = 0; i < 5; ++i) {
+        if (!checks[i]) {
+            continue;
+        }
+        checks[i]->blockSignals(true);
+        checks[i]->setChecked(values[i]);
+        checks[i]->blockSignals(false);
+    }
+    if (m_logView) {
+        m_logView->setWordWrap(m_logWrapEnabled ? QTextEdit::WidgetWidth
+                                                : QTextEdit::NoWrap);
+    }
+    if (m_viewMenu && m_wrapLogsMenuValid) {
+        m_viewMenu->setItemChecked(m_wrapLogsMenuId, m_logWrapEnabled);
+    }
+}
+
+void LegacyMainWindow::saveLegacySettings()
+{
+    QSettings settings;
+    settings.setPath(QString::fromLatin1("boot-bitch.local"),
+                     QString::fromLatin1("boot-bitch-legacy"), QSettings::User);
+    if (m_showNonLinuxCheck) {
+        settings.writeEntry(QString::fromLatin1("/devices/showNonLinux"),
+                            m_showNonLinuxCheck->isChecked());
+    }
+    if (m_showRemovableCheck) {
+        settings.writeEntry(QString::fromLatin1("/devices/showRemovable"),
+                            m_showRemovableCheck->isChecked());
+    }
+    if (m_showEncryptedCheck) {
+        settings.writeEntry(QString::fromLatin1("/devices/showEncrypted"),
+                            m_showEncryptedCheck->isChecked());
+    }
+    settings.writeEntry(QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
+    settings.writeEntry(QString::fromLatin1("/diagnostics/autoRefreshStale"),
+                        m_autoRefreshEnabled);
+}
+
+void LegacyMainWindow::deviceFilterChanged()
+{
+    saveLegacySettings();
+    rebuildDeviceList();
+    updateActionStates();
+    statusBar()->message(QString::fromLatin1("Device discovery filters updated."), 2500);
+}
+
+void LegacyMainWindow::autoRefreshToggled(bool enabled)
+{
+    m_autoRefreshEnabled = enabled;
+    saveLegacySettings();
+    updateActionStates();
+}
+
+// Modern Host capabilities and dependencies: read-only labels fed by the
+// helper backend-profile facts parsed from the cached diagnostics.
+void LegacyMainWindow::updateCapabilityView()
+{
+    if (!m_capDistributionLabel) {
+        return;
+    }
+    const QString unavailable = QString::fromLatin1(
+        "not reported (run diagnostics for the selected scope)");
+    QString distribution = mapValue(m_factMap, QString::fromLatin1("System:"));
+    if (distribution.isEmpty()) {
+        distribution = mapValue(m_factMap, QString::fromLatin1("Detected target OS:"));
+    }
+    if (distribution.isEmpty()) {
+        distribution = mapValue(m_factMap, QString::fromLatin1("OS:"));
+    }
+    QString packageManager = mapValue(m_factMap, QString::fromLatin1("Package manager backends:"));
+    if (packageManager.isEmpty()) {
+        packageManager = mapValue(m_factMap, QString::fromLatin1("Package manager backend:"));
+    }
+    QString initramfs = mapValue(m_factMap, QString::fromLatin1("Initramfs backends:"));
+    if (initramfs.isEmpty()) {
+        initramfs = mapValue(m_factMap, QString::fromLatin1("Initramfs backend:"));
+    }
+    m_capDistributionLabel->setText(distribution.isEmpty() ? unavailable : distribution);
+    m_capPackageManagerLabel->setText(packageManager.isEmpty() ? unavailable : packageManager);
+    m_capServiceLabel->setText(detailOrDash(mapValue(m_factMap, QString::fromLatin1("Service manager:"))));
+    m_capDisplayLabel->setText(detailOrDash(mapValue(m_factMap, QString::fromLatin1("Display manager backend:"))));
+    m_capInitramfsLabel->setText(initramfs.isEmpty() ? unavailable : initramfs);
+    m_capBootloaderLabel->setText(detailOrDash(mapValue(m_factMap, QString::fromLatin1("Bootloader backend:"))));
+    m_capLoggingLabel->setText(detailOrDash(mapValue(m_factMap, QString::fromLatin1("Logging backend:"))));
 }
 
 void LegacyMainWindow::runAction()
@@ -2728,7 +3444,8 @@ bool LegacyMainWindow::ensureAdministratorSession(const QString &context)
 
 void LegacyMainWindow::startCommand(const QStringList &args,
                                     bool diagnostic, const QString &label,
-                                    bool unlock, bool config, bool shell)
+                                    bool unlock, bool config, bool shell,
+                                    bool quiet)
 {
     if (m_running) {
         return;
@@ -2752,7 +3469,7 @@ void LegacyMainWindow::startCommand(const QStringList &args,
             "Authorize (Systems or Repair tab), enter Host Maintenance or commit "
             "a repair target to authorize this session.")
             .arg(label));
-        if (!m_smokeMode) {
+        if (!m_smokeMode && !quiet) {
             QMessageBox::warning(
                 this, QString::fromLatin1("Administrator authorization required"),
                 QString::fromLatin1(
@@ -2778,7 +3495,7 @@ void LegacyMainWindow::startCommand(const QStringList &args,
         appendLog(QString::fromLatin1(
             "ERROR: the administrator session for %1 is no longer valid; the "
             "command was not started.").arg(label));
-        if (!m_smokeMode) {
+        if (!m_smokeMode && !quiet) {
             QMessageBox::warning(
                 this, QString::fromLatin1("Administrator authorization expired"),
                 QString::fromLatin1(
@@ -2942,6 +3659,11 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
         handleUnlockFinished(ok, transcript, unlockDevice, unlockDisk);
     }
 
+    if (wasConfig && wasConfigWrite && ok) {
+        maybeAutoRefreshDiagnostics(QString::fromLatin1(
+            "the target configuration was edited"));
+    }
+
     if (wasSmoke) {
         if (!ok) {
             m_smokeMode = false;
@@ -2986,6 +3708,8 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
             "LUKS volume unlocked; the target topology changed, so cached "
             "diagnostics were invalidated. Run diagnostics again."));
         scanDevices();
+        maybeAutoRefreshDiagnostics(QString::fromLatin1(
+            "the LUKS unlock changed the target topology"));
     } else if (authFailed) {
         status = QString::fromLatin1(
             "State: locked\nComponent: %1\nMethod: helper unlock (cryptsetup)\n"
@@ -3031,6 +3755,50 @@ void LegacyMainWindow::reportChangeStatuses(const ParsedTranscript &parsed)
                           .arg(fromStd(key)));
         }
     }
+}
+
+// Modern scheduleEvidenceRefresh() semantics, reduced to the legacy session
+// model: after an operation that invalidated the cached diagnostics, schedule
+// one Run All for the current scope only when the setting is on, the scope is
+// ready, no command is running and the administrator session is already
+// active. It never opens an authorization prompt by itself; a missing session
+// leaves the manual stale hint in place.
+void LegacyMainWindow::maybeAutoRefreshDiagnostics(const QString &reason)
+{
+    if (!m_autoRefreshEnabled) {
+        return;
+    }
+    if (m_smokeMode || m_running) {
+        return;
+    }
+    if (!diagnosticsScopeReady()) {
+        appendLog(QString::fromLatin1(
+            "Automatic read-only diagnostics regeneration is pending until a "
+            "scope is ready (%1).").arg(reason));
+        return;
+    }
+    if (!administratorSessionActive()) {
+        appendLog(QString::fromLatin1(
+            "Automatic read-only diagnostics regeneration is pending until "
+            "administrator authorization is active (%1); it never opens an "
+            "authorization prompt by itself.").arg(reason));
+        return;
+    }
+    appendLog(QString::fromLatin1(
+        "Automatic read-only diagnostics regeneration scheduled after %1.")
+        .arg(reason));
+    QTimer::singleShot(0, this, SLOT(runScheduledAutoRefresh()));
+}
+
+void LegacyMainWindow::runScheduledAutoRefresh()
+{
+    if (!m_autoRefreshEnabled || m_running || !diagnosticsScopeReady()) {
+        return;
+    }
+    if (!administratorSessionActive()) {
+        return;
+    }
+    runDiagnosticsInternal(true);
 }
 
 void LegacyMainWindow::runSmokeStep()
@@ -3246,6 +4014,166 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         ok = false;
     }
 
+    // B2 menus: File (Refresh Devices, Lock Administrator Session, Quit),
+    // View (tab shortcuts, Auto-size Device Columns, checkable Wrap Log Lines)
+    // and Help (Using Boot Bitch, About Boot Bitch). Qt3's auto-generated menu
+    // ids are NEGATIVE, so validity is tracked separately.
+    if (!m_fileMenu || !m_viewMenu || !m_helpMenu || !m_wrapLogsMenuValid) {
+        problems->append(QString::fromLatin1("modern menu structure missing"));
+        ok = false;
+    } else {
+        struct MenuItemCheck {
+            QPopupMenu *menu;
+            const char *label;
+        };
+        const MenuItemCheck menuChecks[] = {
+            { m_fileMenu, "Refresh Devices" },
+            { m_fileMenu, "Lock Administrator Session" },
+            { m_fileMenu, "Quit" },
+            { m_viewMenu, "Systems" },
+            { m_viewMenu, "Diagnostics" },
+            { m_viewMenu, "Logs" },
+            { m_viewMenu, "Settings" },
+            { m_viewMenu, "Auto-size Device Columns" },
+            { m_viewMenu, "Wrap Log Lines" },
+            { m_helpMenu, "Using Boot Bitch" },
+            { m_helpMenu, "About Boot Bitch" }
+        };
+        for (int i = 0; i < static_cast<int>(sizeof(menuChecks) / sizeof(menuChecks[0])); ++i) {
+            if (!menuItemId(menuChecks[i].menu,
+                            QString::fromLatin1(menuChecks[i].label), 0)) {
+                problems->append(QString::fromLatin1("menu item missing: %1")
+                                     .arg(QString::fromLatin1(menuChecks[i].label)));
+                ok = false;
+            }
+        }
+        if (m_viewMenu->isItemChecked(m_wrapLogsMenuId) != m_logWrapEnabled) {
+            problems->append(QString::fromLatin1("Wrap Log Lines menu check is out of sync"));
+            ok = false;
+        }
+    }
+    // View tab shortcuts must switch the pages.
+    if (m_tabs) {
+        const int originalPage = m_tabs->currentPageIndex();
+        showLogsTab();
+        if (m_tabs->currentPageIndex() != 5) {
+            problems->append(QString::fromLatin1("View > Logs did not select the Logs tab"));
+            ok = false;
+        }
+        showSettingsTab();
+        if (m_tabs->currentPageIndex() != 6) {
+            problems->append(QString::fromLatin1("View > Settings did not select the Settings tab"));
+            ok = false;
+        }
+        showSystemsTab();
+        if (m_tabs->currentPageIndex() != 0) {
+            problems->append(QString::fromLatin1("View > Systems did not select the Systems tab"));
+            ok = false;
+        }
+        showDiagnosticsTab();
+        if (m_tabs->currentPageIndex() != 1) {
+            problems->append(QString::fromLatin1("View > Diagnostics did not select the Diagnostics tab"));
+            ok = false;
+        }
+        m_tabs->setCurrentPage(originalPage);
+    }
+    // Wrap Log Lines sync both ways: toggling the Settings checkbox updates
+    // the menu check mark, and activating the View menu item updates the
+    // checkbox and persists through saveLegacySettings().
+    if (m_logWrapCheck && m_viewMenu && m_wrapLogsMenuValid) {
+        const bool originalWrap = m_logWrapEnabled;
+        // Settings checkbox -> state + menu check mark.
+        m_logWrapCheck->setChecked(!originalWrap);
+        const bool afterCheckbox = m_logWrapEnabled;
+        if (afterCheckbox == originalWrap) {
+            problems->append(QString::fromLatin1(
+                "Settings wrap checkbox did not change the wrap state"));
+            ok = false;
+        }
+        if (m_viewMenu->isItemChecked(m_wrapLogsMenuId) != afterCheckbox) {
+            problems->append(QString::fromLatin1(
+                "Wrap Log Lines menu check did not follow the Settings checkbox"));
+            ok = false;
+        }
+        // View menu item -> state + checkbox (this also restores the state).
+        toggleLogWrapFromMenu();
+        if (m_logWrapEnabled != originalWrap) {
+            problems->append(QString::fromLatin1(
+                "Wrap Log Lines menu toggle did not restore the state"));
+            ok = false;
+        }
+        if (m_logWrapCheck->isChecked() != m_logWrapEnabled) {
+            problems->append(QString::fromLatin1(
+                "Settings wrap checkbox did not follow the menu item"));
+            ok = false;
+        }
+        if (m_viewMenu->isItemChecked(m_wrapLogsMenuId) != m_logWrapEnabled) {
+            problems->append(QString::fromLatin1(
+                "Wrap Log Lines menu check is out of sync after the menu toggle"));
+            ok = false;
+        }
+        // Persistence: only asserted when the environment can write settings
+        // (a read-only home must not fail a correct GUI).
+        QSettings probe;
+        probe.setPath(QString::fromLatin1("boot-bitch.local"),
+                      QString::fromLatin1("boot-bitch-legacy"), QSettings::User);
+        const bool settingsWritable = probe.writeEntry(
+            QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
+        if (settingsWritable) {
+            QSettings readBack;
+            readBack.setPath(QString::fromLatin1("boot-bitch.local"),
+                             QString::fromLatin1("boot-bitch-legacy"), QSettings::User);
+            if (readBack.readBoolEntry(QString::fromLatin1("/logs/wrapLines"),
+                                       !m_logWrapEnabled) != m_logWrapEnabled) {
+                problems->append(QString::fromLatin1(
+                    "Wrap Log Lines state was not persisted through QSettings"));
+                ok = false;
+            }
+        }
+    }
+    // Auto-size Device Columns must keep every column visible and the last
+    // column stretched (verifyLayout re-checks both afterwards).
+    autoSizeDeviceColumns();
+
+    // Logs parity controls: New Session Log / Add Note / Delete / Refresh and
+    // the prior-log banner (hidden while the live register is shown).
+    if (!m_newSessionLogButton || !m_addNoteButton || !m_deleteSessionLogButton) {
+        problems->append(QString::fromLatin1("session log management controls missing"));
+        ok = false;
+    }
+    if (!m_priorLogBanner || m_priorLogBanner->isVisible()) {
+        problems->append(QString::fromLatin1("prior-log banner missing or shown for the live register"));
+        ok = false;
+    }
+
+    // Settings parity: functional device-discovery filters, functional
+    // diagnostics auto-refresh and the read-only host capabilities group.
+    if (!m_showNonLinuxCheck || !m_showRemovableCheck || !m_showEncryptedCheck
+        || !m_autoRefreshCheck) {
+        problems->append(QString::fromLatin1("Settings filter/auto-refresh controls missing"));
+        ok = false;
+    } else if (!m_showNonLinuxCheck->isEnabled() || !m_showRemovableCheck->isEnabled()
+               || !m_showEncryptedCheck->isEnabled() || !m_autoRefreshCheck->isEnabled()) {
+        problems->append(QString::fromLatin1("Settings filter/auto-refresh controls are disabled"));
+        ok = false;
+    }
+    if (!m_capDistributionLabel || !m_capPackageManagerLabel || !m_capServiceLabel
+        || !m_capDisplayLabel || !m_capInitramfsLabel || !m_capBootloaderLabel
+        || !m_capLoggingLabel || !m_refreshCapabilitiesButton) {
+        problems->append(QString::fromLatin1("host capabilities group missing"));
+        ok = false;
+    }
+
+    // Diagnostics list parity: the friendly titles are shown, the stable keys
+    // stay internal.
+    if (m_diagnosticList && m_diagnosticList->firstChild()
+        && m_diagnosticList->firstChild()->text(0) != QString::fromLatin1("Environment validation")) {
+        problems->append(QString::fromLatin1(
+            "diagnostic list does not show the friendly titles (first='%1')")
+            .arg(m_diagnosticList->firstChild()->text(0)));
+        ok = false;
+    }
+
     // Read-only udev metadata probe: a locked LUKS container must be visible in
     // the inventory with its probed type (the GUI never opens the device).
     if (m_deviceList) {
@@ -3268,6 +4196,32 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 }
                 break;
             }
+        }
+    }
+
+    // Device-discovery filters: unchecking "Show encrypted devices before
+    // unlocking" hides the encrypted drive's rows (and never loses the
+    // selected/committed target state); restoring shows them again.
+    if (m_showEncryptedCheck && m_showEncryptedCheck->isChecked() && m_deviceList) {
+        const QString selectedBefore = selectedDisk();
+        const int rowsBefore = m_deviceList->childCount();
+        m_showEncryptedCheck->setChecked(false);
+        const int rowsFiltered = m_deviceList->childCount();
+        if (rowsFiltered > rowsBefore) {
+            problems->append(QString::fromLatin1(
+                "device-discovery filter added rows instead of hiding them"));
+            ok = false;
+        }
+        if (!selectedBefore.isEmpty() && selectedDisk() != selectedBefore) {
+            problems->append(QString::fromLatin1(
+                "hiding the selected drive's row lost the selected target state"));
+            ok = false;
+        }
+        m_showEncryptedCheck->setChecked(true);
+        if (m_deviceList->childCount() != rowsBefore) {
+            problems->append(QString::fromLatin1(
+                "restoring the device-discovery filter did not restore the rows"));
+            ok = false;
         }
     }
 
@@ -3730,7 +4684,6 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
         m_tabs->setCurrentPage(page);
         qApp->processEvents();
         QWidget *pageWidget = m_tabs->page(page);
-        const QRect pageRect = pageWidget->rect();
 
         for (std::size_t i = 0; i < m_groupBoxes.size(); ++i) {
             QGroupBox *box = m_groupBoxes[i];
@@ -3747,14 +4700,21 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
                     .arg(box->title()).arg(needed).arg(box->width()));
                 ok = false;
             }
-            const QRect mapped(box->mapTo(pageWidget, QPoint(0, 0)), box->size());
-            if (!pageRect.contains(mapped)) {
+            QWidget *bound = pageWidget;
+            if (m_settingsContent && isInsideWidget(box, m_settingsContent)) {
+                // The Settings page scrolls (Qt3 QScrollView); containment is
+                // checked against the scroll content, not the viewport.
+                bound = m_settingsContent;
+            }
+            const QRect boundRect = bound->rect();
+            const QRect mapped(box->mapTo(bound, QPoint(0, 0)), box->size());
+            if (!boundRect.contains(mapped)) {
                 problems->append(QString::fromLatin1(
-                    "group box '%1' is clipped by the page (at %2,%3 %4x%5, page %6x%7)")
+                    "group box '%1' is clipped by the page (at %2,%3 %4x%5, bound %6x%7)")
                     .arg(box->title())
                     .arg(mapped.x()).arg(mapped.y())
                     .arg(mapped.width()).arg(mapped.height())
-                    .arg(pageRect.width()).arg(pageRect.height()));
+                    .arg(boundRect.width()).arg(boundRect.height()));
                 ok = false;
             }
         }
@@ -3773,14 +4733,19 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
                     .arg(button->text()).arg(needed).arg(button->width()));
                 ok = false;
             }
-            const QRect mapped(button->mapTo(pageWidget, QPoint(0, 0)), button->size());
-            if (!pageRect.contains(mapped)) {
+            QWidget *bound = pageWidget;
+            if (m_settingsContent && isInsideWidget(button, m_settingsContent)) {
+                bound = m_settingsContent;
+            }
+            const QRect boundRect = bound->rect();
+            const QRect mapped(button->mapTo(bound, QPoint(0, 0)), button->size());
+            if (!boundRect.contains(mapped)) {
                 problems->append(QString::fromLatin1(
-                    "button '%1' is clipped by the page (at %2,%3 %4x%5, page %6x%7)")
+                    "button '%1' is clipped by the page (at %2,%3 %4x%5, bound %6x%7)")
                     .arg(button->text())
                     .arg(mapped.x()).arg(mapped.y())
                     .arg(mapped.width()).arg(mapped.height())
-                    .arg(pageRect.width()).arg(pageRect.height()));
+                    .arg(boundRect.width()).arg(boundRect.height()));
                 ok = false;
             }
         }
@@ -3870,9 +4835,13 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
             pageWidget = pageWidget->parentWidget();
         }
         if (pageWidget && pageWidget != m_tabs) {
-            const QRect pageRect = pageWidget->rect();
-            const QRect mapped(title->mapTo(pageWidget, QPoint(0, 0)), title->size());
-            if (!pageRect.contains(mapped)) {
+            QWidget *bound = pageWidget;
+            if (m_settingsContent && isInsideWidget(title, m_settingsContent)) {
+                bound = m_settingsContent;
+            }
+            const QRect boundRect = bound->rect();
+            const QRect mapped(title->mapTo(bound, QPoint(0, 0)), title->size());
+            if (!boundRect.contains(mapped)) {
                 problems->append(QString::fromLatin1(
                     "section title '%1' is clipped by its page").arg(title->text()));
                 ok = false;
@@ -4214,6 +5183,7 @@ void LegacyMainWindow::updateFactView(const ParsedTranscript &parsed)
     }
     updateDriveDetails();
     updateUnlockStatus();
+    updateCapabilityView();
 }
 
 void LegacyMainWindow::updateDriveDetails()
@@ -4294,18 +5264,32 @@ void LegacyMainWindow::updateDriveDetails()
         protection = QString::fromLatin1("Eligible repair candidate");
     }
 
-    new QListViewItem(m_detailList, QString::fromLatin1("Drive:"), detailOrDash(disk));
-    new QListViewItem(m_detailList, QString::fromLatin1("Detected target:"),
-                      component.isEmpty() ? QString::fromLatin1("Pending inspection")
-                                          : component);
-    new QListViewItem(m_detailList, QString::fromLatin1("Model / label:"), detailOrDash(model));
-    new QListViewItem(m_detailList, QString::fromLatin1("Status:"), status);
-    new QListViewItem(m_detailList, QString::fromLatin1("Size:"), detailOrDash(size));
-    new QListViewItem(m_detailList, QString::fromLatin1("Connection:"), detailOrDash(transport));
-    new QListViewItem(m_detailList, QString::fromLatin1("Filesystem:"), detailOrDash(fstype));
-    new QListViewItem(m_detailList, QString::fromLatin1("UUID:"), detailOrDash(uuid));
-    new QListViewItem(m_detailList, QString::fromLatin1("Mounts:"), detailOrDash(mounts));
-    new QListViewItem(m_detailList, QString::fromLatin1("Protection:"), protection);
+    // Qt3 prepends a plain insertion when sorting is disabled; chain the rows
+    // with the after-form constructor to keep the documented field order
+    // (Drive, Detected target, Model/label, ...).
+    QListViewItem *lastDetail = 0;
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Drive:"), detailOrDash(disk));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Detected target:"),
+                                   component.isEmpty() ? QString::fromLatin1("Pending inspection")
+                                                       : component);
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Model / label:"), detailOrDash(model));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Status:"), status);
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Size:"), detailOrDash(size));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Connection:"), detailOrDash(transport));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Filesystem:"), detailOrDash(fstype));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("UUID:"), detailOrDash(uuid));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Mounts:"), detailOrDash(mounts));
+    lastDetail = new QListViewItem(m_detailList, lastDetail,
+                                   QString::fromLatin1("Protection:"), protection);
 }
 
 void LegacyMainWindow::updateUnlockStatus()
@@ -4418,6 +5402,9 @@ void LegacyMainWindow::mergeHelperDevices(const ParsedTranscript &parsed)
         row.path = toStd(path);
         row.mapper = path.startsWith(QString::fromLatin1("/dev/mapper/"));
         m_rows.insert(path, row);
+        // Keep the helper-reported row in the cached inventory too, so a
+        // device-discovery refilter cannot drop it from the list.
+        m_inventory.push_back(row);
         new QListViewItem(m_deviceList, path, QString::fromLatin1("?"),
                           QString::fromLatin1("helper-reported"),
                           QString::fromLatin1(""), QString::fromLatin1(""),
@@ -4546,8 +5533,8 @@ void LegacyMainWindow::updateAuthorizationAffordance()
 }
 
 // Selected-diagnostic pane: modern title/description/availability text plus
-// the list tooltip. The list keeps the stable helper keys; the pane shows the
-// modern friendly title and description.
+// the list tooltip. The list shows the friendly title; the stable helper key
+// is mapped back internally for the command and the description.
 void LegacyMainWindow::updateDiagnosticDetails()
 {
     if (!m_diagTitle || !m_diagDescription || !m_diagAvailability) {
@@ -4560,9 +5547,10 @@ void LegacyMainWindow::updateDiagnosticDetails()
         m_diagAvailability->setText(QString::fromLatin1("Unavailable"));
         return;
     }
-    const QString key = item->text(0).stripWhiteSpace();
+    const QString key = mapValue(m_diagKeyByTitle,
+                                 item->text(0).stripWhiteSpace());
     const QString description = diagnosticDescription(key);
-    m_diagTitle->setText(diagnosticTitle(key));
+    m_diagTitle->setText(key.isEmpty() ? item->text(0) : diagnosticTitle(key));
     m_diagDescription->setText(description);
     QToolTip::add(m_diagnosticList, description);
     if (m_running) {
@@ -4636,6 +5624,15 @@ void LegacyMainWindow::updateActionStates()
                 ? QString::fromLatin1("Run Diagnostic - run the selected read-only diagnostic through the helper.")
                 : (ready ? QString::fromLatin1("Select a target and wait for any running command first.")
                          : scopeReadyReason())));
+    }
+    if (m_refreshCapabilitiesButton) {
+        // Modern Refresh Capabilities: run the current scope's diagnostics and
+        // rebuild the read-only backend profile.
+        m_refreshCapabilitiesButton->setEnabled(diagnosticsEnabled);
+        QToolTip::add(m_refreshCapabilitiesButton, diagnosticsEnabled
+            ? QString::fromLatin1("Run All for the current scope and refresh the read-only backend profile.")
+            : (ready ? QString::fromLatin1("Select a target and wait for any running command first.")
+                     : scopeReadyReason()));
     }
     if (m_configButton) {
         // Modern parity: Edit Target File is target-only (never Host
@@ -4791,6 +5788,7 @@ void LegacyMainWindow::updateActionStates()
     updateScopeLabel();
     updateAuthorizationAffordance();
     updateDiagnosticDetails();
+    updateCapabilityView();
     updateConfigView();
     updateLegacyFeatureView();
 }
@@ -4938,6 +5936,7 @@ void LegacyMainWindow::refreshSessionLogList()
         last = new QListViewItem(m_sessionLogList, last, QFileInfo(*it).fileName());
     }
     // Restore the selection so a refresh never changes the displayed log.
+    bool selectedPrior = false;
     for (QListViewItem *item = m_sessionLogList->firstChild(); item;
          item = item->nextSibling()) {
         const bool matches = wanted == QString::fromLatin1("current")
@@ -4946,8 +5945,16 @@ void LegacyMainWindow::refreshSessionLogList()
         if (matches) {
             m_sessionLogList->setSelected(item, true);
             m_sessionLogList->setCurrentItem(item);
+            selectedPrior = item != m_sessionLogList->firstChild();
             break;
         }
+    }
+    if (!selectedPrior && m_sessionLogList->firstChild()) {
+        m_sessionLogList->setSelected(m_sessionLogList->firstChild(), true);
+        m_sessionLogList->setCurrentItem(m_sessionLogList->firstChild());
+    }
+    if (m_deleteSessionLogButton) {
+        m_deleteSessionLogButton->setEnabled(selectedPrior);
     }
 }
 
@@ -4955,7 +5962,7 @@ void LegacyMainWindow::saveLog()
 {
     const QString path = QFileDialog::getSaveFileName(
         QString::null, QString::fromLatin1("Log files (*.log);;All files (*)"),
-        this, "save-log", QString::fromLatin1("Save helper log"));
+        this, "save-log", QString::fromLatin1("Save log as"));
     if (path.isEmpty()) {
         return;
     }
@@ -4967,7 +5974,7 @@ void LegacyMainWindow::saveLog()
         return;
     }
     QTextStream stream(&file);
-    // The complete session is saved even while a filter hides entries.
+    // The complete live register is saved even while a filter hides entries.
     stream << m_logLines.join(QString::fromLatin1("\n"));
     if (!m_logLines.isEmpty()) {
         stream << "\n";
@@ -4977,10 +5984,18 @@ void LegacyMainWindow::saveLog()
 
 void LegacyMainWindow::clearLog()
 {
+    // Clear Register: the live register and view only; prior session files are
+    // never modified.
     m_logLines.clear();
     m_viewingPriorLog = false;
     m_priorLogPath = QString::null;
     m_priorLogLines.clear();
+    if (m_priorLogBanner) {
+        m_priorLogBanner->hide();
+    }
+    if (m_deleteSessionLogButton) {
+        m_deleteSessionLogButton->setEnabled(false);
+    }
     refreshSessionLogList();
     refreshLogView();
 }
@@ -4988,7 +6003,7 @@ void LegacyMainWindow::clearLog()
 void LegacyMainWindow::showAbout()
 {
     QMessageBox::about(
-        this, QString::fromLatin1("About Boot Bitch Legacy"),
+        this, QString::fromLatin1("About Boot Bitch"),
         QString::fromLatin1(
             "<b>Boot Bitch Legacy</b><br>"
             "Qt3 frontend for Debian Etch / KDE 3.5-era systems.<br><br>"

@@ -2,6 +2,38 @@
 
 ## Unreleased
 
+- Complete the legacy Qt3 GUI's modern-GUI parity for menus, Logs, Settings
+  and the Diagnostics check list. The menus now mirror the modern structure:
+  **File** carries **Refresh Devices**, **Lock Administrator Session** (drops
+  the cached elevation decision with a best-effort non-blocking `sudo -k`,
+  logs the action and refreshes the inventory, so the next privileged action
+  asks for the password again) and **Quit**; **View** carries the **Systems**,
+  **Diagnostics**, **Logs** and **Settings** tab shortcuts plus **Auto-size
+  Device Columns** and the checkable **Wrap Log Lines** (kept in sync both
+  ways with the Settings wrap toggle); **Help** carries **Using Boot Bitch**
+  and **About Boot Bitch**. The Logs tab gains the modern session management:
+  **Save As...**, **Clear Register** (live register/view only), **New Session
+  Log** (closes the active file; it becomes a prior session), **Add Note**
+  (`NOTE: <text>`), **Delete** (selected prior file only, confirmed, never the
+  live file or anything outside the log directory) and **Refresh**, plus a
+  read-only prior-session banner. The Settings tab makes the three
+  device-discovery filters functional with the modern rules (a hidden drive
+  hides its partitions/mappers, an encrypted drive stays visible while "show
+  encrypted" is on, and the selected/committed target state stays valid when
+  its row is hidden), makes the diagnostics auto-refresh toggle functional
+  (after a LUKS unlock or target configuration edit, only with an active
+  authorized session and no running command; it never opens an authorization
+  prompt by itself) and adds the read-only **Host capabilities and
+  dependencies** group (Distribution, package manager, service manager,
+  display manager, initramfs, bootloader and logging backends from the cached
+  diagnostics) with **Refresh Capabilities**; the filters, wrap toggle and
+  auto-refresh toggle persist through Qt3 `QSettings` under the modern key
+  names, the page scrolls like the modern one, and no install button is
+  offered because host installs are forbidden. The Diagnostics check list now
+  shows the modern friendly titles while the stable helper keys stay internal
+  for the command and the log. The `--smoke-test` assertions cover the new
+  menus, Logs controls, Settings filters/capabilities and diagnostic titles at
+  1024x768.
 - Bring the legacy Qt3 GUI to modern-GUI parity and fix the reported
   functional defects. The window now carries the modern global header (packaged
   icon, "Boot Bitch" in the 1.65x bold title font, the "Linux recovery and

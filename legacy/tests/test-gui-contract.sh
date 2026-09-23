@@ -292,6 +292,54 @@ for marker in 'm_targetCommitted' 'm_hostMaintenance' 'diagnosticsScopeReady' 's
 done
 pass "tab parity (details/unlock/session/search/settings/gating)"
 
+# --- menus, Logs management, Settings filters/capabilities (cycle 2) --------
+for marker in 'm_fileMenu' 'm_viewMenu' 'm_helpMenu' 'm_wrapLogsMenuId' \
+    'm_wrapLogsMenuValid' 'Refresh Devices' 'Lock Administrator Session' \
+    'Auto-size Device Columns' 'Wrap Log Lines' 'Using Boot Bitch' \
+    'About Boot Bitch' 'lockAdministratorSession' 'autoSizeDeviceColumns' \
+    'toggleLogWrapFromMenu' 'showUsageHelp' 'clearSudoTimestamp' 'menuItemId' \
+    'label.left(tab)'; do
+    grep -q "$marker" "$WINDOW" || fail "menu parity marker missing: $marker"
+done
+# Qt3 QPopupMenu auto-ids are negative and QListView sorts by the first column
+# by default; both must be handled explicitly (id sign is not validity, and
+# insertion-order lists disable the default sort).
+grep -q 'm_wrapLogsMenuId >= 0\|m_wrapLogsMenuId < 0' "$WINDOW" \
+    && fail "menu validity still keys on the Qt3 negative auto-id sign"
+for list in m_diagnosticList m_detailList m_unsupportedList; do
+    grep -q "$list->setSorting(-1)" "$WINDOW" \
+        || fail "$list does not disable Qt3's default first-column sorting"
+done
+# With sorting disabled Qt3 prepends plain insertions; the insertion-order
+# lists must chain their items with the after-form constructor.
+for marker in 'm_diagnosticList, lastDiagnostic' \
+    'm_detailList, lastDetail' \
+    'm_unsupportedList, lastUnsupported'; do
+    grep -qF "$marker" "$WINDOW" \
+        || fail "list does not keep insertion order with the after-form constructor: $marker"
+done
+for marker in 'Save As...' 'Clear Register' 'New Session Log' 'Add Note' \
+    'm_newSessionLogButton' 'm_addNoteButton' 'm_deleteSessionLogButton' \
+    'startNewSessionLog' 'addSessionNote' 'deleteSelectedSessionLog' \
+    'm_priorLogBanner' 'Viewing a prior session log'; do
+    grep -q "$marker" "$WINDOW" || fail "Logs parity marker missing: $marker"
+done
+grep -q 'Save log\.\.\.' "$WINDOW" && fail "Logs still shows the removed Save log... button"
+grep -q '"Clear log"' "$WINDOW" && fail "Logs still shows the removed Clear log button"
+for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck' \
+    'm_autoRefreshCheck' 'deviceFilterChanged' 'autoRefreshToggled' \
+    'Host capabilities and dependencies' 'm_capDistributionLabel' \
+    'm_refreshCapabilitiesButton' 'Refresh Capabilities' 'updateCapabilityView' \
+    'QSettings' 'devices/showNonLinux' 'devices/showRemovable' \
+    'devices/showEncrypted' 'logs/wrapLines' 'diagnostics/autoRefreshStale' \
+    'maybeAutoRefreshDiagnostics' 'runScheduledAutoRefresh' \
+    'm_settingsContent' 'QScrollView'; do
+    grep -q "$marker" "$WINDOW" || fail "Settings parity marker missing: $marker"
+done
+grep -q 'm_diagKeyByTitle' "$WINDOW" || fail "diagnostic list lost the title->key mapping"
+grep -q 'diagnosticTitle' "$WINDOW" || fail "diagnostic list lost the friendly titles"
+pass "menus, Logs session management, Settings filters/capabilities and diagnostic titles"
+
 # --- modal elevation prompt, no inline sudo password echo -------------------
 grep -q 'elevationNeedsPassword' "$WINDOW" || fail "GUI does not pre-check an interactive elevation"
 grep -q 'authenticateElevation' "$WINDOW" || fail "GUI does not authenticate interactive elevation"
@@ -305,7 +353,13 @@ grep -q 'enableLabelWordWrap' "$WINDOW" || fail "hidden-input modal text is not 
 grep -q 'Qt::WordBreak' "$WINDOW" || fail "hidden-input modal lost the Qt3 wrap alignment"
 grep -q 'setMaximumWidth(kHiddenInputMaximumWidth)' "$WINDOW" \
     || fail "hidden-input modal is not width-constrained"
-grep -q 'QInputDialog::getText' "$WINDOW" && fail "GUI still uses the self-sizing QInputDialog prompt"
+# The Add Note dialog is the only QInputDialog use; the administrator
+# authorization prompt must stay the width-constrained hidden-input dialog.
+grep -q 'QInputDialog::getText' "$WINDOW" || fail "GUI lost the Add Note input dialog"
+AUTH_BLOCK="$(sed -n '/^bool LegacyMainWindow::ensureAdministratorSession/,/^}/p' "$WINDOW")"
+[[ -n "$AUTH_BLOCK" ]] || fail "ensureAdministratorSession block not found"
+grep -q 'QInputDialog' <<<"$AUTH_BLOCK" \
+    && fail "administrator authorization still uses the self-sizing QInputDialog"
 grep -q 'elevationNeedsPassword' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner lost the interactive-elevation check"
 grep -q 'authenticateElevation' "$GUI_DIR/src/HelperRunner.cpp" \

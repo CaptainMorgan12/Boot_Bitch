@@ -55,6 +55,12 @@ public:
     // logs a secret. This is the GUI's pre-command expiry check.
     bool sessionIsCurrent();
 
+    // Best-effort `sudo -k`: drops the cached sudo timestamp without ever
+    // prompting or blocking (stdin is closed and output discarded). Returns
+    // false when sudo is not installed or the call failed; callers must not
+    // treat that as a session state.
+    bool clearSudoTimestamp();
+
     // Authenticates the cached interactive `sudo` with `secret` by running
     // `sudo -S -p '' -v`; the password travels over a pipe, never argv/env and
     // never into the helper transcript. On success the cached prefix becomes

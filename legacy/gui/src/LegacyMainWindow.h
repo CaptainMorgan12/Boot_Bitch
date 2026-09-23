@@ -58,6 +58,7 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListView;
+class QPopupMenu;
 class QPushButton;
 class QResizeEvent;
 class QTabWidget;
@@ -120,6 +121,20 @@ private slots:
     void saveLog();
     void clearLog();
     void showAbout();
+    void showUsageHelp();
+    void lockAdministratorSession();
+    void showSystemsTab();
+    void showDiagnosticsTab();
+    void showLogsTab();
+    void showSettingsTab();
+    void autoSizeDeviceColumns();
+    void toggleLogWrapFromMenu();
+    void startNewSessionLog();
+    void addSessionNote();
+    void deleteSelectedSessionLog();
+    void deviceFilterChanged();
+    void autoRefreshToggled(bool enabled);
+    void runScheduledAutoRefresh();
     void runSmokeStep();
 
 private:
@@ -164,10 +179,18 @@ private:
     void setSelection(const QString &disk, const QString &component,
                       const QString &rootOverride);
     void selectInventoryRow(const QString &disk);
+    void rebuildDeviceList();
+    bool deviceRowVisible(const DeviceRow &row) const;
+    bool rowBelongsToDisk(const DeviceRow &row, const QString &diskPath) const;
+    bool diskHasEncryptedRow(const QString &diskPath) const;
+    bool diskHasLinuxCandidate(const QString &diskPath) const;
+    void loadLegacySettings();
+    void saveLegacySettings();
     void updateStatus();
     void updateActionStates();
     void updateScopeLabel();
     void updateElevationLabel();
+    void updateCapabilityView();
     void updateConfigView();
     void openConfigEditor(const QString &content, const QString &key,
                           const QString &path);
@@ -195,7 +218,10 @@ private:
     bool sessionStillCurrent();
     void startCommand(const QStringList &args, bool diagnostic,
                       const QString &label, bool unlock = false,
-                      bool config = false, bool shell = false);
+                      bool config = false, bool shell = false,
+                      bool quiet = false);
+    void runDiagnosticsInternal(bool quiet);
+    void maybeAutoRefreshDiagnostics(const QString &reason);
     void reportChangeStatuses(const ParsedTranscript &parsed);
     void handleUnlockFinished(bool ok, const std::string &transcript,
                               const QString &device, const QString &disk);
@@ -203,6 +229,15 @@ private:
     bool verifyLayout(QString *problems, int *checked);
 
     QTabWidget *m_tabs;
+    QPopupMenu *m_fileMenu;
+    QPopupMenu *m_viewMenu;
+    QPopupMenu *m_helpMenu;
+    // Qt3's insertItem() auto-generates NEGATIVE menu ids, so the id's sign
+    // cannot be used as a validity signal; this flag says the Wrap Log Lines
+    // item exists and m_wrapLogsMenuId may be used with isItemChecked()/
+    // setItemChecked().
+    bool m_wrapLogsMenuValid;
+    int m_wrapLogsMenuId;
     QComboBox *m_logFilterCombo;
     QComboBox *m_configCombo;
     QListView *m_deviceList;
@@ -217,6 +252,11 @@ private:
     QLineEdit *m_shellCommandEdit;
     QTextEdit *m_shellOutput;
     QCheckBox *m_logWrapCheck;
+    QCheckBox *m_showNonLinuxCheck;
+    QCheckBox *m_showRemovableCheck;
+    QCheckBox *m_showEncryptedCheck;
+    QCheckBox *m_autoRefreshCheck;
+    QLabel *m_priorLogBanner;
     QLabel *m_headerTitle;
     QLabel *m_headerSubtitle;
     QLabel *m_headerBadge;
@@ -248,6 +288,13 @@ private:
     QLabel *m_settingsLogDirLabel;
     QLabel *m_settingsSessionLabel;
     QLabel *m_settingsVersionLabel;
+    QLabel *m_capDistributionLabel;
+    QLabel *m_capPackageManagerLabel;
+    QLabel *m_capServiceLabel;
+    QLabel *m_capDisplayLabel;
+    QLabel *m_capInitramfsLabel;
+    QLabel *m_capBootloaderLabel;
+    QLabel *m_capLoggingLabel;
     QPushButton *m_scanButton;
     QPushButton *m_diagnosticsButton;
     QPushButton *m_runDiagnosticButton;
@@ -262,19 +309,26 @@ private:
     QPushButton *m_repairAuthorizeButton;
     QPushButton *m_shellRunButton;
     QPushButton *m_shellClearButton;
+    QPushButton *m_newSessionLogButton;
+    QPushButton *m_addNoteButton;
+    QPushButton *m_deleteSessionLogButton;
+    QPushButton *m_refreshCapabilitiesButton;
     QGroupBox *m_chrootGroup;
     QGroupBox *m_fileCopyGroup;
     QWidget *m_chrootTab;
+    QWidget *m_settingsContent;
     QMap<QString, QPushButton *> m_actionButtons;
     std::vector<QPushButton *> m_buttons;
     std::vector<QGroupBox *> m_groupBoxes;
     std::vector<QLabel *> m_sectionTitles;
+    std::vector<DeviceRow> m_inventory;
 
     HelperRunner *m_runner;
     CapabilityModel m_model;
     QMap<QString, DeviceRow> m_rows;
     QMap<QString, QString> m_factMap;
     QMap<QString, QString> m_unlockStatusCache;
+    QMap<QString, QString> m_diagKeyByTitle;
 
     QString m_transcript;
     QString m_logDirectory;
@@ -306,6 +360,8 @@ private:
     bool m_targetCommitted;
     bool m_hostMaintenance;
     bool m_viewingPriorLog;
+    bool m_logWrapEnabled;
+    bool m_autoRefreshEnabled;
     QString m_pendingIdentity;
     QString m_pendingLabel;
     QString m_pendingConfigKey;

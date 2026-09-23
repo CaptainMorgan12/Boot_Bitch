@@ -337,6 +337,17 @@ bool HelperRunner::sessionIsCurrent()
     return probeCommandWithStdinNull(sudoTimestampProbe);
 }
 
+bool HelperRunner::clearSudoTimestamp()
+{
+    if (!commandOnPath(QString::fromLatin1("sudo"))) {
+        return false;
+    }
+    // `sudo -k` only removes the cached timestamp; it never prompts. Closing
+    // stdin keeps even a broken sudo from blocking on a password read.
+    static const char *const sudoKill[] = { "sudo", "-k", 0 };
+    return probeCommandWithStdinNull(sudoKill);
+}
+
 bool HelperRunner::authenticateElevation(const QByteArray &secret, QString *error)
 {
     if (error) {

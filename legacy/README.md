@@ -64,9 +64,17 @@ tab label and button switch with Host Maintenance; greyed with the exact
 reason otherwise), **File Copy** mirrors the modern tab with every control
 greyed and the exact `Legacy feature file-copy:` probe reason, **Logs**
 streams the helper output with an all/errors filter, a **Search log:** box and
-a per-session list (live session first, earlier files selectable read-only),
-and **Settings** shows the read-only configuration plus greyed modern options
-and a working log-wrap toggle. There is no independent scope selector: the
+a per-session list (live session first, earlier files selectable read-only)
+with **Save As...**, **Clear Register**, **New Session Log**, **Add Note**,
+**Delete** (prior files only, confirmed) and **Refresh**, and **Settings**
+shows functional device-discovery filters, the functional diagnostics
+auto-refresh toggle, the wrap-log toggle, the mandatory safety controls, the
+read-only **Host capabilities and dependencies** group (backend profile from
+the cached diagnostics plus **Refresh Capabilities**) and the read-only
+configuration; the menus mirror the modern File/View/Help structure
+(**Refresh Devices**, **Lock Administrator Session**, **Quit**; tab
+shortcuts, **Auto-size Device Columns**, **Wrap Log Lines**; **Using Boot
+Bitch**, **About Boot Bitch**). There is no independent scope selector: the
 scope follows the committed repair target or Host Maintenance, so any
 selectable non-running-host disk (including a second Etch disk) can be
 committed while the protected running-host disk stays excluded (its Select
@@ -90,12 +98,15 @@ missing or unrecognised. The helper keeps every runtime preflight.
 Build it natively on Etch with `qmake-qt3`/`make` (or through
 `scripts/package-legacy.sh`); `--print-config` and `--help` work without X.
 `--smoke-test` also verifies the global header, the section headings, the
-details/unlock/session/search/gating controls, the scope-less target
-eligibility (with the auto-resolved root), the per-key diagnostic list and
-Selected diagnostic pane, Copy/Save Results, the target-only configuration
-row, the probe-based feature gating, the last-column stretch and the
-1024x768 layout programmatically (run it as root or after `sudo -S -v`, since
-the modal authorization dialog is never opened in smoke mode).
+details/unlock/session/search/gating controls, the File/View/Help menus, the
+Logs session-management controls and prior-log banner, the functional
+device-discovery filters, the diagnostics auto-refresh toggle and the host
+capabilities group, the scope-less target eligibility (with the auto-resolved
+root), the per-key diagnostic list and Selected diagnostic pane, Copy/Save
+Results, the target-only configuration row, the probe-based feature gating,
+the last-column stretch and the 1024x768 layout programmatically (run it as
+root or after `sudo -S -v`, since the modal authorization dialog is never
+opened in smoke mode).
 
 ## Launcher (development-only)
 
@@ -335,8 +346,9 @@ compiles the Qt-free parser/inventory modules with plain `g++ -std=c++98
 change-status invalidation, device inventory with UUID/label/transport and
 resolved dm chains, LUKS unlock-result/error markers) and checks the Qt3-only
 source contract, the legacy command set (including the guarded `grub` stage),
-the parity controls (tabs, details panel, unlock status, session/search,
-settings, target/Host-Maintenance gating, modal sudo authorization,
+the parity controls (tabs, menus, details panel, unlock status, session/search,
+Logs session management, settings filters/auto-refresh/capabilities,
+target/Host-Maintenance gating, modal sudo authorization,
 per-diagnostic runs, read-only config viewer, probe-based feature gating) and
 the layout guards. The full Qt3 compile and the extended `--smoke-test`
 (controls + 1024x768 layout assertions) are verified on the Etch guest by the
