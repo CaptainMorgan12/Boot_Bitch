@@ -314,7 +314,8 @@ boot-repair-legacy 0.2.25-etch1`, modes gui=755 desktop=644, installed
 GUI/helper hashes equal to the artifact payload); artifact sha256
 `789acac4…`, installed GUI `47c7e2e0…` / helper `9e80ed46…`; the Xvfb smoke
 reports `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate:
-ok; controls: ok; layout: ok (53 widgets checked)` (rc 0); host-scope
-diagnostics carry the six `Legacy feature` lines and no `Legacy config` line
-(target-only probe). Evidence:
+ok; controls: ok; layout: ok (53 widgets checked)` (rc 0); the in-guest Qt3
+`test-auth-pipe.sh` harness passes (`AUTH-PIPE OK` / `legacy auth-pipe test:
+PASS`); host-scope diagnostics carry the six `Legacy feature` lines and no
+`Legacy config` line (target-only probe). Evidence:
 `Development/release-0.2.25/etch-legacy/gui-align-20260922/`.

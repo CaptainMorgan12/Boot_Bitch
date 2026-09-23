@@ -239,7 +239,9 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   `Development/scripts/local-refresh.sh --legacy-vm`
   (`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256 `789acac4…`; installed
   GUI `47c7e2e0…`, helper `9e80ed46…`); Xvfb smoke
-  `SMOKE OK: … controls: ok; layout: ok (53 widgets checked)` rc 0. Evidence:
+  `SMOKE OK: … controls: ok; layout: ok (53 widgets checked)` rc 0 and the
+  Qt3 `test-auth-pipe.sh` harness `AUTH-PIPE OK` / `legacy auth-pipe test:
+  PASS` in the guest. Evidence:
   `Development/release-0.2.25/etch-legacy/gui-align-20260922/`.
 
 ## Packaging
