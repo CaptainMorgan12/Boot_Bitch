@@ -154,6 +154,52 @@ grep -q "not supported by the legacy helper on Etch" "$WINDOW" \
     && fail "hardcoded host-default reason still present"
 pass "parity controls (unlock, elevation, filters, per-diagnostic runs, config viewer, probe gating)"
 
+# --- no independent scope selector; target eligibility; no Authorize button --
+grep -q 'm_scopeCombo' "$WINDOW" && fail "Systems still carries the removed scope dropdown"
+grep -q '"Scope:"' "$WINDOW" && fail "Systems still carries a Scope label"
+grep -q 'scopeChanged' "$WINDOW" && fail "GUI still wires the removed scope selector"
+grep -q 'Authenticate' "$WINDOW" && fail "GUI still shows a standalone Authenticate control"
+grep -q 'Authorize' "$WINDOW" && fail "GUI still shows a standalone Authorize control"
+grep -q 'scopeFeatureKey' "$WINDOW" || fail "GUI lost the scope feature mapping (shell vs host-shell)"
+# The protected running-host disk stays excluded from the commit eligibility.
+grep -q 'selectedDisk() == runningHostDisk()' "$WINDOW" \
+    || fail "GUI lost the protected running-host commit exclusion"
+pass "no scope selector / standalone auth control; target eligibility is selection-based"
+
+# --- authorization is requested on commit/maintenance, never on Run All -----
+grep -q 'ensureAdministratorSession' "$WINDOW" || fail "GUI lost the session authorization entry point"
+grep -q 'administratorSessionActive' "$WINDOW" || fail "GUI lost the cached session check"
+START_BLOCK="$(sed -n '/^void LegacyMainWindow::startCommand/,/^}/p' "$WINDOW")"
+[[ -n "$START_BLOCK" ]] || fail "startCommand block not found"
+grep -q 'QInputDialog' <<<"$START_BLOCK" \
+    && fail "Run All still opens the password prompt (must fail closed)"
+grep -q 'administratorSessionActive' <<<"$START_BLOCK" \
+    || fail "startCommand does not fail closed without an authorized session"
+COMMIT_BLOCK="$(sed -n '/^void LegacyMainWindow::setRepairTarget/,/^}/p' "$WINDOW")"
+[[ -n "$COMMIT_BLOCK" ]] || fail "setRepairTarget block not found"
+grep -q 'ensureAdministratorSession' <<<"$COMMIT_BLOCK" \
+    || fail "committing a repair target does not request authorization"
+MAINT_BLOCK="$(sed -n '/^void LegacyMainWindow::toggleHostMaintenance/,/^}/p' "$WINDOW")"
+[[ -n "$MAINT_BLOCK" ]] || fail "toggleHostMaintenance block not found"
+grep -q 'ensureAdministratorSession' <<<"$MAINT_BLOCK" \
+    || fail "entering Host Maintenance does not request authorization"
+grep -q 'SIGPIPE' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner does not guard the password pipe write against SIGPIPE"
+grep -q 'ScopedSigPipeIgnore' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner lost the scoped SIGPIPE guard"
+pass "authorization on commit/Host Maintenance, cached for the session, SIGPIPE-safe"
+
+# --- Chroot Shell follows the scope probe + authorization (greyed otherwise) -
+for marker in 'm_shellCommandEdit' 'm_shellOutput' 'm_shellRunButton' \
+    'm_shellClearButton' 'runChrootShell' 'clearChrootOutput' \
+    'updateChrootShellState' 'host-shell'; do
+    grep -q "$marker" "$WINDOW" || fail "chroot shell wiring marker missing: $marker"
+done
+grep -q '"shell"' "$WINDOW" || fail "chroot shell lost the target shell verb"
+grep -q 'unavailable: see the helper.s Legacy feature shell: probe reason above' "$WINDOW" \
+    && fail "chroot shell still hardcodes the greyed placeholder"
+pass "chroot shell wired to shell/host-shell with probe + session gating"
+
 # --- tab parity, Systems panel, unlock status and Logs session/search --------
 for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings' 'About'; do
     grep -q "\"$tab\"" "$WINDOW" || fail "GUI lost a modern-parity tab: $tab"
@@ -204,6 +250,12 @@ pass "read-only UUID/label/transport inventory for the details panel"
 grep -q 'QFontMetrics' "$WINDOW" || fail "GUI lost the title/button font-metric layout guard"
 grep -q 'setMinimumWidth' "$WINDOW" || fail "GUI lost the minimum-width layout guard"
 grep -q 'setMinimumHeight' "$WINDOW" || fail "GUI lost the minimum-height layout guard"
+grep -q 'kGroupTitlePadding' "$WINDOW" || fail "GUI lost the group-title padding floor"
+grep -q 'kListHeaderPadding' "$WINDOW" || fail "GUI lost the list-header font-metric floor"
+grep -q 'addListViewColumn' "$WINDOW" || fail "GUI lost the header-safe list column helper"
+grep -q 'QListView::LastColumn' "$WINDOW" \
+    || fail "list last columns no longer stretch to the right edge"
+grep -q 'listLastColumnFills' "$WINDOW" || fail "GUI lost the last-column gutter check"
 grep -q 'setChildrenCollapsible(false)' "$WINDOW" \
     || fail "splitter panes may collapse and clip their titles"
 grep -q 'setMinimumSize(820, 600)' "$WINDOW" || fail "window minimum size contract changed"
@@ -231,5 +283,18 @@ grep -q 'TUI fallback' "$MAIN" && fail "GUI usage still documents a TUI fallback
 grep -q "package's entry point" "$WINDOW" \
     || fail "GUI About does not state the packaged entry point"
 pass "GUI is the packaged entry point (no launcher fallback advertised)"
+
+# --- Qt3 auth-pipe harness (runs on Etch; skips without qmake-qt3) ----------
+for file in "$TESTS_DIR/auth-pipe-test.cpp" "$TESTS_DIR/auth-pipe-test.pro" \
+    "$TESTS_DIR/test-auth-pipe.sh"; do
+    [[ -f "$file" ]] || fail "missing auth-pipe harness file: ${file#"$ROOT_DIR"/}"
+done
+grep -q 'not-read-by-sudo' "$TESTS_DIR/auth-pipe-test.cpp" \
+    || fail "auth-pipe harness lost the fake-sudo stdin check"
+grep -q 'SIGPIPE' "$TESTS_DIR/auth-pipe-test.cpp" \
+    || fail "auth-pipe harness does not name the SIGPIPE failure"
+bash -n "$TESTS_DIR/test-auth-pipe.sh" || fail "test-auth-pipe.sh failed bash -n"
+"$TESTS_DIR/test-auth-pipe.sh"
+pass "Qt3 auth-pipe harness present (Etch-runnable, host-skipped)"
 
 echo "legacy GUI contract: PASS"

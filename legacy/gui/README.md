@@ -32,12 +32,16 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   component, mapper, method and the exact error), never from raw log entries.
   Diagnostics and repairs require an explicitly committed repair target
   (**Set as repair target**) or active **Host Maintenance**, mirroring the Qt6
-  Systems page; the protected running host can never be committed or unlocked.
-  The helper's `unlock <disk> <luks-device>` runs after a confirmation, the
-  passphrase is entered hidden and travels only over the helper's standard
-  input (never argv/logs), a rejected passphrase offers a retry, and a
-  successful unlock invalidates the cached diagnostics because the target
-  topology changed.
+  Systems page; there is no independent scope selector, so any selectable
+  non-running-host disk (including a second Etch disk) can be committed while
+  the protected running host stays excluded and is reachable only through Host
+  Maintenance. Committing a target leaves Host Maintenance; the LUKS component
+  list is filtered to the selected disk's partitions/mappers so a second disk
+  cannot inherit the running host's root. The helper's `unlock <disk>
+  <luks-device>` runs after a confirmation, the passphrase is entered hidden
+  and travels only over the helper's standard input (never argv/logs), a
+  rejected passphrase offers a retry, and a successful unlock invalidates the
+  cached diagnostics because the target topology changed.
 - **Diagnostics** lists the 13 `Repair tool <key>: available|unavailable|<reason>`
   lines with an **all/available/unavailable filter**; unavailable rows are
   greyed and show the helper's probe reason verbatim. `Repair capability
@@ -47,10 +51,13 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   `host-diagnose <key>` through the helper, **Copy results** copies the raw
   evidence pane and the **Target configuration** group is a read-only viewer
   for the helper's `config-read` keys (11 files; target scope only). A plain
-  interactive `sudo` is authorized through a modal hidden-input
-  **Administrator authorization** dialog whose password is fed to `sudo -S -v`
-  over a pipe (never argv, never the transcript); cancelled or failed
-  authorization never starts the command.
+  interactive `sudo` is authorized **once per scope** through the modal
+  hidden-input **Administrator authorization** dialog when Host Maintenance is
+  entered or a repair target is committed; the password is fed to `sudo -S -v`
+  over a pipe (never argv, never the transcript) and the cached session is
+  reused by every later command, so **Run All never prompts**. A cancelled or
+  failed authorization never starts the command, and an expired session fails
+  closed with the exact remedy (re-commit the target or re-enter maintenance).
 - **Repair** shows the resolved **elevation state** (`gksu --sudo-mode`,
   `gksudo`, `sudo -n`, `su`, root or unavailable) with a **Re-check elevation**
   button that re-probes and surfaces the exact error, and exposes only the
@@ -68,12 +75,19 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   Settings) are listed **greyed with their reasons**; where the helper emits a
   `Legacy feature` probe, the row's state and reason come from that cached
   line and fail closed when it is missing or unrecognised.
-- **Chroot Shell** and **File Copy** mirror the modern tab layouts with every
-  control greyed and the exact `Legacy feature shell:` / `Legacy feature
-  file-copy:` probe reason (the helper commands exist but need `chroot` +
-  `timeout --foreground/--kill-after` / `unshare`, or an rsync with
-  `--chown`; this frontend exposes no workflow and never weakens the helper
-  preflights).
+- **Chroot Shell** runs one reviewed command string through the helper's
+  guarded `shell <disk> <root> <command>` (offline target) or `host-shell
+  <disk> <root> <command>` (running host, with an explicit confirmation). The
+  command is passed as a single argument (no shell interpolation by the GUI)
+  and the controls are enabled only when the scope is committed, the cached
+  administrator session is active and the scope's `Legacy feature shell:` /
+  `Legacy feature host-shell:` probe reports `available`; otherwise every
+  control stays greyed with the exact reason and the helper's runtime
+  preflights are never weakened. On Etch the probes are unavailable
+  (`unshare`/`timeout --foreground` are missing), so the tab stays greyed with
+  the probe reason. **File Copy** mirrors the modern tab with every control
+  greyed and the exact `Legacy feature file-copy:` probe reason (the helper
+  command exists but needs an rsync with `--chown`).
 - **Logs** streams the merged helper output with an **all/errors filter**, a
   **Search log:** substring filter (case-insensitive) and a **Session logs**
   list: the live session is the first entry, earlier files in the log
@@ -93,11 +107,11 @@ The Qt6 Boot Bitch tabs map onto this frontend where Qt3 allows it:
 
 | Modern GUI | Legacy Qt3 | Notes |
 | --- | --- | --- |
-| Systems (device tree, selected drive details, Unlock status, Select Target/Unlock/Authorize) | Systems (inventory, details panel, scope/target, Host Maintenance, unlock + status) | target is typed/selected then committed; modal sudo authorization replaces Polkit "Authorize" |
-| Diagnostics (check list, Run All/Run Diagnostic, results) | Diagnostics (capability list + Run All + per-key runs, read-only config viewer, raw evidence, Copy results) | capability/feature lines are the legacy evidence source; gated by committed target/Host Maintenance |
+| Systems (device tree, selected drive details, Unlock status, Select Target/Unlock/Authorize) | Systems (inventory, details panel, target, Host Maintenance, unlock + status) | target is typed/selected then committed; modal sudo authorization replaces Polkit "Authorize" and is requested on commit/maintenance only |
+| Diagnostics (check list, Run All/Run Diagnostic, results) | Diagnostics (capability list + Run All + per-key runs, read-only config viewer, raw evidence, Copy results) | capability/feature lines are the legacy evidence source; gated by committed target/Host Maintenance; the cached session means Run All never prompts |
 | Repair (Full Repair plan, individual tools, gating) | Repair (individual gated tools incl. guarded GRUB-legacy regeneration) | no combined plan on the legacy helper |
 | Snapshots | — | deliberately omitted; the greyed row follows `Legacy feature snapshots:` |
-| Chroot Shell | Chroot Shell (greyed) | helper exposes `shell`; greyed with the `Legacy feature shell:` probe reason |
+| Chroot Shell | Chroot Shell | wired to the helper's `shell`/`host-shell` behind the scope probe + session; greyed with the probe reason when unavailable |
 | File Copy | File Copy (greyed) | helper exposes file copy; greyed with the `Legacy feature file-copy:` probe reason |
 | Logs (search, entry-kind filter, session logs) | Logs (search, all/errors filter, session list) | full live log always saved |
 | Settings (persistent options) | Settings (read-only config + greyed options) | no persistent settings; CLI flags/env only |
@@ -141,18 +155,21 @@ boot-repair-legacy-gui --help | --version | --print-config
 `--help`, `--version` and `--print-config` work without an X display.
 `--smoke-test` runs `host-diagnose all` followed by `host-validate` through the
 helper, verifies the details/unlock/session/search/gating controls, the
-per-diagnostic check list, the read-only config viewer and the probe-based
-`Legacy feature` gating (rows, greyed tabs and the host-maintenance-gated
-actions), and the 1024x768 layout (group titles, button text, list columns and
+scope-less target eligibility (a synthetic non-running-host disk is
+committable, the running host is not), the per-diagnostic check list, the
+read-only config viewer, the probe-based `Legacy feature` gating (rows, the
+Chroot Shell tab and the host-maintenance-gated actions) and the 1024x768
+layout (group titles, button text, list columns, the stretched last column and
 combos are checked with font metrics and widget geometry) and prints the
 combined result; it needs a display (Xvfb with a 1024x768 screen is
 sufficient). Elevation order is `sudo -n` (only when already authorized),
 `gksu --sudo-mode`, `gksudo`, `sudo`, `su`; `--no-elevate` runs the helper
-directly. A plain interactive `sudo` is authorized once per session through
-the modal hidden-input dialog and then runs as `sudo -n`; the smoke test never
-opens a modal and requires root or a pre-authenticated `--elevate 'sudo -n'`.
-No secret is ever placed on a command line; the LUKS passphrase uses stdin
-only.
+directly. A plain interactive `sudo` is authorized once per scope through the
+modal hidden-input dialog when Host Maintenance is entered or a repair target
+is committed, and the cached session is reused afterwards; the smoke test
+never opens a modal and requires root or a pre-authenticated
+`--elevate 'sudo -n'`. No secret is ever placed on a command line; the LUKS
+passphrase uses stdin only.
 
 ## Tests
 
@@ -164,9 +181,14 @@ modules with plain `g++ -std=c++98 -Werror`, runs the fixture assertions in
 with UUID/label/transport and the resolved dm chain, unlock-result/error
 markers) and checks the Qt3-only source contract, the legacy command set
 (including `grub`), the parity controls (tabs, details panel, unlock status,
-session/search, settings, gating, modal sudo authorization, per-diagnostic
-runs, read-only config viewer, probe-based feature gating) and the layout
-guards. The full Qt3 compile and the extended smoke test run on the Etch
+session/search, settings, scope-less gating, authorization on
+commit/maintenance but never on Run All, the SIGPIPE guard, per-diagnostic
+runs, read-only config viewer, probe-based feature gating, Chroot Shell
+wiring) and the layout guards. It also runs
+`legacy/tests/test-auth-pipe.sh`, the Qt3 console harness that proves the
+password-pipe write survives a sudo that exits without reading stdin (the
+SIGPIPE crash); the modern host skips it without `qmake-qt3`, the Etch guest
+runs it. The full Qt3 compile and the extended smoke test run on the Etch
 guest.
 
 ## Etch validation (2026-09-22)
@@ -216,3 +238,25 @@ controls: ok; layout: ok (60 widgets checked)` (rc 0), and the session log
 carries all six `Legacy feature` lines (including `host-maintenance:
 unavailable|unshare is not installed in the recovery environment`). Evidence:
 `Development/release-0.2.25/etch-legacy/gui-residual-20260922/`.
+
+Defects pass (same day, later): the reported legacy defects were fixed and
+validated on the real Etch guest. The scope dropdown and any standalone
+authenticate control are gone (scope follows the committed target or Host
+Maintenance), authorization is requested once on Host Maintenance entry /
+target commit and cached for the session, the SIGPIPE crash on the sudo
+password pipe is fixed, the Chroot Shell tab is wired to `shell`/`host-shell`
+behind the scope probe + session (still greyed on Etch with the exact
+`host-shell: unavailable|unshare is not installed…` reason), the protected
+running-host disk stays excluded from commit/unlock, and the layout gained
+larger font-metric title/header floors plus a `LastColumn`-stretched evidence
+column. Evidence: `boot-repair-legacy_0.2.25-etch1_amd64.deb` sha256
+`88b4072b…`, installed GUI `f11abe3a…` / helper `bd2fe7d4…`; Xvfb smoke
+`SMOKE OK: … controls: ok; layout: ok (59 widgets checked)` rc 0;
+`AUTH-PIPE OK`/`legacy auth-pipe test: PASS` (the pre-fix runner exits 141
+with SIGPIPE); XTest-driven `MODAL-AUTH DRILL: PASS` (modal on Host
+Maintenance, GUI survives the password, session established, Run All reuses it
+with no second prompt); `--smoke-test --elevate sudo` fails closed rc 1. The
+drill and its `xtype` helper are captured under
+`Development/release-0.2.25/etch-legacy/gui-defects-20260922/`; the interactive
+modal still cannot be exercised on the host (no Qt3), so it is validated in
+the guest through Xvfb + XTest rather than headlessly on the maintainer host.

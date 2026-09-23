@@ -8,6 +8,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
 #include <unistd.h>
@@ -15,6 +16,36 @@
 namespace legacy {
 
 namespace {
+
+// A password write to a sudo that exits without reading its stdin (for example
+// when sudo already holds a valid timestamp, so `sudo -S -v` succeeds
+// immediately) must never kill the GUI with SIGPIPE. Ignore SIGPIPE only for
+// the duration of the write and restore the previous disposition afterwards so
+// the helper processes spawned through QProcess keep the default behaviour.
+class ScopedSigPipeIgnore
+{
+public:
+    ScopedSigPipeIgnore()
+        : m_valid(false)
+    {
+        struct sigaction ignore;
+        ::memset(&ignore, 0, sizeof(ignore));
+        ignore.sa_handler = SIG_IGN;
+        ::sigemptyset(&ignore.sa_mask);
+        m_valid = ::sigaction(SIGPIPE, &ignore, &m_old) == 0;
+    }
+
+    ~ScopedSigPipeIgnore()
+    {
+        if (m_valid) {
+            ::sigaction(SIGPIPE, &m_old, 0);
+        }
+    }
+
+private:
+    struct sigaction m_old;
+    bool m_valid;
+};
 
 // Splits a whitespace-separated elevation override ("sudo -n") into arguments.
 QStringList splitPrefix(const QString &text)
@@ -283,6 +314,7 @@ bool HelperRunner::authenticateElevation(const QByteArray &secret, QString *erro
         return false;
     }
     if (pid == 0) {
+        ::signal(SIGPIPE, SIG_DFL);
         ::close(inputPipe[1]);
         ::close(errorPipe[0]);
         ::dup2(inputPipe[0], 0);
@@ -307,25 +339,31 @@ bool HelperRunner::authenticateElevation(const QByteArray &secret, QString *erro
     ::close(errorPipe[1]);
     // Write the password and its newline directly, without building a
     // secret-bearing QByteArray (Qt3's QByteArray has no append/+= helpers).
-    std::size_t offset = 0;
-    while (offset < static_cast<std::size_t>(secret.size())) {
-        const ssize_t written = ::write(inputPipe[1], secret.data() + offset,
-                                        static_cast<std::size_t>(secret.size()) - offset);
-        if (written < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            break;
-        }
-        offset += static_cast<std::size_t>(written);
-    }
+    // SIGPIPE stays ignored for the write: when sudo already holds a valid
+    // timestamp it exits without reading stdin and the write returns EPIPE
+    // instead of terminating the GUI.
     {
-        const char newline = '\n';
-        if (::write(inputPipe[1], &newline, 1) != 1) {
-            // Closing the pipe below makes sudo fail closed on EOF.
+        ScopedSigPipeIgnore ignoreSigPipe;
+        std::size_t offset = 0;
+        while (offset < static_cast<std::size_t>(secret.size())) {
+            const ssize_t written = ::write(inputPipe[1], secret.data() + offset,
+                                            static_cast<std::size_t>(secret.size()) - offset);
+            if (written < 0) {
+                if (errno == EINTR) {
+                    continue;
+                }
+                break;
+            }
+            offset += static_cast<std::size_t>(written);
         }
+        {
+            const char newline = '\n';
+            if (::write(inputPipe[1], &newline, 1) != 1) {
+                // Closing the pipe below makes sudo fail closed on EOF.
+            }
+        }
+        ::close(inputPipe[1]);
     }
-    ::close(inputPipe[1]);
 
     QByteArray captured;
     char buffer[256];
@@ -449,8 +487,10 @@ bool HelperRunner::run(const QStringList &helperArgs)
     // LUKS passphrases (and only those) travel over the helper's standard
     // input; the pipe is closed immediately so the helper reads exactly the
     // submitted bytes and never waits for a newline. The buffer is wiped
-    // right after the write.
+    // right after the write. SIGPIPE is ignored for the write so a helper that
+    // exited before reading cannot kill the GUI.
     if (!m_input.isEmpty()) {
+        ScopedSigPipeIgnore ignoreSigPipe;
         m_process->writeToStdin(m_input);
         m_process->closeStdin();
         m_input.fill('\0');

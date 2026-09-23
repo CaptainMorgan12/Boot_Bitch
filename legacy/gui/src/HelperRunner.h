@@ -52,7 +52,9 @@ public:
     // `sudo -n` when the installed sudo supports it (modern hosts), otherwise
     // plain `sudo`, which runs non-interactively while the cached timestamp is
     // valid (Etch's sudo 1.6.8 has no -n). `error` receives sudo's own stderr
-    // line on failure.
+    // line on failure. SIGPIPE is ignored only for the password write: sudo
+    // exits without reading stdin when its timestamp is already valid, and the
+    // resulting EPIPE must not terminate the GUI.
     bool authenticateElevation(const QByteArray &secret, QString *error = 0);
 
     // Drops the cached elevation decision so the next resolveElevation()/run()

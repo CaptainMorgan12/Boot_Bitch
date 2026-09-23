@@ -19,10 +19,15 @@
 // MainWindow::repairToolAvailable: fail closed, missing/unparseable evidence
 // keeps the action disabled, and diagnostics/repairs additionally require an
 // explicitly committed repair target or active Host Maintenance exactly like
-// the modern Systems page. A plain interactive `sudo` is authorized through a
-// modal hidden-input dialog that feeds `sudo -S -v` over a pipe; the LUKS
-// passphrase travels only over the helper's standard input. Neither secret is
-// ever logged or placed in command arguments.
+// the modern Systems page. The scope follows that state only (there is no
+// independent scope selector): Set as repair target commits any selectable
+// non-running-host disk, Host Maintenance selects the protected running host,
+// and committing a target leaves Host Maintenance. A plain interactive `sudo`
+// is authorized once per session through a modal hidden-input dialog when Host
+// Maintenance is entered or a repair target is committed (never on Run All),
+// and the cached session is reused afterwards; the LUKS passphrase travels
+// only over the helper's standard input. Neither secret is ever logged or
+// placed in command arguments.
 //
 // Qt3 note: the Q3* class names of Qt4's Qt3-support module do not exist in
 // Qt3 itself; the native Qt3 classes are QMainWindow/QListView/QTextEdit/
@@ -48,6 +53,7 @@ class QLabel;
 class QLineEdit;
 class QListView;
 class QPushButton;
+class QResizeEvent;
 class QTabWidget;
 class QTextEdit;
 
@@ -79,7 +85,6 @@ signals:
 
 private slots:
     void scanDevices();
-    void scopeChanged(int index);
     void deviceSelectionChanged();
     void targetEdited();
     void setRepairTarget();
@@ -90,6 +95,8 @@ private slots:
     void viewConfigFile();
     void copyResults();
     void runAction();
+    void runChrootShell();
+    void clearChrootOutput();
     void runUnlock();
     void recheckElevation();
     void diagnosticsFilterChanged();
@@ -118,6 +125,7 @@ private:
     QWidget *buildAboutTab();
 
     QPushButton *makeButton(const QString &text, QWidget *parent);
+    void addListViewColumn(QListView *list, const QString &title, int width);
     void registerGroupBox(QGroupBox *box);
     void appendLog(const QString &line);
     void appendToLogFile(const QString &line);
@@ -131,6 +139,7 @@ private:
     bool hostMaintenanceActive() const;
     bool diagnosticsScopeReady() const;
     QString scopeReadyReason() const;
+    QString scopeFeatureKey() const;
     QString runningHostDisk() const;
     void updateStatus();
     void updateActionStates();
@@ -139,6 +148,7 @@ private:
     void updateLegacyFeatureView();
     void updateFeatureTab(QGroupBox *group, QLabel *label, const char *feature,
                           const QString &title);
+    void updateChrootShellState();
     void legacyFeatureDisplay(const char *feature, QString *state,
                               QString *reason) const;
     void updateFactView(const ParsedTranscript &parsed);
@@ -152,10 +162,11 @@ private:
     QStringList sessionLogFiles() const;
     QString visibleMapperForDisk(const QString &disk) const;
     void autoDetectHostTarget();
-    bool promptElevationPassword();
+    bool ensureAdministratorSession(const QString &context);
+    bool administratorSessionActive() const;
     void startCommand(const QStringList &args, bool diagnostic,
                       const QString &label, bool unlock = false,
-                      bool config = false);
+                      bool config = false, bool shell = false);
     void reportChangeStatuses(const ParsedTranscript &parsed);
     void handleUnlockFinished(bool ok, const std::string &transcript,
                               const QString &device, const QString &disk);
@@ -163,7 +174,6 @@ private:
     bool verifyLayout(QString *problems, int *checked);
 
     QTabWidget *m_tabs;
-    QComboBox *m_scopeCombo;
     QComboBox *m_diskCombo;
     QComboBox *m_rootCombo;
     QComboBox *m_unlockCombo;
@@ -181,6 +191,8 @@ private:
     QTextEdit *m_logView;
     QTextEdit *m_unlockStatusView;
     QLineEdit *m_logSearchEdit;
+    QLineEdit *m_shellCommandEdit;
+    QTextEdit *m_shellOutput;
     QCheckBox *m_logWrapCheck;
     QLabel *m_scopeHint;
     QLabel *m_gateHint;
@@ -203,6 +215,8 @@ private:
     QPushButton *m_elevateButton;
     QPushButton *m_setTargetButton;
     QPushButton *m_hostMaintenanceButton;
+    QPushButton *m_shellRunButton;
+    QPushButton *m_shellClearButton;
     QGroupBox *m_chrootGroup;
     QGroupBox *m_fileCopyGroup;
     QMap<QString, QPushButton *> m_actionButtons;
@@ -235,6 +249,7 @@ private:
     bool m_pendingDiagnostic;
     bool m_pendingUnlock;
     bool m_pendingConfig;
+    bool m_pendingShell;
     bool m_unlockRetry;
     bool m_targetCommitted;
     bool m_hostMaintenance;

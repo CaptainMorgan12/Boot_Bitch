@@ -36,41 +36,51 @@ and is **not shipped** in the `.deb` any more.
 CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it:
 **Systems** renders the read-only kernel inventory, the **Selected drive
 details** panel (drive, detected target/component, model/label, status, size,
-connection, filesystem, UUID, mounts, protection), the scope/target controls
-with explicit **Set as repair target** / **Host Maintenance** commit and a
+connection, filesystem, UUID, mounts, protection), the target controls with
+explicit **Set as repair target** / **Host Maintenance** commit and a
 dedicated **Unlock status** frame (locked/unlocked, component, mapper, method,
 errors; disabled for the protected running host), **Diagnostics** lists the 13
 `Repair tool` capability lines with an all/available/unavailable filter, Run
 All, per-key diagnostic runs, a read-only `config-read` viewer and the raw
-evidence pane (a plain interactive sudo is authorized through a modal
-hidden-input dialog fed to `sudo -S -v` over a pipe; the read-only commands
-stay disabled until a target is committed or Host Maintenance is active),
-**Repair** shows the resolved elevation method with a re-check button and
-enables only the legacy-supported commands (`validate`, `diagnose`,
+evidence pane, **Repair** shows the resolved elevation method with a re-check
+button and enables only the legacy-supported commands (`validate`, `diagnose`,
 `fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
 `initramfs` and the guarded `grub` regeneration) whose cached capability line
 is `available` for the current scope (host `initramfs`/`grub` also need the
-`Legacy feature host-maintenance:` probe), **Chroot Shell** and **File Copy**
-mirror the modern tabs with every control greyed and the exact
-`Legacy feature shell:` / `Legacy feature file-copy:` probe reason, **Logs**
+`Legacy feature host-maintenance:` probe), **Chroot Shell** runs one reviewed
+command through the helper's guarded `shell` (offline target) / `host-shell`
+(running host) verbs when the scope is committed, the session is authorized
+and the scope's `Legacy feature` probe is available (greyed with the exact
+reason otherwise), **File Copy** mirrors the modern tab with every control
+greyed and the exact `Legacy feature file-copy:` probe reason, **Logs**
 streams the helper output with an all/errors filter, a **Search log:** box and
 a per-session list (live session first, earlier files selectable read-only),
 and **Settings** shows the read-only configuration plus greyed modern options
-and a working log-wrap toggle. A repair that is not proven `unchanged` (or an
-unlock that changes the topology) invalidates the cache and disables the gated
-actions until diagnostics run again. The deliberately omitted modern-only
-features (Full Repair plan, snapshots, host default/reboot, EFI/UKI/extlinux)
-stay greyed; where the helper emits a `Legacy feature` probe the row state and
-reason come from that cached line and fail closed when it is missing or
-unrecognised. The helper keeps every runtime preflight.
+and a working log-wrap toggle. There is no independent scope selector: the
+scope follows the committed repair target or Host Maintenance, so any
+selectable non-running-host disk (including a second Etch disk) can be
+committed while the protected running-host disk stays excluded. A plain
+interactive `sudo` is authorized **once per scope** through the modal
+hidden-input dialog when Host Maintenance is entered or a repair target is
+committed (never on Run All), the password is fed to `sudo -S -v` over a pipe
+and is never logged or echoed, and the cached session is reused afterwards;
+the SIGPIPE-safe password write survives a sudo that exits without reading
+stdin (an already-valid timestamp). A repair that is not proven `unchanged`
+(or an unlock that changes the topology) invalidates the cache and disables
+the gated actions until diagnostics run again. The deliberately omitted
+modern-only features (Full Repair plan, snapshots, host default/reboot,
+EFI/UKI/extlinux) stay greyed; where the helper emits a `Legacy feature` probe
+the row state and reason come from that cached line and fail closed when it is
+missing or unrecognised. The helper keeps every runtime preflight.
 
 Build it natively on Etch with `qmake-qt3`/`make` (or through
 `scripts/package-legacy.sh`); `--print-config` and `--help` work without X.
 `--smoke-test` also verifies the details/unlock/session/search/gating
-controls, the per-key diagnostic list, the read-only config viewer, the
-probe-based feature gating and the 1024x768 layout programmatically (run it as
-root or after `sudo -S -v`, since the modal authorization dialog is never
-opened in smoke mode).
+controls, the scope-less target eligibility, the per-key diagnostic list, the
+read-only config viewer, the probe-based feature gating, the last-column
+stretch and the 1024x768 layout programmatically (run it as root or after
+`sudo -S -v`, since the modal authorization dialog is never opened in smoke
+mode).
 
 ## Launcher (development-only)
 
@@ -199,6 +209,24 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   controls: ok; layout: ok (60 widgets checked)` (rc 0), and the session log
   carries all six `Legacy feature` lines. Evidence:
   `Development/release-0.2.25/etch-legacy/gui-residual-20260922/`.
+- Defects pass (same day, later): the scope selector was removed (scope follows
+  the committed target or Host Maintenance; any selectable non-running-host
+  disk can be committed), authorization moved to Host Maintenance entry / target
+  commit and is cached for the session (Run All never prompts), the Chroot Shell
+  tab is wired to `shell`/`host-shell` behind the scope probe + session, the
+  protected running-host unlock/commit exclusion stays, and the layout guards
+  gained larger title/header font-metric floors plus a stretched last column.
+  Built and installed on Etch (`boot-repair-legacy_0.2.25-etch1_amd64.deb`,
+  sha256 `88b4072b…`; installed GUI `f11abe3a…`, helper `bd2fe7d4…`). The Xvfb
+  smoke reports `SMOKE OK: host-diagnose: 13 capability lines parsed;
+  host-validate: ok; controls: ok; layout: ok (59 widgets checked)` (rc 0); the
+  Qt3 auth-pipe harness proves the SIGPIPE crash fix (pre-fix runner exits 141,
+  fixed runner reports `AUTH-PIPE OK`); and an XTest-driven Xvfb drill enters
+  Host Maintenance, types the hidden-input password, survives it, establishes
+  the session and runs Run All with no second prompt
+  (`MODAL-AUTH DRILL: PASS`). `--smoke-test --elevate sudo` still fails closed
+  with the exact remedy. Evidence:
+  `Development/release-0.2.25/etch-legacy/gui-defects-20260922/`.
 
 ## Packaging
 

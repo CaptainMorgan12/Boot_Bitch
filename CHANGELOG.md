@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+- Fix the reported legacy Qt3 GUI defects: remove the Systems `Scope:`
+  dropdown (scope follows the committed repair target or Host Maintenance, so
+  any selectable non-running-host disk — including a second Etch disk — can be
+  committed) and never add a standalone authenticate control; request the
+  modal hidden-input `sudo -S -v` authorization once per scope on Host
+  Maintenance entry or target commit, cache it for the session and never
+  prompt on Run All; fix the crash where a password write to a sudo that
+  already held a valid timestamp (and exited without reading stdin) killed the
+  GUI with SIGPIPE; wire the Chroot Shell tab to the helper's guarded
+  `shell`/`host-shell` verbs behind the scope probe plus the cached session
+  (greyed with the exact reason otherwise); keep the protected running-host
+  disk excluded from commit and unlock; and raise the title/header font-metric
+  layout floors and stretch the last evidence column to the window edge.
+  Validated on the Etch guest: Xvfb smoke `controls: ok; layout: ok
+  (59 widgets checked)`, the Qt3 `auth-pipe` harness (`AUTH-PIPE OK`, pre-fix
+  runner exits 141) and an XTest-driven modal-auth/Run All drill
+  (`MODAL-AUTH DRILL: PASS`).
 - Stretch the final visible column of the modern GUI tables to the viewport
   edge: the Repair individual-tools "Full Repair" column and the Settings
   capability table's "Notes" column now fill the window's right edge instead
