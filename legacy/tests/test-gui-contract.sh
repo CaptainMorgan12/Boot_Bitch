@@ -107,6 +107,8 @@ pass "Qt3-only widget/toolkit usage (no kdelibs)"
 
 # --- only the legacy-supported command set ----------------------------------
 WINDOW="$GUI_DIR/src/LegacyMainWindow.cpp"
+OVERLAY="$ROOT_DIR/legacy/overlay.sh"
+[[ -f "$OVERLAY" ]] || fail "legacy overlay not found"
 ACTION_BLOCK="$(sed -n '/^const ToolSpec toolSpecs\[\] = {/,/^};/p' "$WINDOW")"
 [[ -n "$ACTION_BLOCK" ]] || fail "toolSpecs block not found"
 for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs grub display-manager; do
@@ -133,6 +135,42 @@ for marker in 'Full Repair plan: Manual recovery tool' 'Reconcile Boot Stack' \
     'setTreeStepSize' 'appendRepairSummaryBlock' 'repairStageTitles'; do
     grep -q "$marker" "$WINDOW" || fail "B7 marker missing: $marker"
 done
+# Cycle 8 markers: Full Repair regeneration, apt intent translation and the
+# modern file-copy page structure.
+grep -q 'maybeAutoRefreshDiagnostics(QString::fromLatin1("Full Repair"))' "$WINDOW" \
+    || fail "Full Repair end-of-plan diagnostics regeneration missing"
+grep -q 'Automatic read-only diagnostics regeneration scheduled after %1.' "$WINDOW" \
+    || fail "auto-refresh scheduled log line missing"
+grep -q 'm_pendingBrowse' "$WINDOW" || fail "browse-target pending flag missing"
+grep -q 'handleFileCopyBrowseResult' "$WINDOW" || fail "browse-result handler missing"
+for marker in 'm_fileCopyScopeLabel' 'm_fileCopyBrowseButton' \
+    'Browse Target Folders...' 'm_fileCopyOwnershipCombo' \
+    'Smart destination ownership (recommended)' \
+    'Preserve source numeric UID/GID' \
+    '1. Select source files or folders from this host' \
+    '1. Select source files or folders from the repaired system' \
+    '2. Choose destination in repaired system' \
+    '3. Ownership and copy policy' 'fileCopyBrowse()' \
+    'setTextFormat(Qt::PlainText)'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-8 file-copy marker missing: $marker"
+done
+# Layout-ownership regression guard: a sub-layout constructed WITH a parent
+# layout is added automatically at construction; an extra addLayout() parents
+# it twice ("QLayout::addChildLayout: layout already has a parent") and
+# double-frees it at shutdown. The direction row must be constructed
+# parentless and owned by addLayout(), like the other tabs.
+grep -q 'QHBoxLayout \*directionRow = new QHBoxLayout();' "$WINDOW" \
+    || fail "file-copy direction row must be constructed parentless (addLayout owns it)"
+grep -q 'layout->addLayout(directionRow);' "$WINDOW" \
+    || fail "file-copy direction row must be owned by addLayout()"
+grep -q 'legacy_apt_intent_translate' "$OVERLAY" \
+    || fail "apt intent translation missing from the overlay"
+grep -q 'apt intent translated:' "$OVERLAY" \
+    || fail "apt intent translation log line missing"
+grep -q 'browse_target_directory' "$OVERLAY" \
+    || fail "legacy browse-target override missing from the overlay"
+grep -q 'BROWSE_ENTRY' "$OVERLAY" \
+    || fail "legacy browse record format missing from the overlay"
 # Cycle 4b: the display tool is the legacy host-scope SysV stage (runnable
 # with the helper's display capability line; offline stays disabled).
 grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
@@ -414,7 +452,7 @@ for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck
     'maybeAutoRefreshDiagnostics' 'runScheduledAutoRefresh' \
     'entering Host Maintenance changed the diagnostics scope' \
     'committing the repair target changed the diagnostics scope' \
-    'maybeAutoRefreshDiagnostics(m_pendingLabel)' \
+    'maybeAutoRefreshDiagnostics(finishedLabel)' \
     'm_settingsContent' 'QScrollView' \
     'm_repairVerticalSplitter' 'Qt::Vertical' 'kSectionTitleLeftTolerance'; do
     grep -q "$marker" "$WINDOW" || fail "Settings parity marker missing: $marker"

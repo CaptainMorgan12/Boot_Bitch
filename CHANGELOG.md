@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+- Cycle 8: Full Repair diagnostic regeneration, shell apt-intent translation
+  and the modern File Copy page. Running the Full Repair plan now invalidates
+  the scope's cached diagnostics once after the last plan stage (success or
+  aborted, mirroring the modern finishFullRepairPlan) and schedules one quiet
+  Run All when the auto-refresh setting, the administrator session and the
+  idle state allow it (log: "Automatic read-only diagnostics regeneration
+  scheduled after Full Repair."); individual repairs keep their stale-based
+  scheduling. The legacy shell paths translate a reviewed `apt
+  update|upgrade|full-upgrade|dist-upgrade|install|remove|purge|autoremove|
+  clean|autoclean` intent to the Etch apt-get equivalent (`full-upgrade` ->
+  `dist-upgrade`) with an "apt intent translated:" log line; anything
+  ambiguous runs unchanged. The repair result popup actually wraps now: Qt
+  3.3.7's LogText mode disables word wrap entirely, so the popup uses
+  PlainText plus a defensive wrap re-application while it streams. The File
+  Copy tab matches the modern page: heading row (title | live scope label |
+  Preview Changes | Copy and Verify), direction row, "1. Select source..."
+  group with the Add/Remove/Clear button row, "2. Choose destination..."
+  group with Browse Target Folders... (helper browse-target records, raw
+  percent-encoded names because Qt 3.3.7 lacks QByteArray::fromBase64) and
+  "3. Ownership and copy policy" with the Smart/Preserve ownership combo.
+
 - Cycle 7: Systems tree + unlock gating + repair summary, and the legacy
   capability wave. The Systems tab now shows a device tree (disks as
   top-level items with partitions/mappers as indented children; Device/Size/

@@ -86,8 +86,8 @@ printf '%s\n' "$check_out" | grep -qE 'sed -nE +61' \
     || fail "port summary sed -nE count is not 61"
 printf '%s\n' "$check_out" | grep -qE '=~ regex literal hoists +11' \
     || fail "port summary regex-hoist count is not 11"
-printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +33' \
-    || fail "port summary wrapped-function count is not 33"
+printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +34' \
+    || fail "port summary wrapped-function count is not 34"
 pass "port --check in sync and lists every transformation"
 
 # --- generated helper has no bash-4 syntax ----------------------------------

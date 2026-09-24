@@ -390,4 +390,51 @@ cmp -s "$FIXTURE/boot/grub/menu.lst" "$FIXTURE/menu.lst.nodefault" \
 RUNNING_HOST_MODE=0
 pass "legacy Make Default (canonical entry, idempotent, fail-closed)"
 
+# --- legacy apt intent translation (cycle 8) ---------------------------------
+# Etch's apt has no subcommands: `apt update` must become `apt-get update`,
+# `apt full-upgrade` must become `apt-get dist-upgrade`, and anything else
+# (bare apt, unknown subcommands, other frontends) must run unchanged.
+[[ "$(legacy_apt_intent_translate 'apt update')" == 'apt-get update' ]] \
+    || fail "apt update was not translated to apt-get update"
+[[ "$(legacy_apt_intent_translate 'apt upgrade')" == 'apt-get upgrade' ]] \
+    || fail "apt upgrade was not translated to apt-get upgrade"
+[[ "$(legacy_apt_intent_translate 'apt full-upgrade')" == 'apt-get dist-upgrade' ]] \
+    || fail "apt full-upgrade was not translated to dist-upgrade"
+[[ "$(legacy_apt_intent_translate 'apt dist-upgrade')" == 'apt-get dist-upgrade' ]] \
+    || fail "apt dist-upgrade was not translated"
+[[ "$(legacy_apt_intent_translate 'apt install htop')" == 'apt-get install htop' ]] \
+    || fail "apt install arguments were not preserved through the translation"
+[[ "$(legacy_apt_intent_translate 'apt remove --purge htop')" == 'apt-get remove --purge htop' ]] \
+    || fail "apt remove arguments were not preserved through the translation"
+[[ "$(legacy_apt_intent_translate 'apt autoremove')" == 'apt-get autoremove' ]] \
+    || fail "apt autoremove was not translated"
+[[ "$(legacy_apt_intent_translate 'apt')" == 'apt' ]] \
+    || fail "a bare apt was rewritten"
+[[ "$(legacy_apt_intent_translate 'apt frobnicate')" == 'apt frobnicate' ]] \
+    || fail "an unknown apt subcommand was rewritten"
+[[ "$(legacy_apt_intent_translate 'apt-get update')" == 'apt-get update' ]] \
+    || fail "an apt-get command was rewritten (must stay untouched)"
+[[ "$(legacy_apt_intent_translate 'aptitude update')" == 'aptitude update' ]] \
+    || fail "aptitude was rewritten"
+[[ "$(legacy_apt_intent_translate 'apt-cache search htop')" == 'apt-cache search htop' ]] \
+    || fail "apt-cache was rewritten"
+pass "legacy apt intent translation (apt -> apt-get, full-upgrade -> dist-upgrade)"
+
+# --- legacy browse-target record format (cycle 8) ----------------------------
+# The legacy port emits BROWSE_ENTRY records with raw percent-encoded names
+# (Qt 3.3.7 has no QByteArray::fromBase64); the Qt3 picker decodes them.
+mkdir -p "$FIXTURE/browse-root/alpha" "$FIXTURE/browse-root/beta"
+prepare_target() { :; }
+maybe_mount_target_path() { :; }
+realpath_existing() { printf '%s\n' "$1"; }
+TARGET_ROOT="$FIXTURE"
+browse_out="$(browse_target_directory /browse-root)"
+printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	alpha' \
+    || fail "browse-target did not list alpha"
+printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	beta' \
+    || fail "browse-target did not list beta"
+printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	' \
+    || fail "browse-target emitted no BROWSE_ENTRY records"
+pass "legacy browse-target records (raw percent-encoded names)"
+
 echo "legacy helper smoke: PASS"

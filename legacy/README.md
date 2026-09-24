@@ -59,7 +59,9 @@ the plan paragraph, the **Full Repair plan** section (six legacy stages,
 **Configure Plan...** / **Run Full Repair**, count/readiness labels), the
 13-row **Individual repair tools** list with the **Selected tool** pane (a
 draggable vertical splitter separates the plan and the tools panes), the
-modern-style result popup that follows the Settings wrap toggle, plus the
+modern-style result popup that follows the Settings wrap toggle (Qt
+3.3.7's LogText mode disables word wrap, so the popup uses PlainText and
+re-applies the wrap mode while it streams), plus the
 resolved elevation
 method with a re-check button and the deferred **Authorize** control; only the
 legacy-supported commands (`validate`, `diagnose`,
@@ -89,8 +91,9 @@ Log**, **Add Note**, **Delete** (prior files only, confirmed) and
 shows functional device-discovery filters, the functional diagnostics
 auto-refresh toggle (schedules one quiet Run All after scope entry —
 Host Maintenance or a committed repair target —, an unlock, a target
-configuration edit or any repair whose change status invalidates the cache,
-never opening an authorization prompt by itself), the wrap-log toggle, the
+configuration edit, any repair whose change status invalidates the cache, or
+once after the last Full Repair stage with the cached diagnostics invalidated
+first, never opening an authorization prompt by itself), the wrap-log toggle, the
 mandatory safety controls, the
 read-only **Host capabilities and dependencies** group (Distribution /
 Package manager family / adapted authorization-support summary labels, the

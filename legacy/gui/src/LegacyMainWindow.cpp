@@ -996,6 +996,10 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_chrootHeading(0),
       m_chrootScopeLabel(0),
       m_fileCopyHeading(0),
+      m_fileCopyScopeLabel(0),
+      m_fileCopySourceTitle(0),
+      m_fileCopyDestinationTitle(0),
+      m_fileCopyOptionsTitle(0),
       m_logsHeading(0),
       m_settingsHeading(0),
       m_gateHint(0),
@@ -1054,12 +1058,16 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_fileCopyPreviewButton(0),
       m_fileCopyRunButton(0),
       m_fileCopyDirectionCombo(0),
+      m_fileCopyOwnershipCombo(0),
       m_fileCopySourceList(0),
       m_fileCopyDestinationEdit(0),
+      m_fileCopyBrowseButton(0),
       m_systemsSplitter(0),
       m_repairVerticalSplitter(0),
       m_chrootGroup(0),
-      m_fileCopyGroup(0),
+      m_fileCopySourceGroup(0),
+      m_fileCopyDestinationGroup(0),
+      m_fileCopyOptionsGroup(0),
       m_chrootTab(0),
       m_settingsContent(0),
       m_repairContent(0),
@@ -1074,6 +1082,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_pendingUnlock(false),
       m_pendingConfig(false),
       m_pendingShell(false),
+      m_pendingBrowse(false),
       m_unlockRetry(false),
       m_targetCommitted(false),
       m_hostMaintenance(false),
@@ -2198,89 +2207,169 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
+    // Modern heading row (buildFileCopyPage parity): the File copy section
+    // title, then the live scope label, then the two primary actions share
+    // the page-title row; both actions stay disabled until the direction and
+    // scope are ready.
+    QHBoxLayout *headingRow = new QHBoxLayout(layout);
+    headingRow->setSpacing(6);
     m_fileCopyHeading = makeSectionTitle(QString::fromLatin1("File copy"), page);
-    layout->addWidget(m_fileCopyHeading);
+    headingRow->addWidget(m_fileCopyHeading);
+    headingRow->addStretch();
+    m_fileCopyScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
+    m_fileCopyScopeLabel->setTextFormat(Qt::PlainText);
+    m_fileCopyScopeLabel->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
+    headingRow->addWidget(m_fileCopyScopeLabel, 1);
+    m_fileCopyPreviewButton = makeButton(QString::fromLatin1("Preview Changes"), page);
+    m_fileCopyPreviewButton->setEnabled(false);
+    QToolTip::add(m_fileCopyPreviewButton, QString::fromLatin1(
+        "Run a copy dry-run through the guarded helper. No files are changed."));
+    connect(m_fileCopyPreviewButton, SIGNAL(clicked()), this, SLOT(fileCopyPreview()));
+    headingRow->addWidget(m_fileCopyPreviewButton, 0, Qt::AlignVCenter);
+    m_fileCopyRunButton = makeButton(QString::fromLatin1("Copy and Verify"), page);
+    m_fileCopyRunButton->setEnabled(false);
+    QToolTip::add(m_fileCopyRunButton, QString::fromLatin1(
+        "Copy staged items and verify the result. Existing destination names "
+        "are overwritten when source content differs; unrelated destination "
+        "files are never deleted."));
+    connect(m_fileCopyRunButton, SIGNAL(clicked()), this, SLOT(fileCopyRun()));
+    headingRow->addWidget(m_fileCopyRunButton, 0, Qt::AlignVCenter);
 
-    m_fileCopyGroup = new QGroupBox(page);
-    QVBoxLayout *copyLayout = new QVBoxLayout(m_fileCopyGroup, 8, 4);
-
+    // The fail-closed probe notice stays on the page while the helper's
+    // `Legacy feature file-copy:` line is not cached.
     m_fileCopyReasonLabel = new QLabel(
         QString::fromLatin1(
             "No 'Legacy feature file-copy:' line is cached; run diagnostics "
             "for the selected scope to evaluate the helper's copy/ownership "
             "probes (fail closed)."),
-        m_fileCopyGroup);
+        page);
     m_fileCopyReasonLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    copyLayout->addWidget(m_fileCopyReasonLabel);
+    layout->addWidget(m_fileCopyReasonLabel);
 
-    // Direction row (modern parity: Host -> Repair / Repair -> Host).
-    QHBoxLayout *directionRow = new QHBoxLayout(copyLayout);
+    // Direction row (modern parity: Host -> Repair / Repair -> Host). The
+    // sub-layout is constructed WITHOUT a parent and added via addLayout(),
+    // matching the existing-tab pattern: a layout constructed with a parent
+    // layout is added automatically at construction, so an explicit
+    // addLayout() would parent it twice ("QLayout::addChildLayout: layout
+    // already has a parent") and double-free it at shutdown.
+    QHBoxLayout *directionRow = new QHBoxLayout();
     directionRow->setSpacing(6);
-    directionRow->addWidget(new QLabel(QString::fromLatin1("Direction:"), m_fileCopyGroup));
-    m_fileCopyDirectionCombo = new QComboBox(m_fileCopyGroup);
+    directionRow->addWidget(new QLabel(QString::fromLatin1("Direction:"), page));
+    m_fileCopyDirectionCombo = new QComboBox(page);
     m_fileCopyDirectionCombo->insertItem(QString::fromUtf8("Host \xE2\x86\x92 Repair"));
     m_fileCopyDirectionCombo->insertItem(QString::fromUtf8("Repair \xE2\x86\x92 Host"));
     m_fileCopyDirectionCombo->setEnabled(false);
+    QToolTip::add(m_fileCopyDirectionCombo, QString::fromLatin1(
+        "Choose which system supplies the source files and which system "
+        "receives them."));
     connect(m_fileCopyDirectionCombo, SIGNAL(activated(int)), this, SLOT(fileCopyDirectionChanged()));
     directionRow->addWidget(m_fileCopyDirectionCombo);
     directionRow->addStretch();
-    m_fileCopyClearButton = makeButton(QString::fromLatin1("Clear"), m_fileCopyGroup);
-    m_fileCopyClearButton->setEnabled(false);
-    QToolTip::add(m_fileCopyClearButton, QString::fromLatin1(
-        "Clear the staged source list (nothing is copied or deleted)."));
-    connect(m_fileCopyClearButton, SIGNAL(clicked()), this, SLOT(fileCopyClearStaging()));
-    directionRow->addWidget(m_fileCopyClearButton);
+    layout->addLayout(directionRow);
 
-    QHBoxLayout *body = new QHBoxLayout(copyLayout);
-    body->setSpacing(8);
-    QVBoxLayout *sources = new QVBoxLayout(body);
-    sources->addWidget(new QLabel(QString::fromLatin1("Sources:"), m_fileCopyGroup));
-    m_fileCopySourceList = new QListView(m_fileCopyGroup);
+    // Group 1: staged sources with the Add/Remove/Clear button row. The
+    // title adapts per direction (modern updateFileCopyDirection).
+    m_fileCopySourceGroup = new QGroupBox(page);
+    QVBoxLayout *sourceLayout = new QVBoxLayout(m_fileCopySourceGroup, 8, 4);
+    m_fileCopySourceTitle = makeSectionTitle(
+        QString::fromLatin1("1. Select source files or folders from this host"),
+        m_fileCopySourceGroup);
+    // The group-1 title is the longest direction-adapted title: make it
+    // wrap-capable (WordBreak + no minimum width) so a narrow details-less
+    // pane can never clip it; the smoke's clipping gates exempt wrapping
+    // section titles from the single-line width check.
+    m_fileCopySourceTitle->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
+    m_fileCopySourceTitle->setMinimumWidth(0);
+    sourceLayout->addWidget(m_fileCopySourceTitle);
+    m_fileCopySourceList = new QListView(m_fileCopySourceGroup);
     addListViewColumn(m_fileCopySourceList, QString::fromLatin1("Source"), 150);
     m_fileCopySourceList->setAllColumnsShowFocus(true);
     m_fileCopySourceList->setResizeMode(QListView::LastColumn);
     m_fileCopySourceList->setSorting(-1);
     m_fileCopySourceList->setEnabled(false);
-    m_fileCopySourceList->setMinimumHeight(110);
+    m_fileCopySourceList->setMinimumHeight(130);
     QToolTip::add(m_fileCopySourceList, QString::fromLatin1(
         "Files and folders staged for the verified copy. The legacy backend "
         "copies with cp -a and restores ownership with chown --reference; "
         "every regular file is byte-compared after the copy."));
-    sources->addWidget(m_fileCopySourceList, 1);
+    sourceLayout->addWidget(m_fileCopySourceList, 1);
+    QHBoxLayout *sourceButtons = new QHBoxLayout(sourceLayout);
+    sourceButtons->setSpacing(6);
+    m_fileCopyAddFilesButton = makeButton(QString::fromLatin1("Add Files..."), m_fileCopySourceGroup);
+    m_fileCopyAddFilesButton->setEnabled(false);
+    connect(m_fileCopyAddFilesButton, SIGNAL(clicked()), this, SLOT(fileCopyAddFiles()));
+    sourceButtons->addWidget(m_fileCopyAddFilesButton);
+    m_fileCopyAddFolderButton = makeButton(QString::fromLatin1("Add Folder..."), m_fileCopySourceGroup);
+    m_fileCopyAddFolderButton->setEnabled(false);
+    connect(m_fileCopyAddFolderButton, SIGNAL(clicked()), this, SLOT(fileCopyAddFolder()));
+    sourceButtons->addWidget(m_fileCopyAddFolderButton);
+    m_fileCopyRemoveButton = makeButton(QString::fromLatin1("Remove"), m_fileCopySourceGroup);
+    m_fileCopyRemoveButton->setEnabled(false);
+    connect(m_fileCopyRemoveButton, SIGNAL(clicked()), this, SLOT(fileCopyRemoveSelected()));
+    sourceButtons->addWidget(m_fileCopyRemoveButton);
+    sourceButtons->addStretch();
+    m_fileCopyClearButton = makeButton(QString::fromLatin1("Clear"), m_fileCopySourceGroup);
+    m_fileCopyClearButton->setEnabled(false);
+    QToolTip::add(m_fileCopyClearButton, QString::fromLatin1(
+        "Clear the staged source list (nothing is copied or deleted)."));
+    connect(m_fileCopyClearButton, SIGNAL(clicked()), this, SLOT(fileCopyClearStaging()));
+    sourceButtons->addWidget(m_fileCopyClearButton);
+    registerGroupBox(m_fileCopySourceGroup);
+    layout->addWidget(m_fileCopySourceGroup, 1);
 
-    QVBoxLayout *controls = new QVBoxLayout(body);
-    controls->addWidget(new QLabel(QString::fromLatin1("Destination:"), m_fileCopyGroup));
-    m_fileCopyDestinationEdit = new QLineEdit(m_fileCopyGroup);
+    // Group 2: destination with the Browse Target Folders... action.
+    m_fileCopyDestinationGroup = new QGroupBox(page);
+    QVBoxLayout *destinationLayout = new QVBoxLayout(m_fileCopyDestinationGroup, 8, 4);
+    m_fileCopyDestinationTitle = makeSectionTitle(
+        QString::fromLatin1("2. Choose destination in repaired system"),
+        m_fileCopyDestinationGroup);
+    destinationLayout->addWidget(m_fileCopyDestinationTitle);
+    QHBoxLayout *destinationRow = new QHBoxLayout(destinationLayout);
+    destinationRow->setSpacing(6);
+    m_fileCopyDestinationEdit = new QLineEdit(m_fileCopyDestinationGroup);
     m_fileCopyDestinationEdit->setEnabled(false);
-    m_fileCopyDestinationEdit->setText(QString::fromLatin1("unavailable: see the helper's Legacy feature file-copy: probe reason above"));
+    m_fileCopyDestinationEdit->setText(QString::fromLatin1(
+        "unavailable: see the helper's Legacy feature file-copy: probe reason above"));
     QToolTip::add(m_fileCopyDestinationEdit, QString::fromLatin1(
         "An absolute path inside the selected repair system (Host to Repair) "
         "or on the running host (Repair to Host)."));
-    controls->addWidget(m_fileCopyDestinationEdit);
-    m_fileCopyAddFilesButton = makeButton(QString::fromLatin1("Add Files..."), m_fileCopyGroup);
-    m_fileCopyAddFilesButton->setEnabled(false);
-    connect(m_fileCopyAddFilesButton, SIGNAL(clicked()), this, SLOT(fileCopyAddFiles()));
-    controls->addWidget(m_fileCopyAddFilesButton);
-    m_fileCopyAddFolderButton = makeButton(QString::fromLatin1("Add Folder..."), m_fileCopyGroup);
-    m_fileCopyAddFolderButton->setEnabled(false);
-    connect(m_fileCopyAddFolderButton, SIGNAL(clicked()), this, SLOT(fileCopyAddFolder()));
-    controls->addWidget(m_fileCopyAddFolderButton);
-    m_fileCopyRemoveButton = makeButton(QString::fromLatin1("Remove"), m_fileCopyGroup);
-    m_fileCopyRemoveButton->setEnabled(false);
-    connect(m_fileCopyRemoveButton, SIGNAL(clicked()), this, SLOT(fileCopyRemoveSelected()));
-    controls->addWidget(m_fileCopyRemoveButton);
-    m_fileCopyPreviewButton = makeButton(QString::fromLatin1("Preview Changes"), m_fileCopyGroup);
-    m_fileCopyPreviewButton->setEnabled(false);
-    connect(m_fileCopyPreviewButton, SIGNAL(clicked()), this, SLOT(fileCopyPreview()));
-    controls->addWidget(m_fileCopyPreviewButton);
-    m_fileCopyRunButton = makeButton(QString::fromLatin1("Copy and Verify"), m_fileCopyGroup);
-    m_fileCopyRunButton->setEnabled(false);
-    connect(m_fileCopyRunButton, SIGNAL(clicked()), this, SLOT(fileCopyRun()));
-    controls->addWidget(m_fileCopyRunButton);
-    controls->addStretch();
+    destinationRow->addWidget(m_fileCopyDestinationEdit, 1);
+    m_fileCopyBrowseButton = makeButton(QString::fromLatin1("Browse Target Folders..."), m_fileCopyDestinationGroup);
+    m_fileCopyBrowseButton->setEnabled(false);
+    QToolTip::add(m_fileCopyBrowseButton, QString::fromLatin1(
+        "Browse the selected repair system through the helper's temporary "
+        "read-only mounts and choose an absolute destination path. No target "
+        "files are changed while browsing."));
+    connect(m_fileCopyBrowseButton, SIGNAL(clicked()), this, SLOT(fileCopyBrowse()));
+    destinationRow->addWidget(m_fileCopyBrowseButton);
+    registerGroupBox(m_fileCopyDestinationGroup);
+    layout->addWidget(m_fileCopyDestinationGroup);
 
-    registerGroupBox(m_fileCopyGroup);
-    layout->addWidget(m_fileCopyGroup, 1);
+    // Group 3: ownership and copy policy (the legacy equivalent set).
+    m_fileCopyOptionsGroup = new QGroupBox(page);
+    QVBoxLayout *optionsLayout = new QVBoxLayout(m_fileCopyOptionsGroup, 8, 4);
+    m_fileCopyOptionsTitle = makeSectionTitle(
+        QString::fromLatin1("3. Ownership and copy policy"),
+        m_fileCopyOptionsGroup);
+    optionsLayout->addWidget(m_fileCopyOptionsTitle);
+    QHBoxLayout *ownershipRow = new QHBoxLayout(optionsLayout);
+    ownershipRow->setSpacing(6);
+    ownershipRow->addWidget(new QLabel(QString::fromLatin1("Ownership:"), m_fileCopyOptionsGroup));
+    m_fileCopyOwnershipCombo = new QComboBox(m_fileCopyOptionsGroup);
+    m_fileCopyOwnershipCombo->insertItem(QString::fromLatin1(
+        "Smart destination ownership (recommended)"));
+    m_fileCopyOwnershipCombo->insertItem(QString::fromLatin1(
+        "Preserve source numeric UID/GID"));
+    m_fileCopyOwnershipCombo->setEnabled(false);
+    QToolTip::add(m_fileCopyOwnershipCombo, QString::fromLatin1(
+        "Smart mode validates UID/GID identity mapping across the two systems "
+        "and falls back to the destination-directory owner when the same "
+        "numeric ID means a different account (the legacy backend implements "
+        "it with chown --reference)."));
+    ownershipRow->addWidget(m_fileCopyOwnershipCombo, 1);
+    registerGroupBox(m_fileCopyOptionsGroup);
+    layout->addWidget(m_fileCopyOptionsGroup);
+
     return page;
 }
 
@@ -3783,6 +3872,9 @@ void LegacyMainWindow::toggleLogWrap(bool enabled)
     if (m_logView) {
         m_logView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
     }
+    if (m_resultView) {
+        m_resultView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
+    }
     // Keep the Settings checkbox and the View menu item in sync without
     // re-entering their signals.
     if (m_logWrapCheck && m_logWrapCheck->isChecked() != enabled) {
@@ -4592,9 +4684,11 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     layout->addWidget(m_resultStatus);
     m_resultView = new QTextEdit(dialog);
     m_resultView->setReadOnly(true);
-    m_resultView->setTextFormat(Qt::LogText);
-    // The popup follows the Settings "Wrap long log lines" toggle, exactly
-    // like the Logs view; the monospace font stays either way.
+    // Qt 3.3.7's Qt::LogText mode disables word wrap entirely, so the popup
+    // uses Qt::PlainText (the transcript is short-lived, not the Logs view)
+    // and follows the Settings "Wrap long log lines" toggle like the Logs
+    // view; the monospace font stays either way.
+    m_resultView->setTextFormat(Qt::PlainText);
     m_resultView->setWordWrap(m_logWrapEnabled
                                   ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
     QFont mono(QString::fromLatin1("monospace"));
@@ -4816,7 +4910,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
                                      bool diagnostic, const QString &label,
                                      bool unlock, bool config, bool shell,
                                      bool quiet, const QString &logSection,
-                                     const QString &logStages)
+                                     const QString &logStages, bool browse)
 {
     if (m_running) {
         return false;
@@ -4893,6 +4987,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     m_pendingUnlock = unlock;
     m_pendingConfig = config;
     m_pendingShell = shell;
+    m_pendingBrowse = browse;
     m_pendingIdentity = identity();
     m_pendingLabel = label;
     // Tag the command's own header lines and its streamed output: diagnostic
@@ -4903,7 +4998,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     if (diagnostic) {
         m_logEntryKind = LogEntry::Diagnostic;
         m_logEntryDiagnostic = logSection;
-    } else if (!unlock && !config && !shell) {
+    } else if (!unlock && !config && !shell && !browse) {
         m_logEntryKind = LogEntry::Repair;
         m_logEntryStages = logStages;
         m_activeRepairStages = QStringList::split(QString::fromLatin1(" "), logStages, false);
@@ -4950,7 +5045,12 @@ void LegacyMainWindow::helperLine(const QString &line)
     }
     appendLog(line);
     // Stream into the modern-style repair result popup when it is open.
+    // The wrap mode is re-applied defensively so a toggle that flips through
+    // any path mid-dialog is honored (cheap; the widget keeps its state).
     if (m_resultView) {
+        m_resultView->setWordWrap(m_logWrapEnabled
+                                      ? QTextEdit::WidgetWidth
+                                      : QTextEdit::NoWrap);
         m_resultView->append(line);
     }
 }
@@ -5003,6 +5103,9 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     const QString configKey = m_pendingConfigKey;
     const QString configPath = m_pendingConfigPath;
     const bool wasShell = m_pendingShell;
+    const bool wasBrowse = m_pendingBrowse;
+    const bool wasFullRepair = m_pendingLabel == QString::fromLatin1("Full Repair");
+    const QString finishedLabel = m_pendingLabel;
     QString configReadContent;
     if (m_pendingDiagnostic) {
         m_model.applyDiagnosticTranscript(toStd(m_pendingIdentity), transcript, ok);
@@ -5015,19 +5118,10 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
         m_model.applyCommandTranscript(transcript);
         reportChangeStatuses(parsed);
         // B7-4: the structured repair summary block after every repair
-        // command (individual tool or Full Repair); unlock/config/shell
-        // traffic stays out of the summary.
-        if (!wasConfig && !m_pendingUnlock && !wasShell) {
+        // command (individual tool or Full Repair); unlock/config/shell and
+        // the read-only browse listing stay out of the summary.
+        if (!wasConfig && !m_pendingUnlock && !wasShell && !wasBrowse) {
             appendRepairSummaryBlock(parsed, ok);
-        }
-        // Gap #21: a repair whose change status invalidates the cached
-        // diagnostics schedules one quiet Run All (auto-refresh on, scope
-        // ready, session active, nothing running; never during the smoke and
-        // never opening an authorization prompt by itself). Config writes and
-        // unlocks keep their own scheduling with their own reasons.
-        if (ok && !wasConfig && !m_pendingUnlock && !wasShell
-            && m_model.diagnosticsStale()) {
-            maybeAutoRefreshDiagnostics(m_pendingLabel);
         }
         if (wasConfig && !wasConfigWrite && ok) {
             // The helper's `config-read` output carries a small read-only
@@ -5068,6 +5162,7 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     m_pendingConfigKey = QString::null;
     m_pendingConfigPath = QString::null;
     m_pendingShell = false;
+    m_pendingBrowse = false;
     m_pendingLabel = QString::null;
     updateActionStates();
     updateBusyIndicator();
@@ -5109,6 +5204,28 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     if (wasConfig && wasConfigWrite && ok) {
         maybeAutoRefreshDiagnostics(QString::fromLatin1(
             "the target configuration was edited"));
+    }
+
+    // The read-only browse listing drives the repair-system folder picker.
+    if (wasBrowse) {
+        handleFileCopyBrowseResult(transcript, ok);
+    }
+
+    // Modern finishFullRepairPlan parity: once after the last plan stage
+    // (success OR aborted), the scope's cached diagnostics are invalidated
+    // and one quiet Run All is scheduled when the auto-refresh setting, the
+    // administrator session and the idle state allow it; it never prompts.
+    // Individual repair actions keep the existing stale-based scheduling.
+    if (!wasDiagnostic && !wasConfig && !wasUnlock && !wasShell && !wasBrowse) {
+        if (wasFullRepair) {
+            m_model.reset();
+            appendLog(QString::fromLatin1(
+                "Full Repair completed; cached diagnostics were invalidated "
+                "for the current scope."));
+            maybeAutoRefreshDiagnostics(QString::fromLatin1("Full Repair"));
+        } else if (ok && m_model.diagnosticsStale()) {
+            maybeAutoRefreshDiagnostics(finishedLabel);
+        }
     }
 
     if (wasSmoke) {
@@ -5704,19 +5821,73 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             }
         }
     }
-    // B7-6: the File Copy controls exist; the tab lights up with the cached
-    // file-copy probe, scope and session.
+    // Cycle 8: the File Copy tab matches modern's buildFileCopyPage — heading
+    // row (title | scope label | Preview Changes | Copy and Verify), the
+    // direction row, and the three titled groups (sources / destination with
+    // Browse Target Folders... / ownership and copy policy).
     if (!m_fileCopyDirectionCombo || !m_fileCopySourceList
         || !m_fileCopyDestinationEdit || !m_fileCopyAddFilesButton
         || !m_fileCopyAddFolderButton || !m_fileCopyRemoveButton
         || !m_fileCopyClearButton || !m_fileCopyPreviewButton
-        || !m_fileCopyRunButton) {
+        || !m_fileCopyRunButton || !m_fileCopyScopeLabel
+        || !m_fileCopyBrowseButton || !m_fileCopyOwnershipCombo
+        || !m_fileCopySourceGroup || !m_fileCopyDestinationGroup
+        || !m_fileCopyOptionsGroup) {
         problems->append(QString::fromLatin1("File Copy controls missing"));
         ok = false;
-    } else if (m_fileCopyDirectionCombo->count() != 2) {
-        problems->append(QString::fromLatin1(
-            "File Copy direction combo must carry Host -> Repair / Repair -> Host"));
-        ok = false;
+    } else {
+        if (m_fileCopyDirectionCombo->count() != 2) {
+            problems->append(QString::fromLatin1(
+                "File Copy direction combo must carry Host -> Repair / Repair -> Host"));
+            ok = false;
+        }
+        if (m_fileCopyOwnershipCombo->count() != 2
+            || m_fileCopyOwnershipCombo->text(0) != QString::fromLatin1(
+                "Smart destination ownership (recommended)")
+            || m_fileCopyOwnershipCombo->text(1) != QString::fromLatin1(
+                "Preserve source numeric UID/GID")) {
+            problems->append(QString::fromLatin1(
+                "File Copy ownership combo lost the legacy ownership set"));
+            ok = false;
+        }
+        const char *const expectedTitles[] = {
+            "1. Select source files or folders from this host",
+            "2. Choose destination in repaired system",
+            "3. Ownership and copy policy"
+        };
+        for (std::size_t t = 0; t < sizeof(expectedTitles) / sizeof(expectedTitles[0]); ++t) {
+            bool found = false;
+            for (std::size_t i = 0; i < m_sectionTitles.size(); ++i) {
+                if (m_sectionTitles[i]
+                    && m_sectionTitles[i]->text() == QString::fromLatin1(expectedTitles[t])) {
+                    found = true;
+                    break;
+                }
+            }
+            if (!found) {
+                problems->append(QString::fromLatin1(
+                    "File Copy group title missing: '%1'")
+                    .arg(QString::fromLatin1(expectedTitles[t])));
+                ok = false;
+            }
+        }
+        if (m_fileCopyScopeLabel->text() != QString::fromLatin1("Target: none selected")
+            && m_fileCopyScopeLabel->text().find(QString::fromLatin1("Host maintenance:")) < 0
+            && m_fileCopyScopeLabel->text().find(QString::fromLatin1("Target:")) < 0) {
+            problems->append(QString::fromLatin1(
+                "File Copy scope label lost the modern scope text"));
+            ok = false;
+        }
+        // Browse Target Folders... reads the repair tree through the helper
+        // and needs a committed target; in the smoke the scope is the
+        // running host with no committed repair target, so it stays disabled
+        // in the default Host -> Repair direction.
+        if (m_fileCopyBrowseButton->isEnabled()) {
+            problems->append(QString::fromLatin1(
+                "Browse Target Folders... must stay disabled without a "
+                "committed repair target"));
+            ok = false;
+        }
     }
     // B7-7: Make Default beside Host Maintenance, gated by Host Maintenance +
     // the cached host-default probe + the session.
@@ -7692,21 +7863,80 @@ bool LegacyMainWindow::fileCopyReady(QString *reason) const
 
 void LegacyMainWindow::updateFileCopyTab()
 {
-    if (!m_fileCopyGroup) {
+    if (!m_fileCopySourceGroup) {
         return;
     }
     QString reason;
     const bool ready = fileCopyReady(&reason);
     const bool hasSources = !m_fileCopySources.isEmpty();
-    const bool hasDestination = m_fileCopyDestinationEdit
-        && !m_fileCopyDestinationEdit->text().stripWhiteSpace().isEmpty()
-        && m_fileCopyDestinationEdit->text() != QString::fromLatin1(
-            "unavailable: see the helper's Legacy feature file-copy: probe reason above");
-    const bool canRun = ready && hasSources && hasDestination;
     const bool anySources = hasSources && ready;
+    const bool repairToHost = m_fileCopyDirectionCombo
+        && m_fileCopyDirectionCombo->currentItem() == 1;
+    const bool targetCommitted = !m_committedDisk.isEmpty();
+
+    // Direction-driven labels (modern updateFileCopyDirection). The heading
+    // stays the static "File copy" title — the direction arrow lives only in
+    // the Direction combo — so the page-title row can never crowd it out.
+    // The group-1 title uses the modern wording and is wrap-capable (see
+    // buildFileCopyTab), so a narrow pane can never clip it.
+    if (m_fileCopySourceTitle) {
+        m_fileCopySourceTitle->setText(repairToHost
+            ? QString::fromLatin1("1. Select source files or folders from the repaired system")
+            : QString::fromLatin1("1. Select source files or folders from this host"));
+    }
+    if (m_fileCopyDestinationTitle) {
+        m_fileCopyDestinationTitle->setText(repairToHost
+            ? QString::fromLatin1("2. Choose destination on this host")
+            : QString::fromLatin1("2. Choose destination in repaired system"));
+    }
+    if (m_fileCopyAddFilesButton) {
+        updateButtonText(m_fileCopyAddFilesButton, repairToHost
+            ? QString::fromLatin1("Add File Path...")
+            : QString::fromLatin1("Add Files..."));
+        m_fileCopyAddFilesButton->setEnabled(ready);
+    }
+    if (m_fileCopyAddFolderButton) {
+        updateButtonText(m_fileCopyAddFolderButton, repairToHost
+            ? QString::fromLatin1("Add Folder Path...")
+            : QString::fromLatin1("Add Folder..."));
+        m_fileCopyAddFolderButton->setEnabled(ready);
+    }
+    if (m_fileCopyBrowseButton) {
+        updateButtonText(m_fileCopyBrowseButton, repairToHost
+            ? QString::fromLatin1("Browse...")
+            : QString::fromLatin1("Browse Target Folders..."));
+        // Host to Repair browsing reads the selected repair tree through the
+        // helper and needs a committed repair target (Host Maintenance alone
+        // provides no repair tree); Repair to Host browses the running host
+        // directly and needs no target.
+        const bool browseEnabled = ready && (repairToHost || targetCommitted);
+        m_fileCopyBrowseButton->setEnabled(browseEnabled);
+        const QString browseTip = !browseEnabled
+            ? (!ready
+                   ? reason
+                   : QString::fromLatin1(
+                         "Select the repair drive in Systems before choosing a "
+                         "destination inside it (Host Maintenance does not "
+                         "provide a repair tree to browse)."))
+            : (repairToHost
+                   ? QString::fromLatin1(
+                         "Choose a host destination folder directly.")
+                   : QString::fromLatin1(
+                         "Browse the selected repair system through the helper's "
+                         "temporary read-only mounts and choose an absolute "
+                         "destination path. No target files are changed while "
+                         "browsing."));
+        if (m_fileCopyBrowseTip != browseTip) {
+            m_fileCopyBrowseTip = browseTip;
+            QToolTip::add(m_fileCopyBrowseButton, browseTip);
+        }
+    }
 
     if (m_fileCopyDirectionCombo) {
         m_fileCopyDirectionCombo->setEnabled(ready);
+    }
+    if (m_fileCopyOwnershipCombo) {
+        m_fileCopyOwnershipCombo->setEnabled(ready);
     }
     if (m_fileCopyDestinationEdit) {
         m_fileCopyDestinationEdit->setEnabled(ready);
@@ -7718,37 +7948,249 @@ void LegacyMainWindow::updateFileCopyTab()
     if (m_fileCopySourceList) {
         m_fileCopySourceList->setEnabled(ready);
     }
-    if (m_fileCopyAddFilesButton) {
-        m_fileCopyAddFilesButton->setEnabled(ready);
-    }
-    if (m_fileCopyAddFolderButton) {
-        m_fileCopyAddFolderButton->setEnabled(ready);
-    }
     if (m_fileCopyRemoveButton) {
         m_fileCopyRemoveButton->setEnabled(anySources);
     }
     if (m_fileCopyClearButton) {
         m_fileCopyClearButton->setEnabled(anySources);
     }
+    // The primary actions share the page-title row with the scope label and
+    // light up as soon as the direction and scope are ready (modern parity);
+    // the run path itself re-validates the staged sources and destination.
     if (m_fileCopyPreviewButton) {
-        m_fileCopyPreviewButton->setEnabled(canRun);
+        m_fileCopyPreviewButton->setEnabled(ready);
+        const QString previewTip = ready
+            ? QString::fromLatin1(
+                  "Run a copy dry-run through the guarded helper. No files are changed.")
+            : reason;
+        if (m_fileCopyPreviewTip != previewTip) {
+            m_fileCopyPreviewTip = previewTip;
+            QToolTip::add(m_fileCopyPreviewButton, previewTip);
+        }
     }
     if (m_fileCopyRunButton) {
-        m_fileCopyRunButton->setEnabled(canRun);
-        QToolTip::add(m_fileCopyRunButton, canRun
+        m_fileCopyRunButton->setEnabled(ready);
+        const QString runTip = ready
             ? QString::fromLatin1(
                   "Copy the staged files and folders with cp -a, restore "
                   "ownership with chown --reference and byte-compare every "
                   "regular file afterwards.")
-            : reason);
+            : reason;
+        if (m_fileCopyRunTip != runTip) {
+            m_fileCopyRunTip = runTip;
+            QToolTip::add(m_fileCopyRunButton, runTip);
+        }
     }
 }
 
 void LegacyMainWindow::fileCopyDirectionChanged()
 {
-    // Direction changes never touch the staged sources; the destination is
-    // the only direction-dependent field (kept as typed).
+    // Direction changes clear the staged sources and destination to avoid
+    // mixing source/destination namespaces (modern parity).
+    m_fileCopySources.clear();
+    if (m_fileCopySourceList) {
+        m_fileCopySourceList->clear();
+    }
+    if (m_fileCopyDestinationEdit) {
+        m_fileCopyDestinationEdit->clear();
+    }
+    const bool repairToHost = m_fileCopyDirectionCombo
+        && m_fileCopyDirectionCombo->currentItem() == 1;
+    appendLog(QString::fromLatin1(
+        "File Copy direction changed to %1; staged paths were cleared to "
+        "avoid mixing source/destination namespaces.")
+        .arg(repairToHost
+                 ? QString::fromUtf8("Repair \xE2\x86\x92 Host")
+                 : QString::fromUtf8("Host \xE2\x86\x92 Repair")));
     updateFileCopyTab();
+}
+
+// Browse Target Folders... (modern browseFileCopyDestination): Repair -> Host
+// picks a host folder through QFileDialog; Host -> Repair walks the selected
+// repair tree one directory view at a time through the helper's read-only
+// browse-target verb (BROWSE_ENTRY records, base64-encoded names).
+void LegacyMainWindow::fileCopyBrowse()
+{
+    if (m_running) {
+        return;
+    }
+    QString reason;
+    if (!fileCopyReady(&reason)) {
+        QMessageBox::information(this, QString::fromLatin1("File Copy unavailable"),
+                                 reason, QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    const bool repairToHost = m_fileCopyDirectionCombo
+        && m_fileCopyDirectionCombo->currentItem() == 1;
+    if (repairToHost) {
+        const QString path = QFileDialog::getExistingDirectory(
+            QString::null, this, "file-copy-host-dest",
+            QString::fromLatin1("Choose host destination folder"));
+        if (path.isEmpty()) {
+            return;
+        }
+        if (m_fileCopyDestinationEdit) {
+            m_fileCopyDestinationEdit->setText(path);
+        }
+        appendLog(QString::fromLatin1(
+            "Staged Repair \xE2\x86\x92 Host destination: %1. No copy occurred.")
+            .arg(path));
+        updateFileCopyTab();
+        return;
+    }
+    if (m_committedDisk.isEmpty() || m_committedRoot.isEmpty()) {
+        QMessageBox::information(
+            this, QString::fromLatin1("Select a repair target"),
+            QString::fromLatin1(
+                "Select the repair drive in Systems before choosing a "
+                "destination inside it."),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    m_fileCopyBrowsePath = QString::fromLatin1("/");
+    QStringList args;
+    args << QString::fromLatin1("browse-target")
+         << m_committedDisk << m_committedRoot
+         << m_fileCopyBrowsePath;
+    startCommand(args, false,
+                 QString::fromLatin1("File Copy - Browse Target Folders"),
+                 false, false, false, false, QString::null, QString::null,
+                 true);
+}
+
+// Qt 3.3.7 has no QByteArray::fromBase64, so the legacy helper emits the
+// browse names raw with only %, CR and LF percent-encoded; decode inline.
+static QString legacyPercentDecode(const QString &encoded)
+{
+    QString out;
+    for (int i = 0; i < static_cast<int>(encoded.length()); ++i) {
+        if (encoded[i] == QChar('%')
+            && i + 2 < static_cast<int>(encoded.length())) {
+            bool ok = false;
+            const int value = encoded.mid(i + 1, 2).toInt(&ok, 16);
+            if (ok) {
+                out += QChar(value);
+                i += 2;
+                continue;
+            }
+        }
+        out += encoded[i];
+    }
+    return out;
+}
+
+// The browse-target transcript drives the folder picker: immediate
+// subdirectories arrive as BROWSE_ENTRY records (the legacy port emits the
+// raw percent-encoded name). The user can step into a folder, move up, or
+// choose the current folder as the destination.
+void LegacyMainWindow::handleFileCopyBrowseResult(const std::string &transcript,
+                                                  bool ok)
+{
+    if (!ok) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Browse Target Folders"),
+            QString::fromLatin1(
+                "The helper could not list the repair-system folder:\n\n%1")
+                .arg(transcript.size() > 400
+                         ? QString::fromLatin1(transcript.substr(0, 400).c_str())
+                         : QString::fromLatin1(transcript.c_str())),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    QStringList entries;
+    const QStringList lines = QStringList::split(QString::fromLatin1("\n"),
+                                                fromStd(transcript), false);
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        if (!(*it).startsWith(QString::fromLatin1("BROWSE_ENTRY\t"))) {
+            continue;
+        }
+        entries.append(legacyPercentDecode((*it).mid(13)));
+    }
+    entries.sort();
+    QStringList items;
+    items.append(QString::fromLatin1("(choose this folder: %1)")
+                    .arg(m_fileCopyBrowsePath));
+    if (m_fileCopyBrowsePath != QString::fromLatin1("/")) {
+        items.append(QString::fromLatin1("(parent folder)"));
+    }
+    for (QStringList::ConstIterator it = entries.begin(); it != entries.end(); ++it) {
+        items.append(*it);
+    }
+    // Stack-allocated picker (the config-editor pattern): every child is
+    // parented to the stack dialog, so the whole browse-picker lifecycle
+    // stays inside this frame and nothing is heap-allocated without a parent.
+    // (Qt3's static QInputDialog::getItem heap-allocates and deletes its
+    // dialog around the modal exec; the stack dialog avoids that pattern.)
+    QDialog picker(this, "legacy-file-copy-browse", true);
+    picker.setCaption(QString::fromLatin1("Select repair-system destination"));
+    QVBoxLayout *pickerLayout = new QVBoxLayout(&picker, 10, 8);
+    QLabel *pickerHint = new QLabel(
+        QString::fromLatin1(
+            "Choose a destination folder inside the repaired system "
+            "(current folder: %1):")
+            .arg(m_fileCopyBrowsePath),
+        &picker);
+    enableLabelWordWrap(pickerHint);
+    pickerHint->setMaximumWidth(520);
+    pickerLayout->addWidget(pickerHint);
+    QListView *pickerList = new QListView(&picker);
+    pickerList->addColumn(QString::fromLatin1("Folder"));
+    pickerList->setSorting(-1);
+    pickerList->setAllColumnsShowFocus(true);
+    for (QStringList::ConstIterator it = items.begin(); it != items.end(); ++it) {
+        new QListViewItem(pickerList, *it);
+    }
+    pickerLayout->addWidget(pickerList, 1);
+    QHBoxLayout *pickerButtons = new QHBoxLayout(pickerLayout);
+    pickerButtons->setSpacing(6);
+    pickerButtons->addStretch();
+    QPushButton *pickerCancel = new QPushButton(QString::fromLatin1("Cancel"), &picker);
+    QPushButton *pickerOpen = new QPushButton(QString::fromLatin1("Open"), &picker);
+    pickerOpen->setDefault(true);
+    pickerButtons->addWidget(pickerCancel);
+    pickerButtons->addWidget(pickerOpen);
+    QObject::connect(pickerCancel, SIGNAL(clicked()), &picker, SLOT(reject()));
+    QObject::connect(pickerOpen, SIGNAL(clicked()), &picker, SLOT(accept()));
+    QObject::connect(pickerList, SIGNAL(doubleClicked(QListViewItem *)),
+                     &picker, SLOT(accept()));
+    picker.resize(520, 380);
+    if (picker.exec() != QDialog::Accepted) {
+        return;
+    }
+    QListViewItem *pickerItem = pickerList->currentItem();
+    if (!pickerItem) {
+        return;
+    }
+    const QString picked = pickerItem->text(0);
+    if (picked.startsWith(QString::fromLatin1("(choose this folder:"))) {
+        if (m_fileCopyDestinationEdit) {
+            m_fileCopyDestinationEdit->setText(m_fileCopyBrowsePath);
+        }
+        appendLog(QString::fromLatin1(
+            "Staged Host \xE2\x86\x92 Repair destination: %1. No copy occurred.")
+            .arg(m_fileCopyBrowsePath));
+        updateFileCopyTab();
+        return;
+    }
+    if (picked == QString::fromLatin1("(parent folder)")) {
+        const int slash = m_fileCopyBrowsePath.findRev('/');
+        m_fileCopyBrowsePath = slash > 0
+            ? m_fileCopyBrowsePath.left(slash) : QString::fromLatin1("/");
+    } else {
+        m_fileCopyBrowsePath = m_fileCopyBrowsePath == QString::fromLatin1("/")
+            ? QString::fromLatin1("/") + picked
+            : m_fileCopyBrowsePath + QString::fromLatin1("/") + picked;
+    }
+    // Step into the chosen folder (or the parent) with one more read-only
+    // helper browse request.
+    QStringList args;
+    args << QString::fromLatin1("browse-target")
+         << m_committedDisk << m_committedRoot
+         << m_fileCopyBrowsePath;
+    startCommand(args, false,
+                 QString::fromLatin1("File Copy - Browse Target Folders"),
+                 false, false, false, false, QString::null, QString::null,
+                 true);
 }
 
 void LegacyMainWindow::fileCopyAddFiles()
@@ -7838,12 +8280,16 @@ bool LegacyMainWindow::startFileCopyCommand(bool realCopy)
             return false;
         }
     }
+    const QString ownership = m_fileCopyOwnershipCombo
+        && m_fileCopyOwnershipCombo->currentItem() == 1
+            ? QString::fromLatin1("preserve")
+            : QString::fromLatin1("smart");
     QStringList args;
     args << (realCopy ? QString::fromLatin1("copy")
                       : QString::fromLatin1("copy-preview"))
          << selectedDisk() << selectedRoot()
          << fileCopyDirection()
-         << QString::fromLatin1("smart")
+         << ownership
          << QString::fromLatin1("normal")
          << destination;
     for (QStringList::ConstIterator it = m_fileCopySources.begin();
@@ -8222,6 +8668,9 @@ void LegacyMainWindow::updateScopeLabel()
     }
     if (m_chrootScopeLabel) {
         m_chrootScopeLabel->setText(text);
+    }
+    if (m_fileCopyScopeLabel) {
+        m_fileCopyScopeLabel->setText(text);
     }
 }
 

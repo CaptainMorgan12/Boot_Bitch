@@ -321,7 +321,7 @@ transform_legacy_behaviour()
 transform_renames()
 {
     local file="$1"
-    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason"
+    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory"
     local func count=0
     for func in $funcs; do
         grep -qE "^${func}\(\)$" "$file" || {

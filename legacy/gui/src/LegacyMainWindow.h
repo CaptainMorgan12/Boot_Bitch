@@ -167,6 +167,7 @@ private slots:
     void fileCopyClearStaging();
     void fileCopyPreview();
     void fileCopyRun();
+    void fileCopyBrowse();
     void runScheduledAutoRefresh();
     void runSmokeStep();
 
@@ -256,6 +257,7 @@ private:
     QString fileCopyDirection() const;
     bool fileCopyReady(QString *reason) const;
     bool startFileCopyCommand(bool realCopy);
+    void handleFileCopyBrowseResult(const std::string &transcript, bool ok);
     void updateChrootShellState();
     void updateChrootShellMode();
     void legacyFeatureDisplay(const char *feature, QString *state,
@@ -280,7 +282,8 @@ private:
                       bool config = false, bool shell = false,
                       bool quiet = false,
                       const QString &logSection = QString::null,
-                      const QString &logStages = QString::null);
+                      const QString &logStages = QString::null,
+                      bool browse = false);
     void runDiagnosticsInternal(bool quiet);
     void maybeAutoRefreshDiagnostics(const QString &reason);
     void reportChangeStatuses(const ParsedTranscript &parsed);
@@ -335,6 +338,10 @@ private:
     QLabel *m_chrootHeading;
     QLabel *m_chrootScopeLabel;
     QLabel *m_fileCopyHeading;
+    QLabel *m_fileCopyScopeLabel;
+    QLabel *m_fileCopySourceTitle;
+    QLabel *m_fileCopyDestinationTitle;
+    QLabel *m_fileCopyOptionsTitle;
     QLabel *m_logsHeading;
     QLabel *m_settingsHeading;
     QLabel *m_gateHint;
@@ -393,12 +400,16 @@ private:
     QPushButton *m_fileCopyPreviewButton;
     QPushButton *m_fileCopyRunButton;
     QComboBox *m_fileCopyDirectionCombo;
+    QComboBox *m_fileCopyOwnershipCombo;
     QListView *m_fileCopySourceList;
     QLineEdit *m_fileCopyDestinationEdit;
+    QPushButton *m_fileCopyBrowseButton;
     QSplitter *m_systemsSplitter;
     QSplitter *m_repairVerticalSplitter;
     QGroupBox *m_chrootGroup;
-    QGroupBox *m_fileCopyGroup;
+    QGroupBox *m_fileCopySourceGroup;
+    QGroupBox *m_fileCopyDestinationGroup;
+    QGroupBox *m_fileCopyOptionsGroup;
     QWidget *m_chrootTab;
     QWidget *m_settingsContent;
     QWidget *m_repairContent;
@@ -438,6 +449,14 @@ private:
     std::vector<LogEntry> m_logEntries;
     QStringList m_priorLogLines;
     QStringList m_fileCopySources;
+    QString m_fileCopyBrowsePath;
+    // Last applied dynamic tooltips, so updateFileCopyTab() re-registers a
+    // tooltip only when the text actually changes (Qt3's QTipManager deletes
+    // and reallocates the per-widget Tip record on every add; the churn is
+    // needless and is avoided by construction).
+    QString m_fileCopyBrowseTip;
+    QString m_fileCopyPreviewTip;
+    QString m_fileCopyRunTip;
     // Live tagging context for the next appendLog: the kind and the section
     // key/stage set of the helper command currently streaming (Application
     // outside a command). helperLine() updates the diagnostic key when the
@@ -455,6 +474,7 @@ private:
     bool m_pendingUnlock;
     bool m_pendingConfig;
     bool m_pendingShell;
+    bool m_pendingBrowse;
     bool m_unlockRetry;
     bool m_targetCommitted;
     bool m_hostMaintenance;

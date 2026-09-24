@@ -1278,6 +1278,66 @@ run_chroot_shell()
     legacy_chroot_shell "$@"
 }
 
+# The modern browse-target protocol base64-encodes directory names, but Qt
+# 3.3.7 has no QByteArray::fromBase64 for the GUI side.  The legacy port
+# emits the same BROWSE_ENTRY records with the raw name, percent-encoding
+# only the three record-breaking bytes (%, CR, LF); the Qt3 picker decodes
+# them inline.  A directory whose name embeds a newline stays unlistable on
+# the Qt3 picker (documented deviation).
+browse_target_directory()
+{
+    local virtual_path="$1" candidate root_real candidate_real entry name encoded
+    validate_browse_virtual_path "$virtual_path"
+    need find
+
+    prepare_target ro
+    maybe_mount_target_path "$virtual_path" ro
+
+    candidate="$TARGET_ROOT$virtual_path"
+    [[ -d "$candidate" && ! -L "$candidate" ]] \
+        || fail "Repair-system folder does not exist: $virtual_path"
+    root_real="$(realpath_existing "$TARGET_ROOT")" \
+        || fail "Unable to resolve mounted target root."
+    candidate_real="$(realpath_existing "$candidate")" \
+        || fail "Unable to resolve repair-system folder: $virtual_path"
+    path_within "$candidate_real" "$root_real" \
+        || fail "Repair-system folder escapes the selected target through a symlink: $virtual_path"
+
+    while IFS= read -r -d '' entry; do
+        name="${entry##*/}"
+        encoded="$(printf '%s' "$name" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g' | tr -d '\n')"
+        printf 'BROWSE_ENTRY\t%s\n' "$encoded"
+    done < <(find "$candidate_real" -mindepth 1 -maxdepth 1 -type d ! -type l -print0)
+}
+
+# Etch's apt(8) predates the apt command frontend (Debian 4.0 ships apt 0.6
+# plus apt-get): `apt update` fails with a usage error.  Rewrite the reviewed
+# command's intent conservatively to the apt-get equivalent when the first
+# word is exactly `apt` and the second is a known subcommand; `full-upgrade`
+# maps to Etch's `dist-upgrade`.  Anything else (a bare `apt`, an unknown
+# subcommand, quoting games) runs unchanged through the same guards.
+legacy_apt_intent_translate()
+{
+    local command="${1:-}" first="" rest="" sub="" args=""
+    case "$command" in
+        *\ *) first="${command%% *}"; rest="${command#* }" ;;
+        *) first="$command"; rest="" ;;
+    esac
+    [[ "$first" == "apt" && -n "$rest" ]] || { printf '%s\n' "$command"; return 0; }
+    sub="${rest%% *}"
+    case "$sub" in
+        update|upgrade|full-upgrade|dist-upgrade|install|remove|purge|autoremove|clean|autoclean) ;;
+        *) { printf '%s\n' "$command"; return 0; } ;;
+    esac
+    args="${rest#* }"
+    [[ "$sub" == "full-upgrade" ]] && sub="dist-upgrade"
+    if [[ -n "$args" && "$args" != "$rest" ]]; then
+        printf 'apt-get %s %s\n' "$sub" "$args"
+    else
+        printf 'apt-get %s\n' "$sub"
+    fi
+}
+
 # The offline chroot shell through the guarded plain chroot.  Mirrors the
 # modern flow (prepare_target rw, clean environment, stdin /dev/null,
 # interactive-prompt transcript scan) minus the timeout wrapper: Etch's
@@ -1295,7 +1355,10 @@ legacy_chroot_shell()
     log "Command: $command" | tee -a "$SESSION_LOG"
     transcript="$SESSION_DIR/chroot-shell-output"
     : > "$transcript"
-    run_command="$command"
+    run_command="$(legacy_apt_intent_translate "$command")"
+    if [[ "$run_command" != "$command" ]]; then
+        log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
+    fi
     while :; do
         set +e
         chroot "$TARGET_ROOT" /usr/bin/env \
@@ -1360,6 +1423,10 @@ legacy_host_shell()
     local transcript="$SESSION_DIR/host-shell-output" rc=0
     local run_command="$command" retry_command="" retried=0
     : > "$transcript"
+    run_command="$(legacy_apt_intent_translate "$command")"
+    if [[ "$run_command" != "$command" ]]; then
+        log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
+    fi
     while :; do
         set +e
         /usr/bin/env \
@@ -1404,10 +1471,14 @@ run_host_snapshots()
 
 run_host_default()
 {
+    # host-default is inherently a host-scope action (the GUI only offers it
+    # under Host Maintenance); the dispatch does not set the flag, so do it
+    # here exactly like run_host_repair does.
+    RUNNING_HOST_MODE=1
     legacy_require_feature host-maintenance
     legacy_require_feature host-default
     if legacy_grub_legacy_target; then
-        legacy_host_default_repair
+        legacy_host_default_repair "$@"
         return 0
     fi
     run_host_default_modern "$@"
@@ -1445,7 +1516,11 @@ legacy_menu_lst_canonical_entry()
                 [[ -n "$kernel" ]] || kernel="$line"
                 ;;
             initrd*)
-                if [[ "$kernel" == *"/boot/vmlinuz-"* && "$line" == *"/boot/initrd.img-"* ]]; then
+                # Accept both /boot/vmlinuz-<ver> and /vmlinuz-<ver> kernel
+                # paths (the GRUB root is often /boot itself), matching the
+                # initrd line the same way.
+                if [[ "$kernel" == *"vmlinuz-"* && "$kernel" != *"single"* ]] \
+                    && [[ "$line" == *"initrd.img-"* ]]; then
                     printf '%s\n' "$idx"
                     return 0
                 fi
