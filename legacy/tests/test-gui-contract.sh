@@ -109,7 +109,7 @@ pass "Qt3-only widget/toolkit usage (no kdelibs)"
 WINDOW="$GUI_DIR/src/LegacyMainWindow.cpp"
 ACTION_BLOCK="$(sed -n '/^const ToolSpec toolSpecs\[\] = {/,/^};/p' "$WINDOW")"
 [[ -n "$ACTION_BLOCK" ]] || fail "toolSpecs block not found"
-for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs grub; do
+for stage in validate fs-inspect fix-broken dpkg-configure apt-update apt-upgrade initramfs grub display-manager; do
     grep -q "\"$stage\"" <<<"$ACTION_BLOCK" || fail "legacy stage missing from the GUI: $stage"
 done
 # `unlock` is a dedicated control (passphrase on stdin), never a repair stage;
@@ -119,9 +119,28 @@ for forbidden in snapshots host-default host-shell fs-repair copy unlock; do
     grep -q "\"$forbidden\"" <<<"$ACTION_BLOCK" \
         && fail "unsupported stage exposed by the GUI tool table: $forbidden"
 done
-for key in dkms display efi extlinux bootstack; do
+for key in dkms efi extlinux; do
     grep -qF "{ \"$key\", \"\"," <<<"$ACTION_BLOCK" \
         || fail "display-only tool is not stage-less: $key"
+done
+grep -qF '{ "bootstack", "boot-stack",' <<<"$ACTION_BLOCK" \
+    || fail "bootstack tool is not wired to the legacy boot-stack stage"
+for marker in 'Full Repair plan: Manual recovery tool' 'Reconcile Boot Stack' \
+    'm_hostDefaultButton' 'Make Default' 'host-default' \
+    'm_fileCopyDirectionCombo' 'Add Files...' 'Add Folder...' \
+    'Copy and Verify' 'Preview Changes' 'fileCopyRun' 'updateFileCopyTab' \
+    'startFileCopyCommand' 'deviceTreeItems' 'setRootIsDecorated(true)' \
+    'setTreeStepSize' 'appendRepairSummaryBlock' 'repairStageTitles'; do
+    grep -q "$marker" "$WINDOW" || fail "B7 marker missing: $marker"
+done
+# Cycle 4b: the display tool is the legacy host-scope SysV stage (runnable
+# with the helper's display capability line; offline stays disabled).
+grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
+    || fail "display tool is not wired to the display-manager stage"
+for marker in 'Restore Graphical Login' 'hostOnly' \
+    'Host-scope stage - not part of the Full Repair plan' \
+    'enter Host Maintenance to run it'; do
+    grep -q "$marker" "$WINDOW" || fail "display stage marker missing: $marker"
 done
 grep -q 'host-validate' "$WINDOW" || fail "GUI lost the host-validate command form"
 grep -q 'host-diagnose' "$WINDOW" || fail "GUI lost the host-diagnose command form"
@@ -150,9 +169,21 @@ grep -q 'writeToStdin' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner cannot send the passphrase over stdin"
 grep -q 'Re-check elevation' "$WINDOW" || fail "GUI lost the elevation re-check control"
 grep -q 'Elevation:' "$WINDOW" || fail "GUI lost the elevation state label"
-for filter in 'All entries' 'Errors and warnings'; do
+# Modern 1:1 Logs filter combo: All entries / Diagnostics / Repairs / the
+# three workflows / the 16 diagnostic section titles.
+for filter in 'All entries' 'Diagnostics' 'Repairs' 'File system repair' \
+    'Package repair' 'File copy'; do
     grep -q "$filter" "$WINDOW" || fail "GUI lost a log filter option: $filter"
 done
+grep -q 'logFilterSpecs' "$WINDOW" || fail "GUI lost the log filter spec table"
+grep -q 'stagesContainPackageStage' "$WINDOW" \
+    || fail "GUI lost the package-workflow stage mapping"
+grep -q 'LogEntry::Diagnostic' "$WINDOW" \
+    || fail "GUI lost the capture-time log entry tagging"
+grep -q 'Diagnostic: ' "$WINDOW" \
+    || fail "GUI lost the diagnostic section marker handling"
+grep -q 'Errors and warnings' "$WINDOW" \
+    && fail "removed all/errors filter still present"
 # Modern parity: the Diagnostics tab has no capability list and no filter.
 for removed in 'm_diagFilterCombo' 'm_capabilityList' 'All tools' \
     'Reason / evidence' 'View target file (read-only)' 'm_configView'; do
@@ -169,6 +200,7 @@ for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
     'm_toolRunButton' 'runSelectedTool' 'updateToolDetails' 'toolRunReady' \
     'showRepairResultDialog' 'm_resultStatus' 'm_resultView' \
     'm_resultCloseButton' 'm_repairContent' 'QScrollView' \
+    'setWordWrap(m_logWrapEnabled' \
     'Choose Full Repair stages in Settings' \
     'Always preflight' 'Manual recovery tool' \
     'Read-only check - not part of the Full Repair plan' \
@@ -200,10 +232,11 @@ for removed in 'm_diskCombo' 'm_rootCombo' 'm_unlockCombo' \
     'Root component:' 'LUKS component:' 'Selected scope and target'; do
     grep -q "$removed" "$WINDOW" && fail "removed Systems element still present: $removed"
 done
-# Global header (modern parity): icon, title, subtitle and version badge.
+# Global header (modern parity): icon, title, subtitle, version badge and the
+# reserved busy-indicator slot.
 for marker in 'm_headerTitle' 'Boot Bitch' 'Linux recovery and boot-repair utility' \
     'm_headerBadge' 'GUARDED REPAIR' 'LEGACY_VERSION' 'legacyHeaderPixmap' \
-    'setPointSizeFloat'; do
+    'setPointSizeFloat' 'm_busyLabel' 'Working...' 'updateBusyIndicator'; do
     grep -q "$marker" "$WINDOW" || fail "global header marker missing: $marker"
 done
 # Diagnostics parity: Selected diagnostic pane, Run All / Run Diagnostic,
@@ -306,8 +339,16 @@ grep -q 'unavailable: see the helper.s Legacy feature shell: probe reason above'
 pass "chroot shell wired to shell/host-shell with probe + session gating and host-mode labels"
 
 # --- tab parity, Systems panel, unlock status and Logs session/search --------
-for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings' 'About'; do
+# Modern parity: seven tabs (the About tab is gone; Help -> About Boot Bitch
+# opens the dialog).
+for tab in 'Systems' 'Diagnostics' 'Repair' 'Chroot Shell' 'File Copy' 'Logs' 'Settings'; do
     grep -q "\"$tab\"" "$WINDOW" || fail "GUI lost a modern-parity tab: $tab"
+done
+grep -q 'buildAboutTab' "$WINDOW" && fail "About tab still present"
+grep -q 'expected 7 tabs' "$WINDOW" || fail "smoke tab-count assertion still expects 8 tabs"
+for marker in 'Developer:' 'CaptainMorgan12' 'Qt 3.3.x frontend' \
+    'Lock Administrator Session'; do
+    grep -q "$marker" "$WINDOW" || fail "About dialog marker missing: $marker"
 done
 for marker in 'Selected drive details' 'Connection:' 'UUID:' 'Protection:' 'updateDriveDetails'; do
     grep -q "$marker" "$WINDOW" || fail "Systems details panel marker missing: $marker"
@@ -363,13 +404,53 @@ grep -q '"Clear log"' "$WINDOW" && fail "Logs still shows the removed Clear log 
 for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck' \
     'm_autoRefreshCheck' 'deviceFilterChanged' 'autoRefreshToggled' \
     'Host capabilities and dependencies' 'm_capDistributionLabel' \
-    'm_refreshCapabilitiesButton' 'Refresh Capabilities' 'updateCapabilityView' \
+    'm_refreshCapabilitiesButton' 'Refresh Capabilities' 'refreshCapabilities' \
+    'm_capabilityTable' 'm_installSupportButton' 'Install Missing Support...' \
+    'Privileged authorization support' 'no KAuth' 'capabilitySpecs' \
+    'Process namespace isolation' '"unshare"' \
+    'Automatic installation will require explicit package mapping' \
     'QSettings' 'devices/showNonLinux' 'devices/showRemovable' \
     'devices/showEncrypted' 'logs/wrapLines' 'diagnostics/autoRefreshStale' \
     'maybeAutoRefreshDiagnostics' 'runScheduledAutoRefresh' \
-    'm_settingsContent' 'QScrollView'; do
+    'entering Host Maintenance changed the diagnostics scope' \
+    'committing the repair target changed the diagnostics scope' \
+    'maybeAutoRefreshDiagnostics(m_pendingLabel)' \
+    'm_settingsContent' 'QScrollView' \
+    'm_repairVerticalSplitter' 'Qt::Vertical' 'kSectionTitleLeftTolerance'; do
     grep -q "$marker" "$WINDOW" || fail "Settings parity marker missing: $marker"
 done
+grep -q 'updateCapabilityView' "$WINDOW" \
+    && fail "compact capability label grid still present"
+# Cycle 6: one canonical QSettings file (~/.qt/boot-bitchrc), every toggle
+# handler persists immediately, and the window close flushes again.
+grep -q 'setPath(QString::fromLatin1("boot-bitch"),' "$WINDOW" \
+    || fail "settings do not use the canonical boot-bitch path"
+grep -q '"boot-repair"), QSettings::User' "$WINDOW" \
+    || fail "settings do not use the boot-repair application"
+grep -q '~/.qt/boot-bitchrc' "$WINDOW" \
+    || fail "settings do not document the canonical file location"
+grep -q 'boot-bitch.local"),' "$WINDOW" \
+    && fail "scattered per-subkey settings path still present"
+for handler in deviceFilterChanged autoRefreshToggled toggleLogWrap planCheckboxChanged; do
+    sed -n "/^void LegacyMainWindow::$handler/,/^}/p" "$WINDOW" \
+        | grep -q 'saveLegacySettings' \
+        || fail "$handler does not persist its toggle"
+done
+sed -n '/^void LegacyMainWindow::closeEvent/,/^}/p' "$WINDOW" \
+    | grep -q 'saveLegacySettings' \
+    || fail "closeEvent does not flush the settings"
+grep -q 'QTable::SingleRow' "$WINDOW" \
+    || fail "capability table lost the full-row selection mode"
+grep -q 'selectRow(0)' "$WINDOW" \
+    || fail "capability table does not select its first row after refresh"
+grep -q 'diskFilesystemSummary' "$WINDOW" \
+    || fail "GUI lost the disk filesystem aggregation"
+grep -q 'return QString::fromLatin1("unknown");' "$WINDOW" \
+    || fail "Filesystem column can still render empty"
+for marker in 'Model / label:' 'Mounts:' 'UUID:'; do
+    grep -q "$marker" "$WINDOW" || fail "details panel marker missing: $marker"
+done
+pass "canonical settings path, per-toggle persistence, row selection, ten details rows, non-empty Filesystem labels"
 grep -q 'm_diagKeyByTitle' "$WINDOW" || fail "diagnostic list lost the title->key mapping"
 grep -q 'diagnosticTitle' "$WINDOW" || fail "diagnostic list lost the friendly titles"
 pass "menus, Logs session management, Settings filters/capabilities and diagnostic titles"
@@ -468,6 +549,25 @@ grep -q 'TUI fallback' "$MAIN" && fail "GUI usage still documents a TUI fallback
 grep -q "package's entry point" "$WINDOW" \
     || fail "GUI About does not state the packaged entry point"
 pass "GUI is the packaged entry point (no launcher fallback advertised)"
+
+# --- legacy icons generated from the modern master ---------------------------
+ICON_SCRIPT="$GUI_DIR/data/make-icons.py"
+[[ -f "$ICON_SCRIPT" ]] || fail "missing legacy icon script"
+grep -q 'org.bootrepair.BootRepair.png' "$ICON_SCRIPT" \
+    || fail "icon script no longer loads the modern master artwork"
+grep -q 'LANCZOS' "$ICON_SCRIPT" \
+    || fail "icon script no longer resizes with LANCZOS"
+grep -q 'sys.exit' "$ICON_SCRIPT" \
+    || fail "icon script does not fail when the master is missing"
+for size in 16 22 32 48; do
+    icon="$GUI_DIR/data/boot-repair-legacy-${size}x${size}.png"
+    [[ -f "$icon" ]] || fail "missing generated legacy icon: $icon"
+done
+MASTER="$ROOT_DIR/data/icons/hicolor/1024x1024/apps/org.bootrepair.BootRepair.png"
+[[ -f "$MASTER" ]] || fail "modern master icon missing"
+grep -q 'setIcon(headerPixmap)' "$WINDOW" \
+    || fail "GUI window does not use the packaged icon artwork"
+pass "legacy icons generated from the modern master (LANCZOS, fail-fast script)"
 
 # --- Qt3 auth-pipe harness (runs on Etch; skips without qmake-qt3) ----------
 for file in "$TESTS_DIR/auth-pipe-test.cpp" "$TESTS_DIR/auth-pipe-test.pro" \

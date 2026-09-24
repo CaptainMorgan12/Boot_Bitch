@@ -11,7 +11,7 @@ Repair tool fixbroken: available
 Repair tool aptupdate: available
 Repair tool upgrade: available
 Repair tool dkms: unavailable|DKMS is not installed in the target
-Repair tool display: unavailable|No supported display manager was detected in the target
+Repair tool display: available
 Repair tool initramfs: available
 Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available
 Repair tool grub: available
@@ -25,7 +25,7 @@ Repair capability evidence fixbroken: /usr/bin/dpkg and /usr/bin/apt-get present
 Repair capability evidence aptupdate: /usr/bin/apt-get present; APT sources present
 Repair capability evidence upgrade: /usr/bin/dpkg and /usr/bin/apt-get present
 Repair capability evidence dkms: dkms executable missing
-Repair capability evidence display: no supported display-manager backend detected
+Repair capability evidence display: legacy SysV: sysvinit display manager kdm (/usr/bin/kdm, init script /etc/init.d/kdm)
 Repair capability evidence initramfs: initramfs backend: initramfs-tools; update-initramfs and mkinitramfs present
 Repair capability evidence efi: grub-install present; ESP mount candidate: unresolved
 Repair capability evidence grub: update-grub present
@@ -35,7 +35,7 @@ Legacy feature gating (read-only):
 Legacy feature file-copy: unavailable|rsync is not installed in the recovery environment
 Legacy feature shell: unavailable|the installed timeout does not support --foreground/--kill-after
 Legacy feature host-shell: unavailable|unshare is not installed in the recovery environment
-Legacy feature host-maintenance: unavailable|unshare is not installed in the recovery environment
+Legacy feature host-maintenance: available
 Legacy feature snapshots: unavailable|the selected target filesystem is ext3, not Btrfs
 Legacy feature host-default: unavailable|host default selection requires the running-host scope
 

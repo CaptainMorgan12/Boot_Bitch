@@ -86,8 +86,8 @@ printf '%s\n' "$check_out" | grep -qE 'sed -nE +61' \
     || fail "port summary sed -nE count is not 61"
 printf '%s\n' "$check_out" | grep -qE '=~ regex literal hoists +11' \
     || fail "port summary regex-hoist count is not 11"
-printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +24' \
-    || fail "port summary wrapped-function count is not 24"
+printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +33' \
+    || fail "port summary wrapped-function count is not 33"
 pass "port --check in sync and lists every transformation"
 
 # --- generated helper has no bash-4 syntax ----------------------------------
@@ -114,13 +114,47 @@ for symbol in read_target_os_modern grub_unavailable_reason_modern \
     legacy_feature_reason legacy_require_feature legacy_root_evidence_present \
     legacy_mount_special legacy_sort_versions legacy_b64e legacy_b64d \
     legacy_sed_ext legacy_findmnt legacy_lsblk legacy_realpath legacy_timeout_watchdog \
-    legacy_mountinfo_table_from legacy_mounts_table_from legacy_mountpoints_from_table; do
+    legacy_mountinfo_table_from legacy_mounts_table_from legacy_mountpoints_from_table \
+    legacy_chroot run_selected_chroot_modern display_unavailable_reason_modern \
+    adaptive_display_manager_repair_modern repair_capability_evidence_modern \
+    legacy_sysv_display_manager_entry legacy_display_manager_probe \
+    legacy_display_manager_repair legacy_display_manager_rollback \
+    unlock_target_modern mount_recorded_modern legacy_filter_mount_options \
+    resolve_fstab_source_modern legacy_remap_target_device_path \
+    legacy_boot_stack_repair repair_boot_stack_modern \
+    legacy_chroot_shell legacy_host_shell \
+    legacy_run_file_copy legacy_run_copy_item legacy_verify_copy_item \
+    legacy_chown_reference_for_item \
+    legacy_host_default_repair legacy_menu_lst_canonical_entry \
+    host_default_unavailable_reason_modern; do
     grep -q "$symbol" "$HELPER" || fail "generated helper is missing $symbol"
 done
 grep -q 'STATE_ROOT=/var/run/boot-repair' "$HELPER" || fail "generated helper has no /var/run state fallback"
 grep -q 'for feature in file-copy shell host-shell host-maintenance snapshots host-default' "$HELPER" \
     || fail "generated helper has no legacy feature list"
 grep -q 'Legacy feature %s:' "$HELPER" || fail "generated helper has no legacy feature report format"
+grep -q 'the legacy SysV display-manager repair is a host-scope stage' "$HELPER" \
+    || fail "generated helper has no host-scope display reason"
+grep -q 'cryptsetup --key-file - luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
+    || fail "generated helper lost the cryptsetup 1.0 luksOpen unlock invocation"
+grep -q 'cryptsetup open --type luks --key-file -' "$HELPER" \
+    || fail "generated helper lost the modern cryptsetup open invocation (rename)"
+grep -q "grep -v '^noload$'" "$HELPER" \
+    || fail "generated helper lost the noload mount-option filter"
+grep -q 'vgscan --mknodes' "$HELPER" \
+    || fail "generated helper lost the post-unlock LVM scan"
+grep -q 'LVM scan/activation after unlock:' "$HELPER" \
+    || fail "generated helper lost the post-unlock LVM log line"
+grep -q 'legacy_remap_target_device_path' "$HELPER" \
+    || fail "generated helper lost the host-relative device path remap"
+grep -q 'resolve_fstab_source_modern' "$HELPER" \
+    || fail "generated helper lost the renamed fstab source resolution"
+grep -q 'split-mount safe' "$HELPER" \
+    || fail "generated helper lost the split-mount-safe legacy evidence chain"
+grep -q '/etc/apt/sources.list' "$HELPER" \
+    || fail "generated helper lost the sources-list root evidence"
+grep -q 'guarded plain-chroot fallback' "$HELPER" \
+    || fail "generated helper has no plain-chroot fallback wording"
 pass "overlay wiring and gating surface present"
 
 # --- compat shim behaviour ---------------------------------------------------
@@ -300,17 +334,34 @@ gating_checks()
 
     # Forced-unavailable probes (no tools on PATH).
     reason="$(PATH=/nonexistent legacy_feature_reason file-copy 2>&1)"
-    [[ $? -ne 0 ]] || fail "file-copy must be unavailable without rsync"
-    [[ "$reason" == *'rsync is not installed'* ]] || fail "file-copy reason: $reason"
+    [[ $? -ne 0 ]] || fail "file-copy must be unavailable without cp"
+    [[ "$reason" == *'cp is not installed'* ]] || fail "file-copy reason: $reason"
     reason="$(PATH=/nonexistent legacy_feature_reason host-maintenance 2>&1)"
-    [[ $? -ne 0 ]] || fail "host-maintenance must be unavailable without unshare"
-    [[ "$reason" == *'unshare is not installed'* ]] || fail "host-maintenance reason: $reason"
+    [[ $? -ne 0 ]] || fail "host-maintenance must be unavailable with no tools"
+    case "$reason" in
+        *'unshare is not installed'*'EFI host needs firmware-variable isolation'*|*'chroot is not installed'*)
+            ;;
+        *) fail "host-maintenance reason: $reason" ;;
+    esac
     local tmpbin
     tmpbin="$(mktemp -d "${TMPDIR:-/tmp}/legacy-feature-probe.XXXXXX")"
     ln -s "$(command -v chroot)" "$tmpbin/chroot"
-    reason="$(PATH="$tmpbin" legacy_feature_reason shell 2>&1)"
-    [[ $? -ne 0 ]] || fail "shell must be unavailable without timeout"
-    [[ "$reason" == *'timeout'* ]] || fail "shell reason: $reason"
+    # shell is now the guarded plain chroot: chroot alone makes it available.
+    PATH="$tmpbin" legacy_feature_reason shell \
+        || fail "shell must be available through the guarded plain chroot"
+    # BIOS hosts: host-maintenance and host-shell need only chroot; EFI hosts
+    # keep the unshare/timeout gate.  BOOT_REPAIR_LEGACY_HOST_EFI is the
+    # read-only test seam for the firmware probe.
+    BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-maintenance \
+        || fail "host-maintenance must be available through the plain-chroot fallback on a BIOS-only host"
+    BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$tmpbin" legacy_feature_reason host-shell \
+        || fail "host-shell must be available on a BIOS-only host"
+    reason="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-maintenance 2>&1)"
+    [[ $? -ne 0 ]] || fail "host-maintenance must keep the unshare gate on an EFI host"
+    [[ "$reason" == *'unshare is not installed'* ]] || fail "EFI host-maintenance reason: $reason"
+    reason="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH="$tmpbin" legacy_feature_reason host-shell 2>&1)"
+    [[ $? -ne 0 ]] || fail "host-shell must keep the strict gate on an EFI host"
+    [[ "$reason" == *'unshare is not installed'* ]] || fail "EFI host-shell reason: $reason"
     rm -rf -- "$tmpbin"
 
     # Runtime entry points must fail closed with the unavailable|<reason> line.
@@ -358,6 +409,6 @@ gating_checks()
     return 0
 }
 ( gating_checks ) || fail "legacy feature gating"
-pass "feature gating (file-copy, shell, host modes, snapshots, host-default)"
+pass "feature gating (file-copy, shell, host modes with the plain-chroot fallback, snapshots, host-default)"
 
 echo "legacy port contract: PASS"

@@ -34,8 +34,10 @@ and is **not shipped** in the `.deb` any more.
 `QTabWidget`/`QProcess`, no kdelibs) C++98 application; see
 `legacy/gui/README.md` for the full design, the modern-GUI parity table and
 CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it: a global
-header (packaged icon, **Boot Bitch**, the recovery subtitle and the
-**GUARDED REPAIR • 0.2.25** badge), **Systems** with the **Available repair
+header (the real Boot Bitch icon resized from the modern master PNG,
+**Boot Bitch**, the recovery subtitle, the
+**GUARDED REPAIR • 0.2.25** badge and a reserved-slot **Working...** busy
+indicator shown only while a helper command runs), **Systems** with the **Available repair
 targets** inventory, the **Select Target** / **Unlock** / **Host
 Maintenance** / **Authorize** action row, the **Selected drive details**
 panel (drive, detected target/component, model/label, status, size,
@@ -44,7 +46,9 @@ status** frame (locked/unlocked, component, mapper, method, errors; disabled
 for the protected running host) — drive selection comes from the list row and
 the best Linux root component is auto-resolved from the read-only udev
 metadata (mapper with a Linux filesystem first, then a Linux partition, then
-the disk itself), **Diagnostics** mirrors the modern page (Run All + scope
+the disk itself); every Filesystem cell in the target list carries a label
+(mounted/udev-probed/`[swap]`/`unknown`, whole disks aggregating their
+children as `ext3 + LUKS` etc.), **Diagnostics** mirrors the modern page (Run All + scope
 label, per-key diagnostic checks, the Selected diagnostic pane with Run
 Diagnostic, Results and Copy/Save Results, and the target-only **Edit Target
 File...** control with the Etch-era file list — probe-based availability,
@@ -53,34 +57,54 @@ diagnostics; no capability list or filter is duplicated, the cached
 capability lines gate the Repair tab), **Repair** mirrors the modern page with
 the plan paragraph, the **Full Repair plan** section (six legacy stages,
 **Configure Plan...** / **Run Full Repair**, count/readiness labels), the
-13-row **Individual repair tools** list with the **Selected tool** pane and the
-modern-style result popup, plus the resolved elevation
+13-row **Individual repair tools** list with the **Selected tool** pane (a
+draggable vertical splitter separates the plan and the tools panes), the
+modern-style result popup that follows the Settings wrap toggle, plus the
+resolved elevation
 method with a re-check button and the deferred **Authorize** control; only the
 legacy-supported commands (`validate`, `diagnose`,
 `fs-inspect`, `fix-broken`, `dpkg-configure`, `apt-update`, `apt-upgrade`,
-`initramfs` and the guarded `grub` regeneration) can run and only when their
+`initramfs`, the guarded `grub` regeneration and the legacy SysV
+`display-manager` stage) can run and only when their
 cached capability line
-is `available` for the current scope (host `initramfs`/`grub` also need the
-`Legacy feature host-maintenance:` probe; the DKMS/display/EFI/extlinux/
-boot-stack rows are display-only with the exact reason), **Chroot Shell / Host Shell** runs
+is `available` for the current scope (host `initramfs`/`grub`/`display`
+also need the `Legacy feature host-maintenance:` probe, which the guarded
+plain-chroot fallback now satisfies on BIOS-only hosts; the DKMS/EFI/
+extlinux/boot-stack rows stay display-only with the exact reason), **Chroot Shell / Host Shell** runs (the tab lights up on Etch: offline `shell` through the guarded plain chroot, `host-shell` through the legacy direct path on BIOS hosts), **File Copy** runs (cp -a + chown --reference + per-file cmp verification), and **Make Default** / boot-stack land the guarded GRUB-legacy host-default and the one-pass boot-stack reconciliation); it runs
 one reviewed command through the helper's guarded `shell` (offline target) /
 `host-shell` (running host) verbs when the scope is committed, the session is
 authorized and the scope's `Legacy feature` probe is available (the heading,
 tab label and button switch with Host Maintenance; greyed with the exact
 reason otherwise), **File Copy** mirrors the modern tab with every control
 greyed and the exact `Legacy feature file-copy:` probe reason, **Logs**
-streams the helper output with an all/errors filter, a **Search log:** box and
-a per-session list (live session first, earlier files selectable read-only)
-with **Save As...**, **Clear Register**, **New Session Log**, **Add Note**,
-**Delete** (prior files only, confirmed) and **Refresh**, and **Settings**
+streams the helper output with the modern 1:1 kind filter (**All entries** /
+**Diagnostics** / **Repairs** / **File system repair** / **Package repair** /
+**File copy** / the 16 diagnostic sections; entries are tagged at capture
+time from the stream's `Diagnostic: <key>` markers and the requested repair
+stages), a **Search log:** box and a per-session list (live session first,
+earlier files selectable read-only) with **Save As...** / **Clear Register**
+right of the **Application log** title above the search row, **New Session
+Log**, **Add Note**, **Delete** (prior files only, confirmed) and
+**Refresh**, and **Settings**
 shows functional device-discovery filters, the functional diagnostics
-auto-refresh toggle, the wrap-log toggle, the mandatory safety controls, the
-read-only **Host capabilities and dependencies** group (backend profile from
-the cached diagnostics plus **Refresh Capabilities**) and the read-only
-configuration; the menus mirror the modern File/View/Help structure
+auto-refresh toggle (schedules one quiet Run All after scope entry —
+Host Maintenance or a committed repair target —, an unlock, a target
+configuration edit or any repair whose change status invalidates the cache,
+never opening an authorization prompt by itself), the wrap-log toggle, the
+mandatory safety controls, the
+read-only **Host capabilities and dependencies** group (Distribution /
+Package manager family / adapted authorization-support summary labels, the
+6-column **Feature | Command | Scope | Status | Suggested package | Notes**
+table mirroring the modern probe rows plus the legacy unshare row, **Refresh
+Capabilities** (read-only PATH probes, nothing executed) and the disabled
+**Install Missing Support...** button with the modern tooltip) and the
+read-only configuration; the menus mirror the modern File/View/Help
+structure
 (**Refresh Devices**, **Lock Administrator Session**, **Quit**; tab
 shortcuts, **Auto-size Device Columns**, **Wrap Log Lines**; **Using Boot
-Bitch**, **About Boot Bitch**). There is no independent scope selector: the
+Bitch**, **About Boot Bitch** - a rich-text dialog with the modern heading
+and the legacy-adapted description; there is no About tab). There is no
+independent scope selector: the
 scope follows the committed repair target or Host Maintenance, so any
 selectable non-running-host disk (including a second Etch disk) can be
 committed while the protected running-host disk stays excluded (its Select
@@ -109,7 +133,8 @@ Build it natively on Etch with `qmake-qt3`/`make` (or through
 `--smoke-test` also verifies the global header, the section headings, the
 details/unlock/session/search/gating controls, the File/View/Help menus, the
 Repair plan controls, the 13-tool list and Selected tool pane (including the
-display-only DKMS row and the plan-column mirroring), the Logs
+display-only DKMS row, the host-scope display-tool gate and the
+plan-column mirroring), the Logs
 session-management controls and prior-log banner, the functional
 device-discovery filters, the Full Repair plan checkboxes, the diagnostics
 auto-refresh toggle and the host
@@ -172,14 +197,18 @@ a distribution check. On an Etch-era host the expected picture is:
 | `validate`, `diagnose`, `fs-inspect` | available against an unlocked disposable target (read-only) |
 | `host-validate`, `host-diagnose`, `host-fs-inspect` | available read-only: the running-host probes mount nothing, so they need no `unshare` |
 | `host-repair` package stages (`dpkg-configure`, `fix-broken`, `apt-update`, `apt-upgrade`) | available on BIOS-only hosts: no EFI firmware variables exist to isolate; an EFI host keeps the fail-closed `unshare` guard |
+| `host-repair` `initramfs` / `grub` / `display-manager` stages | available on Etch through the guarded plain-chroot fallback (`legacy_chroot`, no `unshare`): the mapper/crypttab preflight, the trial builds and the backups stay untouched; `Legacy feature host-maintenance:` reports `available` |
 | `dpkg-configure`, `fix-broken` | available with simulation-first guards |
 | `apt-update`, `upgrade` | probe-gated; unavailable without a reachable, trusted APT source |
-| `initramfs` | available after validation (`update-initramfs` 0.85i) |
+| `initramfs` | available after validation (`update-initramfs` 0.85i), host and offline, through the guarded plain-chroot fallback |
 | `grub` | available through the guarded GRUB-legacy branch (`update-grub` only; `menu.lst` backup, entry-preservation guard and rollback) |
-| `display` | read-only evidence only (sysvinit/KDM); repair not implemented |
+| `display` | available for the running host with a detected legacy SysV display manager (`/etc/X11/default-display-manager` kdm/gdm/xdm entry + executable binary + init script); the guarded repair restores the entry and the missing runlevel S-symlink with backup/rollback and never starts the GUI; the offline target form stays disabled with the host-scope reason |
 | `efi`, `dkms`, `extlinux`, `bootstack` | unavailable with the exact missing prerequisite as the reason |
 | `host-shell`, `host-default`, `host-snapshots`, `host-reboot`, `shell`, file copy, snapshots | unavailable on Etch (missing `unshare`/`timeout`/`rsync`/Btrfs evidence) |
-| LUKS `unlock` | available (cryptsetup 1.0.4, LUKS1); stdin only, never argv |
+| LUKS `unlock` | available (cryptsetup 1.0.4, LUKS1): the legacy helper opens the component with the 1.0 action `cryptsetup --key-file - luksOpen <device> luks-<uuid>` (the modern `open --type luks` form does not exist in 1.0), then runs `vgscan --mknodes` + `vgchange -ay` best-effort so the target's LVM logical volumes appear for the GUI rescan (never deactivates anything); stdin only, never argv |
+| Read-only mounts (Etch) | the legacy helper strips `noload` from every ro ext mount (root, boot entry and the os-release probe all funnel through `mount_recorded`): util-linux 2.12r rejects `ro,noload` on ext3, plain `ro` is the correct 2.6.18 read-only mount (a dirty-journal ro mount failing is fail-closed); the xfs `norecovery` option is left as-is and simply never exercised |
+| Target device naming (Etch fstab/crypttab) | Etch-era fstab/crypttab entries use bare host-relative device paths (`/dev/hda1` written from the installed system's perspective); the legacy port remaps such a source onto the selected target disk (e.g. `/dev/hda1` → `/dev/hdb1` on a `/dev/hdb` target) before the `same_single_top_disk` guard runs — UUID=/LABEL=/mapper/by-id forms pass through and the guard is never weakened (modern fstabs use UUIDs, which the modern resolution already handles) |
+| Root confirmation (Etch, split-LV safe) | an os-release-less root is confirmed by `/etc/debian_version` paired with any one of the dpkg status pair, `/etc/apt/sources.list` or `/etc/inittab` — the `/etc`-resident files keep the probe correct when `/var` (and the dpkg database) live on a separate LV, as in the etch2 split-LV layout (`debian-root`/`debian-usr`/`debian-var`/…); `/etc/debian_version` alone never confirms a root |
 
 The `lsblk`/`findmnt` fallbacks also cover kernel 2.6.18: it has no
 `/sys/class/block` class, no per-partition `partition` attribute and no

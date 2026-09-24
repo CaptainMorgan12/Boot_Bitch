@@ -130,6 +130,11 @@ void testCapabilityModel(const std::string &fixture)
           "available capability unlocks the action");
     check(model.isAvailable("validate", identity, &reason),
           "validate capability unlocks");
+    check(model.isAvailable("display", identity, &reason),
+          "legacy SysV display capability unlocks the display stage");
+    check(model.evidence("display")
+              == "legacy SysV: sysvinit display manager kdm (/usr/bin/kdm, init script /etc/init.d/kdm)",
+          "display evidence line cached verbatim");
     check(!model.isAvailable("dkms", identity, &reason),
           "unavailable capability stays disabled");
     check(reason == "DKMS is not installed in the target",
@@ -148,9 +153,14 @@ void testCapabilityModel(const std::string &fixture)
           "legacy feature reason is the helper's probe reason");
     check(!model.legacyFeatureAvailable("mystery", identity, &reason),
           "unknown legacy feature key fails closed");
-    check(model.legacyFeatureState("host-maintenance")
-              == "unavailable|unshare is not installed in the recovery environment",
-          "legacy feature state cached verbatim");
+    check(model.legacyFeatureState("host-maintenance") == "available",
+          "the plain-chroot fallback unlocks host-maintenance on the Etch host");
+    check(model.legacyFeatureAvailable("host-maintenance", identity, &reason),
+          "host-maintenance unlocks through the guarded plain-chroot fallback");
+    check(!model.legacyFeatureAvailable("host-shell", identity, &reason),
+          "host-shell keeps its strict unshare gate");
+    check(reason == "unshare is not installed in the recovery environment",
+          "host-shell reason stays the helper's probe reason");
     check(!model.legacyFeatureAvailable("shell", "target|/dev/hdb|/dev/hdb1", &reason),
           "legacy features never unlock for another identity");
 
@@ -297,6 +307,22 @@ void testDeviceParsers()
               && mountMap.find("/dev/hda1")->second.options == "rw",
           "first (real) mount entry kept over later bind mounts");
 
+    // Joined mount targets for the details panel: distinct targets per
+    // source, primary first, bind mounts appended.
+    const std::string mountTargetsText =
+        "/dev/hda1 /boot ext3 rw 0 0\n"
+        "/dev/hda1 /boot ext3 rw,noatime 0 0\n"
+        "/dev/hda1 /mnt/boot ext3 ro 0 0\n"
+        "/dev/mapper/root / ext3 rw 0 0\n";
+    const std::map<std::string, std::string> mountTargets =
+        legacy::parseMountTargets(mountTargetsText);
+    check(mountTargets.find("/dev/hda1") != mountTargets.end()
+              && mountTargets.find("/dev/hda1")->second == "/boot, /mnt/boot",
+          "distinct mount targets joined (primary first, duplicates dropped)");
+    check(mountTargets.find("/dev/mapper/root") != mountTargets.end()
+              && mountTargets.find("/dev/mapper/root")->second == "/",
+          "single mount target kept verbatim");
+
     const std::string swaps =
         "Filename                                Type            Size    Used    Priority\n"
         "/dev/hda2                               partition       2097144 0       -1\n";
@@ -349,7 +375,7 @@ void testDeviceParsers()
 
     const std::vector<legacy::DeviceRow> rows = legacy::buildDeviceRows(
         records, mountRows, swapMap, diskNames, attributes, mapperLinks,
-        uuidByPath, labelByPath, probedFsByPath);
+        uuidByPath, labelByPath, probedFsByPath, mountTargets);
 
     bool sawDisk = false;
     bool sawPart = false;
@@ -395,6 +421,7 @@ void testDeviceParsers()
             check(row.uuid == "uuid-root", "mapper UUID linked by path");
             check(row.mountpoint == "/" && row.fstype == "ext3",
                   "mapper row carries the mount");
+            check(row.mountpoints == "/", "mapper row carries the joined mounts");
         }
         if (row.path == "/dev/mapper/crypt") {
             sawCrypt = true;

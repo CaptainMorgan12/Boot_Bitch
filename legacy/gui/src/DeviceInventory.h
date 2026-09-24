@@ -52,6 +52,8 @@ struct DeviceRow {
     std::string model;      // disks only, from sysfs
     std::string fstype;     // mounted or swapped filesystem, else ""
     std::string mountpoint; // mount target, else "" / "[swap]"
+    std::string mountpoints; // comma-joined distinct mount targets in
+                             // /proc/mounts order (primary first), else ""
     std::string probedFstype; // udev ID_FS_TYPE (world-readable metadata), else ""
     std::string uuid;       // /dev/disk/by-uuid link value, else ""
     std::string label;      // /dev/disk/by-label link value, else ""
@@ -61,6 +63,7 @@ struct DeviceRow {
 // Parsers for the world-readable kernel files (tested on the host).
 std::vector<PartitionRecord> parseProcPartitions(const std::string &text);
 std::map<std::string, MountRecord> parseProcMounts(const std::string &text);
+std::map<std::string, std::string> parseMountTargets(const std::string &text);
 std::map<std::string, std::string> parseProcSwaps(const std::string &text);
 
 // Parses a udev database record (Etch's /dev/.udev/db/block@<name> or a
@@ -98,6 +101,8 @@ std::vector<DeviceRow> buildDeviceRows(
     const std::map<std::string, std::string> &labelByPath =
         std::map<std::string, std::string>(),
     const std::map<std::string, std::string> &probedFsByPath =
+        std::map<std::string, std::string>(),
+    const std::map<std::string, std::string> &mountTargetsByPath =
         std::map<std::string, std::string>());
 
 // Reads the live kernel metadata and returns the rows (read-only).

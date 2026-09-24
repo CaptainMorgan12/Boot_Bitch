@@ -2,6 +2,157 @@
 
 ## Unreleased
 
+- Cycle 7: Systems tree + unlock gating + repair summary, and the legacy
+  capability wave. The Systems tab now shows a device tree (disks as
+  top-level items with partitions/mappers as indented children; Device/Size/
+  Type/Filesystem columns, expandable/collapsible) instead of the flat list,
+  and a drive with a locked LUKS component no longer resolves its unencrypted
+  /boot partition as the root: Select Target stays disabled with "Unlock the
+  encrypted volume first; Select Target becomes available after a Linux
+  filesystem is detected." until the unlock exposes the mapped Linux root.
+  The Unlock status pane keeps the modern field order (State / Component /
+  Mapper / Method, plus the exact last-error line). After every repair run
+  the register gains a `──────── REPAIR ────────`-bracketed summary block
+  (✓ changed / ✗ failed / ▪ no-repair-needed per stage plus headline counts,
+  Repair-tagged so the Repairs filter shows it; a stage with no parsed status
+  counts as failed, never as success). The capability wave lands the helper +
+  GUI for the Chroot Shell / Host Shell tab (offline shell through the
+  guarded plain chroot, host shell through the legacy direct path on BIOS
+  hosts; both probes report available on Etch), the File Copy tab (direction
+  combo, staging, Preview Changes / Copy and Verify through the cp -a +
+  chown --reference + cmp backend), the Boot stack reconciliation tool (the
+  guarded mapper/crypttab + initramfs + GRUB-legacy one-pass stage, kept out
+  of the plan) and Make Default beside Host Maintenance (menu.lst
+  `default <N>` ensure with backup/rollback, gated by Host Maintenance + the
+  cached host-default probe + the session).
+
+- Fix the Etch host-relative device naming in target fstab/crypttab
+  resolution. Etch-era entries name devices with bare paths (`/dev/hda1` as
+  seen from the installed system), which on the repair host point at the
+  repair host's own disk and made `same_single_top_disk` refuse a valid
+  target reference (`/boot resolves outside the selected target disk`). The
+  legacy port now remaps such a source onto the selected target disk
+  (`/dev/hda1` → `/dev/hdb1` on a `/dev/hdb` target, only when the target
+  partition exists) before the guard runs; UUID=/LABEL=/mapper/by-id forms
+  pass through and the same-disk guard still re-validates the remapped path.
+- Relax the legacy root-evidence probe for split-mount Etch roots. The etch2
+  target keeps its dpkg database on a separate `debian-var` LV, so the old
+  probe (`/etc/debian_version` + dpkg status) refused a correctly unlocked
+  root; the legacy port now confirms an os-release-less root from
+  `/etc/debian_version` paired with any one of the dpkg status pair,
+  `/etc/apt/sources.list` or `/etc/inittab` — all `/etc`-resident, so the
+  probe stays correct with separate `/var` and `/usr` mounts (the
+  `/etc/redhat-release`+rpm and `/etc/SuSE-release`+rpm chains are unchanged;
+  the modern helper keeps its strict os-release probe for modern roots).
+- Fix two Etch follow-ups on the repair-target flow. Read-only ext mounts no
+  longer use `noload`: Etch's util-linux 2.12r rejects `ro,noload` on ext3
+  (`ext3: No journal on filesystem`), so the legacy helper strips the option
+  for every ro ext mount (root, boot entry and the os-release probe all go
+  through the same filter) and mounts plain `ro` — a dirty-journal ro mount
+  failing stays fail-closed. After a successful LUKS unlock the helper now
+  runs `vgscan --mknodes` + `vgchange -ay` best-effort (logging
+  `LVM scan/activation after unlock: N logical volume(s) activated`) so the
+  target's LVM logical volumes appear on the GUI rescan and the root
+  auto-resolves; the `UNLOCKED=`/`UNLOCK_AUTH_FAILED=1` markers are unchanged.
+- Fix the legacy helper's LUKS unlock for Etch's cryptsetup 1.0. The modern
+  unlock path calls `cryptsetup open --type luks --key-file -`, which does not
+  exist in cryptsetup 1.0 (`--type: unknown option`); the legacy helper now
+  opens the selected LUKS component with the 1.0 action
+  `cryptsetup --key-file - luksOpen <device> luks-<uuid>` while keeping every
+  modern preflight — the protected-host and same-disk asserts, the
+  `cryptsetup isLuks` verification, the `luks-<uuid>` mapper naming, the
+  existing-mapper reuse, the mapper-name-collision refusal, the rc-2
+  passphrase-retry marker and the `UNLOCKED=<mapper>` output are all
+  unchanged (the GUI needs no change: it consumes the same markers).
+- Harden the legacy GUI's settings persistence and polish three panels.
+  Every user toggle — the three device-discovery filters, the wrap toggle
+  (Settings checkbox and View menu), the diagnostics auto-refresh checkbox
+  and the six Full Repair plan checkboxes — now persists into one canonical
+  per-user file (`~/.qt/boot-bitchrc`; the previous organization/application
+  pairing scattered the keys across per-subkey files so overrides did not
+  survive a restart), every handler saves immediately, window close flushes
+  again, and `dpkg -r`/`dpkg -i` reinstalls never touch the file. The
+  Settings host-capability table now selects whole rows (`QTable::SingleRow`,
+  first row selected) — the selected missing capability is the conceptual
+  guard the disabled **Install Missing Support...** documents. The selected
+  drive details panel always shows all ten modern rows (Model/label with the
+  owning-disk fallback, UUID with the helper-confirmed root fallback, joined
+  Mounts; unknown values render as `-`), and the Available repair targets
+  Filesystem column is never empty (mounted/udev-probed/`[swap]`/`unknown`
+  for components, whole disks aggregating their children as `ext3 + LUKS`).
+  The repair result popup continues to follow the wrap toggle at creation
+  (re-verified; an unwrapped popup means a stale build is installed).
+- Extend the legacy GUI's diagnostics auto-refresh and add the header busy
+  indicator. With **Automatically regenerate read-only diagnostics** on, one
+  quiet Run All is now also scheduled after entering Host Maintenance and
+  after committing a repair target (both change the scope identity), and
+  after any repair whose change status invalidates the cached diagnostics —
+  on top of the existing unlock/target-config-edit paths — whenever a scope
+  is ready, no command is running and the administrator session is active;
+  it never opens an authorization prompt by itself and logs the exact
+  skip/pending reason otherwise. A reserved-slot **Working...** busy
+  indicator now appears in the header row (next to the GUARDED REPAIR badge)
+  only while a helper command runs; its fixed width keeps the header layout
+  stable and the smoke layout gate covers it.
+- Make the two Etch "unavailable" repairs work: the initramfs tool and the
+  graphical-login tool. The legacy helper gains a guarded plain-chroot
+  fallback (`legacy_chroot`): on BIOS-only hosts there are no EFI firmware
+  variables to isolate, so the host initramfs/GRUB/display-manager stages run
+  through a plain `chroot` with the existing mount/preflight discipline
+  (mapper/crypttab preflight, trial builds, backups and session unmount
+  cleanup all unchanged) and `Legacy feature host-maintenance:` now reports
+  `available` instead of `unshare is not installed in the recovery
+  environment`; an EFI host keeps the fail-closed unshare guard, and
+  `shell`/`host-shell` keep their strict timeout/unshare gates. The display
+  capability is now probed for legacy SysV targets: a configured
+  `/etc/X11/default-display-manager` entry (kdm/gdm/xdm/...) with an
+  executable binary and an init script emits `Repair tool display: available`
+  plus a `legacy SysV:` evidence line, and a new guarded `display-manager`
+  stage (host scope; dispatched through `host-repair`) restores the entry and
+  the missing runlevel S-symlink with a backup and rollback, never starting
+  the GUI or touching unrelated services. The GUI's display tool row is now
+  runnable ("Restore Graphical Login", stage `display-manager`, host-only:
+  the offline target form stays disabled with the host-scope reason and the
+  tool stays out of the six-stage Full Repair plan). `unshare` remains a
+  displayed-missing capability row whose note documents the fallback. The
+  contract/smoke/parser tests cover the fallback gates, the display probe and
+  repair (entry restore, symlink creation, refuse-on-missing-binary and
+  rollback) and the updated Etch evidence fixture.
+- Finish the legacy Qt3 GUI parity round (cycle 4a). The Repair page now keeps
+  the **Full Repair plan** frame and the **Individual repair tools** splitter
+  in a draggable vertical splitter (like the modern page), the repair result
+  popup follows the Settings **Wrap long log lines** toggle while staying
+  monospace, and every section title expands horizontally with `Qt::AlignLeft`
+  so its text starts at the same left edge as the frame content below it (the
+  smoke locks this in with a per-title left-edge geometry probe). The Logs tab
+  replaces the all/errors filter with the modern 1:1 kind filter (**All
+  entries** / **Diagnostics** / **Repairs** / **File system repair** /
+  **Package repair** / **File copy** / the 16 diagnostic section titles):
+  every register entry is tagged at capture time — lines while a diagnostic
+  runs carry the section key from the stream's `Diagnostic: <key>` markers,
+  lines while a repair runs carry the helper stage (the Full Repair run
+  carries its stage set), fs-inspect maps to File system repair and
+  fix-broken/dpkg-configure/apt-update/apt-upgrade map to Package repair, and
+  File copy stays for the 1:1 order with no lines in this frontend; Save As
+  always writes every entry. **Save As...** and **Clear Register** moved into
+  the top row right of the **Application log** title, above the search row.
+  The About tab is gone (Help -> **About Boot Bitch** opens a rich-text
+  dialog with the modern heading **Boot Bitch <version>** and **Developer:
+  CaptainMorgan12** and a legacy-adapted guarded-repair description), the
+  tab count drops to seven, and the legacy window/app icon is now the real
+  Boot Bitch artwork (the `make-icons.py` script resizes the modern master
+  PNG with LANCZOS into the 16/22/32/48 shipped sizes and fails fast when the
+  master is missing). Settings -> **Host capabilities and dependencies**
+  mirrors the modern structure: Distribution / Package manager family /
+  adapted authorization-support summary labels, the 6-column **Feature |
+  Command | Scope | Status | Suggested package | Notes** table with the modern
+  23 probe rows (read-only PATH searches, never executed) plus the legacy
+  `Process namespace isolation / unshare` row, **Refresh Capabilities** and
+  the disabled **Install Missing Support...** button with the modern tooltip.
+  The smoke controls/layout gates cover the new splitter, the capability
+  table, the 1:1 filter combo and the section-title left edge; the contract
+  test asserts the seven tabs, the About-tab absence, the filter/table/icon
+  markers and the regenerated icon files.
 - Rebuild the legacy Qt3 Repair tab to mirror the modern page and fix the
   clipped section titles. The Repair tab now opens with the modern plan
   paragraph, then the **Full Repair plan** section (selected-stage count, the

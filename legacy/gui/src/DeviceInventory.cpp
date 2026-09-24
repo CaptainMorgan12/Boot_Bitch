@@ -422,6 +422,52 @@ std::map<std::string, MountRecord> parseProcMounts(const std::string &text)
     return mounts;
 }
 
+// Comma-joined distinct mount targets per source (primary first), for the
+// details panel's Mounts cell.  The primary target mirrors parseProcMounts'
+// first-wins rule (the first entry for a source is the real mount); later
+// distinct targets (bind mounts) are appended.  /proc/mounts escapes spaces
+// as \040, so a ", " join cannot collide with a real target.
+std::map<std::string, std::string> parseMountTargets(const std::string &text)
+{
+    std::map<std::string, std::string> targets;
+    std::istringstream stream(text);
+    std::string line;
+    while (std::getline(stream, line)) {
+        const std::vector<std::string> fields = splitWhitespace(line);
+        if (fields.size() < 4) {
+            continue;
+        }
+        const std::string &source = fields[0];
+        const std::string &target = fields[1];
+        std::map<std::string, std::string>::iterator it = targets.find(source);
+        if (it == targets.end()) {
+            targets[source] = target;
+            continue;
+        }
+        const std::string &joined = it->second;
+        bool seen = false;
+        std::string::size_type pos = 0;
+        while (pos <= joined.size()) {
+            const std::string::size_type comma = joined.find(", ", pos);
+            const std::string part = joined.substr(
+                pos, comma == std::string::npos ? std::string::npos
+                                                : comma - pos);
+            if (part == target) {
+                seen = true;
+                break;
+            }
+            if (comma == std::string::npos) {
+                break;
+            }
+            pos = comma + 2;
+        }
+        if (!seen) {
+            targets[source] = joined + ", " + target;
+        }
+    }
+    return targets;
+}
+
 std::map<std::string, std::string> parseProcSwaps(const std::string &text)
 {
     std::map<std::string, std::string> swaps;
@@ -551,7 +597,8 @@ std::vector<DeviceRow> buildDeviceRows(
     const std::map<std::string, std::string> &mapperLinks,
     const std::map<std::string, std::string> &uuidByPath,
     const std::map<std::string, std::string> &labelByPath,
-    const std::map<std::string, std::string> &probedFsByPath)
+    const std::map<std::string, std::string> &probedFsByPath,
+    const std::map<std::string, std::string> &mountTargetsByPath)
 {
     std::vector<DeviceRow> rows;
     std::map<std::string, bool> diskSet;
@@ -607,6 +654,13 @@ std::vector<DeviceRow> buildDeviceRows(
         if (probed != probedFsByPath.end()) {
             row.probedFstype = probed->second;
         }
+        const std::map<std::string, std::string>::const_iterator targets =
+            mountTargetsByPath.find(row.path);
+        if (targets != mountTargetsByPath.end()) {
+            row.mountpoints = targets->second;
+        } else if (row.mountpoint == "[swap]") {
+            row.mountpoints = "[swap]";
+        }
         row.encrypted = looksLikeLuks(row.fstype) || looksLikeLuks(row.probedFstype);
         rows.push_back(row);
     }
@@ -644,6 +698,13 @@ std::vector<DeviceRow> buildDeviceRows(
             probedFsByPath.find(row.path);
         if (probed != probedFsByPath.end()) {
             row.probedFstype = probed->second;
+        }
+        const std::map<std::string, std::string>::const_iterator targets =
+            mountTargetsByPath.find(row.path);
+        if (targets != mountTargetsByPath.end()) {
+            row.mountpoints = targets->second;
+        } else if (row.mountpoint == "[swap]") {
+            row.mountpoints = "[swap]";
         }
         row.encrypted = looksLikeLuks(row.fstype) || looksLikeLuks(row.probedFstype);
         rows.push_back(row);
@@ -691,8 +752,10 @@ std::vector<DeviceRow> scanDevices()
         partitions = parseProcPartitions(content);
     }
     std::map<std::string, MountRecord> mounts;
+    std::map<std::string, std::string> mountTargets;
     if (readFile("/proc/mounts", &content)) {
         mounts = parseProcMounts(content);
+        mountTargets = parseMountTargets(content);
     }
     std::map<std::string, std::string> swaps;
     if (readFile("/proc/swaps", &content)) {
@@ -808,7 +871,8 @@ std::vector<DeviceRow> scanDevices()
         }
     }
     return buildDeviceRows(partitions, mounts, swaps, diskNames, attributes,
-                           mapperLinks, uuidByPath, labelByPath, probedFsByPath);
+                           mapperLinks, uuidByPath, labelByPath, probedFsByPath,
+                           mountTargets);
 }
 
 bool detectRunningHostTarget(std::string *rootPath, std::string *diskPath)

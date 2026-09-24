@@ -95,6 +95,7 @@ bool legacyFeatureIsAvailable(const std::string &state, std::string *reason);
 // True for "unchanged" and "unchanged|<reason>" (proven no-op).
 bool changeStatusIsUnchanged(const std::string &status);
 
+
 // LUKS unlock result helpers (legacy helper `unlock` command):
 //   `UNLOCKED=<mapper-path>` on success (the mapper path is returned, "" when
 //   the transcript carries no such line);

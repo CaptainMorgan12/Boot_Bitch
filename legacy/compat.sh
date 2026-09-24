@@ -182,8 +182,15 @@ legacy_root_evidence_present()
     local dir="$1"
     [[ -n "$dir" ]] || return 1
     [[ -f "$dir/etc/os-release" ]] && return 0
+    # Etch-era installed roots can split /var and /usr onto separate LVs
+    # (the etch2 split-LV layout keeps the dpkg database on the debian-var
+    # LV), so the dpkg status pair alone is not reliable evidence.  Accept
+    # /etc/debian_version paired with ANY ONE of the dpkg status files or the
+    # /etc-resident release files - every one of them lives on the root even
+    # with separate /var and /usr mounts.
     if [[ -f "$dir/etc/debian_version" ]]; then
-        [[ -f "$dir/var/lib/dpkg/status" || -f "$dir/var/lib/dpkg/status-old" ]] && return 0
+        [[ -f "$dir/var/lib/dpkg/status" || -f "$dir/var/lib/dpkg/status-old" \
+            || -f "$dir/etc/apt/sources.list" || -f "$dir/etc/inittab" ]] && return 0
     fi
     if [[ -f "$dir/etc/redhat-release" ]]; then
         [[ -d "$dir/var/lib/rpm" || -f "$dir/var/lib/rpm/Packages" ]] && return 0
@@ -200,7 +207,7 @@ legacy_root_evidence_label()
     if [[ -f "$dir/etc/os-release" ]]; then
         printf '%s\n' '/etc/os-release'
     elif [[ -f "$dir/etc/debian_version" ]]; then
-        printf '%s\n' '/etc/debian_version + dpkg database'
+        printf '%s\n' '/etc/debian_version + release evidence (split-mount safe)'
     elif [[ -f "$dir/etc/redhat-release" ]]; then
         printf '%s\n' '/etc/redhat-release + rpm database'
     elif [[ -f "$dir/etc/SuSE-release" ]]; then

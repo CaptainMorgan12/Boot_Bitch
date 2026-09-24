@@ -13,9 +13,10 @@
 // commands gated by the cached capability lines, including the guarded
 // GRUB-legacy regeneration, plus the greyed modern-only feature list driven by
 // the helper's `Legacy feature` probes), Chroot Shell / Host Shell and File
-// Copy (greyed with their probe reasons), Logs (streamed helper output with an
-// all/errors filter, a search box and the per-session log list), Settings
-// (read-only configuration plus greyed modern-only options) and About.
+// Copy (greyed with their probe reasons), Logs (streamed helper output with a
+// modern 1:1 kind filter, a search box and the per-session log list) and
+// Settings (read-only configuration plus greyed modern-only options; the Help
+// menu carries the About dialog instead of a tab).
 //
 // The window never reads block devices; all device/target confirmation and
 // every privileged action goes through the helper (QProcess). Device and
@@ -59,15 +60,33 @@ class QGroupBox;
 class QLabel;
 class QLineEdit;
 class QListView;
+class QListViewItem;
 class QPopupMenu;
 class QPushButton;
 class QResizeEvent;
+class QSplitter;
 class QTabWidget;
+class QTable;
 class QTextEdit;
 
 namespace legacy {
 
 class HelperRunner;
+
+// One application-log register entry, tagged at capture time so the Logs
+// filter combo (modern 1:1) can select entries by kind: lines captured while
+// a diagnostic command runs are Diagnostic (with the current section key from
+// the stream's `Diagnostic: <key>` markers), lines captured while a repair
+// action runs are Repair (with the helper stage or the space-separated Full
+// Repair stage set), everything else is Application.
+struct LogEntry {
+    enum Kind { Application = 0, Diagnostic = 1, Repair = 2 };
+    LogEntry() : kind(Application) {}
+    QString text;
+    int kind;
+    QString diagnostic; // diagnostic key for Diagnostic entries
+    QString stages;     // space-separated helper stages for Repair entries
+};
 
 class LegacyMainWindow : public QMainWindow
 {
@@ -121,6 +140,7 @@ private slots:
     void sessionLogSelectionChanged();
     void refreshSessionLogs();
     void toggleLogWrap(bool enabled);
+    void refreshCapabilities();
     void helperLine(const QString &line);
     void helperFinished(bool ok, int exitCode);
     void saveLog();
@@ -139,6 +159,14 @@ private slots:
     void deleteSelectedSessionLog();
     void deviceFilterChanged();
     void autoRefreshToggled(bool enabled);
+    void makeDefault();
+    void fileCopyDirectionChanged();
+    void fileCopyAddFiles();
+    void fileCopyAddFolder();
+    void fileCopyRemoveSelected();
+    void fileCopyClearStaging();
+    void fileCopyPreview();
+    void fileCopyRun();
     void runScheduledAutoRefresh();
     void runSmokeStep();
 
@@ -151,7 +179,6 @@ private:
     QWidget *buildFileCopyTab();
     QWidget *buildLogTab();
     QWidget *buildSettingsTab();
-    QWidget *buildAboutTab();
 
     QPushButton *makeButton(const QString &text, QWidget *parent);
     // Re-applies the font-metric minimum width after a runtime button-text
@@ -185,17 +212,30 @@ private:
                       const QString &rootOverride);
     void selectInventoryRow(const QString &disk);
     void rebuildDeviceList();
+    // Every visible device-tree item (top-level disks then their children),
+    // in traversal order; used by the smoke checks and the auto-size pass.
+    std::vector<QListViewItem *> deviceTreeItems() const;
     bool deviceRowVisible(const DeviceRow &row) const;
     bool rowBelongsToDisk(const DeviceRow &row, const QString &diskPath) const;
     bool diskHasEncryptedRow(const QString &diskPath) const;
     bool diskHasLinuxCandidate(const QString &diskPath) const;
+    // Filesystem label for a whole-disk row: the primary Linux filesystem of
+    // its children plus " + LUKS" when an encrypted child exists (never empty;
+    // "unknown" when nothing is known).
+    QString diskFilesystemSummary(const DeviceRow &row) const;
     void loadLegacySettings();
     void saveLegacySettings();
     void updateStatus();
     void updateActionStates();
+    // B7-4: the structured repair summary block (──────── REPAIR ────────
+    // bracketed, Repair-tagged) appended after every repair command, built
+    // from the parsed `Repair change status` lines.
+    void appendRepairSummaryBlock(const ParsedTranscript &parsed, bool commandOk);
+    // Shows/hides the reserved header busy indicator ("Working...") from
+    // m_running; the fixed slot width keeps the header layout stable.
+    void updateBusyIndicator();
     void updateScopeLabel();
     void updateElevationLabel();
-    void updateCapabilityView();
     void updatePlanView();
     void updateToolDetails();
     int selectedToolIndex() const;
@@ -212,6 +252,10 @@ private:
                           const QString &path);
     void updateLegacyFeatureView();
     void updateFeatureTab(QLabel *label, const char *feature);
+    void updateFileCopyTab();
+    QString fileCopyDirection() const;
+    bool fileCopyReady(QString *reason) const;
+    bool startFileCopyCommand(bool realCopy);
     void updateChrootShellState();
     void updateChrootShellMode();
     void legacyFeatureDisplay(const char *feature, QString *state,
@@ -224,7 +268,7 @@ private:
     void mergeHelperDevices(const ParsedTranscript &parsed);
     void refreshSessionLogList();
     void refreshLogView();
-    bool logLinePassesFilter(const QString &line) const;
+    bool logLinePassesFilter(const LogEntry &entry) const;
     QStringList sessionLogFiles() const;
     QString visibleMapperForDisk(const QString &disk) const;
     void autoDetectHostTarget();
@@ -234,7 +278,9 @@ private:
     bool startCommand(const QStringList &args, bool diagnostic,
                       const QString &label, bool unlock = false,
                       bool config = false, bool shell = false,
-                      bool quiet = false);
+                      bool quiet = false,
+                      const QString &logSection = QString::null,
+                      const QString &logStages = QString::null);
     void runDiagnosticsInternal(bool quiet);
     void maybeAutoRefreshDiagnostics(const QString &reason);
     void reportChangeStatuses(const ParsedTranscript &parsed);
@@ -276,6 +322,7 @@ private:
     QLabel *m_headerTitle;
     QLabel *m_headerSubtitle;
     QLabel *m_headerBadge;
+    QLabel *m_busyLabel;
     QLabel *m_systemsHeading;
     QLabel *m_targetsHeading;
     QLabel *m_repairHeading;
@@ -313,11 +360,8 @@ private:
     QLabel *m_settingsVersionLabel;
     QLabel *m_capDistributionLabel;
     QLabel *m_capPackageManagerLabel;
-    QLabel *m_capServiceLabel;
-    QLabel *m_capDisplayLabel;
-    QLabel *m_capInitramfsLabel;
-    QLabel *m_capBootloaderLabel;
-    QLabel *m_capLoggingLabel;
+    QLabel *m_capAuthLabel;
+    QTable *m_capabilityTable;
     QPushButton *m_scanButton;
     QPushButton *m_diagnosticsButton;
     QPushButton *m_runDiagnosticButton;
@@ -340,6 +384,19 @@ private:
     QPushButton *m_addNoteButton;
     QPushButton *m_deleteSessionLogButton;
     QPushButton *m_refreshCapabilitiesButton;
+    QPushButton *m_installSupportButton;
+    QPushButton *m_hostDefaultButton;
+    QPushButton *m_fileCopyAddFilesButton;
+    QPushButton *m_fileCopyAddFolderButton;
+    QPushButton *m_fileCopyRemoveButton;
+    QPushButton *m_fileCopyClearButton;
+    QPushButton *m_fileCopyPreviewButton;
+    QPushButton *m_fileCopyRunButton;
+    QComboBox *m_fileCopyDirectionCombo;
+    QListView *m_fileCopySourceList;
+    QLineEdit *m_fileCopyDestinationEdit;
+    QSplitter *m_systemsSplitter;
+    QSplitter *m_repairVerticalSplitter;
     QGroupBox *m_chrootGroup;
     QGroupBox *m_fileCopyGroup;
     QWidget *m_chrootTab;
@@ -378,8 +435,19 @@ private:
     QString m_committedDisk;
     QString m_committedRoot;
     QString m_priorLogPath;
-    QStringList m_logLines;
+    std::vector<LogEntry> m_logEntries;
     QStringList m_priorLogLines;
+    QStringList m_fileCopySources;
+    // Live tagging context for the next appendLog: the kind and the section
+    // key/stage set of the helper command currently streaming (Application
+    // outside a command). helperLine() updates the diagnostic key when the
+    // stream carries a `Diagnostic: <key>` marker.
+    int m_logEntryKind;
+    QString m_logEntryDiagnostic;
+    QString m_logEntryStages;
+    // The helper stages the running repair command carries, for the B7-4
+    // repair summary block (empty for non-repair commands).
+    QStringList m_activeRepairStages;
 
     bool m_updatingSelection;
     bool m_running;

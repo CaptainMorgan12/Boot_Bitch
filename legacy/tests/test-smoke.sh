@@ -112,7 +112,27 @@ TARGET_ROOT="$FIXTURE/empty"
 grep -q '/etc/debian_version' "$FIXTURE/refusal.txt" \
     || fail "refusal does not name the probed legacy evidence"
 TARGET_ROOT="$FIXTURE"
-pass "legacy root confirmation and os-release-less refusal"
+
+# --- split-mount root evidence (etch2 split-LV layout) ----------------------
+# /etc/debian_version paired with any ONE of the dpkg status pair, the APT
+# sources list or /etc/inittab must confirm the root even when /var (and the
+# dpkg database) live on a separate LV; /etc/debian_version alone must not.
+mkdir -p "$FIXTURE/split-root/etc" "$FIXTURE/split-root/etc/apt"
+printf '4.0\n' > "$FIXTURE/split-root/etc/debian_version"
+printf 'id:2:initdefault:\n' > "$FIXTURE/split-root/etc/inittab"
+legacy_root_evidence_present "$FIXTURE/split-root" \
+    || fail "split-mount root with /etc/inittab evidence was refused"
+legacy_root_evidence_label "$FIXTURE/split-root" | grep -q 'split-mount safe' \
+    || fail "legacy_root_evidence_label lost the split-mount-safe wording"
+rm -f "$FIXTURE/split-root/etc/inittab"
+printf 'deb http://archive.debian.org/debian etch main\n' > "$FIXTURE/split-root/etc/apt/sources.list"
+legacy_root_evidence_present "$FIXTURE/split-root" \
+    || fail "split-mount root with the APT sources list was refused"
+rm -rf "$FIXTURE/split-root/etc/apt"
+legacy_root_evidence_present "$FIXTURE/split-root" \
+    && fail "debian_version alone must not confirm a root"
+rm -rf "$FIXTURE/split-root"
+pass "split-mount root evidence (dpkg status / sources.list / inittab)"
 
 # --- dpkg ${db:Status-*} fallback (dpkg 1.13 has no virtual fields) ----------
 run_selected_chroot()
@@ -227,13 +247,147 @@ for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display ini
 done
 grep -q '^Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available$' \
     "$FIXTURE/diagnose.txt" || fail "diagnose did not gate EFI off with the BIOS reason"
-grep -q '^Repair tool bootstack: unavailable|' "$FIXTURE/diagnose.txt" \
-    || fail "diagnose did not gate boot-stack off"
+grep -q '^Repair tool bootstack: available$' "$FIXTURE/diagnose.txt" \
+    || fail "diagnose did not enable the legacy boot-stack pass for the GRUB-legacy fixture"
 grep -q '^Repair tool grub: available$' "$FIXTURE/diagnose.txt" \
     || fail "diagnose did not enable the GRUB legacy branch"
 grep -q '^Legacy feature file-copy: ' "$FIXTURE/diagnose.txt" \
     || fail "diagnose did not report legacy feature gating"
 grep -q '^Diagnostic: luks$' "$FIXTURE/diagnose.txt" || fail "diagnose all skipped a section"
 pass "read-only validate and diagnose against the fixture root"
+
+# --- legacy SysV display-manager probe + guarded host repair -----------------
+mkdir -p "$FIXTURE/etc/X11" "$FIXTURE/etc/init.d" "$FIXTURE/etc/rc2.d" "$FIXTURE/usr/bin"
+printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+: > "$FIXTURE/usr/bin/kdm"
+chmod +x "$FIXTURE/usr/bin/kdm"
+: > "$FIXTURE/etc/init.d/kdm"
+printf 'id:2:initdefault:\n' > "$FIXTURE/etc/inittab"
+
+RUNNING_HOST_MODE=1
+[[ "$(legacy_sysv_display_manager_entry)" == /usr/bin/kdm ]] \
+    || fail "legacy display entry probe: $(legacy_sysv_display_manager_entry)"
+legacy_display_manager_probe | grep -q 'sysvinit display manager kdm' \
+    || fail "legacy display probe evidence line"
+display_unavailable_reason || fail "display capability refused the legacy SysV host"
+repair_capability_evidence display | grep -q 'legacy SysV: sysvinit display manager kdm' \
+    || fail "display capability evidence line"
+RUNNING_HOST_MODE=0
+reason="$(display_unavailable_reason)" \
+    && fail "display capability must stay a host-scope stage for the offline scope"
+[[ "$reason" == *'host-scope stage'* ]] || fail "offline display reason: $reason"
+RUNNING_HOST_MODE=1
+
+# Repair: the missing S-symlink is restored (the entry stays), the display
+# manager is never started, and a second run reports unchanged.
+rm -f "$FIXTURE/etc/rc2.d/S99kdm"
+legacy_display_manager_repair > "$FIXTURE/display-repair.txt"
+[[ "$(head -n1 "$FIXTURE/etc/X11/default-display-manager")" == /usr/bin/kdm ]] \
+    || fail "display repair changed the configured entry"
+[[ -L "$FIXTURE/etc/rc2.d/S99kdm" ]] || fail "display repair did not create the S-symlink"
+[[ "$(readlink "$FIXTURE/etc/rc2.d/S99kdm")" == ../init.d/kdm ]] \
+    || fail "display repair S-symlink target: $(readlink "$FIXTURE/etc/rc2.d/S99kdm")"
+grep -q 'Repair change status display: changed' "$FIXTURE/display-repair.txt" \
+    || fail "display repair did not report its change status"
+display_out="$(legacy_display_manager_repair)"
+printf '%s\n' "$display_out" | grep -q 'Repair change status display: unchanged' \
+    || fail "idempotent display repair did not report unchanged"
+
+# Refuse (fail closed): a configured entry whose binary is missing is never
+# repaired and nothing is written.
+printf '/usr/bin/xdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+( legacy_display_manager_repair ) >/dev/null 2>&1 \
+    && fail "display repair accepted a configured entry with a missing binary"
+printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+
+# Rollback: a repair whose runlevel write fails restores the entry backup
+# (the entry content differs from the configured token, so it is rewritten
+# first) and leaves no S-symlink behind.
+printf '/usr/bin/kdm /usr/bin/xdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+rm -f "$FIXTURE/etc/rc2.d/S99kdm"
+chmod 555 "$FIXTURE/etc/rc2.d"
+( legacy_display_manager_repair ) >/dev/null 2>&1 \
+    && fail "display repair accepted an uncreatable runlevel directory"
+chmod 755 "$FIXTURE/etc/rc2.d"
+[[ "$(head -n1 "$FIXTURE/etc/X11/default-display-manager")" == '/usr/bin/kdm /usr/bin/xdm' ]] \
+    || fail "display repair rollback did not restore the entry backup"
+[[ ! -L "$FIXTURE/etc/rc2.d/S99kdm" ]] || fail "display repair rollback left the S-symlink behind"
+printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+pass "legacy SysV display-manager probe, host repair and rollback"
+
+# --- guarded plain-chroot fallback (B7-5 shell/host-shell) -------------------
+# On a BIOS-only recovery environment (BOOT_REPAIR_LEGACY_HOST_EFI=no, the
+# read-only test seam for the firmware probe) the fallback covers
+# host-maintenance and host-shell; the offline shell runs through the guarded
+# plain chroot with chroot alone.
+mkdir -p "$FIXTURE/chroot-only"
+ln -s "$(command -v chroot)" "$FIXTURE/chroot-only/chroot"
+BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-maintenance \
+    || fail "host-maintenance must be available through the plain-chroot fallback"
+BOOT_REPAIR_LEGACY_HOST_EFI=no PATH="$FIXTURE/chroot-only" legacy_feature_reason host-shell \
+    || fail "host-shell must be available on a BIOS-only host"
+PATH="$FIXTURE/chroot-only" legacy_feature_reason shell \
+    || fail "shell must be available through the guarded plain chroot"
+PATH="$FIXTURE/chroot-only" legacy_feature_reason file-copy >/dev/null 2>&1 \
+    && fail "file-copy must stay unavailable without cp/cmp/find on PATH"
+pass "guarded plain-chroot fallback gates (shell, host-shell, host-maintenance)"
+
+# --- legacy boot-stack availability (B7-7) -----------------------------------
+# The fixture is a GRUB-legacy target with initramfs-tools: the legacy
+# boot-stack pass is available with the legacy evidence line.
+bootstack_unavailable_reason || fail "bootstack capability refused the GRUB-legacy fixture"
+repair_capability_evidence bootstack | grep -q 'legacy boot-stack' \
+    || fail "bootstack capability evidence: $(repair_capability_evidence bootstack)"
+pass "legacy boot-stack capability (GRUB-legacy pass)"
+
+# --- legacy file-copy backend (B7-6) -----------------------------------------
+# cp -a + chown --reference + cmp: a small legacy copy round-trip inside the
+# fixture (no VM, no block device).
+mkdir -p "$FIXTURE/copy-src" "$FIXTURE/copy-dst"
+printf 'hello legacy copy\n' > "$FIXTURE/copy-src/a.txt"
+printf 'second file\n' > "$FIXTURE/copy-src/b.txt"
+(
+    legacy_run_copy_item copy "$FIXTURE/copy-src" "$FIXTURE/copy-dst" ""
+) || fail "legacy cp -a copy failed"
+[[ "$(legacy_verify_copy_item "$FIXTURE/copy-src" "$FIXTURE/copy-dst" | tail -1)" == 2 ]] \
+    || fail "legacy cmp verification did not report 2 verified files"
+cmp -s "$FIXTURE/copy-src/a.txt" "$FIXTURE/copy-dst/copy-src/a.txt" \
+    || fail "legacy copy content mismatch"
+(
+    legacy_run_copy_item preview "$FIXTURE/copy-src" "$FIXTURE/copy-dst" ""
+) || fail "legacy copy preview failed"
+[[ -e "$FIXTURE/copy-dst/copy-src" ]] || fail "legacy copy preview wrote the destination"
+pass "legacy file-copy backend (cp -a, cmp verification, preview is read-only)"
+
+# --- legacy Make Default (B7-7 host-default) ---------------------------------
+mkdir -p "$FIXTURE/etc" "$FIXTURE/etc/init.d"
+RUNNING_HOST_MODE=1
+host_default_unavailable_reason || fail "host-default capability refused the GRUB-legacy host fixture"
+cp -a "$FIXTURE/boot/grub/menu.lst" "$FIXTURE/menu.lst.predefault"
+prepare_running_host() { RUNNING_HOST_MODE=1; TARGET_ROOT="$FIXTURE"; TARGET_DISK=/dev/null; ROOT_DEVICE=/dev/null; }
+profile_target_backends() { :; }
+repair_file_fingerprint() { sha256sum "$1" 2>/dev/null | awk '{print $1}'; }
+prepare_host_command_guard() { HOST_COMMAND_GUARD=0; HOST_COMMAND_GUARD_DIR=""; }
+(
+    legacy_host_default_repair /dev/null /dev/null
+) || fail "legacy_host_default_repair failed on the fixture"
+grep -qE '^[[:space:]]*default[[:space:]]+0([[:space:]]|$)' "$FIXTURE/boot/grub/menu.lst" \
+    || fail "Make Default did not set the canonical default directive"
+default_out="$(legacy_host_default_repair /dev/null /dev/null)"
+printf '%s\n' "$default_out" | grep -q 'Repair change status host-default: unchanged' \
+    || fail "idempotent Make Default did not report unchanged"
+# Fail closed: an unwritable menu without a default directive must refuse and
+# leave the file byte-identical.
+cp -a "$FIXTURE/boot/grub/menu.lst" "$FIXTURE/menu.lst.good"
+grep -v '^default ' "$FIXTURE/boot/grub/menu.lst" > "$FIXTURE/menu.lst.nodefault" || true
+cp "$FIXTURE/menu.lst.nodefault" "$FIXTURE/boot/grub/menu.lst"
+chmod 444 "$FIXTURE/boot/grub/menu.lst"
+( legacy_host_default_repair /dev/null /dev/null ) >/dev/null 2>&1 \
+    && fail "Make Default accepted an unwritable menu.lst"
+chmod 644 "$FIXTURE/boot/grub/menu.lst"
+cmp -s "$FIXTURE/boot/grub/menu.lst" "$FIXTURE/menu.lst.nodefault" \
+    || fail "failed Make Default modified the menu"
+RUNNING_HOST_MODE=0
+pass "legacy Make Default (canonical entry, idempotent, fail-closed)"
 
 echo "legacy helper smoke: PASS"
