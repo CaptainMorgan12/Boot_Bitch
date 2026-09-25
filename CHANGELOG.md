@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Cycle 15 (modern parity): Select Target now mirrors the modern
+  diskIsSelectableRepairTarget predicate — enabled for every selectable
+  non-host, non-optical drive including blank/non-Linux data disks (a locked
+  LUKS container without a visible Linux filesystem stays unlock-only), the
+  committed drive keeps the button enabled with the committed tooltip, and a
+  root-less commit stores the disk itself so diagnostics fail closed with the
+  helper's reason; the protected running host is excluded from the candidate
+  tree; the status-bar scope text is transient (timeout) plus the transient
+  "Repair drive selected: …" commit message; the Repair plan buttons reflow to
+  their own row and the tool title can shrink so "Reconcile Boot Stack" never
+  clips at the minimum width; the (i) buttons hug their page titles; the
+  drive-row details roll up the UUID (unlocked root > LUKS container > Linux
+  root partition).
+
 - Cycle 14 UI fixes: the (i) help affordance is now a frameless hyperlink
   label beside each page title that opens a width-constrained read-only info
   dialog on click (no tooltip-only behavior); the File Copy sections are

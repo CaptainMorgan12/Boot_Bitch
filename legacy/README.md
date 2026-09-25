@@ -56,7 +56,12 @@ mapped root), the Authorize affordance shows only in the deferred state (Systems
 the Repair elevation section is gone, cycle 13); every page title carries an
 (i) help popup with the page's informational text; the Logs page is titled
 "Application log"; the capability table sorts by header click; Select Target
-switches between drives and Unlock stays available in Host Maintenance for
+matches the modern diskIsSelectableRepairTarget predicate (every
+non-host, non-optical drive is selectable — root-less data disks included —
+with the committed drive keeping the committed tooltip), the running host is
+excluded from the candidate tree, the status bar keeps only transient
+messages, and Select Target switches between drives while Unlock stays
+available in Host Maintenance for
 offline drives; the Details button fills the details pane with the protected
 host's facts; cycle 14: the (i) labels open real info dialogs, the File Copy
 groups live inside the vertical splitter, the badges are frameless, the

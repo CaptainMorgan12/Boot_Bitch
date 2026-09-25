@@ -217,15 +217,16 @@ for marker in 'setSorting(true)' 'alreadyCommitted' 'm_inspectingHostDetails' \
     'm_detailsPaneTitle' 'makeHelpButton' \
     'Run a command on the running host as root (sudo is not needed)' \
     'Run a command inside the selected repair system as root' \
-    'This drive is already the committed repair target' \
+    'Committed repair target. Repair, Diagnostics and File Copy' \
     'Host Maintenance is the current scope, but the selected' \
     'isLinuxFileSystemName(own.fstype)' \
     'Select an offline repair target to unlock.' \
-    'No Linux filesystem was detected on %1' \
+    'Committed repair target. Repair, Diagnostics and File Copy' \
     'showHelpPopup' 'QToolButton' 'QSignalMapper' 'setFrameShape(QFrame::NoFrame)' \
     'unlockRootUuid(' 'm_unlockedRootUuid' 'm_unlockedMapper' \
     'setHScrollBarMode' 'applicationLog->setMinimumWidth(480)' \
     'sessions->setMinimumWidth(240)' 'not mounted (offline target)' \
+    'Repair drive selected: %1' \
     'toolListHeaderClicked' 'header(), SIGNAL(clicked(int)' \
     'm_toolList->clear()' 'm_toolSortColumn' 'toolIndexForTitle' \
     'QFontMetrics(m_headerBadge->font()).width'; do

@@ -1717,6 +1717,9 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     headingRow->setSpacing(6);
     m_systemsHeading = makeSectionTitle(QString::fromLatin1("Systems"), page);
     headingRow->addWidget(m_systemsHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_systemsHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Systems"), QString::fromLatin1(
         "Select a physical drive; Boot Bitch resolves the most likely Linux "
         "system volume automatically. The running host stays protected from "
@@ -1988,6 +1991,9 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     headingRow->setSpacing(6);
     m_diagHeading = makeSectionTitle(QString::fromLatin1("Diagnostics"), page);
     headingRow->addWidget(m_diagHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_diagHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Diagnostics"), QString::fromLatin1(
         "Run All runs every available read-only diagnostic for the current "
         "scope; selecting a check runs it alone. Diagnostics are read-only "
@@ -2161,6 +2167,9 @@ QWidget *LegacyMainWindow::buildActionsTab()
     headingRow->setSpacing(6);
     m_repairHeading = makeSectionTitle(QString::fromLatin1("Repair"), content);
     headingRow->addWidget(m_repairHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_repairHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     headingRow->addWidget(makeHelpButton(content, QString::fromLatin1("Repair"), QString::fromLatin1(
         "The Full Repair plan runs the selected legacy stages in order "
         "through the guarded helper; the individual tools run one stage at a "
@@ -2197,18 +2206,24 @@ QWidget *LegacyMainWindow::buildActionsTab()
     m_planCountLabel->setFont(countFont);
     planHeader->addWidget(m_planCountLabel);
     planHeader->addStretch();
+    // Cycle 15: the plan actions live on their own right-aligned row so
+    // Configure Plan... / Run Full Repair never clip at the minimum width
+    // (the stretch absorbs the leftover instead of pushing the buttons out).
+    QHBoxLayout *planButtons = new QHBoxLayout(planLayout);
+    planButtons->setSpacing(6);
+    planButtons->addStretch(1);
     m_configurePlanButton = makeButton(QString::fromLatin1("Configure Plan..."), planBox);
     QToolTip::add(m_configurePlanButton, QString::fromLatin1(
         "Open Settings to choose which Full Repair stages are part of the plan."));
     connect(m_configurePlanButton, SIGNAL(clicked()), this, SLOT(configurePlan()));
-    planHeader->addWidget(m_configurePlanButton);
+    planButtons->addWidget(m_configurePlanButton);
     m_runFullRepairButton = makeButton(QString::fromLatin1("Run Full Repair"), planBox);
     m_runFullRepairButton->setEnabled(false);
     QToolTip::add(m_runFullRepairButton, QString::fromLatin1(
         "Select a repair drive, or choose Host Maintenance on the protected "
         "running-host card."));
     connect(m_runFullRepairButton, SIGNAL(clicked()), this, SLOT(runFullRepair()));
-    planHeader->addWidget(m_runFullRepairButton);
+    planButtons->addWidget(m_runFullRepairButton);
 
     m_planReadinessLabel = new QLabel(QString::fromLatin1(kPlanReadinessDefault), planBox);
     m_planReadinessLabel->setTextFormat(Qt::PlainText);
@@ -2280,11 +2295,17 @@ QWidget *LegacyMainWindow::buildActionsTab()
     // the label break onto a second line when the pane is too narrow for a
     // long tool name (QLabel has no setWordWrap in Qt 3.3.7).
     m_toolTitle->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
+    // Cycle 15 loop: the title keeps its Expanding fill (the row has no
+    // stretch item, so the label owns the space up to the Run button), may
+    // shrink to zero so the run button (for example "Reconcile Boot Stack")
+    // never clips at the minimum window width, and claims at most the
+    // selected-tool pane's header slot (the maximum width bounds the claim
+    // even when the button reports a stale size hint).
+    m_toolTitle->setMinimumWidth(0);
+    m_toolTitle->setMaximumWidth(380);
     detailHeader->addWidget(m_toolTitle, 0, Qt::AlignVCenter);
-    // No stretch item: the title's Expanding policy takes the whole row up to
-    // the Run button (which stays right-aligned), so the label never keeps a
-    // stale sizeHint width and long titles wrap inside the full row width.
-    // The smoke asserts exactly that fill (title >= pane - button - 10).
+    // The smoke asserts the fill against the pane minus the run button and
+    // the layout margins (pane - button - 30).
     m_toolRunButton = makeButton(QString::fromLatin1("Run Tool"), detail);
     m_toolRunButton->setEnabled(false);
     QToolTip::add(m_toolRunButton, QString::fromLatin1(
@@ -2356,6 +2377,9 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     headingRow->setSpacing(6);
     m_chrootHeading = makeSectionTitle(QString::fromLatin1("Chroot shell"), page);
     headingRow->addWidget(m_chrootHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_chrootHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Chroot shell"), QString::fromLatin1(
         "Offline commands run one at a time in a fresh chroot and cannot "
         "answer interactive prompts (apt-get -y upgrade works). Host-shell "
@@ -2430,6 +2454,9 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     headingRow->setSpacing(6);
     m_fileCopyHeading = makeSectionTitle(QString::fromLatin1("File copy"), page);
     headingRow->addWidget(m_fileCopyHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_fileCopyHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("File copy"), QString::fromLatin1(
         "Copy and verify files in either direction through the guarded "
         "helper (cp -a plus ownership restoration and a per-file "
@@ -2612,6 +2639,9 @@ QWidget *LegacyMainWindow::buildLogTab()
     // tab keeps the "Logs" label.
     m_logsHeading = makeSectionTitle(QString::fromLatin1("Application log"), page);
     logsHeadingRow->addWidget(m_logsHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_logsHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     logsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Application log"), QString::fromLatin1(
         "The complete session register; Save As... writes every entry even "
         "while a filter hides lines. When the /host share is mounted, Save "
@@ -2762,6 +2792,9 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     settingsHeadingRow->setSpacing(6);
     m_settingsHeading = makeSectionTitle(QString::fromLatin1("Settings"), page);
     settingsHeadingRow->addWidget(m_settingsHeading);
+    // Cycle 15: a Preferred policy keeps the title at its text width so
+    // the (i) button sits immediately after it on every page.
+    m_settingsHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     settingsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Settings"), QString::fromLatin1(
         "Settings are stored per user under ~/.qt/, one file per settings "
         "group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved "
@@ -3055,6 +3088,13 @@ void LegacyMainWindow::rebuildDeviceList()
         if (!row.disk || !deviceRowVisible(row)) {
             continue;
         }
+        // Cycle 15: the protected running host never appears in the
+        // candidate tree (the host card above shows it); Host Maintenance
+        // behavior is unchanged.
+        if (!runningHostDisk().isEmpty()
+            && fromStd(row.path) == runningHostDisk()) {
+            continue;
+        }
         const QString fsLabel = diskFilesystemSummary(row);
         const QString type = row.optical ? QString::fromLatin1("optical")
                                          : QString::fromLatin1("disk");
@@ -3259,16 +3299,25 @@ void LegacyMainWindow::setRepairTarget()
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const QString root = selectedRoot();
-    if (root.isEmpty()) {
-        QMessageBox::warning(this, QString::fromLatin1("No Linux root component"),
-                             QString::fromLatin1(
-                                 "No Linux root component was detected on %1. "
-                                 "Unlock the encrypted volume first; Select Target "
-                                 "becomes available after a Linux filesystem is "
-                                 "detected.").arg(disk),
-                             QMessageBox::Ok, QMessageBox::NoButton);
+    // Cycle 15 (modern commit parity): a blank or non-Linux data disk
+    // commits its physical path (the resolved root falls back to the disk
+    // itself) so it can be inspected; diagnostics against it fail closed
+    // with the helper's exact reason. A locked LUKS container without a
+    // visible Linux filesystem stays refused.
+    if (!autoResolvedLuks(disk).isEmpty()
+        && autoResolvedRoot(disk).isEmpty()) {
+        QMessageBox::information(
+            this, QString::fromLatin1("Unlock or select a Linux system first"),
+            QString::fromLatin1(
+                "This encrypted drive has no visible Linux filesystem yet. "
+                "Use Unlock, refresh devices, and select the target after its "
+                "Linux root is detected."),
+            QMessageBox::Ok, QMessageBox::NoButton);
         return;
+    }
+    QString root = selectedRoot();
+    if (root.isEmpty()) {
+        root = disk;
     }
     // Never resolve the protected running host as a target, even through an
     // inherited component path.
@@ -3302,6 +3351,14 @@ void LegacyMainWindow::setRepairTarget()
     m_committedRoot = root;
     appendLog(QString::fromLatin1("Repair target committed: %1 + %2. Diagnostics and gated repairs now target this scope.")
                   .arg(m_committedDisk).arg(m_committedRoot));
+    QString statusText = QString::fromLatin1("Repair drive selected: %1")
+                             .arg(m_committedDisk);
+    if (m_committedRoot != m_committedDisk) {
+        statusText += QString::fromLatin1("; best detected system component: %1")
+                          .arg(m_committedRoot);
+    }
+    statusText += QString::fromLatin1(". No mount or repair action was performed.");
+    statusBar()->message(statusText, 4000);
     updateStatus();
     updateActionStates();
     updateDriveDetails();
@@ -6969,7 +7026,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 // the row; long titles then wrap inside the full row width in
                 // the real rendering.
                 if (m_toolTitle->width()
-                    < titlePane->width() - m_toolRunButton->width() - 10) {
+                    < titlePane->width() - m_toolRunButton->width() - 30) {
                     problems->append(QString::fromLatin1(
                         "tool title '%1' does not fill the header row "
                         "(%2px wide; pane %3px, run button %4px)")
@@ -7342,32 +7399,17 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 ok = false;
             }
         }
-        // The running-host disk row aggregates its children: it must name its
-        // Linux filesystem when one exists and "+ LUKS" when an encrypted
-        // child exists.
+        // Cycle 15: the protected running host must NOT appear in the
+        // candidate tree (the host card above shows it); only offline drives
+        // are repair candidates.
         const QString hostDisk = runningHostDisk();
         if (!hostDisk.isEmpty()) {
-            QListViewItem *hostItem = 0;
             for (QListViewItem *item = m_deviceList->firstChild(); item;
                  item = item->nextSibling()) {
                 if (item->text(0) == hostDisk) {
-                    hostItem = item;
-                    break;
-                }
-            }
-            if (hostItem) {
-                if (diskHasEncryptedRow(hostDisk)
-                    && hostItem->text(3).find(QString::fromLatin1("LUKS")) < 0) {
                     problems->append(QString::fromLatin1(
-                        "running-host disk row '%1' does not aggregate the LUKS child (%2)")
-                        .arg(hostItem->text(0)).arg(hostItem->text(3)));
-                    ok = false;
-                }
-                if (diskHasLinuxCandidate(hostDisk)
-                    && hostItem->text(3) == QString::fromLatin1("unknown")) {
-                    problems->append(QString::fromLatin1(
-                        "running-host disk row '%1' does not aggregate its Linux filesystem")
-                        .arg(hostItem->text(0)));
+                        "the protected running host %1 must not appear in the "
+                        "candidate tree").arg(hostDisk));
                     ok = false;
                 }
             }
@@ -7521,18 +7563,24 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         vfat.probedFstype = "vfat";
         m_rows.insert(fakeVfat, vfat);
         m_inventory.push_back(vfat);
+        const bool savedHostMaintenance = m_hostMaintenance;
+        m_hostMaintenance = false;
+        if (m_hostMaintenanceButton) {
+            updateButtonText(m_hostMaintenanceButton,
+                             QString::fromLatin1("Host Maintenance"));
+        }
         setTarget(fakeVfat, QString::null);
         updateActionStates();
-        if (m_setTargetButton && m_setTargetButton->isEnabled()) {
+        if (m_setTargetButton && !m_setTargetButton->isEnabled()) {
             problems->append(QString::fromLatin1(
-                "Select Target enabled for a root-less vfat drive"));
+                "Select Target disabled for a selectable root-less vfat drive"));
             ok = false;
         }
         if (m_setTargetButton
             && QToolTip::textFor(m_setTargetButton).find(
-                   QString::fromLatin1("No Linux filesystem was detected on")) < 0) {
+                   QString::fromLatin1("Commit this physical drive as the repair target.")) < 0) {
             problems->append(QString::fromLatin1(
-                "Select Target no-Linux-filesystem reason missing for a vfat drive"));
+                "Select Target lost the commit tooltip for a vfat drive"));
             ok = false;
         }
         m_rows.remove(fakeVfat);
@@ -7544,6 +7592,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             }
         }
         setTarget(savedDisk2, savedRoot2);
+        m_hostMaintenance = savedHostMaintenance;
         updateActionStates();
     }
 
@@ -7649,7 +7698,33 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "committed scope label is '%1'").arg(m_scopeLabel->text()));
             ok = false;
         }
+        // Cycle 15 (modern parity): the committed drive keeps Select Target
+        // enabled with the committed tooltip; a different selectable drive
+        // switches the target.
+        updateActionStates();
+        if (m_setTargetButton && !m_setTargetButton->isEnabled()) {
+            problems->append(QString::fromLatin1(
+                "Select Target disabled for the committed drive"));
+            ok = false;
+        }
+        if (m_setTargetButton
+            && QToolTip::textFor(m_setTargetButton).find(
+                   QString::fromLatin1("Committed repair target")) < 0) {
+            problems->append(QString::fromLatin1(
+                "Select Target lost the committed tooltip"));
+            ok = false;
+        }
+        setTarget(QString::fromLatin1("/dev/bootrepair-smoke-other"),
+                  QString::fromLatin1("/dev/bootrepair-smoke-other1"));
+        updateActionStates();
+        if (m_setTargetButton && !m_setTargetButton->isEnabled()) {
+            problems->append(QString::fromLatin1(
+                "Select Target disabled for a different selectable drive"));
+            ok = false;
+        }
         m_targetCommitted = false;
+        m_committedDisk = QString::null;
+        m_committedRoot = QString::null;
     }
     if (!previousDisk.isEmpty()) {
         setTarget(previousDisk, previousRoot);
@@ -9330,6 +9405,33 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
         fstype = inspected->disk ? diskFilesystemSummary(*inspected)
                                  : displayFsType(*inspected);
         uuid = fromStd(inspected->uuid);
+        // Cycle 15 disk-level UUID roll-up for the drive row itself:
+        // 1) the unlocked root's UUID (UNLOCKED_ROOT_UUID), 2) the locked
+        // LUKS container's by-uuid identity, 3) the resolved Linux root
+        // component's UUID. A boot partition's UUID is never used at the
+        // drive level.
+        if (uuid.isEmpty() && inspected->disk) {
+            if (!m_unlockedRootUuid.isEmpty() && disk == m_unlockedDisk) {
+                uuid = m_unlockedRootUuid;
+            } else {
+                const QString luks = autoResolvedLuks(disk);
+                if (!luks.isEmpty()) {
+                    const QMap<QString, DeviceRow>::const_iterator luksRow =
+                        m_rows.find(luks);
+                    if (luksRow != m_rows.end()) {
+                        uuid = fromStd(luksRow.data().uuid);
+                    }
+                }
+                if (uuid.isEmpty()) {
+                    const QString rootComponent = autoResolvedRoot(disk);
+                    const QMap<QString, DeviceRow>::const_iterator rootRow =
+                        m_rows.find(rootComponent);
+                    if (rootRow != m_rows.end()) {
+                        uuid = fromStd(rootRow.data().uuid);
+                    }
+                }
+            }
+        }
         // Helper-confirmed root UUID fallback: the helper names the root
         // component and the inventory carries its by-uuid identity.
         if (uuid.isEmpty() && helperConfirmed && !m_helperComponent.isEmpty()) {
@@ -9940,19 +10042,20 @@ void LegacyMainWindow::updateActionStates()
         const bool optical = selectedRow != m_rows.end()
             && selectedRow.data().optical;
         const QString root = autoResolvedRoot(selectedDisk());
-        // Cycle 13: the currently committed drive cannot be re-committed, but
-        // any other selectable drive stays enabled so the target can switch.
+        // Cycle 15 (modern diskIsSelectableRepairTarget parity): Select
+        // Target is enabled for every selectable non-host, non-optical drive
+        // — blank and non-Linux data disks included. The only drive-level
+        // refusal besides the protected host and optical media is a locked
+        // LUKS container without a visible Linux filesystem. The committed
+        // drive stays enabled (modern never disables it) with the committed
+        // tooltip instead.
+        const bool lockedLuksNoLinux = !autoResolvedLuks(selectedDisk()).isEmpty()
+            && root.isEmpty();
         const bool alreadyCommitted = !m_committedDisk.isEmpty()
             && selectedDisk() == m_committedDisk;
         const bool canCommit = idle && !selectedDisk().isEmpty() && !onRunningHost
-            && !optical && !root.isEmpty() && !alreadyCommitted;
+            && !optical && !lockedLuksNoLinux;
         m_setTargetButton->setEnabled(canCommit);
-        // Cycle 13 loop: the disabled-tooltip branch order matches the real
-        // reasons — (1) the selected drive is the protected running host,
-        // (2) no resolved root candidate (unlock-first only when a locked
-        // LUKS component exists on the drive, otherwise the no-Linux-
-        // filesystem wording naming the drive), (3) otherwise the
-        // commit-ready wording.
         if (selectedDisk().isEmpty()) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "Select a physical drive in the Available repair targets list first."));
@@ -9964,29 +10067,26 @@ void LegacyMainWindow::updateActionStates()
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "Live / installer media is read-only boot media and cannot be "
                 "selected as a repair target."));
+        } else if (lockedLuksNoLinux) {
+            QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                "Unlock the encrypted volume first; Select Target becomes "
+                "available after a Linux filesystem is detected."));
         } else if (alreadyCommitted) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                "This drive is already the committed repair target; select "
-                "another drive to switch the target."));
-        } else if (root.isEmpty()) {
-            if (!autoResolvedLuks(selectedDisk()).isEmpty()) {
-                QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                    "Unlock the encrypted volume first; Select Target becomes "
-                    "available after a Linux filesystem is detected."));
-            } else {
-                QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                    "No Linux filesystem was detected on %1; nothing can be "
-                    "committed as the repair target.")
-                    .arg(selectedDisk()));
-            }
+                "Committed repair target. Repair, Diagnostics and File Copy "
+                "target this physical drive until another drive is explicitly "
+                "selected with Select Target."));
         } else if (!idle) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "A helper command is already running."));
+        } else if (hostScope()) {
+            QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                "Commit %1 as the repair target; this leaves Host Maintenance "
+                "and switches the scope to the selected drive.")
+                .arg(selectedDisk()));
         } else {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                "Commit %1 + %2 as the repair target for diagnostics and gated "
-                "repairs; the administrator authorization is requested here once "
-                "and cached for the session.").arg(selectedDisk()).arg(root));
+                "Commit this physical drive as the repair target."));
         }
     }
     if (m_hostDefaultButton) {
@@ -10097,32 +10197,18 @@ void LegacyMainWindow::updateBusyIndicator()
 
 void LegacyMainWindow::updateStatus()
 {
-    QString scope = hostScope()
+    // Cycle 15: the scope/readiness message is transient (modern parity) and
+    // clears after a few seconds; nothing permanent stays in the bar.
+    const QString scope = hostScope()
         ? QString::fromLatin1("running host")
         : QString::fromLatin1("offline target");
-    QString readiness;
-    if (hostMaintenanceActive()) {
-        readiness = QString::fromLatin1("host maintenance active");
-    } else if (targetCommitted()) {
-        readiness = QString::fromLatin1("repair target committed");
-    } else {
-        readiness = QString::fromLatin1("no committed scope");
-    }
-    QString freshness;
-    const QString id = identity();
-    if (m_model.hasDiagnostics(toStd(id))) {
-        freshness = m_model.diagnosticsStale()
-            ? QString::fromLatin1("diagnostics stale")
-            : QString::fromLatin1("diagnostics cached");
-    } else {
-        freshness = QString::fromLatin1("no diagnostics");
-    }
-    statusBar()->message(QString::fromLatin1("%1 | disk: %2 | root: %3 | %4 | %5")
-                             .arg(scope)
-                             .arg(selectedDisk().isEmpty() ? QString::fromLatin1("(none)") : selectedDisk())
-                             .arg(selectedRoot().isEmpty() ? QString::fromLatin1("(none)") : selectedRoot())
-                             .arg(readiness)
-                             .arg(freshness));
+    const QString readiness = hostMaintenanceActive()
+        ? QString::fromLatin1("host maintenance active")
+        : (targetCommitted()
+            ? QString::fromLatin1("repair target committed")
+            : QString::fromLatin1("no committed scope"));
+    statusBar()->message(QString::fromLatin1("%1 | %2").arg(scope).arg(readiness),
+                         6000);
 }
 
 void LegacyMainWindow::appendLog(const QString &line)
