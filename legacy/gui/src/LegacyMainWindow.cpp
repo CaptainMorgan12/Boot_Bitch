@@ -678,6 +678,38 @@ QString promptHiddenPassword(QWidget *parent, const QString &title,
     return edit->text();
 }
 
+// Cycle 10: shared wrapped confirmation dialog. Qt3's QMessageBox sizes
+// itself to the unwrapped text, so long repair confirmations stretched past
+// the window; this stack dialog wraps the wording (Qt::WordBreak) inside a
+// bounded width and keeps the Yes/No (or Yes/Cancel) question semantics.
+bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
+                    bool cancelInsteadOfNo = false)
+{
+    QDialog dialog(parent, "legacy-confirm", true);
+    dialog.setCaption(title);
+    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
+    QLabel *label = new QLabel(text, &dialog);
+    enableLabelWordWrap(label);
+    label->setMaximumWidth(kHiddenInputMaximumWidth);
+    layout->addWidget(label);
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->setSpacing(6);
+    buttons->addStretch();
+    QPushButton *noButton = new QPushButton(
+        cancelInsteadOfNo ? QString::fromLatin1("Cancel")
+                          : QString::fromLatin1("No"),
+        &dialog);
+    QPushButton *yesButton = new QPushButton(QString::fromLatin1("Yes"), &dialog);
+    yesButton->setDefault(true);
+    buttons->addWidget(noButton);
+    buttons->addWidget(yesButton);
+    QObject::connect(noButton, SIGNAL(clicked()), &dialog, SLOT(reject()));
+    QObject::connect(yesButton, SIGNAL(clicked()), &dialog, SLOT(accept()));
+    dialog.setMinimumWidth(360);
+    dialog.setMaximumWidth(kHiddenInputMaximumWidth + 40);
+    return dialog.exec() == QDialog::Accepted;
+}
+
 QString fromStd(const std::string &text)
 {
     return QString::fromLatin1(text.c_str());
@@ -1640,7 +1672,9 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     // (helper facts + the read-only inventory) and stay honest when unknown.
     m_hostCard = new QGroupBox(page);
     QHBoxLayout *hostCardLayout = new QHBoxLayout(m_hostCard, 10, 6);
-    QLabel *hostCheck = new QLabel(QString::fromUtf8("\xE2\x9C\x94"), m_hostCard);
+    // Cycle 10: ASCII-only indicator — Etch's fonts garble the modern check
+    // glyph.
+    QLabel *hostCheck = new QLabel(QString::fromLatin1("[OK]"), m_hostCard);
     QFont checkFont = hostCheck->font();
     checkFont.setBold(true);
     checkFont.setPointSizeFloat(checkFont.pointSizeFloat() * 1.4);
@@ -2550,6 +2584,18 @@ QWidget *LegacyMainWindow::buildLogTab()
     connect(clear, SIGNAL(clicked()), this, SLOT(clearLog()));
     logHeader->addWidget(clear);
 
+    // Cycle 10: the /host share is the offline fetch point — files saved
+    // under /host are collected by the host after the rig is shut down.
+    QLabel *hostHint = new QLabel(
+        QString::fromLatin1(
+            "Offline fetch: when the /host share is mounted, Save As... "
+            "starts there; files under /host are collected by the host after "
+            "the rig is shut down."),
+        applicationLog);
+    hostHint->setTextFormat(Qt::PlainText);
+    hostHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
+    logLayout->addWidget(hostHint);
+
     QHBoxLayout *filterRow = new QHBoxLayout(logLayout);
     filterRow->setSpacing(4);
     filterRow->addWidget(new QLabel(QString::fromLatin1("Search log:"), applicationLog));
@@ -3183,16 +3229,15 @@ void LegacyMainWindow::makeDefault()
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const int answer = QMessageBox::question(
+    const bool answer = confirmWrapped(
         this, QString::fromLatin1("Make Default"),
         QString::fromLatin1(
             "Make the canonical installed kernel entry the default GRUB-legacy "
             "boot entry on the running host?\n\n"
             "The helper verifies /boot/grub/menu.lst, sets the `default <N>` "
             "directive to the canonical entry, backs the menu up first and "
-            "restores it on any failure."),
-        QMessageBox::Yes, QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+            "restores it on any failure."));
+    if (!answer) {
         return;
     }
     QStringList args;
@@ -3742,13 +3787,13 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
             QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const int answer = QMessageBox::question(
+    const bool answer = confirmWrapped(
         this, QString::fromLatin1("Write target configuration"),
         QString::fromLatin1(
             "Write the edited contents to %1? This modifies the repair target "
             "and invalidates cached diagnostics.").arg(path),
-        QMessageBox::Yes, QMessageBox::Cancel);
-    if (answer != QMessageBox::Yes) {
+        true);
+    if (!answer) {
         return;
     }
 
@@ -3844,17 +3889,16 @@ void LegacyMainWindow::runUnlock()
     }
 
     if (!m_unlockRetry) {
-        const int answer = QMessageBox::question(
+        const bool answer = confirmWrapped(
             this, QString::fromLatin1("Confirm LUKS unlock"),
             QString::fromLatin1(
                 "Unlock %1 on %2?\n\n"
                 "The helper opens a temporary device-mapper mapping with "
                 "cryptsetup and keeps it open for this recovery session. The "
-                "passphrase is sent only over the helper's standard input, "
-                "never in command arguments or logs.")
-                .arg(luks).arg(selectedDisk()),
-            QMessageBox::Yes, QMessageBox::No);
-        if (answer != QMessageBox::Yes) {
+                "passphrase travels through a private keyfile and is never "
+                "placed in command arguments or logs.")
+                .arg(luks).arg(selectedDisk()));
+        if (!answer) {
             return;
         }
     }
@@ -3908,8 +3952,12 @@ void LegacyMainWindow::runUnlock()
     m_unlockDevice = luks;
     m_unlockDisk = selectedDisk();
     QStringList args;
+    // Cycle 10: the GUI passes its own uid with the keyfile so the elevated
+    // helper can accept the file under gksu/gksudo (no SUDO_UID) too.
     args << QString::fromLatin1("unlock") << selectedDisk() << luks
-         << QString::fromLatin1("--key-file") << keyfilePath;
+         << QString::fromLatin1("--key-file") << keyfilePath
+         << QString::fromLatin1("--key-owner")
+         << QString::number(static_cast<unsigned long>(::getuid()));
     m_unlockKeyfilePath = keyfilePath;
     startCommand(args, false, QString::fromLatin1("unlock %1").arg(luks), true);
 }
@@ -4170,12 +4218,12 @@ void LegacyMainWindow::deleteSelectedSessionLog()
     if (!fileInfo.exists() || !fileInfo.isFile() || fileInfo.isSymLink()) {
         return;
     }
-    const int answer = QMessageBox::question(
+    const bool answer = confirmWrapped(
         this, QString::fromLatin1("Delete session log"),
         QString::fromLatin1("Delete %1 permanently? This cannot be undone.")
             .arg(fileName),
-        QMessageBox::Yes, QMessageBox::Cancel);
-    if (answer != QMessageBox::Yes) {
+        true);
+    if (!answer) {
         return;
     }
     if (!QFile::remove(canonicalPath)) {
@@ -4611,11 +4659,10 @@ void LegacyMainWindow::runSelectedTool()
         return;
     }
     if (spec.write && spec.confirm) {
-        const int answer = QMessageBox::question(
+        const bool answer = confirmWrapped(
             this, QString::fromLatin1("Confirm repair"),
-            QString::fromLatin1(spec.confirm),
-            QMessageBox::Yes, QMessageBox::No);
-        if (answer != QMessageBox::Yes) {
+            QString::fromLatin1(spec.confirm));
+        if (!answer) {
             return;
         }
     }
@@ -4882,10 +4929,9 @@ void LegacyMainWindow::runFullRepair()
     text += QString::fromLatin1(
         "\nThe helper keeps every runtime preflight; a stage that fails stops "
         "the plan.");
-    const int answer = QMessageBox::question(
-        this, QString::fromLatin1("Run Full Repair"), text,
-        QMessageBox::Yes, QMessageBox::No);
-    if (answer != QMessageBox::Yes) {
+    const bool answer = confirmWrapped(
+        this, QString::fromLatin1("Run Full Repair"), text);
+    if (!answer) {
         return;
     }
     const bool host = hostScope();
@@ -4995,15 +5041,14 @@ void LegacyMainWindow::runChrootShell()
     }
     const bool host = hostScope();
     if (host) {
-        const int answer = QMessageBox::question(
+        const bool answer = confirmWrapped(
             this, QString::fromLatin1("Confirm running-host command"),
             QString::fromLatin1(
                 "Run this command as root on the protected running host?\n\n"
                 "%1\n\n"
                 "The helper keeps its runtime preflights; the command is passed "
-                "as one argument and is never interpreted by the GUI.").arg(command),
-            QMessageBox::Yes, QMessageBox::No);
-        if (answer != QMessageBox::Yes) {
+                "as one argument and is never interpreted by the GUI.").arg(command));
+        if (!answer) {
             return;
         }
     }
@@ -5581,9 +5626,9 @@ void LegacyMainWindow::reportChangeStatuses(const ParsedTranscript &parsed)
 // parsed `Repair change status` lines.  A requested stage with no parsed
 // status counts as failed unless the helper reported a clean read-only
 // outcome (nothing is fabricated).  The block is bracketed by
-// `──────── REPAIR ────────` lines, tagged with the Repair kind so the Repairs
-// log filter shows it, and mirrors the modern icons: ✓ changed,
-// ✗ failed, ▪ unchanged/no repair needed.
+// `==== REPAIR ====` lines, tagged with the Repair kind so the Repairs
+// log filter shows it, and uses ASCII markers ([OK]/[FAIL]/[-]) because
+// Etch's fonts garble the modern check/cross/bullet glyphs.
 void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
                                                 bool commandOk)
 {
@@ -5623,27 +5668,29 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
                 ++unchanged;
                 const QString reason = state.startsWith(QString::fromLatin1("unchanged|"))
                     ? state.mid(10) : QString::fromLatin1("no repair needed");
-                detail = QString::fromLatin1("\xE2\x96\xAA %1 \xE2\x80\x94 %2")
+                // Cycle 10: ASCII markers only — Etch's fonts garble the
+                // modern check/cross/bullet glyphs in the Qt3 log view.
+                detail = QString::fromLatin1("[-] %1 - %2")
                              .arg(title).arg(reason);
             } else if (commandOk) {
                 ++successful;
-                detail = QString::fromLatin1("\xE2\x9C\x93 %1 \xE2\x80\x94 changed")
+                detail = QString::fromLatin1("[OK] %1 - changed")
                              .arg(title);
             } else {
                 ++failed;
-                detail = QString::fromLatin1("\xE2\x9C\x97 %1 \xE2\x80\x94 %2")
+                detail = QString::fromLatin1("[FAIL] %1 - %2")
                              .arg(title).arg(state);
             }
         } else if (commandOk && stage == QString::fromLatin1("filesystem")
                    && cleanFsInspect) {
             ++unchanged;
             detail = QString::fromLatin1(
-                "\xE2\x96\xAA %1 \xE2\x80\x94 no file system errors found \xE2\x80\x94 no changes")
+                "[-] %1 - no file system errors found - no changes")
                 .arg(title);
         } else {
             ++failed;
             detail = QString::fromLatin1(
-                "\xE2\x9C\x97 %1 \xE2\x80\x94 not reported").arg(title);
+                "[FAIL] %1 - not reported").arg(title);
         }
         lines.append(QString::fromLatin1("  ") + detail);
     }
@@ -5661,8 +5708,8 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
             "regenerated.");
     }
     const QString headline = QString::fromLatin1(
-        "%1 results: \xE2\x9C\x93 %2 successful \xC2\xB7 \xE2\x9C\x97 %3 failed "
-        "\xC2\xB7 \xE2\x96\xAA %4 no repair needed \xE2\x80\x94 %5")
+        "%1 results: [OK] %2 successful | [FAIL] %3 failed "
+        "| [-] %4 no repair needed - %5")
         .arg(m_pendingLabel == QString::fromLatin1("Full Repair")
                  ? QString::fromLatin1("Full Repair")
                  : m_pendingLabel)
@@ -5674,12 +5721,13 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     m_logEntryKind = LogEntry::Repair;
     m_logEntryStages = m_activeRepairStages.join(QString::fromLatin1(" "));
     appendLog(QString::null);
-    appendLog(QString::fromUtf8("\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80 REPAIR \xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80"));
+    // Cycle 10: ASCII brackets, consistent with the ASCII stage markers.
+    appendLog(QString::fromLatin1("==== REPAIR ===="));
     appendLog(headline);
     for (int i = 0; i < static_cast<int>(lines.size()); ++i) {
         appendLog(lines[i]);
     }
-    appendLog(QString::fromUtf8("\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80 REPAIR \xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80"));
+    appendLog(QString::fromLatin1("==== REPAIR ===="));
     appendLog(QString::null);
     m_logEntryKind = savedKind;
     m_logEntryStages = savedStages;
@@ -7558,8 +7606,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         bool sawHeadline = false;
         for (std::size_t e = 0; e < m_logEntries.size(); ++e) {
             const LogEntry &entry = m_logEntries[e];
-            if (entry.text.find(QString::fromUtf8(
-                    "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80 REPAIR \xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80")) >= 0) {
+            if (entry.text.find(QString::fromLatin1("==== REPAIR ====")) >= 0) {
                 sawBracket = true;
                 if (entry.kind != LogEntry::Repair) {
                     problems->append(QString::fromLatin1(
@@ -7567,7 +7614,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                     ok = false;
                 }
             }
-            if (entry.text.find(QString::fromLatin1("Validate \xE2\x80\x94 validation is read-only")) >= 0
+            if (entry.text.find(QString::fromLatin1("[-] Validate - validation is read-only")) >= 0
                 && entry.kind == LogEntry::Repair) {
                 sawValidateLine = true;
             }
@@ -8616,7 +8663,7 @@ bool LegacyMainWindow::startFileCopyCommand(bool realCopy)
         return false;
     }
     if (realCopy) {
-        const int answer = QMessageBox::question(
+        const bool answer = confirmWrapped(
             this, QString::fromLatin1("Copy and Verify"),
             QString::fromLatin1(
                 "Copy the %1 staged item(s) to %2?\n\nThe helper keeps its "
@@ -8624,9 +8671,8 @@ bool LegacyMainWindow::startFileCopyCommand(bool realCopy)
                 "destination is refused unless the helper approves it, and every "
                 "regular file is byte-compared after the copy.")
                 .arg(static_cast<int>(m_fileCopySources.size()))
-                .arg(destination),
-            QMessageBox::Yes, QMessageBox::No);
-        if (answer != QMessageBox::Yes) {
+                .arg(destination));
+        if (!answer) {
             return false;
         }
     }
@@ -8896,10 +8942,10 @@ void LegacyMainWindow::updateHostCard()
             mounts = fromStd(hostRow.mountpoint);
         }
     }
-    QString summary = parts.join(QString::fromLatin1("  â¢  "));
+    QString summary = parts.join(QString::fromLatin1("  |  "));
     if (!mounts.isEmpty()) {
         if (!summary.isEmpty()) {
-            summary += QString::fromLatin1("  â¢  ");
+            summary += QString::fromLatin1("  |  ");
         }
         summary += QString::fromLatin1("Critical mounts: %1").arg(mounts);
     }
@@ -9718,8 +9764,17 @@ void LegacyMainWindow::refreshSessionLogList()
 
 void LegacyMainWindow::saveLog()
 {
+    // Cycle 10: the offline host fetch point is the mounted vfat /host share;
+    // when it exists and is writable the Save As... dialog starts there, so a
+    // saved log lands where the host can collect it after the rig is shut
+    // down. Otherwise the log directory is the fallback.
+    QString startDir = m_logDirectory;
+    const QFileInfo hostShare(QString::fromLatin1("/host"));
+    if (hostShare.exists() && hostShare.isDir() && hostShare.isWritable()) {
+        startDir = QString::fromLatin1("/host");
+    }
     const QString path = QFileDialog::getSaveFileName(
-        QString::null, QString::fromLatin1("Log files (*.log);;All files (*)"),
+        startDir, QString::fromLatin1("Log files (*.log);;All files (*)"),
         this, "save-log", QString::fromLatin1("Save log as"));
     if (path.isEmpty()) {
         return;

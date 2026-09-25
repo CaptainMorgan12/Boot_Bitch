@@ -271,11 +271,16 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   names the scope, not one boot-bitchrc file) — so overrides survive restart
   and `dpkg -r`/`dpkg -i` reinstalls never touch them. The unlock passphrase
   reaches the helper through a mode-600 keyfile argument
-  (`unlock --key-file <path>`; the helper verifies a regular caller-owned
-  file, reads it with the newline-tolerant key handling and deletes it before
-  the open attempt) because Qt 3.3.7's QProcess cannot deliver stdin;
-  `--smoke-test` runs with settings isolation so the user's persisted files
-  are neither read nor written during the smoke. The filters hide the
+  (`unlock --key-file <path> --key-owner <uid>`; the helper verifies a
+  regular caller-owned file — owner equals the passed uid, SUDO_UID or the
+  effective uid — reads it with the newline-tolerant key handling and deletes
+  it before the open attempt) because Qt 3.3.7's QProcess cannot deliver
+  stdin; `--smoke-test` runs with settings isolation so the user's persisted
+  files are neither read nor written during the smoke. Cycle 10: every new UI
+  string is ASCII-only (`|` separators, `[OK]`/`[FAIL]`/`[-]`,
+  `==== REPAIR ====` brackets) for Etch's fonts; the Logs Save As... starts
+  in the mounted /host share when writable; long confirmations use a shared
+  wrapped dialog. The filters hide the
   owning drive's rows (a hidden drive hides its partitions/mappers) with the
   modern rule — an encrypted drive stays visible while "show encrypted" is on
   even without a Linux candidate — and the selected/committed target state

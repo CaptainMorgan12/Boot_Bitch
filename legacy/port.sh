@@ -320,8 +320,12 @@ transform_legacy_behaviour()
                 unlock_target
             else
                 [[ "$1" == "--key-file" ]] || fail "unlock does not accept extra arguments."
-                (($# == 2)) || fail "unlock --key-file requires exactly one path argument."
-                unlock_target --key-file "$2"
+                case "$#" in
+                    2) unlock_target --key-file "$2" ;;
+                    4) [[ "$3" == "--key-owner" ]] || fail "unlock accepts only --key-file and --key-owner arguments."
+                       unlock_target --key-file "$2" --key-owner "$4" ;;
+                    *) fail "unlock --key-file requires exactly one path argument (plus an optional --key-owner uid)." ;;
+                esac
             fi
             ;;'
 

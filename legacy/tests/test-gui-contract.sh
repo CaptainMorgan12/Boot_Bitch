@@ -191,6 +191,15 @@ for marker in 'writeUnlockKeyfile' 'discardUnlockKeyfile' \
     'legacySmokeSettingsIsolation' 'applyLegacySettingsDefaults'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-9 loop-2 marker missing: $marker"
 done
+# Cycle 10 markers: --key-owner unlock channel, ASCII repair summary, the
+# wrapped confirmation helper and the /host save-log default.
+for marker in '"--key-owner"' 'getuid()' 'confirmWrapped' \
+    '==== REPAIR ====' '\[OK\] %1 - changed' '\[FAIL\] %1 -' '\[-\] %1 - %2' \
+    'Offline fetch: when the /host share is mounted'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-10 marker missing: $marker"
+done
+grep -q 'QMessageBox::question' "$WINDOW" \
+    && fail "an unwrapped QMessageBox::question confirmation remains"
 grep -q 'setCommunication(QProcess::Stdout | QProcess::DupStderr)' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "helper runner stdin channel was not reverted (stdin unused by design)"
 grep -q 'legacy::legacySetSmokeSettingsIsolation(true)' "$GUI_DIR/src/main.cpp" \

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Cycle 10: ASCII-only rendering, the desktop-elevation unlock channel and
+  the /host log fetch. Every new cycle-9 UI string (host-card identity/storage
+  line, check indicator, repair summary) now renders with ASCII-only markers
+  (`|` separators, `[OK]`/`[FAIL]`/`[-]`, `==== REPAIR ====` brackets) because
+  Etch's fonts garble the modern glyphs. The LUKS unlock passes `--key-owner
+  <uid>` with the mode-600 keyfile, so gksu/gksudo elevation (no SUDO_UID)
+  accepts the GUI's file while foreign-owned files still fail. The Logs
+  Save As... dialog starts in the mounted /host share when it exists and is
+  writable (fallback: the log directory) with an offline-fetch hint. Every
+  long confirmation (Full Repair, individual repairs, Make Default, unlock,
+  config write, host-shell command, copy-and-verify, log deletion) now uses a
+  shared width-constrained wrapped dialog instead of an unwrapped message
+  box.
+
 - Cycle 9 unlock channel and smoke isolation: the LUKS passphrase now travels
   through a mode-600 keyfile argument (the GUI writes an O_EXCL-created file
   in its log directory, never argv, and deletes it on every path; the helper

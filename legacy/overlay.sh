@@ -1223,13 +1223,25 @@ legacy_unlock_keyfile_from_file()
 # passphrase, and --key-file - consumes the exact bytes.
 unlock_target()
 {
-    local fstype uuid mapper_name mapper_path existing_mapper crypt_rc keyfile_arg=""
-    if [[ "${1:-}" == "--key-file" ]]; then
-        keyfile_arg="$2"
-        [[ -n "$keyfile_arg" ]] || fail "unlock --key-file requires a path."
-    elif [[ -n "${1:-}" ]]; then
-        fail "unlock does not accept extra arguments."
-    fi
+    local fstype uuid mapper_name mapper_path existing_mapper crypt_rc
+    local keyfile_arg="" key_owner_arg=""
+    while (($# > 0)); do
+        case "$1" in
+            --key-file)
+                keyfile_arg="${2:-}"
+                [[ -n "$keyfile_arg" ]] || fail "unlock --key-file requires a path."
+                shift 2
+                ;;
+            --key-owner)
+                key_owner_arg="${2:-}"
+                [[ -n "$key_owner_arg" ]] || fail "unlock --key-owner requires a uid."
+                shift 2
+                ;;
+            *)
+                fail "unlock does not accept extra arguments."
+                ;;
+        esac
+    done
 
     need lsblk
     need findmnt
@@ -1284,14 +1296,24 @@ unlock_target()
     if [[ -n "$keyfile_arg" ]]; then
         [[ -f "$keyfile_arg" && ! -L "$keyfile_arg" ]] \
             || fail "The unlock keyfile is not a regular file: $keyfile_arg"
-        # The helper runs as root under sudo; the GUI creates the keyfile as
-        # the invoking user, so the ownership check compares against SUDO_UID
-        # when sudo recorded it, and against the effective uid otherwise (a
-        # direct root run). A foreign-owned file still fails.
-        local owner_uid=""
-        owner_uid="$(id -u)"
-        [[ -n "${SUDO_UID:-}" ]] && owner_uid="$SUDO_UID"
-        [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$owner_uid" ]] \
+        # The helper may run as root under sudo or gksu; the GUI passes its
+        # own uid as --key-owner. Accept the keyfile when its owner equals
+        # that uid, or SUDO_UID (sudo recorded the invoker), or the effective
+        # uid (a direct root run). A foreign-owned file still fails.
+        local accepted=0
+        if [[ -n "$key_owner_arg" ]] \
+            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$key_owner_arg" ]]; then
+            accepted=1
+        fi
+        if (( accepted == 0 )) && [[ -n "${SUDO_UID:-}" ]] \
+            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$SUDO_UID" ]]; then
+            accepted=1
+        fi
+        if (( accepted == 0 )) \
+            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$(id -u)" ]]; then
+            accepted=1
+        fi
+        (( accepted == 1 )) \
             || fail "The unlock keyfile is not owned by the calling user."
         keyfile="$(legacy_unlock_keyfile_from_file "$keyfile_arg" "$SESSION_DIR/unlock-keyfile")"
         rm -f -- "$keyfile_arg"

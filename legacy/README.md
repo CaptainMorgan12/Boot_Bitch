@@ -99,9 +99,12 @@ Log**, **Add Note**, **Delete** (prior files only, confirmed) and
 **Refresh**, and **Settings**
 shows functional device-discovery filters, the functional diagnostics
 LUKS unlock delivers the passphrase through a mode-600 keyfile argument
-(`unlock --key-file <path>`) because Qt 3.3.7's QProcess cannot deliver
-stdin; `--smoke-test` runs with settings isolation (persisted overrides are
-never read or written during the smoke), and the
+(`unlock --key-file <path> --key-owner <uid>`) because Qt 3.3.7's QProcess
+cannot deliver stdin and desktop elevation (gksu/gksudo) records no
+SUDO_UID; `--smoke-test` runs with settings isolation (persisted overrides are
+never read or written during the smoke); the Logs Save As... starts in the
+mounted /host share when it is writable (fallback: the log directory) with an
+offline-fetch hint; all long confirmations use a wrapped dialog; and the
 per-user settings files under ~/.qt/ (Qt 3.3.7 stores each settings group
 in its own file named after the group: devicesrc, logsrc, diagnosticsrc,
 repairrc; saved on every change and on close; the GUI never elevates itself,

@@ -139,10 +139,14 @@ grep -q 'cryptsetup --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"
     || fail "generated helper lost the keyfile-based cryptsetup 1.0 luksOpen invocation"
 grep -q 'legacy_unlock_keyfile_from_stdin' "$HELPER" \
     || fail "generated helper lost the newline-tolerant unlock keyfile handling"
-grep -q 'unlock --key-file requires exactly one path argument.' "$HELPER" \
+grep -q 'unlock --key-file requires exactly one path argument (plus an optional --key-owner uid).' "$HELPER" \
     || fail "generated helper lost the optional unlock --key-file argument"
 grep -q 'unlock_target --key-file "$2"' "$HELPER" \
     || fail "generated helper does not pass --key-file through to unlock_target"
+grep -q 'unlock_target --key-file "$2" --key-owner "$4"' "$HELPER" \
+    || fail "generated helper does not pass --key-owner through to unlock_target"
+grep -q 'unlock --key-owner requires a uid.' "$HELPER" \
+    || fail "generated helper lost the --key-owner argument parsing"
 grep -q 'legacy_unlock_keyfile_from_file' "$HELPER" \
     || fail "generated helper lost the GUI keyfile channel"
 grep -q 'The unlock keyfile is not owned by the calling user.' "$HELPER" \
