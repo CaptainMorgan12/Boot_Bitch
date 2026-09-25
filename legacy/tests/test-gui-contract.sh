@@ -163,6 +163,40 @@ grep -q 'QHBoxLayout \*directionRow = new QHBoxLayout();' "$WINDOW" \
     || fail "file-copy direction row must be constructed parentless (addLayout owns it)"
 grep -q 'layout->addLayout(directionRow);' "$WINDOW" \
     || fail "file-copy direction row must be owned by addLayout()"
+grep -q 'QVBoxLayout \*hostText = new QVBoxLayout();' "$WINDOW" \
+    || fail "host-card text column must be constructed parentless (addLayout owns it)"
+grep -q 'hostCardLayout->addLayout(hostText, 1);' "$WINDOW" \
+    || fail "host-card text column must be owned by addLayout()"
+# Cycle 9 markers: protected-host card, Details dialog, collapsed tree,
+# right-edge badge, Run/Re-run text, two-line scope label and the per-user
+# settings note.
+for marker in 'm_hostCard' 'm_hostSystemLabel' 'm_hostStorageLabel' \
+    'm_hostProtectedBadge' 'm_hostDetailsButton' 'showHostDetails()' \
+    'updateHostCard()' 'driveDetailsRows' 'Critical mounts:' \
+    '"PROTECTED"' '"Details"' 'Re-run Diagnostic' 'Host maintenance:\\n' \
+    'headerLayout->addSpacing(8)' 'm_rawView->setMinimumWidth(200)' \
+    '~/.qt/' 'setResizeMode(checks, QSplitter::KeepSize)'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-9 marker missing: $marker"
+done
+# The unlock passphrase dialog must reuse the width-constrained wrapped
+# prompt (the same dialog the administrator modal uses).
+grep -q 'promptHiddenPassword' "$WINDOW" || fail "hidden-input prompt missing"
+grep -q 'kHiddenInputMaximumWidth' "$WINDOW" || fail "hidden-input width constraint missing"
+grep -q 'Unlock LUKS repair target' "$WINDOW" || fail "unlock prompt title missing"
+# Cycle 9 loop 2: the unlock passphrase travels through a mode-600 keyfile
+# argument (Qt 3.3.7 QProcess cannot deliver stdin), and --smoke-test runs
+# with settings isolation.
+for marker in 'writeUnlockKeyfile' 'discardUnlockKeyfile' \
+    '"--key-file"' 'm_unlockKeyfilePath' 'O_CREAT | O_EXCL' \
+    'legacySmokeSettingsIsolation' 'applyLegacySettingsDefaults'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-9 loop-2 marker missing: $marker"
+done
+grep -q 'setCommunication(QProcess::Stdout | QProcess::DupStderr)' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "helper runner stdin channel was not reverted (stdin unused by design)"
+grep -q 'legacy::legacySetSmokeSettingsIsolation(true)' "$GUI_DIR/src/main.cpp" \
+    || fail "main() does not enable the smoke settings isolation"
+awk '/legacySetSmokeSettingsIsolation\(true\)/{iso=NR} /LegacyMainWindow window;/{win=NR} END{exit !(iso && iso < win)}' "$GUI_DIR/src/main.cpp" \
+    || fail "smoke settings isolation must be set before the window is constructed"
 grep -q 'legacy_apt_intent_translate' "$OVERLAY" \
     || fail "apt intent translation missing from the overlay"
 grep -q 'apt intent translated:' "$OVERLAY" \
@@ -459,14 +493,20 @@ for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck
 done
 grep -q 'updateCapabilityView' "$WINDOW" \
     && fail "compact capability label grid still present"
-# Cycle 6: one canonical QSettings file (~/.qt/boot-bitchrc), every toggle
-# handler persists immediately, and the window close flushes again.
+# Cycle 6/9: every toggle handler persists immediately and the window close
+# flushes again. Qt 3.3.7 stores each settings group in its own per-user file
+# under ~/.qt/ named after the group (devicesrc, logsrc, diagnosticsrc,
+# repairrc); the GUI must document those actual file names.
 grep -q 'setPath(QString::fromLatin1("boot-bitch"),' "$WINDOW" \
     || fail "settings do not use the canonical boot-bitch path"
 grep -q '"boot-repair"), QSettings::User' "$WINDOW" \
     || fail "settings do not use the boot-repair application"
+for file in devicesrc logsrc diagnosticsrc repairrc; do
+    grep -q "$file" "$WINDOW" \
+        || fail "settings do not document the per-group $file location"
+done
 grep -q '~/.qt/boot-bitchrc' "$WINDOW" \
-    || fail "settings do not document the canonical file location"
+    && fail "settings still claim a single boot-bitchrc file"
 grep -q 'boot-bitch.local"),' "$WINDOW" \
     && fail "scattered per-subkey settings path still present"
 for handler in deviceFilterChanged autoRefreshToggled toggleLogWrap planCheckboxChanged; do

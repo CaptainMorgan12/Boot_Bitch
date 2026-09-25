@@ -359,6 +359,51 @@ cmp -s "$FIXTURE/copy-src/a.txt" "$FIXTURE/copy-dst/copy-src/a.txt" \
 [[ -e "$FIXTURE/copy-dst/copy-src" ]] || fail "legacy copy preview wrote the destination"
 pass "legacy file-copy backend (cp -a, cmp verification, preview is read-only)"
 
+# --- legacy unlock keyfile handling (cycle 9 loop fix) -----------------------
+# The passphrase read from stdin tolerates exactly one trailing newline/CR
+# (cryptsetup 1.0 would otherwise treat it as key material), lands in a
+# mode-600 keyfile under the session state, and the caller deletes it after
+# the open attempt.
+mkdir -p "$FIXTURE/state"
+SESSION_DIR="$FIXTURE/state"
+printf 'smoke-test-key\n' | legacy_unlock_keyfile_from_stdin "$FIXTURE/state/key" \
+    > "$FIXTURE/state/key.path" \
+    || fail "newline-tolerant unlock key write failed"
+key_path="$(cat "$FIXTURE/state/key.path")"
+[[ -f "$key_path" ]] || fail "unlock keyfile was not created"
+[[ "$(cat "$key_path")" == "smoke-test-key" ]] \
+    || fail "unlock keyfile kept the trailing newline"
+[[ "$(stat -c '%a' "$key_path")" == "600" ]] \
+    || fail "unlock keyfile is not mode 600"
+printf 'smoke-test-key\r\n' | legacy_unlock_keyfile_from_stdin "$FIXTURE/state/key2" \
+    >/dev/null || fail "CRLF unlock key write failed"
+[[ "$(cat "$FIXTURE/state/key2")" == "smoke-test-key" ]] \
+    || fail "unlock keyfile kept the CRLF terminator"
+printf '\n' | legacy_unlock_keyfile_from_stdin "$FIXTURE/state/key3" \
+    >/dev/null 2>&1 && fail "an empty unlock passphrase was accepted"
+rm -f "$FIXTURE/state/key" "$FIXTURE/state/key2" "$FIXTURE/state/key3" "$FIXTURE/state/key.path"
+pass "legacy unlock keyfile (one trailing newline/CR stripped, mode 600, empty refused)"
+
+# The GUI --key-file channel: the argument file must be a regular file owned
+# by the caller, its content (one trailing newline tolerated) lands in the
+# session keyfile, and the argument file is deleted before the open attempt.
+printf 'smoke-test-key\n' > "$FIXTURE/state/gui-key"
+out_path="$(legacy_unlock_keyfile_from_file "$FIXTURE/state/gui-key" "$FIXTURE/state/session-key")" \
+    || fail "GUI keyfile channel failed"
+[[ "$(cat "$out_path")" == "smoke-test-key" ]] \
+    || fail "GUI keyfile channel kept the trailing newline"
+[[ "$(stat -c '%a' "$out_path")" == "600" ]] \
+    || fail "GUI keyfile channel session keyfile is not mode 600"
+printf 'smoke-test-key' > "$FIXTURE/state/gui-key2"
+chmod 600 "$FIXTURE/state/gui-key2"
+legacy_unlock_keyfile_from_file "$FIXTURE/state/gui-key2" "$FIXTURE/state/session-key2" \
+    >/dev/null || fail "GUI keyfile channel without a newline failed"
+[[ "$(cat "$FIXTURE/state/session-key2")" == "smoke-test-key" ]] \
+    || fail "GUI keyfile channel mangled the passphrase"
+rm -f "$FIXTURE/state/gui-key" "$FIXTURE/state/gui-key2" \
+    "$FIXTURE/state/session-key" "$FIXTURE/state/session-key2"
+pass "legacy GUI keyfile channel (regular file, mode 600, newline tolerated)"
+
 # --- legacy Make Default (B7-7 host-default) ---------------------------------
 mkdir -p "$FIXTURE/etc" "$FIXTURE/etc/init.d"
 RUNNING_HOST_MODE=1

@@ -263,6 +263,13 @@ int main(int argc, char **argv)
 
     QApplication application(argc, argv);
     application.setName(QString::fromLatin1("boot-repair-legacy-gui"));
+    // Cycle 9 loop 3: the smoke settings isolation must be active BEFORE the
+    // window is constructed (loadLegacySettings runs in the constructor), or
+    // a persisted ~/.qt/repairrc etc. would be read and flip a smoke
+    // assertion. Set it first, then construct the window.
+    if (smokeTest) {
+        legacy::legacySetSmokeSettingsIsolation(true);
+    }
     legacy::LegacyMainWindow window;
     window.setHelperPath(helper);
     window.setElevationOverride(elevationOverride);
@@ -276,6 +283,8 @@ int main(int argc, char **argv)
     window.show();
 
     if (smokeTest) {
+        // The isolation flag was already set before the window construction
+        // above; this block only wires the reporter and starts the smoke.
         SmokeReporter reporter(&application);
         QObject::connect(&window, SIGNAL(smokeFinished(bool, const QString &)),
                          &reporter, SLOT(finished(bool, const QString &)));

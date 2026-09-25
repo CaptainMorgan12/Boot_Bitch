@@ -36,12 +36,18 @@ and is **not shipped** in the `.deb` any more.
 CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it: a global
 header (the real Boot Bitch icon resized from the modern master PNG,
 **Boot Bitch**, the recovery subtitle, the
-**GUARDED REPAIR • 0.2.25** badge and a reserved-slot **Working...** busy
-indicator shown only while a helper command runs), **Systems** with the **Available repair
-targets** inventory, the **Select Target** / **Unlock** / **Host
-Maintenance** / **Authorize** action row, the **Selected drive details**
+**GUARDED REPAIR • 0.2.25** badge flush against the window's right edge and
+a reserved-slot **Working...** busy
+indicator shown only while a helper command runs), **Systems** leading with
+the permanently-protected running-host card (green-check indicator,
+probe-based identity/storage line, **PROTECTED** badge, **Details** /
+**Host Maintenance** / **Make Default** actions) above the **Available repair
+targets** tree (disks top-level with partitions/mappers as children,
+collapsed at startup), the **Select Target** / **Unlock** action row, the
+**Selected drive details**
 panel (drive, detected target/component, model/label, status, size,
-connection, filesystem, UUID, mounts, protection) and a dedicated **Unlock
+connection, filesystem, UUID, mounts, protection; the Details dialog reuses
+the same rows) and a dedicated **Unlock
 status** frame (locked/unlocked, component, mapper, method, errors; disabled
 for the protected running host) — drive selection comes from the list row and
 the best Linux root component is auto-resolved from the read-only udev
@@ -49,8 +55,11 @@ metadata (mapper with a Linux filesystem first, then a Linux partition, then
 the disk itself); every Filesystem cell in the target list carries a label
 (mounted/udev-probed/`[swap]`/`unknown`, whole disks aggregating their
 children as `ext3 + LUKS` etc.), **Diagnostics** mirrors the modern page (Run All + scope
-label, per-key diagnostic checks, the Selected diagnostic pane with Run
-Diagnostic, Results and Copy/Save Results, and the target-only **Edit Target
+label (the two-line Host maintenance:/Target: form), per-key diagnostic
+checks, the Selected diagnostic pane with the Run/**Re-run** Diagnostic
+button (Re-run once cached results exist for the current scope+key), Results
+and Copy/Save Results (minimum sizes keep the buttons visible when the
+window shrinks), and the target-only **Edit Target
 File...** control with the Etch-era file list — probe-based availability,
 guarded `config-read`/`config-write`, edits invalidate the cached
 diagnostics; no capability list or filter is duplicated, the cached
@@ -89,6 +98,15 @@ right of the **Application log** title above the search row, **New Session
 Log**, **Add Note**, **Delete** (prior files only, confirmed) and
 **Refresh**, and **Settings**
 shows functional device-discovery filters, the functional diagnostics
+LUKS unlock delivers the passphrase through a mode-600 keyfile argument
+(`unlock --key-file <path>`) because Qt 3.3.7's QProcess cannot deliver
+stdin; `--smoke-test` runs with settings isolation (persisted overrides are
+never read or written during the smoke), and the
+per-user settings files under ~/.qt/ (Qt 3.3.7 stores each settings group
+in its own file named after the group: devicesrc, logsrc, diagnosticsrc,
+repairrc; saved on every change and on close; the GUI never elevates itself,
+so the invoking user owns the files and a root-launched GUI keeps its own
+copies), the
 auto-refresh toggle (schedules one quiet Run All after scope entry —
 Host Maintenance or a committed repair target —, an unlock, a target
 configuration edit, any repair whose change status invalidates the cache, or

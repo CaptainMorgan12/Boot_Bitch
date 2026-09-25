@@ -135,8 +135,20 @@ grep -q 'for feature in file-copy shell host-shell host-maintenance snapshots ho
 grep -q 'Legacy feature %s:' "$HELPER" || fail "generated helper has no legacy feature report format"
 grep -q 'the legacy SysV display-manager repair is a host-scope stage' "$HELPER" \
     || fail "generated helper has no host-scope display reason"
-grep -q 'cryptsetup --key-file - luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
-    || fail "generated helper lost the cryptsetup 1.0 luksOpen unlock invocation"
+grep -q 'cryptsetup --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
+    || fail "generated helper lost the keyfile-based cryptsetup 1.0 luksOpen invocation"
+grep -q 'legacy_unlock_keyfile_from_stdin' "$HELPER" \
+    || fail "generated helper lost the newline-tolerant unlock keyfile handling"
+grep -q 'unlock --key-file requires exactly one path argument.' "$HELPER" \
+    || fail "generated helper lost the optional unlock --key-file argument"
+grep -q 'unlock_target --key-file "$2"' "$HELPER" \
+    || fail "generated helper does not pass --key-file through to unlock_target"
+grep -q 'legacy_unlock_keyfile_from_file' "$HELPER" \
+    || fail "generated helper lost the GUI keyfile channel"
+grep -q 'The unlock keyfile is not owned by the calling user.' "$HELPER" \
+    || fail "generated helper lost the keyfile ownership check"
+grep -q 'SUDO_UID' "$HELPER" \
+    || fail "generated helper keyfile ownership check does not consult SUDO_UID"
 grep -q 'cryptsetup open --type luks --key-file -' "$HELPER" \
     || fail "generated helper lost the modern cryptsetup open invocation (rename)"
 grep -q "grep -v '^noload$'" "$HELPER" \

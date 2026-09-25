@@ -2,6 +2,37 @@
 
 ## Unreleased
 
+- Cycle 9 unlock channel and smoke isolation: the LUKS passphrase now travels
+  through a mode-600 keyfile argument (the GUI writes an O_EXCL-created file
+  in its log directory, never argv, and deletes it on every path; the helper
+  accepts `unlock --key-file <path>`, verifies a regular caller-owned file,
+  reads it with the newline-tolerant key handling and deletes it before the
+  open attempt; the stdin channel remains for scripted callers). Qt 3.3.7's
+  QProcess cannot deliver stdin, so the helper runner's stdin channel is
+  unused by design. `--smoke-test` now runs with settings isolation: the
+  user's persisted ~/.qt/devicesrc|logsrc|diagnosticsrc|repairrc overrides are
+  never read or written during the smoke and the in-code defaults apply, so a
+  persisted override can never flip a smoke assertion.
+
+- Cycle 9: the protected running-host card and the small-parity set. The
+  Systems page now leads with a permanently-protected host card (green-check
+  indicator, probe-based identity/storage line, PROTECTED badge, and the
+  Details / Host Maintenance / Make Default actions on its right; Refresh
+  Devices stays top-right and the candidate list moves below the card). The
+  Details button opens a read-only dialog that reuses exactly the details
+  rows the Systems pane shows. The device tree starts collapsed (disks rolled
+  up; expand with +). The GUARDED REPAIR badge now reaches the window's right
+  edge. The Diagnostics results pane keeps minimum sizes so Copy Results /
+  Save Results never disappear when the window shrinks, and the per-check
+  button reads "Re-run Diagnostic" once cached results exist for the current
+  scope+key. The Diagnostics/Repair/Shell/File Copy scope label renders the
+  modern two-line form (Host maintenance: / Target: over the disk path).
+  Settings persistence is confirmed per-user with a Settings-page note
+  naming the actual Qt 3.3.7 files: each settings group lives in its own file
+  under ~/.qt/ (devicesrc, logsrc, diagnosticsrc, repairrc); the GUI never
+  elevates itself, so the invoking user owns the files and a root-launched
+  GUI keeps its own copies.
+
 - Cycle 8: Full Repair diagnostic regeneration, shell apt-intent translation
   and the modern File Copy page. Running the Full Repair plan now invalidates
   the scope's cached diagnostics once after the last plan stage (success or

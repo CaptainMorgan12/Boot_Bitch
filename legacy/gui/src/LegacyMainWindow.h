@@ -73,6 +73,12 @@ namespace legacy {
 
 class HelperRunner;
 
+// Cycle 9 loop 2: --smoke-test runs with settings isolation so a user's
+// persisted ~/.qt/*rc overrides can never flip a smoke assertion, and the
+// smoke never reads or writes those files.
+void legacySetSmokeSettingsIsolation(bool enabled);
+bool legacySmokeSettingsIsolation();
+
 // One application-log register entry, tagged at capture time so the Logs
 // filter combo (modern 1:1) can select entries by kind: lines captured while
 // a diagnostic command runs are Diagnostic (with the current section key from
@@ -160,6 +166,7 @@ private slots:
     void deviceFilterChanged();
     void autoRefreshToggled(bool enabled);
     void makeDefault();
+    void showHostDetails();
     void fileCopyDirectionChanged();
     void fileCopyAddFiles();
     void fileCopyAddFolder();
@@ -256,6 +263,12 @@ private:
     void updateFileCopyTab();
     QString fileCopyDirection() const;
     bool fileCopyReady(QString *reason) const;
+    std::vector<std::pair<QString, QString> > driveDetailsRows(
+        const QString &disk) const;
+    void updateHostCard();
+    void applyLegacySettingsDefaults();
+    bool writeUnlockKeyfile(const QByteArray &secret, QString *path);
+    void discardUnlockKeyfile();
     bool startFileCopyCommand(bool realCopy);
     void handleFileCopyBrowseResult(const std::string &transcript, bool ok);
     void updateChrootShellState();
@@ -378,6 +391,11 @@ private:
     QPushButton *m_unlockButton;
     QPushButton *m_elevateButton;
     QPushButton *m_setTargetButton;
+    QLabel *m_hostSystemLabel;
+    QLabel *m_hostStorageLabel;
+    QLabel *m_hostProtectedBadge;
+    QPushButton *m_hostDetailsButton;
+    QGroupBox *m_hostCard;
     QPushButton *m_hostMaintenanceButton;
     QPushButton *m_authorizeButton;
     QPushButton *m_repairAuthorizeButton;
@@ -450,6 +468,11 @@ private:
     QStringList m_priorLogLines;
     QStringList m_fileCopySources;
     QString m_fileCopyBrowsePath;
+    QString m_lastDiagnosticKey;
+    QString m_lastDiagnosticIdentity;
+    // The GUI's mode-600 unlock keyfile (Qt 3.3.7 QProcess cannot deliver
+    // stdin); created per unlock attempt and deleted on every path.
+    QString m_unlockKeyfilePath;
     // Last applied dynamic tooltips, so updateFileCopyTab() re-registers a
     // tooltip only when the text actually changes (Qt3's QTipManager deletes
     // and reallocates the per-widget Tip record on every add; the churn is

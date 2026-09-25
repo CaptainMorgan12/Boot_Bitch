@@ -536,6 +536,14 @@ bool HelperRunner::run(const QStringList &helperArgs)
     m_buffer = QString::null;
     m_reported = false;
     m_process = new QProcess(this);
+    // stdin stays unused by design: Qt 3.3.7's QProcess cannot deliver stdin
+    // reliably (without QProcess::Stdin the written bytes never reach the
+    // child; with it the child inherits the parent's stdin on some setups).
+    // The LUKS passphrase therefore travels through a mode-600 keyfile
+    // argument (never argv-processable content) and setInputData is only
+    // used to clear the buffer. Stderr is duplicated onto stdout (DupStderr)
+    // so one read channel carries the whole transcript; the admin sudo -S -v
+    // authentication uses its own raw fork/pipe and is unaffected.
     m_process->setCommunication(QProcess::Stdout | QProcess::DupStderr);
 
     if (!m_direct) {

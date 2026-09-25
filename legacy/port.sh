@@ -306,6 +306,25 @@ transform_legacy_behaviour()
         '    [[ -f "$probe_dir/etc/os-release" ]] && found=0' \
         '    legacy_root_evidence_present "$probe_dir" && found=0'
 
+    # Cycle 9 loop 2: the unlock verb accepts an optional --key-file <path>
+    # so the Qt3 GUI can deliver the LUKS passphrase through a mode-600 file
+    # (Qt 3.3.7 QProcess cannot deliver stdin). Without the argument the
+    # stdin channel is unchanged.
+    replace_block "$file" \
+        '        unlock)
+            (($# == 0)) || fail "unlock does not accept extra arguments."
+            unlock_target
+            ;;' \
+        '        unlock)
+            if (($# == 0)); then
+                unlock_target
+            else
+                [[ "$1" == "--key-file" ]] || fail "unlock does not accept extra arguments."
+                (($# == 2)) || fail "unlock --key-file requires exactly one path argument."
+                unlock_target --key-file "$2"
+            fi
+            ;;'
+
     note "dpkg db:Status sites" "$(count_literal 'db:Status' "$file")"
     replace_block "$file" \
         '        desktop_status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \

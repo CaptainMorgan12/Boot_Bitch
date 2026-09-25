@@ -19548,8 +19548,13 @@ main()
 
     case "$command" in
         unlock)
-            (($# == 0)) || fail "unlock does not accept extra arguments."
-            unlock_target
+            if (($# == 0)); then
+                unlock_target
+            else
+                [[ "$1" == "--key-file" ]] || fail "unlock does not accept extra arguments."
+                (($# == 2)) || fail "unlock --key-file requires exactly one path argument."
+                unlock_target --key-file "$2"
+            fi
             ;;
         validate)
             (($# == 0)) || fail "validate does not accept repair stages."
@@ -20806,6 +20811,50 @@ resolve_fstab_source()
     printf '%s\n' "$(legacy_remap_target_device_path "$resolved")"
 }
 
+# Read the LUKS passphrase from stdin, strip exactly one trailing CR/LF
+# (the GUI writes the raw passphrase and closes stdin; a scripted caller may
+# append a newline that cryptsetup 1.0 would otherwise treat as part of the
+# key), and write it to a mode-600 keyfile under the session state. Prints the
+# keyfile path; the caller deletes the keyfile after the open attempt. An
+# empty passphrase keeps the cryptsetup rc-2 semantics (UNLOCK_AUTH_FAILED).
+legacy_unlock_keyfile_from_stdin()
+{
+    local keyfile="${1:-}" passphrase=""
+    [[ -n "$keyfile" ]] || fail "Internal unlock keyfile error."
+    IFS= read -r passphrase || true
+    passphrase="${passphrase%$'\r'}"
+    if [[ -z "$passphrase" ]]; then
+        printf 'UNLOCK_AUTH_FAILED=1\n' >&2
+        fail "An empty LUKS passphrase was received on stdin."
+    fi
+    : > "$keyfile" || fail "Cannot create the session keyfile."
+    chmod 600 "$keyfile" || fail "Cannot restrict the session keyfile."
+    printf '%s' "$passphrase" > "$keyfile" || fail "Cannot write the session keyfile."
+    passphrase=""
+    printf '%s\n' "$keyfile"
+}
+
+# Read the LUKS passphrase from the GUI's mode-600 keyfile argument
+# (Qt 3.3.7 QProcess cannot deliver stdin), strip exactly one trailing CR/LF
+# and write it to the mode-600 session keyfile. The caller deletes the
+# argument file before the open attempt and the session keyfile after it.
+legacy_unlock_keyfile_from_file()
+{
+    local source="${1:-}" keyfile="${2:-}" passphrase=""
+    [[ -n "$source" && -n "$keyfile" ]] || fail "Internal unlock keyfile error."
+    IFS= read -r passphrase < "$source" || true
+    passphrase="${passphrase%$'\r'}"
+    if [[ -z "$passphrase" ]]; then
+        printf 'UNLOCK_AUTH_FAILED=1\n' >&2
+        fail "An empty LUKS passphrase was read from the keyfile."
+    fi
+    : > "$keyfile" || fail "Cannot create the session keyfile."
+    chmod 600 "$keyfile" || fail "Cannot restrict the session keyfile."
+    printf '%s' "$passphrase" > "$keyfile" || fail "Cannot write the session keyfile."
+    passphrase=""
+    printf '%s\n' "$keyfile"
+}
+
 # LUKS unlock for Etch's cryptsetup 1.0.  The modern helper opens with
 # `cryptsetup open --type luks --key-file - "$device" "$name"`; cryptsetup 1.0
 # has neither the `open` subcommand nor `--type` (its actions are
@@ -20819,7 +20868,13 @@ resolve_fstab_source()
 # passphrase, and --key-file - consumes the exact bytes.
 unlock_target()
 {
-    local fstype uuid mapper_name mapper_path existing_mapper crypt_rc
+    local fstype uuid mapper_name mapper_path existing_mapper crypt_rc keyfile_arg=""
+    if [[ "${1:-}" == "--key-file" ]]; then
+        keyfile_arg="$2"
+        [[ -n "$keyfile_arg" ]] || fail "unlock --key-file requires a path."
+    elif [[ -n "${1:-}" ]]; then
+        fail "unlock does not accept extra arguments."
+    fi
 
     need lsblk
     need findmnt
@@ -20864,13 +20919,39 @@ unlock_target()
     log "Unlocking LUKS target $ROOT_DEVICE"
     log "Mapper name: $mapper_name"
 
+    # The passphrase arrives either on stdin (one trailing newline/CR is
+    # tolerated) or through the GUI's --key-file argument (a mode-600 regular
+    # file owned by the caller, because Qt 3.3.7 QProcess cannot deliver
+    # stdin). Both channels land in a mode-600 session keyfile that is
+    # deleted on every path, failure included; the argument file is deleted
+    # before the open attempt and is never logged.
+    local keyfile=""
+    if [[ -n "$keyfile_arg" ]]; then
+        [[ -f "$keyfile_arg" && ! -L "$keyfile_arg" ]] \
+            || fail "The unlock keyfile is not a regular file: $keyfile_arg"
+        # The helper runs as root under sudo; the GUI creates the keyfile as
+        # the invoking user, so the ownership check compares against SUDO_UID
+        # when sudo recorded it, and against the effective uid otherwise (a
+        # direct root run). A foreign-owned file still fails.
+        local owner_uid=""
+        owner_uid="$(id -u)"
+        [[ -n "${SUDO_UID:-}" ]] && owner_uid="$SUDO_UID"
+        [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$owner_uid" ]] \
+            || fail "The unlock keyfile is not owned by the calling user."
+        keyfile="$(legacy_unlock_keyfile_from_file "$keyfile_arg" "$SESSION_DIR/unlock-keyfile")"
+        rm -f -- "$keyfile_arg"
+    else
+        keyfile="$(legacy_unlock_keyfile_from_stdin "$SESSION_DIR/unlock-keyfile")"
+    fi
+
     # cryptsetup 1.0 exit code 2 is the documented "no permission" result,
     # which includes an incorrect LUKS passphrase. Emit the machine-readable
     # marker so the GUI can offer a passphrase retry without re-authorizing.
     set +e
-    cryptsetup --key-file - luksOpen "$ROOT_DEVICE" "$mapper_name"
+    cryptsetup --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"
     crypt_rc=$?
     set -e
+    rm -f -- "$keyfile"
     if (( crypt_rc != 0 )); then
         if (( crypt_rc == 2 )); then
             printf 'UNLOCK_AUTH_FAILED=1\n' >&2
