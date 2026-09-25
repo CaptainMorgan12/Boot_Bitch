@@ -103,6 +103,8 @@ bool changeStatusIsUnchanged(const std::string &status);
 //   as a generic failure). Neither helper ever sees a passphrase: the helper
 //   prints only these markers.
 std::string unlockMapper(const std::string &text);
+std::string unlockRoot(const std::string &text);
+std::string unlockRootFstype(const std::string &text);
 bool unlockAuthFailed(const std::string &text);
 // Last "ERROR:" line of a transcript, trimmed and with the prefix removed
 // ("" when the transcript carries no error line). Used by the Systems tab's

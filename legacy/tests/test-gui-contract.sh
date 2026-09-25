@@ -200,6 +200,22 @@ for marker in '"--key-owner"' 'getuid()' 'confirmWrapped' \
 done
 grep -q 'QMessageBox::question' "$WINDOW" \
     && fail "an unwrapped QMessageBox::question confirmation remains"
+# Cycle 11 markers: Already Unlocked, the UNLOCKED_ROOT fallback and the
+# deferred-only Authorize affordance.
+for marker in '"Already Unlocked"' 'unlockRoot' 'unlockRootFstype' \
+    'm_unlockedDisk' 'm_unlockedRoot' 'setHidden(!deferred)'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-11 marker missing: $marker"
+done
+# Cycle 11 fix: the summary builder maps plan-stage keys to the transcript's
+# tool keys before matching the change-status lines.
+grep -q 'repairToolKeyForStage(toStd(stage))' "$WINDOW" \
+    || fail "repair summary does not map plan-stage keys to tool keys"
+grep -q 'UNLOCKED_ROOT' "$OVERLAY" \
+    || fail "legacy unlock does not emit the UNLOCKED_ROOT probe line"
+grep -q 'legacy_blkid_value_path' "$OVERLAY" \
+    || fail "legacy unlock fstype probe must use the direct mapper path"
+grep -q 'injectUnlockedMapperRows' "$WINDOW" \
+    || fail "GUI does not inject the unlocked mapper rows"
 grep -q 'setCommunication(QProcess::Stdout | QProcess::DupStderr)' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "helper runner stdin channel was not reverted (stdin unused by design)"
 grep -q 'legacy::legacySetSmokeSettingsIsolation(true)' "$GUI_DIR/src/main.cpp" \

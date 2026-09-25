@@ -229,6 +229,98 @@ cmp -s "$FIXTURE/menu.lst.orig" "$FIXTURE/boot/grub/menu.lst" \
     || fail "lossy GRUB legacy repair did not restore menu.lst"
 pass "GRUB legacy detection, entry preservation and rollback"
 
+# --- cycle 12: GRUB defoptions/kopt expansion must not trip the guard -------
+# The user's etch2 menu.lst carries `# defoptions=console=...` (the setup
+# console args) while its kernel lines predate the edit; update-grub expands
+# defoptions into the regenerated kernel lines, so the comparison must ignore
+# the managed arguments (and still refuse genuine removals or drops).
+cat > "$FIXTURE/menu.lst.defopts.before" <<'EOF'
+# defoptions=console=ttyS0,115200 consoleblank=0
+# kopt=root=/dev/mapper/debian-root ro
+
+title		Debian GNU/Linux, kernel 2.6.18-6-686
+kernel		/boot/vmlinuz-2.6.18-6-686 root=/dev/mapper/debian-root ro
+initrd		/boot/initrd.img-2.6.18-6-686
+EOF
+managed="$(legacy_grub_managed_options "$FIXTURE/menu.lst.defopts.before")"
+[[ "$managed" == *"console=ttyS0,115200"* ]] \
+    || fail "managed defoptions/kopt arguments were not extracted"
+[[ "$managed" == *"root=/dev/mapper/debian-root"* ]] \
+    || fail "managed kopt arguments were not extracted"
+LEGACY_GRUB_MANAGED="$managed"
+legacy_grub_entry_declarations "$FIXTURE/menu.lst.defopts.before" "$LEGACY_GRUB_MANAGED" \
+    > "$FIXTURE/decl.defopts.before"
+cat > "$FIXTURE/menu.lst.defopts.after" <<'EOF'
+# defoptions=console=ttyS0,115200 consoleblank=0
+# kopt=root=/dev/mapper/debian-root ro
+
+title		Debian GNU/Linux, kernel 2.6.18-6-686
+kernel		/boot/vmlinuz-2.6.18-6-686 root=/dev/mapper/debian-root ro console=ttyS0,115200 consoleblank=0
+initrd		/boot/initrd.img-2.6.18-6-686
+EOF
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.defopts.before" \
+    "$FIXTURE/menu.lst.defopts.after" \
+    || fail "entry-preservation guard rejected the defoptions expansion"
+
+cat > "$FIXTURE/menu.lst.defopts.dropped" <<'EOF'
+title		Debian GNU/Linux, kernel 2.6.18-6-686
+kernel		/boot/vmlinuz-2.6.18-6-686 root=/dev/mapper/debian-root ro
+initrd		/boot/initrd.img-2.6.18-6-686
+EOF
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.defopts.before" \
+    "$FIXTURE/menu.lst.defopts.dropped" \
+    && fail "entry-preservation guard accepted a regeneration that dropped the defoptions argument"
+LEGACY_GRUB_MANAGED=""
+pass "GRUB legacy defoptions/kopt expansion (guard accepts the expansion, refuses a drop)"
+
+# --- cycle 12: split-LV data mounts ------------------------------------------
+mkdir -p "$FIXTURE/etc" "$FIXTURE/usr" "$FIXTURE/var/lib/dpkg" "$FIXTURE/tmp" "$FIXTURE/home" "$FIXTURE/opt"
+cat > "$FIXTURE/etc/fstab" <<'EOF'
+/dev/hda3	/	ext3	defaults,errors=remount-ro	0	1
+/dev/hdb3	/usr	ext3	defaults	0	2
+/dev/hdb4	/var	ext3	defaults	0	2
+/dev/hdb5	/tmp	ext3	defaults	0	2
+/dev/hdb6	/home	ext3	defaults	0	2
+/dev/hdb7	none	swap	sw	0	0
+proc		/proc	proc	defaults	0	0
+none		/dev/shm	tmpfs	defaults	0	0
+EOF
+TARGET_ROOT="$FIXTURE"
+TARGET_DISK=/dev/hdb
+ROOT_DEVICE=/dev/hda3
+MOUNTS=()
+: > "$FIXTURE/mounts.log"
+resolve_fstab_source() { printf '%s\n' "$1"; }
+is_block_device() { [[ "$1" == /dev/hda3 || "$1" == /dev/hdb[3456] ]]; }
+same_single_top_disk() { [[ "$1" == /dev/hdb && "$2" == /dev/hdb* ]]; }
+mountpoint() { return 1; }
+mount_recorded() {
+    printf 'MOUNT %s\n' "$*" >> "$FIXTURE/mounts.log"
+    MOUNTS+=("$2")
+    return 0
+}
+legacy_mount_target_fstab_entries ro
+[[ "$(grep -c '^MOUNT ' "$FIXTURE/mounts.log")" -eq 4 ]] \
+    || fail "split-LV ro mount did not mount exactly the four data entries"
+grep -q "MOUNT /dev/hdb4 $FIXTURE/var -o ro" "$FIXTURE/mounts.log" \
+    || fail "split-LV /var was not mounted read-only"
+grep -q "MOUNT /dev/hdb3 $FIXTURE/usr -o ro" "$FIXTURE/mounts.log" \
+    || fail "split-LV /usr was not mounted read-only"
+grep -q '/home' "$FIXTURE/mounts.log" || fail "split-LV /home was not mounted"
+grep -q '/tmp' "$FIXTURE/mounts.log" || fail "split-LV /tmp was not mounted"
+grep -q 'swap' "$FIXTURE/mounts.log" && fail "swap was mounted as a data entry"
+grep -q 'proc' "$FIXTURE/mounts.log" && fail "proc was mounted as a data entry"
+grep -q 'tmpfs' "$FIXTURE/mounts.log" && fail "tmpfs was mounted as a data entry"
+[[ "${#MOUNTS[@]}" -eq 4 ]] || fail "mount records do not match the data mounts"
+
+# A repair (rw) must fail closed when a required data mount fails.
+mount_recorded() { return 1; }
+( legacy_mount_target_fstab_entries rw ) > "$FIXTURE/mounts-rw.log" 2>&1 \
+    && fail "rw split-LV mount did not fail closed on a mount failure"
+grep -q 'could not be mounted' "$FIXTURE/mounts-rw.log" \
+    || fail "rw split-LV mount failure left no fail-closed evidence"
+pass "split-LV data mounts (ro tolerant, rw fail-closed, pseudo entries skipped)"
+
 # --- read-only validate / diagnose against the fixture root ------------------
 prepare_target() { :; }
 mount_target_boot_entry() { :; }
@@ -403,6 +495,199 @@ legacy_unlock_keyfile_from_file "$FIXTURE/state/gui-key2" "$FIXTURE/state/sessio
 rm -f "$FIXTURE/state/gui-key" "$FIXTURE/state/gui-key2" \
     "$FIXTURE/state/session-key" "$FIXTURE/state/session-key2"
 pass "legacy GUI keyfile channel (regular file, mode 600, newline tolerated)"
+
+# The path-based blkid TYPE probe parses both the modern `-o value -s TYPE`
+# and the Etch-era bare `TYPE="..."` output, and probes the given path
+# directly (no basename/readlink translation).
+mkdir -p "$FIXTURE/blkid-stub"
+cat > "$FIXTURE/blkid-stub/blkid" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-o" ]; then
+    printf 'ext3\n'
+else
+    printf '/dev/mapper/smoke: UUID="x" TYPE="reiserfs"\n'
+fi
+EOF
+chmod +x "$FIXTURE/blkid-stub/blkid"
+legacy_real_tool_path() { printf '%s\n' "$FIXTURE/blkid-stub/blkid"; }
+[[ "$(legacy_blkid_value_path /dev/mapper/smoke)" == "ext3" ]] \
+    || fail "path-based blkid probe did not parse the modern output"
+legacy_real_tool_path() { printf '%s\n' "$FIXTURE/blkid-stub/blkid-old"; }
+cat > "$FIXTURE/blkid-stub/blkid-old" <<'EOF'
+#!/bin/sh
+if [ "$1" = "-o" ]; then
+    exit 1
+fi
+printf '/dev/mapper/smoke: UUID="x" TYPE="reiserfs"\n'
+EOF
+chmod +x "$FIXTURE/blkid-stub/blkid-old"
+[[ "$(legacy_blkid_value_path /dev/mapper/smoke)" == "reiserfs" ]] \
+    || fail "path-based blkid probe did not parse the Etch-era TYPE= output"
+pass "legacy path-based blkid TYPE probe (modern and Etch-era output)"
+
+# --- cycle 12: existing-mapper unlock still probes the root candidate --------
+# A previous session may have left the mapper open: the reuse path must emit
+# UNLOCKED_ROOT for the already-open chain (a fresh GUI process cannot see
+# the LVs in its read-only inventory otherwise).
+find() {
+    if [[ "$1" == /dev/mapper ]]; then
+        printf '%s\n' /dev/mapper/debian-root /dev/mapper/debian-usr \
+            /dev/mapper/luks-etchroot
+        return 0
+    fi
+    command find "$@"
+}
+legacy_blkid_value_path() {
+    case "$1" in
+        *debian-root*|*debian-usr*) printf 'ext3\n' ;;
+        *) return 0 ;;
+    esac
+}
+probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+printf '%s\n' "$probe_out" | grep -q 'UNLOCKED_ROOT=/dev/mapper/debian-root' \
+    || fail "existing-mapper probe did not emit the unlocked root"
+printf '%s\n' "$probe_out" | grep -q 'UNLOCKED_ROOT_FSTYPE=ext3' \
+    || fail "existing-mapper probe did not emit the unlocked root fstype"
+pass "legacy unlock root probe on the already-open mapper chain"
+
+# --- cycle 12: the file system check skips devices mounted under the target --
+# The legacy check keeps the target's helper-owned mounts and must emit the
+# modern offline-only skip lines instead of running an offline fsck over a
+# live filesystem on Etch's IDE/PIO disk.
+cat > "$FIXTURE/fs-check-mounts.txt" <<'EOF'
+/dev/mapper/debian-root /tmp/boot-repair-session/session.xxxx/mount
+EOF
+(
+    findmnt() { cat "$FIXTURE/fs-check-mounts.txt"; }
+    canonical_block() { printf '%s\n' "$1"; }
+    umount() { printf 'UMOUNT CALLED\n' >> "$FIXTURE/fs-check.txt"; }
+    RUNNING_HOST_MODE=0
+    TARGET_ROOT="/tmp/boot-repair-session/session.xxxx/mount"
+    filesystem_scope_resolve() {
+        FS_SCOPE_DEVICES=(/dev/mapper/debian-root)
+        FS_SCOPE_MOUNTS=("")
+        FS_SCOPE_FSTYPES=(ext3)
+        FS_SCOPE_UUIDS=("")
+        FS_SCOPE_TOOLS=(e2fsck)
+    }
+    filesystem_scope_tools() { :; }
+    filesystem_detail_line() { printf 'detail: %s\n' "$3"; }
+    filesystem_repair_tool() { printf '/sbin/e2fsck'; }
+    filesystem_run_inspect_command() {
+        printf 'INSPECT RAN %s\n' "$2"
+        FS_INSPECT_OUTPUT=""
+        FS_INSPECT_RC=0
+    }
+    fs_inspect_scope > "$FIXTURE/fs-check.txt" 2>&1 || true
+)
+grep -q 'result=skipped' "$FIXTURE/fs-check.txt" \
+    || fail "mounted target device was not skipped by the file system check"
+grep -q 'this check tool is offline-only' "$FIXTURE/fs-check.txt" \
+    || fail "skip line lost the offline-only detail"
+grep -q 'File system check summary: devices=1 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=1' \
+    "$FIXTURE/fs-check.txt" || fail "file system check summary counts are wrong"
+grep -q 'INSPECT RAN' "$FIXTURE/fs-check.txt" \
+    && fail "the mounted device was checked instead of skipped"
+grep -q 'UMOUNT CALLED' "$FIXTURE/fs-check.txt" \
+    && fail "the legacy file system check released the target mounts"
+pass "file system check skips devices mounted under the target (offline-only)"
+
+# --- cycle 12 loop 3: resolver copy with teardown restore --------------------
+# The legacy resolver is a file copy (the 2.6.18 kernel refuses a
+# remount,bind,ro of a single-file bind with EBUSY): the target's original is
+# backed up, the host resolver is copied over it, a second call reuses the
+# copy, and the exit cleanup restores the original and removes the backup.
+# Helper functions leave `set -e` enabled at their end, so the smoke re-arms
+# `set +e` here and the case exits 0 explicitly.
+set +e
+mkdir -p "$FIXTURE/etc"
+printf 'nameserver smoke-ns-target\n' > "$FIXTURE/etc/resolv.conf"
+(
+    # The subshell must not inherit the smoke's EXIT trap (it would delete the
+    # fixture when the case's last assertion returns non-zero).
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE"
+    SESSION_DIR="$FIXTURE/session-resolver"
+    mkdir -p "$SESSION_DIR"
+    LEGACY_RESOLVER_DESTINATION=""
+    LEGACY_RESOLVER_BACKUP=""
+    cp_calls=0
+    cp() {
+        cp_calls=$((cp_calls + 1))
+        if [[ "$2" == /etc/resolv.conf ]]; then
+            printf 'nameserver smoke-ns-host\n' > "$FIXTURE/etc/resolv.conf"
+        else
+            command cp "$@"
+        fi
+    }
+    realpath_existing() { printf '%s\n' "$1"; }
+    path_within() { return 0; }
+    log() { :; }
+    cleanup_modern() { :; }
+    mount_target_resolver
+    [[ "$(cat "$FIXTURE/etc/resolv.conf")" == "nameserver smoke-ns-host" ]] \
+        || fail "resolver copy did not land in the target"
+    [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
+        || fail "resolver backup was not created"
+    mount_target_resolver
+    [[ $cp_calls -le 2 ]] || fail "resolver copy ran more than once"
+    cleanup >/dev/null 2>&1 || true
+    [[ "$(cat "$FIXTURE/etc/resolv.conf")" == "nameserver smoke-ns-target" ]] \
+        || fail "resolver restore did not put the target's original back"
+    [[ -e "$SESSION_DIR/resolv.conf.target.before" ]] \
+        && fail "resolver backup was not removed by the teardown"
+    exit 0
+)
+pass "legacy resolver copy with teardown restore (idempotent, never remounted)"
+
+# --- cycle 12 loop 4: legacy data mount promotion ----------------------------
+# The split-LV data mounts (usr/var/tmp/home) must be promoted read-write
+# before the modifying stages; the promotion is idempotent and fails closed
+# when a data filesystem cannot be promoted.
+set +e
+(
+    trap - EXIT
+    SESSION_LOG="$FIXTURE/session.log"
+    LEGACY_DATA_MOUNTS=("$FIXTURE/var" "$FIXTURE/home")
+    LEGACY_DATA_PROMOTED=0
+    remount_calls=0
+    : > "$FIXTURE/remounts.log"
+    mount() {
+        remount_calls=$((remount_calls + 1))
+        printf 'REM %s\n' "$*" >> "$FIXTURE/remounts.log"
+        return 0
+    }
+    mountpoint() { return 0; }
+    log() { :; }
+    remount_target_data_rw_modern() { :; }
+    remount_target_data_rw
+    [[ $remount_calls -eq 2 ]] || fail "data promotion did not remount both data mounts"
+    grep -q "REM -o remount,rw $FIXTURE/var" "$FIXTURE/remounts.log" \
+        || fail "data promotion did not remount /var read-write"
+    grep -q "REM -o remount,rw $FIXTURE/home" "$FIXTURE/remounts.log" \
+        || fail "data promotion did not remount /home read-write"
+    remount_target_data_rw
+    [[ $remount_calls -eq 2 ]] || fail "data promotion was not idempotent"
+    LEGACY_DATA_PROMOTED=0
+    mount() { return 1; }
+    ( remount_target_data_rw ) >/dev/null 2>&1 \
+        && fail "data promotion did not fail closed on a remount failure"
+    exit 0
+)
+pass "legacy data mount promotion (rw remount, idempotent, fail-closed)"
+
+# --- cycle 12 loop 2: cryptsetup 1.0 status parsing --------------------------
+# Etch prints `device:  /dev/.static/dev/hdb5`; the parser must strip the
+# colon-bearing field and the /dev/.static prefix.
+cryptsetup() { printf 'device:  /dev/.static/dev/hdb5\n'; }
+status_device="$(legacy_crypt_status_device smoke-mapper)" \
+    || fail "cryptsetup 1.0 status was not parsed"
+[[ "$status_device" == "/dev/hdb5" ]] \
+    || fail "cryptsetup 1.0 device path was not normalized: $status_device"
+cryptsetup() { printf 'cipher:  aes\n'; }
+legacy_crypt_status_device smoke-mapper \
+    && fail "a status without a device field must not yield a device"
+pass "legacy cryptsetup 1.0 status parsing (device: field, /dev/.static strip)"
 
 # --- legacy Make Default (B7-7 host-default) ---------------------------------
 mkdir -p "$FIXTURE/etc" "$FIXTURE/etc/init.d"

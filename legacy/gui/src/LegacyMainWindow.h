@@ -269,6 +269,8 @@ private:
     void applyLegacySettingsDefaults();
     bool writeUnlockKeyfile(const QByteArray &secret, QString *path);
     void discardUnlockKeyfile();
+    void injectUnlockedMapperRows(const QString &disk, const QString &mapper,
+                                  const QString &root, const QString &fstype);
     bool startFileCopyCommand(bool realCopy);
     void handleFileCopyBrowseResult(const std::string &transcript, bool ok);
     void updateChrootShellState();
@@ -473,6 +475,10 @@ private:
     // The GUI's mode-600 unlock keyfile (Qt 3.3.7 QProcess cannot deliver
     // stdin); created per unlock attempt and deleted on every path.
     QString m_unlockKeyfilePath;
+    // Cycle 11: the drive unlocked in this session and the helper-confirmed
+    // root component (UNLOCKED_ROOT) for the Select Target fallback.
+    QString m_unlockedDisk;
+    QString m_unlockedRoot;
     // Last applied dynamic tooltips, so updateFileCopyTab() re-registers a
     // tooltip only when the text actually changes (Qt3's QTipManager deletes
     // and reallocates the per-widget Tip record on every add; the churn is

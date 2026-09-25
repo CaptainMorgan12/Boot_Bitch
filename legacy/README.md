@@ -49,6 +49,15 @@ panel (drive, detected target/component, model/label, status, size,
 connection, filesystem, UUID, mounts, protection; the Details dialog reuses
 the same rows) and a dedicated **Unlock
 status** frame (locked/unlocked, component, mapper, method, errors; disabled
+for the protected running host; after a successful unlock the Unlock button
+reads **Already Unlocked** — the helper emits `UNLOCKED_ROOT=` from a
+read-only probe of the opened mapper chain so Select Target can commit the
+mapped root), and the Authorize affordance shows only in the deferred state; after the
+root/boot mounts the helper mounts the target's other standard fstab entries
+(/usr, /var, /tmp, /home, /opt, /srv; remapped, same-disk-only, read-only
+diagnostics tolerant and repairs fail-closed) so split-LV layouts reach the
+package stages, and the GRUB-legacy regeneration guard preserves the
+`# defoptions=`/`# kopt=` console arguments instead of rolling back
 for the protected running host) — drive selection comes from the list row and
 the best Linux root component is auto-resolved from the read-only udev
 metadata (mapper with a Linux filesystem first, then a Linux partition, then

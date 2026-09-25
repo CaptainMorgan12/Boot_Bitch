@@ -376,6 +376,38 @@ std::string unlockMapper(const std::string &text)
     return std::string();
 }
 
+std::string unlockRoot(const std::string &text)
+{
+    const std::vector<std::string> lines = splitLines(text);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string line = trim(lines[i]);
+        if (startsWith(line, "UNLOCKED_ROOT=")) {
+            const std::string value =
+                trim(line.substr(std::strlen("UNLOCKED_ROOT=")));
+            if (!value.empty()) {
+                return value;
+            }
+        }
+    }
+    return std::string();
+}
+
+std::string unlockRootFstype(const std::string &text)
+{
+    const std::vector<std::string> lines = splitLines(text);
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string line = trim(lines[i]);
+        if (startsWith(line, "UNLOCKED_ROOT_FSTYPE=")) {
+            const std::string value =
+                trim(line.substr(std::strlen("UNLOCKED_ROOT_FSTYPE=")));
+            if (!value.empty()) {
+                return value;
+            }
+        }
+    }
+    return std::string();
+}
+
 bool unlockAuthFailed(const std::string &text)
 {
     const std::vector<std::string> lines = splitLines(text);

@@ -86,8 +86,8 @@ printf '%s\n' "$check_out" | grep -qE 'sed -nE +61' \
     || fail "port summary sed -nE count is not 61"
 printf '%s\n' "$check_out" | grep -qE '=~ regex literal hoists +11' \
     || fail "port summary regex-hoist count is not 11"
-printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +34' \
-    || fail "port summary wrapped-function count is not 34"
+printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +41' \
+    || fail "port summary wrapped-function count is not 41"
 pass "port --check in sync and lists every transformation"
 
 # --- generated helper has no bash-4 syntax ----------------------------------
@@ -147,6 +147,47 @@ grep -q 'unlock_target --key-file "$2" --key-owner "$4"' "$HELPER" \
     || fail "generated helper does not pass --key-owner through to unlock_target"
 grep -q 'unlock --key-owner requires a uid.' "$HELPER" \
     || fail "generated helper lost the --key-owner argument parsing"
+grep -q 'UNLOCKED_ROOT=' "$HELPER" \
+    || fail "generated helper lost the unlocked-root probe line"
+grep -q 'legacy_blkid_value_path "$entry"' "$HELPER" \
+    || fail "generated helper lost the direct-path unlocked-root fstype probe"
+grep -q 'legacy_blkid_value_path' "$HELPER" \
+    || fail "generated helper lost the path-based blkid TYPE probe"
+grep -q 'legacy_mount_target_fstab_entries' "$HELPER" \
+    || fail "generated helper lost the split-LV data mount pass"
+grep -q 'prepare_target_modern' "$HELPER" \
+    || fail "generated helper lost the prepare_target wrap"
+grep -q 'defoptions/kopt-managed arguments captured' "$HELPER" \
+    || fail "generated helper lost the GRUB defoptions preflight note"
+grep -q 'legacy_grub_managed_options' "$HELPER" \
+    || fail "generated helper lost the defoptions/kopt extraction"
+grep -q 'legacy_unlock_root_probe "$existing_mapper"' "$HELPER" \
+    || fail "generated helper lost the existing-mapper root probe"
+grep -q 'filesystem_release_all_mounts_modern' "$HELPER" \
+    || fail "generated helper lost the filesystem release wrap"
+grep -q 'filesystem_mountpoint_for_device_modern' "$HELPER" \
+    || fail "generated helper lost the filesystem mountpoint wrap"
+grep -q 'mount_target_resolver_modern' "$HELPER" \
+    || fail "generated helper lost the idempotent resolver-bind wrap"
+grep -q 'legacy_crypt_status_device' "$HELPER" \
+    || fail "generated helper lost the cryptsetup 1.0 status parser"
+grep -q 'find_crypt_mapper_for_device_modern' "$HELPER" \
+    || fail "generated helper lost the existing-mapper lookup wrap"
+grep -q 'cleanup_modern' "$HELPER" \
+    || fail "generated helper lost the cleanup wrap"
+grep -q 'LEGACY_RESOLVER_DESTINATION' "$HELPER" \
+    || fail "generated helper lost the resolver-copy teardown state"
+grep -q 'Copied recovery-host resolver into the target chroot' "$HELPER" \
+    || fail "generated helper lost the resolver copy path"
+grep -q 'Remounting target data filesystem ' "$HELPER" \
+    || fail "generated helper lost the legacy data-mount promotion"
+grep -q 'LEGACY_DATA_MOUNTS' "$HELPER" \
+    || fail "generated helper lost the legacy data-mount records"
+grep -q 'remount_target_data_rw_modern' "$HELPER" \
+    || fail "generated helper lost the data-promotion wrap"
+if grep -E 'awk .*\[\[:space:\]\]' "$OVERLAY"; then
+    fail "overlay awk programs still use the mawk-incompatible [[:space:]] class"
+fi
 grep -q 'legacy_unlock_keyfile_from_file' "$HELPER" \
     || fail "generated helper lost the GUI keyfile channel"
 grep -q 'The unlock keyfile is not owned by the calling user.' "$HELPER" \

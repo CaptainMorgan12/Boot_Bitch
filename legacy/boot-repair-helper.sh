@@ -1893,7 +1893,7 @@ mount_records_prune()
 # request-scoped target paths and mapper aliases, unmount helper-owned mounts,
 # close session-owned LUKS mappings and delete the session directory.  Always
 # exits with the status captured on entry so the original failure is preserved.
-cleanup()
+cleanup_modern()
 {
     local rc=$?
     set +e
@@ -2365,7 +2365,7 @@ preferred_block_path()
     printf '%s\n' "$canonical"
 }
 
-find_crypt_mapper_for_device()
+find_crypt_mapper_for_device_modern()
 {
     local device="$1" canonical alias name existing_device
     canonical="$(canonical_block "$device")" || return 1
@@ -2753,7 +2753,7 @@ mount_special_modern()
     MOUNTS+=("$destination")
 }
 
-mount_target_resolver()
+mount_target_resolver_modern()
 {
     local target_link="$TARGET_ROOT/etc/resolv.conf" link destination root_real
     [[ -r /etc/resolv.conf ]] || return 0
@@ -2973,7 +2973,7 @@ mount_target_btrfs_subvolumes()
     )
 }
 
-remount_target_data_rw()
+remount_target_data_rw_modern()
 {
     local path
     for path in "${TARGET_DATA_MOUNTS[@]:-}"; do
@@ -4023,7 +4023,7 @@ profile_esp_root()
 # only the root (and locates/mounts the Btrfs root subvolume); mode rw also
 # mounts /boot, the ESP, /dev, /proc, /sys, /run and the resolver.  Sets
 # TARGET_ROOT, TARGET_SUBVOL and SESSION_LOG after all safety checks pass.
-prepare_target()
+prepare_target_modern()
 {
     local mode="$1" fstype mounted_root raw_target raw_root mount_mode discovered_subvol="" root_mount_options
     local selected_component="" selected_fstype="" fallback_root=""
@@ -11202,7 +11202,7 @@ filesystem_device_record()
 # checked first so a repair target that reuses a host-visible device name can
 # never be confused with the running host; the live mount table is the
 # fallback for running-host maintenance.
-filesystem_mountpoint_for_device()
+filesystem_mountpoint_for_device_modern()
 {
     local device="$1" hint="${2:-}" source mountpoint
     # Running-host scope: TARGET_ROOT is "/" and the hint is a live mountpoint
@@ -11266,7 +11266,7 @@ filesystem_release_mounts_for_device()
 # Read-only inspection runs against unmounted devices so mount-sensitive
 # filesystem tools (for example btrfs check) still produce valid evidence.
 # Only helper-owned mounts are released.
-filesystem_release_all_mounts()
+filesystem_release_all_mounts_modern()
 {
     local idx mountpath
     for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx )); do
@@ -19846,6 +19846,7 @@ target_package_installed()
 
 LEGACY_GRUB_BACKUP=""
 LEGACY_GRUB_DECLARATIONS=""
+LEGACY_GRUB_MANAGED=""
 
 legacy_grub_legacy_target()
 {
@@ -19855,16 +19856,79 @@ legacy_grub_legacy_target()
     return 0
 }
 
+# Escape a token for a BRE (sed) pattern. The bracket class carries the
+# literal `]` first (the POSIX idiom); kernel-argument tokens never contain
+# backslashes, so the backslash itself is not in the class.
+legacy_grub_sed_escape()
+{
+    printf '%s' "$1" | sed 's/[].*^$[]/\\&/g'
+}
+
+# Escape a token for an ERE (grep -E) pattern.
+legacy_grub_grep_escape()
+{
+    printf '%s' "$1" | sed 's/[].[*^$+?|(){}]/\\&/g'
+}
+
+# The kernel-line arguments managed by the menu.lst defoptions/kopt comments
+# (Etch's update-grub expands these into the generated kernel lines).
+legacy_grub_managed_options()
+{
+    local config="$1" line="" rest="" combined=""
+    [[ -s "$config" ]] || return 0
+    while IFS= read -r line; do
+        [[ "$line" == \#* ]] || continue
+        line="${line#\#}"
+        line="${line# }"
+        case "$line" in
+            defoptions=*|kopt=*)
+                rest="${line#*=}"
+                rest="$(printf '%s' "$rest" | tr '\t' ' ')"
+                rest="$(printf '%s' "$rest" | sed 's/^ *//; s/ *$//')"
+                if [[ -n "$rest" ]]; then
+                    combined="$combined $rest"
+                fi
+                ;;
+        esac
+    done < "$config" 2>/dev/null || true
+    printf '%s' "$combined" | sed 's/^ *//; s/ *$//'
+}
+
 # Normalized title/kernel/initrd/root/module declarations.  These are the
 # boot-critical identity of a GRUB legacy menu; GRUB_DISTRIBUTOR and title
-# wording are not trusted as entry identity.
+# wording are not trusted as entry identity.  The defoptions/kopt-managed
+# arguments are removed from kernel lines so an update-grub regeneration that
+# expands them is not mistaken for entry removal.
 legacy_grub_entry_declarations()
 {
-    local config="$1"
+    local config="$1" managed="${2:-}" line="" normalized="" token="" escaped=""
     [[ -s "$config" ]] || return 0
     legacy_sed_ext -n '/^[[:space:]]*(title|kernel|initrd|root|module)[[:space:]]/p' "$config" 2>/dev/null \
         | legacy_sed_ext 's/[[:space:]]+/ /g; s/^ //; s/ $//' \
+        | while IFS= read -r line; do
+            if [[ "$line" == kernel\ * && -n "$managed" ]]; then
+                normalized="$line"
+                for token in $managed; do
+                    escaped="$(legacy_grub_sed_escape "$token")"
+                    normalized="$(printf '%s' "$normalized" \
+                        | sed "s| $escaped | |g; s| $escaped\$||; s|^$escaped ||")"
+                done
+                printf '%s\n' "$normalized"
+            else
+                printf '%s\n' "$line"
+            fi
+        done \
         | LC_ALL=C sort -u
+}
+
+# The kernel lines of a menu.lst (normalized whitespace), for the positive
+# defoptions-carry check.
+legacy_grub_kernel_lines()
+{
+    local config="$1"
+    [[ -s "$config" ]] || return 0
+    legacy_sed_ext -n '/^[[:space:]]*kernel[[:space:]]/p' "$config" 2>/dev/null \
+        | legacy_sed_ext 's/[[:space:]]+/ /g; s/^ //; s/ $//'
 }
 
 legacy_grub_preflight()
@@ -19877,7 +19941,11 @@ legacy_grub_preflight()
     LEGACY_GRUB_DECLARATIONS="$SESSION_DIR/grub-menu-declarations.before"
     cp -a -- "$TARGET_ROOT/boot/grub/menu.lst" "$LEGACY_GRUB_BACKUP" \
         || fail "Unable to back up /boot/grub/menu.lst before regeneration."
-    legacy_grub_entry_declarations "$TARGET_ROOT/boot/grub/menu.lst" > "$LEGACY_GRUB_DECLARATIONS"
+    LEGACY_GRUB_MANAGED="$(legacy_grub_managed_options "$TARGET_ROOT/boot/grub/menu.lst")"
+    legacy_grub_entry_declarations "$TARGET_ROOT/boot/grub/menu.lst" "$LEGACY_GRUB_MANAGED" > "$LEGACY_GRUB_DECLARATIONS"
+    if [[ -n "$LEGACY_GRUB_MANAGED" ]]; then
+        log "SIMULATE/PREFLIGHT: GRUB legacy defoptions/kopt-managed arguments captured: $LEGACY_GRUB_MANAGED" | tee -a "$SESSION_LOG"
+    fi
     log "SIMULATE/PREFLIGHT: GRUB legacy menu.lst backed up to $LEGACY_GRUB_BACKUP and entry declarations captured." | tee -a "$SESSION_LOG"
 }
 
@@ -19885,13 +19953,29 @@ legacy_grub_guard_entries_preserved()
 {
     local before="$1" after="$2" after_keys="$SESSION_DIR/grub-menu-declarations.after"
     local missing="$SESSION_DIR/grub-menu-declarations.missing"
+    local token="" escaped="" kernel_lines=""
     [[ -s "$before" ]] || return 0
-    legacy_grub_entry_declarations "$after" > "$after_keys"
+    # Cycle 12: compare with the defoptions/kopt-managed arguments stripped
+    # from the kernel lines, so a regeneration that expands the menu's own
+    # defoptions/kopt comments is not mistaken for entry removal.
+    legacy_grub_entry_declarations "$after" "$LEGACY_GRUB_MANAGED" > "$after_keys"
     comm -23 "$before" "$after_keys" > "$missing" || true
     if [[ -s "$missing" ]]; then
         log "ERROR: GRUB legacy regeneration would remove existing menu declarations; the target configuration was rolled back." | tee -a "$SESSION_LOG"
         sed 's/^/  preserved-declaration-required: /' "$missing" | tee -a "$SESSION_LOG"
         return 1
+    fi
+    # Positive check: the regenerated kernel lines must carry every
+    # defoptions/kopt-managed argument (update-grub expands them).
+    if [[ -n "$LEGACY_GRUB_MANAGED" ]]; then
+        kernel_lines="$(legacy_grub_kernel_lines "$after")"
+        for token in $LEGACY_GRUB_MANAGED; do
+            escaped="$(legacy_grub_grep_escape "$token")"
+            if ! printf '%s\n' "$kernel_lines" | grep -qE "(^|[[:space:]])$escaped([[:space:]]|$)"; then
+                log "ERROR: GRUB legacy regeneration dropped the defoptions/kopt-managed argument '$token'; the target configuration was rolled back." | tee -a "$SESSION_LOG"
+                return 1
+            fi
+        done
     fi
     return 0
 }
@@ -20517,6 +20601,108 @@ diagnostic_repair_capabilities()
 }
 
 # ---------------------------------------------------------------------------
+# Split-LV target mounts (cycle 12)
+# ---------------------------------------------------------------------------
+
+# Cycle 12: after the root (and boot-entry) mounts, the target's remaining
+# standard-system fstab entries are mounted under TARGET_ROOT so package and
+# boot stages see /var/lib/dpkg and apt's /var/cache|/var/lib/apt on
+# split-LV layouts. Read-only diagnostics tolerate a data mount that fails
+# (logged); a repair stage fails closed when the entry it needs cannot be
+# mounted. Every mount goes through mount_recorded, so the exit teardown
+# already unmounts them in reverse order.
+prepare_target()
+{
+    # Every prepare is a fresh mount cycle: the recorded data mounts and the
+    # promotion state restart with it.
+    LEGACY_DATA_MOUNTS=()
+    LEGACY_DATA_PROMOTED=0
+    prepare_target_modern "$@"
+    legacy_mount_target_fstab_entries "${1:-ro}"
+}
+
+legacy_mount_target_fstab_entries()
+{
+    local mode="${1:-ro}" mp="" entry="" spec="" fstype="" options=""
+    local resolved="" dest="" filtered="" option=""
+    [[ -f "$TARGET_ROOT/etc/fstab" ]] || return 0
+    for mp in /usr /var /tmp /home /opt /srv; do
+        entry="$(fstab_entry_for_mountpoint "$mp")" || continue
+        [[ -n "$entry" ]] || continue
+        IFS=$'\t' read -r spec fstype options <<< "$entry"
+        [[ -n "$spec" && -n "$fstype" ]] || continue
+        # Pseudo entries and swap are never mounted; / and /boot are handled
+        # by the root and boot-entry mounts.
+        case "$fstype" in
+            swap|proc|sysfs|tmpfs|devpts|devtmpfs|none|auto) continue ;;
+        esac
+        resolved="$(resolve_fstab_source "$spec")" || continue
+        [[ -n "$resolved" && "$resolved" == /dev/* ]] || continue
+        is_block_device "$resolved" || continue
+        same_single_top_disk "$TARGET_DISK" "$resolved" || continue
+        # A same-device entry (single-filesystem layout) needs no mount.
+        [[ "$(readlink -f -- "$resolved")" == "$(readlink -f -- "$ROOT_DEVICE")" ]] \
+            && continue
+        dest="$(target_path "$mp")"
+        [[ -n "$dest" && "$dest" == /* && ! -L "$dest" \
+            && ( "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ) ]] \
+            || { if [[ "$mode" == rw ]]; then
+                     fail "Refusing an unsafe target $mp mount path: $dest"
+                 fi
+                 log "WARN: skipping target $mp: unsafe mount path." | tee -a "$SESSION_LOG"
+                 continue; }
+        if mountpoint -q "$dest" 2>/dev/null; then
+            # Already mounted (helper-recorded or pre-existing): leave it
+            # untouched; a repair remounts helper-owned entries read-write.
+            continue
+        fi
+        mkdir -p -- "$dest"
+        filtered=""
+        if [[ "$mode" == rw ]]; then
+            for option in $(printf '%s' "$options" | tr ',' ' '); do
+                [[ -n "$option" ]] || continue
+                case "$option" in
+                    noauto|nofail|ro) continue ;;
+                esac
+                filtered="${filtered:+,}$option"
+            done
+        fi
+        if ! mount_recorded "$resolved" "$dest" -o "$mode${filtered:+,$filtered}"; then
+            if [[ "$mode" == rw ]]; then
+                fail "Repair requires the target $mp filesystem ($resolved) and it could not be mounted."
+            fi
+            log "WARN: could not mount target $mp from $resolved; the read-only diagnostic proceeds without it." | tee -a "$SESSION_LOG"
+            continue
+        fi
+        LEGACY_DATA_MOUNTS+=("$dest")
+        log "Mounted target $mp from $resolved ($mode${filtered:+,$filtered})" | tee -a "$SESSION_LOG"
+    done
+}
+
+# Cycle 12 loop 4: promote the legacy split-LV data mounts read-write
+# together with the modern btrfs data subvolumes. A plain `mount -o
+# remount,rw` of an ext3 mount works on 2.6.18. Idempotent across the plan's
+# stages (a second promotion is a no-op); a data filesystem that cannot be
+# promoted fails closed with the exact reason.
+remount_target_data_rw()
+{
+    local dest
+    if (( LEGACY_DATA_PROMOTED == 0 )); then
+        for dest in "${LEGACY_DATA_MOUNTS[@]:-}"; do
+            [[ -n "$dest" && -d "$dest" ]] || continue
+            if ! mountpoint -q "$dest" 2>/dev/null; then
+                fail "A modifying stage requires the target data filesystem $dest, which is no longer mounted."
+            fi
+            log "Remounting target data filesystem $dest read-write" | tee -a "$SESSION_LOG"
+            mount -o remount,rw "$dest" \
+                || fail "A modifying stage requires the target data filesystem $dest, which could not be remounted read-write."
+        done
+        LEGACY_DATA_PROMOTED=1
+    fi
+    remount_target_data_rw_modern
+}
+
+# ---------------------------------------------------------------------------
 # Gated command entry points
 # ---------------------------------------------------------------------------
 
@@ -20870,6 +21056,166 @@ legacy_unlock_keyfile_from_file()
 # opening invocation (and its failure cleanup) uses the 1.0 syntax.  The
 # stdin key semantics are identical: the GUI closes stdin right after the
 # passphrase, and --key-file - consumes the exact bytes.
+# Cycle 12: the legacy read-only file system check keeps the target's
+# helper-owned mounts and skips every device that is mounted under the
+# target (the root, usr, var, tmp, home and boot entries) with the modern
+# offline-only skip lines; running an offline fsck over a live filesystem on
+# Etch's IDE/PIO disk takes tens of minutes. fs-repair flows are unaffected
+# (they do not go through fs_inspect_scope).
+filesystem_release_all_mounts()
+{
+    return 0
+}
+
+# Cycle 12: for the legacy target scope, the target's own helper mounts are
+# the selected repair system and count as mounted for the offline-only skip
+# (the modern helper releases those mounts first, so its scan excludes them).
+filesystem_mountpoint_for_device()
+{
+    local device="$1" hint="${2:-}" source mountpoint
+    if (( RUNNING_HOST_MODE == 1 )); then
+        hint=""
+    elif [[ -n "$hint" && -n "$TARGET_ROOT" ]] && mountpoint -q "$TARGET_ROOT$hint" 2>/dev/null; then
+        printf '%s\n' "$hint"
+        return 0
+    fi
+    while IFS=' ' read -r source mountpoint; do
+        [[ -n "$source" && -n "$mountpoint" ]] || continue
+        source="${source%%\[*}"
+        [[ "$(canonical_block "$source" 2>/dev/null || true)" == "$device" ]] || continue
+        printf '%s\n' "$mountpoint"
+        return 0
+    done < <(findmnt -rn -o SOURCE,TARGET 2>/dev/null || true)
+    printf '\n'
+}
+
+# Cycle 12 loop 2: cryptsetup 1.0 status parsing. Etch prints
+# `device:  /dev/.static/dev/hdb5` — the trailing colon breaks the modern
+# field match and the /dev/.static prefix defeats readlink -f, so an
+# already-open mapper was never recognized (spurious "Mapper name
+# collision"). Strip both before the caller's canonical comparison.
+legacy_crypt_status_device()
+{
+    local name="$1" value=""
+    value="$(cryptsetup status "$name" 2>/dev/null \
+        | awk -F: '$1 ~ /^[ \t]*device$/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
+    [[ -n "$value" ]] || return 1
+    # /dev/.static/dev/hdb5 -> /dev/hdb5 (the .static tree mirrors /dev, so
+    # the prefix is dropped while the /dev/ root stays).
+    value="${value#/dev/.static}"
+    printf '%s\n' "$value"
+}
+
+# Cycle 12 loop 2: the existing-mapper lookup uses the legacy status parser
+# and the canonical-path comparison (the modern body is otherwise identical).
+find_crypt_mapper_for_device()
+{
+    local device="$1" canonical alias name existing_device
+    canonical="$(canonical_block "$device")" || return 1
+    command -v cryptsetup >/dev/null 2>&1 || return 1
+    for alias in /dev/mapper/*; do
+        [[ -e "$alias" || -L "$alias" ]] || continue
+        name="$(basename -- "$alias")"
+        [[ "$name" == "control" ]] && continue
+        existing_device="$(legacy_crypt_status_device "$name")" || continue
+        existing_device="$(readlink -f -- "$existing_device" 2>/dev/null || true)"
+        [[ -n "$existing_device" ]] || continue
+        if [[ "$existing_device" == "$canonical" ]]; then
+            printf '%s\n' "$alias"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Cycle 12 loop 3: on the 2.6.18 kernel `mount -o remount,bind,ro` of a
+# single-file bind fails with EBUSY, so the legacy resolver is a file COPY:
+# the host /etc/resolv.conf is copied over the target's file (the target's
+# original is backed up first, mode preserved), both are recorded for the
+# teardown restore, and nothing is ever remounted. Idempotent: an existing
+# copy is reused, so promote_target_data_rw cannot re-trigger it.
+LEGACY_RESOLVER_DESTINATION=""
+LEGACY_RESOLVER_BACKUP=""
+# Cycle 12 loop 4: the legacy split-LV data mounts recorded by
+# legacy_mount_target_fstab_entries and their promotion state.
+LEGACY_DATA_MOUNTS=()
+LEGACY_DATA_PROMOTED=0
+mount_target_resolver()
+{
+    local target_link="$TARGET_ROOT/etc/resolv.conf" link destination root_real
+    [[ -r /etc/resolv.conf ]] || return 0
+    [[ -e "$target_link" || -L "$target_link" ]] || return 0
+    if [[ -L "$target_link" ]]; then
+        link="$(readlink -- "$target_link")"
+        if [[ "$link" == /* ]]; then
+            destination="$TARGET_ROOT$link"
+        else
+            destination="$(dirname -- "$target_link")/$link"
+        fi
+    else
+        destination="$target_link"
+    fi
+    # Fail closed: the destination must stay inside TARGET_ROOT and must not
+    # be a symlink (copying over a symlink would clobber the link itself).
+    root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null || true)"
+    [[ -n "$root_real" ]] || return 0
+    path_within "$(realpath -m -- "$destination")" "$root_real" \
+        || fail "Target resolver path escapes the selected root: $destination"
+    [[ -L "$destination" ]] \
+        && fail "Target resolver destination is a symlink: $destination"
+    if [[ -e "$LEGACY_RESOLVER_DESTINATION" \
+        && "$LEGACY_RESOLVER_DESTINATION" == "$destination" ]]; then
+        log "Target resolver copy already present at $destination (reused)" | tee -a "$SESSION_LOG"
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "$destination")"
+    if [[ -e "$destination" ]]; then
+        LEGACY_RESOLVER_BACKUP="$SESSION_DIR/resolv.conf.target.before"
+        cp -a -- "$destination" "$LEGACY_RESOLVER_BACKUP" \
+            || fail "Unable to back up the target resolver before the temporary copy."
+    fi
+    cp -- /etc/resolv.conf "$destination" \
+        || fail "Unable to copy the recovery-host resolver into the target."
+    LEGACY_RESOLVER_DESTINATION="$destination"
+    log "Copied recovery-host resolver into the target chroot (temporary; restored on exit)" | tee -a "$SESSION_LOG"
+}
+
+# Cycle 12 loop 3: the teardown restores the target's original resolver file
+# (or removes the temporary copy when there was none) before the modern
+# cleanup runs; the resolver is no longer a mount, so MOUNTS never carries it.
+cleanup()
+{
+    local rc=$?
+    if [[ -n "$LEGACY_RESOLVER_DESTINATION" ]]; then
+        if [[ -n "$LEGACY_RESOLVER_BACKUP" && -e "$LEGACY_RESOLVER_BACKUP" ]]; then
+            cp -a -- "$LEGACY_RESOLVER_BACKUP" "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null \
+                || log "WARN: could not restore the target resolver copy." | tee -a "$SESSION_LOG"
+            rm -f -- "$LEGACY_RESOLVER_BACKUP" 2>/dev/null || true
+        else
+            rm -f -- "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null || true
+        fi
+        LEGACY_RESOLVER_DESTINATION=""
+        LEGACY_RESOLVER_BACKUP=""
+    fi
+    cleanup_modern
+    return $rc
+}
+
+# Cycle 12: blkid TYPE probe for an absolute device path. The unlock mapper
+# chain passes real /dev/mapper nodes (on Etch they are block nodes, not
+# symlinks, so a readlink/basename translation would probe a nonexistent
+# /dev/<name>); Etch's blkid may predate -o/-s, hence the TYPE= fallback.
+legacy_blkid_value_path()
+{
+    local path="$1" real="" value=""
+    real="$(legacy_real_tool_path blkid)" || return 0
+    value="$("$real" -o value -s TYPE -- "$path" 2>/dev/null | head -n1 || true)"
+    if [[ -z "$value" ]]; then
+        value="$("$real" -- "$path" 2>/dev/null | head -n1 | sed -n 's/.*TYPE="\([^"]*\)".*/\1/p' || true)"
+    fi
+    printf '%s\n' "$value"
+}
+
 unlock_target()
 {
     local fstype uuid mapper_name mapper_path existing_mapper crypt_rc
@@ -20924,6 +21270,10 @@ unlock_target()
     if [[ -n "$existing_mapper" ]]; then
         log "LUKS target is already unlocked by existing mapper: $existing_mapper"
         printf 'UNLOCKED=%s\n' "$existing_mapper"
+        # Cycle 12: a fresh GUI process must still be able to resolve the root
+        # on the already-open mapper chain, so the same read-only probe runs
+        # here and UNLOCKED_ROOT follows UNLOCKED.
+        legacy_unlock_root_probe "$existing_mapper"
         return 0
     fi
 
@@ -21012,6 +21362,55 @@ unlock_target()
 
     log "LUKS unlock complete. The mapper remains open for this recovery session."
     printf 'UNLOCKED=%s\n' "$mapper_path"
+    legacy_unlock_root_probe "$mapper_path"
+}
+
+# Cycle 11/12: resolve the Linux root candidate on the opened mapper chain
+# with the port's read-only fstype probe (blkid; never a mount), so the GUI
+# can enable Select Target with the helper-confirmed component even though
+# its read-only inventory cannot see the mapped LV's filesystem. Prefer an LV
+# whose name matches root (case-insensitive); otherwise the first LV with a
+# known Linux filesystem. No candidate emits no line and the GUI keeps its
+# existing fail-closed behavior. The same probe runs for a mapper that was
+# already open (existing-mapper reuse).
+legacy_unlock_root_probe()
+{
+    local mapper_path="$1" unlocked_root="" unlocked_fstype=""
+    local candidate_name="" fstype_probe="" root_match="" fallback_name="" fallback_fstype=""
+    while IFS= read -r entry; do
+        [[ -n "$entry" ]] || continue
+        [[ "$entry" == "$mapper_path" || "$entry" == *control* ]] && continue
+        candidate_name="${entry##*/}"
+        [[ -n "$candidate_name" ]] || continue
+        # /dev/mapper entries on Etch are real block nodes (readlink -f is the
+        # identity), so the path is probed directly.
+        fstype_probe="$(legacy_blkid_value_path "$entry")"
+        case "$fstype_probe" in
+            ext2|ext3|ext4|reiserfs|xfs|jfs)
+                case "$candidate_name" in
+                    *root*|*ROOT*) root_match="$entry"; unlocked_fstype="$fstype_probe" ;;
+                esac
+                if [[ -z "$fallback_name" ]]; then
+                    fallback_name="$entry"
+                    fallback_fstype="$fstype_probe"
+                fi
+                ;;
+        esac
+    done < <(find /dev/mapper -maxdepth 1 \( -type b -o -type l \) 2>/dev/null | sort)
+    if [[ -n "$root_match" ]]; then
+        unlocked_root="$root_match"
+    else
+        unlocked_root="$fallback_name"
+        unlocked_fstype="$fallback_fstype"
+    fi
+    if [[ -n "$unlocked_root" ]]; then
+        log "Unlocked root candidate: $unlocked_root (${unlocked_fstype:-unknown fstype})"
+        printf 'UNLOCKED_ROOT=%s\n' "$unlocked_root"
+        if [[ -n "$unlocked_fstype" ]]; then
+            printf 'UNLOCKED_ROOT_FSTYPE=%s\n' "$unlocked_fstype"
+        fi
+    fi
+    return 0
 }
 
 run_chroot_shell()

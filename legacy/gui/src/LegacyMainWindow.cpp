@@ -2905,6 +2905,10 @@ void LegacyMainWindow::scanDevices()
     // The complete inventory is cached in m_rows/m_inventory; the visible list
     // is a filtered projection so a hidden row (device-discovery filter) can
     // never invalidate the selected/committed target state.
+    // Cycle 11: a rescan may change the topology, so the session unlock
+    // state resets (the Unlock button returns to its normal gating).
+    m_unlockedDisk = QString::null;
+    m_unlockedRoot = QString::null;
     m_inventory = legacy::scanDevices();
     m_rows.clear();
     for (std::size_t i = 0; i < m_inventory.size(); ++i) {
@@ -3330,6 +3334,14 @@ QString LegacyMainWindow::autoResolvedRoot(const QString &disk) const
     if (m_helperDisk == disk && !m_helperComponent.isEmpty()
         && m_helperComponent.startsWith(QString::fromLatin1("/dev/"))) {
         return m_helperComponent;
+    }
+    // Cycle 11: after this session's successful unlock, the helper-confirmed
+    // root component resolves even though the read-only inventory cannot see
+    // the mapped LV's filesystem (the B7-1 locked-LUKS gate below would
+    // otherwise keep Select Target disabled).
+    if (m_unlockedDisk == disk && !m_unlockedRoot.isEmpty()
+        && m_unlockedRoot.startsWith(QString::fromLatin1("/dev/"))) {
+        return m_unlockedRoot;
     }
     const QString diskName = disk.startsWith(QString::fromLatin1("/dev/"))
         ? disk.mid(5) : disk;
@@ -5556,6 +5568,8 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
                                             const QString &disk)
 {
     const std::string mapper = unlockMapper(transcript);
+    const std::string unlockedRoot = unlockRoot(transcript);
+    const std::string unlockedFstype = unlockRootFstype(transcript);
     const bool authFailed = unlockAuthFailed(transcript);
     const QString targetDisk = disk.isEmpty() ? selectedDisk() : disk;
     QString status;
@@ -5572,6 +5586,26 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
             "LUKS volume unlocked; the target topology changed, so cached "
             "diagnostics were invalidated. Run diagnostics again."));
         scanDevices();
+        // Cycle 11: record the helper-confirmed root AFTER the rescan (which
+        // clears the previous session state) so Select Target can resolve
+        // the mapped LV the read-only inventory cannot see.
+        m_unlockedDisk = targetDisk;
+        m_unlockedRoot = fromStd(unlockedRoot);
+        if (m_unlockedRoot.isEmpty()) {
+            m_unlockedDisk = QString::null;
+        }
+        if (!unlockedFstype.empty()) {
+            appendLog(QString::fromLatin1(
+                "Unlocked root candidate: %1 (fstype %2).")
+                .arg(m_unlockedRoot).arg(fromStd(unlockedFstype)));
+        }
+        // Cycle 12: show the freshly activated mapper and root under the
+        // selected drive so the tree and the inventory-backed resolution
+        // both see them.
+        injectUnlockedMapperRows(targetDisk, fromStd(mapper),
+                                 m_unlockedRoot, fromStd(unlockedFstype));
+        updateDriveDetails();
+        updateActionStates();
         maybeAutoRefreshDiagnostics(QString::fromLatin1(
             "the LUKS unlock changed the target topology"));
     } else if (authFailed) {
@@ -5659,8 +5693,15 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     QStringList lines;
     for (int i = 0; i < static_cast<int>(expected.size()); ++i) {
         const QString stage = expected[i];
-        const QString title = repairStageDisplayTitle(stage);
-        const QMap<QString, QString>::const_iterator found = outcomes.find(stage);
+        // Cycle 11 fix: the plan-stage keys (dpkg-configure, fix-broken,
+        // apt-update, apt-upgrade) must map to the transcript's tool keys
+        // (dpkg, fixbroken, aptupdate, upgrade) before matching the
+        // `Repair change status <key>:` lines, so the four package stages
+        // render their real outcomes instead of "not reported".
+        const QString toolKey = fromStd(repairToolKeyForStage(toStd(stage)));
+        const QString title = repairStageDisplayTitle(toolKey);
+        const QMap<QString, QString>::const_iterator found =
+            outcomes.find(toolKey);
         QString detail;
         if (found != outcomes.end()) {
             const QString state = found.data();
@@ -5681,7 +5722,8 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
                 detail = QString::fromLatin1("[FAIL] %1 - %2")
                              .arg(title).arg(state);
             }
-        } else if (commandOk && stage == QString::fromLatin1("filesystem")
+        } else if (commandOk && (stage == QString::fromLatin1("filesystem")
+                   || stage == QString::fromLatin1("fs-inspect"))
                    && cleanFsInspect) {
             ++unchanged;
             detail = QString::fromLatin1(
@@ -6265,6 +6307,79 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1(
             "scope label lost the two-line Host maintenance form"));
         ok = false;
+    }
+    // Cycle 11: the Unlock button is in its default state in the smoke (no
+    // unlock ran), and the Authorize affordance is hidden while the
+    // administrator session is active (modern deferred-only parity).
+    if (m_unlockButton
+        && m_unlockButton->text() != QString::fromLatin1("Unlock")) {
+        problems->append(QString::fromLatin1(
+            "Unlock button is not in its default state ('%1')")
+            .arg(m_unlockButton->text()));
+        ok = false;
+    }
+    if (m_authStatusLabel && !m_authStatusLabel->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "authorization status label must be hidden while the session is active"));
+        ok = false;
+    }
+    if (m_authorizeButton && !m_authorizeButton->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "Authorize button must be hidden while the session is active"));
+        ok = false;
+    }
+    // Cycle 12: the unlock result's mapper rows are injected into the
+    // inventory owned by the selected drive (the read-only scan cannot see
+    // them), so they show indented under the drive with the helper-probed
+    // fstype and the inventory-backed resolution can find them.
+    {
+        const QString fakeDisk = QString::fromLatin1("/dev/bootrepair-smoke-inject");
+        DeviceRow dk;
+        dk.name = "bootrepair-smoke-inject";
+        dk.path = toStd(fakeDisk);
+        dk.disk = true;
+        m_rows.insert(fakeDisk, dk);
+        m_inventory.push_back(dk);
+        injectUnlockedMapperRows(fakeDisk,
+                                 QString::fromLatin1("/dev/mapper/luks-smoke-inject"),
+                                 QString::fromLatin1("/dev/mapper/smoke-inject-root"),
+                                 QString::fromLatin1("ext3"));
+        QListViewItem *injectedDisk = 0;
+        for (QListViewItem *item = m_deviceList->firstChild(); item;
+             item = item->nextSibling()) {
+            if (item->text(0) == fakeDisk) {
+                injectedDisk = item;
+                break;
+            }
+        }
+        if (!injectedDisk || injectedDisk->childCount() != 2) {
+            problems->append(QString::fromLatin1(
+                "unlocked mapper rows were not added under the selected drive"));
+            ok = false;
+        } else {
+            for (QListViewItem *child = injectedDisk->firstChild(); child;
+                 child = child->nextSibling()) {
+                if (child->text(0) == QString::fromLatin1(
+                        "/dev/mapper/smoke-inject-root")
+                    && child->text(3) != QString::fromLatin1("ext3")) {
+                    problems->append(QString::fromLatin1(
+                        "unlocked root row lost the helper-probed fstype ('%1')")
+                        .arg(child->text(3)));
+                    ok = false;
+                }
+            }
+        }
+        m_rows.remove(fakeDisk);
+        for (std::vector<DeviceRow>::iterator it = m_inventory.begin();
+             it != m_inventory.end(); ++it) {
+            if (fromStd(it->path) == fakeDisk) {
+                m_inventory.erase(it);
+                break;
+            }
+        }
+        m_rows.remove(QString::fromLatin1("/dev/mapper/luks-smoke-inject"));
+        m_rows.remove(QString::fromLatin1("/dev/mapper/smoke-inject-root"));
+        rebuildDeviceList();
     }
     // Cycle 9: the guarded-repair badge reaches the window's right edge.
     if (m_headerBadge) {
@@ -7309,9 +7424,19 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             "smoke session is not authorized although helper commands ran"));
         ok = false;
     }
-    if (m_authStatusLabel
-        && m_authStatusLabel->text().find(QString::fromLatin1("Authorization")) < 0) {
-        problems->append(QString::fromLatin1("authorization status label is empty"));
+    // Cycle 11 deferred-only parity: in the authorized (root) smoke state the
+    // Authorize affordance must be HIDDEN (its text may be empty by design);
+    // it appears only in the deferred state (a ready scope without an active
+    // session). The smoke runs as root with the session permanently active,
+    // so the deferred/shown state cannot be exercised here.
+    if (m_authStatusLabel && !m_authStatusLabel->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "authorization status label must be hidden while the session is active"));
+        ok = false;
+    }
+    if (m_authorizeButton && !m_authorizeButton->isHidden()) {
+        problems->append(QString::fromLatin1(
+            "Authorize button must be hidden while the session is active"));
         ok = false;
     }
 
@@ -7637,6 +7762,58 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "repair summary headline lost the no-repair-needed tail"));
             ok = false;
         }
+    }
+
+    // Cycle 11 fix: a Full Repair summary must map the plan-stage keys to the
+    // transcript's tool keys, so the four package stages render their real
+    // outcomes instead of "not reported".
+    {
+        const QString fullRepairTranscript = QString::fromLatin1(
+            "=== Full Repair ===\n"
+            "Repair change status dpkg: changed\n"
+            "Repair change status fixbroken: changed\n"
+            "Repair change status aptupdate: unchanged|APT package lists are byte-identical and no repository index was fetched\n"
+            "Repair change status upgrade: changed\n"
+            "Repair change status initramfs: unchanged|already up to date\n"
+            "Repair change status grub: changed\n");
+        const ParsedTranscript fullParsed = parseTranscript(
+            toStd(fullRepairTranscript));
+        const QStringList savedStages = m_activeRepairStages;
+        const QString savedPendingLabel = m_pendingLabel;
+        const std::size_t savedEntries = m_logEntries.size();
+        m_activeRepairStages = QStringList::split(QString::fromLatin1(" "),
+            QString::fromLatin1("dpkg-configure fix-broken apt-update apt-upgrade initramfs grub"),
+            false);
+        m_pendingLabel = QString::fromLatin1("Full Repair");
+        appendRepairSummaryBlock(fullParsed, true);
+        QString blockText;
+        for (std::size_t e = savedEntries; e < m_logEntries.size(); ++e) {
+            blockText += m_logEntries[e].text;
+            blockText += QString::fromLatin1("\n");
+        }
+        const char *const expectedLines[] = {
+            "[OK] Complete interrupted package configuration - changed",
+            "[OK] Repair broken package dependencies - changed",
+            "[-] Refresh package metadata - APT package lists are byte-identical and no repository index was fetched",
+            "[OK] Upgrade installed packages - changed",
+            "[-] Initramfs - already up to date",
+            "[OK] GRUB configuration - changed"
+        };
+        for (std::size_t e = 0; e < sizeof(expectedLines) / sizeof(expectedLines[0]); ++e) {
+            if (blockText.find(QString::fromLatin1(expectedLines[e])) < 0) {
+                problems->append(QString::fromLatin1(
+                    "Full Repair summary lost the %1 stage outcome")
+                    .arg(QString::fromLatin1(expectedLines[e])));
+                ok = false;
+            }
+        }
+        if (blockText.find(QString::fromLatin1("not reported")) >= 0) {
+            problems->append(QString::fromLatin1(
+                "Full Repair summary rendered 'not reported' for a real stage"));
+            ok = false;
+        }
+        m_activeRepairStages = savedStages;
+        m_pendingLabel = savedPendingLabel;
     }
 
     // Session list: the live session must be listed and selectable.
@@ -9103,6 +9280,50 @@ QString LegacyMainWindow::visibleMapperForDisk(const QString &disk) const
     return QString::null;
 }
 
+// Cycle 12: after a successful unlock, the freshly activated LVs are added to
+// the cached inventory as mapper rows owned by the selected drive (the
+// read-only inventory scan cannot see the dm nodes' chain, so the tree would
+// otherwise stay empty below the drive). The fstype comes from the helper's
+// UNLOCKED_ROOT_FSTYPE probe line, never from a block read here.
+void LegacyMainWindow::injectUnlockedMapperRows(const QString &disk,
+                                                const QString &mapper,
+                                                const QString &root,
+                                                const QString &fstype)
+{
+    if (disk.isEmpty()) {
+        return;
+    }
+    const QString diskName = disk.startsWith(QString::fromLatin1("/dev/"))
+        ? disk.mid(5) : disk;
+    const QStringList paths = (QStringList() << mapper << root);
+    bool added = false;
+    for (QStringList::ConstIterator it = paths.begin(); it != paths.end(); ++it) {
+        const QString path = *it;
+        if (path.isEmpty() || !path.startsWith(QString::fromLatin1("/dev/"))
+            || m_rows.contains(path)) {
+            continue;
+        }
+        DeviceRow row;
+        row.name = toStd(path);
+        row.path = toStd(path);
+        row.mapper = true;
+        // The tree's owning-disk resolution walks the parent chain by name,
+        // so the row is parented to the selected drive for display.
+        row.parent = toStd(diskName);
+        if (path == root && !fstype.isEmpty()) {
+            row.probedFstype = toStd(fstype);
+        } else {
+            row.probedFstype = "unknown";
+        }
+        m_rows.insert(path, row);
+        m_inventory.push_back(row);
+        added = true;
+    }
+    if (added) {
+        rebuildDeviceList();
+    }
+}
+
 void LegacyMainWindow::mergeHelperDevices(const ParsedTranscript &parsed)
 {
     bool added = false;
@@ -9203,29 +9424,18 @@ void LegacyMainWindow::updateScopeLabel()
 // pages. The modal hidden-input dialog is opened by authorizeNow().
 void LegacyMainWindow::updateAuthorizationAffordance()
 {
+    // Cycle 11 (modern parity): the Authorize button and status label are
+    // only visible in the deferred-authorization state — a scope is ready
+    // AND the administrator session is not active. With no scope, or once
+    // the session is active, both are hidden (the modern frontend shows no
+    // idle authorization row either).
     const bool ready = diagnosticsScopeReady();
     const bool active = administratorSessionActive();
-    const bool idle = !m_running;
+    const bool deferred = ready && !active;
 
     QString text;
     bool canAuthorize = false;
-    if (!ready) {
-        text = QString::fromLatin1(
-            "Authorization: select a repair target or Host Maintenance first.");
-    } else if (active) {
-        QString description;
-        m_runner->resolveElevation(&description);
-        if (description.find(QString::fromLatin1("gksu")) >= 0
-            || description.find(QString::fromLatin1("gksudo")) >= 0) {
-            text = QString::fromLatin1("Authorization: %1 provides it per command.")
-                       .arg(description);
-        } else {
-            text = QString::fromLatin1("Authorization: administrator session active (%1).")
-                       .arg(description);
-        }
-    } else if (!idle) {
-        text = QString::fromLatin1("Authorization: a helper command is running.");
-    } else {
+    if (deferred) {
         text = QString::fromLatin1(
             "Authorization required: diagnostics and repairs fail closed until "
             "you press Authorize.");
@@ -9233,27 +9443,31 @@ void LegacyMainWindow::updateAuthorizationAffordance()
     }
     if (m_authStatusLabel) {
         m_authStatusLabel->setText(text);
+        m_authStatusLabel->setHidden(!deferred);
     }
     if (m_authorizeButton) {
+        m_authorizeButton->setHidden(!deferred);
         m_authorizeButton->setEnabled(canAuthorize);
-        QToolTip::add(m_authorizeButton, canAuthorize
-            ? QString::fromLatin1(
-                  "Re-establish the privileged helper session for the current "
-                  "scope now. The password is requested in the hidden-input "
-                  "modal and is never logged.")
-            : text);
+        if (canAuthorize) {
+            QToolTip::add(m_authorizeButton, QString::fromLatin1(
+                "Re-establish the privileged helper session for the current "
+                "scope now. The password is requested in the hidden-input "
+                "modal and is never logged."));
+        }
     }
     if (m_repairAuthStatusLabel) {
         m_repairAuthStatusLabel->setText(text);
+        m_repairAuthStatusLabel->setHidden(!deferred);
     }
     if (m_repairAuthorizeButton) {
+        m_repairAuthorizeButton->setHidden(!deferred);
         m_repairAuthorizeButton->setEnabled(canAuthorize);
-        QToolTip::add(m_repairAuthorizeButton, canAuthorize
-            ? QString::fromLatin1(
-                  "Re-establish the privileged helper session without leaving "
-                  "the Repair tab. The password is requested in the "
-                  "hidden-input modal and is never logged.")
-            : text);
+        if (canAuthorize) {
+            QToolTip::add(m_repairAuthorizeButton, QString::fromLatin1(
+                "Re-establish the privileged helper session without leaving "
+                "the Repair tab. The password is requested in the "
+                "hidden-input modal and is never logged."));
+        }
     }
 }
 
@@ -9374,30 +9588,49 @@ void LegacyMainWindow::updateActionStates()
     if (m_unlockButton) {
         const bool onRunningHost = !runningHostDisk().isEmpty()
             && selectedDisk() == runningHostDisk();
-        const QString luks = onRunningHost ? QString::null
-                                           : unlockCandidateFor(selectedDisk());
-        const bool unlockEnabled = idle && !hostScope() && !onRunningHost
-            && !selectedDisk().isEmpty() && !luks.isEmpty();
-        m_unlockButton->setEnabled(unlockEnabled);
-        if (hostScope() || onRunningHost) {
+        // Cycle 11 Already-Unlocked state (modern parity): after this
+        // session's successful unlock of the selected drive the button reads
+        // "Already Unlocked" and is disabled; it returns to the normal
+        // gating on another selection or a rescan.
+        const bool alreadyUnlocked = !selectedDisk().isEmpty()
+            && m_unlockedDisk == selectedDisk()
+            && !m_unlockedRoot.isEmpty();
+        if (alreadyUnlocked && idle) {
+            updateButtonText(m_unlockButton,
+                             QString::fromLatin1("Already Unlocked"));
+            m_unlockButton->setEnabled(false);
             QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "The protected running host cannot be unlocked; use Host "
-                "Maintenance for the protected running host."));
-        } else if (selectedDisk().isEmpty()) {
-            QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "Select a physical drive in the Available repair targets list first."));
-        } else if (!idle) {
-            QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "A helper command is already running."));
-        } else if (luks.isEmpty()) {
-            QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "No locked LUKS component is currently visible on this selected "
-                "drive."));
+                "An unlocked Linux filesystem is already visible on this "
+                "drive. Boot Bitch will reuse the existing mapper and will "
+                "not close or reopen a mapping created by this recovery "
+                "session."));
         } else {
-            QToolTip::add(m_unlockButton, QString::fromLatin1(
-                "Unlock %1 using cryptsetup through the privileged helper. The "
-                "passphrase is sent on standard input and is never placed in "
-                "command arguments or logs.").arg(luks));
+            updateButtonText(m_unlockButton, QString::fromLatin1("Unlock"));
+            const QString luks = onRunningHost ? QString::null
+                                               : unlockCandidateFor(selectedDisk());
+            const bool unlockEnabled = idle && !hostScope() && !onRunningHost
+                && !selectedDisk().isEmpty() && !luks.isEmpty();
+            m_unlockButton->setEnabled(unlockEnabled);
+            if (hostScope() || onRunningHost) {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "The protected running host cannot be unlocked; use Host "
+                    "Maintenance for the protected running host."));
+            } else if (selectedDisk().isEmpty()) {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "Select a physical drive in the Available repair targets list first."));
+            } else if (!idle) {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "A helper command is already running."));
+            } else if (luks.isEmpty()) {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "No locked LUKS component is currently visible on this selected "
+                    "drive."));
+            } else {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "Unlock %1 using cryptsetup through the privileged helper. The "
+                    "passphrase travels through a private keyfile and is never "
+                    "placed in command arguments or logs.").arg(luks));
+            }
         }
     }
     if (m_elevateButton) {

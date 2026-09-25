@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+- Cycle 12: split-LV targets and GRUB defoptions preservation. The legacy
+  prepare_target now mounts the target's remaining standard-system fstab
+  entries (/usr, /var, /tmp, /home, /opt, /srv) under the repair root after
+  the root and boot mounts — host-relative device remapping, same-disk
+  containment, pseudo-entry skipping, read-only diagnostics tolerant of a
+  failed data mount (logged) and repair stages fail closed — so the package
+  stages see /var/lib/dpkg and apt's /var/lib/apt on split-LV layouts; the
+  existing mount records mean teardown unmounts them in reverse order. The
+  GRUB-legacy regeneration guard now parses the menu's `# defoptions=`/`#
+  kopt=` comments, strips those managed arguments from the kernel-line
+  comparison (an update-grub expansion is no longer mistaken for entry
+  removal), and still rolls back on genuine removals or when a managed
+  argument is dropped from the regenerated kernel lines.
+
+- Cycle 11: unlock completion parity. After a successful unlock of the
+  selected drive's LUKS component the Unlock button reads "Already
+  Unlocked" and is disabled (modern parity; it returns to the normal gating
+  on another selection or a rescan, and stays "Unlock" with the retry path
+  on any failure). The helper now emits `UNLOCKED_ROOT=<component>` (plus
+  `UNLOCKED_ROOT_FSTYPE=<type>`) after the unlock — a read-only blkid probe
+  over the opened mapper chain, never a mount — so the GUI can enable Select
+  Target with the helper-confirmed mapped root that its read-only inventory
+  cannot see (no line keeps the existing fail-closed behavior). The Authorize
+  button and status label now appear only in the deferred-authorization state
+  (a ready scope without an active session), like the modern frontend.
+
 - Cycle 10: ASCII-only rendering, the desktop-elevation unlock channel and
   the /host log fetch. Every new cycle-9 UI string (host-card identity/storage
   line, check indicator, repair summary) now renders with ASCII-only markers

@@ -519,9 +519,17 @@ void testUnlockHelpers()
 {
     const std::string okTranscript =
         "Unlocking LUKS target /dev/hda5\n"
-        "UNLOCKED=/dev/mapper/luks-etchroot\n";
+        "UNLOCKED=/dev/mapper/luks-etchroot\n"
+        "UNLOCKED_ROOT=/dev/mapper/debian-root\n"
+        "UNLOCKED_ROOT_FSTYPE=ext3\n";
     check(legacy::unlockMapper(okTranscript) == "/dev/mapper/luks-etchroot",
           "unlock mapper path extracted");
+    check(legacy::unlockRoot(okTranscript) == "/dev/mapper/debian-root",
+          "unlocked root component extracted");
+    check(legacy::unlockRootFstype(okTranscript) == "ext3",
+          "unlocked root fstype extracted");
+    check(legacy::unlockRoot("UNLOCKED=/dev/mapper/x\n").empty(),
+          "missing UNLOCKED_ROOT marker yields an empty root");
     check(!legacy::unlockAuthFailed(okTranscript),
           "successful unlock is not an auth failure");
     check(legacy::unlockMapper("no marker here").empty(),
