@@ -195,7 +195,7 @@ done
 # wrapped confirmation helper and the /host save-log default.
 for marker in '"--key-owner"' 'getuid()' 'confirmWrapped' \
     '==== REPAIR ====' '\[OK\] %1 - changed' '\[FAIL\] %1 -' '\[-\] %1 - %2' \
-    'When the /host share is mounted, Save '; do
+    'writable system share mount exists'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-10 marker missing: $marker"
 done
 grep -q 'QMessageBox::question' "$WINDOW" \

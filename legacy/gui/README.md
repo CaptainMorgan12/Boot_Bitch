@@ -279,8 +279,8 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   files are neither read nor written during the smoke. Cycle 10: every new UI
   string is ASCII-only (`|` separators, `[OK]`/`[FAIL]`/`[-]`,
   `==== REPAIR ====` brackets) for Etch's fonts; the Logs Save As... starts
-  in the mounted /host share when writable; long confirmations use a shared
-  wrapped dialog. The filters hide the
+  in a writable /host mount when one exists (fallback: the log directory);
+  long confirmations use a shared wrapped dialog. The filters hide the
   owning drive's rows (a hidden drive hides its partitions/mappers) with the
   modern rule — an encrypted drive stays visible while "show encrypted" is on
   even without a Linux candidate — and the selected/committed target state

@@ -288,9 +288,12 @@ EOF
 TARGET_ROOT="$FIXTURE"
 TARGET_DISK=/dev/hdb
 ROOT_DEVICE=/dev/hda3
+ROOT_CANONICAL=/dev/hda3
 MOUNTS=()
+TARGET_DATA_MOUNTS=()
 : > "$FIXTURE/mounts.log"
 resolve_fstab_source() { printf '%s\n' "$1"; }
+canonical_block() { printf '%s\n' "$1"; }
 is_block_device() { [[ "$1" == /dev/hda3 || "$1" == /dev/hdb[3456] ]]; }
 same_single_top_disk() { [[ "$1" == /dev/hdb && "$2" == /dev/hdb* ]]; }
 mountpoint() { return 1; }
@@ -299,7 +302,7 @@ mount_recorded() {
     MOUNTS+=("$2")
     return 0
 }
-legacy_mount_target_fstab_entries ro
+mount_target_data_partitions ro
 [[ "$(grep -c '^MOUNT ' "$FIXTURE/mounts.log")" -eq 4 ]] \
     || fail "split-LV ro mount did not mount exactly the four data entries"
 grep -q "MOUNT /dev/hdb4 $FIXTURE/var -o ro" "$FIXTURE/mounts.log" \
@@ -311,11 +314,11 @@ grep -q '/tmp' "$FIXTURE/mounts.log" || fail "split-LV /tmp was not mounted"
 grep -q 'swap' "$FIXTURE/mounts.log" && fail "swap was mounted as a data entry"
 grep -q 'proc' "$FIXTURE/mounts.log" && fail "proc was mounted as a data entry"
 grep -q 'tmpfs' "$FIXTURE/mounts.log" && fail "tmpfs was mounted as a data entry"
-[[ "${#MOUNTS[@]}" -eq 4 ]] || fail "mount records do not match the data mounts"
+[[ "${#TARGET_DATA_MOUNTS[@]}" -eq 4 ]] || fail "the shared data mount records do not match the data mounts"
 
 # A repair (rw) must fail closed when a required data mount fails.
 mount_recorded() { return 1; }
-( legacy_mount_target_fstab_entries rw ) > "$FIXTURE/mounts-rw.log" 2>&1 \
+( mount_target_data_partitions rw ) > "$FIXTURE/mounts-rw.log" 2>&1 \
     && fail "rw split-LV mount did not fail closed on a mount failure"
 grep -q 'could not be mounted' "$FIXTURE/mounts-rw.log" \
     || fail "rw split-LV mount failure left no fail-closed evidence"
@@ -640,16 +643,16 @@ printf 'nameserver smoke-ns-target\n' > "$FIXTURE/etc/resolv.conf"
 )
 pass "legacy resolver copy with teardown restore (idempotent, never remounted)"
 
-# --- cycle 12 loop 4: legacy data mount promotion ----------------------------
+# --- cycle 12 loop 4: shared data mount promotion ---------------------------
 # The split-LV data mounts (usr/var/tmp/home) must be promoted read-write
-# before the modifying stages; the promotion is idempotent and fails closed
-# when a data filesystem cannot be promoted.
+# before the modifying stages; the shared promotion is fail-closed when a
+# data filesystem cannot be promoted or is no longer mounted.
 set +e
 (
     trap - EXIT
     SESSION_LOG="$FIXTURE/session.log"
-    LEGACY_DATA_MOUNTS=("$FIXTURE/var" "$FIXTURE/home")
-    LEGACY_DATA_PROMOTED=0
+    TARGET_ROOT="$FIXTURE"
+    TARGET_DATA_MOUNTS=("$FIXTURE/var" "$FIXTURE/home")
     remount_calls=0
     : > "$FIXTURE/remounts.log"
     mount() {
@@ -659,22 +662,21 @@ set +e
     }
     mountpoint() { return 0; }
     log() { :; }
-    remount_target_data_rw_modern() { :; }
     remount_target_data_rw
     [[ $remount_calls -eq 2 ]] || fail "data promotion did not remount both data mounts"
     grep -q "REM -o remount,rw $FIXTURE/var" "$FIXTURE/remounts.log" \
         || fail "data promotion did not remount /var read-write"
     grep -q "REM -o remount,rw $FIXTURE/home" "$FIXTURE/remounts.log" \
         || fail "data promotion did not remount /home read-write"
-    remount_target_data_rw
-    [[ $remount_calls -eq 2 ]] || fail "data promotion was not idempotent"
-    LEGACY_DATA_PROMOTED=0
     mount() { return 1; }
     ( remount_target_data_rw ) >/dev/null 2>&1 \
         && fail "data promotion did not fail closed on a remount failure"
+    mountpoint() { return 1; }
+    ( remount_target_data_rw ) >/dev/null 2>&1 \
+        && fail "data promotion did not fail closed on a vanished data mount"
     exit 0
 )
-pass "legacy data mount promotion (rw remount, idempotent, fail-closed)"
+pass "shared data mount promotion (rw remount, fail-closed)"
 
 # --- cycle 12 loop 2: cryptsetup 1.0 status parsing --------------------------
 # Etch prints `device:  /dev/.static/dev/hdb5`; the parser must strip the

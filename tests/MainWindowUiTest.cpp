@@ -2306,6 +2306,7 @@ private slots:
     void repairToolActionButtonStaysPinnedToPanelHeader();
     void snapshotActionsStayAboveInventory();
     void fileCopyHeaderActionsShareTitleRow();
+    void fileCopySectionSplitterSeparatesSourceFromDestination();
     void diagnosticsHeaderRunAllFollowsScopeLabel();
     void scopeLabelHeadersStayOnTitleRow();
     void responsivePageHeadersWrapActionsAtMinimumWidth();
@@ -13935,6 +13936,49 @@ void MainWindowUiTest::fileCopyHeaderActionsShareTitleRow()
     QVERIFY2(qAbs(smallRunRight - smallContentRight) <= 2,
              qPrintable(QStringLiteral("minimum width: Copy and Verify right=%1, content pane right=%2")
                             .arg(smallRunRight).arg(smallContentRight)));
+}
+
+// Cycle 16 (legacy lesson): the File Copy page separates the staged-source
+// section from the destination/ownership sections with a vertical splitter.
+// Neither pane may collapse; the source list keeps a compact ~80px floor and
+// the lower pane keeps a ~160px floor so the destination and policy controls
+// stay reachable however tall the source list grows.
+void MainWindowUiTest::fileCopySectionSplitterSeparatesSourceFromDestination()
+{
+    MainWindow window;
+    window.resize(1000, 700);
+    window.show();
+    QTest::qWait(100);
+    window.m_tabs->setCurrentIndex(5);
+    QCoreApplication::processEvents();
+    QTest::qWait(50);
+
+    QVERIFY(window.m_fileCopySectionSplitter);
+    QCOMPARE(window.m_fileCopySectionSplitter->orientation(), Qt::Vertical);
+    QVERIFY2(!window.m_fileCopySectionSplitter->childrenCollapsible(),
+             "the File Copy section splitter panes must not be collapsible");
+    QCOMPARE(window.m_fileCopySectionSplitter->count(), 2);
+
+    QWidget *first = window.m_fileCopySectionSplitter->widget(0);
+    QWidget *second = window.m_fileCopySectionSplitter->widget(1);
+    QVERIFY(first && second);
+    QCOMPARE(first, static_cast<QWidget *>(window.m_fileCopySourceBox));
+    QVERIFY2(window.m_sourceList->minimumHeight() < 100,
+             "the staged source list keeps a compact floor inside its splitter pane");
+    QVERIFY(window.m_fileCopySourceBox->minimumHeight() > 0);
+    QVERIFY(window.m_fileCopyDestinationBox);
+    QVERIFY2(second->isAncestorOf(window.m_fileCopyDestinationBox),
+             "the destination controls must live below the source section in the splitter");
+    QVERIFY2(second->isAncestorOf(window.m_ownershipCombo),
+             "the ownership policy must live below the source section in the splitter");
+    QVERIFY2(second->minimumHeight() >= 120,
+             "the destination/ownership pane keeps a stable floor");
+    // The source pane takes the extra height while the destination/ownership
+    // pane keeps its floor.
+    const QList<int> sizes = window.m_fileCopySectionSplitter->sizes();
+    QCOMPARE(sizes.size(), 2);
+    QVERIFY2(sizes.at(0) >= sizes.at(1),
+             "the source section receives the majority of the splitter height");
 }
 
 // The Diagnostics title row closes with the scope label followed by Run All:

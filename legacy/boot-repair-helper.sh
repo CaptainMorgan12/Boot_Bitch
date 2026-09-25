@@ -2642,10 +2642,14 @@ fstab_entry_for_mountpoint()
 
 mount_recorded_modern()
 {
-    local source="$1" destination="$2"; shift 2
+    local source="$1" destination="$2" rc=0; shift 2
     mkdir -p -- "$destination"
-    mount "$@" -- "$source" "$destination"
+    # Propagate the mount result: callers that tolerate a failed mount (the
+    # probe and the ro-tolerant data mounts) decide via `if ! mount_recorded`;
+    # plain callers keep the fail-closed errexit behavior.
+    mount "$@" -- "$source" "$destination" || rc=$?
     MOUNTS+=("$destination")
+    return "$rc"
 }
 
 # Populate a private writable /dev tmpfs from the recovery host's device tree.
@@ -2910,6 +2914,81 @@ current_btrfs_subvol()
 # (for example @home, @var@log) in depth order so a chroot cannot write into
 # hidden mountpoint directories inside @.  The recovery mode (ro/rw) overrides
 # any fstab ro/rw option; system directories are skipped.
+# Mount separate non-Btrfs data filesystems declared in the target fstab
+# (/usr /var /tmp /home /opt /srv) that live on the selected disk, so the
+# package stages see /var/lib/dpkg and apt's /var/lib/apt on split-partition
+# layouts. Btrfs entries keep the existing subvolume path. Every mount is
+# recorded in TARGET_DATA_MOUNTS, which remount_target_data_rw promotes
+# read-write for the modifying stages. Read-only diagnostics tolerate a
+# failed data mount (logged); a modifying stage that needs the entry fails
+# closed when it cannot be mounted or promoted.
+mount_target_data_partitions()
+{
+    local requested_mode="$1" spec mountpoint_name fstype options resolved dest
+    local mount_options option filtered_options entry
+    local -a option_parts=()
+
+    [[ "$requested_mode" == "ro" || "$requested_mode" == "rw" ]] \
+        || fail "Internal data partition mount mode error: $requested_mode"
+    [[ -f "$TARGET_ROOT/etc/fstab" ]] || return 0
+
+    for mountpoint_name in /usr /var /tmp /home /opt /srv; do
+        entry="$(fstab_entry_for_mountpoint "$mountpoint_name")" || continue
+        [[ -n "$entry" ]] || continue
+        IFS=$'\t' read -r spec fstype options <<< "$entry"
+        [[ -n "$spec" && -n "$fstype" ]] || continue
+        # Pseudo entries are never mounted; Btrfs keeps the subvolume path.
+        case "$(filesystem_normalize_fstype "$fstype")" in
+            swap|proc|sysfs|tmpfs|devpts|devtmpfs|none|auto|btrfs) continue ;;
+        esac
+        resolved="$(resolve_fstab_source "$spec")"
+        [[ -n "$resolved" ]] && is_block_device "$resolved" || {
+            log "WARNING: skipping unresolved data fstab entry $mountpoint_name -> $spec" | tee -a "$SESSION_LOG"
+            continue
+        }
+        resolved="$(canonical_block "$resolved")" || continue
+        # Same-disk containment: the data filesystem must belong to the
+        # selected target disk; anything else is left to its own system.
+        same_single_top_disk "$TARGET_DISK" "$resolved" || continue
+        # A same-device entry (single-filesystem layout) needs no mount.
+        [[ "$resolved" == "$ROOT_CANONICAL" ]] && continue
+
+        dest="$TARGET_ROOT$mountpoint_name"
+        [[ -n "$dest" && "$dest" == /* && ! -L "$dest" ]] || {
+            log "WARNING: refusing an unsafe target $mountpoint_name mount path: $dest" | tee -a "$SESSION_LOG"
+            continue
+        }
+        if mountpoint -q "$dest" 2>/dev/null; then
+            continue
+        fi
+
+        mount_options="$options"
+        [[ -n "$mount_options" && "$mount_options" != "defaults" ]] || mount_options=""
+        # The recovery mode is authoritative even when fstab contains ro/rw.
+        IFS=',' read -ra option_parts <<< "$mount_options"
+        filtered_options=""
+        for option in "${option_parts[@]:-}"; do
+            [[ -n "$option" ]] || continue
+            case "$option" in
+                ro|rw|auto|noauto|nofail|_netdev|x-systemd.*|defaults) continue ;; 
+            esac
+            filtered_options+="${filtered_options:+,}$option"
+        done
+        mount_options="$requested_mode${filtered_options:+,$filtered_options}"
+
+        mkdir -p -- "$dest"
+        if ! mount_recorded "$resolved" "$dest" -o "$mount_options"; then
+            if [[ "$requested_mode" == "rw" ]]; then
+                fail "Repair requires the target $mountpoint_name filesystem ($resolved) and it could not be mounted."
+            fi
+            log "WARNING: could not mount target $mountpoint_name from $resolved; the read-only diagnostic proceeds without it." | tee -a "$SESSION_LOG"
+            continue
+        fi
+        TARGET_DATA_MOUNTS+=("$dest")
+        log "Mounted target $mountpoint_name from $resolved ($requested_mode)" | tee -a "$SESSION_LOG"
+    done
+}
+
 mount_target_btrfs_subvolumes()
 {
     local requested_mode="$1" _depth spec mountpoint_name fstype options resolved dest mount_options option filtered_options
@@ -2952,7 +3031,7 @@ mount_target_btrfs_subvolumes()
         for option in "${option_parts[@]:-}"; do
             [[ -n "$option" ]] || continue
             case "$option" in
-                ro|rw|auto|noauto|nofail|_netdev|x-systemd.*) continue ;;
+                ro|rw|auto|noauto|nofail|_netdev|x-systemd.*|defaults) continue ;;
             esac
             filtered_options+="${filtered_options:+,}$option"
         done
@@ -2973,14 +3052,19 @@ mount_target_btrfs_subvolumes()
     )
 }
 
-remount_target_data_rw_modern()
+remount_target_data_rw()
 {
     local path
     for path in "${TARGET_DATA_MOUNTS[@]:-}"; do
         [[ -n "$path" && -d "$path" ]] || continue
-        mountpoint -q "$path" 2>/dev/null || continue
-        log "Remounting target data subvolume ${path#"$TARGET_ROOT"} read-write" | tee -a "$SESSION_LOG"
-        mount -o remount,rw "$path"
+        # A modifying stage fails closed when a required data filesystem has
+        # gone away or cannot be promoted read-write.
+        if ! mountpoint -q "$path" 2>/dev/null; then
+            fail "A modifying stage requires the target data filesystem $path, which is no longer mounted."
+        fi
+        log "Remounting target data filesystem ${path#"$TARGET_ROOT"} read-write" | tee -a "$SESSION_LOG"
+        mount -o remount,rw "$path" \
+            || fail "A modifying stage requires the target data filesystem $path, which could not be remounted read-write."
     done
 }
 
@@ -4023,7 +4107,7 @@ profile_esp_root()
 # only the root (and locates/mounts the Btrfs root subvolume); mode rw also
 # mounts /boot, the ESP, /dev, /proc, /sys, /run and the resolver.  Sets
 # TARGET_ROOT, TARGET_SUBVOL and SESSION_LOG after all safety checks pass.
-prepare_target_modern()
+prepare_target()
 {
     local mode="$1" fstype mounted_root raw_target raw_root mount_mode discovered_subvol="" root_mount_options
     local selected_component="" selected_fstype="" fallback_root=""
@@ -4157,6 +4241,7 @@ prepare_target_modern()
     # into the hidden mountpoint directories inside @ instead of the installed
     # system's actual subvolumes.
     mount_target_btrfs_subvolumes "$mode"
+    mount_target_data_partitions "$mode"
 
     if [[ "$mode" == "rw" ]]; then
         mount_target_boot_entry "/boot"
@@ -15307,6 +15392,43 @@ APT_SHELL_UPGRADE_POLICY_REGEX="upgrade.*(disabled|not supported)|use .*(full-up
 # Echo the same command with its plain 'upgrade' subcommand replaced by
 # 'full-upgrade', or return 1 when the command is not a confidently recognized
 # single-line apt/apt-get upgrade.
+# Evidence-based apt-intent translation: when the reviewed command is
+# exactly `apt <action>` with a supported action and the detected backend is
+# Debian-family (or unknown — the evidence decides), probe whether this apt
+# actually supports the action via its own --help exit status (read-only
+# evidence). When it does not, translate apt -> apt-get and full-upgrade ->
+# dist-upgrade with the machine-readable log line. Anything else runs
+# verbatim.
+apt_intent_translate()
+{
+    local command="$1" first rest sub args
+    first="${command%% *}"
+    rest="${command#* }"
+    [[ "$first" == "apt" && -n "$rest" ]] || { printf '%s\n' "$command"; return 0; }
+    sub="${rest%% *}"
+    case "$sub" in
+        update|upgrade|full-upgrade|dist-upgrade|install|remove|purge|autoremove|clean|autoclean) ;;
+        *) { printf '%s\n' "$command"; return 0; } ;;
+    esac
+    # Debian-family backends only; an unknown backend falls through to the
+    # apt evidence below.
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        ""|apt|apt-get|dpkg|debian*) : ;;
+        *) { printf '%s\n' "$command"; return 0; } ;;
+    esac
+    if command -v apt >/dev/null 2>&1 && apt "$sub" --help >/dev/null 2>&1; then
+        printf '%s\n' "$command"
+        return 0
+    fi
+    args="${rest#* }"
+    [[ "$sub" == "full-upgrade" ]] && sub="dist-upgrade"
+    if [[ -n "$args" && "$args" != "$rest" ]]; then
+        printf 'apt-get %s %s\n' "$sub" "$args"
+    else
+        printf 'apt-get %s\n' "$sub"
+    fi
+}
+
 apt_shell_full_upgrade_command()
 {
     local command="${1:-}"
@@ -15348,7 +15470,10 @@ run_chroot_shell_modern()
     # stdout and in the session log.
     transcript="$SESSION_DIR/chroot-shell-output"
     : > "$transcript"
-    run_command="$command"
+    run_command="$(apt_intent_translate "$command")"
+    if [[ "$run_command" != "$command" ]]; then
+        log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
+    fi
     while :; do
         set +e
         timeout --foreground --kill-after=10 "$CHROOT_SHELL_TIMEOUT_SECONDS" chroot "$TARGET_ROOT" /usr/bin/env \
@@ -15411,6 +15536,10 @@ run_host_shell_modern()
     # the original failure visible.
     local transcript="$SESSION_DIR/host-shell-output" rc=0
     local run_command="$command" retry_command="" retried=0
+    run_command="$(apt_intent_translate "$command")"
+    if [[ "$run_command" != "$command" ]]; then
+        log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
+    fi
     : > "$transcript"
     while :; do
         set +e
@@ -20601,108 +20730,6 @@ diagnostic_repair_capabilities()
 }
 
 # ---------------------------------------------------------------------------
-# Split-LV target mounts (cycle 12)
-# ---------------------------------------------------------------------------
-
-# Cycle 12: after the root (and boot-entry) mounts, the target's remaining
-# standard-system fstab entries are mounted under TARGET_ROOT so package and
-# boot stages see /var/lib/dpkg and apt's /var/cache|/var/lib/apt on
-# split-LV layouts. Read-only diagnostics tolerate a data mount that fails
-# (logged); a repair stage fails closed when the entry it needs cannot be
-# mounted. Every mount goes through mount_recorded, so the exit teardown
-# already unmounts them in reverse order.
-prepare_target()
-{
-    # Every prepare is a fresh mount cycle: the recorded data mounts and the
-    # promotion state restart with it.
-    LEGACY_DATA_MOUNTS=()
-    LEGACY_DATA_PROMOTED=0
-    prepare_target_modern "$@"
-    legacy_mount_target_fstab_entries "${1:-ro}"
-}
-
-legacy_mount_target_fstab_entries()
-{
-    local mode="${1:-ro}" mp="" entry="" spec="" fstype="" options=""
-    local resolved="" dest="" filtered="" option=""
-    [[ -f "$TARGET_ROOT/etc/fstab" ]] || return 0
-    for mp in /usr /var /tmp /home /opt /srv; do
-        entry="$(fstab_entry_for_mountpoint "$mp")" || continue
-        [[ -n "$entry" ]] || continue
-        IFS=$'\t' read -r spec fstype options <<< "$entry"
-        [[ -n "$spec" && -n "$fstype" ]] || continue
-        # Pseudo entries and swap are never mounted; / and /boot are handled
-        # by the root and boot-entry mounts.
-        case "$fstype" in
-            swap|proc|sysfs|tmpfs|devpts|devtmpfs|none|auto) continue ;;
-        esac
-        resolved="$(resolve_fstab_source "$spec")" || continue
-        [[ -n "$resolved" && "$resolved" == /dev/* ]] || continue
-        is_block_device "$resolved" || continue
-        same_single_top_disk "$TARGET_DISK" "$resolved" || continue
-        # A same-device entry (single-filesystem layout) needs no mount.
-        [[ "$(readlink -f -- "$resolved")" == "$(readlink -f -- "$ROOT_DEVICE")" ]] \
-            && continue
-        dest="$(target_path "$mp")"
-        [[ -n "$dest" && "$dest" == /* && ! -L "$dest" \
-            && ( "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ) ]] \
-            || { if [[ "$mode" == rw ]]; then
-                     fail "Refusing an unsafe target $mp mount path: $dest"
-                 fi
-                 log "WARN: skipping target $mp: unsafe mount path." | tee -a "$SESSION_LOG"
-                 continue; }
-        if mountpoint -q "$dest" 2>/dev/null; then
-            # Already mounted (helper-recorded or pre-existing): leave it
-            # untouched; a repair remounts helper-owned entries read-write.
-            continue
-        fi
-        mkdir -p -- "$dest"
-        filtered=""
-        if [[ "$mode" == rw ]]; then
-            for option in $(printf '%s' "$options" | tr ',' ' '); do
-                [[ -n "$option" ]] || continue
-                case "$option" in
-                    noauto|nofail|ro) continue ;;
-                esac
-                filtered="${filtered:+,}$option"
-            done
-        fi
-        if ! mount_recorded "$resolved" "$dest" -o "$mode${filtered:+,$filtered}"; then
-            if [[ "$mode" == rw ]]; then
-                fail "Repair requires the target $mp filesystem ($resolved) and it could not be mounted."
-            fi
-            log "WARN: could not mount target $mp from $resolved; the read-only diagnostic proceeds without it." | tee -a "$SESSION_LOG"
-            continue
-        fi
-        LEGACY_DATA_MOUNTS+=("$dest")
-        log "Mounted target $mp from $resolved ($mode${filtered:+,$filtered})" | tee -a "$SESSION_LOG"
-    done
-}
-
-# Cycle 12 loop 4: promote the legacy split-LV data mounts read-write
-# together with the modern btrfs data subvolumes. A plain `mount -o
-# remount,rw` of an ext3 mount works on 2.6.18. Idempotent across the plan's
-# stages (a second promotion is a no-op); a data filesystem that cannot be
-# promoted fails closed with the exact reason.
-remount_target_data_rw()
-{
-    local dest
-    if (( LEGACY_DATA_PROMOTED == 0 )); then
-        for dest in "${LEGACY_DATA_MOUNTS[@]:-}"; do
-            [[ -n "$dest" && -d "$dest" ]] || continue
-            if ! mountpoint -q "$dest" 2>/dev/null; then
-                fail "A modifying stage requires the target data filesystem $dest, which is no longer mounted."
-            fi
-            log "Remounting target data filesystem $dest read-write" | tee -a "$SESSION_LOG"
-            mount -o remount,rw "$dest" \
-                || fail "A modifying stage requires the target data filesystem $dest, which could not be remounted read-write."
-        done
-        LEGACY_DATA_PROMOTED=1
-    fi
-    remount_target_data_rw_modern
-}
-
-# ---------------------------------------------------------------------------
 # Gated command entry points
 # ---------------------------------------------------------------------------
 
@@ -21136,10 +21163,6 @@ find_crypt_mapper_for_device()
 # copy is reused, so promote_target_data_rw cannot re-trigger it.
 LEGACY_RESOLVER_DESTINATION=""
 LEGACY_RESOLVER_BACKUP=""
-# Cycle 12 loop 4: the legacy split-LV data mounts recorded by
-# legacy_mount_target_fstab_entries and their promotion state.
-LEGACY_DATA_MOUNTS=()
-LEGACY_DATA_PROMOTED=0
 mount_target_resolver()
 {
     local target_link="$TARGET_ROOT/etc/resolv.conf" link destination root_real

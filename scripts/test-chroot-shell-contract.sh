@@ -93,6 +93,18 @@ awk '
 grep -q '^run_apt_update()' "$HELPER"
 grep -q 'Refresh package metadata did not complete' "$HELPER"
 
+# Evidence-based apt-intent translation: the reviewed shell command is probed
+# through apt's own --help exit status (read-only evidence) and translated to
+# apt-get only when this apt lacks the action; the mapping line is machine-
+# readable and appears in both the request output and the session log.
+grep -q '^apt_intent_translate()' "$HELPER"
+grep -Fq 'apt "$sub" --help >/dev/null 2>&1' "$HELPER"
+grep -Fq "apt intent translated: " "$HELPER"
+grep -q 'apt_intent_translate' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not apply the apt-intent translation' >&2; exit 1; }
+grep -q 'apt_intent_translate' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not apply the apt-intent translation' >&2; exit 1; }
+
 # Target chroots receive a private writable /dev tmpfs instead of the
 # read-only recovery-host /dev bind.  rpm/dnf5 package payloads that own /dev
 # (for example Fedora's filesystem package) must be unpackable, but no write
@@ -294,6 +306,92 @@ for untouched_command in 'dnf update' 'apt-get upgrade extra'; do
     fi
 done
 
+# Evidence-based apt-intent translation for the chroot shell: a reviewed
+# `apt <action>` command is probed through the target apt's own --help exit
+# status (read-only evidence).  When this apt rejects the action, the command
+# runs as apt-get with the mapping line logged; when apt accepts the action
+# (or the backend is not Debian-family), the command runs verbatim.
+apt_intent_root="$shell_stub_root/apt-intent"
+mkdir -p "$apt_intent_root"
+run_apt_intent_case()
+{
+    local case_root="$1" command="$2"
+    mkdir -p "$case_root/target"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$case_root"
+        SESSION_LOG="$case_root/session.log"
+        TARGET_ROOT="$case_root/target"
+        if [[ -n "${APT_INTENT_BACKEND:-}" ]]; then
+            TARGET_PACKAGE_MANAGER="$APT_INTENT_BACKEND"
+        fi
+        prepare_target() { :; }
+        log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+        apt()
+        {
+            # The helper only ever probes `apt <action> --help` (read-only
+            # evidence); everything else never reaches this stub.
+            local action="${1:-}"
+            if [[ "${2:-}" == "--help" ]]; then
+                if grep -Fxq "$action" "$case_root/reject" 2>/dev/null; then
+                    return 1
+                fi
+                return 0
+            fi
+            return 0
+        }
+        timeout()
+        {
+            while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+                if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+            done
+            "$@"
+        }
+        chroot()
+        {
+            printf '%s\n' "$*" >> "$case_root/calls"
+            return 0
+        }
+        ( run_chroot_shell "$command" ) > "$case_root/output" 2>&1 || true
+    )
+}
+
+printf 'full-upgrade\n' > "$apt_intent_root/reject"
+run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
+grep -Fq '/bin/sh -c apt-get dist-upgrade' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a rejecting apt did not translate full-upgrade to apt-get dist-upgrade' >&2; exit 1; }
+grep -Fq 'apt intent translated: apt-get dist-upgrade' "$apt_intent_root/output" \
+    || { echo 'FAIL: the apt-intent mapping line is missing from the request output' >&2; exit 1; }
+grep -Fq 'apt intent translated: apt-get dist-upgrade' "$apt_intent_root/session.log" \
+    || { echo 'FAIL: the apt-intent mapping line is missing from the session log' >&2; exit 1; }
+
+printf 'update\n' > "$apt_intent_root/reject"
+run_apt_intent_case "$apt_intent_root" 'apt update'
+grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a rejecting apt did not translate apt update to apt-get update' >&2; exit 1; }
+grep -Fq 'apt intent translated: apt-get update' "$apt_intent_root/output" \
+    || { echo 'FAIL: the apt update mapping line is missing' >&2; exit 1; }
+
+# An apt that supports the action runs the reviewed command verbatim.
+: > "$apt_intent_root/reject"
+: > "$apt_intent_root/calls"
+run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
+grep -Fq '/bin/sh -c apt full-upgrade' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a supporting apt command was rewritten' >&2; exit 1; }
+if grep -Fq 'apt intent translated' "$apt_intent_root/output"; then
+    echo 'FAIL: a supporting apt command emitted a translation line' >&2
+    exit 1
+fi
+
+# A known non-Debian backend never receives the apt rewrite even when the
+# local apt would reject the action.
+printf 'update\n' > "$apt_intent_root/reject"
+: > "$apt_intent_root/calls"
+APT_INTENT_BACKEND=dnf run_apt_intent_case "$apt_intent_root" 'apt update'
+grep -Fq '/bin/sh -c apt update' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a non-Debian backend rewrote an apt command' >&2; exit 1; }
+
 # Behavioural apt-upgrade retry for the running-host shell: the same policy
 # refusal is retried once with full-upgrade on the live host, and a successful
 # retry is reported as a pass.
@@ -307,6 +405,9 @@ mkdir -p "$shell_stub_root/host-retry"
     prepare_running_host() { :; }
     prepare_host_command_guard() { :; }
     log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    # This apt accepts every action, so the intent probe never rewrites the
+    # reviewed command before the policy retry below.
+    apt() { return 0; }
     run_host_command_isolated()
     {
         local call

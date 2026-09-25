@@ -78,8 +78,8 @@
   Etch's fonts garble the modern glyphs. The LUKS unlock passes `--key-owner
   <uid>` with the mode-600 keyfile, so gksu/gksudo elevation (no SUDO_UID)
   accepts the GUI's file while foreign-owned files still fail. The Logs
-  Save As... dialog starts in the mounted /host share when it exists and is
-  writable (fallback: the log directory) with an offline-fetch hint. Every
+  Save As... dialog starts in a writable /host mount when one exists
+  (fallback: the log directory). Every
   long confirmation (Full Repair, individual repairs, Make Default, unlock,
   config write, host-shell command, copy-and-verify, log deletion) now uses a
   shared width-constrained wrapped dialog instead of an unwrapped message

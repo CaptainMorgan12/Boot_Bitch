@@ -5281,11 +5281,21 @@ QWidget *MainWindow::buildFileCopyPage()
     directionRow->addStretch(1);
     layout->addLayout(directionRow);
 
+    // Cycle 16 (legacy lesson): the source section and the
+    // destination/ownership sections sit in a vertical splitter, so a long
+    // staged-source list can be resized while the destination and policy
+    // controls keep a stable floor. Neither pane may collapse; the source
+    // list keeps a compact ~80px floor and the lower pane ~160px.
+    m_fileCopySectionSplitter = new QSplitter(Qt::Vertical);
+    m_fileCopySectionSplitter->setObjectName(QStringLiteral("fileCopySectionSplitter"));
+    m_fileCopySectionSplitter->setChildrenCollapsible(false);
+    m_fileCopySectionSplitter->setHandleWidth(6);
+
     m_fileCopySourceBox = new QGroupBox;
     auto *sourceLayout = new QVBoxLayout(m_fileCopySourceBox);
     m_sourceList = new QListWidget;
     m_sourceList->setAlternatingRowColors(true);
-    m_sourceList->setMinimumHeight(130);
+    m_sourceList->setMinimumHeight(80);
     m_sourceList->setTextElideMode(Qt::ElideMiddle);
     installCopyAction(m_sourceList);
     sourceLayout->addWidget(m_sourceList);
@@ -5307,7 +5317,13 @@ QWidget *MainWindow::buildFileCopyPage()
     sourceButtons->addStretch(1);
     sourceButtons->addWidget(clear);
     sourceLayout->addLayout(sourceButtons);
-    layout->addWidget(m_fileCopySourceBox);
+    m_fileCopySectionSplitter->addWidget(m_fileCopySourceBox);
+    m_fileCopySourceBox->setMinimumHeight(120);
+
+    auto *fileCopyLowerPane = new QWidget;
+    auto *lowerPaneLayout = new QVBoxLayout(fileCopyLowerPane);
+    lowerPaneLayout->setContentsMargins(0, 0, 0, 0);
+    lowerPaneLayout->setSpacing(10);
 
     m_fileCopyDestinationBox = new QGroupBox;
     auto *destinationLayout = new QHBoxLayout(m_fileCopyDestinationBox);
@@ -5317,7 +5333,7 @@ QWidget *MainWindow::buildFileCopyPage()
     connect(m_fileCopyBrowseDestinationButton, &QPushButton::clicked, this, &MainWindow::browseFileCopyDestination);
     destinationLayout->addWidget(m_destinationEdit, 1);
     destinationLayout->addWidget(m_fileCopyBrowseDestinationButton);
-    layout->addWidget(m_fileCopyDestinationBox);
+    lowerPaneLayout->addWidget(m_fileCopyDestinationBox);
 
     auto *optionsBox = new QGroupBox(QStringLiteral("3. Ownership and copy policy"));
     auto *optionsLayout = new QVBoxLayout(optionsBox);
@@ -5331,7 +5347,14 @@ QWidget *MainWindow::buildFileCopyPage()
     ownershipRow->addWidget(m_ownershipCombo, 1);
     optionsLayout->addLayout(ownershipRow);
 
-    layout->addWidget(optionsBox);
+    lowerPaneLayout->addWidget(optionsBox);
+    fileCopyLowerPane->setMinimumHeight(160);
+    m_fileCopySectionSplitter->addWidget(fileCopyLowerPane);
+
+    m_fileCopySectionSplitter->setStretchFactor(0, 1);
+    m_fileCopySectionSplitter->setStretchFactor(1, 0);
+
+    layout->addWidget(m_fileCopySectionSplitter);
 
     layout->addStretch(1);
 

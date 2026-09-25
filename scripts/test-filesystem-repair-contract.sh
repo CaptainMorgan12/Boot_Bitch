@@ -85,6 +85,16 @@ grep -q '^filesystem_mode_matrix()' "$HELPER"
 grep -q '^filesystem_zfs_status_result()' "$HELPER"
 grep -q '^filesystem_btrfs_scrub_result()' "$HELPER"
 grep -q 'result=skipped' "$HELPER"
+grep -q '^mount_target_btrfs_subvolumes()' "$HELPER"
+grep -q '^mount_target_data_partitions()' "$HELPER"
+grep -q '^remount_target_data_rw()' "$HELPER"
+grep -q 'mount_target_data_partitions "$mode"' "$HELPER"
+grep -q 'Remounting target data filesystem ' "$HELPER"
+grep -q 'same_single_top_disk "$TARGET_DISK" "$resolved"' "$HELPER"
+grep -q 'Repair requires the target ' "$HELPER"
+# The data partitions are recorded in the same list the Btrfs subvolumes use,
+# so the single rw promotion covers both layouts.
+grep -q 'TARGET_DATA_MOUNTS+=("$dest")' "$HELPER"
 grep -q 'summary_skipped += 1' "$HELPER"
 grep -q 'Offline file system repair refuses mounted filesystem' "$HELPER"
 grep -q 'Online file system repair requires' "$HELPER"
@@ -1794,5 +1804,96 @@ grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw 
     || { echo 'FAIL: cleanup did not emit MOUNT_LEAK evidence' >&2; printf '%s\n' "$leak_out" >&2; exit 1; }
 grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" "$sandbox/state/mount-leaks.log" \
     || { echo 'FAIL: the leaked mount was not persisted under STATE_ROOT' >&2; exit 1; }
+
+
+# ---------------------------------------------------------------------------
+# Part 12: prepare_target mounts the target fstab's separate non-Btrfs data
+# partitions (/usr /var /tmp /home /opt /srv) that live on the selected disk.
+# Read-only diagnostics get ro mounts; remount_target_data_rw promotes them
+# for the modifying stages; entries outside the selected disk are refused;
+# pseudo and Btrfs entries keep their existing handling; and a modifying
+# stage fails closed when a required data filesystem cannot be mounted.
+# ---------------------------------------------------------------------------
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+/dev/test-root  /     ext4  defaults  0 1
+/dev/test-boot  /boot ext4  defaults  0 2
+/dev/test-root  /usr  ext4  defaults  0 2
+/dev/test-var   /var  ext4  defaults,noatime  0 2
+/dev/test-home  /home xfs   defaults  0 2
+/dev/test-other /none ext4  defaults  0 2
+tmpfs           /tmp  tmpfs defaults  0 0
+/dev/test-opt   /opt  btrfs subvol=/@opt  0 0
+/dev/test-srv   /srv  ext4  nofail,relatime  0 2
+FSTAB
+
+# The mocked readlink proves /dev/test-* existence through sandbox files.
+touch "$sandbox/dev-test-var" "$sandbox/dev-test-srv" "$sandbox/dev-test-opt" "$sandbox/dev-test-other"
+
+data_mount_harness='top_disks_for() {
+    case "$1" in
+        */test-home) printf "%s\n" "test-other-disk" ;;
+        *) printf "%s\n" "test-disk" ;;
+    esac
+}
+ROOT_CANONICAL=/dev/test-root
+TARGET_DISK=/dev/test-disk
+TARGET_ROOT="'"$sandbox"'/target"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+: > "$FAKE_MOUNT_LOG"
+TARGET_DATA_MOUNTS=()
+mount_target_data_partitions ro
+printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"'
+
+data_ro="$(run_harness "$data_mount_harness")"
+grep -Fq 'MOUNTS:' <<<"$data_ro" \
+    || { echo 'FAIL: data mount harness produced no mount list' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq "$sandbox/target/var," <<<"$data_ro" \
+    || { echo 'FAIL: separate /var was not recorded as a data mount' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq "$sandbox/target/srv," <<<"$data_ro" \
+    || { echo 'FAIL: separate /srv was not recorded as a data mount' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq "$sandbox/target/home," <<<"$data_ro" \
+    && { echo 'FAIL: an off-disk /home was mounted instead of refused' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq "$sandbox/target/opt," <<<"$data_ro" \
+    && { echo 'FAIL: a Btrfs /opt was mounted as a plain data partition' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq "$sandbox/target/usr," <<<"$data_ro" \
+    && { echo 'FAIL: a same-device /usr entry was mounted twice' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
+grep -Fq -- '-o ro,noatime -- /dev/test-var' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: /var was not mounted read-only with its fstab options' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+grep -Fq -- '-o ro,relatime -- /dev/test-srv' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: /srv was not mounted read-only with its fstab options' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+grep -Fq -- 'tmpfs' "$FAKE_MOUNT_LOG" \
+    && { echo 'FAIL: a tmpfs pseudo entry was mounted' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+
+# The rw promotion remounts every recorded data mount read-write with the
+# machine-readable line; the modifying stage fails closed when the mount is
+# unavailable.  The harness snippet is single-quoted (the shellcheck-safe
+# pattern used by data_mount_harness) and reuses TARGET_ROOT for the sandbox
+# paths.
+promotion="$(run_harness "$data_mount_harness"'
+: > "$FAKE_MOUNT_LOG"
+printf "%s\n" "$TARGET_ROOT/var" "$TARGET_ROOT/srv" >> "$FAKE_MOUNTPOINT_DB"
+remount_target_data_rw')"
+grep -Fq 'Remounting target data filesystem /var read-write' <<<"$promotion" \
+    || { echo 'FAIL: /var rw promotion line missing' >&2; printf '%s\n' "$promotion" >&2; exit 1; }
+grep -Fq 'Remounting target data filesystem /srv read-write' <<<"$promotion" \
+    || { echo 'FAIL: /srv rw promotion line missing' >&2; printf '%s\n' "$promotion" >&2; exit 1; }
+grep -Fq -- '-o remount,rw ' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: the rw promotion did not remount the data mounts' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+
+fail_out="$(FAKE_MOUNT_FAIL=1 run_harness "$data_mount_harness"'
+: > "$FAKE_MOUNTPOINT_DB"
+TARGET_DATA_MOUNTS=()
+mount_target_data_partitions rw' 2>&1 || true)"
+grep -Fq 'Repair requires the target /var filesystem (/dev/test-var) and it could not be mounted.' <<<"$fail_out" \
+    || { echo 'FAIL: a modifying stage tolerated an unmountable required data filesystem' >&2; printf '%s\n' "$fail_out" >&2; exit 1; }
+
+# Already-mounted destinations are never mounted twice.
+printf '%s\n' "$sandbox/target/var" >> "$FAKE_MOUNTPOINT_DB"
+data_skip="$(run_harness "$data_mount_harness")"
+grep -Fq "$sandbox/target/srv," <<<"$data_skip" \
+    || { echo 'FAIL: the already-mounted /var suppressed the remaining data mounts' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
+grep -Fq "$sandbox/target/var," <<<"$data_skip" \
+    && { echo 'FAIL: the already-mounted /var was recorded again' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

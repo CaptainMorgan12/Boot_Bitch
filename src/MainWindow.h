@@ -1061,6 +1061,7 @@ private:
     QString m_hostRebootBootId;
     QLabel *m_fileCopyHeading = nullptr;
     QComboBox *m_fileCopyDirectionCombo = nullptr;
+    QSplitter *m_fileCopySectionSplitter = nullptr;
     QGroupBox *m_fileCopySourceBox = nullptr;
     QGroupBox *m_fileCopyDestinationBox = nullptr;
     QListWidget *m_sourceList = nullptr;

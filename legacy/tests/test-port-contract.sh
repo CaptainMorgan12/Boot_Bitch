@@ -86,8 +86,8 @@ printf '%s\n' "$check_out" | grep -qE 'sed -nE +61' \
     || fail "port summary sed -nE count is not 61"
 printf '%s\n' "$check_out" | grep -qE '=~ regex literal hoists +11' \
     || fail "port summary regex-hoist count is not 11"
-printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +41' \
-    || fail "port summary wrapped-function count is not 41"
+printf '%s\n' "$check_out" | grep -qE 'wrapped/replaced modern functions +39' \
+    || fail "port summary wrapped-function count is not 39"
 pass "port --check in sync and lists every transformation"
 
 # --- generated helper has no bash-4 syntax ----------------------------------
@@ -157,10 +157,13 @@ grep -q 'legacy_blkid_uuid_path' "$HELPER" \
     || fail "generated helper lost the path-based blkid UUID probe"
 grep -q 'legacy_blkid_value_path' "$HELPER" \
     || fail "generated helper lost the path-based blkid TYPE probe"
-grep -q 'legacy_mount_target_fstab_entries' "$HELPER" \
-    || fail "generated helper lost the split-LV data mount pass"
-grep -q 'prepare_target_modern' "$HELPER" \
-    || fail "generated helper lost the prepare_target wrap"
+grep -q '^mount_target_data_partitions()' "$HELPER" \
+    || fail "generated helper lost the shared split-LV data mount pass"
+grep -q '^prepare_target()' "$HELPER" \
+    || fail "generated helper lost the unwrapped shared prepare_target"
+if grep -q 'legacy_mount_target_fstab_entries\|LEGACY_DATA_MOUNTS\|LEGACY_DATA_PROMOTED' "$HELPER"; then
+    fail "generated helper still carries the retired legacy data-mount pass"
+fi
 grep -q 'defoptions/kopt-managed arguments captured' "$HELPER" \
     || fail "generated helper lost the GRUB defoptions preflight note"
 grep -q 'legacy_grub_managed_options' "$HELPER" \
@@ -184,11 +187,15 @@ grep -q 'LEGACY_RESOLVER_DESTINATION' "$HELPER" \
 grep -q 'Copied recovery-host resolver into the target chroot' "$HELPER" \
     || fail "generated helper lost the resolver copy path"
 grep -q 'Remounting target data filesystem ' "$HELPER" \
-    || fail "generated helper lost the legacy data-mount promotion"
-grep -q 'LEGACY_DATA_MOUNTS' "$HELPER" \
-    || fail "generated helper lost the legacy data-mount records"
-grep -q 'remount_target_data_rw_modern' "$HELPER" \
-    || fail "generated helper lost the data-promotion wrap"
+    || fail "generated helper lost the data-mount promotion line"
+grep -q '^remount_target_data_rw()' "$HELPER" \
+    || fail "generated helper lost the unwrapped fail-closed data promotion"
+# The shared evidence-based apt-intent translation covers the guarded shell
+# paths; the legacy plain-chroot paths keep the unconditional Etch translation.
+grep -q '^apt_intent_translate()' "$HELPER" \
+    || fail "generated helper lost the shared evidence-based apt-intent translation"
+grep -q 'legacy_apt_intent_translate' "$HELPER" \
+    || fail "generated helper lost the plain-chroot apt-intent translation"
 if grep -E 'awk .*\[\[:space:\]\]' "$OVERLAY"; then
     fail "overlay awk programs still use the mawk-incompatible [[:space:]] class"
 fi

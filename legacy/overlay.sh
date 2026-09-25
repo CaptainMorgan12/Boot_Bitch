@@ -952,108 +952,6 @@ diagnostic_repair_capabilities()
 }
 
 # ---------------------------------------------------------------------------
-# Split-LV target mounts (cycle 12)
-# ---------------------------------------------------------------------------
-
-# Cycle 12: after the root (and boot-entry) mounts, the target's remaining
-# standard-system fstab entries are mounted under TARGET_ROOT so package and
-# boot stages see /var/lib/dpkg and apt's /var/cache|/var/lib/apt on
-# split-LV layouts. Read-only diagnostics tolerate a data mount that fails
-# (logged); a repair stage fails closed when the entry it needs cannot be
-# mounted. Every mount goes through mount_recorded, so the exit teardown
-# already unmounts them in reverse order.
-prepare_target()
-{
-    # Every prepare is a fresh mount cycle: the recorded data mounts and the
-    # promotion state restart with it.
-    LEGACY_DATA_MOUNTS=()
-    LEGACY_DATA_PROMOTED=0
-    prepare_target_modern "$@"
-    legacy_mount_target_fstab_entries "${1:-ro}"
-}
-
-legacy_mount_target_fstab_entries()
-{
-    local mode="${1:-ro}" mp="" entry="" spec="" fstype="" options=""
-    local resolved="" dest="" filtered="" option=""
-    [[ -f "$TARGET_ROOT/etc/fstab" ]] || return 0
-    for mp in /usr /var /tmp /home /opt /srv; do
-        entry="$(fstab_entry_for_mountpoint "$mp")" || continue
-        [[ -n "$entry" ]] || continue
-        IFS=$'\t' read -r spec fstype options <<< "$entry"
-        [[ -n "$spec" && -n "$fstype" ]] || continue
-        # Pseudo entries and swap are never mounted; / and /boot are handled
-        # by the root and boot-entry mounts.
-        case "$fstype" in
-            swap|proc|sysfs|tmpfs|devpts|devtmpfs|none|auto) continue ;;
-        esac
-        resolved="$(resolve_fstab_source "$spec")" || continue
-        [[ -n "$resolved" && "$resolved" == /dev/* ]] || continue
-        is_block_device "$resolved" || continue
-        same_single_top_disk "$TARGET_DISK" "$resolved" || continue
-        # A same-device entry (single-filesystem layout) needs no mount.
-        [[ "$(readlink -f -- "$resolved")" == "$(readlink -f -- "$ROOT_DEVICE")" ]] \
-            && continue
-        dest="$(target_path "$mp")"
-        [[ -n "$dest" && "$dest" == /* && ! -L "$dest" \
-            && ( "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ) ]] \
-            || { if [[ "$mode" == rw ]]; then
-                     fail "Refusing an unsafe target $mp mount path: $dest"
-                 fi
-                 log "WARN: skipping target $mp: unsafe mount path." | tee -a "$SESSION_LOG"
-                 continue; }
-        if mountpoint -q "$dest" 2>/dev/null; then
-            # Already mounted (helper-recorded or pre-existing): leave it
-            # untouched; a repair remounts helper-owned entries read-write.
-            continue
-        fi
-        mkdir -p -- "$dest"
-        filtered=""
-        if [[ "$mode" == rw ]]; then
-            for option in $(printf '%s' "$options" | tr ',' ' '); do
-                [[ -n "$option" ]] || continue
-                case "$option" in
-                    noauto|nofail|ro) continue ;;
-                esac
-                filtered="${filtered:+,}$option"
-            done
-        fi
-        if ! mount_recorded "$resolved" "$dest" -o "$mode${filtered:+,$filtered}"; then
-            if [[ "$mode" == rw ]]; then
-                fail "Repair requires the target $mp filesystem ($resolved) and it could not be mounted."
-            fi
-            log "WARN: could not mount target $mp from $resolved; the read-only diagnostic proceeds without it." | tee -a "$SESSION_LOG"
-            continue
-        fi
-        LEGACY_DATA_MOUNTS+=("$dest")
-        log "Mounted target $mp from $resolved ($mode${filtered:+,$filtered})" | tee -a "$SESSION_LOG"
-    done
-}
-
-# Cycle 12 loop 4: promote the legacy split-LV data mounts read-write
-# together with the modern btrfs data subvolumes. A plain `mount -o
-# remount,rw` of an ext3 mount works on 2.6.18. Idempotent across the plan's
-# stages (a second promotion is a no-op); a data filesystem that cannot be
-# promoted fails closed with the exact reason.
-remount_target_data_rw()
-{
-    local dest
-    if (( LEGACY_DATA_PROMOTED == 0 )); then
-        for dest in "${LEGACY_DATA_MOUNTS[@]:-}"; do
-            [[ -n "$dest" && -d "$dest" ]] || continue
-            if ! mountpoint -q "$dest" 2>/dev/null; then
-                fail "A modifying stage requires the target data filesystem $dest, which is no longer mounted."
-            fi
-            log "Remounting target data filesystem $dest read-write" | tee -a "$SESSION_LOG"
-            mount -o remount,rw "$dest" \
-                || fail "A modifying stage requires the target data filesystem $dest, which could not be remounted read-write."
-        done
-        LEGACY_DATA_PROMOTED=1
-    fi
-    remount_target_data_rw_modern
-}
-
-# ---------------------------------------------------------------------------
 # Gated command entry points
 # ---------------------------------------------------------------------------
 
@@ -1487,10 +1385,6 @@ find_crypt_mapper_for_device()
 # copy is reused, so promote_target_data_rw cannot re-trigger it.
 LEGACY_RESOLVER_DESTINATION=""
 LEGACY_RESOLVER_BACKUP=""
-# Cycle 12 loop 4: the legacy split-LV data mounts recorded by
-# legacy_mount_target_fstab_entries and their promotion state.
-LEGACY_DATA_MOUNTS=()
-LEGACY_DATA_PROMOTED=0
 mount_target_resolver()
 {
     local target_link="$TARGET_ROOT/etc/resolv.conf" link destination root_real

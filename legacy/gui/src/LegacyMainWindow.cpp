@@ -2644,10 +2644,9 @@ QWidget *LegacyMainWindow::buildLogTab()
     m_logsHeading->setSizePolicy(QSizePolicy(QSizePolicy::Preferred, QSizePolicy::Fixed));
     logsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Application log"), QString::fromLatin1(
         "The complete session register; Save As... writes every entry even "
-        "while a filter hides lines. When the /host share is mounted, Save "
-        "As... starts there so the host can fetch the file after the rig is "
-        "shut down; otherwise the log directory is the fallback. Prior "
-        "session files are listed read-only.")));
+        "while a filter hides lines. If a writable system share mount exists "
+        "at /host, Save As... starts there; otherwise the log directory is "
+        "the fallback. Prior session files are listed read-only.")));
     logsHeadingRow->addStretch();
 
     QSplitter *splitter = new QSplitter(Qt::Horizontal, page);
@@ -10400,10 +10399,8 @@ void LegacyMainWindow::refreshSessionLogList()
 
 void LegacyMainWindow::saveLog()
 {
-    // Cycle 10: the offline host fetch point is the mounted vfat /host share;
-    // when it exists and is writable the Save As... dialog starts there, so a
-    // saved log lands where the host can collect it after the rig is shut
-    // down. Otherwise the log directory is the fallback.
+    // If a writable system share mount exists at /host, use it as the Save
+    // As... starting directory; otherwise the log directory is the fallback.
     QString startDir = m_logDirectory;
     const QFileInfo hostShare(QString::fromLatin1("/host"));
     if (hostShare.exists() && hostShare.isDir() && hostShare.isWritable()) {
