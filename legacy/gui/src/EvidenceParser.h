@@ -105,6 +105,7 @@ bool changeStatusIsUnchanged(const std::string &status);
 std::string unlockMapper(const std::string &text);
 std::string unlockRoot(const std::string &text);
 std::string unlockRootFstype(const std::string &text);
+std::string unlockRootUuid(const std::string &text);
 bool unlockAuthFailed(const std::string &text);
 // Last "ERROR:" line of a transcript, trimmed and with the prefix removed
 // ("" when the transcript carries no error line). Used by the Systems tab's

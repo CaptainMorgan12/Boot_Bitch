@@ -221,7 +221,14 @@ for marker in 'setSorting(true)' 'alreadyCommitted' 'm_inspectingHostDetails' \
     'Host Maintenance is the current scope, but the selected' \
     'isLinuxFileSystemName(own.fstype)' \
     'Select an offline repair target to unlock.' \
-    'No Linux filesystem was detected on %1'; do
+    'No Linux filesystem was detected on %1' \
+    'showHelpPopup' 'QToolButton' 'QSignalMapper' 'setFrameShape(QFrame::NoFrame)' \
+    'unlockRootUuid(' 'm_unlockedRootUuid' 'm_unlockedMapper' \
+    'setHScrollBarMode' 'applicationLog->setMinimumWidth(480)' \
+    'sessions->setMinimumWidth(240)' 'not mounted (offline target)' \
+    'toolListHeaderClicked' 'header(), SIGNAL(clicked(int)' \
+    'm_toolList->clear()' 'm_toolSortColumn' 'toolIndexForTitle' \
+    'QFontMetrics(m_headerBadge->font()).width'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-13 marker missing: $marker"
 done
 grep -q 'QString::fromLatin1("Application log"), page)' "$WINDOW" \

@@ -39,7 +39,9 @@
 #include <qtextedit.h>
 #include <qtextstream.h>
 #include <qtimer.h>
+#include <qtoolbutton.h>
 #include <qtooltip.h>
+#include <qsignalmapper.h>
 
 #include <cstdlib>
 #include <cstring>
@@ -1002,6 +1004,9 @@ bool rootBelongsToDisk(const QMap<QString, DeviceRow> &rows,
 
 LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     : QMainWindow(parent, name),
+      m_toolSortColumn(-1),
+      m_toolSortAscending(true),
+      m_helpSignalMapper(0),
       m_tabs(0),
       m_fileMenu(0),
       m_viewMenu(0),
@@ -1201,9 +1206,13 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     QFont badgeFont = m_headerBadge->font();
     badgeFont.setBold(true);
     m_headerBadge->setFont(badgeFont);
-    m_headerBadge->setFrameShape(QFrame::StyledPanel);
+    m_headerBadge->setFrameShape(QFrame::NoFrame);
     m_headerBadge->setMargin(5);
     m_headerBadge->setAlignment(Qt::AlignCenter);
+    // Cycle 14 loop: the frameless badge keeps its needed width (the frame
+    // removal shaved 2px and the smoke's clip gate caught it).
+    m_headerBadge->setMinimumWidth(
+        QFontMetrics(m_headerBadge->font()).width(m_headerBadge->text()) + 12);
     QToolTip::add(m_headerBadge, QString::fromLatin1(
         "Ordinary repairs require an explicitly selected non-host target. The "
         "protected running host has a separate deliberate maintenance mode with "
@@ -1409,16 +1418,60 @@ QLabel *LegacyMainWindow::makeSectionTitle(const QString &text, QWidget *parent)
     return label;
 }
 
-// Cycle 13: the (i) help button beside each page title (modern
-// contextHelpButton parity). The informational text travels in the tooltip,
-// which Qt3 wraps to the available screen width; nothing inline remains.
-QPushButton *LegacyMainWindow::makeHelpButton(QWidget *parent, const QString &text)
+// Cycle 14: the (i) help link beside each page title (modern
+// contextHelpButton parity): a frameless hyperlink-style label with the
+// page's informational text, shown in a width-constrained read-only dialog
+// on click. No tooltip-only behavior remains.
+int g_helpCounter = 0;
+
+QWidget *LegacyMainWindow::makeHelpButton(QWidget *parent, const QString &title,
+                                          const QString &text)
 {
-    QPushButton *button = new QPushButton(QString::fromLatin1("(i)"), parent);
-    button->setFixedWidth(QFontMetrics(button->font()).width(QString::fromLatin1("(i)")) + 18);
-    button->setFixedHeight(QFontMetrics(button->font()).height() + 10);
-    QToolTip::add(button, text);
+    // Cycle 14 loop: Qt 3.3.7's QLabel has no linkActivated signal at
+    // runtime, so the (i) affordance is a flat auto-raised QToolButton that
+    // opens the width-constrained info dialog through a QSignalMapper.
+    ++g_helpCounter;
+    const QString href = QString::fromLatin1("help:%1").arg(g_helpCounter);
+    m_helpTitles.insert(href, title);
+    m_helpTexts.insert(href, text);
+    QToolButton *button = new QToolButton(parent);
+    button->setText(QString::fromLatin1("i"));
+    button->setAutoRaise(true);
+    button->setFixedSize(18, 18);
+    if (!m_helpSignalMapper) {
+        m_helpSignalMapper = new QSignalMapper(this);
+        connect(m_helpSignalMapper, SIGNAL(mapped(const QString &)),
+                this, SLOT(showHelpPopup(const QString &)));
+    }
+    connect(button, SIGNAL(clicked()), m_helpSignalMapper, SLOT(map()));
+    m_helpSignalMapper->setMapping(button, href);
     return button;
+}
+
+void LegacyMainWindow::showHelpPopup(const QString &href)
+{
+    const QString title = mapValue(m_helpTitles, href);
+    const QString text = mapValue(m_helpTexts, href);
+    if (text.isEmpty()) {
+        return;
+    }
+    QDialog dialog(this, "legacy-info", true);
+    dialog.setCaption(title.isEmpty()
+                          ? QString::fromLatin1("Information") : title);
+    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
+    QLabel *label = new QLabel(text, &dialog);
+    enableLabelWordWrap(label);
+    label->setMaximumWidth(kHiddenInputMaximumWidth);
+    layout->addWidget(label);
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->addStretch();
+    QPushButton *close = new QPushButton(QString::fromLatin1("Close"), &dialog);
+    close->setDefault(true);
+    buttons->addWidget(close);
+    QObject::connect(close, SIGNAL(clicked()), &dialog, SLOT(accept()));
+    dialog.setMinimumWidth(360);
+    dialog.setMaximumWidth(kHiddenInputMaximumWidth + 40);
+    dialog.exec();
 }
 
 // Qt3 list columns are fixed-width by default, so a header wider than its
@@ -1664,7 +1717,7 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     headingRow->setSpacing(6);
     m_systemsHeading = makeSectionTitle(QString::fromLatin1("Systems"), page);
     headingRow->addWidget(m_systemsHeading);
-    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Systems"), QString::fromLatin1(
         "Select a physical drive; Boot Bitch resolves the most likely Linux "
         "system volume automatically. The running host stays protected from "
         "ordinary target repairs, with a separate explicit host-maintenance "
@@ -1730,7 +1783,7 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     QFont protectedFont = m_hostProtectedBadge->font();
     protectedFont.setBold(true);
     m_hostProtectedBadge->setFont(protectedFont);
-    m_hostProtectedBadge->setFrameShape(QFrame::StyledPanel);
+    m_hostProtectedBadge->setFrameShape(QFrame::NoFrame);
     m_hostProtectedBadge->setMargin(5);
     QToolTip::add(m_hostProtectedBadge, QString::fromLatin1(
         "The running host remains protected from ordinary repair-target "
@@ -1935,7 +1988,7 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     headingRow->setSpacing(6);
     m_diagHeading = makeSectionTitle(QString::fromLatin1("Diagnostics"), page);
     headingRow->addWidget(m_diagHeading);
-    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Diagnostics"), QString::fromLatin1(
         "Run All runs every available read-only diagnostic for the current "
         "scope; selecting a check runs it alone. Diagnostics are read-only "
         "and are the only evidence source for the gated repair actions.")));
@@ -2108,7 +2161,7 @@ QWidget *LegacyMainWindow::buildActionsTab()
     headingRow->setSpacing(6);
     m_repairHeading = makeSectionTitle(QString::fromLatin1("Repair"), content);
     headingRow->addWidget(m_repairHeading);
-    headingRow->addWidget(makeHelpButton(content, QString::fromLatin1(
+    headingRow->addWidget(makeHelpButton(content, QString::fromLatin1("Repair"), QString::fromLatin1(
         "The Full Repair plan runs the selected legacy stages in order "
         "through the guarded helper; the individual tools run one stage at a "
         "time. Every action stays disabled until the cached capability lines "
@@ -2188,6 +2241,14 @@ QWidget *LegacyMainWindow::buildActionsTab()
     // Curated workflow order (Qt3's default first-column sorting would reorder
     // it); the after-form insertion keeps that order on the Etch Qt3 style.
     m_toolList->setSorting(-1);
+    // Cycle 14 loop: Qt3's setSorting(true) re-sorts immediately (breaking
+    // the curated order), so header-click sorting is manual: the curated
+    // insertion order stays the default and clicking a header column sorts
+    // asc/desc with the Selected tool pane refreshed afterwards.
+    if (m_toolList->header()) {
+        connect(m_toolList->header(), SIGNAL(clicked(int)),
+                this, SLOT(toolListHeaderClicked(int)));
+    }
     m_toolList->setMinimumHeight(220);
     connect(m_toolList, SIGNAL(selectionChanged()), this, SLOT(toolSelectionChanged()));
     QListViewItem *lastTool = 0;
@@ -2295,7 +2356,7 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     headingRow->setSpacing(6);
     m_chrootHeading = makeSectionTitle(QString::fromLatin1("Chroot shell"), page);
     headingRow->addWidget(m_chrootHeading);
-    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Chroot shell"), QString::fromLatin1(
         "Offline commands run one at a time in a fresh chroot and cannot "
         "answer interactive prompts (apt-get -y upgrade works). Host-shell "
         "commands run directly on the running host. The helper's probe lines "
@@ -2362,14 +2423,14 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 6);
 
     // Modern heading row (buildFileCopyPage parity): the File copy section
-    // title, then the live scope label, then the two primary actions share
-    // the page-title row; both actions stay disabled until the direction and
-    // scope are ready.
+    // title + (i), then the live scope label, then the two primary actions
+    // share the page-title row; both actions stay disabled until the
+    // direction and scope are ready.
     QHBoxLayout *headingRow = new QHBoxLayout(layout);
     headingRow->setSpacing(6);
     m_fileCopyHeading = makeSectionTitle(QString::fromLatin1("File copy"), page);
     headingRow->addWidget(m_fileCopyHeading);
-    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1("File copy"), QString::fromLatin1(
         "Copy and verify files in either direction through the guarded "
         "helper (cp -a plus ownership restoration and a per-file "
         "byte-compare). The helper's file-copy probe gates the controls and "
@@ -2394,9 +2455,6 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyRunButton, SIGNAL(clicked()), this, SLOT(fileCopyRun()));
     headingRow->addWidget(m_fileCopyRunButton, 0, Qt::AlignVCenter);
 
-    // Cycle 13: no inline probe status text (modern has none); the gating
-    // stays internal and the probe explanation lives in the (i) popup.
-
     // Direction row (modern parity: Host -> Repair / Repair -> Host). The
     // sub-layout is constructed WITHOUT a parent and added via addLayout(),
     // matching the existing-tab pattern: a layout constructed with a parent
@@ -2418,10 +2476,21 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     directionRow->addStretch();
     layout->addLayout(directionRow);
 
+    // Cycle 14: the vertical splitter owns its panes from construction, so
+    // the three groups are always visible inside them (the cycle-13 wrap
+    // created the panes after the groups and the reparenting hid them on
+    // Etch).
+    QSplitter *fileCopySplitter = new QSplitter(Qt::Vertical, page);
+    fileCopySplitter->setChildrenCollapsible(false);
+    QWidget *sourcePane = new QWidget(fileCopySplitter);
+    QVBoxLayout *sourcePaneLayout = new QVBoxLayout(sourcePane, 0, 0);
+    QWidget *lowerPane = new QWidget(fileCopySplitter);
+    QVBoxLayout *lowerPaneLayout = new QVBoxLayout(lowerPane, 0, 6);
+
     // Group 1: staged sources with the Add/Remove/Clear button row. The
     // title adapts per direction (modern updateFileCopyDirection).
-    m_fileCopySourceGroup = new QGroupBox(page);
-    QVBoxLayout *sourceLayout = new QVBoxLayout(m_fileCopySourceGroup, 8, 4);
+    m_fileCopySourceGroup = new QGroupBox(sourcePane);
+    QVBoxLayout *sourceGroupLayout = new QVBoxLayout(m_fileCopySourceGroup, 8, 4);
     m_fileCopySourceTitle = makeSectionTitle(
         QString::fromLatin1("1. Select source files or folders from this host"),
         m_fileCopySourceGroup);
@@ -2431,7 +2500,7 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     // section titles from the single-line width check.
     m_fileCopySourceTitle->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
     m_fileCopySourceTitle->setMinimumWidth(0);
-    sourceLayout->addWidget(m_fileCopySourceTitle);
+    sourceGroupLayout->addWidget(m_fileCopySourceTitle);
     m_fileCopySourceList = new QListView(m_fileCopySourceGroup);
     addListViewColumn(m_fileCopySourceList, QString::fromLatin1("Source"), 150);
     m_fileCopySourceList->setAllColumnsShowFocus(true);
@@ -2443,8 +2512,8 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
         "Files and folders staged for the verified copy. The legacy backend "
         "copies with cp -a and restores ownership with chown --reference; "
         "every regular file is byte-compared after the copy."));
-    sourceLayout->addWidget(m_fileCopySourceList, 1);
-    QHBoxLayout *sourceButtons = new QHBoxLayout(sourceLayout);
+    sourceGroupLayout->addWidget(m_fileCopySourceList, 1);
+    QHBoxLayout *sourceButtons = new QHBoxLayout(sourceGroupLayout);
     sourceButtons->setSpacing(6);
     m_fileCopyAddFilesButton = makeButton(QString::fromLatin1("Add Files..."), m_fileCopySourceGroup);
     m_fileCopyAddFilesButton->setEnabled(false);
@@ -2466,9 +2535,10 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyClearButton, SIGNAL(clicked()), this, SLOT(fileCopyClearStaging()));
     sourceButtons->addWidget(m_fileCopyClearButton);
     registerGroupBox(m_fileCopySourceGroup);
+    sourcePaneLayout->addWidget(m_fileCopySourceGroup);
 
     // Group 2: destination with the Browse Target Folders... action.
-    m_fileCopyDestinationGroup = new QGroupBox(page);
+    m_fileCopyDestinationGroup = new QGroupBox(lowerPane);
     QVBoxLayout *destinationLayout = new QVBoxLayout(m_fileCopyDestinationGroup, 8, 4);
     m_fileCopyDestinationTitle = makeSectionTitle(
         QString::fromLatin1("2. Choose destination in repaired system"),
@@ -2493,9 +2563,10 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyBrowseButton, SIGNAL(clicked()), this, SLOT(fileCopyBrowse()));
     destinationRow->addWidget(m_fileCopyBrowseButton);
     registerGroupBox(m_fileCopyDestinationGroup);
+    lowerPaneLayout->addWidget(m_fileCopyDestinationGroup);
 
     // Group 3: ownership and copy policy (the legacy equivalent set).
-    m_fileCopyOptionsGroup = new QGroupBox(page);
+    m_fileCopyOptionsGroup = new QGroupBox(lowerPane);
     QVBoxLayout *optionsLayout = new QVBoxLayout(m_fileCopyOptionsGroup, 8, 4);
     m_fileCopyOptionsTitle = makeSectionTitle(
         QString::fromLatin1("3. Ownership and copy policy"),
@@ -2517,19 +2588,8 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
         "it with chown --reference)."));
     ownershipRow->addWidget(m_fileCopyOwnershipCombo, 1);
     registerGroupBox(m_fileCopyOptionsGroup);
-
-    // Cycle 13: a draggable vertical splitter separates section 1 (sources)
-    // from the destination and ownership sections; both panes keep usable
-    // floors and the source list is shorter (80px) so the page fits.
-    QSplitter *fileCopySplitter = new QSplitter(Qt::Vertical, page);
-    fileCopySplitter->setChildrenCollapsible(false);
-    QWidget *sourcePane = new QWidget(fileCopySplitter);
-    QVBoxLayout *sourcePaneLayout = new QVBoxLayout(sourcePane, 0, 0);
-    sourcePaneLayout->addWidget(m_fileCopySourceGroup);
-    QWidget *lowerPane = new QWidget(fileCopySplitter);
-    QVBoxLayout *lowerPaneLayout = new QVBoxLayout(lowerPane, 0, 6);
-    lowerPaneLayout->addWidget(m_fileCopyDestinationGroup);
     lowerPaneLayout->addWidget(m_fileCopyOptionsGroup);
+
     sourcePane->setMinimumHeight(120);
     lowerPane->setMinimumHeight(140);
     QValueList<int> fileCopySizes;
@@ -2552,7 +2612,7 @@ QWidget *LegacyMainWindow::buildLogTab()
     // tab keeps the "Logs" label.
     m_logsHeading = makeSectionTitle(QString::fromLatin1("Application log"), page);
     logsHeadingRow->addWidget(m_logsHeading);
-    logsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    logsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Application log"), QString::fromLatin1(
         "The complete session register; Save As... writes every entry even "
         "while a filter hides lines. When the /host share is mounted, Save "
         "As... starts there so the host can fetch the file after the rig is "
@@ -2564,6 +2624,9 @@ QWidget *LegacyMainWindow::buildLogTab()
     splitter->setChildrenCollapsible(false);
 
     QGroupBox *sessions = new QGroupBox(splitter);
+    // Cycle 14: the session pane keeps a floor so Add Note and Refresh are
+    // never cut off at the default window size.
+    sessions->setMinimumWidth(240);
     QVBoxLayout *sessionLayout = new QVBoxLayout(sessions, 8, 4);
     sessionLayout->addWidget(makeSectionTitle(QString::fromLatin1("Session logs"), sessions));
     m_sessionLogList = new QListView(sessions);
@@ -2604,6 +2667,9 @@ QWidget *LegacyMainWindow::buildLogTab()
     sessionButtons->addWidget(refresh, 1, 1);
 
     QGroupBox *applicationLog = new QGroupBox(splitter);
+    // Cycle 14: the log pane keeps a readability floor; the session pane
+    // takes the leftover.
+    applicationLog->setMinimumWidth(480);
     QVBoxLayout *logLayout = new QVBoxLayout(applicationLog, 8, 4);
 
     // Modern top row: the "Application log" section title on the left and the
@@ -2669,6 +2735,11 @@ QWidget *LegacyMainWindow::buildLogTab()
     m_logView->setReadOnly(true);
     m_logView->setTextFormat(Qt::LogText);
     m_logView->setWordWrap(m_logWrapEnabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
+    // Cycle 14: long lines wrap at the widget width with no horizontal
+    // scrollbar while wrapping is on (the default); turning wrap off
+    // re-enables the scrollbar.
+    m_logView->setHScrollBarMode(m_logWrapEnabled ? QScrollView::AlwaysOff
+                                                 : QScrollView::Auto);
     m_logView->setMinimumHeight(80);
     logLayout->addWidget(m_logView, 1);
 
@@ -2691,7 +2762,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     settingsHeadingRow->setSpacing(6);
     m_settingsHeading = makeSectionTitle(QString::fromLatin1("Settings"), page);
     settingsHeadingRow->addWidget(m_settingsHeading);
-    settingsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+    settingsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1("Settings"), QString::fromLatin1(
         "Settings are stored per user under ~/.qt/, one file per settings "
         "group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved "
         "immediately on every change and on close. Launch the GUI as the "
@@ -2929,14 +3000,31 @@ void LegacyMainWindow::scanDevices()
     // The complete inventory is cached in m_rows/m_inventory; the visible list
     // is a filtered projection so a hidden row (device-discovery filter) can
     // never invalidate the selected/committed target state.
-    // Cycle 11: a rescan may change the topology, so the session unlock
-    // state resets (the Unlock button returns to its normal gating).
+    // Cycle 14: the session unlock state survives a rescan while the
+    // unlocked mapping still exists (leaving Host Maintenance must not lose
+    // the already-unlocked target); it clears only when the mapping is gone.
+    const QString priorUnlockedDisk = m_unlockedDisk;
+    const QString priorUnlockedRoot = m_unlockedRoot;
+    const QString priorUnlockedMapper = m_unlockedMapper;
+    const QString priorUnlockedUuid = m_unlockedRootUuid;
     m_unlockedDisk = QString::null;
     m_unlockedRoot = QString::null;
+    m_unlockedMapper = QString::null;
+    m_unlockedRootUuid = QString::null;
     m_inventory = legacy::scanDevices();
     m_rows.clear();
     for (std::size_t i = 0; i < m_inventory.size(); ++i) {
         m_rows.insert(fromStd(m_inventory[i].path), m_inventory[i]);
+    }
+    if (!priorUnlockedDisk.isEmpty() && !priorUnlockedRoot.isEmpty()
+        && QFileInfo(priorUnlockedRoot).exists()) {
+        m_unlockedDisk = priorUnlockedDisk;
+        m_unlockedRoot = priorUnlockedRoot;
+        m_unlockedMapper = priorUnlockedMapper;
+        m_unlockedRootUuid = priorUnlockedUuid;
+        injectUnlockedMapperRows(m_unlockedDisk, m_unlockedMapper,
+                                 m_unlockedRoot, QString::null,
+                                 m_unlockedRootUuid);
     }
     rebuildDeviceList();
     updateHostCard();
@@ -4143,6 +4231,8 @@ void LegacyMainWindow::toggleLogWrap(bool enabled)
     m_logWrapEnabled = enabled;
     if (m_logView) {
         m_logView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
+        m_logView->setHScrollBarMode(enabled ? QScrollView::AlwaysOff
+                                             : QScrollView::Auto);
     }
     if (m_resultView) {
         m_resultView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
@@ -4486,6 +4576,18 @@ void LegacyMainWindow::refreshCapabilities()
 
 // ---- Individual repair tools and the Full Repair plan -----------------------
 
+// Cycle 14 loop: the tools list is sortable, so the selected tool resolves
+// by the current row's TITLE (titles are unique), never by row position.
+int LegacyMainWindow::toolIndexForTitle(const QString &title) const
+{
+    for (int i = 0; i < toolSpecCount; ++i) {
+        if (QString::fromLatin1(toolSpecs[i].title) == title) {
+            return i;
+        }
+    }
+    return -1;
+}
+
 int LegacyMainWindow::selectedToolIndex() const
 {
     if (!m_toolList) {
@@ -4495,20 +4597,76 @@ int LegacyMainWindow::selectedToolIndex() const
     if (!item) {
         return -1;
     }
-    int index = 0;
-    for (QListViewItem *row = m_toolList->firstChild(); row;
-         row = row->nextSibling(), ++index) {
-        if (row == item) {
-            return index;
-        }
-    }
-    return -1;
+    return toolIndexForTitle(item->text(0));
 }
 
 void LegacyMainWindow::toolSelectionChanged()
 {
     updateToolDetails();
     updateActionStates();
+}
+
+// Cycle 14 loop: manual header-click sorting for the individual tools list.
+// Qt3 cannot keep the curated order as the default while sorting is enabled,
+// so the items are detached, reordered by the clicked column (toggling
+// asc/desc), and re-inserted; the current selection and the Selected tool
+// pane are then restored.
+void LegacyMainWindow::toolListHeaderClicked(int column)
+{
+    if (!m_toolList || !m_toolList->header()
+        || column < 0 || column >= m_toolList->columns()) {
+        return;
+    }
+    const bool ascending = m_toolSortColumn == column
+        ? !m_toolSortAscending : true;
+    // Deterministic on Qt3: rebuild the rows in the sorted order instead of
+    // detaching/re-inserting live items. Column 0 sorts by the tool title;
+    // column 1 sorts by a static per-tool key (the plan stage or the plan
+    // base), never by the dynamic availability text.
+    std::vector<int> order;
+    for (int i = 0; i < toolSpecCount; ++i) {
+        order.push_back(i);
+    }
+    for (std::size_t i = 1; i < order.size(); ++i) {
+        const int key = order[i];
+        QString keyText = column == 0
+            ? QString::fromLatin1(toolSpecs[key].title)
+            : (toolSpecs[key].planStage && *toolSpecs[key].planStage
+                ? QString::fromLatin1(toolSpecs[key].planStage)
+                : QString::fromLatin1(toolSpecs[key].planBase));
+        std::size_t j = i;
+        while (j > 0) {
+            const int prev = order[j - 1];
+            const QString prevText = column == 0
+                ? QString::fromLatin1(toolSpecs[prev].title)
+                : (toolSpecs[prev].planStage && *toolSpecs[prev].planStage
+                    ? QString::fromLatin1(toolSpecs[prev].planStage)
+                    : QString::fromLatin1(toolSpecs[prev].planBase));
+            const bool before = ascending
+                ? prevText > keyText : prevText < keyText;
+            if (!before) {
+                break;
+            }
+            order[j] = order[j - 1];
+            --j;
+        }
+        order[j] = key;
+    }
+    m_toolList->clear();
+    QListViewItem *lastTool = 0;
+    for (std::size_t i = 0; i < order.size(); ++i) {
+        const ToolSpec &spec = toolSpecs[order[i]];
+        lastTool = new QListViewItem(m_toolList, lastTool,
+                                     QString::fromLatin1(spec.title),
+                                     QString::fromLatin1("not reported"));
+    }
+    m_toolSortColumn = column;
+    m_toolSortAscending = ascending;
+    if (m_toolList->firstChild()) {
+        m_toolList->setSelected(m_toolList->firstChild(), true);
+        m_toolList->setCurrentItem(m_toolList->firstChild());
+    }
+    updateToolDetails();
 }
 
 // True when the selected tool may run now; `reason` always receives the exact
@@ -4607,13 +4765,15 @@ void LegacyMainWindow::updateToolDetails()
 
     // 1. Full Repair column for every tool row.
     if (m_toolList) {
-        int index = 0;
         for (QListViewItem *row = m_toolList->firstChild(); row;
-             row = row->nextSibling(), ++index) {
-            if (index >= toolSpecCount) {
-                break;
+             row = row->nextSibling()) {
+            // The row's tool resolves by its title, so a sorted list still
+            // mirrors the correct spec (the curated order is not assumed).
+            const int rowIndex = toolIndexForTitle(row->text(0));
+            if (rowIndex < 0) {
+                continue;
             }
-            const ToolSpec &spec = toolSpecs[index];
+            const ToolSpec &spec = toolSpecs[rowIndex];
             QString status;
             if (spec.planStage && *spec.planStage) {
                 const int planIndex = planIndexForStage(spec.planStage);
@@ -4624,7 +4784,7 @@ void LegacyMainWindow::updateToolDetails()
                 status = QString::fromLatin1(spec.planBase);
             }
             QString reason;
-            if (!toolRunReady(index, &reason)) {
+            if (!toolRunReady(rowIndex, &reason)) {
                 status = QString::fromLatin1("Unavailable: %1").arg(reason);
             }
             row->setText(1, status);
@@ -5584,6 +5744,7 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
     const std::string mapper = unlockMapper(transcript);
     const std::string unlockedRoot = unlockRoot(transcript);
     const std::string unlockedFstype = unlockRootFstype(transcript);
+    const std::string unlockedUuid = unlockRootUuid(transcript);
     const bool authFailed = unlockAuthFailed(transcript);
     const QString targetDisk = disk.isEmpty() ? selectedDisk() : disk;
     QString status;
@@ -5605,6 +5766,8 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
         // the mapped LV the read-only inventory cannot see.
         m_unlockedDisk = targetDisk;
         m_unlockedRoot = fromStd(unlockedRoot);
+        m_unlockedMapper = fromStd(mapper);
+        m_unlockedRootUuid = fromStd(unlockedUuid);
         if (m_unlockedRoot.isEmpty()) {
             m_unlockedDisk = QString::null;
         }
@@ -5616,8 +5779,9 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
         // Cycle 12: show the freshly activated mapper and root under the
         // selected drive so the tree and the inventory-backed resolution
         // both see them.
-        injectUnlockedMapperRows(targetDisk, fromStd(mapper),
-                                 m_unlockedRoot, fromStd(unlockedFstype));
+        injectUnlockedMapperRows(targetDisk, m_unlockedMapper,
+                                 m_unlockedRoot, fromStd(unlockedFstype),
+                                 m_unlockedRootUuid);
         updateDriveDetails();
         updateActionStates();
         maybeAutoRefreshDiagnostics(QString::fromLatin1(
@@ -6317,6 +6481,122 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             "scope label lost the two-line Host maintenance form"));
         ok = false;
     }
+    // Cycle 14 loop: manual header-click sorting keeps the curated order by
+    // default; clicking the Tool column sorts asc then desc, and the
+    // Selected tool pane follows. Afterwards the curated order is restored
+    // (detach + re-insert per toolSpecs) so later checks stay valid.
+    if (m_toolList && m_toolList->header() && m_toolList->childCount() > 1
+        && m_toolList->firstChild()) {
+        // Cycle 14 loop: the sort case is deterministic — the pane-follow
+        // invariant compares the pane against the CURRENT first row's spec
+        // (looked up by the row's text, never a hard-coded expectation), and
+        // the restore rebuilds the curated order from toolSpecs.
+        const QString firstBefore = m_toolList->firstChild()->text(0);
+        toolListHeaderClicked(0);
+        if (!m_toolList->firstChild()) {
+            problems->append(QString::fromLatin1(
+                "tools list became empty after the first header click"));
+            ok = false;
+        } else {
+            if (m_toolList->firstChild()->text(0) == firstBefore) {
+                problems->append(QString::fromLatin1(
+                    "tools list did not reorder on the first header click"));
+                ok = false;
+            }
+            // Pane-follow invariant: title/button must match the current
+            // first row's spec (the row's text IS the spec title).
+            int firstSpec = -1;
+            const QString firstRowText = m_toolList->firstChild()->text(0);
+            for (int i = 0; i < toolSpecCount; ++i) {
+                if (QString::fromLatin1(toolSpecs[i].title) == firstRowText) {
+                    firstSpec = i;
+                    break;
+                }
+            }
+            if (firstSpec < 0) {
+                problems->append(QString::fromLatin1(
+                    "sorted first row has no tool spec"));
+                ok = false;
+            } else {
+                if (m_toolTitle && m_toolTitle->text()
+                    != QString::fromLatin1(toolSpecs[firstSpec].title)) {
+                    problems->append(QString::fromLatin1(
+                        "Selected tool pane did not follow the sorted selection"));
+                    ok = false;
+                }
+                if (m_toolRunButton && m_toolRunButton->text()
+                    != QString::fromLatin1(toolSpecs[firstSpec].button)) {
+                    problems->append(QString::fromLatin1(
+                        "Selected tool button did not follow the sorted selection"));
+                    ok = false;
+                }
+            }
+            const QString firstAfterFirstClick = m_toolList->firstChild()->text(0);
+            toolListHeaderClicked(0);   // descending (toggle)
+            if (!m_toolList->firstChild()) {
+                problems->append(QString::fromLatin1(
+                    "tools list became empty after the toggle click"));
+                ok = false;
+            } else {
+                if (m_toolList->firstChild()->text(0) == firstAfterFirstClick) {
+                    problems->append(QString::fromLatin1(
+                        "tools list did not toggle on the second header click"));
+                    ok = false;
+                }
+                const QString toggledRowText = m_toolList->firstChild()->text(0);
+                int toggledSpec = -1;
+                for (int i = 0; i < toolSpecCount; ++i) {
+                    if (QString::fromLatin1(toolSpecs[i].title) == toggledRowText) {
+                        toggledSpec = i;
+                        break;
+                    }
+                }
+                if (toggledSpec >= 0 && m_toolTitle && m_toolTitle->text()
+                    != QString::fromLatin1(toolSpecs[toggledSpec].title)) {
+                    problems->append(QString::fromLatin1(
+                        "Selected tool pane did not follow the toggled selection"));
+                    ok = false;
+                }
+            }
+            // Restore the curated order by rebuilding the rows.
+            m_toolList->clear();
+            QListViewItem *lastTool = 0;
+            for (int i = 0; i < toolSpecCount; ++i) {
+                lastTool = new QListViewItem(m_toolList, lastTool,
+                                             QString::fromLatin1(toolSpecs[i].title),
+                                             QString::fromLatin1("not reported"));
+            }
+            m_toolSortColumn = -1;
+            m_toolSortAscending = true;
+            if (m_toolList->firstChild()) {
+                m_toolList->setSelected(m_toolList->firstChild(), true);
+                m_toolList->setCurrentItem(m_toolList->firstChild());
+                updateToolDetails();
+                if (m_toolList->firstChild()->text(0)
+                    != QString::fromLatin1("Validate environment")) {
+                    problems->append(QString::fromLatin1(
+                        "tools list did not restore the curated order"));
+                    ok = false;
+                }
+                if (m_toolTitle && m_toolTitle->text()
+                    != QString::fromLatin1(toolSpecs[0].title)) {
+                    problems->append(QString::fromLatin1(
+                        "Selected tool pane did not return to the first curated tool"));
+                    ok = false;
+                }
+                if (m_toolRunButton && m_toolRunButton->text()
+                    != QString::fromLatin1(toolSpecs[0].button)) {
+                    problems->append(QString::fromLatin1(
+                        "Selected tool button did not return to the first curated tool"));
+                    ok = false;
+                }
+            } else {
+                problems->append(QString::fromLatin1(
+                    "tools list became empty after the restore"));
+                ok = false;
+            }
+        }
+    }
     // Cycle 11: the Unlock button is in its default state in the smoke (no
     // unlock ran), and the Authorize affordance is hidden while the
     // administrator session is active (modern deferred-only parity).
@@ -6352,7 +6632,8 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         injectUnlockedMapperRows(fakeDisk,
                                  QString::fromLatin1("/dev/mapper/luks-smoke-inject"),
                                  QString::fromLatin1("/dev/mapper/smoke-inject-root"),
-                                 QString::fromLatin1("ext3"));
+                                 QString::fromLatin1("ext3"),
+                                 QString::fromLatin1("smoke-uuid"));
         QListViewItem *injectedDisk = 0;
         for (QListViewItem *item = m_deviceList->firstChild(); item;
              item = item->nextSibling()) {
@@ -6376,6 +6657,14 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                         .arg(child->text(3)));
                     ok = false;
                 }
+            }
+            const QMap<QString, DeviceRow>::const_iterator rootRow =
+                m_rows.find(QString::fromLatin1("/dev/mapper/smoke-inject-root"));
+            if (rootRow == m_rows.end()
+                || fromStd(rootRow.data().uuid) != QString::fromLatin1("smoke-uuid")) {
+                problems->append(QString::fromLatin1(
+                    "unlocked root row lost the helper-probed UUID"));
+                ok = false;
             }
         }
         m_rows.remove(fakeDisk);
@@ -8994,8 +9283,12 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
 
     // Modern parity: the inspected row (a child component when one is
     // selected, otherwise the drive) supplies the details; the Drive field
-    // always names the top-level drive.
+    // always names the top-level drive. For the protected-host pane the
+    // resolved root component supplies UUID and Mounts.
     QString inspectedPath = selectedComponent();
+    if (inspectedPath.isEmpty() && m_inspectingHostDetails) {
+        inspectedPath = autoResolvedRoot(disk);
+    }
     if (inspectedPath.isEmpty()) {
         inspectedPath = disk;
     }
@@ -9047,10 +9340,16 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
             }
         }
         // Mounts: the joined distinct targets (primary first); the single
-        // mountpoint covers rows without a joined list.
+        // mountpoint covers rows without a joined list. The freshly unlocked
+        // root is never auto-mounted on selection (mounting happens during
+        // diagnostics read-only and repairs read-write).
         mounts = fromStd(inspected->mountpoints);
         if (mounts.isEmpty()) {
             mounts = fromStd(inspected->mountpoint);
+        }
+        if (mounts.isEmpty() && inspectedPath == m_unlockedRoot
+            && !m_unlockedRoot.isEmpty()) {
+            mounts = QString::fromLatin1("not mounted (offline target)");
         }
     }
     if ((fstype.isEmpty() || fstype == QString::fromLatin1("unknown"))
@@ -9301,7 +9600,8 @@ QString LegacyMainWindow::visibleMapperForDisk(const QString &disk) const
 void LegacyMainWindow::injectUnlockedMapperRows(const QString &disk,
                                                 const QString &mapper,
                                                 const QString &root,
-                                                const QString &fstype)
+                                                const QString &fstype,
+                                                const QString &uuid)
 {
     if (disk.isEmpty()) {
         return;
@@ -9323,8 +9623,15 @@ void LegacyMainWindow::injectUnlockedMapperRows(const QString &disk,
         // The tree's owning-disk resolution walks the parent chain by name,
         // so the row is parented to the selected drive for display.
         row.parent = toStd(diskName);
-        if (path == root && !fstype.isEmpty()) {
-            row.probedFstype = toStd(fstype);
+        if (path == root) {
+            if (!fstype.isEmpty()) {
+                row.probedFstype = toStd(fstype);
+            } else {
+                row.probedFstype = "unknown";
+            }
+            if (!uuid.isEmpty()) {
+                row.uuid = toStd(uuid);
+            }
         } else {
             row.probedFstype = "unknown";
         }
@@ -9586,7 +9893,9 @@ void LegacyMainWindow::updateActionStates()
                 "An unlocked Linux filesystem is already visible on this "
                 "drive. Boot Bitch will reuse the existing mapper and will "
                 "not close or reopen a mapping created by this recovery "
-                "session."));
+                "session. Mounting happens during diagnostics (read-only) "
+                "and repairs (read-write); data filesystems are never "
+                "auto-mounted on selection."));
         } else {
             updateButtonText(m_unlockButton, QString::fromLatin1("Unlock"));
             const QString luks = onRunningHost ? QString::null

@@ -58,7 +58,11 @@ the Repair elevation section is gone, cycle 13); every page title carries an
 "Application log"; the capability table sorts by header click; Select Target
 switches between drives and Unlock stays available in Host Maintenance for
 offline drives; the Details button fills the details pane with the protected
-host's facts; after the
+host's facts; cycle 14: the (i) labels open real info dialogs, the File Copy
+groups live inside the vertical splitter, the badges are frameless, the
+unlocked-target state survives rescans (with the helper's
+`UNLOCKED_ROOT_UUID=` probe line), and the Logs panes keep wider floors with
+the log view word-wrapped and scrollbar-free; after the
 root/boot mounts the helper mounts the target's other standard fstab entries
 (/usr, /var, /tmp, /home, /opt, /srv; remapped, same-disk-only, read-only
 diagnostics tolerant and repairs fail-closed) so split-LV layouts reach the

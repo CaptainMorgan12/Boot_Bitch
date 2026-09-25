@@ -151,6 +151,10 @@ grep -q 'UNLOCKED_ROOT=' "$HELPER" \
     || fail "generated helper lost the unlocked-root probe line"
 grep -q 'legacy_blkid_value_path "$entry"' "$HELPER" \
     || fail "generated helper lost the direct-path unlocked-root fstype probe"
+grep -q 'UNLOCKED_ROOT_UUID=' "$HELPER" \
+    || fail "generated helper lost the unlocked-root UUID probe line"
+grep -q 'legacy_blkid_uuid_path' "$HELPER" \
+    || fail "generated helper lost the path-based blkid UUID probe"
 grep -q 'legacy_blkid_value_path' "$HELPER" \
     || fail "generated helper lost the path-based blkid TYPE probe"
 grep -q 'legacy_mount_target_fstab_entries' "$HELPER" \

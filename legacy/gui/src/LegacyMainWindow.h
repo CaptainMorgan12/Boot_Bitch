@@ -68,6 +68,7 @@ class QSplitter;
 class QTabWidget;
 class QTable;
 class QTextEdit;
+class QSignalMapper;
 
 namespace legacy {
 
@@ -174,6 +175,9 @@ private slots:
     void fileCopyPreview();
     void fileCopyRun();
     void fileCopyBrowse();
+    void showHelpPopup(const QString &href);
+    void toolListHeaderClicked(int column);
+    int toolIndexForTitle(const QString &title) const;
     void runScheduledAutoRefresh();
     void runSmokeStep();
 
@@ -195,7 +199,13 @@ private:
     QLabel *makeSectionTitle(const QString &text, QWidget *parent);
     void addListViewColumn(QListView *list, const QString &title, int width);
     void registerGroupBox(QGroupBox *box);
-    QPushButton *makeHelpButton(QWidget *parent, const QString &text);
+    QWidget *makeHelpButton(QWidget *parent, const QString &title,
+                            const QString &text);
+    QMap<QString, QString> m_helpTitles;
+    QMap<QString, QString> m_helpTexts;
+    int m_toolSortColumn;
+    bool m_toolSortAscending;
+    QSignalMapper *m_helpSignalMapper;
     void appendLog(const QString &line);
     void appendToLogFile(const QString &line);
     void ensureLogFile();
@@ -270,7 +280,8 @@ private:
     bool writeUnlockKeyfile(const QByteArray &secret, QString *path);
     void discardUnlockKeyfile();
     void injectUnlockedMapperRows(const QString &disk, const QString &mapper,
-                                  const QString &root, const QString &fstype);
+                                  const QString &root, const QString &fstype,
+                                  const QString &uuid = QString::null);
     bool startFileCopyCommand(bool realCopy);
     void handleFileCopyBrowseResult(const std::string &transcript, bool ok);
     void updateChrootShellState();
@@ -476,6 +487,8 @@ private:
     // root component (UNLOCKED_ROOT) for the Select Target fallback.
     QString m_unlockedDisk;
     QString m_unlockedRoot;
+    QString m_unlockedMapper;
+    QString m_unlockedRootUuid;
     // Last applied dynamic tooltips, so updateFileCopyTab() re-registers a
     // tooltip only when the text actually changes (Qt3's QTipManager deletes
     // and reallocates the per-widget Tip record on every add; the churn is

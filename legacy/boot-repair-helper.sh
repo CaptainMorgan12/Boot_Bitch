@@ -21365,6 +21365,19 @@ unlock_target()
     legacy_unlock_root_probe "$mapper_path"
 }
 
+# Cycle 14: blkid UUID probe for an absolute device path (same modern /
+# Etch-era output handling as the TYPE probe).
+legacy_blkid_uuid_path()
+{
+    local path="$1" real="" value=""
+    real="$(legacy_real_tool_path blkid)" || return 0
+    value="$("$real" -o value -s UUID -- "$path" 2>/dev/null | head -n1 || true)"
+    if [[ -z "$value" ]]; then
+        value="$("$real" -- "$path" 2>/dev/null | head -n1 | sed -n 's/.*UUID="\([^"]*\)".*/\1/p' || true)"
+    fi
+    printf '%s\n' "$value"
+}
+
 # Cycle 11/12: resolve the Linux root candidate on the opened mapper chain
 # with the port's read-only fstype probe (blkid; never a mount), so the GUI
 # can enable Select Target with the helper-confirmed component even though
@@ -21404,10 +21417,15 @@ legacy_unlock_root_probe()
         unlocked_fstype="$fallback_fstype"
     fi
     if [[ -n "$unlocked_root" ]]; then
+        local unlocked_uuid=""
+        unlocked_uuid="$(legacy_blkid_uuid_path "$unlocked_root")"
         log "Unlocked root candidate: $unlocked_root (${unlocked_fstype:-unknown fstype})"
         printf 'UNLOCKED_ROOT=%s\n' "$unlocked_root"
         if [[ -n "$unlocked_fstype" ]]; then
             printf 'UNLOCKED_ROOT_FSTYPE=%s\n' "$unlocked_fstype"
+        fi
+        if [[ -n "$unlocked_uuid" ]]; then
+            printf 'UNLOCKED_ROOT_UUID=%s\n' "$unlocked_uuid"
         fi
     fi
     return 0

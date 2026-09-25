@@ -521,13 +521,16 @@ void testUnlockHelpers()
         "Unlocking LUKS target /dev/hda5\n"
         "UNLOCKED=/dev/mapper/luks-etchroot\n"
         "UNLOCKED_ROOT=/dev/mapper/debian-root\n"
-        "UNLOCKED_ROOT_FSTYPE=ext3\n";
+        "UNLOCKED_ROOT_FSTYPE=ext3\n"
+        "UNLOCKED_ROOT_UUID=smoke-uuid-value\n";
     check(legacy::unlockMapper(okTranscript) == "/dev/mapper/luks-etchroot",
           "unlock mapper path extracted");
     check(legacy::unlockRoot(okTranscript) == "/dev/mapper/debian-root",
           "unlocked root component extracted");
     check(legacy::unlockRootFstype(okTranscript) == "ext3",
           "unlocked root fstype extracted");
+    check(legacy::unlockRootUuid(okTranscript) == "smoke-uuid-value",
+          "unlocked root uuid extracted");
     check(legacy::unlockRoot("UNLOCKED=/dev/mapper/x\n").empty(),
           "missing UNLOCKED_ROOT marker yields an empty root");
     check(!legacy::unlockAuthFailed(okTranscript),

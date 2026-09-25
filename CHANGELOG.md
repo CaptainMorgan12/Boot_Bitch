@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+- Cycle 14 UI fixes: the (i) help affordance is now a frameless hyperlink
+  label beside each page title that opens a width-constrained read-only info
+  dialog on click (no tooltip-only behavior); the File Copy sections are
+  restored inside the vertical splitter (the panes own the groups from
+  construction); the PROTECTED and GUARDED REPAIR badges lose their frames;
+  the protected-host details pane shows the root component's UUID and
+  Mounts; the session unlock state survives rescans while the mapping exists
+  (leaving Host Maintenance no longer loses the unlocked target) and the
+  helper now emits `UNLOCKED_ROOT_UUID=`; the individual repair tools list
+  sorts by header click; the Logs session pane gets a wider floor, the
+  application-log pane a 480px minimum, and long log lines wrap at the
+  widget width with the horizontal scrollbar off (while wrap is on).
+
 - Cycle 13 cleanup: the host-capabilities table sorts by header click; Unlock
   stays available for a selected offline drive while Host Maintenance is
   active (only the protected host disk is refused); the committed-target
