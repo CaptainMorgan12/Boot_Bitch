@@ -195,7 +195,7 @@ done
 # wrapped confirmation helper and the /host save-log default.
 for marker in '"--key-owner"' 'getuid()' 'confirmWrapped' \
     '==== REPAIR ====' '\[OK\] %1 - changed' '\[FAIL\] %1 -' '\[-\] %1 - %2' \
-    'Offline fetch: when the /host share is mounted'; do
+    'When the /host share is mounted, Save '; do
     grep -q "$marker" "$WINDOW" || fail "cycle-10 marker missing: $marker"
 done
 grep -q 'QMessageBox::question' "$WINDOW" \
@@ -210,6 +210,24 @@ done
 # tool keys before matching the change-status lines.
 grep -q 'repairToolKeyForStage(toStd(stage))' "$WINDOW" \
     || fail "repair summary does not map plan-stage keys to tool keys"
+# Cycle 13 markers: sortable capability table, per-drive Select Target, the
+# Details-pane behavior, the modern chroot notices, the help buttons and the
+# Application log heading.
+for marker in 'setSorting(true)' 'alreadyCommitted' 'm_inspectingHostDetails' \
+    'm_detailsPaneTitle' 'makeHelpButton' \
+    'Run a command on the running host as root (sudo is not needed)' \
+    'Run a command inside the selected repair system as root' \
+    'This drive is already the committed repair target' \
+    'Host Maintenance is the current scope, but the selected' \
+    'isLinuxFileSystemName(own.fstype)' \
+    'Select an offline repair target to unlock.' \
+    'No Linux filesystem was detected on %1'; do
+    grep -q "$marker" "$WINDOW" || fail "cycle-13 marker missing: $marker"
+done
+grep -q 'QString::fromLatin1("Application log"), page)' "$WINDOW" \
+    || fail "Logs page heading is not Application log"
+grep -q 'setMinimumHeight(80)' "$WINDOW" \
+    || fail "vertical-shrink floors missing"
 grep -q 'UNLOCKED_ROOT' "$OVERLAY" \
     || fail "legacy unlock does not emit the UNLOCKED_ROOT probe line"
 grep -q 'legacy_blkid_value_path' "$OVERLAY" \
@@ -264,8 +282,10 @@ grep -q 'protected running host cannot be unlocked' "$WINDOW" \
     || fail "unlock is not fail-closed for the protected running host"
 grep -q 'writeToStdin' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner cannot send the passphrase over stdin"
-grep -q 'Re-check elevation' "$WINDOW" || fail "GUI lost the elevation re-check control"
-grep -q 'Elevation:' "$WINDOW" || fail "GUI lost the elevation state label"
+grep -q 'Privilege elevation' "$WINDOW" \
+    && fail "the legacy-only Privilege elevation section still exists"
+grep -q 'm_settingsElevationLabel' "$WINDOW" \
+    || fail "Settings lost the privileged-authorization support label"
 # Modern 1:1 Logs filter combo: All entries / Diagnostics / Repairs / the
 # three workflows / the 16 diagnostic section titles.
 for filter in 'All entries' 'Diagnostics' 'Repairs' 'File system repair' \
@@ -384,7 +404,8 @@ grep -q 'scopeChanged' "$WINDOW" && fail "GUI still wires the removed scope sele
 grep -q 'Authenticate' "$WINDOW" && fail "GUI still shows a standalone Authenticate control"
 # Modern parity: the deferred-authorization affordance IS an Authorize control.
 grep -q 'm_authorizeButton' "$WINDOW" || fail "GUI lost the deferred Authorize control"
-grep -q 'm_repairAuthorizeButton' "$WINDOW" || fail "GUI lost the Repair-tab Authorize control"
+grep -q 'm_repairAuthorizeButton' "$WINDOW" \
+    && fail "the Repair-tab Authorize control still exists (Systems only now)"
 grep -q 'scopeFeatureKey' "$WINDOW" || fail "GUI lost the scope feature mapping (shell vs host-shell)"
 # The protected running-host disk stays excluded from the commit eligibility.
 grep -q 'selectedDisk() == runningHostDisk()' "$WINDOW" \

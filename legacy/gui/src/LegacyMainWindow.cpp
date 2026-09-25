@@ -1058,14 +1058,11 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_toolDescription(0),
       m_toolPlanStatus(0),
       m_resultStatus(0),
-      m_elevationLabel(0),
       m_targetSummary(0),
       m_configLabel(0),
       m_configReasonLabel(0),
       m_chrootReasonLabel(0),
-      m_fileCopyReasonLabel(0),
       m_authStatusLabel(0),
-      m_repairAuthStatusLabel(0),
       m_settingsHelperLabel(0),
       m_settingsElevationLabel(0),
       m_settingsLogDirLabel(0),
@@ -1082,16 +1079,16 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_saveResultsButton(0),
       m_configButton(0),
       m_unlockButton(0),
-      m_elevateButton(0),
       m_setTargetButton(0),
       m_hostSystemLabel(0),
       m_hostStorageLabel(0),
       m_hostProtectedBadge(0),
       m_hostDetailsButton(0),
+      m_detailsPaneTitle(0),
+      m_inspectingHostDetails(false),
       m_hostCard(0),
       m_hostMaintenanceButton(0),
       m_authorizeButton(0),
-      m_repairAuthorizeButton(0),
       m_configurePlanButton(0),
       m_runFullRepairButton(0),
       m_toolRunButton(0),
@@ -1412,6 +1409,18 @@ QLabel *LegacyMainWindow::makeSectionTitle(const QString &text, QWidget *parent)
     return label;
 }
 
+// Cycle 13: the (i) help button beside each page title (modern
+// contextHelpButton parity). The informational text travels in the tooltip,
+// which Qt3 wraps to the available screen width; nothing inline remains.
+QPushButton *LegacyMainWindow::makeHelpButton(QWidget *parent, const QString &text)
+{
+    QPushButton *button = new QPushButton(QString::fromLatin1("(i)"), parent);
+    button->setFixedWidth(QFontMetrics(button->font()).width(QString::fromLatin1("(i)")) + 18);
+    button->setFixedHeight(QFontMetrics(button->font()).height() + 10);
+    QToolTip::add(button, text);
+    return button;
+}
+
 // Qt3 list columns are fixed-width by default, so a header wider than its
 // declared column clips. Raise every declared width to the header's font
 // metric plus padding; `QListView::LastColumn` then stretches the last column
@@ -1655,6 +1664,13 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     headingRow->setSpacing(6);
     m_systemsHeading = makeSectionTitle(QString::fromLatin1("Systems"), page);
     headingRow->addWidget(m_systemsHeading);
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "Select a physical drive; Boot Bitch resolves the most likely Linux "
+        "system volume automatically. The running host stays protected from "
+        "ordinary target repairs, with a separate explicit host-maintenance "
+        "path for its own system. The Details button shows the protected "
+        "host's facts in the details pane; selecting any drive row restores "
+        "the per-drive pane.")));
     headingRow->addStretch();
     m_scanButton = makeButton(QString::fromLatin1("Refresh Devices"), page);
     QToolTip::add(m_scanButton, QString::fromLatin1(
@@ -1828,6 +1844,10 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     connect(m_authorizeButton, SIGNAL(clicked()), this, SLOT(authorizeNow()));
     authRow->addWidget(m_authorizeButton, 0, Qt::AlignVCenter);
 
+    // Cycle 13: the committed-target summary keeps the row's right edge even
+    // when the Authorize affordance is hidden (the stretch lives before the
+    // label, independent of the deferred state).
+    authRow->addStretch(1);
     m_targetSummary = new QLabel(QString::fromLatin1("Committed target: none"), left);
     m_targetSummary->setTextFormat(Qt::PlainText);
     m_targetSummary->setAlignment(Qt::WordBreak | Qt::AlignRight | Qt::AlignVCenter);
@@ -1863,7 +1883,9 @@ QWidget *LegacyMainWindow::buildTargetsTab()
         "Read-only inventory plus helper-confirmed facts; mirrors the modern "
         "Qt6 Selected drive details panel."));
     QVBoxLayout *detailsLayout = new QVBoxLayout(details, 8, 4);
-    detailsLayout->addWidget(makeSectionTitle(QString::fromLatin1("Selected drive details"), details));
+    m_detailsPaneTitle = makeSectionTitle(
+        QString::fromLatin1("Selected drive details"), details);
+    detailsLayout->addWidget(m_detailsPaneTitle);
     m_detailList = new QListView(details);
     addListViewColumn(m_detailList, QString::fromLatin1("Field"), 120);
     addListViewColumn(m_detailList, QString::fromLatin1("Value"), 220);
@@ -1913,6 +1935,10 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     headingRow->setSpacing(6);
     m_diagHeading = makeSectionTitle(QString::fromLatin1("Diagnostics"), page);
     headingRow->addWidget(m_diagHeading);
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "Run All runs every available read-only diagnostic for the current "
+        "scope; selecting a check runs it alone. Diagnostics are read-only "
+        "and are the only evidence source for the gated repair actions.")));
     headingRow->addStretch();
     m_scopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
     m_scopeLabel->setTextFormat(Qt::PlainText);
@@ -2020,7 +2046,7 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     m_rawView->setReadOnly(true);
     m_rawView->setTextFormat(Qt::LogText);
     m_rawView->setWordWrap(QTextEdit::NoWrap);
-    m_rawView->setMinimumHeight(150);
+    m_rawView->setMinimumHeight(80);
     detailLayout->addWidget(m_rawView, 1);
 
     QHBoxLayout *resultButtons = new QHBoxLayout(detailLayout);
@@ -2082,6 +2108,11 @@ QWidget *LegacyMainWindow::buildActionsTab()
     headingRow->setSpacing(6);
     m_repairHeading = makeSectionTitle(QString::fromLatin1("Repair"), content);
     headingRow->addWidget(m_repairHeading);
+    headingRow->addWidget(makeHelpButton(content, QString::fromLatin1(
+        "The Full Repair plan runs the selected legacy stages in order "
+        "through the guarded helper; the individual tools run one stage at a "
+        "time. Every action stays disabled until the cached capability lines "
+        "say available and the helper keeps its runtime preflights.")));
     headingRow->addStretch();
     m_repairScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), content);
     m_repairScopeLabel->setTextFormat(Qt::PlainText);
@@ -2225,30 +2256,11 @@ QWidget *LegacyMainWindow::buildActionsTab()
     vertical->setSizes(verticalSizes);
     layout->addWidget(vertical, 0);
 
-    // ---- Legacy-only privilege elevation (with the Authorize control) -------
-    QGroupBox *elevation = new QGroupBox(content);
-    QVBoxLayout *elevationLayout = new QVBoxLayout(elevation, 6, 4);
-    elevationLayout->addWidget(makeSectionTitle(QString::fromLatin1("Privilege elevation"), elevation));
-    m_elevationLabel = new QLabel(elevation);
-    m_elevationLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    elevationLayout->addWidget(m_elevationLabel);
-    QHBoxLayout *elevationButtons = new QHBoxLayout(elevationLayout);
-    elevationButtons->setSpacing(6);
-    m_elevateButton = makeButton(QString::fromLatin1("Re-check elevation"), elevation);
-    connect(m_elevateButton, SIGNAL(clicked()), this, SLOT(recheckElevation()));
-    elevationButtons->addWidget(m_elevateButton);
-    m_repairAuthStatusLabel = new QLabel(elevation);
-    m_repairAuthStatusLabel->setTextFormat(Qt::PlainText);
-    m_repairAuthStatusLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft | Qt::AlignVCenter);
-    elevationButtons->addWidget(m_repairAuthStatusLabel, 1);
-    m_repairAuthorizeButton = makeButton(QString::fromLatin1("Authorize"), elevation);
-    m_repairAuthorizeButton->setEnabled(false);
-    QToolTip::add(m_repairAuthorizeButton, QString::fromLatin1(
-        "Re-establish the privileged helper session for the current scope "
-        "without leaving the Repair tab."));
-    connect(m_repairAuthorizeButton, SIGNAL(clicked()), this, SLOT(authorizeNow()));
-    elevationButtons->addWidget(m_repairAuthorizeButton, 0, Qt::AlignVCenter);
-    layout->addWidget(elevation, 0);
+    // Cycle 13: no legacy-only elevation section (modern has none); the
+    // elevation state stays visible in Settings (privileged-authorization
+    // support) and the status bar, and the deferred Authorize affordance
+    // lives on the Systems page. The internal elevation re-resolution used
+    // by the Authorize flow is unchanged.
 
     m_gateHint = new QLabel(content);
     m_gateHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
@@ -2268,7 +2280,6 @@ QWidget *LegacyMainWindow::buildActionsTab()
     registerGroupBox(planBox);
     registerGroupBox(tools);
     registerGroupBox(detail);
-    registerGroupBox(elevation);
     return page;
 }
 
@@ -2284,6 +2295,11 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     headingRow->setSpacing(6);
     m_chrootHeading = makeSectionTitle(QString::fromLatin1("Chroot shell"), page);
     headingRow->addWidget(m_chrootHeading);
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "Offline commands run one at a time in a fresh chroot and cannot "
+        "answer interactive prompts (apt-get -y upgrade works). Host-shell "
+        "commands run directly on the running host. The helper's probe lines "
+        "gate the command field; the exact reason appears in the tooltip.")));
     headingRow->addStretch();
     m_chrootScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
     m_chrootScopeLabel->setTextFormat(Qt::PlainText);
@@ -2353,6 +2369,11 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     headingRow->setSpacing(6);
     m_fileCopyHeading = makeSectionTitle(QString::fromLatin1("File copy"), page);
     headingRow->addWidget(m_fileCopyHeading);
+    headingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "Copy and verify files in either direction through the guarded "
+        "helper (cp -a plus ownership restoration and a per-file "
+        "byte-compare). The helper's file-copy probe gates the controls and "
+        "keeps the direction and path containment checks.")));
     headingRow->addStretch();
     m_fileCopyScopeLabel = new QLabel(QString::fromLatin1("Target: none selected"), page);
     m_fileCopyScopeLabel->setTextFormat(Qt::PlainText);
@@ -2373,16 +2394,8 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyRunButton, SIGNAL(clicked()), this, SLOT(fileCopyRun()));
     headingRow->addWidget(m_fileCopyRunButton, 0, Qt::AlignVCenter);
 
-    // The fail-closed probe notice stays on the page while the helper's
-    // `Legacy feature file-copy:` line is not cached.
-    m_fileCopyReasonLabel = new QLabel(
-        QString::fromLatin1(
-            "No 'Legacy feature file-copy:' line is cached; run diagnostics "
-            "for the selected scope to evaluate the helper's copy/ownership "
-            "probes (fail closed)."),
-        page);
-    m_fileCopyReasonLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    layout->addWidget(m_fileCopyReasonLabel);
+    // Cycle 13: no inline probe status text (modern has none); the gating
+    // stays internal and the probe explanation lives in the (i) popup.
 
     // Direction row (modern parity: Host -> Repair / Repair -> Host). The
     // sub-layout is constructed WITHOUT a parent and added via addLayout(),
@@ -2425,7 +2438,7 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     m_fileCopySourceList->setResizeMode(QListView::LastColumn);
     m_fileCopySourceList->setSorting(-1);
     m_fileCopySourceList->setEnabled(false);
-    m_fileCopySourceList->setMinimumHeight(130);
+    m_fileCopySourceList->setMinimumHeight(80);
     QToolTip::add(m_fileCopySourceList, QString::fromLatin1(
         "Files and folders staged for the verified copy. The legacy backend "
         "copies with cp -a and restores ownership with chown --reference; "
@@ -2453,7 +2466,6 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyClearButton, SIGNAL(clicked()), this, SLOT(fileCopyClearStaging()));
     sourceButtons->addWidget(m_fileCopyClearButton);
     registerGroupBox(m_fileCopySourceGroup);
-    layout->addWidget(m_fileCopySourceGroup, 1);
 
     // Group 2: destination with the Browse Target Folders... action.
     m_fileCopyDestinationGroup = new QGroupBox(page);
@@ -2481,7 +2493,6 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
     connect(m_fileCopyBrowseButton, SIGNAL(clicked()), this, SLOT(fileCopyBrowse()));
     destinationRow->addWidget(m_fileCopyBrowseButton);
     registerGroupBox(m_fileCopyDestinationGroup);
-    layout->addWidget(m_fileCopyDestinationGroup);
 
     // Group 3: ownership and copy policy (the legacy equivalent set).
     m_fileCopyOptionsGroup = new QGroupBox(page);
@@ -2506,7 +2517,26 @@ QWidget *LegacyMainWindow::buildFileCopyTab()
         "it with chown --reference)."));
     ownershipRow->addWidget(m_fileCopyOwnershipCombo, 1);
     registerGroupBox(m_fileCopyOptionsGroup);
-    layout->addWidget(m_fileCopyOptionsGroup);
+
+    // Cycle 13: a draggable vertical splitter separates section 1 (sources)
+    // from the destination and ownership sections; both panes keep usable
+    // floors and the source list is shorter (80px) so the page fits.
+    QSplitter *fileCopySplitter = new QSplitter(Qt::Vertical, page);
+    fileCopySplitter->setChildrenCollapsible(false);
+    QWidget *sourcePane = new QWidget(fileCopySplitter);
+    QVBoxLayout *sourcePaneLayout = new QVBoxLayout(sourcePane, 0, 0);
+    sourcePaneLayout->addWidget(m_fileCopySourceGroup);
+    QWidget *lowerPane = new QWidget(fileCopySplitter);
+    QVBoxLayout *lowerPaneLayout = new QVBoxLayout(lowerPane, 0, 6);
+    lowerPaneLayout->addWidget(m_fileCopyDestinationGroup);
+    lowerPaneLayout->addWidget(m_fileCopyOptionsGroup);
+    sourcePane->setMinimumHeight(120);
+    lowerPane->setMinimumHeight(140);
+    QValueList<int> fileCopySizes;
+    fileCopySizes.append(190);
+    fileCopySizes.append(260);
+    fileCopySplitter->setSizes(fileCopySizes);
+    layout->addWidget(fileCopySplitter, 1);
 
     return page;
 }
@@ -2516,8 +2546,19 @@ QWidget *LegacyMainWindow::buildLogTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *layout = new QVBoxLayout(page, 8, 4);
 
-    m_logsHeading = makeSectionTitle(QString::fromLatin1("Logs"), page);
-    layout->addWidget(m_logsHeading);
+    QHBoxLayout *logsHeadingRow = new QHBoxLayout(layout);
+    logsHeadingRow->setSpacing(6);
+    // Cycle 13: the page heading is "Application log" (modern parity); the
+    // tab keeps the "Logs" label.
+    m_logsHeading = makeSectionTitle(QString::fromLatin1("Application log"), page);
+    logsHeadingRow->addWidget(m_logsHeading);
+    logsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "The complete session register; Save As... writes every entry even "
+        "while a filter hides lines. When the /host share is mounted, Save "
+        "As... starts there so the host can fetch the file after the rig is "
+        "shut down; otherwise the log directory is the fallback. Prior "
+        "session files are listed read-only.")));
+    logsHeadingRow->addStretch();
 
     QSplitter *splitter = new QSplitter(Qt::Horizontal, page);
     splitter->setChildrenCollapsible(false);
@@ -2529,7 +2570,7 @@ QWidget *LegacyMainWindow::buildLogTab()
     addListViewColumn(m_sessionLogList, QString::fromLatin1("Session"), 150);
     m_sessionLogList->setAllColumnsShowFocus(true);
     m_sessionLogList->setResizeMode(QListView::LastColumn);
-    m_sessionLogList->setMinimumHeight(110);
+    m_sessionLogList->setMinimumHeight(80);
     QToolTip::add(m_sessionLogList, QString::fromLatin1(
         "The first entry is the live session; earlier files in the log "
         "directory are listed read-only below it."));
@@ -2584,18 +2625,6 @@ QWidget *LegacyMainWindow::buildLogTab()
     connect(clear, SIGNAL(clicked()), this, SLOT(clearLog()));
     logHeader->addWidget(clear);
 
-    // Cycle 10: the /host share is the offline fetch point — files saved
-    // under /host are collected by the host after the rig is shut down.
-    QLabel *hostHint = new QLabel(
-        QString::fromLatin1(
-            "Offline fetch: when the /host share is mounted, Save As... "
-            "starts there; files under /host are collected by the host after "
-            "the rig is shut down."),
-        applicationLog);
-    hostHint->setTextFormat(Qt::PlainText);
-    hostHint->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-    logLayout->addWidget(hostHint);
-
     QHBoxLayout *filterRow = new QHBoxLayout(logLayout);
     filterRow->setSpacing(4);
     filterRow->addWidget(new QLabel(QString::fromLatin1("Search log:"), applicationLog));
@@ -2640,7 +2669,7 @@ QWidget *LegacyMainWindow::buildLogTab()
     m_logView->setReadOnly(true);
     m_logView->setTextFormat(Qt::LogText);
     m_logView->setWordWrap(m_logWrapEnabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
-    m_logView->setMinimumHeight(110);
+    m_logView->setMinimumHeight(80);
     logLayout->addWidget(m_logView, 1);
 
     registerGroupBox(sessions);
@@ -2658,8 +2687,17 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     QWidget *page = new QWidget(m_tabs);
     QVBoxLayout *pageLayout = new QVBoxLayout(page, 8, 6);
 
+    QHBoxLayout *settingsHeadingRow = new QHBoxLayout(pageLayout);
+    settingsHeadingRow->setSpacing(6);
     m_settingsHeading = makeSectionTitle(QString::fromLatin1("Settings"), page);
-    pageLayout->addWidget(m_settingsHeading);
+    settingsHeadingRow->addWidget(m_settingsHeading);
+    settingsHeadingRow->addWidget(makeHelpButton(page, QString::fromLatin1(
+        "Settings are stored per user under ~/.qt/, one file per settings "
+        "group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved "
+        "immediately on every change and on close. Launch the GUI as the "
+        "same user to keep your overrides; a GUI started as root keeps its "
+        "own copies.")));
+    settingsHeadingRow->addStretch();
 
     // Modern Settings is a scrollable page. Qt3 has no QScrollArea, so the
     // Qt3 QScrollView hosts the content; AutoOneFit keeps the content at the
@@ -2750,24 +2788,7 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     logsLayout->addWidget(m_logWrapCheck);
     layout->addWidget(logs);
 
-    // Cycle 9 settings-context note: every override is persisted per user
-    // under ~/.qt/ (QSettings::User). Qt 3.3.7 stores each settings group in
-    // its own file named after the group: devicesrc (device-discovery
-    // filters), logsrc (wrap log lines), diagnosticsrc (auto-refresh) and
-    // repairrc (Full Repair plan checkboxes). The GUI itself never elevates,
-    // so the invoking user owns the files; a GUI started as root (for
-    // example the Etch smoke) keeps separate copies there, which is why
-    // overrides from a root run do not appear in a normal-user launch.
-    QLabel *settingsNote = new QLabel(
-        QString::fromLatin1(
-            "Settings are stored per user under ~/.qt/, one file per settings "
-            "group (devicesrc, logsrc, diagnosticsrc, repairrc), and are "
-            "saved immediately on every change. Launch the GUI as the same "
-            "user to keep your overrides; a GUI started as root keeps its "
-            "own copies."),
-        content);
-    enableLabelWordWrap(settingsNote);
-    layout->addWidget(settingsNote);
+    // Cycle 13: the per-user settings note moved into the Settings (i) popup.
 
     QGroupBox *safety = new QGroupBox(content);
     QVBoxLayout *safetyLayout = new QVBoxLayout(safety, 6, 3);
@@ -2829,6 +2850,9 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     m_capabilityTable->setSelectionMode(QTable::SingleRow);
     m_capabilityTable->setReadOnly(true);
     m_capabilityTable->setMinimumHeight(230);
+    // Cycle 13: header-click sorting on the six columns; refreshCapabilities
+    // still restores the first-row selection after every repopulation.
+    m_capabilityTable->setSorting(true);
     const char *capabilityHeaders[] = {
         "Feature", "Command", "Scope", "Status", "Suggested package", "Notes"
     };
@@ -3105,6 +3129,8 @@ void LegacyMainWindow::deviceSelectionChanged()
     if (m_updatingSelection) {
         return;
     }
+    // Cycle 13: any drive-row selection restores the normal per-drive pane.
+    m_inspectingHostDetails = false;
     QListViewItem *item = m_deviceList->currentItem();
     if (!item) {
         return;
@@ -3377,9 +3403,19 @@ QString LegacyMainWindow::autoResolvedRoot(const QString &disk) const
     if (!partitionCandidate.isEmpty()) {
         return partitionCandidate;
     }
-    // Whole-disk filesystem or blank/data disk: the disk itself is the only
-    // candidate, exactly like the modern fallback.
-    return disk;
+    // Whole-disk filesystem: the disk itself is a candidate only when its
+    // own filesystem is Linux root-capable — a vfat share disk or a
+    // blank/data disk must never become a committable target (Select Target
+    // then stays disabled with the no-Linux-filesystem reason).
+    const QMap<QString, DeviceRow>::const_iterator diskRow = m_rows.find(disk);
+    if (diskRow != m_rows.end()) {
+        const DeviceRow &own = diskRow.data();
+        if (legacy::isLinuxFileSystemName(own.fstype)
+            || legacy::isLinuxFileSystemName(own.probedFstype)) {
+            return disk;
+        }
+    }
+    return QString::null;
 }
 
 // First locked LUKS component visible on `disk` (a partition or whole-device
@@ -3872,13 +3908,14 @@ void LegacyMainWindow::runUnlock()
     if (m_running) {
         return;
     }
-    if (hostScope()
-        || (!runningHostDisk().isEmpty() && selectedDisk() == runningHostDisk())) {
+    // Cycle 13 loop: Host Maintenance is a scope, not a lock — unlocking is
+    // refused only when the selected drive IS the protected running host.
+    if (!runningHostDisk().isEmpty()
+        && selectedDisk() == runningHostDisk()) {
         QMessageBox::warning(this, QString::fromLatin1("Unlock not available"),
                              QString::fromLatin1(
                                  "The protected running host cannot be unlocked. "
-                                 "Use Host Maintenance for the protected running "
-                                 "host, or select an offline repair target."),
+                                 "Select an offline repair target to unlock."),
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
@@ -4036,29 +4073,6 @@ void LegacyMainWindow::discardUnlockKeyfile()
     }
 }
 
-void LegacyMainWindow::recheckElevation()
-{
-    if (m_running) {
-        return;
-    }
-    m_runner->resetElevation();
-    QString description;
-    const bool ok = m_runner->resolveElevation(&description);
-    m_lastHelperDescription = description;
-    updateElevationLabel();
-    appendLog(QString::fromLatin1("Elevation re-check: %1")
-                  .arg(ok ? description
-                          : QString::fromLatin1("unavailable - %1").arg(description)));
-    if (!ok) {
-        QMessageBox::warning(this, QString::fromLatin1("Elevation unavailable"),
-                             QString::fromLatin1(
-                                 "No elevation method could be resolved: %1\n\n"
-                                 "Privileged commands will fail until gksu, gksudo "
-                                 "or sudo is available (or the GUI is started as "
-                                 "root).").arg(description),
-                             QMessageBox::Ok, QMessageBox::NoButton);
-    }
-}
 
 void LegacyMainWindow::logFilterChanged()
 {
@@ -6026,13 +6040,8 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("target/unlock/host-maintenance controls missing"));
         ok = false;
     }
-    if (!m_authorizeButton || !m_authStatusLabel
-        || !m_repairAuthorizeButton || !m_repairAuthStatusLabel) {
+    if (!m_authorizeButton || !m_authStatusLabel) {
         problems->append(QString::fromLatin1("deferred-authorization controls missing"));
-        ok = false;
-    }
-    if (!m_elevationLabel || m_elevationLabel->text().isEmpty() || !m_elevateButton) {
-        problems->append(QString::fromLatin1("elevation control missing or empty"));
         ok = false;
     }
     if (!m_logFilterCombo
@@ -7210,6 +7219,45 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         updateActionStates();
     }
 
+    // Cycle 13 loop: a root-less non-LUKS drive (the vfat share disk) must
+    // show the no-Linux-filesystem reason — never the unlock-first wording.
+    {
+        const QString savedDisk2 = selectedDisk();
+        const QString savedRoot2 = selectedRoot();
+        const QString fakeVfat = QString::fromLatin1("/dev/bootrepair-smoke-vfat");
+        DeviceRow vfat;
+        vfat.name = "bootrepair-smoke-vfat";
+        vfat.path = toStd(fakeVfat);
+        vfat.disk = true;
+        vfat.probedFstype = "vfat";
+        m_rows.insert(fakeVfat, vfat);
+        m_inventory.push_back(vfat);
+        setTarget(fakeVfat, QString::null);
+        updateActionStates();
+        if (m_setTargetButton && m_setTargetButton->isEnabled()) {
+            problems->append(QString::fromLatin1(
+                "Select Target enabled for a root-less vfat drive"));
+            ok = false;
+        }
+        if (m_setTargetButton
+            && QToolTip::textFor(m_setTargetButton).find(
+                   QString::fromLatin1("No Linux filesystem was detected on")) < 0) {
+            problems->append(QString::fromLatin1(
+                "Select Target no-Linux-filesystem reason missing for a vfat drive"));
+            ok = false;
+        }
+        m_rows.remove(fakeVfat);
+        for (std::vector<DeviceRow>::iterator it = m_inventory.begin();
+             it != m_inventory.end(); ++it) {
+            if (fromStd(it->path) == fakeVfat) {
+                m_inventory.erase(it);
+                break;
+            }
+        }
+        setTarget(savedDisk2, savedRoot2);
+        updateActionStates();
+    }
+
     // Fail closed for the protected running host: Unlock and Select Target must
     // stay disabled and their tooltips must name Host Maintenance as the path.
     const QString hostDisk = runningHostDisk();
@@ -7446,10 +7494,9 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     const QString shellFeature = scopeFeatureKey();
     if (m_chrootReasonLabel
         && !m_chrootReasonLabel->text().contains(
-               QString::fromLatin1("Legacy feature %1:").arg(shellFeature))) {
+               QString::fromLatin1("Run a command on the running host as root"))) {
         problems->append(QString::fromLatin1(
-            "Chroot Shell reason does not name the helper probe line (%1)")
-            .arg(shellFeature));
+            "Chroot Shell notice lost the modern host-scope wording"));
         ok = false;
     }
     // Chroot Shell gating: the controls must be exactly as enabled as the
@@ -7480,12 +7527,6 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "chroot shell command field does not follow the shell gating"));
             ok = false;
         }
-    }
-    if (m_fileCopyReasonLabel
-        && !m_fileCopyReasonLabel->text().contains(QString::fromLatin1("Legacy feature file-copy:"))) {
-        problems->append(QString::fromLatin1(
-            "File Copy reason does not name the helper probe line"));
-        ok = false;
     }
     // Host-maintenance feature gate: the host initramfs/grub tools must be
     // exactly as runnable as the cached `Legacy feature host-maintenance:` line
@@ -8352,21 +8393,20 @@ void LegacyMainWindow::updateChrootShellState()
         }
     }
 
-    QString text;
-    if (enabled) {
-        text = QString::fromLatin1(
-            "Legacy feature %1: available. The helper command is wired and the "
-            "session is authorized; the helper keeps its runtime preflights.")
-            .arg(QString::fromLatin1(feature));
-    } else {
-        text = QString::fromLatin1("Legacy feature %1: %2\n%3")
-            .arg(QString::fromLatin1(feature))
-            .arg(state == QString::fromLatin1("not reported")
-                     ? QString::fromLatin1("no probe line cached")
-                     : state)
-            .arg(reason);
-    }
-    m_chrootReasonLabel->setText(text);
+    // Cycle 13: the label carries the modern scope notice, never the probe
+    // status; the gating stays internal (the run button tooltips carry the
+    // exact reason).
+    m_chrootReasonLabel->setText(host
+        ? QString::fromLatin1(
+              "Run a command on the running host as root (sudo is not needed). "
+              "Commands are executed directly on the active system; output is "
+              "kept in this window and in the application log.")
+        : QString::fromLatin1(
+              "Run a command inside the selected repair system as root (sudo "
+              "is not needed). Commands are executed one at a time in a fresh "
+              "chroot and cannot answer interactive prompts; use non-interactive "
+              "flags such as apt-get -y upgrade. Output is kept in this window "
+              "and in the application log."));
 
     if (m_shellCommandEdit) {
         m_shellCommandEdit->setEnabled(enabled);
@@ -8387,7 +8427,6 @@ void LegacyMainWindow::updateChrootShellState()
 void LegacyMainWindow::updateLegacyFeatureView()
 {
     updateChrootShellState();
-    updateFeatureTab(m_fileCopyReasonLabel, "file-copy");
     updateFileCopyTab();
 }
 
@@ -8924,7 +8963,13 @@ void LegacyMainWindow::updateDriveDetails()
         return;
     }
     m_detailList->clear();
-    const QString disk = selectedDisk();
+    const QString disk = m_inspectingHostDetails
+        ? runningHostDisk() : selectedDisk();
+    if (m_detailsPaneTitle) {
+        m_detailsPaneTitle->setText(m_inspectingHostDetails
+            ? QString::fromLatin1("Protected running host - details")
+            : QString::fromLatin1("Selected drive details"));
+    }
     // Qt3 prepends a plain insertion when sorting is disabled; chain the rows
     // with the after-form constructor to keep the documented field order
     // (Drive, Detected target, Model/label, ...).
@@ -9135,47 +9180,15 @@ void LegacyMainWindow::updateHostCard()
 
 // Cycle 9 Details button: the running-host facts in a read-only dialog,
 // reusing exactly the rows the Systems details pane shows.
+// Cycle 13: the Details button (kept on the host card, since the running
+// host is never selectable as a drive row) populates the right Selected
+// drive details pane with the running-host facts — the same rows the
+// popup used. No dialog: selecting any drive row restores the normal
+// per-drive pane.
 void LegacyMainWindow::showHostDetails()
 {
-    const QString disk = runningHostDisk();
-    if (disk.isEmpty()) {
-        QMessageBox::information(
-            this, QString::fromLatin1("Running host details"),
-            QString::fromLatin1(
-                "The protected running host could not be identified; run "
-                "diagnostics to refresh the read-only inventory."),
-            QMessageBox::Ok, QMessageBox::NoButton);
-        return;
-    }
-    QDialog dialog(this, "legacy-host-details", true);
-    dialog.setCaption(QString::fromLatin1("Protected running host - details"));
-    QVBoxLayout *layout = new QVBoxLayout(&dialog, 10, 8);
-    QLabel *heading = makeSectionTitle(
-        QString::fromLatin1("Protected running host"), &dialog);
-    layout->addWidget(heading);
-    QListView *list = new QListView(&dialog);
-    addListViewColumn(list, QString::fromLatin1("Field"), 130);
-    addListViewColumn(list, QString::fromLatin1("Value"), 280);
-    list->setAllColumnsShowFocus(true);
-    list->setResizeMode(QListView::LastColumn);
-    list->setSorting(-1);
-    list->setMinimumHeight(260);
-    const std::vector<std::pair<QString, QString> > rows =
-        driveDetailsRows(disk);
-    QListViewItem *lastRow = 0;
-    for (std::size_t i = 0; i < rows.size(); ++i) {
-        lastRow = new QListViewItem(list, lastRow, rows[i].first,
-                                    rows[i].second);
-    }
-    layout->addWidget(list, 1);
-    QHBoxLayout *buttons = new QHBoxLayout(layout);
-    buttons->addStretch();
-    QPushButton *close = new QPushButton(QString::fromLatin1("Close"), &dialog);
-    close->setDefault(true);
-    buttons->addWidget(close);
-    QObject::connect(close, SIGNAL(clicked()), &dialog, SLOT(accept()));
-    dialog.resize(560, 400);
-    dialog.exec();
+    m_inspectingHostDetails = true;
+    updateDriveDetails();
 }
 
 void LegacyMainWindow::updateUnlockStatus()
@@ -9356,22 +9369,6 @@ void LegacyMainWindow::updateElevationLabel()
     QString description;
     const bool ok = m_runner->resolveElevation(&description);
     m_lastHelperDescription = description;
-    if (m_elevationLabel) {
-        if (ok) {
-            m_elevationLabel->setText(QString::fromLatin1("Elevation: %1 | helper: %2")
-                                          .arg(description)
-                                          .arg(m_runner->helperPath()));
-        } else {
-            m_elevationLabel->setText(QString::fromLatin1("Elevation unavailable: %1")
-                                          .arg(description));
-        }
-        QToolTip::add(m_elevationLabel, ok
-            ? QString::fromLatin1("The helper runs through this elevation method; "
-                                  "a plain sudo asks for its password in a modal "
-                                  "hidden-input dialog before each command.")
-            : QString::fromLatin1("No elevation method is available. Install gksu, "
-                                  "gksudo or sudo, or start the GUI as root."));
-    }
     if (m_settingsHelperLabel) {
         m_settingsHelperLabel->setText(m_runner->helperPath());
     }
@@ -9453,20 +9450,6 @@ void LegacyMainWindow::updateAuthorizationAffordance()
                 "Re-establish the privileged helper session for the current "
                 "scope now. The password is requested in the hidden-input "
                 "modal and is never logged."));
-        }
-    }
-    if (m_repairAuthStatusLabel) {
-        m_repairAuthStatusLabel->setText(text);
-        m_repairAuthStatusLabel->setHidden(!deferred);
-    }
-    if (m_repairAuthorizeButton) {
-        m_repairAuthorizeButton->setHidden(!deferred);
-        m_repairAuthorizeButton->setEnabled(canAuthorize);
-        if (canAuthorize) {
-            QToolTip::add(m_repairAuthorizeButton, QString::fromLatin1(
-                "Re-establish the privileged helper session without leaving "
-                "the Repair tab. The password is requested in the "
-                "hidden-input modal and is never logged."));
         }
     }
 }
@@ -9608,13 +9591,20 @@ void LegacyMainWindow::updateActionStates()
             updateButtonText(m_unlockButton, QString::fromLatin1("Unlock"));
             const QString luks = onRunningHost ? QString::null
                                                : unlockCandidateFor(selectedDisk());
-            const bool unlockEnabled = idle && !hostScope() && !onRunningHost
+            // Cycle 13: Host Maintenance is a scope, not a lock on other
+            // drives — a selected offline drive stays unlockable while it is
+            // active.
+            const bool unlockEnabled = idle && !onRunningHost
                 && !selectedDisk().isEmpty() && !luks.isEmpty();
             m_unlockButton->setEnabled(unlockEnabled);
-            if (hostScope() || onRunningHost) {
+            if (onRunningHost) {
                 QToolTip::add(m_unlockButton, QString::fromLatin1(
                     "The protected running host cannot be unlocked; use Host "
                     "Maintenance for the protected running host."));
+            } else if (hostScope()) {
+                QToolTip::add(m_unlockButton, QString::fromLatin1(
+                    "Host Maintenance is the current scope, but the selected "
+                    "offline drive can still be unlocked."));
             } else if (selectedDisk().isEmpty()) {
                 QToolTip::add(m_unlockButton, QString::fromLatin1(
                     "Select a physical drive in the Available repair targets list first."));
@@ -9633,9 +9623,6 @@ void LegacyMainWindow::updateActionStates()
             }
         }
     }
-    if (m_elevateButton) {
-        m_elevateButton->setEnabled(idle);
-    }
     if (m_setTargetButton) {
         const bool onRunningHost = !runningHostDisk().isEmpty()
             && selectedDisk() == runningHostDisk();
@@ -9644,9 +9631,19 @@ void LegacyMainWindow::updateActionStates()
         const bool optical = selectedRow != m_rows.end()
             && selectedRow.data().optical;
         const QString root = autoResolvedRoot(selectedDisk());
+        // Cycle 13: the currently committed drive cannot be re-committed, but
+        // any other selectable drive stays enabled so the target can switch.
+        const bool alreadyCommitted = !m_committedDisk.isEmpty()
+            && selectedDisk() == m_committedDisk;
         const bool canCommit = idle && !selectedDisk().isEmpty() && !onRunningHost
-            && !optical && !root.isEmpty();
+            && !optical && !root.isEmpty() && !alreadyCommitted;
         m_setTargetButton->setEnabled(canCommit);
+        // Cycle 13 loop: the disabled-tooltip branch order matches the real
+        // reasons — (1) the selected drive is the protected running host,
+        // (2) no resolved root candidate (unlock-first only when a locked
+        // LUKS component exists on the drive, otherwise the no-Linux-
+        // filesystem wording naming the drive), (3) otherwise the
+        // commit-ready wording.
         if (selectedDisk().isEmpty()) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "Select a physical drive in the Available repair targets list first."));
@@ -9658,10 +9655,21 @@ void LegacyMainWindow::updateActionStates()
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "Live / installer media is read-only boot media and cannot be "
                 "selected as a repair target."));
-        } else if (root.isEmpty()) {
+        } else if (alreadyCommitted) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
-                "Unlock the encrypted volume first; Select Target becomes "
-                "available after a Linux filesystem is detected."));
+                "This drive is already the committed repair target; select "
+                "another drive to switch the target."));
+        } else if (root.isEmpty()) {
+            if (!autoResolvedLuks(selectedDisk()).isEmpty()) {
+                QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                    "Unlock the encrypted volume first; Select Target becomes "
+                    "available after a Linux filesystem is detected."));
+            } else {
+                QToolTip::add(m_setTargetButton, QString::fromLatin1(
+                    "No Linux filesystem was detected on %1; nothing can be "
+                    "committed as the repair target.")
+                    .arg(selectedDisk()));
+            }
         } else if (!idle) {
             QToolTip::add(m_setTargetButton, QString::fromLatin1(
                 "A helper command is already running."));

@@ -52,7 +52,13 @@ status** frame (locked/unlocked, component, mapper, method, errors; disabled
 for the protected running host; after a successful unlock the Unlock button
 reads **Already Unlocked** — the helper emits `UNLOCKED_ROOT=` from a
 read-only probe of the opened mapper chain so Select Target can commit the
-mapped root), and the Authorize affordance shows only in the deferred state; after the
+mapped root), the Authorize affordance shows only in the deferred state (Systems only —
+the Repair elevation section is gone, cycle 13); every page title carries an
+(i) help popup with the page's informational text; the Logs page is titled
+"Application log"; the capability table sorts by header click; Select Target
+switches between drives and Unlock stays available in Host Maintenance for
+offline drives; the Details button fills the details pane with the protected
+host's facts; after the
 root/boot mounts the helper mounts the target's other standard fstab entries
 (/usr, /var, /tmp, /home, /opt, /srv; remapped, same-disk-only, read-only
 diagnostics tolerant and repairs fail-closed) so split-LV layouts reach the

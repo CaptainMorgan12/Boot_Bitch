@@ -2,6 +2,22 @@
 
 ## Unreleased
 
+- Cycle 13 cleanup: the host-capabilities table sorts by header click; Unlock
+  stays available for a selected offline drive while Host Maintenance is
+  active (only the protected host disk is refused); the committed-target
+  summary stays right-aligned when the Authorize affordance is hidden; Select
+  Target disables for the already-committed drive and stays enabled for other
+  selectable drives; the Details button now populates the right details pane
+  with the protected host's facts (no popup) and selecting any drive restores
+  the per-drive pane; the Repair tab's legacy Privilege elevation section is
+  gone (elevation stays in Settings and the status bar); File Copy gains a
+  draggable vertical splitter and drops its inline probe status text; the
+  Chroot Shell page shows the modern scope notices instead of the probe
+  status; every page title gains an (i) help button carrying the
+  informational text (the Logs page is now titled "Application log", and the
+  Settings storage note moved into its popup); lower pane floors keep the
+  Diagnostics and Logs action buttons visible when the window shrinks.
+
 - Cycle 12: split-LV targets and GRUB defoptions preservation. The legacy
   prepare_target now mounts the target's remaining standard-system fstab
   entries (/usr, /var, /tmp, /home, /opt, /srv) under the repair root after
