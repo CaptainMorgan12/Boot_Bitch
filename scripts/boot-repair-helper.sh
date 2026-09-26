@@ -1266,8 +1266,9 @@ mount_recorded()
 # copied so chroot tools see the same devices as before, but every write stays
 # on the private tmpfs and never reaches the running host's /dev.  The host's
 # nested /dev mounts (pts, shm, mqueue, hugepages) are recreated as plain
-# directories: a guarded package transaction needs a writable /dev, not ptys,
-# and avoiding nested mounts keeps the EXIT cleanup a single unmount.  The
+# directories: the caller mounts a private devpts instance on /dev/pts (see
+# mount_special dev-rw), while shm/mqueue/hugepages stay plain directories so
+# the EXIT cleanup keeps unmounting exactly the recorded MOUNTS entries.  The
 # source directory is overridable for the shell contract test.
 populate_writable_dev()
 {
@@ -1321,7 +1322,7 @@ populate_writable_dev()
 
 mount_special()
 {
-    local kind="$1" source="$2" destination="$3" root_real parent_real
+    local kind="$1" source="$2" destination="$3" root_real parent_real ptmx_bind=0
     root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null)" \
         || fail "Unable to resolve target root before mounting $kind."
     [[ "$destination" == "$TARGET_ROOT/"* && ! -L "$destination" ]] \
@@ -1353,7 +1354,25 @@ mount_special()
             # functional while every write stays on the private mount.
             mount -t tmpfs -o mode=755,nosuid,size=64M tmpfs "$destination"
             populate_writable_dev "$destination"
-            log "Target /dev: private writable tmpfs populated from the recovery host; the running host /dev is not modified." | tee -a "$SESSION_LOG"
+            # A fresh devpts instance so target-side PTY allocation
+            # (posix_openpt/script) works inside the chroot: every pty opened
+            # here belongs to this private instance and never reaches the
+            # running host's /dev/pts.  The host's /dev/ptmx device node (5:2)
+            # copied with the device tree would instead address the host's
+            # global devpts instance (or fail with ENODEV where devpts is
+            # mounted per-namespace), so it is replaced by a link into the
+            # private instance; ptmxmode=000 keeps the instance's ptmx node
+            # usable only by the chroot root.
+            mount -t devpts -o newinstance,gid=5,mode=620,ptmxmode=000 devpts "$destination/pts"
+            rm -f -- "$destination/ptmx"
+            if ! ln -s pts/ptmx "$destination/ptmx" 2>/dev/null; then
+                # Bind fallback for the private instance's ptmx node where the
+                # symlink cannot be created.
+                touch -- "$destination/ptmx" 2>/dev/null || true
+                mount --bind "$destination/pts/ptmx" "$destination/ptmx"
+                ptmx_bind=1
+            fi
+            log "Target /dev: private writable tmpfs populated from the recovery host with a private devpts at /dev/pts; the running host /dev and its ptys are not modified or leaked." | tee -a "$SESSION_LOG"
             ;;
         tmpfs)
             mount -t tmpfs -o mode=755,nosuid,nodev,noexec,size=64M tmpfs "$destination"
@@ -1364,6 +1383,15 @@ mount_special()
         *) fail "Internal mount type error: $kind" ;;
     esac
     MOUNTS+=("$destination")
+    if [[ "$kind" == "dev-rw" ]]; then
+        # The nested mounts are recorded after their parent so the EXIT
+        # cleanup (which unmounts MOUNTS in reverse) detaches /dev/pts and
+        # the ptmx bind fallback before the private /dev tmpfs.
+        MOUNTS+=("$destination/pts")
+        if (( ptmx_bind == 1 )); then
+            MOUNTS+=("$destination/ptmx")
+        fi
+    fi
 }
 
 mount_target_resolver()
@@ -14013,6 +14041,159 @@ SHELL_PROMPT_QUIET_TICKS=2
 SHELL_PROMPT_TRAILING_BYTES=800
 SHELL_ANSWER_WINDOW_SECONDS=600
 
+# ---------------------------------------------------------------------------
+# Shell output transcript filter
+# ---------------------------------------------------------------------------
+# Both shell paths (the interactive PTY pump and the plain stdin-pipe path)
+# stream the command's output through this byte-level filter so transcripts
+# stay clean: ESC-led ANSI CSI/OSC sequences and BEL are dropped (the prompt
+# text is never interpreted and control bytes never reach the wire or the
+# logs), and CR is normalized -- a CR following content ends the line exactly
+# once, a CRLF pair collapses into a single newline, and a CR right after a
+# newline emits nothing, so progress updates and CRLF terminals produce plain
+# lines instead of gaps or duplicates.  A line ended by CR is right-trimmed
+# of trailing spaces/tabs before its newline is emitted (apt pads progress
+# lines to the terminal width and clears them with space runs), which removes
+# the pure-space "gap" lines; lines ended by a real LF are never trimmed.
+# TERM=dumb on the command environment keeps apt/dnf from emitting
+# color/control sequences in the first place; this filter is the defensive
+# second layer.
+SHELL_FILTER_ESC=0            # 0 normal, 1 after ESC, 2 CSI, 3 OSC, 4 ESC-in-OSC
+SHELL_FILTER_CR_PENDING=0     # previous input byte was CR
+SHELL_FILTER_LINE_HAS_CONTENT=0
+SHELL_FILTER_PENDING_WS=""    # deferred run of trailing spaces/tabs of the current line
+SHELL_FILTER_OUT=""
+
+# Consume one byte of command output ($1) and set SHELL_FILTER_OUT to the
+# cleaned byte (or the empty string when the byte is dropped).  Trailing
+# spaces/tabs of the current line are deferred (SHELL_FILTER_PENDING_WS) so a
+# CR-terminated progress line can be right-trimmed the moment the CR arrives;
+# a line ended by a real LF flushes them untouched.
+shell_filter_byte()
+{
+    local byte="$1"
+    SHELL_FILTER_OUT=""
+    if (( SHELL_FILTER_ESC == 1 )); then
+        case "$byte" in
+            '[') SHELL_FILTER_ESC=2 ;;
+            ']') SHELL_FILTER_ESC=3 ;;
+            *) SHELL_FILTER_ESC=0 ;;   # two-byte sequence: both bytes dropped
+        esac
+        return 0
+    fi
+    if (( SHELL_FILTER_ESC == 2 )); then
+        # CSI: consume until the final byte (0x40-0x7e).
+        case "$byte" in
+            [@-~]) SHELL_FILTER_ESC=0 ;;
+        esac
+        return 0
+    fi
+    if (( SHELL_FILTER_ESC == 3 )); then
+        # OSC: terminated by BEL or ESC \.
+        if [[ "$byte" == $'\x1b' ]]; then
+            SHELL_FILTER_ESC=4
+        elif [[ "$byte" == $'\a' ]]; then
+            SHELL_FILTER_ESC=0
+        fi
+        return 0
+    fi
+    if (( SHELL_FILTER_ESC == 4 )); then
+        # ESC inside OSC: ESC \ ends it, anything else resumes the OSC body.
+        if [[ "$byte" == '\' ]]; then
+            SHELL_FILTER_ESC=0
+        else
+            SHELL_FILTER_ESC=3
+        fi
+        return 0
+    fi
+    if [[ "$byte" == $'\x1b' ]]; then
+        SHELL_FILTER_ESC=1
+        return 0
+    fi
+    if [[ "$byte" == $'\a' ]]; then
+        return 0
+    fi
+    if [[ "$byte" == $'\r' ]]; then
+        SHELL_FILTER_CR_PENDING=1
+        # CR ends the line: drop the deferred trailing whitespace (the
+        # progress-line trim) and, when the line had content, end it.
+        SHELL_FILTER_PENDING_WS=""
+        if (( SHELL_FILTER_LINE_HAS_CONTENT == 1 )); then
+            SHELL_FILTER_OUT=$'\n'
+            SHELL_FILTER_LINE_HAS_CONTENT=0
+        fi
+        return 0
+    fi
+    if [[ "$byte" == $'\n' ]]; then
+        if (( SHELL_FILTER_CR_PENDING == 1 )); then
+            # The CR already ended the line; the LF adds nothing.
+            SHELL_FILTER_CR_PENDING=0
+            SHELL_FILTER_LINE_HAS_CONTENT=0
+        else
+            # LF-terminated lines are never trimmed: the deferred trailing
+            # whitespace is flushed before the newline.
+            SHELL_FILTER_OUT="$SHELL_FILTER_PENDING_WS"$'\n'
+            SHELL_FILTER_PENDING_WS=""
+            SHELL_FILTER_LINE_HAS_CONTENT=0
+        fi
+        return 0
+    fi
+    SHELL_FILTER_CR_PENDING=0
+    case "$byte" in
+        ' '|$'\t')
+            # Defer trailing spaces/tabs: they stay un-emitted until the
+            # line ends (CR drops them, LF flushes them) or real content
+            # follows (which flushes them first).
+            SHELL_FILTER_PENDING_WS+="$byte"
+            ;;
+        *)
+            SHELL_FILTER_OUT="$SHELL_FILTER_PENDING_WS$byte"
+            SHELL_FILTER_PENDING_WS=""
+            SHELL_FILTER_LINE_HAS_CONTENT=1
+            ;;
+    esac
+}
+
+# Emit the deferred trailing-whitespace run of the current line, if any.  The
+# interactive pump flushes before a PROMPT record and at runner EOF so an
+# unterminated prompt line keeps every byte (including a trailing space);
+# shell_stream_filter flushes at stream EOF.
+shell_filter_flush_pending()
+{
+    SHELL_FILTER_OUT="$SHELL_FILTER_PENDING_WS"
+    SHELL_FILTER_PENDING_WS=""
+}
+
+# Filter a complete stdin stream (one byte at a time) for the plain shell
+# path; the interactive pump calls shell_filter_byte directly.  read -n 1
+# delivers the newline byte as an empty string, so an empty byte with a
+# successful read is the newline; NUL bytes are indistinguishable at this
+# boundary and normalize the same way (they never pass through).
+shell_stream_filter()
+{
+    local ch
+    SHELL_FILTER_ESC=0
+    SHELL_FILTER_CR_PENDING=0
+    SHELL_FILTER_LINE_HAS_CONTENT=0
+    SHELL_FILTER_PENDING_WS=""
+    while IFS= read -r -n 1 ch; do
+        if [[ -z "$ch" ]]; then
+            ch=$'\n'
+        fi
+        shell_filter_byte "$ch"
+        if [[ -n "$SHELL_FILTER_OUT" ]]; then
+            printf '%s' "$SHELL_FILTER_OUT"
+        fi
+    done
+    # The final line may be unterminated (a prompt or the last progress
+    # update); it was not ended by CR, so flush its deferred trailing
+    # whitespace to keep every byte.
+    shell_filter_flush_pending
+    if [[ -n "$SHELL_FILTER_OUT" ]]; then
+        printf '%s' "$SHELL_FILTER_OUT"
+    fi
+}
+
 shell_interactive_enabled()
 {
     [[ "${BOOT_REPAIR_SESSION_PROTOCOL:-0}" == "1" ]]
@@ -14041,6 +14222,23 @@ shell_command_string()
     printf '%s\n' "$out"
 }
 
+# Feed one cleaned stream byte into the wire (fd 1), the session log (fd 11),
+# the transcript (fd 12) and the prompt buffer.  Reads the tail_buf and
+# newline_done locals of the shell_run_interactive frame via dynamic scoping.
+shell_pump_cleaned_byte()
+{
+    local clean="$1"
+    tail_buf+="$clean"
+    if [[ "$clean" == *$'\n' ]]; then
+        newline_done=1
+    else
+        newline_done=0
+    fi
+    printf '%s' "$clean"
+    printf '%s' "$clean" >&11
+    printf '%s' "$clean" >&12
+}
+
 # Run one shell command with the generic interactive channel.
 #   $1 = transcript path (raw command output evidence)
 #   $2 = overall deadline in seconds (paused while a prompt is pending)
@@ -14052,7 +14250,7 @@ shell_run_interactive()
     local transcript="$1" deadline="$2" command_string="$3"
     local in_fifo="$SESSION_DIR/shell-in" out_fifo="$SESSION_DIR/shell-out"
     local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
-    local tail_buf="" ch="" bytes="" encoded="" tag="" id="" answer=""
+    local tail_buf="" ch="" clean="" bytes="" encoded="" tag="" id="" answer=""
     local script_bin="" setsid_bin="" newline_done=1 wait_rc=0 grace=0
 
     command -v script >/dev/null 2>&1 && script_bin=script
@@ -14090,24 +14288,48 @@ shell_run_interactive()
     quiet_ticks=0
     tail_buf=""
     newline_done=1
+    SHELL_FILTER_ESC=0
+    SHELL_FILTER_CR_PENDING=0
+    SHELL_FILTER_LINE_HAS_CONTENT=0
+    SHELL_FILTER_PENDING_WS=""
     while :; do
         if ! kill -0 "$runner_pid" 2>/dev/null; then
+            # The runner is gone: drain whatever it already wrote to the
+            # output FIFO (the blocking read ends at EOF) so the transcript
+            # never loses the command's final bytes.
+            while IFS= read -r -n 1 -u 8 ch; do
+                if [[ -z "$ch" ]]; then
+                    ch=$'\n'
+                fi
+                shell_filter_byte "$ch"
+                clean="$SHELL_FILTER_OUT"
+                if [[ -n "$clean" ]]; then
+                    shell_pump_cleaned_byte "$clean"
+                fi
+            done
+            # An unterminated final line (a prompt) was not ended by CR: flush
+            # its deferred trailing whitespace so no byte is lost.
+            shell_filter_flush_pending
+            clean="$SHELL_FILTER_OUT"
+            if [[ -n "$clean" ]]; then
+                shell_pump_cleaned_byte "$clean"
+            fi
             rc=1
             break
         fi
         if IFS= read -r -n 1 -t 1 -u 8 ch; then
-            # Normalize CR (pty line discipline, progress bars) so the live
-            # stream and the logs stay line-oriented; nothing else changes.
-            [[ "$ch" == $'\r' ]] && ch=$'\n'
-            tail_buf+="$ch"
-            if [[ "$ch" == $'\n' ]]; then
-                newline_done=1
-            else
-                newline_done=0
+            # read -n 1 delivers the newline byte as an empty string.
+            if [[ -z "$ch" ]]; then
+                ch=$'\n'
             fi
-            printf '%s' "$ch"
-            printf '%s' "$ch" >&11
-            printf '%s' "$ch" >&12
+            # The transcript filter drops ANSI/control sequences and
+            # normalizes CR/CRLF; the cleaned byte is what reaches the wire,
+            # the logs, the prompt buffer and the GUI popup.
+            shell_filter_byte "$ch"
+            clean="$SHELL_FILTER_OUT"
+            if [[ -n "$clean" ]]; then
+                shell_pump_cleaned_byte "$clean"
+            fi
             quiet_ticks=0
             continue
         fi
@@ -14118,8 +14340,16 @@ shell_run_interactive()
         fi
         if (( quiet_ticks >= SHELL_PROMPT_QUIET_TICKS )); then
             # Alive, quiet and it has printed something: hand the trailing
-            # output to the GUI.  Close the current output line first so the
-            # PROMPT record starts on a fresh line for the broker's reader.
+            # output to the GUI.  Flush the filter's deferred trailing
+            # whitespace first so an unterminated prompt line keeps every
+            # byte (including a trailing space) in the PROMPT payload, then
+            # close the current output line so the PROMPT record starts on a
+            # fresh line for the broker's reader.
+            shell_filter_flush_pending
+            clean="$SHELL_FILTER_OUT"
+            if [[ -n "$clean" ]]; then
+                shell_pump_cleaned_byte "$clean"
+            fi
             if (( newline_done == 0 )); then
                 printf '\n'
                 printf '\n' >&11
@@ -14270,6 +14500,46 @@ apt_shell_upgrade_policy_refused()
     grep -Eiq "$APT_SHELL_UPGRADE_POLICY_REGEX" "$transcript"
 }
 
+# ---------------------------------------------------------------------------
+# Evidence-based snapper guard for the chroot shell
+# ---------------------------------------------------------------------------
+# TUXEDO OS and Debian-family targets with snapper ship an apt hook
+# (/etc/apt/apt.conf.d/80snapper and friends) whose DPkg::Pre-Invoke and
+# DPkg::Post-Invoke run `snapper create|cleanup` around every dpkg
+# transaction.  Inside a chroot snapper's D-Bus client can only fail (the
+# private /run carries no system bus) and prints
+# "Failure (org.freedesktop.DBus.Error.FileNotFound)." twice per transaction.
+# The hook sources /etc/default/snapper before testing DISABLE_APT_SNAPSHOT,
+# so the environment switch exported by the shell command cannot win where
+# that file forces "no".  No assumption is made about which distributions or
+# hook file names exist: the guard applies only when the target proves BOTH
+# an executable /usr/bin/snapper AND at least one apt config referencing
+# snapper (scanned under /etc/apt/apt.conf and /etc/apt/apt.conf.d/).  When
+# the target also has an /etc/default/snapper, a temporary stub declaring
+# DISABLE_APT_SNAPSHOT="yes" is bind-mounted read-only over that file for the
+# lifetime of the shell command.  The stub is generated in the session
+# directory (never written to the target disk), the bind is recorded in
+# MOUNTS so the EXIT cleanup detaches it in the normal reverse order, and the
+# target's real file is never modified.  The running-host shell never runs
+# this guard: host maintenance keeps real snapshots.
+chroot_shell_guard_snapper()
+{
+    local stub="$SESSION_DIR/snapper-default-guard"
+    local target_file="$TARGET_ROOT/etc/default/snapper"
+    [[ -x "$TARGET_ROOT/usr/bin/snapper" ]] || return 0
+    grep -rqs -- 'snapper' "$TARGET_ROOT/etc/apt/apt.conf" "$TARGET_ROOT/etc/apt/apt.conf.d" || return 0
+    [[ -e "$target_file" && ! -L "$target_file" ]] || return 0
+    {
+        printf '%s\n' '# Temporary Boot Bitch guard: apt must never snapshot this target from a chroot shell.'
+        printf '%s\n' 'DISABLE_APT_SNAPSHOT="yes"'
+    } > "$stub"
+    mount --bind "$stub" "$target_file" || return 0
+    mount -o remount,bind,ro "$target_file" 2>/dev/null || true
+    MOUNTS+=("$target_file")
+    log "Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)" | tee -a "$SESSION_LOG"
+    return 0
+}
+
 # Execute one reviewed command as root inside a fresh target chroot with a
 # bounded runtime; the command text is logged before it runs.
 run_chroot_shell()
@@ -14284,6 +14554,7 @@ run_chroot_shell()
     # (/dev tmpfs, /proc, /sys, /run and the target resolver bind) before the
     # command runs, so dnf/apt/pacman do not fail or wait on missing mounts.
     prepare_target rw
+    chroot_shell_guard_snapper
     log "BEGIN: Chroot shell command" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
     # A command runs in a clean target environment.  Two modes exist:
@@ -14312,20 +14583,31 @@ run_chroot_shell()
             # The interactive run deliberately drops the non-interactive
             # frontend switches so debconf/dpkg questions reach the popup;
             # the user's explicit answer (or cancel) is the control instead.
+            # TERM=dumb keeps apt/dnf from emitting color/control sequences.
+            # DISABLE_APT_SNAPSHOT=yes covers targets where snapper's apt hook
+            # exists but /etc/default/snapper does not force "no"; where that
+            # file exists and forces the value, the evidence-based
+            # chroot_shell_guard_snapper() read-only stub bind above is what
+            # wins.  The running-host shell never gets this switch: host
+            # maintenance keeps real snapper snapshots.
             shell_run_interactive "$transcript" "$CHROOT_SHELL_TIMEOUT_SECONDS" \
                 "$(shell_command_string chroot "$TARGET_ROOT" /usr/bin/env \
                     HOME=/root \
+                    TERM=dumb \
+                    DISABLE_APT_SNAPSHOT=yes \
                     PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                     /bin/sh -c "$run_command")"
             rc=$?
         else
             timeout --foreground --kill-after=10 "$CHROOT_SHELL_TIMEOUT_SECONDS" chroot "$TARGET_ROOT" /usr/bin/env \
                 HOME=/root \
+                TERM=dumb \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 DEBIAN_FRONTEND=noninteractive \
                 APT_LISTCHANGES_FRONTEND=none \
+                DISABLE_APT_SNAPSHOT=yes \
                 DNF5_FORCE_INTERACTIVE=0 \
-                /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+                /bin/sh -c "$run_command" < /dev/null 2>&1 | shell_stream_filter | tee -a "$SESSION_LOG" "$transcript"
             rc=${PIPESTATUS[0]}
         fi
         set -e
@@ -14405,19 +14687,21 @@ run_host_shell()
             # The interactive run deliberately drops the non-interactive
             # frontend switch so debconf/dpkg questions reach the popup; the
             # user's explicit answer (or cancel) is the control instead.
+            # TERM=dumb keeps apt/dnf from emitting color/control sequences.
             shell_run_interactive "$transcript" 300 \
                 "$(shell_command_string unshare --mount --propagation private \
                     /bin/sh -eu -c "$(host_command_guard_body)" boot-repair-host-command \
-                    /usr/bin/env HOME=/root \
+                    /usr/bin/env HOME=/root TERM=dumb \
                     "PATH=$HOST_COMMAND_GUARD_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
                     /bin/bash -lc "$run_command")"
             rc=$?
         else
             run_host_command_isolated timeout --foreground 300 /usr/bin/env \
                 HOME=/root \
+                TERM=dumb \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
                 DEBIAN_FRONTEND=noninteractive \
-                /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+                /bin/bash -lc "$run_command" 2>&1 | shell_stream_filter | tee -a "$SESSION_LOG" "$transcript"
             rc=${PIPESTATUS[0]}
         fi
         set -e

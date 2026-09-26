@@ -153,6 +153,77 @@ grep -q 'shell_run_interactive "$transcript" 300' <<<"$host_shell_body" \
 grep -q 'DEBIAN_FRONTEND=noninteractive' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the plain chroot shell lost its non-interactive frontend' >&2; exit 1; }
 
+# The chroot shell neuters snapper's apt hook (Debian/TUXEDO
+# /etc/apt/apt.conf.d/80snapper): its DPkg::Pre/Post-Invoke `snapper
+# create|cleanup` runs can only fail on the absent system bus and print
+# "Failure (org.freedesktop.DBus.Error.FileNotFound)."  The hook's documented
+# kill-switch travels in the command environment (the hook itself is `|| true`,
+# so skipping it cannot change the transaction).  The running-host shell keeps
+# real host snapshots and must never receive the switch.
+grep -Fq 'DISABLE_APT_SNAPSHOT=yes' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not carry the snapper apt-hook kill-switch' >&2; exit 1; }
+if grep -Fq 'DISABLE_APT_SNAPSHOT=yes' <<<"$host_shell_body"; then
+    echo 'FAIL: the running-host shell must keep real snapper snapshots' >&2
+    exit 1
+fi
+
+# The environment switch alone cannot win where the target's
+# /etc/default/snapper forces DISABLE_APT_SNAPSHOT="no" (the hook sources it
+# before testing the variable), so the chroot session setup adds an
+# evidence-based guard: it applies only when the target proves BOTH an
+# executable /usr/bin/snapper AND an apt config referencing snapper (scanned
+# under /etc/apt/apt.conf and /etc/apt/apt.conf.d/ — no hardcoded hook file
+# names), it bind-mounts a session-tmp stub (never written to the target disk)
+# read-only over the target's /etc/default/snapper, and it records the bind in
+# MOUNTS so the EXIT cleanup detaches it in the normal reverse order.
+grep -q '^chroot_shell_guard_snapper()' "$HELPER" \
+    || { echo 'FAIL: the snapper guard function is missing' >&2; exit 1; }
+guard_block="$(sed -n '/^chroot_shell_guard_snapper()/,/^}/p' "$HELPER")"
+[[ -n "$guard_block" ]] || { echo 'FAIL: the snapper guard body is missing' >&2; exit 1; }
+grep -Fq '[[ -x "$TARGET_ROOT/usr/bin/snapper" ]]' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard does not probe the target snapper binary' >&2; exit 1; }
+grep -Fq 'grep -rqs -- '"'"'snapper'"'"' "$TARGET_ROOT/etc/apt/apt.conf" "$TARGET_ROOT/etc/apt/apt.conf.d"' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard does not scan the target apt config for snapper references' >&2; exit 1; }
+grep -Fq 'snapper-default-guard' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard stub is not generated in the session directory' >&2; exit 1; }
+grep -Fq 'DISABLE_APT_SNAPSHOT="yes"' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard stub does not declare the kill-switch' >&2; exit 1; }
+grep -Fq 'Temporary Boot Bitch guard' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard stub is not marked as temporary' >&2; exit 1; }
+grep -Fq 'mount --bind "$stub" "$target_file"' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard does not bind the stub over the target default file' >&2; exit 1; }
+grep -Fq 'mount -o remount,bind,ro "$target_file"' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard bind is not read-only' >&2; exit 1; }
+grep -Fq 'MOUNTS+=("$target_file")' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard bind is not recorded for cleanup' >&2; exit 1; }
+grep -Fq 'Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard lost its evidence-named session log line' >&2; exit 1; }
+grep -Fq 'chroot_shell_guard_snapper' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not apply the snapper guard' >&2; exit 1; }
+if grep -Fq 'chroot_shell_guard_snapper' <<<"$host_shell_body"; then
+    echo 'FAIL: the running-host shell must never apply the snapper guard' >&2
+    exit 1
+fi
+
+# Transcript hygiene: both shell paths run the command with TERM=dumb and
+# stream the output through the byte-level transcript filter, which drops
+# ANSI CSI/OSC sequences and BEL and normalizes CR/CRLF.
+grep -q 'TERM=dumb' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not run with TERM=dumb' >&2; exit 1; }
+grep -q 'TERM=dumb' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not run with TERM=dumb' >&2; exit 1; }
+grep -q '^shell_stream_filter()' "$HELPER"
+grep -q '^shell_filter_byte()' "$HELPER"
+grep -q 'SHELL_FILTER_ESC' "$HELPER"
+grep -q '\[@-~\]' "$HELPER" \
+    || { echo 'FAIL: the transcript filter lost the CSI final-byte class' >&2; exit 1; }
+grep -Fq 'shell_stream_filter | tee' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the plain chroot shell does not stream through the transcript filter' >&2; exit 1; }
+grep -Fq 'shell_stream_filter | tee' <<<"$host_shell_body" \
+    || { echo 'FAIL: the plain running-host shell does not stream through the transcript filter' >&2; exit 1; }
+grep -q 'shell_filter_byte "$ch"' <<<"$(sed -n '/^shell_run_interactive()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the interactive pump does not use the transcript filter' >&2; exit 1; }
+
 # Target chroots receive a private writable /dev tmpfs instead of the
 # read-only recovery-host /dev bind.  rpm/dnf5 package payloads that own /dev
 # (for example Fedora's filesystem package) must be unpackable, but no write
@@ -169,6 +240,33 @@ if grep -q 'nodev' <<<"$dev_rw_block"; then
     echo 'FAIL: the private target /dev must allow device nodes' >&2
     exit 1
 fi
+# The private /dev must carry a fresh devpts instance for target-side PTY
+# allocation (posix_openpt): gid=5 for the tty group, ptmxmode=000 so only the
+# chroot root can use the instance's ptmx, and the copied host /dev/ptmx node
+# (5:2, which would address the running host's devpts instance) replaced by a
+# link into the private instance.
+grep -Fq 'mount -t devpts -o newinstance,gid=5,mode=620,ptmxmode=000 devpts "$destination/pts"' <<<"$dev_rw_block" \
+    || { echo 'FAIL: the private target /dev does not mount a fresh devpts instance' >&2; exit 1; }
+grep -Fq 'ln -s pts/ptmx "$destination/ptmx"' <<<"$dev_rw_block" \
+    || { echo 'FAIL: the target /dev/ptmx is not linked into the private devpts instance' >&2; exit 1; }
+# The devpts mount must be recorded in MOUNTS after its /dev tmpfs parent so
+# the EXIT cleanup unmounts it in the same reverse-order path as /dev.
+mount_special_block="$(sed -n '/^mount_special()/,/^}/p' "$HELPER")"
+grep -Fq 'MOUNTS+=("$destination/pts")' <<<"$mount_special_block" \
+    || { echo 'FAIL: the private devpts mount is not recorded for cleanup' >&2; exit 1; }
+awk '
+    /^mount_special\(\)/ { in_fn = 1 }
+    in_fn && index($0, "MOUNTS+=(\"$destination\")") { saw_parent = 1 }
+    in_fn && saw_parent && index($0, "MOUNTS+=(\"$destination/pts\")") { pts_after_parent = 1 }
+    in_fn && /^}/ { exit }
+    END { exit(pts_after_parent ? 0 : 1) }
+' <<<"$mount_special_block" \
+    || { echo 'FAIL: the devpts mount is not recorded after its /dev parent for reverse cleanup' >&2; exit 1; }
+cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
+grep -Fq 'for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx ))' <<<"$cleanup_block" \
+    || { echo 'FAIL: the cleanup path does not unmount MOUNTS in reverse order' >&2; exit 1; }
+grep -Fq 'umount "$mountpoint" 2>/dev/null || umount -l "$mountpoint" 2>/dev/null || true' <<<"$cleanup_block" \
+    || { echo 'FAIL: the cleanup path lost the recorded-mount unmount' >&2; exit 1; }
 # Four chroot installs: prepare_target rw, promote_target_rw,
 # snapshot_mount_promoted_root_rw and the running-host rollback scratch chroot.
 [[ "$(grep -c 'mount_special dev-rw none "\$TARGET_ROOT/dev"' "$HELPER")" == 4 ]] \
@@ -649,5 +747,233 @@ finish_interactive_case "$cancel_root"
     || { echo 'FAIL: an empty (cancel) answer did not fail closed with rc 125' >&2; cat "$cancel_root/output" >&2; exit 1; }
 grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$cancel_root/output" \
     || { echo 'FAIL: the cancel message is missing' >&2; cat "$cancel_root/output" >&2; exit 1; }
+
+# Case 5: transcript hygiene.  A command emitting ANSI CSI sequences and CR
+# progress updates must leave a transcript with plain one-shot lines: no ESC
+# bytes, no CSI parameter remnants ([33m/[0m), no blank lines and no
+# duplicates.
+start_interactive_case ansi-cr \
+    "printf 'Downloading 10%%\rDownloading 50%%\r\033[33mDownloading 100%%\033[0m\r\nDone\n'" 5
+ansi_root="$interactive_root/ansi-cr"
+finish_interactive_case "$ansi_root"
+[[ "$(cat "$ansi_root/rc")" == "0" ]] \
+    || { echo 'FAIL: the ANSI/CR fixture command did not exit 0' >&2; cat "$ansi_root/output" >&2; exit 1; }
+printf 'Downloading 10%%\nDownloading 50%%\nDownloading 100%%\nDone\n' > "$ansi_root/expected"
+cmp -s "$ansi_root/expected" "$ansi_root/transcript" \
+    || { echo 'FAIL: the interactive transcript is not the clean one-shot-lines transcript' >&2; cat -A "$ansi_root/transcript" >&2; exit 1; }
+cmp -s "$ansi_root/expected" "$ansi_root/output" \
+    || { echo 'FAIL: the interactive wire stream is not clean' >&2; cat -A "$ansi_root/output" >&2; exit 1; }
+if grep -Fq $'\x1b' "$ansi_root/transcript"; then
+    echo 'FAIL: the transcript still carries an ESC byte' >&2
+    exit 1
+fi
+if grep -Eq '\[33m|\[0m|\[31m' "$ansi_root/transcript"; then
+    echo 'FAIL: the transcript still carries ANSI CSI parameter remnants' >&2
+    exit 1
+fi
+if grep -q '^$' "$ansi_root/transcript"; then
+    echo 'FAIL: the transcript contains a blank line' >&2
+    exit 1
+fi
+
+# Case 6: the plain (non-interactive) shell path streams through the same
+# transcript filter, so /dev/null-stdin runs produce equally clean evidence.
+mkdir -p "$shell_stub_root/plain-filter"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$shell_stub_root/plain-filter"
+    SESSION_LOG="$shell_stub_root/plain-filter/session.log"
+    TARGET_ROOT="$shell_stub_root/plain-filter/target"
+    mkdir -p "$TARGET_ROOT"
+    prepare_target() { :; }
+    log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    timeout()
+    {
+        while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+            if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+        done
+        "$@"
+    }
+    chroot()
+    {
+        printf 'Progress 10%%\rProgress 50%%\r\033[33mProgress 100%%\033[0m\r\nFinished\n'
+        return 0
+    }
+    ( run_chroot_shell 'any command' ) > "$shell_stub_root/plain-filter/output" 2>&1 || true
+)
+plain_transcript="$shell_stub_root/plain-filter/chroot-shell-output"
+printf 'Progress 10%%\nProgress 50%%\nProgress 100%%\nFinished\n' > "$shell_stub_root/plain-filter/expected"
+cmp -s "$shell_stub_root/plain-filter/expected" "$plain_transcript" \
+    || { echo 'FAIL: the plain shell transcript is not clean' >&2; cat -A "$plain_transcript" >&2; exit 1; }
+if grep -Fq $'\x1b' "$plain_transcript"; then
+    echo 'FAIL: the plain shell transcript still carries an ESC byte' >&2
+    exit 1
+fi
+if grep -q '^$' "$plain_transcript"; then
+    echo 'FAIL: the plain shell transcript contains a blank line' >&2
+    exit 1
+fi
+
+# Filter behavioural case: apt pads progress lines to the terminal width with
+# spaces/tabs and clears them with space runs, all CR-terminated.  A CR-ended
+# line must be right-trimmed of trailing spaces/tabs before its newline is
+# emitted (a pure-space CR line emits nothing at all), while a line ended by a
+# real LF keeps its trailing whitespace.
+filter_case_root="$shell_stub_root/filter-cr-trim"
+mkdir -p "$filter_case_root"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    # CR progress line padded with spaces -> trimmed; padded with spaces+tabs
+    # -> trimmed; a pure-space/tab CR "clear" line -> gone entirely; an LF line
+    # with trailing spaces -> kept verbatim; a CRLF line -> collapsed + trimmed.
+    printf 'Reading state 10%%   \rReading state 50%% \t \r \t \rDone  \nLast line  \n' \
+        | shell_stream_filter
+) > "$filter_case_root/output"
+printf 'Reading state 10%%\nReading state 50%%\nDone  \nLast line  \n' > "$filter_case_root/expected"
+cmp -s "$filter_case_root/expected" "$filter_case_root/output" \
+    || { echo 'FAIL: CR-ended lines are not trimmed / LF-ended lines are trimmed' >&2; \
+         cat -A "$filter_case_root/output" >&2; exit 1; }
+grep -Fxq 'Done  ' "$filter_case_root/output" \
+    || { echo 'FAIL: an LF-terminated line lost its trailing spaces' >&2; exit 1; }
+if grep -Eq '^[[:space:]]+$' "$filter_case_root/output"; then
+    echo 'FAIL: a pure-whitespace CR gap line survived the trim' >&2
+    exit 1
+fi
+if grep -q '^$' "$filter_case_root/output"; then
+    echo 'FAIL: the filtered stream contains a blank line' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Evidence-based snapper guard (behavioural).  Fake targets replay the hook's
+# own logic through stubbed chroot/mount so the guard chain is exercised end
+# to end.  With snapper evidence present, the read-only stub bind must make
+# the hook observe DISABLE_APT_SNAPSHOT="yes" and skip snapper, and the
+# target's real /etc/default/snapper must come back byte-identical.  Without
+# the apt-config reference the guard must stay silent and the hook must still
+# run (no hardcoded assumptions).
+# ---------------------------------------------------------------------------
+snapper_case_root="$shell_stub_root/snapper-guard"
+mkdir -p "$snapper_case_root/target/etc/apt/apt.conf.d" "$snapper_case_root/target/etc/default" \
+    "$snapper_case_root/target/usr/bin"
+printf 'DISABLE_APT_SNAPSHOT="no"\n' > "$snapper_case_root/target/etc/default/snapper"
+cp -p "$snapper_case_root/target/etc/default/snapper" "$snapper_case_root/expected-default"
+printf 'DPkg::Pre-Invoke { "snapper create -d apt -c number -t pre -p || true"; };\n' \
+    > "$snapper_case_root/target/etc/apt/apt.conf.d/80snapper"
+printf '#!/bin/sh\nexit 0\n' > "$snapper_case_root/target/usr/bin/snapper"
+chmod 0755 "$snapper_case_root/target/usr/bin/snapper"
+: > "$snapper_case_root/mount-log"
+: > "$snapper_case_root/seen-value"
+: > "$snapper_case_root/snapper-invocations"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$snapper_case_root"
+    SESSION_LOG="$snapper_case_root/session.log"
+    TARGET_ROOT="$snapper_case_root/target"
+    prepare_target() { :; }
+    log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    timeout()
+    {
+        while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+            if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+        done
+        "$@"
+    }
+    # Emulate the guard's read-only bind: preserve the real file and swap the
+    # stub over it for the lifetime of the session, exactly like a file bind.
+    mount()
+    {
+        if [[ "$1" == "--bind" && "$3" == "$TARGET_ROOT/etc/default/snapper" ]]; then
+            printf '%s\n' "$*" >> "$snapper_case_root/mount-log"
+            cp -p "$TARGET_ROOT/etc/default/snapper" "$snapper_case_root/real-default-preserved" || return 1
+            cp -p "$2" "$TARGET_ROOT/etc/default/snapper" || return 1
+        fi
+        return 0
+    }
+    # Replay the hook's own logic inside the fake target.
+    chroot()
+    {
+        if . "$TARGET_ROOT/etc/default/snapper" 2>/dev/null \
+            && [[ -x "$TARGET_ROOT/usr/bin/snapper" ]] \
+            && [[ "x$DISABLE_APT_SNAPSHOT" != "xyes" ]]; then
+            printf 'invoked\n' >> "$snapper_case_root/snapper-invocations"
+        fi
+        printf 'DISABLE=%s\n' "${DISABLE_APT_SNAPSHOT:-unset}" >> "$snapper_case_root/seen-value"
+        return 0
+    }
+    ( run_chroot_shell 'apt autoremove' ) > "$snapper_case_root/output" 2>&1 || true
+)
+# The harness swapped the file while emulating the bind; restore the real one
+# before asserting the end state.
+cp -p "$snapper_case_root/real-default-preserved" "$snapper_case_root/target/etc/default/snapper"
+grep -Fq -- '--bind' "$snapper_case_root/mount-log" \
+    || { echo 'FAIL: the snapper guard never bound its stub during the session' >&2; cat "$snapper_case_root/mount-log" >&2; exit 1; }
+grep -Fq 'DISABLE=yes' "$snapper_case_root/seen-value" \
+    || { echo 'FAIL: the hook did not observe the guarded kill-switch value' >&2; cat "$snapper_case_root/seen-value" >&2; exit 1; }
+[[ -s "$snapper_case_root/snapper-invocations" ]] \
+    && { echo 'FAIL: the guarded hook still invoked snapper' >&2; cat "$snapper_case_root/snapper-invocations" >&2; exit 1; }
+cmp -s "$snapper_case_root/expected-default" "$snapper_case_root/target/etc/default/snapper" \
+    || { echo 'FAIL: the target /etc/default/snapper content changed' >&2; cat -A "$snapper_case_root/target/etc/default/snapper" >&2; exit 1; }
+grep -Fq 'Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)' "$snapper_case_root/output" \
+    || { echo 'FAIL: the guarded session did not log the guard line' >&2; cat "$snapper_case_root/output" >&2; exit 1; }
+
+# Negative case: the apt config carries no snapper reference, so the guard
+# must stay silent (no bind, no log line) and the hook must still run.
+snapper_negative_root="$shell_stub_root/snapper-guard-no-evidence"
+mkdir -p "$snapper_negative_root/target/etc/apt/apt.conf.d" "$snapper_negative_root/target/etc/default" \
+    "$snapper_negative_root/target/usr/bin"
+printf 'DISABLE_APT_SNAPSHOT="no"\n' > "$snapper_negative_root/target/etc/default/snapper"
+printf 'APT::Get::Assume-Yes "true";\n' > "$snapper_negative_root/target/etc/apt/apt.conf.d/00assume-yes"
+printf '#!/bin/sh\nexit 0\n' > "$snapper_negative_root/target/usr/bin/snapper"
+chmod 0755 "$snapper_negative_root/target/usr/bin/snapper"
+: > "$snapper_negative_root/mount-log"
+: > "$snapper_negative_root/seen-value"
+: > "$snapper_negative_root/snapper-invocations"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$snapper_negative_root"
+    SESSION_LOG="$snapper_negative_root/session.log"
+    TARGET_ROOT="$snapper_negative_root/target"
+    prepare_target() { :; }
+    log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    timeout()
+    {
+        while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+            if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+        done
+        "$@"
+    }
+    mount()
+    {
+        printf '%s\n' "$*" >> "$snapper_negative_root/mount-log"
+        return 0
+    }
+    chroot()
+    {
+        if . "$TARGET_ROOT/etc/default/snapper" 2>/dev/null \
+            && [[ -x "$TARGET_ROOT/usr/bin/snapper" ]] \
+            && [[ "x$DISABLE_APT_SNAPSHOT" != "xyes" ]]; then
+            printf 'invoked\n' >> "$snapper_negative_root/snapper-invocations"
+        fi
+        printf 'DISABLE=%s\n' "${DISABLE_APT_SNAPSHOT:-unset}" >> "$snapper_negative_root/seen-value"
+        return 0
+    }
+    ( run_chroot_shell 'apt autoremove' ) > "$snapper_negative_root/output" 2>&1 || true
+)
+[[ -s "$snapper_negative_root/mount-log" ]] \
+    && { echo 'FAIL: the snapper guard applied a bind without apt-config evidence' >&2; cat "$snapper_negative_root/mount-log" >&2; exit 1; }
+grep -Fq 'DISABLE=no' "$snapper_negative_root/seen-value" \
+    || { echo 'FAIL: the unguarded hook did not observe the target value' >&2; cat "$snapper_negative_root/seen-value" >&2; exit 1; }
+grep -Fq 'invoked' "$snapper_negative_root/snapper-invocations" \
+    || { echo 'FAIL: the unguarded hook should still run snapper' >&2; exit 1; }
+if grep -Fq 'guarding the chroot shell against snapshots' "$snapper_negative_root/output"; then
+    echo 'FAIL: the snapper guard logged without evidence' >&2
+    cat "$snapper_negative_root/output" >&2
+    exit 1
+fi
 
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."
