@@ -7345,6 +7345,19 @@ void MainWindow::closePrivilegedSession()
     session->deleteLater();
 }
 
+// A6-01: true when the shell prompt text is asking for a secret (a
+// passphrase, password, PIN, credential, key file or unlock phrase).  A
+// secret-looking prompt never echoes the typed answer into the transcript or
+// the output pane; the raw answer is still sent to the helper as the ANSWER
+// record, exactly as before.
+bool promptLooksSecret(const QString &promptText)
+{
+    static const QRegularExpression secretPattern(
+        QStringLiteral("\\b(passphrase|password|passwd|pin|passcode|secret|credential|unlock|phrase\\s+for|key\\s+file)\\b"),
+        QRegularExpression::CaseInsensitiveOption);
+    return secretPattern.match(promptText).hasMatch();
+}
+
 // Sends one request over the line-oriented privileged session and returns the
 // captured helper output. Exactly one request owns the gate at a time; a
 // re-entrant request is refused or deferred by its caller instead of being
@@ -7482,6 +7495,21 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     bool requestSucceeded = false;
     bool requestTimedOut = false;
     int requestExitCode = -1;
+    // A6-03/A6-04: at most one prompt dialog is open at a time, at most 8
+    // prompts are answered per request, and prompts arriving after the DONE
+    // record are ignored.  A dropped prompt is answered with an empty ANSWER
+    // record so the helper fails closed instead of hanging.
+    bool promptDialogOpen = false;
+    int promptCount = 0;
+    // A6-07: bound the per-request transcript and the raw wire buffer so a
+    // runaway helper can never exhaust memory.  Protocol records (PROMPT,
+    // DONE, SESSION_ERROR) keep parsing after the caps are hit; only the
+    // displayed OUT payloads are dropped.
+    constexpr qsizetype kCapturedOutputCap = 2 * 1024 * 1024;
+    constexpr qsizetype kWireBufferCap = 4 * 1024 * 1024;
+    bool capturedTruncated = false;
+    bool paneTruncated = false;
+    const QString truncatedMarker = QStringLiteral("… output truncated …");
 
     // Bounded safety net: a helper that never answers must not leave the UI
     // busy forever. The watchdog aborts the wait, reports a clear error and
@@ -7531,6 +7559,35 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             return;
         }
         wireBuffer += session->readAllStandardOutput();
+        // A6-07: drop the oldest bytes once the raw wire buffer exceeds its
+        // bound.  A partially buffered line at the cut is skipped, later
+        // records still parse, and the per-line caps above still hold.
+        if (wireBuffer.size() > kWireBufferCap) {
+            wireBuffer = wireBuffer.right(kWireBufferCap);
+        }
+        // A6-07: appends one transcript line, switching to the one-shot
+        // truncation marker once the captured-output cap is hit.  Returns
+        // false when the line was dropped so callers skip the pane insert.
+        auto appendCapturedLine = [&](const QString &text) -> bool {
+            if (capturedTruncated) {
+                return false;
+            }
+            if (captured.size() + text.size() + 1 > kCapturedOutputCap) {
+                capturedTruncated = true;
+                captured += truncatedMarker;
+                captured += QLatin1Char('\n');
+                if (!paneTruncated) {
+                    paneTruncated = true;
+                    output->moveCursor(QTextCursor::End);
+                    output->insertPlainText(truncatedMarker + QLatin1Char('\n'));
+                    output->moveCursor(QTextCursor::End);
+                }
+                return false;
+            }
+            captured += text;
+            captured += QLatin1Char('\n');
+            return true;
+        };
         while (true) {
             const qsizetype newline = wireBuffer.indexOf('\n');
             if (newline < 0) {
@@ -7556,20 +7613,48 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
 
             if (tag == QByteArrayLiteral("OUT")) {
                 const QString text = QString::fromUtf8(payload);
-                captured += text;
-                captured += QLatin1Char('\n');
-                output->moveCursor(QTextCursor::End);
-                output->insertPlainText(text + QLatin1Char('\n'));
-                output->moveCursor(QTextCursor::End);
+                if (appendCapturedLine(text)) {
+                    output->moveCursor(QTextCursor::End);
+                    output->insertPlainText(text + QLatin1Char('\n'));
+                    output->moveCursor(QTextCursor::End);
+                }
                 continue;
             }
             if (tag == QByteArrayLiteral("SESSION_ERROR")) {
                 const QString text = QString::fromUtf8(payload);
-                captured += QStringLiteral("ERROR: %1\n").arg(text);
-                output->appendPlainText(QStringLiteral("ERROR: %1").arg(text));
+                const QString errorLine = QStringLiteral("ERROR: %1").arg(text);
+                if (appendCapturedLine(errorLine)) {
+                    output->appendPlainText(errorLine);
+                }
                 continue;
             }
             if (tag == QByteArrayLiteral("PROMPT") && interactiveShellRequest) {
+                ++promptCount;
+                // A6-03/A6-04: no prompt handling after the DONE record,
+                // exactly one prompt dialog at a time, and a per-request
+                // prompt budget.  A dropped prompt is answered with an empty
+                // ANSWER record so the helper fails closed instead of waiting
+                // for an answer that never arrives.
+                if (requestDone) {
+                    continue;
+                }
+                if (promptDialogOpen) {
+                    if (session && session->state() == QProcess::Running) {
+                        session->write("ANSWER\t" + requestId + "\t\n");
+                    }
+                    continue;
+                }
+                if (promptCount > 8) {
+                    const QString budgetError = QStringLiteral(
+                        "ERROR: The privileged request exceeded the interactive prompt budget; treating the request as a protocol failure.");
+                    if (appendCapturedLine(budgetError)) {
+                        output->appendPlainText(budgetError);
+                    }
+                    if (session && session->state() == QProcess::Running) {
+                        session->write("ANSWER\t" + requestId + "\t\n");
+                    }
+                    continue;
+                }
                 // The shell command is waiting for input.  Show its trailing
                 // output in a modal dialog, send the typed answer back as an
                 // ANSWER record and keep the transcript readable.  Cancel (or
@@ -7608,21 +7693,53 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                                  &promptDialog, &QDialog::reject);
                 promptLayout->addWidget(promptButtons);
 
+                promptDialogOpen = true;
+                // A5-13: pause the request watchdog while the prompt dialog
+                // is open so the safety limit can never fire mid-popup; the
+                // remaining budget is restored after the dialog closes.
+                const bool watchdogWasActive = requestWatchdog.isActive();
+                const int watchdogRemaining = requestWatchdog.isActive()
+                    ? requestWatchdog.remainingTime() : 0;
+                requestWatchdog.stop();
                 const bool accepted = promptDialog.exec() == QDialog::Accepted;
+                promptDialogOpen = false;
+                if (watchdogWasActive && !requestDone && !requestTimedOut) {
+                    requestWatchdog.start(watchdogRemaining > 0 ? watchdogRemaining : 1);
+                }
+                if (requestDone) {
+                    // The request finished while the dialog was open (the
+                    // helper aborted its own answer window): never send a
+                    // stray ANSWER record for a request that is already done.
+                    continue;
+                }
                 const QString answer = accepted ? answerEdit->text() : QString();
                 if (accepted && !answer.isEmpty()) {
                     if (session && session->state() == QProcess::Running) {
                         session->write("ANSWER\t" + requestId + "\t" + answer.toUtf8().toBase64()
                                        + "\n");
                     }
-                    captured += QStringLiteral(">> %1\n").arg(answer);
-                    output->appendPlainText(QStringLiteral(">> %1").arg(answer));
+                    // A6-01: a secret-looking answer is masked in the
+                    // transcript and the pane; the raw ANSWER record still
+                    // carried the exact typed answer above.
+                    if (promptLooksSecret(promptText)) {
+                        const QString masked = QStringLiteral(">> [answer hidden]");
+                        if (appendCapturedLine(masked)) {
+                            output->appendPlainText(masked);
+                        }
+                    } else {
+                        const QString echoLine = QStringLiteral(">> %1").arg(answer);
+                        if (appendCapturedLine(echoLine)) {
+                            output->appendPlainText(echoLine);
+                        }
+                    }
                 } else {
                     if (session && session->state() == QProcess::Running) {
                         session->write("ANSWER\t" + requestId + "\t\n");
                     }
-                    captured += QStringLiteral(">> [prompt cancelled]\n");
-                    output->appendPlainText(QStringLiteral(">> [prompt cancelled]"));
+                    const QString cancelledLine = QStringLiteral(">> [prompt cancelled]");
+                    if (appendCapturedLine(cancelledLine)) {
+                        output->appendPlainText(cancelledLine);
+                    }
                 }
                 continue;
             }
@@ -7716,14 +7833,22 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     requestWatchdog.stop();
 
     if (requestTimedOut) {
-        // Abort the unresponsive helper immediately: a timed-out request must
-        // not add a multi-second graceful-close wait to the frozen UI. The
-        // close below still resets the session state and authorization.
+        // A5-02 (GUI side): give the broker a chance to exit through its own
+        // cleanup (reap registered children, unmount request-owned paths,
+        // close session-owned mappers) instead of SIGKILLing it outright.
+        // The broker may be blocked inside the per-request dispatch pipeline,
+        // in which case the QUIT sits in its input pipe and the brief grace
+        // expires; the existing single-PID terminate/kill path is the
+        // fallback after the grace.
         if (session && session->state() != QProcess::NotRunning) {
-            session->terminate();
-            if (!session->waitForFinished(1000)) {
-                session->kill();
-                session->waitForFinished(1000);
+            session->write("QUIT\n");
+            session->closeWriteChannel();
+            if (!session->waitForFinished(1500)) {
+                session->terminate();
+                if (!session->waitForFinished(1000)) {
+                    session->kill();
+                    session->waitForFinished(1000);
+                }
             }
         }
         closePrivilegedSession();
@@ -13014,6 +13139,9 @@ bool MainWindow::adoptActiveSessionLog()
         s_activeSessionPath.clear();
         return false;
     }
+    // A7-02: the shared session file stays private to the invoking user even
+    // when a second window re-opens it.
+    file->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     m_sessionLogFile = file;
     m_sessionLogPath = s_activeSessionPath;
     // The live register keeps the newest entry first, matching appendLog();
@@ -13144,8 +13272,17 @@ void MainWindow::createSessionLogFile(const QString &scopeLabel, const QString &
         return;
     }
     const QString directory = sessionLogDirectory();
+    const bool directoryExisted = QFileInfo::exists(directory);
     if (!QDir().mkpath(directory)) {
         return; // The in-memory log keeps working without a file.
+    }
+    // A7-02: session logs carry command evidence, so a log directory the app
+    // itself creates is private (0700).  A pre-existing directory (including
+    // a BOOT_REPAIR_LOG_DIR override pointing at one) keeps its
+    // administrator-chosen mode.
+    if (!directoryExisted) {
+        QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                              | QFileDevice::ExeOwner);
     }
     const QString stamp = QDateTime::currentDateTime().toString(QStringLiteral("yyyyMMdd-HHmmss"));
     QString path = QDir(directory).filePath(QStringLiteral("session-%1.log").arg(stamp));
@@ -13158,6 +13295,8 @@ void MainWindow::createSessionLogFile(const QString &scopeLabel, const QString &
         delete file;
         return;
     }
+    // A7-02: the per-run session log is private to the invoking user (0600).
+    file->setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner);
     m_sessionLogFile = file;
     m_sessionLogPath = path;
     s_activeSessionPath = path;

@@ -93,7 +93,7 @@ for rule in \
     'case conversion ,, +64' \
     'case conversion \^\^ +15' \
     'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +292' \
+    'array \[@\] expansions \(all forms\) +294' \
     'mapfile call sites +58' \
     'sed -i -E +1' \
     'sed -nE +61' \
@@ -103,7 +103,7 @@ for rule in \
     '=~ regex literal hoists +11' \
     'os-release gates +1' \
     'dpkg db:Status sites +4' \
-    'wrapped/replaced modern functions +39' \
+    'wrapped/replaced modern functions +42' \
     'post-rewrite residual: mapfile +0' \
     'post-rewrite residual: sed -i -E +0' \
     'post-rewrite residual: sed -nE +0' \
@@ -430,7 +430,72 @@ grep -q 's/\\t/%09/g' "$HELPER" \
     || fail "generated helper lost the A9-13 TAB percent-encoding"
 grep -q '[[ -n "$SESSION_DIR" ]] || SESSION_DIR="$(mktemp -d "$STATE_ROOT/session.XXXXXX")"' "$HELPER" \
     || fail "generated helper lost the A9-02 prepare_target session reuse guard"
+# Batch B6 surface: host-shell timeout wrap, noload mount retry, VG-scoped
+# unlocked-root probe.
+host_shell_body="$(awk '/^legacy_host_shell\(\)$/{f=1} f{print} f&&/^}$/{exit}' "$HELPER")"
+[[ -n "$host_shell_body" ]] || fail "could not extract legacy_host_shell from the generated helper"
+printf '%s\n' "$host_shell_body" | grep -q 'timeout --foreground 300 --kill-after=10 /usr/bin/env' \
+    || fail "generated helper lost the B6/A9-03 host-shell timeout wrap"
+printf '%s\n' "$host_shell_body" | grep -q 'rc=${PIPESTATUS\[0\]}' \
+    || fail "generated helper lost the B6/A9-03 host-shell PIPESTATUS rc"
+grep -q 'grandchildren of a killed shell may outlive' "$HELPER" \
+    || fail "generated helper lost the B6/A9-03 watchdog deviation comment"
+grep -q 'legacy_mount_options_without_noload' "$HELPER" \
+    || fail "generated helper lost the B6/A9-05 noload-stripping retry form"
+grep -q 'tune2fs -l -- "\$source"' "$HELPER" \
+    || fail "generated helper lost the B6/A9-05 tune2fs journal-state check"
+grep -q 's/\^Filesystem state:\[\[:space:\]\]\*//p' "$HELPER" \
+    || fail "generated helper lost the B6/A9-05 journal-state gate"
+grep -q 'may replay the target'"'"'s journal during a nominally read-only mount' "$HELPER" \
+    || fail "generated helper lost the B6/A9-05 replay-risk WARNING"
+grep -q -- '--noheadings -o vg_name' "$HELPER" \
+    || fail "generated helper lost the B6/A9-08 pvs VG probe"
+grep -q -- '--noheadings -o lv_path' "$HELPER" \
+    || fail "generated helper lost the B6/A9-08 lvs LV enumeration"
+grep -q 'falling back to the unscoped unlocked-root probe' "$HELPER" \
+    || fail "generated helper lost the B6/A9-08 unscoped fallback warning"
+grep -q 'Unlocked-root probe scoped to volume group' "$HELPER" \
+    || fail "generated helper lost the B6/A9-08 VG scope log line"
 pass "overlay wiring and gating surface present"
+
+# Batch B4: cancel-token surface in the generated helper.
+grep -q '^legacy_cancel_requested()' "$HELPER" \
+    || fail "generated helper lost the cancel-token predicate"
+grep -q '^legacy_cancel_stage_check()' "$HELPER" \
+    || fail "generated helper lost the stage-boundary cancel check"
+grep -q '^legacy_cancel_watcher()' "$HELPER" \
+    || fail "generated helper lost the shell-command cancel watcher"
+grep -q 'kill -0 "$PPID"' "$HELPER" \
+    || fail "generated helper watcher does not poll kill -0 PPID"
+grep -q 'terminate_helper_tree "$child"' "$HELPER" \
+    || fail "generated helper watcher lost the bounded TERM->KILL escalation"
+grep -q -- '--cancel-file requires a path.' "$HELPER" \
+    || fail "generated helper lost the --cancel-file option parsing"
+grep -q -- '--cancel-token requires a value.' "$HELPER" \
+    || fail "generated helper lost the --cancel-token option parsing"
+grep -q 'CANCEL_FILE="$2"' "$HELPER" \
+    || fail "generated helper does not store the --cancel-file path"
+grep -q 'CANCEL_TOKEN="$2"' "$HELPER" \
+    || fail "generated helper does not store the --cancel-token value"
+grep -q 'CANCEL_FILE="${CANCEL_FILE:-}"' "$HELPER" \
+    || fail "generated helper lost the environment cancel-file surface"
+grep -q 'CANCEL_TOKEN="${CANCEL_TOKEN:-}"' "$HELPER" \
+    || fail "generated helper lost the CANCEL_TOKEN environment surface"
+grep -q '$SESSION_DIR/cancel' "$HELPER" \
+    || fail "generated helper lost the session-dir cancel path"
+grep -q '^run_package_stage_modern()' "$HELPER" \
+    || fail "generated helper lost the renamed package-stage body"
+grep -q '^adaptive_initramfs_repair_modern()' "$HELPER" \
+    || fail "generated helper lost the renamed initramfs-stage body"
+grep -q '^adaptive_grub_stage_modern()' "$HELPER" \
+    || fail "generated helper lost the renamed grub-stage body"
+grep -q 'exit "\$rc" ) &' "$HELPER" \
+    || fail "generated helper shell pipelines do not run in the watcher-owned background subshell"
+grep -q 'rc=${PIPESTATUS\[0\]}' "$HELPER" \
+    || fail "generated helper shell pipelines do not preserve the command status through the watcher"
+grep -q 'Cancellation:' "$HELPER" \
+    || fail "generated helper usage lost the cancellation section"
+pass "B4 cancel-token surface (options, token forms, watcher, stage checks, usage)"
 
 # --- compat shim behaviour ---------------------------------------------------
 shim_checks()

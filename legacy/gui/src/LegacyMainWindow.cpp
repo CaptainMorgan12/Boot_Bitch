@@ -43,9 +43,12 @@
 #include <qtooltip.h>
 #include <qsignalmapper.h>
 
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <fcntl.h>
+#include <limits.h>
+#include <signal.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -722,7 +725,11 @@ std::string toStd(const QString &text)
     return std::string(text.latin1());
 }
 
-bool ensureDirectory(const QString &path)
+// Creates every missing path component with `mode` (mkdir); an existing
+// component must be a directory or the whole call fails. The leaf itself is
+// never chmod'ed here: callers that need a re-tightened leaf do it
+// explicitly and only for the GUI's own private paths.
+bool ensureDirectory(const QString &path, mode_t mode)
 {
     if (path.isEmpty()) {
         return false;
@@ -737,7 +744,7 @@ bool ensureDirectory(const QString &path)
             continue;
         }
         current += QString::fromLatin1("/") + *it;
-        if (::mkdir(current.latin1(), 0755) != 0) {
+        if (::mkdir(current.latin1(), mode) != 0) {
             struct stat info;
             if (::stat(current.latin1(), &info) != 0 || !S_ISDIR(info.st_mode)) {
                 return false;
@@ -745,6 +752,48 @@ bool ensureDirectory(const QString &path)
         }
     }
     return true;
+}
+
+// True when `path` is the GUI's own default log tree
+// (~/.boot-repair-legacy/logs or below it). Only that private tree is ever
+// chmod'ed by the GUI: a user-supplied --log-dir may be a shared path and
+// keeps the permissions its owner chose.
+bool isDefaultLogTree(const QString &path)
+{
+    const QString homeLogs = QDir::homeDirPath()
+        + QString::fromLatin1("/.boot-repair-legacy/logs");
+    return path == homeLogs
+        || path.startsWith(homeLogs + QString::fromLatin1("/"));
+}
+
+// The pending unlock keyfile path for the termination handlers, kept in a
+// plain char buffer (never QString/QByteArray) so a handler only touches
+// async-signal-safe primitives: unlink() and _exit(). writeUnlockKeyfile()
+// registers the created file, discardUnlockKeyfile() clears it.
+static char gUnlockKeyfilePath[PATH_MAX];
+
+extern "C" void legacyKeyfileTerminationHandler(int signalNumber)
+{
+    if (gUnlockKeyfilePath[0] != '\0') {
+        ::unlink(gUnlockKeyfilePath);
+    }
+    ::_exit(128 + signalNumber);
+}
+
+// Installs SIGTERM/SIGINT/SIGHUP handlers once, so a terminated GUI never
+// leaves a passphrase keyfile behind: the handler unlinks the pending
+// keyfile (best-effort) and exits with the conventional 128+signum status.
+void installKeyfileTerminationHandlers()
+{
+    struct sigaction action;
+    ::memset(&action, 0, sizeof(action));
+    action.sa_handler = legacyKeyfileTerminationHandler;
+    ::sigemptyset(&action.sa_mask);
+    const int handledSignals[] = { SIGTERM, SIGINT, SIGHUP };
+    for (std::size_t i = 0;
+         i < sizeof(handledSignals) / sizeof(handledSignals[0]); ++i) {
+        ::sigaction(handledSignals[i], &action, 0);
+    }
 }
 
 QString mapValue(const QMap<QString, QString> &map, const QString &key)
@@ -1151,6 +1200,9 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_smokeValidateOk(false)
 {
     setCaption(QString::fromLatin1("Boot Bitch Legacy (Etch / KDE 3.5 era)"));
+    // B3: a SIGTERM/SIGINT/SIGHUP must never leave an unlock keyfile behind.
+    // The handlers unlink the pending keyfile (if any) and exit 128+signum.
+    installKeyfileTerminationHandlers();
     // Every section title/group title/button/list column must stay fully
     // visible at the 1024x768 contract size; the layouts only need a modest
     // floor below it.
@@ -4156,16 +4208,43 @@ void LegacyMainWindow::runUnlock()
 }
 
 // Write the collected LUKS passphrase to a mode-600, O_EXCL-created keyfile
-// in the GUI's log directory (never argv, never the session log). Fails
-// closed: an existing file, an unwritable directory or a partial write leaves
-// nothing behind.
+// in the dedicated 0700 `.keys` subdirectory of the GUI's log directory
+// (never argv, never the session log). The subdirectory is created 0700 and
+// re-tightened on every attempt, so a shared --log-dir cannot expose a
+// passphrase file to other users. Fails closed: an existing file, an
+// unwritable directory or a partial write leaves nothing behind.
 bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *path)
 {
     if (path) {
         *path = QString::null;
     }
-    ensureDirectory(m_logDirectory);
-    QString candidate = m_logDirectory + QString::fromLatin1("/.unlock-key-")
+    ensureLogDirectory();
+    const QString keysDirectory = m_logDirectory + QString::fromLatin1("/.keys");
+    if (::mkdir(keysDirectory.local8Bit().data(), 0700) != 0) {
+        struct stat info;
+        if (::stat(keysDirectory.local8Bit().data(), &info) != 0
+            || !S_ISDIR(info.st_mode)) {
+            QMessageBox::warning(
+                this, QString::fromLatin1("Unlock keyfile unavailable"),
+                QString::fromLatin1(
+                    "The private keyfile directory could not be created in "
+                    "%1; the unlock was not started.")
+                    .arg(m_logDirectory),
+                QMessageBox::Ok, QMessageBox::NoButton);
+            return false;
+        }
+    }
+    if (::chmod(keysDirectory.local8Bit().data(), 0700) != 0) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Unlock keyfile unavailable"),
+            QString::fromLatin1(
+                "The private keyfile directory in %1 could not be secured; "
+                "the unlock was not started.")
+                .arg(m_logDirectory),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return false;
+    }
+    QString candidate = keysDirectory + QString::fromLatin1("/.unlock-key-")
         + QString::number(static_cast<unsigned long>(::getpid()));
     const QByteArray candidateBytes = candidate.local8Bit();
     const int fd = ::open(candidateBytes.data(),
@@ -4180,6 +4259,12 @@ bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *pat
             QMessageBox::Ok, QMessageBox::NoButton);
         return false;
     }
+    // Register the created keyfile with the termination handlers immediately
+    // so a SIGTERM/SIGINT/SIGHUP always unlinks it before the GUI exits,
+    // even mid-write.
+    ::strncpy(gUnlockKeyfilePath, candidateBytes.data(),
+              sizeof(gUnlockKeyfilePath) - 1);
+    gUnlockKeyfilePath[sizeof(gUnlockKeyfilePath) - 1] = '\0';
     const unsigned char *data =
         reinterpret_cast<const unsigned char *>(secret.data());
     std::size_t remaining = static_cast<std::size_t>(secret.size());
@@ -4188,6 +4273,7 @@ bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *pat
         if (written <= 0) {
             ::close(fd);
             ::unlink(candidateBytes.data());
+            gUnlockKeyfilePath[0] = '\0';
             QMessageBox::warning(
                 this, QString::fromLatin1("Unlock keyfile unavailable"),
                 QString::fromLatin1(
@@ -4215,6 +4301,7 @@ void LegacyMainWindow::discardUnlockKeyfile()
         ::unlink(m_unlockKeyfilePath.local8Bit().data());
         m_unlockKeyfilePath = QString::null;
     }
+    gUnlockKeyfilePath[0] = '\0';
 }
 
 
@@ -4390,6 +4477,15 @@ void LegacyMainWindow::deleteSelectedSessionLog()
     if (!fileInfo.exists() || !fileInfo.isFile() || fileInfo.isSymLink()) {
         return;
     }
+    // Record the file identity before the confirmation, then re-check with
+    // lstat() immediately before the unlink: only a regular file with the
+    // same device/inode may be removed, so a path swapped for a symlink or
+    // another file while the confirmation dialog is open is refused.
+    struct stat earlier;
+    if (::lstat(canonicalPath.local8Bit().data(), &earlier) != 0
+        || !S_ISREG(earlier.st_mode)) {
+        return;
+    }
     const bool answer = confirmWrapped(
         this, QString::fromLatin1("Delete session log"),
         QString::fromLatin1("Delete %1 permanently? This cannot be undone.")
@@ -4398,7 +4494,20 @@ void LegacyMainWindow::deleteSelectedSessionLog()
     if (!answer) {
         return;
     }
-    if (!QFile::remove(canonicalPath)) {
+    struct stat current;
+    if (::lstat(canonicalPath.local8Bit().data(), &current) != 0
+        || !S_ISREG(current.st_mode)
+        || current.st_dev != earlier.st_dev
+        || current.st_ino != earlier.st_ino) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Delete session log"),
+            QString::fromLatin1(
+                "%1 changed while the confirmation was open; the delete was "
+                "refused.").arg(fileName),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    if (::unlink(canonicalPath.local8Bit().data()) != 0) {
         QMessageBox::warning(this, QString::fromLatin1("Delete session log"),
                              QString::fromLatin1("Unable to delete %1.").arg(fileName),
                              QMessageBox::Ok, QMessageBox::NoButton);
@@ -4517,6 +4626,20 @@ void LegacyMainWindow::saveLegacySettings()
             settings.writeEntry(QString::fromLatin1(planSpecs[i].settingsKey),
                                 m_planChecks[i]->isChecked());
         }
+    }
+    // The four per-group files Qt 3.3.7 wrote under ~/.qt carry the GUI's
+    // persisted state; keep them private (0600) like the session logs. A
+    // file that was never written (its group stayed untouched) is missing and
+    // its chmod failure is ignored.
+    const QString qtDirectory = QDir::homeDirPath() + QString::fromLatin1("/.qt");
+    static const char *const settingsFiles[] = {
+        "devicesrc", "logsrc", "diagnosticsrc", "repairrc"
+    };
+    for (int i = 0;
+         i < static_cast<int>(sizeof(settingsFiles) / sizeof(settingsFiles[0])); ++i) {
+        const QString settingsPath = qtDirectory + QString::fromLatin1("/")
+            + QString::fromLatin1(settingsFiles[i]);
+        ::chmod(settingsPath.local8Bit().data(), 0600);
     }
 }
 
@@ -5541,6 +5664,19 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     updateActionStates();
     updateBusyIndicator();
 
+    // A10-05: the cancel token for this command.  The file lives in the
+    // GUI's own private directory (0700) and is removed before the run - a
+    // leftover from an interrupted session must never cancel the new command
+    // immediately - and after it finishes.  HelperRunner passes it as
+    // --cancel-file and cancel() touches it before the direct kill.
+    ensureDirectory(QDir::homeDirPath()
+                        + QString::fromLatin1("/.boot-repair-legacy"),
+                    0700);
+    m_cancelFilePath = QDir::homeDirPath()
+        + QString::fromLatin1("/.boot-repair-legacy/cancel-request");
+    ::unlink(m_cancelFilePath.local8Bit().data());
+    m_runner->setCancelFile(m_cancelFilePath);
+
     QString elevation;
     m_runner->resolveElevation(&elevation);
     m_lastHelperDescription = elevation;
@@ -5548,7 +5684,27 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     appendLog(QString::null);
     appendLog(QString::fromLatin1("=== %1 ===").arg(label));
     appendLog(QString::fromLatin1("helper: %1 (%2)").arg(m_runner->helperPath()).arg(elevation));
-    appendLog(QString::fromLatin1("command: %1 %2").arg(m_runner->helperPath()).arg(args.join(QString::fromLatin1(" "))));
+    // The command transcript never carries secrets. The guarded config-write
+    // verb transports the edited file content as one argv element (the last
+    // one), and the unlock carries its passphrase in the --key-file argument:
+    // both are redacted before the line is logged.
+    QStringList loggableArgs(args);
+    if (loggableArgs.count() > 4
+        && loggableArgs[0] == QString::fromLatin1("config-write")) {
+        loggableArgs[loggableArgs.count() - 1] =
+            QString::fromLatin1("<config-write content redacted>");
+    }
+    if (loggableArgs.count() > 1) {
+        for (int i = 0; i + 1 < static_cast<int>(loggableArgs.count()); ++i) {
+            if (loggableArgs[i] == QString::fromLatin1("--key-file")) {
+                loggableArgs[i + 1] =
+                    QString::fromLatin1("<keyfile path redacted>");
+            }
+        }
+    }
+    appendLog(QString::fromLatin1("command: %1 %2")
+                  .arg(m_runner->helperPath())
+                  .arg(loggableArgs.join(QString::fromLatin1(" "))));
     if (!m_runner->run(args)) {
         // HelperRunner emitted finished(false, -1) synchronously.
         return false;
@@ -5591,6 +5747,11 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
 {
     if (m_pendingLabel.isEmpty() && !m_running) {
         return;
+    }
+    // A10-05: the finished command's cancel token is removed so the next run
+    // starts clean (startCommand unlinks it again defensively).
+    if (!m_cancelFilePath.isEmpty()) {
+        ::unlink(m_cancelFilePath.local8Bit().data());
     }
     appendLog(QString::fromLatin1("--- %1 %2 (exit %3) ---")
                   .arg(m_pendingLabel)
@@ -10224,15 +10385,32 @@ void LegacyMainWindow::appendLog(const QString &line)
     }
 }
 
+// Ensures the session-log directory. The GUI's own default tree
+// (~/.boot-repair-legacy/logs) is private: components are created 0700 and
+// the leaf is re-tightened to 0700 (a pre-existing directory from an earlier
+// run with looser permissions, or one weakened by umask, is fixed here). A
+// user-supplied --log-dir is never chmod'ed: it may be a shared path and
+// keeps the permissions its owner chose.
+void LegacyMainWindow::ensureLogDirectory()
+{
+    if (m_logDirectory.isEmpty()) {
+        m_logDirectory = QDir::homeDirPath()
+            + QString::fromLatin1("/.boot-repair-legacy/logs");
+    }
+    if (isDefaultLogTree(m_logDirectory)) {
+        ensureDirectory(m_logDirectory, 0700);
+        ::chmod(m_logDirectory.local8Bit().data(), 0700);
+    } else {
+        ensureDirectory(m_logDirectory, 0755);
+    }
+}
+
 void LegacyMainWindow::ensureLogFile()
 {
     if (!m_logPath.isEmpty()) {
         return;
     }
-    if (m_logDirectory.isEmpty()) {
-        m_logDirectory = QDir::homeDirPath() + QString::fromLatin1("/.boot-repair-legacy/logs");
-    }
-    ensureDirectory(m_logDirectory);
+    ensureLogDirectory();
     m_logPath = m_logDirectory + QString::fromLatin1("/")
         + QDateTime::currentDateTime().toString(QString::fromLatin1("yyyyMMdd-hhmmss"))
         + QString::fromLatin1(".log");
@@ -10248,13 +10426,31 @@ void LegacyMainWindow::appendToLogFile(const QString &line)
     if (m_logPath.isEmpty()) {
         return;
     }
-    QFile file(m_logPath);
-    if (!file.open(IO_WriteOnly | IO_Append)) {
+    // Append-only open with O_NOFOLLOW + mode 0600: the session log is the
+    // GUI's own file, a replaced symlink must never redirect the write, and
+    // fchmod re-tightens the file to 0600 regardless of the process umask
+    // (no symlink following, no umask dependence). Written through the
+    // fdopen'ed FILE stream in local8Bit, the same encoding the previous
+    // QTextStream path produced.
+    const QByteArray pathBytes = m_logPath.local8Bit();
+    const int fd = ::open(pathBytes.data(),
+                          O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW, 0600);
+    if (fd < 0) {
         return;
     }
-    QTextStream stream(&file);
-    stream << line << "\n";
-    file.close();
+    ::fchmod(fd, 0600);
+    FILE *file = ::fdopen(fd, "a");
+    if (!file) {
+        ::close(fd);
+        return;
+    }
+    const QByteArray lineBytes = line.local8Bit();
+    if (lineBytes.size() > 0) {
+        std::fwrite(lineBytes.data(), 1,
+                    static_cast<std::size_t>(lineBytes.size()), file);
+    }
+    std::fputc('\n', file);
+    std::fclose(file);
 }
 
 // The combo index -> filter semantics live in logFilterSpecs plus the 16

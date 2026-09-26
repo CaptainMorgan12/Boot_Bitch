@@ -18,6 +18,7 @@
 #include <QDialog>
 #include <QDialogButtonBox>
 #include <QDir>
+#include <QElapsedTimer>
 #include <QFile>
 #include <QGuiApplication>
 #include <QInputDialog>
@@ -1028,6 +1029,13 @@ int capturedHostRequestCount(const QString &capturePath, const QString &command,
 //               non-interactive hint, followed by DONE with exit code 1
 //   aptupgrade - the helper's distribution-disabled apt-upgrade mapping line
 //               and a successful full-upgrade retry, followed by DONE 0
+//   shellpromptsecret - a passphrase prompt; reads one ANSWER record
+//   promptburst - two prompt records, the second arriving while the first
+//                 dialog is open; reads two ANSWER records
+//   promptbudget - nine sequential prompt records, one ANSWER read each
+//   promptafterdone - DONE followed by a stray PROMPT; never expects an answer
+//   promptslow - a delayed prompt and a short post-answer delay before DONE
+//   bigout - one ~2.3 MiB OUT payload followed by DONE
 // The process is parented to the window so MainWindow owns its lifetime.
 QProcess *startFakePrivilegedSession(MainWindow &window, const QString &capturePath,
                                      const QString &mode)
@@ -1050,6 +1058,38 @@ QProcess *startFakePrivilegedSession(MainWindow &window, const QString &captureP
         "printf 'OUT\\t%s\\tContinue? [Y/n] \\n' \"$id\"; "
         "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
         "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  shellpromptsecret) promptb64=$(printf 'Please enter the LUKS passphrase: ' | base64 | tr -d '\\n'); "
+        "printf 'OUT\\t%s\\tPlease enter the LUKS passphrase: \\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  promptburst) promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
+        "printf 'OUT\\t%s\\tContinue? [y/N] \\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "sleep 0.5; printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  promptbudget) promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
+        "i=0; while [ \"$i\" -lt 9 ]; do "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "i=$((i+1)); done; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  promptafterdone) promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer || true; "
+        "[ -n \"$answer\" ] && printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "exit 0 ;;\n"
+        "  promptslow) promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
+        "sleep 0.25; printf 'OUT\\t%s\\tContinue? [y/N] \\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "sleep 0.15; printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  bigout) big=$(head -c 2300000 /dev/zero | tr '\\0' 'x'); "
+        "printf 'OUT\\t%s\\t%s\\n' \"$id\" \"$big\"; "
         "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "esac\n"
         "exit 9\n")
@@ -2295,6 +2335,11 @@ private slots:
     void privilegedRefusalNamesNextStep();
     void targetShellDispatchStillUsesShell();
     void chrootShellInteractivePromptHintAndBusyCoverage();
+    void shellPromptSecretAnswerIsMaskedButDelivered();
+    void sessionLogFileAndDirectoryArePrivate();
+    void shellPromptBudgetAndPostDonePromptsFailClosed();
+    void requestWatchdogPausesWhilePromptDialogOpen();
+    void shellTranscriptCapMarksTruncationAndKeepsDone();
     void shellOutputWrapsLongLinesWithinPane();
     void shellOutputAutoScrollOnlyWhenAlreadyAtBottom();
     void shellReadinessGateIsSharedByButtonAndReturnPressed();
@@ -12980,6 +13025,433 @@ void MainWindowUiTest::chrootShellInteractivePromptHintAndBusyCoverage()
              "the actionable hint must be recorded in the application log");
     QVERIFY2(log.contains(QStringLiteral("Chroot shell command failed: dnf update")),
              "the failure message must be recorded in the application log");
+}
+
+// A6-01: a prompt that is asking for a secret (a passphrase, password, PIN,
+// key file, unlock phrase, ...) never echoes the typed answer into the
+// transcript or the shell pane; the masked ">> [answer hidden]" line appears
+// instead, while the raw ANSWER record still carries the exact typed text to
+// the helper.
+void MainWindowUiTest::shellPromptSecretAnswerIsMaskedButDelivered()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.updateTargetLabels();
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("shellpromptsecret")));
+
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("cryptsetup luksOpen /dev/test-luks root"));
+
+    const QString secret = QStringLiteral("correct horse battery staple");
+    bool promptSeen = false;
+    QTimer *answerTimer = new QTimer(&window);
+    answerTimer->setInterval(10);
+    QObject::connect(answerTimer, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")) {
+                continue;
+            }
+            answerTimer->stop();
+            promptSeen = true;
+            auto *answer = dialog->findChild<QLineEdit *>(QStringLiteral("shellPromptAnswerEdit"));
+            if (answer) {
+                answer->setText(secret);
+            }
+            auto *buttons = dialog->findChild<QDialogButtonBox *>();
+            if (buttons && buttons->button(QDialogButtonBox::Ok)) {
+                buttons->button(QDialogButtonBox::Ok)->click();
+            }
+            answerTimer->deleteLater();
+            return;
+        }
+    });
+    answerTimer->start();
+    window.runChrootShellCommand();
+
+    QVERIFY(promptSeen);
+
+    // The raw ANSWER record still carries the exact typed secret.
+    QFile capture(capturePath);
+    QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString captured = QString::fromUtf8(capture.readAll());
+    QVERIFY2(captured.contains(QStringLiteral("ANSWER\t")),
+             "no ANSWER record reached the helper session");
+    QVERIFY2(captured.contains(QString::fromLatin1(secret.toUtf8().toBase64())),
+             "the raw ANSWER record must still carry the typed secret");
+
+    // Neither the transcript nor the pane may echo the secret; both show the
+    // masked marker instead.
+    const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+    QVERIFY2(!shellOutput.contains(secret),
+             "the typed secret must never appear in the shell pane");
+    QVERIFY2(shellOutput.contains(QStringLiteral(">> [answer hidden]")),
+             "the secret answer must be masked in the transcript");
+    QVERIFY2(!shellOutput.contains(QStringLiteral(">> correct")),
+             "a secret prompt must not echo a plain '>> answer' line");
+    QVERIFY(shellOutput.contains(QStringLiteral("[exit 0]")));
+}
+
+// A7-02: a session log directory the app itself creates is private (0700) and
+// the per-run session file is private to the invoking user (0600). A
+// pre-existing directory (including a BOOT_REPAIR_LOG_DIR override that
+// points at one) keeps its administrator-chosen mode.
+void MainWindowUiTest::sessionLogFileAndDirectoryArePrivate()
+{
+    // Case 1: the app creates the directory (0700) and the file (0600).
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        const QString createdDir = tmp.path() + QStringLiteral("/app-created/logs");
+        ScopedEnvironmentVariable logDirEnv("BOOT_REPAIR_LOG_DIR", createdDir.toUtf8());
+        MainWindow::s_activeSessionPath.clear();
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window, true);
+        window.updateSessionScope();
+        const QStringList files = sessionLogFiles(createdDir);
+        QCOMPARE(files.size(), 1);
+
+        const QFileDevice::Permissions dirPermissions = QFileInfo(createdDir).permissions();
+        QVERIFY2(dirPermissions & QFileDevice::ReadOwner
+                     && dirPermissions & QFileDevice::WriteOwner
+                     && dirPermissions & QFileDevice::ExeOwner,
+                 "the app-created log directory must be owner rwx");
+        QVERIFY2(!(dirPermissions & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
+                                     | QFileDevice::ExeGroup | QFileDevice::ReadOther
+                                     | QFileDevice::WriteOther | QFileDevice::ExeOther)),
+                 "the app-created log directory must be private (0700)");
+
+        const QFileDevice::Permissions filePermissions = QFileInfo(files.first()).permissions();
+        QVERIFY2(filePermissions & QFileDevice::ReadOwner
+                     && filePermissions & QFileDevice::WriteOwner,
+                 "the session log must be owner-readable and writable");
+        QVERIFY2(!(filePermissions & (QFileDevice::ReadGroup | QFileDevice::WriteGroup
+                                      | QFileDevice::ExeGroup | QFileDevice::ReadOther
+                                      | QFileDevice::WriteOther | QFileDevice::ExeOther
+                                      | QFileDevice::ExeOwner)),
+                 "the session log must be private (0600)");
+    }
+
+    // Case 2: a pre-existing override directory keeps its mode (0755).
+    {
+        QTemporaryDir tmp;
+        QVERIFY(tmp.isValid());
+        const QString existingDir = tmp.path() + QStringLiteral("/existing");
+        QVERIFY(QDir().mkpath(existingDir));
+        const QFileDevice::Permissions existingMode =
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+            | QFileDevice::ReadGroup | QFileDevice::ExeGroup
+            | QFileDevice::ReadOther | QFileDevice::ExeOther;
+        QVERIFY(QFile::setPermissions(existingDir, existingMode));
+        ScopedEnvironmentVariable logDirEnv("BOOT_REPAIR_LOG_DIR", existingDir.toUtf8());
+        MainWindow::s_activeSessionPath.clear();
+
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        prepareRepairScope(window, true);
+        window.updateSessionScope();
+        QCOMPARE(sessionLogFiles(existingDir).size(), 1);
+
+        QVERIFY2(QFileInfo(existingDir).permissions() & QFileDevice::ReadOther,
+                 "a pre-existing log directory must keep its administrator-chosen mode");
+    }
+}
+
+// A6-03/A6-04: at most one prompt dialog is open at a time, at most 8 prompts
+// are answered per request, and prompts arriving after the DONE record are
+// ignored. A dropped or refused prompt is answered with an empty ANSWER
+// record so the helper fails closed instead of waiting for an answer that
+// never arrives.
+void MainWindowUiTest::shellPromptBudgetAndPostDonePromptsFailClosed()
+{
+    // --- a second prompt arriving while the first dialog is open is dropped
+    // with an empty ANSWER record; the typed answer still goes out ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("promptburst")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+        int dialogsSeen = 0;
+        bool clicked = false;
+        QElapsedTimer hold;
+        hold.start();
+        QTimer *answerTimer = new QTimer(&window);
+        answerTimer->setInterval(10);
+        QObject::connect(answerTimer, &QTimer::timeout, &window, [&] {
+            // The dialog hides synchronously on OK, so every tick observes
+            // either the still-open first dialog or (later) no dialog at all;
+            // the clicked flag only guards the hold window.
+            if (clicked) {
+                return;
+            }
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(top);
+                if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")
+                    || !dialog->isVisible()) {
+                    continue;
+                }
+                // Keep the dialog open long enough for the scripted second
+                // PROMPT (sent 0.5 s after the first) to arrive mid-popup.
+                if (hold.elapsed() < 800) {
+                    return;
+                }
+                clicked = true;
+                ++dialogsSeen;
+                auto *answer = dialog->findChild<QLineEdit *>(QStringLiteral("shellPromptAnswerEdit"));
+                if (answer) {
+                    answer->setText(QStringLiteral("Y"));
+                }
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                if (buttons && buttons->button(QDialogButtonBox::Ok)) {
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                }
+                answerTimer->deleteLater();
+                return;
+            }
+        });
+        answerTimer->start();
+        window.runChrootShellCommand();
+
+        QCOMPARE(dialogsSeen, 1);
+        QFile capture(capturePath);
+        QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QStringList answerLines = QString::fromUtf8(capture.readAll())
+                                            .split(QLatin1Char('\n'), Qt::SkipEmptyParts)
+                                            .filter(QStringLiteral("ANSWER"));
+        QCOMPARE(answerLines.size(), 2);
+        QVERIFY2(answerLines.at(0).endsWith(QLatin1Char('\t')),
+                 "the dropped prompt must be answered with an empty ANSWER payload");
+        QVERIFY2(answerLines.at(1).contains(QString::fromLatin1(QByteArrayLiteral("Y").toBase64())),
+                 "the visible dialog's typed answer must still reach the helper");
+        const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+        QVERIFY(shellOutput.contains(QStringLiteral("[exit 0]")));
+    }
+
+    // --- the 9th prompt exceeds the per-request budget: it is refused with
+    // the protocol-failure line and an empty ANSWER record, never a 9th
+    // dialog ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("promptbudget")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+        int dialogsSeen = 0;
+        QTimer *answerTimer = new QTimer(&window);
+        answerTimer->setInterval(10);
+        QObject::connect(answerTimer, &QTimer::timeout, &window, [&] {
+            // Each prompt dialog hides synchronously on OK, so a tick can
+            // only ever see the current (fresh) dialog; answering it hides it
+            // before the next prompt opens the next one.
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(top);
+                if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")
+                    || !dialog->isVisible()) {
+                    continue;
+                }
+                ++dialogsSeen;
+                auto *answer = dialog->findChild<QLineEdit *>(QStringLiteral("shellPromptAnswerEdit"));
+                if (answer) {
+                    answer->setText(QStringLiteral("Y"));
+                }
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                if (buttons && buttons->button(QDialogButtonBox::Ok)) {
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                }
+                return;
+            }
+        });
+        answerTimer->start();
+        window.runChrootShellCommand();
+        answerTimer->stop();
+        answerTimer->deleteLater();
+
+        QCOMPARE(dialogsSeen, 8);
+        QFile capture(capturePath);
+        QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QStringList answerLines = QString::fromUtf8(capture.readAll())
+                                            .split(QLatin1Char('\n'), Qt::SkipEmptyParts)
+                                            .filter(QStringLiteral("ANSWER"));
+        QCOMPARE(answerLines.size(), 9);
+        QVERIFY2(answerLines.at(8).endsWith(QLatin1Char('\t')),
+                 "the over-budget prompt must be answered with an empty ANSWER payload");
+        const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+        QVERIFY2(shellOutput.contains(QStringLiteral("prompt budget")),
+                 "exceeding the prompt budget must be reported as a protocol failure");
+        QVERIFY(shellOutput.contains(QStringLiteral("[exit 0]")));
+    }
+
+    // --- a PROMPT arriving after the DONE record is ignored: no dialog and
+    // no ANSWER record ---
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("promptafterdone")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+        bool promptDialogSeen = false;
+        QTimer *promptProbe = new QTimer(&window);
+        promptProbe->setInterval(10);
+        QObject::connect(promptProbe, &QTimer::timeout, &window, [&] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(top);
+                if (dialog && dialog->objectName() == QStringLiteral("shellPromptDialog")) {
+                    promptDialogSeen = true;
+                }
+            }
+        });
+        promptProbe->start();
+        window.runChrootShellCommand();
+        promptProbe->stop();
+        promptProbe->deleteLater();
+
+        QVERIFY2(!promptDialogSeen,
+                 "a prompt after the DONE record must never open a dialog");
+        QFile capture(capturePath);
+        QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString captured = QString::fromUtf8(capture.readAll());
+        QVERIFY2(!captured.contains(QStringLiteral("ANSWER")),
+                 "a prompt after the DONE record must never be answered");
+        QVERIFY(window.m_chrootShellOutput->toPlainText().contains(QStringLiteral("[exit 0]")));
+    }
+}
+
+// A5-13: the request watchdog is paused while the prompt dialog is open, so a
+// short safety limit can never fire mid-popup. The remaining budget resumes
+// after the answer and the request completes normally.
+void MainWindowUiTest::requestWatchdogPausesWhilePromptDialogOpen()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.updateTargetLabels();
+    window.m_privilegedRequestTimeoutMs = 800;
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("promptslow")));
+
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+    QElapsedTimer hold;
+    hold.start();
+    QTimer *answerTimer = new QTimer(&window);
+    answerTimer->setInterval(10);
+    QObject::connect(answerTimer, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")) {
+                continue;
+            }
+            // Hold the dialog open past the 800 ms safety limit (the prompt
+            // arrives after ~250 ms, so without the A5-13 pause the watchdog
+            // would fire mid-popup).
+            if (hold.elapsed() < 700) {
+                return;
+            }
+            answerTimer->stop();
+            auto *answer = dialog->findChild<QLineEdit *>(QStringLiteral("shellPromptAnswerEdit"));
+            if (answer) {
+                answer->setText(QStringLiteral("Y"));
+            }
+            auto *buttons = dialog->findChild<QDialogButtonBox *>();
+            if (buttons && buttons->button(QDialogButtonBox::Ok)) {
+                buttons->button(QDialogButtonBox::Ok)->click();
+            }
+            answerTimer->deleteLater();
+            return;
+        }
+    });
+    answerTimer->start();
+    window.runChrootShellCommand();
+
+    const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+    QVERIFY2(shellOutput.contains(QStringLiteral("[exit 0]")),
+             "the paused watchdog must let the prompt-answering request complete");
+    QVERIFY2(!shellOutput.contains(QStringLiteral("safety limit")),
+             "the safety watchdog must never fire while the prompt dialog is open");
+    QFile capture(capturePath);
+    QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+    QVERIFY2(QString::fromUtf8(capture.readAll())
+                 .contains(QString::fromLatin1(QByteArrayLiteral("Y").toBase64())),
+             "the answered prompt must still deliver its ANSWER record");
+}
+
+// A6-07: the per-request transcript is capped at 2 MiB; once the cap is hit
+// the "… output truncated …" marker replaces further OUT payloads while the
+// protocol records (DONE) keep parsing, so a huge-output command still
+// completes instead of growing the pane without bound.
+void MainWindowUiTest::shellTranscriptCapMarksTruncationAndKeepsDone()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.updateTargetLabels();
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("bigout")));
+
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("cat /proc/kcore"));
+    window.runChrootShellCommand();
+
+    const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+    QVERIFY2(shellOutput.contains(QStringLiteral("output truncated")),
+             "an over-cap transcript must carry the truncation marker");
+    QVERIFY2(shellOutput.contains(QStringLiteral("[exit 0]")),
+             "the DONE record must keep parsing after the transcript cap");
+    QVERIFY2(shellOutput.size() < 64 * 1024,
+             "the huge OUT payload must not reach the shell pane");
 }
 
 // The shared Host/Chroot shell transcript wraps at the pane width instead of

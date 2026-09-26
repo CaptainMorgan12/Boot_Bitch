@@ -88,6 +88,11 @@ trap - EXIT INT TERM HUP
 trap smoke_cleanup EXIT
 set +e
 
+# B6/A9-05: the split-LV data-mount tests below replace mount_recorded with
+# stubs; capture the real wrapper now so the mount-option retry tests can
+# restore it later.
+MOUNT_RECORDED_DEFINITION="$(declare -f mount_recorded)"
+
 TARGET_ROOT="$FIXTURE"
 ROOT_CANONICAL="/dev/null"
 ROOT_DEVICE="/dev/null"
@@ -775,13 +780,20 @@ chmod +x "$FIXTURE/blkid-stub/blkid-old"
     || fail "path-based blkid probe did not parse the Etch-era TYPE= output"
 pass "legacy path-based blkid TYPE probe (modern and Etch-era output)"
 
-# --- cycle 12: existing-mapper unlock still probes the root candidate --------
+# --- cycle 12 + B6/A9-08: existing-mapper unlock probes the root candidate --
 # A previous session may have left the mapper open: the reuse path must emit
 # UNLOCKED_ROOT for the already-open chain (a fresh GUI process cannot see
 # the LVs in its read-only inventory otherwise).
+#
+# B6/A9-08: the probe scopes its candidates to the unlocked PV's own volume
+# group, so a foreign running-host LV (even one named *root*) is never
+# offered; without LVM tooling (or without a provable VG) it falls back to
+# the unscoped probe with a WARNING - the candidate is never silently
+# dropped.
 find() {
     if [[ "$1" == /dev/mapper ]]; then
-        printf '%s\n' /dev/mapper/debian-root /dev/mapper/debian-usr \
+        printf '%s\n' /dev/mapper/etch-root /dev/mapper/etch-var \
+            /dev/mapper/etch-home /dev/mapper/hostvg-root \
             /dev/mapper/luks-etchroot
         return 0
     fi
@@ -789,16 +801,289 @@ find() {
 }
 legacy_blkid_value_path() {
     case "$1" in
-        *debian-root*|*debian-usr*) printf 'ext3\n' ;;
+        *etch-*|*hostvg-*) printf 'ext3\n' ;;
         *) return 0 ;;
     esac
 }
-probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
-printf '%s\n' "$probe_out" | grep -q 'UNLOCKED_ROOT=/dev/mapper/debian-root' \
-    || fail "existing-mapper probe did not emit the unlocked root"
-printf '%s\n' "$probe_out" | grep -q 'UNLOCKED_ROOT_FSTYPE=ext3' \
-    || fail "existing-mapper probe did not emit the unlocked root fstype"
-pass "legacy unlock root probe on the already-open mapper chain"
+mkdir -p "$FIXTURE/lvm-bin" "$FIXTURE/lvm-notools"
+cat > "$FIXTURE/lvm-bin/pvs" <<'EOF'
+#!/bin/sh
+# Fake pvs: `pvs --noheadings -o vg_name -- <pv>`.
+if [ "${PVS_NONE:-}" = "1" ]; then
+    exit 0
+fi
+printf '  %s\n' "${PVS_VG:-etch}"
+EOF
+chmod +x "$FIXTURE/lvm-bin/pvs"
+cat > "$FIXTURE/lvm-bin/lvs" <<'EOF'
+#!/bin/sh
+# Fake lvs: `lvs --noheadings -o lv_path -- <vg>`.
+if [ "${LVS_NONE:-}" = "1" ]; then
+    exit 0
+fi
+printf '  %s\n' "${LVS_LV1:-/dev/mapper/etch-root}"
+[ -n "${LVS_LV2:-}" ] && printf '  %s\n' "$LVS_LV2"
+EOF
+chmod +x "$FIXTURE/lvm-bin/lvs"
+ln -s "$(command -v sort)" "$FIXTURE/lvm-notools/sort"
+
+# Strict mode: the VG gate must exclude the foreign hostvg-root LV even
+# though it matches the root-name heuristic, and select the target VG's LV.
+legacy_real_tool_path() { type -P "$1"; }
+(
+    PATH="$FIXTURE/lvm-bin:$PATH"
+    LVS_LV1=/dev/mapper/etch-root
+    LVS_LV2=/dev/mapper/etch-var
+    export PATH LVS_LV1 LVS_LV2
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-strict.txt"
+)
+strict_out="$(cat "$FIXTURE/unlock-probe-strict.txt")"
+printf '%s\n' "$strict_out" | grep -q 'UNLOCKED_ROOT=/dev/mapper/etch-root' \
+    || fail "VG-scoped probe did not select the target VG root LV: $strict_out"
+printf '%s\n' "$strict_out" | grep -q 'UNLOCKED_ROOT_FSTYPE=ext3' \
+    || fail "VG-scoped probe did not emit the unlocked root fstype"
+printf '%s\n' "$strict_out" | grep -q 'hostvg' \
+    && fail "VG-scoped probe leaked a foreign running-host LV: $strict_out"
+printf '%s\n' "$strict_out" | grep -q "scoped to volume group 'etch'" \
+    || fail "VG-scoped probe left no scope evidence: $strict_out"
+
+# Strict mode, no root-named LV in the VG: the only VG member must win over
+# the foreign root-named LV (the VG gate beats the name heuristic).
+(
+    PATH="$FIXTURE/lvm-bin:$PATH"
+    LVS_LV1=/dev/mapper/etch-home
+    LVS_LV2=
+    export PATH LVS_LV1 LVS_LV2
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-strict2.txt"
+)
+strict_out="$(cat "$FIXTURE/unlock-probe-strict2.txt")"
+printf '%s\n' "$strict_out" | grep -q 'UNLOCKED_ROOT=/dev/mapper/etch-home' \
+    || fail "VG-scoped probe did not fall back to the in-VG LV: $strict_out"
+printf '%s\n' "$strict_out" | grep -q 'hostvg' \
+    && fail "VG-scoped probe leaked a foreign running-host LV: $strict_out"
+
+# Missing LVM tooling: WARNING + unscoped fallback (current behaviour, which
+# prefers the last root-name match - the foreign LV here - and is never
+# silently empty).
+legacy_real_tool_path() {
+    case "$1" in
+        pvs|lvs) return 1 ;;
+        *) type -P "$1" ;;
+    esac
+}
+(
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-notools.txt"
+)
+fallback_out="$(cat "$FIXTURE/unlock-probe-notools.txt")"
+printf '%s\n' "$fallback_out" | grep -q 'no volume group could be proven' \
+    || fail "missing-tooling probe lost the fallback WARNING: $fallback_out"
+printf '%s\n' "$fallback_out" | grep -q 'UNLOCKED_ROOT=' \
+    || fail "missing-tooling fallback silently dropped the candidate: $fallback_out"
+
+# VG proven but lvs missing: WARNING + fallback.
+legacy_real_tool_path() {
+    case "$1" in
+        lvs) return 1 ;;
+        *) type -P "$1" ;;
+    esac
+}
+(
+    PATH="$FIXTURE/lvm-bin:$PATH"
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-nolvs.txt"
+)
+fallback_out="$(cat "$FIXTURE/unlock-probe-nolvs.txt")"
+printf '%s\n' "$fallback_out" | grep -q 'lvs is not installed' \
+    || fail "lvs-missing probe lost the fallback WARNING: $fallback_out"
+printf '%s\n' "$fallback_out" | grep -q 'UNLOCKED_ROOT=' \
+    || fail "lvs-missing fallback silently dropped the candidate: $fallback_out"
+
+# pvs reports no VG (the device is not a provable PV): WARNING + fallback.
+legacy_real_tool_path() { type -P "$1"; }
+(
+    PATH="$FIXTURE/lvm-bin:$PATH"
+    PVS_NONE=1
+    export PATH PVS_NONE
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-novg.txt"
+)
+fallback_out="$(cat "$FIXTURE/unlock-probe-novg.txt")"
+printf '%s\n' "$fallback_out" | grep -q 'no volume group could be proven' \
+    || fail "no-VG probe lost the fallback WARNING: $fallback_out"
+printf '%s\n' "$fallback_out" | grep -q 'UNLOCKED_ROOT=' \
+    || fail "no-VG fallback silently dropped the candidate: $fallback_out"
+
+# VG proven but lvs lists zero logical volumes: WARNING + fallback.
+(
+    PATH="$FIXTURE/lvm-bin:$PATH"
+    LVS_NONE=1
+    export PATH LVS_NONE
+    probe_out="$(legacy_unlock_root_probe /dev/mapper/luks-etchroot)"
+    printf '%s\n' "$probe_out" > "$FIXTURE/unlock-probe-zerolvs.txt"
+)
+fallback_out="$(cat "$FIXTURE/unlock-probe-zerolvs.txt")"
+printf '%s\n' "$fallback_out" | grep -q 'no logical volumes could be listed' \
+    || fail "zero-LV probe lost the fallback WARNING: $fallback_out"
+printf '%s\n' "$fallback_out" | grep -q 'UNLOCKED_ROOT=' \
+    || fail "zero-LV fallback silently dropped the candidate: $fallback_out"
+pass "legacy unlock root probe (VG-scoped; foreign LVs excluded; unscoped fallback with WARNING)"
+
+# --- B6/A9-05: noload kept on the first ro mount, stripped only on retry ----
+# Etch's util-linux 2.12r can reject `ro,noload` on ext3; the filter must keep
+# noload for the first attempt (a plain ro mount of a dirty journal would
+# silently replay it), retry with the stripped options only after that first
+# mount fails, and consult tune2fs first: clean -> plain retry, dirty/unknown
+# -> WARNING naming the replay risk, still proceeding (fail-soft).
+[[ "$(legacy_filter_mount_options 'ro,noload')" == 'ro,noload' ]] \
+    || fail "mount-option filter no longer keeps noload"
+[[ "$(legacy_filter_mount_options 'ro,noload,nosuid')" == 'ro,noload,nosuid' ]] \
+    || fail "mount-option filter mangled the option list"
+[[ "$(legacy_mount_options_without_noload 'ro,noload,nosuid')" == 'ro,nosuid' ]] \
+    || fail "retry form did not strip exactly noload"
+[[ "$(legacy_mount_options_without_noload 'ro,nosuid')" == 'ro,nosuid' ]] \
+    || fail "retry form mangled a noload-free list"
+pass "mount-option filter keeps noload; retry form strips exactly noload"
+
+# The helper functions re-armed errexit after the earlier sections; the
+# mount-retry scenarios below rely on explicit rc handling, so re-arm set +e
+# like the resolver block does.
+set +e
+mkdir -p "$FIXTURE/mount-retry"
+# Restore the real mount_recorded (the split-LV data-mount test left a
+# fail-closed stub in its place).
+eval "$MOUNT_RECORDED_DEFINITION"
+# Successful first attempt: no retry, no tune2fs, noload retained.
+(
+    trap - EXIT
+    : > "$FIXTURE/mount-retry/calls.log"
+    mount_calls=0
+    tune2fs_calls=0
+    mount_recorded_modern() {
+        mount_calls=$((mount_calls + 1))
+        printf '%s\n' "$*" >> "$FIXTURE/mount-retry/calls.log"
+        return 0
+    }
+    tune2fs() { tune2fs_calls=$((tune2fs_calls + 1)); return 1; }
+    mount_recorded /dev/null "$FIXTURE/mount-retry/dst" -o ro,noload \
+        || fail "a successful first noload mount must not fail"
+    [[ $mount_calls -eq 1 ]] || fail "a successful noload mount must not retry"
+    [[ $tune2fs_calls -eq 0 ]] || fail "a successful first mount must not consult tune2fs"
+    grep -q 'ro,noload' "$FIXTURE/mount-retry/calls.log" \
+        || fail "the first attempt lost noload"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "mount-option first-attempt checks failed"
+pass "mount-option retry: a successful noload mount keeps noload and never retries"
+
+# First attempt fails + clean journal: one stripped retry (noload removed)
+# succeeds; the log records the clean-journal note without a WARNING.
+(
+    trap - EXIT
+    : > "$FIXTURE/mount-retry/calls.log"
+    : > "$FIXTURE/mount-retry/log"
+    mount_calls=0
+    mount_recorded_modern() {
+        mount_calls=$((mount_calls + 1))
+        printf '%s\n' "$*" >> "$FIXTURE/mount-retry/calls.log"
+        if [[ $mount_calls -eq 1 ]]; then return 1; fi
+        return 0
+    }
+    tune2fs() { printf 'Filesystem state:           clean\n'; }
+    log() { printf '%s\n' "$*" >> "$FIXTURE/mount-retry/log"; }
+    mount_recorded /dev/null "$FIXTURE/mount-retry/dst" -o ro,noload \
+        || fail "the clean-journal stripped retry mount failed"
+    [[ $mount_calls -eq 2 ]] || fail "a failed noload mount did not retry"
+    last_call="$(tail -n1 "$FIXTURE/mount-retry/calls.log")"
+    [[ "$last_call" == *'-o ro'* && "$last_call" != *noload* ]] \
+        || fail "the retry did not strip noload: $last_call"
+    grep -q 'journal is clean' "$FIXTURE/mount-retry/log" \
+        || fail "the clean-journal retry left no evidence"
+    grep -q 'WARNING' "$FIXTURE/mount-retry/log" \
+        && fail "the clean-journal retry logged a WARNING"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "clean-journal retry checks failed"
+pass "mount-option retry: clean journal -> stripped retry without a WARNING"
+
+# Dirty journal: WARNING naming the replay risk, retry still proceeds.
+(
+    trap - EXIT
+    : > "$FIXTURE/mount-retry/log"
+    mount_calls=0
+    mount_recorded_modern() {
+        mount_calls=$((mount_calls + 1))
+        if [[ $mount_calls -eq 1 ]]; then return 1; fi
+        return 0
+    }
+    tune2fs() { printf 'Filesystem state:           not clean\n'; }
+    log() { printf '%s\n' "$*" >> "$FIXTURE/mount-retry/log"; }
+    mount_recorded /dev/null "$FIXTURE/mount-retry/dst" -o ro,noload \
+        || fail "the dirty-journal retry mount failed"
+    [[ $mount_calls -eq 2 ]] || fail "the dirty-journal retry did not proceed"
+    grep -q 'WARNING' "$FIXTURE/mount-retry/log" \
+        || fail "the dirty-journal retry lost its WARNING"
+    grep -q 'replay the target' "$FIXTURE/mount-retry/log" \
+        || fail "the dirty-journal WARNING does not name the replay risk"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "dirty-journal retry checks failed"
+pass "mount-option retry: dirty journal -> WARNING naming the replay risk, still proceeds"
+
+# Unreadable journal state (tune2fs fails): WARNING with the unknown state,
+# retry still proceeds (fail-soft, never a hard refusal).
+(
+    trap - EXIT
+    : > "$FIXTURE/mount-retry/log"
+    mount_calls=0
+    mount_recorded_modern() {
+        mount_calls=$((mount_calls + 1))
+        if [[ $mount_calls -eq 1 ]]; then return 1; fi
+        return 0
+    }
+    tune2fs() { return 1; }
+    log() { printf '%s\n' "$*" >> "$FIXTURE/mount-retry/log"; }
+    mount_recorded /dev/null "$FIXTURE/mount-retry/dst" -o ro,noload \
+        || fail "the unknown-state retry mount failed"
+    [[ $mount_calls -eq 2 ]] || fail "the unknown-state retry did not proceed"
+    grep -q 'WARNING' "$FIXTURE/mount-retry/log" \
+        || fail "the unknown-state retry lost its WARNING"
+    grep -q 'unknown' "$FIXTURE/mount-retry/log" \
+        || fail "the unknown-state WARNING does not name the unknown state"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "unknown-state retry checks failed"
+pass "mount-option retry: unknown journal state -> WARNING, still proceeds"
+
+# A mount without noload (non-ext/xfs path) never retries and propagates the
+# failure unchanged.
+(
+    trap - EXIT
+    : > "$FIXTURE/mount-retry/calls.log"
+    mount_calls=0
+    tune2fs_calls=0
+    mount_recorded_modern() {
+        mount_calls=$((mount_calls + 1))
+        printf '%s\n' "$*" >> "$FIXTURE/mount-retry/calls.log"
+        return 1
+    }
+    tune2fs() { tune2fs_calls=$((tune2fs_calls + 1)); printf 'Filesystem state:           clean\n'; }
+    mount_recorded /dev/null "$FIXTURE/mount-retry/dst" -o ro,norecovery
+    mrc=$?
+    [[ $mrc -ne 0 ]] || fail "a failed non-noload mount must propagate its failure"
+    [[ $mount_calls -eq 1 ]] || fail "a non-noload mount must not retry"
+    [[ $tune2fs_calls -eq 0 ]] || fail "a non-noload mount must not consult tune2fs"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "non-noload retry checks failed"
+pass "mount-option retry: non-noload mounts never retry and propagate the failure"
 
 # --- cycle 12: the file system check skips devices mounted under the target --
 # The legacy check keeps the target's helper-owned mounts and must emit the
@@ -1084,5 +1369,50 @@ printf '%s\n' "$browse_out" | grep -q $'tab\tname' \
 printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	' \
     || fail "browse-target emitted no BROWSE_ENTRY records"
 pass "legacy browse-target records (raw percent-encoded names, TAB encoded as %09)"
+
+# --- B4/A10-05: cancel-token surface -----------------------------------------
+# The existence signal (CANCEL_FILE) and the token form (CANCEL_TOKEN +
+# $SESSION_DIR/cancel with matching content) must be distinguished exactly:
+# an absent file, a stray file with the wrong content, or no configured
+# surface at all never cancels a run; the matching forms do.
+CANCEL_FILE="$FIXTURE/cancel-request"
+CANCEL_TOKEN=""
+rm -f "$CANCEL_FILE"
+legacy_cancel_requested && fail "an absent cancel file was treated as a cancel request"
+: > "$CANCEL_FILE"
+legacy_cancel_requested || fail "a present cancel file was not treated as a cancel request"
+rm -f "$CANCEL_FILE"
+CANCEL_FILE=""
+legacy_cancel_requested && fail "a cancel request was reported without any cancel surface"
+
+CANCEL_TOKEN="smoke-session-token"
+SESSION_DIR="$FIXTURE/cancel-session"
+mkdir -p "$SESSION_DIR"
+legacy_cancel_requested && fail "the token form cancelled without a cancel file"
+printf 'smoke-session-token\n' > "$SESSION_DIR/cancel"
+legacy_cancel_requested || fail "a matching session cancel token was not honoured"
+printf 'wrong-token\n' > "$SESSION_DIR/cancel"
+legacy_cancel_requested && fail "a mismatched session cancel token was honoured"
+rm -f "$SESSION_DIR/cancel"
+CANCEL_TOKEN=""
+SESSION_DIR=""
+
+# The stage-boundary check stays silent without a request and aborts through
+# fail() (exit 1, "Cancelled at the caller's request.") when one is present.
+CANCEL_FILE="$FIXTURE/cancel-request"
+rm -f "$CANCEL_FILE"
+legacy_cancel_stage_check || fail "the stage check failed without a cancel request"
+: > "$CANCEL_FILE"
+CURRENT_STAGE=""
+set +e
+( legacy_cancel_stage_check ) > "$FIXTURE/cancel-abort.txt" 2>&1
+cancel_rc=$?
+set -e
+[[ $cancel_rc -ne 0 ]] || fail "the stage check did not abort on the cancel token"
+grep -q "Cancelled at the caller.s request" "$FIXTURE/cancel-abort.txt" \
+    || fail "the stage abort left no evidence"
+rm -f "$CANCEL_FILE"
+CANCEL_FILE=""
+pass "legacy cancel token (existence signal, token form, stage-boundary abort)"
 
 echo "legacy helper smoke: PASS"

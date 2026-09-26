@@ -25,6 +25,15 @@ else
     STATE_ROOT=/var/run/boot-repair
 fi
 
+# A10-05 cancel surface.  The Qt3 GUI passes --cancel-file <path> (parsed by
+# main() before the command verb) and its cancel() touches that file; the
+# documented token form is CANCEL_TOKEN=<value> (environment) or
+# --cancel-token <value>, checked against $SESSION_DIR/cancel.  Both may also
+# arrive through the environment (an env CANCEL_TOKEN survives a direct
+# invocation; sudo strips it, which is why the GUI uses the argv form).
+CANCEL_FILE="${CANCEL_FILE:-}"
+CANCEL_TOKEN="${CANCEL_TOKEN:-}"
+
 # Set by read_target_os when the root was confirmed through legacy release
 # evidence instead of /etc/os-release.  Evidence wording only; never a gate.
 TARGET_OS_LEGACY=0
@@ -405,6 +414,7 @@ grub_unavailable_reason()
 
 adaptive_grub_repair()
 {
+    legacy_cancel_stage_check
     if legacy_grub_legacy_target; then
         legacy_grub_repair
     else
@@ -466,7 +476,10 @@ legacy_boot_stack_repair()
     REPAIR_CHANGE_STATUS_COLLECTED=()
     REPAIR_CHANGE_STATUS_COLLECT=1
     validate_mapper_crypttab
+    # A10-05: the cancel surface is checked between the three components.
+    legacy_cancel_stage_check
     adaptive_initramfs_repair
+    legacy_cancel_stage_check
     adaptive_grub_repair
     REPAIR_CHANGE_STATUS_COLLECT=0
     for entry in "${REPAIR_CHANGE_STATUS_COLLECTED[@]:-}"; do
@@ -491,6 +504,7 @@ legacy_boot_stack_repair()
 
 repair_boot_stack()
 {
+    legacy_cancel_stage_check
     if legacy_grub_legacy_target; then
         legacy_boot_stack_repair
         return 0
@@ -648,6 +662,100 @@ legacy_require_feature()
     fi
     printf 'unavailable|%s: %s\n' "$feature" "$reason" >&2
     fail "$feature is unavailable: $reason"
+}
+
+# ---------------------------------------------------------------------------
+# Cancel token (A10-05)
+# ---------------------------------------------------------------------------
+# The helper-side cancel surface: the Qt3 GUI passes --cancel-file <path>
+# (parsed by main() before the command verb) and its cancel() touches that
+# file; the documented token form is CANCEL_TOKEN=<value> (environment or
+# --cancel-token <value>), checked against $SESSION_DIR/cancel.  A small
+# watcher polls the surface between repair stages and on shell-command ticks
+# and aborts with the modern bounded TERM -> KILL tree escalation of the
+# running command; it also reaps that command when the helper itself dies
+# (poll `kill -0 $PPID`), so a SIGKILLed helper never leaves a shell command
+# behind.  Etch deviation (documented): the GUI's SIGKILL reaches only the
+# elevation wrapper (sudo), so a helper inside a long single stage finishes
+# that stage and aborts at the next boundary instead of being interrupted.
+
+# True when the configured cancel surface signals a cancel request.
+# CANCEL_FILE: existence is the signal (the GUI's cancel() touches the file).
+# CANCEL_TOKEN: $SESSION_DIR/cancel must exist AND carry exactly the token,
+# so a stray file in the session directory can never abort a run.
+legacy_cancel_requested()
+{
+    local cancel_path="" line=""
+    if [[ -n "$CANCEL_FILE" ]]; then
+        [[ -e "$CANCEL_FILE" ]] || return 1
+        return 0
+    fi
+    if [[ -n "$CANCEL_TOKEN" && -n "${SESSION_DIR:-}" ]]; then
+        cancel_path="$SESSION_DIR/cancel"
+        [[ -e "$cancel_path" ]] || return 1
+        line="$(head -n1 "$cancel_path" 2>/dev/null || true)"
+        [[ "$line" == "$CANCEL_TOKEN" ]]
+        return $?
+    fi
+    return 1
+}
+
+# Stage-boundary check: abort (fail -> exit 1 -> cleanup) when a cancel was
+# requested.  Runs at the entry of every repair stage wrapper and between the
+# legacy boot-stack components.
+legacy_cancel_stage_check()
+{
+    if legacy_cancel_requested; then
+        log "Cancel requested; aborting at the stage boundary (the session teardown unmounts everything)." | tee -a "$SESSION_LOG" >&2
+        fail "Cancelled at the caller's request."
+    fi
+    return 0
+}
+
+# Shell-command tick watcher: polls the cancel surface every 0.2 s while
+# `child` (the backgrounded command pipeline) runs.  On a cancel request - or
+# when the helper itself died (kill -0 $PPID) - the child is terminated with
+# the modern bounded TERM -> KILL escalation.
+legacy_cancel_watcher()
+{
+    local child="${1:-}"
+    [[ -n "$child" ]] || return 0
+    while kill -0 "$child" 2>/dev/null; do
+        if ! kill -0 "$PPID" 2>/dev/null; then
+            log "Helper parent died; reaping the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            terminate_helper_tree "$child" || true
+            return 0
+        fi
+        if legacy_cancel_requested; then
+            log "Cancel token observed; terminating the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            terminate_helper_tree "$child" || true
+            return 0
+        fi
+        sleep 0.2 2>/dev/null || return 0
+    done
+    return 0
+}
+
+# A10-05 stage entry wrappers: the wrapped modern definitions were renamed by
+# port.sh; every stage entry (package stages, initramfs and GRUB) checks the
+# cancel surface before running, which is what "between repair stages" means
+# for the legacy Full Repair plan.
+run_package_stage()
+{
+    legacy_cancel_stage_check
+    run_package_stage_modern "$@"
+}
+
+adaptive_initramfs_repair()
+{
+    legacy_cancel_stage_check
+    adaptive_initramfs_repair_modern "$@"
+}
+
+adaptive_grub_stage()
+{
+    legacy_cancel_stage_check
+    adaptive_grub_stage_modern "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -861,6 +969,7 @@ display_unavailable_reason()
 adaptive_display_manager_repair()
 {
     local backend="" legacy_ok=""
+    legacy_cancel_stage_check
     backend="$(target_display_manager_backend)"
     legacy_ok="$(legacy_display_manager_probe 2>/dev/null || true)"
     if [[ "$backend" != systemd && "$backend" != OpenRC && -n "$legacy_ok" ]]; then
@@ -1177,13 +1286,27 @@ legacy_run_file_copy()
 # Legacy mount-options filter.  The generated helper adds `noload` to the
 # read-only ext2/ext3/ext4 mounts (the root ro mount, the boot-entry ro mount
 # and the os-release probe mount all funnel through mount_recorded); Etch's
-# util-linux 2.12r rejects `ro,noload` ("ext3: No journal on filesystem on
+# util-linux 2.12r can reject `ro,noload` ("ext3: No journal on filesystem on
 # dm-5" + "wrong fs type, bad option, bad superblock") while plain `ro` mounts
-# the same filesystem fine.  Strip the option so every ro ext mount uses plain
-# `ro` (a dirty-journal ro mount failing is acceptable fail-closed behavior).
+# the same filesystem fine.
+#
+# B6/A9-05: earlier behaviour stripped `noload` unconditionally.  That hides a
+# dirty journal: a plain `ro` mount of a dirty ext filesystem replays the
+# journal, silently turning the "read-only" mount into a modifying one.  The
+# filter now keeps `noload` for the FIRST attempt; mount_recorded retries with
+# the stripped options only when that first mount FAILS, after the tune2fs
+# journal-state check (a dirty journal logs a WARNING naming the replay risk
+# and the retry still proceeds - best-effort fail-soft; see mount_recorded).
 # The xfs `norecovery` option is left as-is: no xfs filesystem exists on Etch,
 # so the option is simply never exercised.
 legacy_filter_mount_options()
+{
+    printf '%s' "$1"
+}
+
+# Strip exactly the `noload` option from a comma-separated mount-option list
+# (the B6/A9-05 retry form).
+legacy_mount_options_without_noload()
 {
     printf '%s' "$1" | tr ',' '\n' | grep -v '^noload$' | paste -sd ',' -
 }
@@ -1217,7 +1340,66 @@ mount_recorded()
                 ;;
         esac
     done
-    mount_recorded_modern "$source" "$destination" "${args[@]:-}"
+
+    # B6/A9-05: the first attempt keeps `noload` (see the filter above).  The
+    # retry branch below applies to ext2/3/4 sources only: the generated
+    # helper adds `noload` to no other mount, so its presence IS the ext gate;
+    # non-ext and modern paths are unchanged.
+    local rc=0 had_noload=0
+    local -a retry_args=()
+    local i=0 retry_value=""
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        opt="${args[$i]}"
+        case "$opt" in
+            -o)
+                retry_value="${args[$((i + 1))]:-}"
+                if [[ ",$retry_value," == *,noload,* ]]; then
+                    had_noload=1
+                    retry_value="$(legacy_mount_options_without_noload "$retry_value")"
+                fi
+                [[ -n "$retry_value" ]] && retry_args+=("-o" "$retry_value")
+                i=$((i + 1))
+                ;;
+            -o*)
+                retry_value="${opt#-o}"
+                if [[ ",$retry_value," == *,noload,* ]]; then
+                    had_noload=1
+                    retry_value="$(legacy_mount_options_without_noload "$retry_value")"
+                fi
+                [[ -n "$retry_value" ]] && retry_args+=("-o$retry_value")
+                ;;
+            *)
+                retry_args+=("$opt")
+                ;;
+        esac
+    done
+    mount_recorded_modern "$source" "$destination" "${args[@]:-}" || rc=$?
+    if (( rc == 0 || had_noload == 0 )); then
+        return "$rc"
+    fi
+
+    # The noload-carrying first mount failed.  Consult the journal state
+    # before retrying without noload: a clean journal makes the stripped
+    # retry safe; a dirty journal means the stripped retry replays the journal
+    # during a nominally read-only mount.  The dirty (and unknown) case logs a
+    # WARNING naming that risk and PROCEEDS - never a hard refusal: the
+    # 2.6.18/Etch behaviour is unconfirmed until the rig drill, so the retry
+    # keeps the mount reachable while the risk stays explicit in the log.
+    # TODO(rig): confirm Etch util-linux 2.12r mount/tune2fs output and, if
+    # the risk is real there, tighten this gate.
+    local journal_state="" tune2fs_output=""
+    tune2fs_output="$(tune2fs -l -- "$source" 2>/dev/null || true)"
+    journal_state="$(printf '%s\n' "$tune2fs_output" \
+        | sed -n 's/^Filesystem state:[[:space:]]*//p' | head -n1)"
+    if [[ "$journal_state" == "clean" ]]; then
+        log "Read-only mount with noload failed for $source; the journal is clean, retrying with plain ro"
+    else
+        log "WARNING: read-only mount with noload failed for $source and the journal state is not clean (${journal_state:-unknown}); retrying with plain ro may replay the target's journal during a nominally read-only mount"
+    fi
+    # rc still holds the failed first attempt: a successful retry must return 0.
+    rc=0
+    mount_recorded_modern "$source" "$destination" "${retry_args[@]:-}" || rc=$?
+    return "$rc"
 }
 
 # Etch-era fstab/crypttab entries name devices with bare host-relative paths
@@ -1722,18 +1904,66 @@ legacy_blkid_uuid_path()
 # Cycle 11/12: resolve the Linux root candidate on the opened mapper chain
 # with the port's read-only fstype probe (blkid; never a mount), so the GUI
 # can enable Select Target with the helper-confirmed component even though
-# its read-only inventory cannot see the mapped LV's filesystem. Prefer an LV
+# its read-only inventory cannot see the mapped LV's filesystem.  Prefer an LV
 # whose name matches root (case-insensitive); otherwise the first LV with a
-# known Linux filesystem. No candidate emits no line and the GUI keeps its
-# existing fail-closed behavior. The same probe runs for a mapper that was
+# known Linux filesystem.  No candidate emits no line and the GUI keeps its
+# existing fail-closed behavior.  The same probe runs for a mapper that was
 # already open (existing-mapper reuse).
+#
+# B6/A9-08: the candidates are scoped to the unlocked PV's OWN volume group
+# (pvs names the VG for this exact PV, lvs lists its logical volumes), so a
+# foreign running-host LV with a Linux filesystem can never become
+# UNLOCKED_ROOT.  When the LVM tooling is missing or no VG is provable, the
+# probe falls back to the previous unscoped behaviour with a WARNING - the
+# candidate is never silently dropped and the later same-disk/host guards
+# remain the hard backstop.
 legacy_unlock_root_probe()
 {
     local mapper_path="$1" unlocked_root="" unlocked_fstype=""
     local candidate_name="" fstype_probe="" root_match="" fallback_name="" fallback_fstype=""
+    local pvs_bin="" lvs_bin="" vg_name="" lv_item="" lv_path="" in_vg=0 scope_vg=0
+    local -a vg_lvs=()
+    pvs_bin="$(legacy_real_tool_path pvs || true)"
+    lvs_bin="$(legacy_real_tool_path lvs || true)"
+    vg_name=""
+    if [[ -n "$pvs_bin" ]]; then
+        vg_name="$("$pvs_bin" --noheadings -o vg_name -- "$mapper_path" 2>/dev/null \
+            | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | head -n1 || true)"
+    fi
+    if [[ -n "$vg_name" && -n "$lvs_bin" ]]; then
+        while IFS= read -r lv_path; do
+            lv_path="$(printf '%s' "$lv_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            [[ -n "$lv_path" ]] || continue
+            vg_lvs+=("$lv_path")
+        done < <("$lvs_bin" --noheadings -o lv_path -- "$vg_name" 2>/dev/null || true)
+        if (( ${#vg_lvs[@]} > 0 )); then
+            scope_vg=1
+            log "Unlocked-root probe scoped to volume group '$vg_name' (${#vg_lvs[@]} logical volume(s))"
+        else
+            log "WARNING: volume group '$vg_name' was proven for $mapper_path but no logical volumes could be listed; falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+        fi
+    elif [[ -n "$vg_name" ]]; then
+        log "WARNING: volume group '$vg_name' was proven for $mapper_path but lvs is not installed in the recovery environment; falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+    else
+        log "WARNING: no volume group could be proven for $mapper_path (LVM tooling missing or the device is not a PV); falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+    fi
     while IFS= read -r entry; do
         [[ -n "$entry" ]] || continue
         [[ "$entry" == "$mapper_path" || "$entry" == *control* ]] && continue
+        if (( scope_vg == 1 )); then
+            in_vg=0
+            for lv_item in "${vg_lvs[@]}"; do
+                if [[ "$entry" == "$lv_item" \
+                    || "$(basename -- "$entry")" == "$(basename -- "$lv_item")" ]]; then
+                    in_vg=1
+                    break
+                fi
+            done
+            # Candidates not in the unlocked PV's volume group are skipped:
+            # they belong to the running host (or another target) and its LVs
+            # must never be offered as the unlocked root.
+            (( in_vg == 1 )) || continue
+        fi
         candidate_name="${entry##*/}"
         [[ -n "$candidate_name" ]] || continue
         # /dev/mapper entries on Etch are real block nodes (readlink -f is the
@@ -1854,6 +2084,7 @@ legacy_apt_intent_translate()
 legacy_chroot_shell()
 {
     local command="${1:-}" rc=0 transcript run_command retry_command="" retried=0
+    local run_pid=0 watcher_pid=0
     [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
     [[ -n "$command" ]] || fail "shell command cannot be empty."
     need chroot
@@ -1868,13 +2099,27 @@ legacy_chroot_shell()
     fi
     while :; do
         set +e
-        chroot "$TARGET_ROOT" /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            APT_LISTCHANGES_FRONTEND=none \
-            /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        # A10-05: the pipeline runs in a background subshell whose exit status
+        # is the command's own (PIPESTATUS captured inside the subshell), and
+        # the cancel watcher ticks alongside it: a cancel token (or a helper
+        # that died) terminates the pipeline with the bounded TERM -> KILL
+        # escalation.
+        ( set +e
+          chroot "$TARGET_ROOT" /usr/bin/env \
+              HOME=/root \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              DEBIAN_FRONTEND=noninteractive \
+              APT_LISTCHANGES_FRONTEND=none \
+              /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+          rc=${PIPESTATUS[0]}
+          exit "$rc" ) &
+        run_pid=$!
+        legacy_cancel_watcher "$run_pid" &
+        watcher_pid=$!
+        rc=0
+        wait "$run_pid" 2>/dev/null || rc=$?
+        kill "$watcher_pid" 2>/dev/null || true
+        wait "$watcher_pid" 2>/dev/null || true
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -1910,8 +2155,15 @@ run_host_shell()
 # same prepare_running_host identity/boot-mount checks and the reviewed
 # command-string guard as the modern host shell, executed directly (no
 # firmware namespace exists on this BIOS-only host, so prepare_host_command_guard
-# skipped the guard; no chroot).  The timeout/kill containment is not
-# expressible on Etch's timeout and is documented as such.
+# skipped the guard; no chroot).  B6/A9-03: the exec runs under
+# `timeout --foreground 300 --kill-after=10` - the compat.sh timeout shim
+# prefers a real coreutils timeout that supports --foreground and falls back
+# to the pure-bash watchdog on Etch (whose timeout binary predates
+# --foreground/--kill-after).  Etch deviation (documented): the watchdog can
+# only kill the direct child, so grandchildren of a killed shell may outlive
+# the bound.  EFI hosts keep the modern isolation+refusal path
+# (run_host_shell_modern): no firmware variables exist to isolate on this
+# BIOS-only host, so the legacy path is used here.
 legacy_host_shell()
 {
     local raw_disk="${1:-}" raw_root="${2:-}" command="${3:-}"
@@ -1928,7 +2180,7 @@ legacy_host_shell()
     log "BEGIN: Running-host shell command (legacy direct path)" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
     local transcript="$SESSION_DIR/host-shell-output" rc=0
-    local run_command="$command" retry_command="" retried=0
+    local run_command="$command" retry_command="" retried=0 run_pid=0 watcher_pid=0
     : > "$transcript"
     run_command="$(legacy_apt_intent_translate "$command")"
     if [[ "$run_command" != "$command" ]]; then
@@ -1936,12 +2188,23 @@ legacy_host_shell()
     fi
     while :; do
         set +e
-        /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        # A10-05: same backgrounded-pipeline + cancel-watcher shape as the
+        # chroot shell; the subshell exit status is the command's own.
+        ( set +e
+          timeout --foreground 300 --kill-after=10 /usr/bin/env \
+              HOME=/root \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              DEBIAN_FRONTEND=noninteractive \
+              /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+          rc=${PIPESTATUS[0]}
+          exit "$rc" ) &
+        run_pid=$!
+        legacy_cancel_watcher "$run_pid" &
+        watcher_pid=$!
+        rc=0
+        wait "$run_pid" 2>/dev/null || rc=$?
+        kill "$watcher_pid" 2>/dev/null || true
+        wait "$watcher_pid" 2>/dev/null || true
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -2093,6 +2356,9 @@ run_host_repair()
 {
     local i=0 stage="" need_maintenance=0
     local -a args=("$@")
+    # A10-05: the cancel surface is checked before the host repair starts (the
+    # individual stage entry wrappers re-check it between stages).
+    legacy_cancel_stage_check
     # Package stages write only through the target package manager.  On a
     # BIOS-only legacy host there are no firmware variables to isolate, so
     # they do not need the unshare-based host command guard; every other host
