@@ -105,6 +105,54 @@ grep -q 'apt_intent_translate' <<<"$chroot_shell_body" \
 grep -q 'apt_intent_translate' <<<"$host_shell_body" \
     || { echo 'FAIL: the running-host shell does not apply the apt-intent translation' >&2; exit 1; }
 
+# Generic interactive input channel: the trigger is quiescence-while-alive
+# (never prompt-text pattern matching), the wire carries base64 only, the
+# answer arrives as ANSWER on the protocol pipe, and every failure closes the
+# input and fails closed.  The channel only exists through the privileged
+# session broker (BOOT_REPAIR_SESSION_PROTOCOL=1).
+grep -q 'SHELL_PROMPT_QUIET_TICKS=2' "$HELPER"
+grep -q 'SHELL_PROMPT_TRAILING_BYTES=800' "$HELPER"
+grep -q 'SHELL_ANSWER_WINDOW_SECONDS=600' "$HELPER"
+grep -q '^shell_interactive_enabled()' "$HELPER"
+grep -q '^shell_interactive_ready()' "$HELPER"
+grep -q '^shell_command_string()' "$HELPER"
+grep -q '^shell_run_interactive()' "$HELPER"
+grep -q 'BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST=' "$HELPER" \
+    || { echo 'FAIL: the broker does not arm the interactive channel env' >&2; exit 1; }
+grep -q '^host_command_guard_body()' "$HELPER" \
+    || { echo 'FAIL: the firmware guard body is not shared with the interactive host shell' >&2; exit 1; }
+grep -Fq "printf 'PROMPT\\t%s\\t%s\\n' \"\${BOOT_REPAIR_SESSION_REQUEST:-0}\" \"\$encoded\"" "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the PROMPT wire record' >&2; exit 1; }
+grep -q 'IFS=\$'"'"'\\t'"'"' read -r -t "\$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded' "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the bounded ANSWER read' >&2; exit 1; }
+grep -Fq "PROMPT\$'\\t'\"\$request_id\"\$'\\t'*" "$HELPER" \
+    || { echo 'FAIL: the broker lost the PROMPT passthrough for the active request' >&2; exit 1; }
+grep -Fq 'interactive prompt was cancelled or no answer arrived in time' "$HELPER" \
+    || { echo 'FAIL: the no-answer fail-closed message is missing' >&2; exit 1; }
+grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$HELPER" \
+    || { echo 'FAIL: the empty-answer cancel message is missing' >&2; exit 1; }
+grep -Fq 'Chroot shell command was cancelled at an interactive prompt.' "$HELPER" \
+    || { echo 'FAIL: the cancelled chroot shell is not reported' >&2; exit 1; }
+grep -Fq 'Running-host shell command was cancelled at an interactive prompt.' "$HELPER" \
+    || { echo 'FAIL: the cancelled running-host shell is not reported' >&2; exit 1; }
+grep -Fq 'command -v script' "$HELPER" \
+    || { echo 'FAIL: the PTY tool probe is missing' >&2; exit 1; }
+grep -Fq 'setsid' "$HELPER" \
+    || { echo 'FAIL: the process-group leader for the interactive runner is missing' >&2; exit 1; }
+grep -q 'shell_interactive_ready && interactive_run=1' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not arm the interactive channel' >&2; exit 1; }
+grep -q 'shell_interactive_ready && interactive_run=1' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not arm the interactive channel' >&2; exit 1; }
+grep -q 'shell_run_interactive "$transcript" "$CHROOT_SHELL_TIMEOUT_SECONDS"' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not call the interactive runner' >&2; exit 1; }
+grep -q 'shell_run_interactive "$transcript" 300' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not call the interactive runner' >&2; exit 1; }
+# The interactive branch drops the non-interactive frontend switches so
+# debconf/dpkg questions reach the popup; the plain branch keeps them and
+# stays bound to /dev/null.
+grep -q 'DEBIAN_FRONTEND=noninteractive' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the plain chroot shell lost its non-interactive frontend' >&2; exit 1; }
+
 # Target chroots receive a private writable /dev tmpfs instead of the
 # read-only recovery-host /dev bind.  rpm/dnf5 package payloads that own /dev
 # (for example Fedora's filesystem package) must be unpackable, but no write
@@ -447,5 +495,159 @@ if grep -q 'command.*\\$.*0.*unsupported NUL' "$HELPER"; then
     echo "FAIL: helper contains the universal-rejecting Bash NUL check" >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Generic interactive channel (behavioural).  shell_run_interactive is driven
+# directly: a stubbed script(1) runs the command on a plain pipe, the harness
+# writes ANSWER records on the runner's stdin (the protocol pipe), and the
+# prompt text round-trips through base64 unchanged.
+# ---------------------------------------------------------------------------
+interactive_root="$shell_stub_root/interactive"
+mkdir -p "$interactive_root"
+
+start_interactive_case()
+{
+    local name="$1" command="$2" window="$3"
+    local root="$interactive_root/$name"
+    mkdir -p "$root"
+    : > "$root/output"
+    : > "$root/session.log"
+    : > "$root/transcript"
+    : > "$root/rc"
+    rm -f "$root/answers"
+    mkfifo "$root/answers"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$root"
+        SESSION_LOG="$root/session.log"
+        BOOT_REPAIR_SESSION_PROTOCOL=1
+        BOOT_REPAIR_SESSION_REQUEST=7
+        SHELL_ANSWER_WINDOW_SECONDS="$window"
+        export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
+        # The harness replaces the PTY allocator: parse -c (split or inside a
+        # combined flag cluster such as -qefc) and run the command on the
+        # inherited pipes; setsid passes the stub through unchanged.
+        script()
+        {
+            local cmd="" arg=""
+            while (($# > 0)); do
+                arg="$1"
+                shift
+                case "$arg" in
+                    -c) cmd="$1"; shift; break ;;
+                    -?*c*) cmd="$1"; shift; break ;;
+                esac
+            done
+            /bin/sh -c "$cmd"
+        }
+        setsid() { "$@"; }
+        set +e
+        shell_run_interactive "$root/transcript" 30 "$command"
+        printf '%s\n' "$?" > "$root/rc"
+        exit 0
+    ) <"$root/answers" >"$root/output" 2>&1 &
+    printf '%s\n' "$!" > "$root/pid"
+    # Open the writer end; this unblocks the runner's stdin open.
+    exec 14>"$root/answers"
+}
+
+wait_prompt_record()
+{
+    local output="$1" seen="" n=0
+    while (( n < 200 )); do
+        seen="$(grep '^PROMPT	7	' "$output" 2>/dev/null | head -n1 || true)"
+        [[ -n "$seen" ]] && break
+        sleep 0.05
+        n=$((n + 1))
+    done
+    [[ -n "$seen" ]] || { echo 'FAIL: no PROMPT record arrived' >&2; return 1; }
+    printf '%s\n' "$seen"
+}
+
+finish_interactive_case()
+{
+    local root="$1"
+    local pid
+    pid="$(cat "$root/pid")"
+    wait "$pid" 2>/dev/null || true
+    exec 14>&-
+}
+
+# Case 1: one answered prompt.  The prompt is a partial line with no newline;
+# the base64 payload must round-trip byte-for-byte, the answer must reach the
+# command verbatim, and the run must exit 0.
+start_interactive_case one-prompt \
+    "printf 'Continue? [Y/n] '; IFS= read -r a; printf 'got:%s\\n' \"\$a\"" 5
+one_root="$interactive_root/one-prompt"
+prompt_record="$(wait_prompt_record "$one_root/output")" \
+    || { finish_interactive_case "$one_root"; exit 1; }
+prompt_b64="${prompt_record#*$'\t'}"
+prompt_b64="${prompt_b64#*$'\t'}"
+expected_b64="$(printf 'Continue? [Y/n] ' | base64 | tr -d '\n')"
+[[ "$prompt_b64" == "$expected_b64" ]] \
+    || { echo "FAIL: prompt text did not round-trip through base64: $prompt_b64" >&2; finish_interactive_case "$one_root"; exit 1; }
+decoded_prompt="$(printf '%s' "$prompt_b64" | base64 -d 2>/dev/null || true)"
+[[ "$decoded_prompt" == 'Continue? [Y/n] ' ]] \
+    || { echo 'FAIL: the decoded prompt text is not the original' >&2; finish_interactive_case "$one_root"; exit 1; }
+answer_b64="$(printf 'Y' | base64 | tr -d '\n')"
+printf 'ANSWER\t7\t%s\n' "$answer_b64" >&14
+finish_interactive_case "$one_root"
+[[ "$(cat "$one_root/rc")" == "0" ]] \
+    || { echo 'FAIL: an answered interactive command did not exit 0' >&2; cat "$one_root/output" >&2; exit 1; }
+grep -Fq 'Continue? [Y/n] ' "$one_root/transcript" \
+    || { echo 'FAIL: the prompt text is missing from the transcript' >&2; exit 1; }
+grep -Fq 'got:Y' "$one_root/transcript" \
+    || { echo 'FAIL: the answer did not reach the command' >&2; cat "$one_root/transcript" >&2; exit 1; }
+
+# Case 2: no answer within the window fails closed with rc 125 and the
+# actionable message; the runner must not hang.
+start_interactive_case no-answer \
+    "printf 'Waiting? [y/N] '; IFS= read -r a; printf 'never\\n'" 1
+no_answer_root="$interactive_root/no-answer"
+wait_prompt_record "$no_answer_root/output" >/dev/null \
+    || { finish_interactive_case "$no_answer_root"; exit 1; }
+finish_interactive_case "$no_answer_root"
+[[ "$(cat "$no_answer_root/rc")" == "125" ]] \
+    || { echo 'FAIL: an unanswered prompt did not fail closed with rc 125' >&2; cat "$no_answer_root/output" >&2; exit 1; }
+grep -Fq 'interactive prompt was cancelled or no answer arrived in time' "$no_answer_root/output" \
+    || { echo 'FAIL: the no-answer fail-closed message is missing' >&2; cat "$no_answer_root/output" >&2; exit 1; }
+
+# Case 3: two prompts in a row round-trip two answers in order.
+start_interactive_case two-prompts \
+    "printf 'First? [y/N] '; IFS= read -r a; printf 'first=%s\\n' \"\$a\"; printf 'Second (Y/n) '; IFS= read -r b; printf 'second=%s\\n' \"\$b\"" 5
+two_root="$interactive_root/two-prompts"
+wait_prompt_record "$two_root/output" >/dev/null \
+    || { finish_interactive_case "$two_root"; exit 1; }
+printf 'ANSWER\t7\t%s\n' "$(printf 'y' | base64 | tr -d '\n')" >&14
+# The second prompt must arrive after the first answer.
+n=0
+while (( n < 200 )); do
+    [[ "$(grep -c '^PROMPT	7	' "$two_root/output" 2>/dev/null || true)" -ge 2 ]] && break
+    sleep 0.05
+    n=$((n + 1))
+done
+[[ "$(grep -c '^PROMPT	7	' "$two_root/output" 2>/dev/null || true)" -ge 2 ]] \
+    || { echo 'FAIL: the second prompt never arrived' >&2; finish_interactive_case "$two_root"; exit 1; }
+printf 'ANSWER\t7\t%s\n' "$(printf 'n' | base64 | tr -d '\n')" >&14
+finish_interactive_case "$two_root"
+[[ "$(cat "$two_root/rc")" == "0" ]] \
+    || { echo 'FAIL: a two-prompt command did not exit 0' >&2; cat "$two_root/output" >&2; exit 1; }
+grep -Fq 'first=y' "$two_root/transcript" \
+    || { echo 'FAIL: the first answer was not delivered in order' >&2; exit 1; }
+grep -Fq 'second=n' "$two_root/transcript" \
+    || { echo 'FAIL: the second answer was not delivered in order' >&2; exit 1; }
+
+# Case 4: an empty ANSWER payload is a cancel and fails closed with rc 125.
+start_interactive_case cancelled "printf 'Stop? [y/N] '; IFS= read -r a" 5
+cancel_root="$interactive_root/cancelled"
+wait_prompt_record "$cancel_root/output" >/dev/null \
+    || { finish_interactive_case "$cancel_root"; exit 1; }
+printf 'ANSWER\t7\t\n' >&14
+finish_interactive_case "$cancel_root"
+[[ "$(cat "$cancel_root/rc")" == "125" ]] \
+    || { echo 'FAIL: an empty (cancel) answer did not fail closed with rc 125' >&2; cat "$cancel_root/output" >&2; exit 1; }
+grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$cancel_root/output" \
+    || { echo 'FAIL: the cancel message is missing' >&2; cat "$cancel_root/output" >&2; exit 1; }
 
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."

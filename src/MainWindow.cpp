@@ -5168,7 +5168,7 @@ QWidget *MainWindow::buildChrootShellPage()
     layout->addLayout(heading);
 
     m_chrootShellNotice = new QLabel(QStringLiteral(
-        "Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as dnf update -y or apt-get -y upgrade. Output is kept in this window and in the application log."));
+        "Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log."));
     m_chrootShellNotice->setWordWrap(true);
     layout->addWidget(m_chrootShellNotice);
 
@@ -7521,6 +7521,11 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     // readyReadStandardOutput and again after the request finishes so a
     // helper that writes DONE immediately before exiting is never
     // misclassified as truncated.
+    // Only the Chroot Shell / Host Shell requests participate in the
+    // interactive PROMPT/ANSWER channel; every other verb ignores a stray
+    // PROMPT record.
+    const bool interactiveShellRequest = kind == LogEntryKind::ChrootShell
+        || kind == LogEntryKind::HostShell;
     auto consumeSessionOutput = [&] {
         if (!session) {
             return;
@@ -7562,6 +7567,63 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 const QString text = QString::fromUtf8(payload);
                 captured += QStringLiteral("ERROR: %1\n").arg(text);
                 output->appendPlainText(QStringLiteral("ERROR: %1").arg(text));
+                continue;
+            }
+            if (tag == QByteArrayLiteral("PROMPT") && interactiveShellRequest) {
+                // The shell command is waiting for input.  Show its trailing
+                // output in a modal dialog, send the typed answer back as an
+                // ANSWER record and keep the transcript readable.  Cancel (or
+                // an empty answer) sends an empty ANSWER payload, which makes
+                // the helper fail the command closed with its non-interactive
+                // message.  The prompt text is only ever displayed, never
+                // interpreted.
+                const QString promptText = QString::fromUtf8(QByteArray::fromBase64(payload));
+                QDialog promptDialog(&dialog);
+                promptDialog.setObjectName(QStringLiteral("shellPromptDialog"));
+                promptDialog.setWindowTitle(QStringLiteral("Shell command is asking for input"));
+                promptDialog.setMinimumWidth(560);
+                auto *promptLayout = new QVBoxLayout(&promptDialog);
+                auto *promptHint = new QLabel(QStringLiteral(
+                    "The shell command is waiting for input. Review its output below, type the "
+                    "answer and press OK. Cancel — or an empty answer — stops the command."));
+                promptHint->setWordWrap(true);
+                promptLayout->addWidget(promptHint);
+                auto *promptView = new QPlainTextEdit;
+                promptView->setObjectName(QStringLiteral("shellPromptTextView"));
+                promptView->setReadOnly(true);
+                promptView->setLineWrapMode(QPlainTextEdit::WidgetWidth);
+                promptView->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
+                promptView->setPlainText(promptText);
+                promptLayout->addWidget(promptView, 1);
+                auto *answerEdit = new QLineEdit;
+                answerEdit->setObjectName(QStringLiteral("shellPromptAnswerEdit"));
+                answerEdit->setPlaceholderText(QStringLiteral("Answer (for example: y, n, Y, I, N, Z, or a word)"));
+                promptLayout->addWidget(answerEdit);
+                auto *promptButtons = new QDialogButtonBox(
+                    QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
+                promptButtons->button(QDialogButtonBox::Ok)->setText(QStringLiteral("Send Answer"));
+                QObject::connect(promptButtons, &QDialogButtonBox::accepted,
+                                 &promptDialog, &QDialog::accept);
+                QObject::connect(promptButtons, &QDialogButtonBox::rejected,
+                                 &promptDialog, &QDialog::reject);
+                promptLayout->addWidget(promptButtons);
+
+                const bool accepted = promptDialog.exec() == QDialog::Accepted;
+                const QString answer = accepted ? answerEdit->text() : QString();
+                if (accepted && !answer.isEmpty()) {
+                    if (session && session->state() == QProcess::Running) {
+                        session->write("ANSWER\t" + requestId + "\t" + answer.toUtf8().toBase64()
+                                       + "\n");
+                    }
+                    captured += QStringLiteral(">> %1\n").arg(answer);
+                    output->appendPlainText(QStringLiteral(">> %1").arg(answer));
+                } else {
+                    if (session && session->state() == QProcess::Running) {
+                        session->write("ANSWER\t" + requestId + "\t\n");
+                    }
+                    captured += QStringLiteral(">> [prompt cancelled]\n");
+                    output->appendPlainText(QStringLiteral(">> [prompt cancelled]"));
+                }
                 continue;
             }
             if (tag == QByteArrayLiteral("DONE")) {
@@ -9625,8 +9687,8 @@ void MainWindow::updateChrootShellMode()
     }
     if (m_chrootShellNotice) {
         m_chrootShellNotice->setText(hostMode
-            ? QStringLiteral("Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system; output is kept in this window and in the application log.")
-            : QStringLiteral("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as dnf update -y or apt-get -y upgrade. Output is kept in this window and in the application log."));
+            ? QStringLiteral("Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.")
+            : QStringLiteral("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log."));
     }
     if (m_chrootShellCommandEdit) {
         m_chrootShellCommandEdit->setPlaceholderText(hostMode

@@ -1046,6 +1046,11 @@ QProcess *startFakePrivilegedSession(MainWindow &window, const QString &captureP
         "printf 'DONE\\t%s\\t1\\n' \"$id\"; exit 1 ;;\n"
         "  aptupgrade) printf 'OUT\\t%s\\t[12:00:00] apt upgrade is disabled by this distribution; running '\\''apt full-upgrade'\\'' instead\\n' \"$id\"; "
         "printf 'OUT\\t%s\\tmock full-upgrade completed\\n' \"$id\"; printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  shellprompt) promptb64=$(printf 'Continue? [Y/n] ' | base64 | tr -d '\\n'); "
+        "printf 'OUT\\t%s\\tContinue? [Y/n] \\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "esac\n"
         "exit 9\n")
         .arg(capturePath, mode);
@@ -2285,6 +2290,7 @@ private slots:
     void hostDriveSummaryWrapsAtMinimumWidth();
     void hostShellModeLabelsAndEnablement();
     void hostShellDispatchesAndHandlesFailureModes();
+    void shellPromptDialogSendsAnswerRecord();
     void shellAptUpgradePolicyRetryLineIsRendered();
     void privilegedRefusalNamesNextStep();
     void targetShellDispatchStillUsesShell();
@@ -12606,9 +12612,10 @@ void MainWindowUiTest::hostShellModeLabelsAndEnablement()
     QCOMPARE(window.m_tabs->tabText(4), QStringLiteral("Chroot Shell"));
     QCOMPARE(window.m_chrootShellHeading->text(), QStringLiteral("Chroot shell"));
     QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("repair system")));
-    // The chroot shell cannot answer prompts: the UI must say so and point at
-    // the non-interactive flag instead of letting a command hang.
-    QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("interactive prompts")));
+    // The chroot shell answers interactive prompts through the popup and
+    // still recommends the non-interactive flag for unattended runs.
+    QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("asks a question")));
+    QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("sends your answer back")));
     QVERIFY(window.m_chrootShellNotice->text().contains(QStringLiteral("dnf update -y")));
     QVERIFY(window.m_chrootShellRunButton->toolTip().contains(QStringLiteral("repair system")));
     QVERIFY(window.m_chrootShellCommandEdit->placeholderText().contains(QStringLiteral("update-grub")));
@@ -12704,6 +12711,130 @@ void MainWindowUiTest::hostShellDispatchesAndHandlesFailureModes()
         QVERIFY(window.m_actionLogEntries.join(QLatin1Char('\n')).contains(QStringLiteral("protocol DONE record")));
         // A truncated response is not a completed command: host evidence is stale.
         QVERIFY(window.m_hostDiagnosticCache.isEmpty());
+    }
+}
+
+// The interactive shell channel: a PROMPT record opens the modal answer
+// dialog; OK sends the ANSWER record with the exact text and the answer lands
+// in the shell transcript, while Cancel sends an empty ANSWER payload (which
+// makes the helper fail closed) and is recorded in the transcript.
+void MainWindowUiTest::shellPromptDialogSendsAnswerRecord()
+{
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("shellprompt")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+        QString promptTitle;
+        QString promptText;
+        bool answerFieldSeen = false;
+        QTimer *answerTimer = new QTimer(&window);
+        answerTimer->setInterval(10);
+        QObject::connect(answerTimer, &QTimer::timeout, &window, [&] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(top);
+                if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")) {
+                    continue;
+                }
+                answerTimer->stop();
+                promptTitle = dialog->windowTitle();
+                auto *view = dialog->findChild<QPlainTextEdit *>(QStringLiteral("shellPromptTextView"));
+                promptText = view ? view->toPlainText() : QString();
+                auto *answer = dialog->findChild<QLineEdit *>(QStringLiteral("shellPromptAnswerEdit"));
+                answerFieldSeen = answer != nullptr;
+                if (answer) {
+                    answer->setText(QStringLiteral("Y"));
+                }
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                if (buttons && buttons->button(QDialogButtonBox::Ok)) {
+                    buttons->button(QDialogButtonBox::Ok)->click();
+                }
+                answerTimer->deleteLater();
+                return;
+            }
+        });
+        answerTimer->start();
+        window.runChrootShellCommand();
+
+        QCOMPARE(promptTitle, QStringLiteral("Shell command is asking for input"));
+        QVERIFY2(promptText.contains(QStringLiteral("Continue? [Y/n]")),
+                 "the dialog must show the command's trailing output");
+        QVERIFY(answerFieldSeen);
+
+        // The ANSWER record carried the exact text, base64-encoded.
+        QFile capture(capturePath);
+        QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString captured = QString::fromUtf8(capture.readAll());
+        QVERIFY2(captured.contains(QStringLiteral("ANSWER\t")),
+                 "no ANSWER record reached the helper session");
+        QVERIFY2(captured.contains(QString::fromLatin1(QByteArrayLiteral("Y").toBase64())),
+                 "the ANSWER record did not carry the typed answer");
+
+        const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+        QVERIFY2(shellOutput.contains(QStringLiteral(">> Y")),
+                 "the given answer must be recorded in the shell transcript");
+        QVERIFY(shellOutput.contains(QStringLiteral("[exit 0]")));
+    }
+
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, false);
+        cacheRepairEvidence(window, capabilityEvidence(false, true));
+        window.updateTargetLabels();
+
+        QTemporaryDir captureDir;
+        QVERIFY(captureDir.isValid());
+        const QString capturePath = captureDir.path() + QStringLiteral("/request.txt");
+        QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("shellprompt")));
+
+        window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+        QTimer *cancelTimer = new QTimer(&window);
+        cancelTimer->setInterval(10);
+        QObject::connect(cancelTimer, &QTimer::timeout, &window, [&] {
+            for (QWidget *top : QApplication::topLevelWidgets()) {
+                auto *dialog = qobject_cast<QDialog *>(top);
+                if (!dialog || dialog->objectName() != QStringLiteral("shellPromptDialog")) {
+                    continue;
+                }
+                cancelTimer->stop();
+                auto *buttons = dialog->findChild<QDialogButtonBox *>();
+                if (buttons && buttons->button(QDialogButtonBox::Cancel)) {
+                    buttons->button(QDialogButtonBox::Cancel)->click();
+                }
+                cancelTimer->deleteLater();
+                return;
+            }
+        });
+        cancelTimer->start();
+        window.runChrootShellCommand();
+
+        QFile capture(capturePath);
+        QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString captured = QString::fromUtf8(capture.readAll());
+        // Cancel sends an ANSWER record with an empty payload.
+        QVERIFY2(captured.contains(QStringLiteral("ANSWER\t")),
+                 "the cancel path sent no ANSWER record");
+        QVERIFY2(captured.contains(QRegularExpression(QStringLiteral("ANSWER\t[0-9]+\t\n"))),
+                 "the cancel path must send an empty ANSWER payload");
+
+        const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+        QVERIFY2(shellOutput.contains(QStringLiteral(">> [prompt cancelled]")),
+                 "a cancelled prompt must be recorded in the shell transcript");
     }
 }
 

@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Cycle 16 (interactive shell): the Chroot Shell and Host Shell can now
+  answer interactive prompts. The helper runs shell commands under a PTY
+  (with a plain stdin-pipe fallback) and, whenever the command is alive but
+  its output has been quiet, sends the trailing output to the GUI as a
+  base64 `PROMPT` wire record — no prompt text is ever pattern-matched or
+  interpreted. Boot Bitch shows a "Shell command is asking for input" popup
+  with the output and a free-text answer field; the answer is written back to
+  the command (repeatedly for multi-question commands such as debconf flows),
+  while cancel, an empty answer, or no answer within the window fails the
+  command closed with the non-interactive hint. The per-command timeout
+  pauses while a prompt awaits the user. Non-interactive flags (`dnf update
+  -y`, `apt-get -y upgrade`) remain recommended for unattended runs; the
+  legacy Qt3 shell keeps its non-interactive behavior for now.
+
 - Cycle 15 (modern parity): Select Target now mirrors the modern
   diskIsSelectableRepairTarget predicate — enabled for every selectable
   non-host, non-optical drive including blank/non-Linux data disks (a locked

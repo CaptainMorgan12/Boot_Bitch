@@ -169,7 +169,7 @@ Still intentionally constrained in 0.2.25:
 - **Diagnostics** — read-only reports for the Running Host or the selected repair drive, including boot state, firmware entries and file systems.
 - **Repair** — the configurable Full Repair plan and individual tools (file system repair, package configuration, broken dependencies, metadata refresh, adaptive package upgrade, DKMS, display manager, initramfs, EFI/UKI and GRUB), or Host Maintenance on the active system.
 - **Snapshots** — read-only Btrfs/Snapper inventory and the guarded rollback workflow, including running-host rollback with a persistent **Reboot required** reminder.
-- **Chroot Shell** — one confirmed root command at a time inside the selected repair system.
+- **Chroot Shell** — one confirmed root command at a time inside the selected repair system. When a command asks a question (apt/dnf/dpkg prompts), it appears in a popup and your answer is sent back to the command; cancel stops it. Non-interactive flags such as `-y`/`--noconfirm` remain recommended for unattended runs.
 - **File Copy** — guarded Host → Repair and Repair → Host transfers with preview and verification.
 - **Logs / Settings** — per-session logs with section filters, and the repair plan, safety rules and capability report.
 

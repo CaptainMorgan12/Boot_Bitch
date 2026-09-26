@@ -4953,6 +4953,25 @@ run_selected_chroot_modern()
 # there is no filesystem root to enter.  They still execute inside the private
 # mount namespace that makes efivarfs read-only and the hook shim PATH-first,
 # exactly like the guarded branch of run_selected_chroot.
+# The firmware-variable isolation guard script shared by the direct
+# host-command runner and the interactive shell channel (which embeds the same
+# script in the pty command string).  The guard proves the efivarfs read-only
+# remount inside the private mount namespace before the command runs.
+host_command_guard_body()
+{
+    cat <<'HOST_GUARD'
+if mountpoint -q /sys/firmware/efi/efivars; then
+    mount --bind /sys/firmware/efi/efivars /sys/firmware/efi/efivars
+    mount -o remount,bind,ro /sys/firmware/efi/efivars
+    findmnt -rn -o OPTIONS --target /sys/firmware/efi/efivars | tr "," "\n" | grep -Fxq ro
+elif [ -d /sys/firmware/efi/efivars ]; then
+    echo "Unable to prove firmware variable mount isolation." >&2
+    exit 1
+fi
+exec "$@"
+HOST_GUARD
+}
+
 run_host_command_isolated()
 {
     local i
@@ -4967,17 +4986,8 @@ run_host_command_isolated()
             args[$i]="PATH=$HOST_COMMAND_GUARD_DIR:${args[$i]#PATH=}"
         fi
     done
-    unshare --mount --propagation private /bin/sh -eu -c '
-        if mountpoint -q /sys/firmware/efi/efivars; then
-            mount --bind /sys/firmware/efi/efivars /sys/firmware/efi/efivars
-            mount -o remount,bind,ro /sys/firmware/efi/efivars
-            findmnt -rn -o OPTIONS --target /sys/firmware/efi/efivars | tr "," "\n" | grep -Fxq ro
-        elif [ -d /sys/firmware/efi/efivars ]; then
-            echo "Unable to prove firmware variable mount isolation." >&2
-            exit 1
-        fi
-        exec "$@"
-    ' boot-repair-host-command "${args[@]:-}"
+    unshare --mount --propagation private /bin/sh -eu -c "$(host_command_guard_body)" \
+        boot-repair-host-command "${args[@]:-}"
 }
 
 # ---------------------------------------------------------------------------
@@ -15378,6 +15388,219 @@ CHROOT_SHELL_PROMPT_REGEX='(\[[yYnN]/[yYnN]\]|Password:|Enter passphrase|Press a
 # stdin (a service, a socket) cannot hold the privileged broker forever.
 CHROOT_SHELL_TIMEOUT_SECONDS=300
 
+# ---------------------------------------------------------------------------
+# Generic interactive input channel for the shell verbs
+# ---------------------------------------------------------------------------
+# The GUI runs the helper through the privileged-session broker, which sets
+# BOOT_REPAIR_SESSION_PROTOCOL=1 and BOOT_REPAIR_SESSION_REQUEST=<id>.  Only
+# then does a shell command receive an interactive input channel: the command
+# runs under a PTY (util-linux script(1)) where available -- so apt, dnf,
+# dpkg/debconf and friends see a terminal and print their real prompts -- with
+# a plain stdin pipe as the fallback.  No prompt text is ever pattern-matched
+# or interpreted: the trigger is the command being ALIVE while its output has
+# been quiet for SHELL_PROMPT_QUIET_TICKS one-second ticks AND having produced
+# at least one output byte.  The trailing output (the last
+# SHELL_PROMPT_TRAILING_BYTES bytes) is base64-encoded into a
+# PROMPT\t<request_id>\t<base64> wire record on stdout; the GUI answers with
+# ANSWER\t<request_id>\t<base64> on the protocol pipe and the decoded answer
+# plus a newline is written to the command's input.  The per-command timeout
+# budget is PAUSED while a prompt awaits an answer.  An empty answer (cancel),
+# a malformed record, or no answer within SHELL_ANSWER_WINDOW_SECONDS closes
+# the command's input and fails the command closed; the command never hangs
+# forever, and nothing in the prompt text is ever executed.
+SHELL_PROMPT_QUIET_TICKS=2
+SHELL_PROMPT_TRAILING_BYTES=800
+SHELL_ANSWER_WINDOW_SECONDS=600
+
+shell_interactive_enabled()
+{
+    [[ "${BOOT_REPAIR_SESSION_PROTOCOL:-0}" == "1" ]]
+}
+
+# Every tool the interactive channel needs must exist before it replaces the
+# fail-closed /dev/null run.
+shell_interactive_ready()
+{
+    shell_interactive_enabled || return 1
+    command -v mkfifo >/dev/null 2>&1 || return 1
+    command -v base64 >/dev/null 2>&1 || return 1
+    command -v tr >/dev/null 2>&1 || return 1
+    command -v tail >/dev/null 2>&1 || return 1
+}
+
+# Shell-quote every argument so the joined string can be executed safely by
+# /bin/sh -c inside script(1).
+shell_command_string()
+{
+    local out="" arg
+    for arg in "$@"; do
+        printf -v arg '%q' "$arg"
+        out+="${out:+ }$arg"
+    done
+    printf '%s\n' "$out"
+}
+
+# Run one shell command with the generic interactive channel.
+#   $1 = transcript path (raw command output evidence)
+#   $2 = overall deadline in seconds (paused while a prompt is pending)
+#   $3 = the command string executed by /bin/sh -c
+# Returns the command's exit code, 124 when the deadline expires, or 125 when
+# a prompt was cancelled or no answer arrived in time.
+shell_run_interactive()
+{
+    local transcript="$1" deadline="$2" command_string="$3"
+    local in_fifo="$SESSION_DIR/shell-in" out_fifo="$SESSION_DIR/shell-out"
+    local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
+    local tail_buf="" ch="" bytes="" encoded="" tag="" id="" answer=""
+    local script_bin="" setsid_bin="" newline_done=1 wait_rc=0 grace=0
+
+    command -v script >/dev/null 2>&1 && script_bin=script
+    command -v setsid >/dev/null 2>&1 && setsid_bin=setsid
+
+    rm -f -- "$in_fifo" "$out_fifo"
+    mkfifo -- "$in_fifo" "$out_fifo" || return 2
+
+    # Spawn the runner first: its redirections block until the matching FIFO
+    # ends are opened below (writer for its stdin, reader for its stdout).
+    if [[ -n "$script_bin" ]]; then
+        if [[ -n "$setsid_bin" ]]; then
+            setsid $script_bin -qefc "$command_string" /dev/null <"$in_fifo" >"$out_fifo" 2>&1 &
+        else
+            $script_bin -qefc "$command_string" /dev/null <"$in_fifo" >"$out_fifo" 2>&1 &
+        fi
+    else
+        if [[ -n "$setsid_bin" ]]; then
+            setsid /bin/sh -c "$command_string" <"$in_fifo" >"$out_fifo" 2>&1 &
+        else
+            /bin/sh -c "$command_string" <"$in_fifo" >"$out_fifo" 2>&1 &
+        fi
+    fi
+    runner_pid=$!
+
+    # Open the matching ends; the order unblocks the runner's redirections.
+    exec 9>"$in_fifo"
+    exec 8<"$out_fifo"
+
+    exec 11>>"$SESSION_LOG"
+    exec 12>>"$transcript"
+
+    begin=$(date +%s)
+    rc=124
+    quiet_ticks=0
+    tail_buf=""
+    newline_done=1
+    while :; do
+        if ! kill -0 "$runner_pid" 2>/dev/null; then
+            rc=1
+            break
+        fi
+        if IFS= read -r -n 1 -t 1 -u 8 ch; then
+            # Normalize CR (pty line discipline, progress bars) so the live
+            # stream and the logs stay line-oriented; nothing else changes.
+            [[ "$ch" == $'\r' ]] && ch=$'\n'
+            tail_buf+="$ch"
+            if [[ "$ch" == $'\n' ]]; then
+                newline_done=1
+            else
+                newline_done=0
+            fi
+            printf '%s' "$ch"
+            printf '%s' "$ch" >&11
+            printf '%s' "$ch" >&12
+            quiet_ticks=0
+            continue
+        fi
+        # One quiet tick: no byte arrived for a second while the command lives.
+        now=$(date +%s)
+        if [[ -n "$tail_buf" ]]; then
+            quiet_ticks=$((quiet_ticks + 1))
+        fi
+        if (( quiet_ticks >= SHELL_PROMPT_QUIET_TICKS )); then
+            # Alive, quiet and it has printed something: hand the trailing
+            # output to the GUI.  Close the current output line first so the
+            # PROMPT record starts on a fresh line for the broker's reader.
+            if (( newline_done == 0 )); then
+                printf '\n'
+                printf '\n' >&11
+                printf '\n' >&12
+                newline_done=1
+            fi
+            bytes="$tail_buf"
+            if (( ${#bytes} > SHELL_PROMPT_TRAILING_BYTES )); then
+                bytes="$(printf '%s' "$bytes" | tail -c "$SHELL_PROMPT_TRAILING_BYTES")"
+            fi
+            encoded="$(printf '%s' "$bytes" | base64 | tr -d '\n')"
+            printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
+            paused_at=$now
+            tag=""
+            id=""
+            encoded=""
+            wait_rc=1
+            if IFS=$'\t' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded; then
+                wait_rc=0
+            fi
+            answer=""
+            if (( wait_rc == 0 )) \
+                && [[ "$tag" == "ANSWER" && "$id" == "${BOOT_REPAIR_SESSION_REQUEST:-0}" ]]; then
+                answer="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
+            else
+                wait_rc=2
+            fi
+            if (( wait_rc != 0 )); then
+                printf '%s\n' "Boot Bitch: the interactive prompt was cancelled or no answer arrived in time, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                rc=125
+                break
+            fi
+            if [[ -z "$answer" ]]; then
+                printf '%s\n' "Boot Bitch: the interactive prompt was cancelled, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                rc=125
+                break
+            fi
+            # Resume: hand the answer to the command and unpause the deadline.
+            now=$(date +%s)
+            begin=$((begin + now - paused_at))
+            printf '%s\n' "$answer" >&9
+            tail_buf=""
+            quiet_ticks=0
+            newline_done=1
+            continue
+        fi
+        if (( now - begin >= deadline )); then
+            rc=124
+            break
+        fi
+    done
+
+    if (( rc == 124 || rc == 125 )); then
+        # Fail closed: interrupt the command on its input, close the input,
+        # then terminate the runner with a bounded grace period.
+        printf '\003' >&9 2>/dev/null || true
+        exec 9>&-
+        if kill -0 "$runner_pid" 2>/dev/null; then
+            kill "$runner_pid" 2>/dev/null || true
+            grace=0
+            while (( grace < 10 )); do
+                kill -0 "$runner_pid" 2>/dev/null || break
+                sleep 1
+                grace=$((grace + 1))
+            done
+            if kill -0 "$runner_pid" 2>/dev/null; then
+                kill -KILL "$runner_pid" 2>/dev/null || true
+            fi
+        fi
+        wait "$runner_pid" 2>/dev/null || true
+    else
+        wait "$runner_pid" 2>/dev/null
+        rc=$?
+    fi
+    exec 8<&-
+    exec 9>&-
+    exec 11>&-
+    exec 12>&-
+    rm -f -- "$in_fifo" "$out_fifo"
+    return "$rc"
+}
+
 # Some distributions (notably TUXEDO OS) ship an apt wrapper that rejects the
 # plain 'apt upgrade' subcommand and prints a policy error directing callers to
 # 'full-upgrade'.  A user-run shell command keeps its intent: when the command
@@ -15451,6 +15674,7 @@ apt_shell_upgrade_policy_refused()
 run_chroot_shell_modern()
 {
     local command="${1:-}" rc=0 transcript run_command retry_command="" retried=0
+    local interactive_run=0
     [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
     [[ -n "$command" ]] || fail "shell command cannot be empty."
     need chroot
@@ -15461,29 +15685,48 @@ run_chroot_shell_modern()
     prepare_target rw
     log "BEGIN: Chroot shell command" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
-    # A command is deliberately run in a clean target environment.  stdin is
-    # /dev/null so a command that asks a question reads EOF and aborts instead
-    # of blocking on (or consuming) the privileged-session protocol pipe.
-    # --kill-after guarantees the bounded runtime even when the command ignores
-    # SIGTERM.  The per-request transcript is scanned after the command ends
-    # for interactive-prompt evidence; tee keeps the live output in the helper
-    # stdout and in the session log.
+    # A command runs in a clean target environment.  Two modes exist:
+    #  - Through the GUI (privileged-session broker): the command runs under a
+    #    PTY with the generic interactive channel (see shell_run_interactive);
+    #    a question the command asks is shown in a popup and the answer is
+    #    written back, with the timeout paused while the popup waits.
+    #  - Otherwise (direct helper invocation, or missing channel tooling):
+    #    stdin stays /dev/null so a command that asks a question reads EOF and
+    #    aborts instead of blocking on the privileged-session protocol pipe,
+    #    and the deliberate refusal hint below turns that abort actionable.
+    # --kill-after guarantees the bounded runtime even when the command
+    # ignores SIGTERM.  The per-request transcript keeps the full output
+    # evidence for the post-run scans.
     transcript="$SESSION_DIR/chroot-shell-output"
     : > "$transcript"
     run_command="$(apt_intent_translate "$command")"
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
+    interactive_run=0
+    shell_interactive_ready && interactive_run=1
     while :; do
         set +e
-        timeout --foreground --kill-after=10 "$CHROOT_SHELL_TIMEOUT_SECONDS" chroot "$TARGET_ROOT" /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            APT_LISTCHANGES_FRONTEND=none \
-            DNF5_FORCE_INTERACTIVE=0 \
-            /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        if (( interactive_run == 1 )); then
+            # The interactive run deliberately drops the non-interactive
+            # frontend switches so debconf/dpkg questions reach the popup;
+            # the user's explicit answer (or cancel) is the control instead.
+            shell_run_interactive "$transcript" "$CHROOT_SHELL_TIMEOUT_SECONDS" \
+                "$(shell_command_string chroot "$TARGET_ROOT" /usr/bin/env \
+                    HOME=/root \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    /bin/sh -c "$run_command")"
+            rc=$?
+        else
+            timeout --foreground --kill-after=10 "$CHROOT_SHELL_TIMEOUT_SECONDS" chroot "$TARGET_ROOT" /usr/bin/env \
+                HOME=/root \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                DEBIAN_FRONTEND=noninteractive \
+                APT_LISTCHANGES_FRONTEND=none \
+                DNF5_FORCE_INTERACTIVE=0 \
+                /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+            rc=${PIPESTATUS[0]}
+        fi
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -15498,8 +15741,12 @@ run_chroot_shell_modern()
         retried=1
     done
     log "Chroot shell exit code: $rc" | tee -a "$SESSION_LOG"
-    if (( rc != 0 )) && grep -Eq "$CHROOT_SHELL_PROMPT_REGEX" "$transcript" 2>/dev/null; then
+    if (( rc != 0 )) && (( interactive_run == 0 )) \
+        && grep -Eq "$CHROOT_SHELL_PROMPT_REGEX" "$transcript" 2>/dev/null; then
         printf '%s\n' "Boot Bitch: the command asked an interactive question, which the Chroot Shell cannot answer (stdin is /dev/null). Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'." | tee -a "$SESSION_LOG"
+    fi
+    if (( rc == 125 )); then
+        fail "Chroot shell command was cancelled at an interactive prompt."
     fi
     if (( rc == 124 || rc == 137 )); then
         printf '%s\n' "Boot Bitch: the command was aborted after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds. If it was waiting for input, re-run it with the non-interactive flag (for example 'dnf update -y')." | tee -a "$SESSION_LOG"
@@ -15528,27 +15775,50 @@ run_host_shell_modern()
     log "BEGIN: Running-host shell command" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
     # The command runs directly in the live host root through the private
-    # firmware-variable namespace with a clean environment.  The timeout
-    # prevents an accidental foreground service from blocking the broker
-    # indefinitely while still allowing ordinary maintenance commands.  A
-    # plain apt upgrade rejected by the host's distribution policy is retried
-    # once with the equivalent full-upgrade transaction; the transcript keeps
-    # the original failure visible.
+    # firmware-variable namespace with a clean environment.  Two modes exist:
+    #  - Through the GUI (privileged-session broker): the command runs under a
+    #    PTY inside the same isolation with the generic interactive channel
+    #    (see shell_run_interactive); questions appear in a popup and the
+    #    answer is written back, with the timeout paused while the popup waits.
+    #  - Otherwise: stdin stays /dev/null and an interactive question aborts
+    #    the command instead of blocking on the protocol pipe.
+    # The timeout prevents an accidental foreground service from blocking the
+    # broker indefinitely while still allowing ordinary maintenance commands.
+    # A plain apt upgrade rejected by the host's distribution policy is
+    # retried once with the equivalent full-upgrade transaction; the
+    # transcript keeps the original failure visible.
     local transcript="$SESSION_DIR/host-shell-output" rc=0
-    local run_command="$command" retry_command="" retried=0
+    local run_command="$command" retry_command="" retried=0 interactive_run=0
     run_command="$(apt_intent_translate "$command")"
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
     : > "$transcript"
+    shell_interactive_ready && interactive_run=1
     while :; do
         set +e
-        run_host_command_isolated timeout --foreground 300 /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        if (( interactive_run == 1 )); then
+            if (( HOST_COMMAND_GUARD != 1 )); then
+                fail "Host command guard is not prepared; refusing to run a native host command."
+            fi
+            # The interactive run deliberately drops the non-interactive
+            # frontend switch so debconf/dpkg questions reach the popup; the
+            # user's explicit answer (or cancel) is the control instead.
+            shell_run_interactive "$transcript" 300 \
+                "$(shell_command_string unshare --mount --propagation private \
+                    /bin/sh -eu -c "$(host_command_guard_body)" boot-repair-host-command \
+                    /usr/bin/env HOME=/root \
+                    "PATH=$HOST_COMMAND_GUARD_DIR:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
+                    /bin/bash -lc "$run_command")"
+            rc=$?
+        else
+            run_host_command_isolated timeout --foreground 300 /usr/bin/env \
+                HOME=/root \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                DEBIAN_FRONTEND=noninteractive \
+                /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+            rc=${PIPESTATUS[0]}
+        fi
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -15563,6 +15833,10 @@ run_host_shell_modern()
         retried=1
     done
     log "Running-host shell exit code: $rc" | tee -a "$SESSION_LOG"
+    if (( rc == 125 )); then
+        log "FAIL: Running-host shell command was cancelled at an interactive prompt." | tee -a "$SESSION_LOG"
+        exit "$rc"
+    fi
     if (( rc != 0 )); then
         log "FAIL: Running-host shell command (exit code $rc)" | tee -a "$SESSION_LOG"
         exit "$rc"
@@ -19617,15 +19891,26 @@ session_server()
 
         set +e
         if [[ "$has_secret" == "1" ]]; then
-            printf '%s' "$secret" | bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
+            printf '%s' "$secret" |
+                BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
+                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
                 while IFS= read -r line || [[ -n "$line" ]]; do
-                    printf 'OUT\t%s\t%s\n' "$request_id" "$line"
+                    if [[ "$line" == PROMPT$'\t'"$request_id"$'\t'* ]]; then
+                        printf '%s\n' "$line"
+                    else
+                        printf 'OUT\t%s\t%s\n' "$request_id" "$line"
+                    fi
                 done
             rc=${PIPESTATUS[1]}
         else
-            bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
+            BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
+                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
                 while IFS= read -r line || [[ -n "$line" ]]; do
-                    printf 'OUT\t%s\t%s\n' "$request_id" "$line"
+                    if [[ "$line" == PROMPT$'\t'"$request_id"$'\t'* ]]; then
+                        printf '%s\n' "$line"
+                    else
+                        printf 'OUT\t%s\t%s\n' "$request_id" "$line"
+                    fi
                 done
             rc=${PIPESTATUS[0]}
         fi

@@ -1967,7 +1967,13 @@ fi
 host_isolated_body="$(sed -n '/^run_host_command_isolated()/,/^}/p' "$HELPER")"
 [[ -n "$host_isolated_body" ]] || { echo 'FAIL: run_host_command_isolated function is missing' >&2; exit 1; }
 grep -q 'unshare --mount --propagation private' <<<"$host_isolated_body"
-grep -q 'mount -o remount,bind,ro /sys/firmware/efi/efivars' <<<"$host_isolated_body"
+# The guard script is shared with the interactive shell channel through a
+# builder function; the efivarfs read-only proof must live there verbatim.
+host_guard_body="$(sed -n '/^host_command_guard_body()/,/^}/p' "$HELPER")"
+grep -q 'mount -o remount,bind,ro /sys/firmware/efi/efivars' <<<"$host_guard_body" \
+    || { echo 'FAIL: host command guard body lost the efivarfs read-only remount' >&2; exit 1; }
+grep -q 'exec "$@"' <<<"$host_guard_body" \
+    || { echo 'FAIL: host command guard body lost the exec passthrough' >&2; exit 1; }
 if grep -q 'chroot' <<<"$host_isolated_body"; then
     echo 'FAIL: native host command isolation must not enter a chroot' >&2
     exit 1
