@@ -92,6 +92,10 @@ set +e
 # stubs; capture the real wrapper now so the mount-option retry tests can
 # restore it later.
 MOUNT_RECORDED_DEFINITION="$(declare -f mount_recorded)"
+# B5: the browse-target section later stubs realpath_existing at the top
+# level; capture the real definition now so the config-write content-file
+# path proof can restore it.
+REALPATH_EXISTING_DEFINITION="$(declare -f realpath_existing)"
 
 TARGET_ROOT="$FIXTURE"
 ROOT_CANONICAL="/dev/null"
@@ -1369,6 +1373,257 @@ printf '%s\n' "$browse_out" | grep -q $'tab\tname' \
 printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	' \
     || fail "browse-target emitted no BROWSE_ENTRY records"
 pass "legacy browse-target records (raw percent-encoded names, TAB encoded as %09)"
+
+# --- batch B5: config-write content-file transport (A9-01 parity) ------------
+# The generated helper inherits the modern guarded transport: a regular,
+# symlink-free caller-owned content file (raw path == resolved path) is
+# copied into the atomic temp under the 1 MiB stat cap, the content never
+# reaches argv, helper output or the session log, and the caller's file is
+# never deleted.  The deprecated argv form keeps its 256 KiB Etch bound.
+set +e
+# Restore the real realpath_existing (the browse-target section left an
+# identity stub at the top level); the content-file path proof depends on it.
+eval "$REALPATH_EXISTING_DEFINITION"
+mkdir -p "$FIXTURE/cfg/etc" "$FIXTURE/cfg/content" "$FIXTURE/cfg/session"
+printf 'cfg-old-content\n' > "$FIXTURE/cfg/etc/crypttab"
+chmod 640 "$FIXTURE/cfg/etc/crypttab"
+: > "$FIXTURE/cfg/session/session.log"
+uid="$(id -u)"
+
+# Round-trip through the file form: byte-identical content, target mode
+# preserved, success reported, caller file untouched, nothing in the log.
+printf 'cfg-b5-marker\nsecond line\n' > "$FIXTURE/cfg/content/content-file"
+chmod 600 "$FIXTURE/cfg/content/content-file"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/content-file" --content-owner "$uid"
+) > "$FIXTURE/cfg/roundtrip.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -eq 0 ]] || fail "content-file round-trip failed: $(cat "$FIXTURE/cfg/roundtrip.out")"
+cmp -s "$FIXTURE/cfg/content/content-file" "$FIXTURE/cfg/etc/crypttab" \
+    || fail "content-file transport did not write byte-identical content"
+[[ "$(stat -c '%a' "$FIXTURE/cfg/etc/crypttab")" == 640 ]] \
+    || fail "content-file write did not preserve the target mode"
+grep -q 'Target configuration updated: /etc/crypttab' "$FIXTURE/cfg/roundtrip.out" \
+    || fail "content-file write did not report success"
+grep -q 'cfg-b5-marker' "$FIXTURE/cfg/roundtrip.out" \
+    && fail "the transported content appeared in the helper output"
+grep -q 'cfg-b5-marker' "$FIXTURE/cfg/session/session.log" \
+    && fail "the transported content reached the session log"
+[[ -f "$FIXTURE/cfg/content/content-file" ]] \
+    || fail "the helper deleted the caller's content file"
+
+# Owner refusal: a SUDO_UID that does not own the file must fail closed.
+printf 'cfg-b5-owner\n' > "$FIXTURE/cfg/content/owner-file"
+chmod 600 "$FIXTURE/cfg/content/owner-file"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$((uid + 1))"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/owner-file" --content-owner "$uid"
+) > "$FIXTURE/cfg/owner-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a SUDO_UID-mismatched content file was accepted"
+grep -q 'owner cannot be proven' "$FIXTURE/cfg/owner-refuse.out" \
+    || fail "content-file owner refusal lacks the proof wording"
+[[ -f "$FIXTURE/cfg/content/owner-file" ]] \
+    || fail "the owner refusal deleted the caller's content file"
+
+# A zero --content-owner without SUDO_UID can never be proven; the gksu-style
+# non-zero matching owner stays accepted.
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    unset SUDO_UID
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/owner-file" --content-owner 0
+) > "$FIXTURE/cfg/zero-owner-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a zero --content-owner without SUDO_UID was accepted"
+grep -q 'owner cannot be proven' "$FIXTURE/cfg/zero-owner-refuse.out" \
+    || fail "zero-owner refusal lacks the proof wording"
+# The gksu-style non-zero matching owner stays accepted (unprovable as root,
+# where the file uid is 0 and the branch requires a non-zero owner).
+if [[ "$uid" != "0" ]]; then
+    (
+        trap - EXIT
+        TARGET_ROOT="$FIXTURE/cfg"
+        SESSION_LOG="$FIXTURE/cfg/session/session.log"
+        prepare_target() { return 0; }
+        maybe_mount_target_path() { return 0; }
+        target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+        unset SUDO_UID
+        run_target_config write crypttab \
+            --content-file "$FIXTURE/cfg/content/owner-file" --content-owner "$uid"
+    ) > "$FIXTURE/cfg/gksu-accept.out" 2>&1
+    cfg_rc=$?
+    [[ $cfg_rc -eq 0 ]] || fail "the gksu-style --content-owner match was refused"
+    cmp -s "$FIXTURE/cfg/content/owner-file" "$FIXTURE/cfg/etc/crypttab" \
+        || fail "the gksu-style content write did not land the content"
+    [[ -f "$FIXTURE/cfg/content/owner-file" ]] \
+        || fail "the gksu-style write deleted the caller's content file"
+else
+    printf 'skip - root run cannot exercise the non-zero --content-owner branch\n'
+fi
+
+# Symlink refusal: the final component and an intermediate directory must
+# both be refused before the file is read, and the caller file survives.
+ln -s "$FIXTURE/cfg/content/content-file" "$FIXTURE/cfg/content/content-link"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/content-link" --content-owner "$uid"
+) > "$FIXTURE/cfg/symlink-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a symlinked content-file final component was accepted"
+grep -q 'symlink-free regular file' "$FIXTURE/cfg/symlink-refuse.out" \
+    || fail "symlink refusal lacks the path wording"
+mkdir -p "$FIXTURE/cfg/content-dir"
+printf 'cfg-b5-intermediate\n' > "$FIXTURE/cfg/content-dir/plain"
+chmod 600 "$FIXTURE/cfg/content-dir/plain"
+ln -s "$FIXTURE/cfg/content-dir" "$FIXTURE/cfg/content-dir-link"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content-dir-link/plain" --content-owner "$uid"
+) > "$FIXTURE/cfg/intermediate-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a content file reached through a symlinked directory was accepted"
+grep -q 'symlink-free regular file' "$FIXTURE/cfg/intermediate-refuse.out" \
+    || fail "intermediate-symlink refusal lacks the path wording"
+[[ -f "$FIXTURE/cfg/content/content-file" && -f "$FIXTURE/cfg/content-dir/plain" ]] \
+    || fail "the symlink refusals deleted the caller's content files"
+
+# Oversize refusal at the 1 MiB stat cap; an exactly-1 MiB file is accepted.
+head -c 1048577 /dev/zero > "$FIXTURE/cfg/content/oversize-file"
+chmod 600 "$FIXTURE/cfg/content/oversize-file"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/oversize-file" --content-owner "$uid"
+) > "$FIXTURE/cfg/oversize-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "an over-1 MiB content file was accepted"
+grep -q 'limited to 1 MiB' "$FIXTURE/cfg/oversize-refuse.out" \
+    || fail "oversize refusal does not name the 1 MiB cap"
+[[ -f "$FIXTURE/cfg/content/oversize-file" ]] \
+    || fail "the oversize refusal deleted the caller's content file"
+head -c 1048576 /dev/zero | tr '\0' 'x' > "$FIXTURE/cfg/content/exact-file"
+chmod 600 "$FIXTURE/cfg/content/exact-file"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/exact-file" --content-owner "$uid"
+) > "$FIXTURE/cfg/exact-accept.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -eq 0 ]] || fail "an exactly-1 MiB content file was refused"
+cmp -s "$FIXTURE/cfg/content/exact-file" "$FIXTURE/cfg/etc/crypttab" \
+    || fail "the exactly-1 MiB write did not land byte-identical content"
+
+# Truncated/malformed option shapes refuse before any write.
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/content-file"
+) > "$FIXTURE/cfg/argc-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a truncated --content-file form was accepted"
+grep -q 'invalid argument count' "$FIXTURE/cfg/argc-refuse.out" \
+    || fail "truncated-form refusal lacks the argument-count wording"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    SUDO_UID="$uid"
+    run_target_config write crypttab \
+        --content-file "$FIXTURE/cfg/content/content-file" --content-owner-extra "$uid"
+) > "$FIXTURE/cfg/shape-refuse.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "a malformed --content-file option shape was accepted"
+grep -q 'requires --content-owner' "$FIXTURE/cfg/shape-refuse.out" \
+    || fail "malformed-shape refusal lacks the --content-owner wording"
+
+# The deprecated argv form still works (existing Etch bound, 256 KiB).
+printf 'cfg-old-content\n' > "$FIXTURE/cfg/etc/crypttab"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    run_target_config write crypttab 'cfg-b5-argv-content'
+) > "$FIXTURE/cfg/argv.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -eq 0 ]] || fail "the argv fallback form failed: $(cat "$FIXTURE/cfg/argv.out")"
+[[ "$(cat "$FIXTURE/cfg/etc/crypttab")" == 'cfg-b5-argv-content' ]] \
+    || fail "the argv fallback form did not write the content"
+cfg_big="$(head -c 262145 /dev/zero | tr '\0' 'x')"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/cfg"
+    SESSION_LOG="$FIXTURE/cfg/session/session.log"
+    prepare_target() { return 0; }
+    maybe_mount_target_path() { return 0; }
+    target_config_path() { printf '%s\n' "$TARGET_ROOT$1"; }
+    run_target_config write crypttab "$cfg_big"
+) > "$FIXTURE/cfg/argv-oversize.out" 2>&1
+cfg_rc=$?
+[[ $cfg_rc -ne 0 ]] || fail "an over-256 KiB argv payload was accepted"
+grep -q 'limited to 256 KiB' "$FIXTURE/cfg/argv-oversize.out" \
+    || fail "argv oversize refusal does not name the 256 KiB bound"
+rm -rf "$FIXTURE/cfg"
+set -e
+pass "config-write content-file transport (round-trip, owner/symlink/oversize refusals, argv fallback, no log leak, caller file survives)"
 
 # --- B4/A10-05: cancel-token surface -----------------------------------------
 # The existence signal (CANCEL_FILE) and the token form (CANCEL_TOKEN +

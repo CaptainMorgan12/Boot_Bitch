@@ -108,6 +108,37 @@ awk '
     END { exit(saw_intent ? 0 : 1) }
 ' <<<"$prepare_block" \
     || { echo 'FAIL: TARGET_WRITE_INTENT is not set before the rw chroot mounts' >&2; exit 1; }
+
+# A9-01: config-write transports the payload through a private content file
+# (--content-file/--content-owner) so file contents never appear in argv or
+# /proc cmdline; the deprecated argv form is only a legacy fallback.
+grep -q '^config_content_file_path_safe()' "$HELPER" \
+    || { echo 'FAIL: config_content_file_path_safe is missing' >&2; exit 1; }
+grep -q '^config_content_file_owner_proven()' "$HELPER" \
+    || { echo 'FAIL: config_content_file_owner_proven is missing' >&2; exit 1; }
+grep -Fq -- '--content-file <path> --content-owner <uid>' "$HELPER" \
+    || { echo 'FAIL: the usage text does not document the content-file transport' >&2; exit 1; }
+grep -Fq 'config-write accepts either' "$HELPER" \
+    || { echo 'FAIL: the config-write dispatcher does not reject a malformed option shape' >&2; exit 1; }
+config_write_body="$(awk '/^config_content_file_path_safe\(\)/{f=1} f{print} /^run_target_config\(\)/{g=1} g && /^}/{exit}' "$HELPER")"
+grep -Fq 'PKEXEC_UID' <<<"$config_write_body" \
+    || { echo 'FAIL: the content-file owner proof does not use PKEXEC_UID' >&2; exit 1; }
+grep -Fq 'SUDO_UID' <<<"$config_write_body" \
+    || { echo 'FAIL: the content-file owner proof does not use SUDO_UID' >&2; exit 1; }
+grep -Fq 'symlink-free regular file' <<<"$config_write_body" \
+    || { echo 'FAIL: the content-file path safety refusal is missing' >&2; exit 1; }
+grep -Fq 'owner cannot be proven' <<<"$config_write_body" \
+    || { echo 'FAIL: the content-file owner refusal is missing' >&2; exit 1; }
+grep -Fq 'limited to 1 MiB' <<<"$config_write_body" \
+    || { echo 'FAIL: the content-file size cap is not 1 MiB' >&2; exit 1; }
+grep -Fq 'cp -- "$content_file" "$tmp"' <<<"$config_write_body" \
+    || { echo 'FAIL: the content file is not copied into the atomic temp file' >&2; exit 1; }
+grep -Fq 'copy failed verification' <<<"$config_write_body" \
+    || { echo 'FAIL: the content copy is not re-verified against the size cap' >&2; exit 1; }
+if grep -q 'rm -f -- "\$content_file"' "$HELPER"; then
+    echo 'FAIL: the helper must never delete the caller-supplied content file' >&2
+    exit 1
+fi
 # Some distributions (for example TUXEDO OS) disable the plain apt/apt-get
 # upgrade subcommand and demand full-upgrade instead.  Both shell paths must
 # recognize exactly that command shape, retry it once with the equivalent
@@ -2125,5 +2156,135 @@ fi
 # ---------------------------------------------------------------------------
 grep -Fq 'timeout --foreground --kill-after=10 300' <<<"$host_shell_body" \
     || { echo 'FAIL: the host-shell non-interactive runner lost --kill-after=10' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A9-01 (config-write content-file transport, behavioural): run_target_config
+# accepts the --content-file/--content-owner form and writes the target file
+# atomically byte-identically; a wrong/unprovable owner, an oversized file and
+# a symlinked content file are all refused without deleting the content file;
+# the deprecated argv form still works; the content never appears in the
+# output or the session log.
+# ---------------------------------------------------------------------------
+cfg_root="$(mktemp -d)"
+(
+    source <(sed '/^main "$@"$/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    unset PKEXEC_UID SUDO_UID
+    # The contract test never mounts a real target: stub the two mount entry
+    # points run_target_config depends on.
+    prepare_target() { :; }
+    maybe_mount_target_path() { :; }
+    cfg_uid="$(id -u)"
+    SESSION_DIR="$cfg_root/session"
+    mkdir -p "$SESSION_DIR"
+    SESSION_LOG="$cfg_root/session.log"
+    : > "$SESSION_LOG"
+    TARGET_ROOT="$cfg_root/target"
+    mkdir -p "$TARGET_ROOT/etc"
+    printf 'original-fstab\n' > "$TARGET_ROOT/etc/fstab"
+    chmod 0640 "$TARGET_ROOT/etc/fstab"
+    printf 'original-crypttab\n' > "$TARGET_ROOT/etc/crypttab"
+    chmod 0640 "$TARGET_ROOT/etc/crypttab"
+
+    # Fixture content file: private, regular, caller-owned, byte-exact payload.
+    content_file="$cfg_root/content"
+    printf 'crypttab-secret-marker-90125\nsecond line\twith tab and  spaces\n' > "$content_file"
+    chmod 0600 "$content_file"
+
+    # (1) Content-file transport accepted: the payload round-trips
+    # byte-identically into the target, mode/owner are preserved atomically,
+    # the helper never deletes the content file, and the content never
+    # appears in the output or the session log.
+    out="$(PKEXEC_UID="$cfg_uid" run_target_config write crypttab --content-file "$content_file" --content-owner "$cfg_uid")"
+    cmp -s "$content_file" "$TARGET_ROOT/etc/crypttab" \
+        || { echo 'FAIL: the content-file transport did not write byte-identical content' >&2; exit 1; }
+    [[ "$(stat -c '%a' -- "$TARGET_ROOT/etc/crypttab")" == "640" ]] \
+        || { echo 'FAIL: the content-file write did not preserve the target mode' >&2; exit 1; }
+    [[ "$(stat -c '%u:%g' -- "$TARGET_ROOT/etc/crypttab")" == "$cfg_uid:$(id -g)" ]] \
+        || { echo 'FAIL: the content-file write did not preserve the target owner' >&2; exit 1; }
+    grep -Fq 'Target configuration updated: /etc/crypttab' <<<"$out" \
+        || { echo 'FAIL: the content-file write did not report success' >&2; exit 1; }
+    [[ -f "$content_file" ]] \
+        || { echo 'FAIL: the helper deleted the caller-supplied content file' >&2; exit 1; }
+    if grep -q 'crypttab-secret-marker-90125' "$SESSION_LOG" 2>/dev/null; then
+        echo 'FAIL: the content appeared in the session log' >&2
+        exit 1
+    fi
+    if grep -q 'crypttab-secret-marker-90125' <<<"$out"; then
+        echo 'FAIL: the content appeared in the helper output' >&2
+        exit 1
+    fi
+
+    # (2) A recorded sudo invoker is honoured the same way.
+    SUDO_UID="$cfg_uid" run_target_config write crypttab --content-file "$content_file" --content-owner "$cfg_uid" >/dev/null \
+        || { echo 'FAIL: the SUDO_UID owner proof refused a matching owner' >&2; exit 1; }
+
+    # (3) Wrong owner refused: the recorded invoker does not own the file.
+    # The helper's fail() exits, so every expected-failure call runs in its
+    # own subshell.
+    printf 'original-crypttab\n' > "$TARGET_ROOT/etc/crypttab"
+    if ( PKEXEC_UID=12345 run_target_config write crypttab --content-file "$content_file" --content-owner 12345 ) >"$cfg_root/refuse-owner.out" 2>&1; then
+        echo 'FAIL: a mismatched PKEXEC_UID owner was accepted' >&2
+        exit 1
+    fi
+    grep -Fq 'owner cannot be proven' "$cfg_root/refuse-owner.out" \
+        || { echo 'FAIL: the mismatched-owner refusal does not name the reason' >&2; cat "$cfg_root/refuse-owner.out" >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/etc/crypttab")" == "original-crypttab" ]] \
+        || { echo 'FAIL: a refused write still modified the target' >&2; exit 1; }
+    [[ -f "$content_file" ]] \
+        || { echo 'FAIL: a refused write deleted the content file' >&2; exit 1; }
+
+    # (4) Unprovable owner refused: no recorded invoker and a zero uid.
+    if ( run_target_config write crypttab --content-file "$content_file" --content-owner 0 ) >"$cfg_root/refuse-zero.out" 2>&1; then
+        echo 'FAIL: a zero --content-owner without a recorded invoker was accepted' >&2
+        exit 1
+    fi
+    grep -Fq 'owner cannot be proven' "$cfg_root/refuse-zero.out" \
+        || { echo 'FAIL: the unprovable-owner refusal does not name the reason' >&2; cat "$cfg_root/refuse-zero.out" >&2; exit 1; }
+
+    # (5) Oversized content file refused before the target is touched.
+    big_file="$cfg_root/oversized"
+    dd if=/dev/zero of="$big_file" bs=1048576 count=1 status=none
+    printf 'x' >> "$big_file"
+    chmod 0600 "$big_file"
+    if ( PKEXEC_UID="$cfg_uid" run_target_config write crypttab --content-file "$big_file" --content-owner "$cfg_uid" ) >"$cfg_root/refuse-big.out" 2>&1; then
+        echo 'FAIL: an oversized content file was accepted' >&2
+        exit 1
+    fi
+    grep -Fq '1 MiB' "$cfg_root/refuse-big.out" \
+        || { echo 'FAIL: the oversized refusal does not name the cap' >&2; cat "$cfg_root/refuse-big.out" >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/etc/crypttab")" == "original-crypttab" ]] \
+        || { echo 'FAIL: an oversized refusal still modified the target' >&2; exit 1; }
+
+    # (6) A symlinked content file is refused.
+    ln -s "$content_file" "$cfg_root/content-link"
+    if ( PKEXEC_UID="$cfg_uid" run_target_config write crypttab --content-file "$cfg_root/content-link" --content-owner "$cfg_uid" ) >"$cfg_root/refuse-link.out" 2>&1; then
+        echo 'FAIL: a symlinked content file was accepted' >&2
+        exit 1
+    fi
+    grep -Fq 'symlink-free regular file' "$cfg_root/refuse-link.out" \
+        || { echo 'FAIL: the symlink refusal does not name the reason' >&2; cat "$cfg_root/refuse-link.out" >&2; exit 1; }
+
+    # (7) The deprecated argv transport still works (legacy Qt3 GUI fallback).
+    run_target_config write fstab $'line1\nline2\targv-fallback' >/dev/null \
+        || { echo 'FAIL: the deprecated argv transport was refused' >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/etc/fstab")" == $'line1\nline2\targv-fallback' ]] \
+        || { echo 'FAIL: the deprecated argv transport did not write the content' >&2; exit 1; }
+
+    # (8) Malformed option shapes are refused.
+    if ( run_target_config write crypttab --content-file "$content_file" ) >"$cfg_root/refuse-argc.out" 2>&1; then
+        echo 'FAIL: a truncated --content-file form was accepted' >&2
+        exit 1
+    fi
+    grep -Fq 'invalid argument count' "$cfg_root/refuse-argc.out" \
+        || { echo 'FAIL: the truncated-form refusal does not name the reason' >&2; cat "$cfg_root/refuse-argc.out" >&2; exit 1; }
+    if ( run_target_config write crypttab --content-file "$content_file" --content-file-extra "$cfg_uid" ) >"$cfg_root/refuse-shape.out" 2>&1; then
+        echo 'FAIL: a malformed --content-file option shape was accepted' >&2
+        exit 1
+    fi
+    grep -Fq 'requires --content-owner' "$cfg_root/refuse-shape.out" \
+        || { echo 'FAIL: the malformed-shape refusal does not name the reason' >&2; cat "$cfg_root/refuse-shape.out" >&2; exit 1; }
+) || { echo 'FAIL: config-write content-file transport contract failed' >&2; exit 1; }
+rm -rf -- "$cfg_root"
 
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."

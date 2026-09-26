@@ -47,6 +47,7 @@
 #include <qstring.h>
 #include <qstringlist.h>
 
+#include <cstddef>
 #include <vector>
 
 #include "DeviceInventory.h"
@@ -282,6 +283,18 @@ private:
     void updateHostCard();
     void applyLegacySettingsDefaults();
     bool writeUnlockKeyfile(const QByteArray &secret, QString *path);
+    // B5: shared mode-600 O_EXCL secret-file writer in the private 0700
+    // `.keys` subdirectory of the GUI's log directory; the created path is
+    // registered in `registeredPath` (a static termination-handler buffer)
+    // before the first byte is written, so a SIGTERM/SIGINT/SIGHUP always
+    // unlinks it. Dialog-free: callers report their own failure wording.
+    bool writeSecretFile(const QByteArray &data, const char *prefix,
+                         char *registeredPath, std::size_t registeredPathSize,
+                         QString *path);
+    // The config-write content file (--content-file transport): the helper
+    // never deletes it; the GUI unlinks it on every completion path.
+    bool writeConfigContentFile(const QByteArray &content, QString *path);
+    void discardConfigContentFile();
     void discardUnlockKeyfile();
     void injectUnlockedMapperRows(const QString &disk, const QString &mapper,
                                   const QString &root, const QString &fstype,
@@ -491,6 +504,10 @@ private:
     // The GUI's mode-600 unlock keyfile (Qt 3.3.7 QProcess cannot deliver
     // stdin); created per unlock attempt and deleted on every path.
     QString m_unlockKeyfilePath;
+    // B5: the GUI's mode-600 config-write content file (--content-file
+    // transport, never argv); created per write attempt and deleted on every
+    // path, including the termination handlers.
+    QString m_configContentFilePath;
     // Cycle 11: the drive unlocked in this session and the helper-confirmed
     // root component (UNLOCKED_ROOT) for the Select Target fallback.
     QString m_unlockedDisk;

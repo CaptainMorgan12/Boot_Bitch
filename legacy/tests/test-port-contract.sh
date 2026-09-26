@@ -77,7 +77,7 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
 for rule in \
-    'assoc declarations \(declare/local -A\) +9' \
+    'assoc declarations \(declare/local -A\) +10' \
     'assoc accesses: current_by_partition_label +6' \
     'assoc accesses: final_destination_count +3' \
     'assoc accesses: seen_destination_names +2' \
@@ -90,11 +90,13 @@ for rule in \
     'assoc accesses: order_index +5' \
     'assoc accesses: reasons +31' \
     'assoc accesses: seen +4' \
+    'assoc accesses: essential_by_dev +1' \
+    'assoc accesses: allowed_nodes +1' \
     'case conversion ,, +64' \
     'case conversion \^\^ +15' \
     'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +294' \
-    'mapfile call sites +58' \
+    'array \[@\] expansions \(all forms\) +299' \
+    'mapfile call sites +60' \
     'sed -i -E +1' \
     'sed -nE +61' \
     'sed -E +16' \
@@ -112,18 +114,18 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +58' \
+    'shim calls: legacy_readarray +60' \
     'shim calls: legacy_sed_ext +78' \
     'shim calls: legacy_sort_versions +12' \
     'shim calls: legacy_date_iso +4' \
     'shim calls: legacy_lc +64' \
     'shim calls: legacy_uc +15' \
     'shim calls: legacy_ucfirst +23' \
-    'shim calls: legacy_assoc_get +24' \
+    'shim calls: legacy_assoc_get +26' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +1' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +48' \
+    'shim calls: legacy_assoc_set +56' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \
@@ -163,7 +165,7 @@ pass "generated helper is bash-3.1 syntax clean"
 if grep -qE 'removed_legacy_assoc_set|removed_seen_legacy' "$HELPER"; then
     fail "generated helper contains a corrupted assoc-set rewrite"
 fi
-assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX'
+assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes'
 assoc_unknown="$(grep -oE 'legacy_assoc_(get|get_num|keys|has|set|unset)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$HELPER" \
     | awk '{print $2}' | sort -u \
     | while IFS= read -r n; do
@@ -496,6 +498,42 @@ grep -q 'rc=${PIPESTATUS\[0\]}' "$HELPER" \
 grep -q 'Cancellation:' "$HELPER" \
     || fail "generated helper usage lost the cancellation section"
 pass "B4 cancel-token surface (options, token forms, watcher, stage checks, usage)"
+
+# Batch B5: config-write content-file transport.  The legacy helper inherits
+# the modern guarded transport (the dispatcher and run_target_config live in
+# the ported modern body; the overlay only wraps config_path_for_key), so the
+# generated helper must carry the exact modern proof surface plus the kept
+# argv fallback.
+grep -q '^config_content_file_path_safe()' "$HELPER" \
+    || fail "generated helper lost the content-file path proof"
+grep -q '^config_content_file_owner_proven()' "$HELPER" \
+    || fail "generated helper lost the content-file owner proof"
+grep -q 'config-write accepts either' "$HELPER" \
+    || fail "generated helper dispatcher does not reject a malformed option shape"
+grep -qF -- '--content-file <path> --content-owner <uid>' "$HELPER" \
+    || fail "generated helper usage does not document the content-file transport"
+grep -qF 'config-write <target-disk> <root-device> <config-key> <content>   (deprecated argv transport)' "$HELPER" \
+    || fail "generated helper usage lost the deprecated argv transport form"
+grep -q 'Target configuration is limited to 1 MiB; refusing.' "$HELPER" \
+    || fail "generated helper content-file cap is not 1 MiB"
+grep -q 'Target configuration is limited to 256 KiB.' "$HELPER" \
+    || fail "generated helper lost the 256 KiB argv fallback bound"
+grep -qF 'cp -- "$content_file" "$tmp"' "$HELPER" \
+    || fail "generated helper does not copy the content file into the atomic temp"
+grep -q 'content copy failed verification' "$HELPER" \
+    || fail "generated helper lost the post-copy verification"
+grep -q 'symlink-free regular file' "$HELPER" \
+    || fail "generated helper content-file path safety refusal missing"
+grep -q 'owner cannot be proven' "$HELPER" \
+    || fail "generated helper content-file owner refusal missing"
+grep -q 'PKEXEC_UID' "$HELPER" \
+    || fail "generated helper content-file proof does not consult PKEXEC_UID"
+grep -q 'SUDO_UID' "$HELPER" \
+    || fail "generated helper content-file proof does not consult SUDO_UID"
+if grep -q 'rm -f -- "$content_file"' "$HELPER"; then
+    fail "generated helper still deletes the caller-supplied content file"
+fi
+pass "B5 config-write transport (path/owner proofs, 1 MiB cap, atomic copy, argv fallback, caller file survives)"
 
 # --- compat shim behaviour ---------------------------------------------------
 shim_checks()

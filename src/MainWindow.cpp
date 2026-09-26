@@ -99,6 +99,7 @@
 
 #ifdef Q_OS_UNIX
 #include <unistd.h>
+#include <fcntl.h>
 #endif
 
 // ---- File-local helpers -----------------------------------------------------
@@ -7416,7 +7417,10 @@ bool promptLooksSecret(const QString &promptText)
 //   arguments[2]  the request's component/root path (Path)
 //   ...           verb-specific:
 //     shell / host-shell      [3] user command (Command)
-//     config-write            [3] config key (Id), [4] payload (Content)
+//     config-write            [3] config key (Id), [4] payload (Content) —
+//                             deprecated argv form; the modern file form is
+//                             [4] --content-file (Flag), [5] path (Path),
+//                             [6] --content-owner (Flag), [7] uid (Id)
 //     copy / copy-preview     [3..5] direction/ownership/approval (Id),
 //                             [6] destination (Path), [7..] sources (Path)
 //     fs-repair / host-fs-repair
@@ -7438,6 +7442,19 @@ MainWindow::HelperArgumentClass MainWindow::helperArgumentClassFor(const QString
         return index == 3 ? HelperArgumentClass::Command : HelperArgumentClass::Id;
     }
     if (verb == QStringLiteral("config-write")) {
+        // The modern GUI transports the payload through a private content
+        // file (--content-file <path> --content-owner <uid>) so the file text
+        // never appears in argv; the deprecated argv payload (kept for the
+        // legacy Qt3 GUI until its port lands) is still classified as Content.
+        if (arguments.size() >= 5 && arguments.at(4) == QStringLiteral("--content-file")) {
+            if (index == 4 || index == 6) {
+                return HelperArgumentClass::Flag;
+            }
+            if (index == 5) {
+                return HelperArgumentClass::Path;
+            }
+            return HelperArgumentClass::Id;
+        }
         return index == 4 ? HelperArgumentClass::Content : HelperArgumentClass::Id;
     }
     if (verb == QStringLiteral("copy") || verb == QStringLiteral("copy-preview")) {
@@ -7487,7 +7504,9 @@ bool MainWindow::safeHelperArgument(const QStringList &arguments, int index, QSt
         // allow-list (not just a shape check) keeps every future or unknown
         // option out until it is explicitly added here. The allow-list shape
         // also excludes every control and bidi character.
-        static const QSet<QString> knownFlags = {QStringLiteral("--post-efi")};
+        static const QSet<QString> knownFlags = {QStringLiteral("--post-efi"),
+                                                 QStringLiteral("--content-file"),
+                                                 QStringLiteral("--content-owner")};
         if (!knownFlags.contains(argument)) {
             return refuse(QStringLiteral("Privileged helper option '%1' is not a recognized flag.").arg(argument));
         }
@@ -12398,11 +12417,52 @@ void MainWindow::editTargetConfig()
         return;
     }
     const QString edited = editor->toPlainText();
+    // A9-01: the write transport is a private content file, never an argv
+    // element, so the edited text can never surface in /proc/<pid>/cmdline,
+    // helper logs or the action register. NUL stays rejected (the file
+    // transport would carry it, so it is refused here explicitly), and the
+    // size cap is the 1 MiB file bound (raised from the old argv bound).
+    if (edited.contains(QChar::Null)) {
+        QMessageBox::warning(this, QStringLiteral("Configuration write refused"),
+                             QStringLiteral("The edited content contains NUL bytes; the guarded write refuses it."));
+        return;
+    }
+    const QByteArray contentBytes = edited.toUtf8();
+    if (contentBytes.size() > 1024 * 1024) {
+        QMessageBox::warning(this, QStringLiteral("File too large"),
+                             QStringLiteral("The edited file is larger than 1 MiB; the guarded write refuses it. Edit the file from a console instead."));
+        return;
+    }
+    QString contentFilePath;
+    if (!writeConfigContentFile(contentBytes, &contentFilePath)) {
+        QMessageBox::warning(this, QStringLiteral("Configuration write unavailable"),
+                             QStringLiteral("The edited content could not be written to a private temporary file in the application log directory; the write was not started."));
+        return;
+    }
+    // The helper never deletes the content file; the GUI unlinks it on every
+    // completion path (success, failure or refusal). The guard is the
+    // fail-safe backstop for an unexpected early return.
+    struct ContentFileGuard {
+        QString path;
+        ~ContentFileGuard()
+        {
+            if (!path.isEmpty()) {
+                QFile::remove(path);
+            }
+        }
+    } contentFileGuard{contentFilePath};
     bool saved = false;
     const QString writeOutput = runPrivilegedRequest(
         QStringLiteral("Write target configuration"),
-        {QStringLiteral("config-write"), m_previewTargetPath, m_previewTargetComponentPath, key, edited},
+        {QStringLiteral("config-write"), m_previewTargetPath, m_previewTargetComponentPath, key,
+         QStringLiteral("--content-file"), contentFilePath,
+         QStringLiteral("--content-owner"),
+         QString::number(static_cast<qulonglong>(::getuid()))},
         QByteArray(), &saved, false);
+    // The helper has read the file by now (the request is synchronous);
+    // unlink it before any result dialog or log entry is produced.
+    contentFileGuard.path.clear();
+    QFile::remove(contentFilePath);
     if (!saved) {
         QMessageBox::warning(this, QStringLiteral("Configuration write failed"), writeOutput.trimmed());
         return;
@@ -12425,6 +12485,76 @@ void MainWindow::editTargetConfig()
     const QString savedText = writeOutput.trimmed()
         + (followUp.isEmpty() ? QString() : QStringLiteral("\n\n") + followUp);
     QMessageBox::information(this, QStringLiteral("Configuration saved"), savedText);
+}
+
+bool MainWindow::writeConfigContentFile(const QByteArray &content, QString *path)
+{
+    if (path) {
+        path->clear();
+    }
+    // A9-01: the content file lives in a dedicated 0700 `.keys` subdirectory
+    // of the GUI's log directory, mirroring the unlock keyfile pattern. The
+    // directory is created 0700 and re-tightened on every attempt so a shared
+    // --log-dir can never expose the file to other users. The candidate is
+    // built from the canonicalized directory path so the helper's
+    // raw-path-equals-resolved-path check cannot be tripped by a symlinked
+    // intermediate directory.
+    const QString keysDirectory = sessionLogDirectory() + QStringLiteral("/.keys");
+    if (!QDir().mkpath(keysDirectory)) {
+        return false;
+    }
+    QFile::setPermissions(keysDirectory, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                             | QFileDevice::ExeOwner);
+    const QString canonicalKeysDirectory = QFileInfo(keysDirectory).canonicalFilePath();
+    const QFileInfo keysInfo(canonicalKeysDirectory);
+    if (keysInfo.path().isEmpty() || !keysInfo.isDir() || keysInfo.isSymLink()
+        || keysInfo.ownerId() != geteuid()) {
+        return false;
+    }
+    const QString candidate = QDir(canonicalKeysDirectory).filePath(
+        QStringLiteral(".config-write-")
+        + QString::number(static_cast<qulonglong>(getpid())));
+
+#ifdef Q_OS_UNIX
+    // O_EXCL creation at mode 0600: an existing file is never reused and the
+    // content is private from the moment it exists. A partial write unlinks
+    // the file and fails closed.
+    const QByteArray candidateBytes = QFile::encodeName(candidate);
+    const int fd = ::open(candidateBytes.constData(), O_WRONLY | O_CREAT | O_EXCL, 0600);
+    if (fd < 0) {
+        return false;
+    }
+    const char *data = content.constData();
+    qsizetype remaining = content.size();
+    while (remaining > 0) {
+        const ssize_t written = ::write(fd, data, static_cast<size_t>(remaining));
+        if (written <= 0) {
+            ::close(fd);
+            ::unlink(candidateBytes.constData());
+            return false;
+        }
+        data += written;
+        remaining -= written;
+    }
+    ::close(fd);
+#else
+    QFile file(candidate);
+    if (!file.open(QIODevice::WriteOnly | QIODevice::NewOnly)) {
+        return false;
+    }
+    if (!file.setPermissions(QFileDevice::ReadOwner | QFileDevice::WriteOwner)
+        || file.write(content) != content.size()) {
+        file.close();
+        file.remove();
+        return false;
+    }
+    file.close();
+#endif
+
+    if (path) {
+        *path = candidate;
+    }
+    return true;
 }
 
 void MainWindow::runAllDiagnostics()

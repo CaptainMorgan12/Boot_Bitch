@@ -13,7 +13,7 @@
 #   * every replace_block must match at least once or generation aborts;
 #   * after the syntax transforms the ported body must hold zero residual
 #     modern constructs (mapfile, sed -E, sort -V, ${v,,}/${v^^}/${v^}) and
-#     exactly the audited shim-call totals (58 legacy_readarray, 48
+#     exactly the audited shim-call totals (60 legacy_readarray, 56
 #     legacy_assoc_set, ...) or generation aborts;
 #   * the assembled helper must define every function at most once more than
 #     the modern source does (the port must never introduce duplicates);
@@ -200,6 +200,35 @@ transform_syntax()
         -e 's/^\([[:space:]]*\)current_by_partition_label=()$/\1current_by_partition_label=() current_by_partition_label_keys=()/' \
         || return 1
 
+    # populate_writable_dev_filtered (A9-01 batch) declares two associative
+    # arrays with inline ['k']=v initializers: a shape the name-based sed
+    # rewrites cannot handle.  The whole declaration block is replaced with
+    # indexed arrays plus legacy_assoc_set calls (drift-gated: a modern edit
+    # to the initializer list aborts generation, A11-01).
+    replace_block "$file" \
+        '    local -A allowed_nodes=() essential_by_dev=(
+        ['"'"'1:3'"'"']=null ['"'"'1:5'"'"']=zero ['"'"'1:7'"'"']=full ['"'"'1:8'"'"']=random ['"'"'1:9'"'"']=urandom
+        ['"'"'5:0'"'"']=tty ['"'"'5:1'"'"']=console
+    )' \
+        '    local -a allowed_nodes=() allowed_nodes_keys=()
+    local -a essential_by_dev=() essential_by_dev_keys=()
+    legacy_assoc_set essential_by_dev '"'"'1:3'"'"' null
+    legacy_assoc_set essential_by_dev '"'"'1:5'"'"' zero
+    legacy_assoc_set essential_by_dev '"'"'1:7'"'"' full
+    legacy_assoc_set essential_by_dev '"'"'1:8'"'"' random
+    legacy_assoc_set essential_by_dev '"'"'1:9'"'"' urandom
+    legacy_assoc_set essential_by_dev '"'"'5:0'"'"' tty
+    legacy_assoc_set essential_by_dev '"'"'5:1'"'"' console' \
+        || return 1
+
+    # The same function sets allowed_nodes with a nested-quoted value; the
+    # generic set rewrite cannot keep the quoting shape, so the line is
+    # replaced verbatim (drift-gated) before the name loop reaches it.
+    replace_block "$file" \
+        '                    allowed_nodes["$(readlink -f -- "$entry" 2>/dev/null || true)"]=1' \
+        '                    legacy_assoc_set allowed_nodes "$(readlink -f -- "$entry" 2>/dev/null || true)" 1' \
+        || return 1
+
     # Longest-first so a shorter name that is a substring of a longer one
     # (seen inside removed_seen / seen_destination_names) is rewritten before
     # the longer name is gone; the \< anchor in rewrite_assoc is the second,
@@ -208,7 +237,7 @@ transform_syntax()
     for name in current_by_partition_label final_destination_count \
         seen_destination_names FS_SCOPE_DEVICE_INDEX destination_priority \
         destination_id current_by_key removed_seen current_by_id order_index \
-        reasons seen; do
+        reasons seen essential_by_dev allowed_nodes; do
         note "assoc accesses: ${name}" \
             "$(( $(count_regex "[$][{]${name}[[]" "$file") \
                 + $(count_regex "${name}\[[^]]*\]=" "$file") \
@@ -529,18 +558,18 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 58
+    check_count 'legacy_readarray' 'legacy_readarray' 60
     check_count 'legacy_sed_ext' 'legacy_sed_ext' 78
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 12
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
     check_count 'legacy_lc' 'legacy_lc ' 64
     check_count 'legacy_uc' 'legacy_uc ' 15
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 23
-    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 24
+    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 26
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 1
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 48
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 56
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }

@@ -67,6 +67,10 @@
 #include <algorithm>
 #include <limits>
 
+#ifdef Q_OS_UNIX
+#include <unistd.h>
+#endif
+
 namespace {
 // Restores an environment variable on scope exit. A failing QVERIFY returns
 // early from the test function, so the fixture must be undone by a destructor
@@ -1243,6 +1247,83 @@ done
     return session;
 }
 
+// Fake privileged-session process for the guarded target-configuration editor.
+// config-read answers with a fixture file; config-write records the resolved
+// --content-file mode/owner (as the real helper would prove them) and copies
+// the file bytes into a separate capture so the test can prove the payload
+// reached the helper byte-identically without ever travelling as an ARG
+// record. Every other request succeeds silently.
+QProcess *startConfigEditFakePrivilegedSession(MainWindow &window,
+                                               const QString &capturePath,
+                                               const QString &contentCapturePath)
+{
+    auto *session = new QProcess(&window);
+    QString script = QStringLiteral(R"SCRIPT(
+capture="$1"
+contentcap="$2"
+while IFS= read -r line; do
+  tag="${line%%$'\t'*}"
+  [ "$tag" = "BEGIN" ] || continue
+  rest="${line#*$'\t'}"
+  id="${rest%%$'\t'*}"
+  rest="${rest#*$'\t'}"
+  count="${rest%%$'\t'*}"
+  printf '%s\n' "$line" >> "$capture"
+  args=""
+  i=0
+  while [ "$i" -lt "$count" ]; do
+    IFS= read -r argline
+    printf '%s\n' "$argline" >> "$capture"
+    payload="${argline##*$'\t'}"
+    args="$args $(printf '%s' "$payload" | base64 -d)"
+    i=$((i+1))
+  done
+  IFS= read -r endline
+  printf '%s\n' "$endline" >> "$capture"
+  case "$args" in
+    *config-read*)
+      printf 'OUT\t%s\tTarget configuration: /etc/fstab\n' "$id"
+      printf 'OUT\t%s\tInspection is read-only.\n\n' "$id"
+      printf 'OUT\t%s\t# original fixture fstab\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *config-write*)
+      contentfile=""
+      owner=""
+      prev=""
+      for a in $args; do
+        [ "$prev" = "--content-file" ] && contentfile="$a"
+        [ "$prev" = "--content-owner" ] && owner="$a"
+        prev="$a"
+      done
+      mode="$(stat -c '%a' "$contentfile" 2>/dev/null || printf missing)"
+      uid="$(stat -c '%u' "$contentfile" 2>/dev/null || printf missing)"
+      printf 'CONTENTFILE\t%s\t%s\t%s\n' "$mode" "$uid" "$owner" >> "$capture"
+      printf '%s\n' "--BEGIN-CONTENT--" >> "$contentcap"
+      cat "$contentfile" >> "$contentcap" 2>/dev/null || true
+      printf '%s\n' "--END-CONTENT--" >> "$contentcap"
+      printf 'OUT\t%s\tTarget configuration updated: /etc/fstab\n' "$id"
+      printf 'OUT\t%s\tThe target was modified; rerun diagnostics before any repair action.\n' "$id"
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+    *)
+      printf 'DONE\t%s\t0\n' "$id"
+      ;;
+  esac
+done
+)SCRIPT");
+    session->start(QStringLiteral("/bin/bash"),
+                   {QStringLiteral("-c"), script, QStringLiteral("fake-config-edit-session"),
+                    capturePath, contentCapturePath});
+    if (!session->waitForStarted(5000)) {
+        delete session;
+        return nullptr;
+    }
+    window.m_privilegedSession = session;
+    window.m_privilegedSessionReady = true;
+    return session;
+}
+
 // Persistent fake privileged session for multi-device file system repairs. The
 // read-only inspection reports issues on two unmounted ext4 devices; every
 // fs-repair request is answered for the device named in the request. The
@@ -2286,6 +2367,7 @@ private slots:
     void helperPathResolutionPrefersInstalledUnlessOverridden();
     void helperPathResolutionTrustMatrix();
     void privilegedArgumentClassValidation();
+    void configWriteUsesContentFileTransport();
     void capabilityGateReadsOnlyCapabilitiesEntry();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
     void settingsFilePermissionsArePrivate();
@@ -16522,6 +16604,17 @@ void MainWindowUiTest::privilegedArgumentClassValidation()
     QCOMPARE(classOf({QStringLiteral("config-write"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
                       QStringLiteral("fstab"), QStringLiteral("payload")}, 4),
              static_cast<int>(HelperArgumentClass::Content));
+    // The modern file transport classifies the option tokens as Flags, the
+    // content file as a Path and the uid as an Id; the deprecated argv form
+    // keeps its Content exemption.
+    const QStringList fileFormArgs = {QStringLiteral("config-write"), QStringLiteral("/dev/sda"),
+                                      QStringLiteral("/dev/sda2"), QStringLiteral("fstab"),
+                                      QStringLiteral("--content-file"), QStringLiteral("/tmp/.keys/.config-write-99"),
+                                      QStringLiteral("--content-owner"), QStringLiteral("1000")};
+    QCOMPARE(classOf(fileFormArgs, 4), static_cast<int>(HelperArgumentClass::Flag));
+    QCOMPARE(classOf(fileFormArgs, 5), static_cast<int>(HelperArgumentClass::Path));
+    QCOMPARE(classOf(fileFormArgs, 6), static_cast<int>(HelperArgumentClass::Flag));
+    QCOMPARE(classOf(fileFormArgs, 7), static_cast<int>(HelperArgumentClass::Id));
     QCOMPARE(classOf({QStringLiteral("copy"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
                       QStringLiteral("host-to-repair"), QStringLiteral("smart"),
                       QStringLiteral("normal"), QStringLiteral("/home/user/out"),
@@ -16585,6 +16678,20 @@ void MainWindowUiTest::privilegedArgumentClassValidation()
         {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
          QStringLiteral("--post efi")}, 3, &reason));
 
+    // The file-transport option tokens validate only against the allow-list;
+    // the path and uid arguments keep Path/Id validation.
+    QVERIFY(MainWindow::safeHelperArgument(fileFormArgs, 4, &reason));
+    QVERIFY(MainWindow::safeHelperArgument(fileFormArgs, 5, &reason));
+    QVERIFY(MainWindow::safeHelperArgument(fileFormArgs, 6, &reason));
+    QVERIFY(MainWindow::safeHelperArgument(fileFormArgs, 7, &reason));
+    QStringList malformedFlagArgs = fileFormArgs;
+    malformedFlagArgs[6] = QStringLiteral("--content-owner-x");
+    QVERIFY(!MainWindow::safeHelperArgument(malformedFlagArgs, 6, &reason));
+    QVERIFY2(reason.contains(QStringLiteral("not a recognized flag")), qPrintable(reason));
+    QStringList contentFileNulArgs = fileFormArgs;
+    contentFileNulArgs[5] = QStringLiteral("/tmp/.keys/.config-write-1") + QChar(0);
+    QVERIFY(!MainWindow::safeHelperArgument(contentFileNulArgs, 5, &reason));
+
     // Ordinary arguments pass.
     QVERIFY(MainWindow::safeHelperArgument(
         {QStringLiteral("snapshots"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
@@ -16607,6 +16714,212 @@ void MainWindowUiTest::privilegedArgumentClassValidation()
         QByteArray(), &succeeded, false, MainWindow::LogEntryKind::ChrootShell);
     QVERIFY(!succeeded);
     QVERIFY2(refused.contains(QStringLiteral("control or bidi")), qPrintable(refused));
+}
+
+// A9-01: the guarded config editor transports the edited content through a
+// private mode-600 content file (--content-file/--content-owner) instead of an
+// argv element. The temp file is unlinked on every completion path, the
+// payload never appears as an ARG record, and neither the payload nor the temp
+// path ever enters the action log register. NUL content is refused before any
+// write request is sent.
+void MainWindowUiTest::configWriteUsesContentFileTransport()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    // The automatic stale-evidence regeneration would add diagnostic requests
+    // behind the config write; the fake session answers them, but keep this
+    // test's request accounting focused on the editor flow.
+    if (window.m_autoRefreshDiagnostics) {
+        window.m_autoRefreshDiagnostics->setChecked(false);
+    }
+
+    QVERIFY(window.m_targetConfigCombo);
+    int fstabIndex = -1;
+    for (int index = 0; index < window.m_targetConfigCombo->count(); ++index) {
+        if (window.m_targetConfigCombo->itemData(index).toString() == QStringLiteral("fstab")) {
+            fstabIndex = index;
+            break;
+        }
+    }
+    QVERIFY2(fstabIndex >= 0, "the fstab configuration key must exist in the combo");
+    window.m_targetConfigCombo->setCurrentIndex(fstabIndex);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("config-requests.log"));
+    const QString contentCapturePath = requestDir.filePath(QStringLiteral("config-content.log"));
+    QProcess *session = startConfigEditFakePrivilegedSession(window, capturePath, contentCapturePath);
+    QVERIFY2(session, "the scripted privileged session must start");
+    QVERIFY(window.m_privilegedSessionReady);
+
+    const QString secretContent = QStringLiteral(
+        "# TOP-SECRET-90125 fixture fstab line\n"
+        "/dev/sdb1\t/secret\tauto\tnofail 0 0");
+
+    // Drive the modal editor: set the edited text and press Save Target File.
+    QTimer editorPoller;
+    editorPoller.setInterval(5);
+    QObject::connect(&editorPoller, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || !dialog->isVisible()
+                || dialog->windowTitle() != QStringLiteral("Edit target /etc/fstab")) {
+                continue;
+            }
+            auto *editor = dialog->findChild<QPlainTextEdit *>();
+            if (!editor) {
+                continue;
+            }
+            editorPoller.stop();
+            editor->setPlainText(secretContent);
+            for (QPushButton *button : dialog->findChildren<QPushButton *>()) {
+                if (button->text() == QStringLiteral("Save Target File")) {
+                    button->click();
+                    return;
+                }
+            }
+            dialog->accept();
+            return;
+        }
+    });
+    editorPoller.start();
+    // Confirmation ("Write the edited contents to ...") and the final
+    // "Configuration saved" information box.
+    acceptNextMessageBoxes(&window, 2, QMessageBox::Yes);
+
+    window.editTargetConfig();
+    editorPoller.stop();
+
+    const QList<QStringList> requests = capturedHelperRequests(capturePath);
+    QStringList configWriteArgs;
+    QString contentFilePath;
+    for (const QStringList &request : requests) {
+        if (!request.isEmpty() && request.first() == QStringLiteral("config-write")) {
+            configWriteArgs = request;
+            contentFilePath = request.value(5);
+            break;
+        }
+    }
+    QVERIFY2(!configWriteArgs.isEmpty(), "the GUI must send a config-write request");
+    QCOMPARE(configWriteArgs.value(1), QStringLiteral("/dev/test-system"));
+    QCOMPARE(configWriteArgs.value(2), QStringLiteral("/dev/test-root"));
+    QCOMPARE(configWriteArgs.value(3), QStringLiteral("fstab"));
+    QCOMPARE(configWriteArgs.value(4), QStringLiteral("--content-file"));
+    QVERIFY2(!contentFilePath.isEmpty(), "the config-write request must name a content file");
+    QCOMPARE(configWriteArgs.value(6), QStringLiteral("--content-owner"));
+    QCOMPARE(configWriteArgs.value(7),
+             QString::number(static_cast<qulonglong>(getuid())));
+
+    // The payload never travels as an ARG record.
+    const QStringList rawArguments = capturedHelperArguments(capturePath);
+    QVERIFY2(!rawArguments.contains(secretContent),
+             "the edited content must never travel as an ARG record");
+
+    // The fake helper proved the content file mode 600, owned by the invoking
+    // user, and copied its bytes out for the round-trip check.
+    QStringList contentRecord;
+    for (const QString &line : QString::fromUtf8([&] {
+             QFile file(capturePath);
+             if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+                 return QByteArray();
+             }
+             return file.readAll();
+         }()).split(QLatin1Char('\n'))) {
+        if (line.startsWith(QStringLiteral("CONTENTFILE\t"))) {
+            contentRecord = line.split(QLatin1Char('\t'));
+            break;
+        }
+    }
+    QCOMPARE(contentRecord.value(1), QStringLiteral("600"));
+    QCOMPARE(contentRecord.value(2),
+             QString::number(static_cast<qulonglong>(getuid())));
+    QCOMPARE(contentRecord.value(3),
+             QString::number(static_cast<qulonglong>(getuid())));
+
+    // The temp file is unlinked on the completion path.
+    QVERIFY2(!QFileInfo::exists(contentFilePath),
+             "the content temp file must be unlinked after the write completes");
+
+    // The content the helper read round-trips byte-identically.
+    QString transported;
+    {
+        QFile contentFile(contentCapturePath);
+        QVERIFY(contentFile.open(QIODevice::ReadOnly | QIODevice::Text));
+        const QString captured = QString::fromUtf8(contentFile.readAll());
+        const QString beginMarker = QStringLiteral("--BEGIN-CONTENT--\n");
+        const QString endMarker = QStringLiteral("--END-CONTENT--");
+        const int beginIndex = captured.indexOf(beginMarker);
+        const int endIndex = beginIndex >= 0
+            ? captured.indexOf(endMarker, beginIndex + beginMarker.size()) : -1;
+        QVERIFY2(beginIndex >= 0 && endIndex >= 0,
+                 "the fake helper must capture the transported content");
+        transported = captured.mid(beginIndex + beginMarker.size(),
+                                   endIndex - beginIndex - beginMarker.size());
+        while (transported.endsWith(QLatin1Char('\n'))) {
+            transported.chop(1);
+        }
+    }
+    QCOMPARE(transported, secretContent);
+
+    // Neither the content nor the temp path may enter the action log register.
+    const QString actionLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(!actionLog.contains(secretContent.trimmed()),
+             "the edited content must never enter the action log register");
+    QVERIFY2(!actionLog.contains(contentFilePath),
+             "the content temp path must never enter the action log register");
+    QVERIFY(actionLog.contains(QStringLiteral("STALE DIAGNOSTICS: target configuration edited")));
+
+    // A second save attempt whose content contains NUL must be refused before
+    // any write request is sent (and before a content file is created).
+    const int configWriteRequestsBefore = requests.size() - 1;
+    QTimer nulPoller;
+    nulPoller.setInterval(5);
+    QObject::connect(&nulPoller, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || !dialog->isVisible()
+                || dialog->windowTitle() != QStringLiteral("Edit target /etc/fstab")) {
+                continue;
+            }
+            auto *editor = dialog->findChild<QPlainTextEdit *>();
+            if (!editor) {
+                continue;
+            }
+            nulPoller.stop();
+            editor->setPlainText(QStringLiteral("nul-") + QChar::Null + QStringLiteral("-payload"));
+            for (QPushButton *button : dialog->findChildren<QPushButton *>()) {
+                if (button->text() == QStringLiteral("Save Target File")) {
+                    button->click();
+                    return;
+                }
+            }
+            dialog->accept();
+            return;
+        }
+    });
+    nulPoller.start();
+    // Confirmation box and the "Configuration write refused" warning box.
+    acceptNextMessageBoxes(&window, 2, QMessageBox::Yes);
+    window.editTargetConfig();
+    nulPoller.stop();
+
+    const QList<QStringList> requestsAfterNul = capturedHelperRequests(capturePath);
+    int configWriteRequestsAfter = 0;
+    for (const QStringList &request : requestsAfterNul) {
+        if (!request.isEmpty() && request.first() == QStringLiteral("config-write")) {
+            ++configWriteRequestsAfter;
+        }
+    }
+    QCOMPARE(configWriteRequestsAfter, configWriteRequestsBefore);
+    QVERIFY2(!QDir(logDir.path() + QStringLiteral("/.keys")).exists()
+                 || QDir(logDir.path() + QStringLiteral("/.keys"))
+                        .entryList(QStringList{QStringLiteral(".config-write-*")},
+                                   QDir::Files).isEmpty(),
+             "a refused write must leave no content file behind");
 }
 
 // A6-05: the capability gate reads only the dedicated capabilities entry
