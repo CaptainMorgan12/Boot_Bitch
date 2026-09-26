@@ -125,7 +125,16 @@ shows functional device-discovery filters, the functional diagnostics
 LUKS unlock delivers the passphrase through a mode-600 keyfile argument
 (`unlock --key-file <path> --key-owner <uid>`) because Qt 3.3.7's QProcess
 cannot deliver stdin and desktop elevation (gksu/gksudo) records no
-SUDO_UID; `--smoke-test` runs with settings isolation (persisted overrides are
+SUDO_UID; the Edit Target File write
+uses the same private `.keys` machinery: the edited content lands in a
+mode-600 O_EXCL file and travels as `config-write <disk> <root> <key>
+--content-file <path> --content-owner <uid>` (never an argv element, 1 MiB
+cap), the helper proves the file (regular, symlink-free, caller-owned),
+copies it into the atomic temp, never logs the content and never deletes
+it — the GUI unlinks the file on every completion path, including the
+SIGTERM/SIGINT/SIGHUP handlers; the old argv payload form stays as the
+deprecated helper-side fallback with its 256 KiB Etch bound;
+`--smoke-test` runs with settings isolation (persisted overrides are
 never read or written during the smoke); the Logs Save As... starts in a writable /host mount when one exists
 (fallback: the log directory); all long confirmations use a wrapped dialog; and the
 per-user settings files under ~/.qt/ (Qt 3.3.7 stores each settings group
@@ -476,12 +485,17 @@ runs `legacy/port.sh --check`, asserts the generated helper is bash-3.1 syntax
 clean, exercises every compat shim and the evidence-based feature gating,
 pins the B4 cancel-token surface (the `--cancel-file`/`--cancel-token`
 options, the `CANCEL_TOKEN` environment form, the watcher, the stage-boundary
-checks and the renamed stage bodies) and
+checks and the renamed stage bodies), pins the B5 config-write content-file
+surface (the path/owner proofs, the 1 MiB stat cap, the atomic copy, the kept
+argv fallback and the caller's file surviving) and
 proves the modern helper is untouched. `legacy/tests/test-smoke.sh` (fast
 `boot-repair-legacy-smoke`) runs read-only `validate`/`diagnose` against a
 synthetic `/etc/os-release`-less Etch root and covers the dpkg status fallback,
-the GRUB-legacy rollback, the 13-key capability report and the B4 cancel-token
-predicate. Neither test touches
+the GRUB-legacy rollback, the 13-key capability report, the B4 cancel-token
+predicate and the B5 config-write content-file matrix (file round-trip with
+mode preservation, owner/symlink/oversize refusals, the argv fallback bound,
+no transported content in the session log, the caller's file never deleted).
+Neither test touches
 a real disk, builds a package or needs root.
 
 ## Licensing

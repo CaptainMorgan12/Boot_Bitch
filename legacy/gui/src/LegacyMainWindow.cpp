@@ -97,10 +97,11 @@ const int kSectionTitleLeftTolerance = 18;
 // the modal to its single unwrapped line and produced an unusably wide window.
 const int kHiddenInputMaximumWidth = 440;
 
-// The guarded `config-write` verb transports the edited file as one argv
-// element; Etch's 2.6.18 kernel caps argv at 128 KiB, so the editor refuses
-// anything larger instead of failing the exec opaquely.
-const int kConfigEditMaximumBytes = 65536;
+// B5: the guarded `config-write` verb transports the edited content through a
+// private mode-600 content file (--content-file <path> --content-owner <uid>,
+// never argv), so the editor's cap is the helper's 1 MiB file bound (the old
+// 64 KiB cap only guarded Etch's 128 KiB argv limit, which no longer applies).
+const int kConfigEditMaximumBytes = 1048576;
 
 // The global header icon is kept compact so the eight tabs still fit at the
 // 1024x768 layout contract size.
@@ -766,23 +767,29 @@ bool isDefaultLogTree(const QString &path)
         || path.startsWith(homeLogs + QString::fromLatin1("/"));
 }
 
-// The pending unlock keyfile path for the termination handlers, kept in a
-// plain char buffer (never QString/QByteArray) so a handler only touches
-// async-signal-safe primitives: unlink() and _exit(). writeUnlockKeyfile()
-// registers the created file, discardUnlockKeyfile() clears it.
+// The pending secret-file paths for the termination handlers, kept in plain
+// char buffers (never QString/QByteArray) so a handler only touches
+// async-signal-safe primitives: unlink() and _exit(). The secret-file writer
+// registers the created file (unlock keyfile or config-write content file),
+// discardUnlockKeyfile()/discardConfigContentFile() clear it.
 static char gUnlockKeyfilePath[PATH_MAX];
+static char gConfigContentFilePath[PATH_MAX];
 
 extern "C" void legacyKeyfileTerminationHandler(int signalNumber)
 {
     if (gUnlockKeyfilePath[0] != '\0') {
         ::unlink(gUnlockKeyfilePath);
     }
+    if (gConfigContentFilePath[0] != '\0') {
+        ::unlink(gConfigContentFilePath);
+    }
     ::_exit(128 + signalNumber);
 }
 
 // Installs SIGTERM/SIGINT/SIGHUP handlers once, so a terminated GUI never
-// leaves a passphrase keyfile behind: the handler unlinks the pending
-// keyfile (best-effort) and exits with the conventional 128+signum status.
+// leaves a secret file behind: the handler unlinks the pending unlock
+// keyfile and the pending config-write content file (best-effort) and exits
+// with the conventional 128+signum status.
 void installKeyfileTerminationHandlers()
 {
     struct sigaction action;
@@ -1200,8 +1207,9 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_smokeValidateOk(false)
 {
     setCaption(QString::fromLatin1("Boot Bitch Legacy (Etch / KDE 3.5 era)"));
-    // B3: a SIGTERM/SIGINT/SIGHUP must never leave an unlock keyfile behind.
-    // The handlers unlink the pending keyfile (if any) and exit 128+signum.
+    // B3/B5: a SIGTERM/SIGINT/SIGHUP must never leave a secret file behind
+    // (unlock keyfile or config-write content file). The handlers unlink the
+    // pending files (if any) and exit 128+signum.
     installKeyfileTerminationHandlers();
     // Every section title/group title/button/list column must stay fully
     // visible at the 1024x768 contract size; the layouts only need a modest
@@ -4020,14 +4028,27 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
         statusBar()->message(QString::fromLatin1("No changes to %1.").arg(path), 3000);
         return;
     }
-    if (static_cast<int>(edited.local8Bit().size()) > kConfigEditMaximumBytes) {
+    // B5: the write transport is a private content file, never an argv
+    // element, so the edited text can never surface in /proc/<pid>/cmdline,
+    // helper logs or the session log. NUL stays rejected (the file transport
+    // would carry it, so it is refused here explicitly), and the size cap is
+    // the helper's 1 MiB file bound (raised from the old argv bound).
+    if (edited.contains(QChar(0x0000))) {
+        QMessageBox::warning(
+            this, QString::fromLatin1("Configuration write refused"),
+            QString::fromLatin1(
+                "The edited content contains NUL bytes; the guarded write "
+                "refuses it."),
+            QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    const QByteArray contentBytes = edited.local8Bit();
+    if (static_cast<int>(contentBytes.size()) > kConfigEditMaximumBytes) {
         QMessageBox::warning(
             this, QString::fromLatin1("File too large"),
             QString::fromLatin1(
-                "The edited file is larger than %1 KiB. The guarded write "
-                "transports the content on the command line, which Etch's "
-                "kernel cannot accept; edit the file from a console instead.")
-                .arg(kConfigEditMaximumBytes / 1024),
+                "The edited file is larger than 1 MiB. The guarded write "
+                "refuses it; edit the file from a console instead."),
             QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
@@ -4041,13 +4062,31 @@ void LegacyMainWindow::openConfigEditor(const QString &content, const QString &k
         return;
     }
 
+    // The edited content travels through the private mode-600 content file
+    // (the helper reads it, proves the ownership and never deletes it; the
+    // GUI unlinks it on every completion path, including the signal
+    // handlers).
+    QString contentFilePath;
+    if (!writeConfigContentFile(contentBytes, &contentFilePath)) {
+        return;
+    }
+    m_configContentFilePath = contentFilePath;
     m_pendingConfigKey = key;
     m_pendingConfigPath = path;
     m_pendingConfigWrite = true;
     QStringList args;
     args << QString::fromLatin1("config-write") << selectedDisk() << selectedRoot()
-         << key << edited;
-    startCommand(args, false, QString::fromLatin1("config-write %1").arg(path), false, true);
+         << key
+         << QString::fromLatin1("--content-file") << contentFilePath
+         << QString::fromLatin1("--content-owner")
+         << QString::number(static_cast<unsigned long>(::getuid()));
+    if (!startCommand(args, false, QString::fromLatin1("config-write %1").arg(path),
+                      false, true)) {
+        // startCommand failed before the runner started (no authorization
+        // session, smoke elevation, ...); the secret file must not outlive
+        // the refused attempt.
+        discardConfigContentFile();
+    }
 }
 
 void LegacyMainWindow::copyResults()
@@ -4182,8 +4221,9 @@ void LegacyMainWindow::runUnlock()
 
     // Qt 3.3.7's QProcess cannot deliver stdin reliably, so the passphrase
     // travels through a mode-600 keyfile argument (O_EXCL, in the GUI's log
-    // directory, never in argv) that the helper reads, verifies and deletes
-    // before the open attempt. The buffer is wiped right after the write.
+    // directory, never in argv) that the helper reads, verifies and never
+    // deletes — the GUI unlinks it on every completion path. The buffer is
+    // wiped right after the write.
     QString keyfilePath;
     if (!writeUnlockKeyfile(secret, &keyfilePath)) {
         secret.fill('\0');
@@ -4207,13 +4247,19 @@ void LegacyMainWindow::runUnlock()
     startCommand(args, false, QString::fromLatin1("unlock %1").arg(luks), true);
 }
 
-// Write the collected LUKS passphrase to a mode-600, O_EXCL-created keyfile
-// in the dedicated 0700 `.keys` subdirectory of the GUI's log directory
-// (never argv, never the session log). The subdirectory is created 0700 and
-// re-tightened on every attempt, so a shared --log-dir cannot expose a
-// passphrase file to other users. Fails closed: an existing file, an
-// unwritable directory or a partial write leaves nothing behind.
-bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *path)
+// Shared secret-file writer (B5, generalized from the unlock keyfile path):
+// write `data` to a mode-600, O_EXCL-created file named .<prefix><pid> in the
+// dedicated 0700 `.keys` subdirectory of the GUI's log directory (never argv,
+// never the session log). The subdirectory is created 0700 and re-tightened
+// on every attempt, so a shared --log-dir cannot expose the file to other
+// users. The created path is registered in the caller's termination-handler
+// buffer (registeredPath) immediately, so a SIGTERM/SIGINT/SIGHUP always
+// unlinks it before the GUI exits, even mid-write. Fails closed: an existing
+// file, an unwritable directory or a partial write leaves nothing behind.
+bool LegacyMainWindow::writeSecretFile(const QByteArray &data, const char *prefix,
+                                       char *registeredPath,
+                                       std::size_t registeredPathSize,
+                                       QString *path)
 {
     if (path) {
         *path = QString::null;
@@ -4224,65 +4270,42 @@ bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *pat
         struct stat info;
         if (::stat(keysDirectory.local8Bit().data(), &info) != 0
             || !S_ISDIR(info.st_mode)) {
-            QMessageBox::warning(
-                this, QString::fromLatin1("Unlock keyfile unavailable"),
-                QString::fromLatin1(
-                    "The private keyfile directory could not be created in "
-                    "%1; the unlock was not started.")
-                    .arg(m_logDirectory),
-                QMessageBox::Ok, QMessageBox::NoButton);
             return false;
         }
     }
     if (::chmod(keysDirectory.local8Bit().data(), 0700) != 0) {
-        QMessageBox::warning(
-            this, QString::fromLatin1("Unlock keyfile unavailable"),
-            QString::fromLatin1(
-                "The private keyfile directory in %1 could not be secured; "
-                "the unlock was not started.")
-                .arg(m_logDirectory),
-            QMessageBox::Ok, QMessageBox::NoButton);
         return false;
     }
-    QString candidate = keysDirectory + QString::fromLatin1("/.unlock-key-")
+    QString candidate = keysDirectory + QString::fromLatin1("/.")
+        + QString::fromLatin1(prefix)
         + QString::number(static_cast<unsigned long>(::getpid()));
     const QByteArray candidateBytes = candidate.local8Bit();
     const int fd = ::open(candidateBytes.data(),
                           O_WRONLY | O_CREAT | O_EXCL, 0600);
     if (fd < 0) {
-        QMessageBox::warning(
-            this, QString::fromLatin1("Unlock keyfile unavailable"),
-            QString::fromLatin1(
-                "The LUKS passphrase could not be written to a private "
-                "keyfile in %1; the unlock was not started.")
-                .arg(m_logDirectory),
-            QMessageBox::Ok, QMessageBox::NoButton);
         return false;
     }
-    // Register the created keyfile with the termination handlers immediately
+    // Register the created file with the termination handlers immediately
     // so a SIGTERM/SIGINT/SIGHUP always unlinks it before the GUI exits,
     // even mid-write.
-    ::strncpy(gUnlockKeyfilePath, candidateBytes.data(),
-              sizeof(gUnlockKeyfilePath) - 1);
-    gUnlockKeyfilePath[sizeof(gUnlockKeyfilePath) - 1] = '\0';
-    const unsigned char *data =
-        reinterpret_cast<const unsigned char *>(secret.data());
-    std::size_t remaining = static_cast<std::size_t>(secret.size());
+    if (registeredPath && registeredPathSize > 0) {
+        ::strncpy(registeredPath, candidateBytes.data(), registeredPathSize - 1);
+        registeredPath[registeredPathSize - 1] = '\0';
+    }
+    const unsigned char *bytes =
+        reinterpret_cast<const unsigned char *>(data.data());
+    std::size_t remaining = static_cast<std::size_t>(data.size());
     while (remaining > 0) {
-        const ssize_t written = ::write(fd, data, remaining);
+        const ssize_t written = ::write(fd, bytes, remaining);
         if (written <= 0) {
             ::close(fd);
             ::unlink(candidateBytes.data());
-            gUnlockKeyfilePath[0] = '\0';
-            QMessageBox::warning(
-                this, QString::fromLatin1("Unlock keyfile unavailable"),
-                QString::fromLatin1(
-                    "The LUKS passphrase could not be written to the private "
-                    "keyfile; the unlock was not started."),
-                QMessageBox::Ok, QMessageBox::NoButton);
+            if (registeredPath && registeredPathSize > 0) {
+                registeredPath[0] = '\0';
+            }
             return false;
         }
-        data += written;
+        bytes += written;
         remaining -= static_cast<std::size_t>(written);
     }
     ::close(fd);
@@ -4290,6 +4313,45 @@ bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *pat
         *path = candidate;
     }
     return true;
+}
+
+// The unlock passphrase secret file: the dedicated .unlock-key-<pid> name in
+// the same private .keys directory. Every failure path leaves nothing behind
+// and the unlock is not started.
+bool LegacyMainWindow::writeUnlockKeyfile(const QByteArray &secret, QString *path)
+{
+    if (writeSecretFile(secret, "unlock-key-",
+                        gUnlockKeyfilePath, sizeof(gUnlockKeyfilePath), path)) {
+        return true;
+    }
+    QMessageBox::warning(
+        this, QString::fromLatin1("Unlock keyfile unavailable"),
+        QString::fromLatin1(
+            "The LUKS passphrase could not be written to a private keyfile in "
+            "%1; the unlock was not started.")
+            .arg(m_logDirectory),
+        QMessageBox::Ok, QMessageBox::NoButton);
+    return false;
+}
+
+// The config-write content file: the dedicated .config-content-<pid> name in
+// the same private .keys directory. The helper never deletes the file; the
+// GUI unlinks it on every completion path.
+bool LegacyMainWindow::writeConfigContentFile(const QByteArray &content, QString *path)
+{
+    if (writeSecretFile(content, "config-content-",
+                        gConfigContentFilePath, sizeof(gConfigContentFilePath),
+                        path)) {
+        return true;
+    }
+    QMessageBox::warning(
+        this, QString::fromLatin1("Configuration write unavailable"),
+        QString::fromLatin1(
+            "The edited content could not be written to a private temporary "
+            "file in %1; the write was not started.")
+            .arg(m_logDirectory),
+        QMessageBox::Ok, QMessageBox::NoButton);
+    return false;
 }
 
 // Delete the unlock keyfile (best-effort) and clear the tracked path. Called
@@ -4302,6 +4364,19 @@ void LegacyMainWindow::discardUnlockKeyfile()
         m_unlockKeyfilePath = QString::null;
     }
     gUnlockKeyfilePath[0] = '\0';
+}
+
+// Delete the pending config-write content file (best-effort) and clear the
+// tracked path. Called from every completion and failure path (the helper
+// never deletes the caller's file), so the edited content file never
+// outlives the attempt; the unlink is idempotent.
+void LegacyMainWindow::discardConfigContentFile()
+{
+    if (!m_configContentFilePath.isEmpty()) {
+        ::unlink(m_configContentFilePath.local8Bit().data());
+        m_configContentFilePath = QString::null;
+    }
+    gConfigContentFilePath[0] = '\0';
 }
 
 
@@ -5574,9 +5649,11 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     m_activeRepairStages.clear();
     if (m_smokeMode && m_runner->elevationNeedsPassword(0)) {
         // A modal password prompt would hang the headless smoke: fail with the
-        // exact remedy instead. The unlock keyfile is discarded here too so
-        // the passphrase file never outlives the attempt.
+        // exact remedy instead. The unlock keyfile and the pending config
+        // content file are discarded here too so no secret file ever outlives
+        // the refused attempt.
         discardUnlockKeyfile();
+        discardConfigContentFile();
         m_smokeMode = false;
         m_pendingConfigWrite = false;
         emit smokeFinished(false, QString::fromLatin1(
@@ -5607,6 +5684,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
         // Never leave a collected secret behind when authorization is missing.
         m_runner->setInputData(QByteArray());
         discardUnlockKeyfile();
+        discardConfigContentFile();
         m_pendingConfigWrite = false;
         m_pendingConfigKey = QString::null;
         m_pendingConfigPath = QString::null;
@@ -5632,6 +5710,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
         }
         m_runner->setInputData(QByteArray());
         discardUnlockKeyfile();
+        discardConfigContentFile();
         m_pendingConfigWrite = false;
         m_pendingConfigKey = QString::null;
         m_pendingConfigPath = QString::null;
@@ -5685,14 +5764,21 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     appendLog(QString::fromLatin1("=== %1 ===").arg(label));
     appendLog(QString::fromLatin1("helper: %1 (%2)").arg(m_runner->helperPath()).arg(elevation));
     // The command transcript never carries secrets. The guarded config-write
-    // verb transports the edited file content as one argv element (the last
-    // one), and the unlock carries its passphrase in the --key-file argument:
-    // both are redacted before the line is logged.
+    // verb transports the edited content either through a private file
+    // (--content-file <path>, B5) or — for the deprecated argv fallback — as
+    // one argv element (the last one); the unlock carries its passphrase in
+    // the --key-file argument: all are redacted before the line is logged.
     QStringList loggableArgs(args);
     if (loggableArgs.count() > 4
         && loggableArgs[0] == QString::fromLatin1("config-write")) {
-        loggableArgs[loggableArgs.count() - 1] =
-            QString::fromLatin1("<config-write content redacted>");
+        if (loggableArgs.count() > 5
+            && loggableArgs[4] == QString::fromLatin1("--content-file")) {
+            loggableArgs[5] =
+                QString::fromLatin1("<config-write content path redacted>");
+        } else {
+            loggableArgs[loggableArgs.count() - 1] =
+                QString::fromLatin1("<config-write content redacted>");
+        }
     }
     if (loggableArgs.count() > 1) {
         for (int i = 0; i + 1 < static_cast<int>(loggableArgs.count()); ++i) {
@@ -5863,10 +5949,12 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     m_pendingShell = false;
     m_pendingBrowse = false;
     m_pendingLabel = QString::null;
-    // The unlock keyfile is deleted on every completion path (the helper has
-    // already read and deleted the file by the time an unlock returns; this
-    // unlink is best-effort and idempotent).
+    // The unlock keyfile and the config-write content file are deleted on
+    // every completion path (the helper has already read the files by the
+    // time the command returns and never deletes them; these unlinks are
+    // best-effort and idempotent).
     discardUnlockKeyfile();
+    discardConfigContentFile();
     updateActionStates();
     updateBusyIndicator();
     updateStatus();

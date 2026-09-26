@@ -101,11 +101,15 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   diagnostics emit `Legacy config <key>: available|unavailable|<reason>` lines
   for the mounted target, so absent files are omitted from the combo with the
   helper's exact reason shown below it; before the first diagnostics run the
-  row lists every Etch key and asks for a diagnostics run. **Edit Target
+  row lists every Etch key and asks for a diagnostics run.   **Edit Target
   File...** opens the modal editor with the helper's guarded `config-read`
   content; **Save Target File** confirms, writes through the guarded
   `config-write` verb (mode/owner preserved, no symlinks, no creation) and
-  invalidates the cached diagnostics.
+  invalidates the cached diagnostics. The edited content travels through a
+  private mode-600 content file in the `.keys` directory
+  (`--content-file <path> --content-owner <uid>`, up to 1 MiB) — never an
+  argv element — and the GUI unlinks it on every completion path; the old
+  argv form stays as a deprecated helper-side fallback.
 - **Menus** mirror the modern structure: **File** carries **Refresh Devices**
   (F5), **Lock Administrator Session** and **Quit**; **View** carries the
   **Systems**, **Diagnostics**, **Logs** and **Settings** tab shortcuts, then

@@ -740,8 +740,8 @@ grep -q 'SIGINT' "$WINDOW" || fail "the SIGINT keyfile handler is missing"
 grep -q 'SIGHUP' "$WINDOW" || fail "the SIGHUP keyfile handler is missing"
 grep -q '_exit(128 + signalNumber)' "$WINDOW" \
     || fail "the keyfile handler does not exit with 128+signum"
-grep -q 'strncpy(gUnlockKeyfilePath' "$WINDOW" \
-    || fail "the created keyfile is not registered with the termination handlers"
+grep -q 'strncpy(registeredPath' "$WINDOW" \
+    || fail "the created secret file is not registered with the termination handlers"
 grep -q 'lstat(canonicalPath.local8Bit().data(), &earlier)' "$WINDOW" \
     || fail "deleteSelectedSessionLog lost the pre-confirmation lstat"
 grep -q 'lstat(canonicalPath.local8Bit().data(), &current)' "$WINDOW" \
@@ -760,6 +760,51 @@ for file in devicesrc logsrc diagnosticsrc repairrc; do
 done
 grep -q 'chmod(settingsPath.local8Bit().data(), 0600)' "$WINDOW" \
     || fail "settings files are not chmod'ed 0600 after saves"
+# B5: the config-write content transport.  The edited file travels through
+# --content-file/--content-owner (never argv); the mode-600 O_EXCL writer is
+# the generalized .keys writer reused by the unlock keyfile path; the content
+# file is unlinked on every completion path and by the termination handlers;
+# the editor cap is the helper's 1 MiB file bound.
+for marker in '"--content-file"' '"--content-owner"' 'writeSecretFile' \
+    'writeConfigContentFile' 'm_configContentFilePath' \
+    'discardConfigContentFile' 'gConfigContentFilePath' \
+    'config-content-' 'kConfigEditMaximumBytes = 1048576' \
+    'NUL bytes; the guarded write' 'larger than 1 MiB' \
+    '<config-write content path redacted>'; do
+    grep -q "$marker" "$WINDOW" || fail "B5 config-write marker missing: $marker"
+done
+UNLOCK_WRITER_BLOCK="$(sed -n '/^bool LegacyMainWindow::writeUnlockKeyfile/,/^}/p' "$WINDOW")"
+[[ -n "$UNLOCK_WRITER_BLOCK" ]] || fail "writeUnlockKeyfile block not found"
+grep -q 'writeSecretFile(secret' <<<"$UNLOCK_WRITER_BLOCK" \
+    || fail "the unlock keyfile writer does not reuse the shared writeSecretFile writer"
+SECRET_BLOCK="$(sed -n '/^bool LegacyMainWindow::writeSecretFile/,/^}/p' "$WINDOW")"
+[[ -n "$SECRET_BLOCK" ]] || fail "writeSecretFile block not found"
+grep -q 'O_WRONLY | O_CREAT | O_EXCL, 0600' <<<"$SECRET_BLOCK" \
+    || fail "writeSecretFile does not O_EXCL-create at mode 0600"
+grep -q 'registeredPath\[registeredPathSize - 1\] = .\\0.;' <<<"$SECRET_BLOCK" \
+    || fail "writeSecretFile does not NUL-terminate the registered path"
+HANDLER_BLOCK="$(sed -n '/^extern "C" void legacyKeyfileTerminationHandler/,/^}/p' "$WINDOW")"
+[[ -n "$HANDLER_BLOCK" ]] || fail "termination handler block not found"
+grep -q 'gUnlockKeyfilePath' <<<"$HANDLER_BLOCK" \
+    || fail "termination handler no longer unlinks the pending unlock keyfile"
+grep -q 'gConfigContentFilePath' <<<"$HANDLER_BLOCK" \
+    || fail "termination handler does not unlink the pending config content file"
+FINISH_BLOCK="$(sed -n '/^void LegacyMainWindow::helperFinished/,/^}/p' "$WINDOW")"
+[[ -n "$FINISH_BLOCK" ]] || fail "helperFinished block not found"
+grep -q 'discardConfigContentFile()' <<<"$FINISH_BLOCK" \
+    || fail "helperFinished does not unlink the config content file on completion"
+START_BLOCK="$(sed -n '/^bool LegacyMainWindow::startCommand/,/^}/p' "$WINDOW")"
+grep -q 'discardConfigContentFile()' <<<"$START_BLOCK" \
+    || fail "startCommand refusal paths do not discard the config content file"
+EDITOR_BLOCK="$(sed -n '/^void LegacyMainWindow::openConfigEditor/,/^}/p' "$WINDOW")"
+[[ -n "$EDITOR_BLOCK" ]] || fail "openConfigEditor block not found"
+grep -q 'QString::fromLatin1("--content-file") << contentFilePath' <<<"$EDITOR_BLOCK" \
+    || fail "openConfigEditor does not pass --content-file with the content path"
+grep -q '"--content-owner"' <<<"$EDITOR_BLOCK" \
+    || fail "openConfigEditor does not pass --content-owner"
+grep -q '::getuid()' <<<"$EDITOR_BLOCK" \
+    || fail "openConfigEditor does not pass the invoker uid as --content-owner"
+pass "B5 config-write transport (--content-file args, .keys writer reuse, unlink on completion + termination, 1 MiB cap)"
 RUNNER_CPP="$GUI_DIR/src/HelperRunner.cpp"
 grep -q 'boundedWaitPid' "$RUNNER_CPP" \
     || fail "HelperRunner lost the bounded waitpid helper"

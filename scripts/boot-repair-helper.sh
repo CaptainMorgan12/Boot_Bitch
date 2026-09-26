@@ -526,7 +526,8 @@ Usage:
   $PROGRAM_NAME validate     <target-disk> <root-device>
   $PROGRAM_NAME diagnose     <target-disk> <root-device> <diagnostic|all>
   $PROGRAM_NAME config-read  <target-disk> <root-device> <config-key>
-  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>
+  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> --content-file <path> --content-owner <uid>
+  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>   (deprecated argv transport)
   $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id]
   $PROGRAM_NAME host-snapshots <host-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id|@rollback-before-<stamp>]
   $PROGRAM_NAME repair       <target-disk> <root-device> <stage> [stage ...]
@@ -13056,14 +13057,58 @@ target_config_path()
     printf '%s\n' "$candidate"
 }
 
+# A9-01 (config-write content transport): the caller-supplied content file must
+# be a regular file whose resolved path equals the raw argument, so a path that
+# resolves through ANY symlink (final component or intermediate directory) is
+# refused before the file is ever read.
+config_content_file_path_safe()
+{
+    local content_arg="$1" real=""
+    [[ -f "$content_arg" && ! -L "$content_arg" ]] || return 1
+    real="$(realpath_existing "$content_arg" 2>/dev/null || true)"
+    [[ -n "$real" && "$real" == "$content_arg" ]] || return 1
+    return 0
+}
+
+# A9-01: prove the content-file ownership instead of accepting the effective
+# uid, mirroring the unlock keyfile proof:
+#   - PKEXEC_UID/SUDO_UID present (pkexec/sudo recorded the invoker): the file
+#     uid must equal the recorded invoker and the --content-owner argument
+#     (when given) must equal it too;
+#   - no recorded invoker: a non-zero, numeric --content-owner must match the
+#     file uid;
+#   - anything else has no provable owner and fails closed.
+config_content_file_owner_proven()
+{
+    local content_arg="$1" owner_arg="${2:-}" uid="" invoker=""
+    uid="$(stat -c '%u' -- "$content_arg" 2>/dev/null || true)"
+    [[ -n "$uid" ]] || return 1
+    if [[ -n "${PKEXEC_UID:-}" ]]; then
+        invoker="$PKEXEC_UID"
+    elif [[ -n "${SUDO_UID:-}" ]]; then
+        invoker="$SUDO_UID"
+    fi
+    if [[ -n "$invoker" ]]; then
+        [[ "$uid" == "$invoker" ]] || return 1
+        if [[ -n "$owner_arg" ]]; then
+            [[ "$owner_arg" == "$invoker" ]] || return 1
+        fi
+        return 0
+    fi
+    if [[ -n "$owner_arg" && "$owner_arg" =~ ^[0-9]+$ && "$owner_arg" != "0" ]]; then
+        [[ "$uid" == "$owner_arg" ]] || return 1
+        return 0
+    fi
+    return 1
+}
+
 run_target_config()
 {
     local action="${1:-}" key="${2:-}" content="${3-}" virtual_path path tmp mode owner_group
+    local content_file="" content_owner="" content_size="" written_size=""
     [[ "$action" == "read" || "$action" == "write" ]] || fail "config requires read or write."
     if [[ "$action" == "read" ]]; then
         [[ $# -eq 2 ]] || fail "config read received an invalid argument count."
-    else
-        [[ $# -eq 3 ]] || fail "config write received an invalid argument count."
     fi
     virtual_path="$(config_path_for_key "$key")"
     if [[ "$action" == "read" ]]; then
@@ -13077,7 +13122,34 @@ run_target_config()
         return 0
     fi
 
-    [[ ${#content} -le 262144 ]] || fail "Target configuration is limited to 256 KiB."
+    # Parse the write transport.  The modern form is
+    #   write <key> --content-file <path> --content-owner <uid>
+    # The content is read from a private, caller-owned file so it never appears
+    # in argv, /proc/<pid>/cmdline or logs; the helper never deletes that file
+    # (the GUI unlinks it on every completion path).  The deprecated argv form
+    #   write <key> <content>
+    # is still accepted only for the legacy Qt3 GUI until its port lands.
+    if [[ "$content" == "--content-file" ]]; then
+        [[ $# -eq 6 ]] || fail "config write --content-file received an invalid argument count."
+        [[ "${5:-}" == "--content-owner" ]] \
+            || fail "config-write --content-file requires --content-owner <uid>."
+        content_file="${4:-}"
+        content_owner="${6:-}"
+        [[ -n "$content_file" ]] || fail "config-write --content-file requires a path."
+        [[ -n "$content_owner" ]] || fail "config-write --content-owner requires a uid."
+        config_content_file_path_safe "$content_file" \
+            || fail "The configuration content file is not a plain, symlink-free regular file: $content_file"
+        config_content_file_owner_proven "$content_file" "$content_owner" \
+            || fail "The configuration content file owner cannot be proven; refusing."
+        content_size="$(stat -c '%s' -- "$content_file" 2>/dev/null || true)"
+        [[ -n "$content_size" ]] || fail "Unable to stat the configuration content file."
+        [[ "$content_size" -le 1048576 ]] \
+            || fail "Target configuration is limited to 1 MiB; refusing."
+    else
+        [[ $# -eq 3 ]] || fail "config write received an invalid argument count."
+        [[ ${#content} -le 262144 ]] || fail "Target configuration is limited to 256 KiB."
+    fi
+
     prepare_target rw
     maybe_mount_target_path "$virtual_path" rw
     path="$(target_config_path "$virtual_path")"
@@ -13085,9 +13157,23 @@ run_target_config()
     mode="$(stat -c '%a' -- "$path")" || fail "Unable to inspect target configuration mode."
     owner_group="$(stat -c '%u:%g' -- "$path")" || fail "Unable to inspect target configuration ownership."
     tmp="$(mktemp "$(dirname -- "$path")/.boot-repair-config.XXXXXX")" || fail "Unable to create a temporary configuration file."
-    if ! printf '%s' "$content" > "$tmp"; then
-        rm -f -- "$tmp"
-        fail "Unable to write temporary target configuration."
+    if [[ -n "$content_file" ]]; then
+        # The content file is never echoed or logged; it is copied straight
+        # into the temporary target file.  Re-verify the result so a file that
+        # grew or changed during the copy can never exceed the 1 MiB cap or
+        # diverge from what was size-checked above.
+        if ! cp -- "$content_file" "$tmp"; then
+            rm -f -- "$tmp"
+            fail "Unable to copy the configuration content into the temporary target file."
+        fi
+        written_size="$(stat -c '%s' -- "$tmp" 2>/dev/null || true)"
+        [[ -n "$written_size" && "$written_size" -le 1048576 && "$written_size" == "$content_size" ]] \
+            || { rm -f -- "$tmp"; fail "The configuration content copy failed verification; refusing."; }
+    else
+        if ! printf '%s' "$content" > "$tmp"; then
+            rm -f -- "$tmp"
+            fail "Unable to write temporary target configuration."
+        fi
     fi
     chmod "$mode" -- "$tmp"
     chown "$owner_group" -- "$tmp"
@@ -20062,8 +20148,23 @@ main()
             run_target_config read "$1"
             ;;
         config-write)
-            [[ $# -eq 2 ]] || fail "config-write requires a configuration key and content."
-            run_target_config write "$1" "$2"
+            case "$#" in
+                2)
+                    # Deprecated argv-content transport; kept only for the
+                    # legacy Qt3 GUI until its port lands. The modern GUI
+                    # transports the content through the --content-file form
+                    # so file contents never appear in argv or /proc cmdline.
+                    run_target_config write "$1" "$2"
+                    ;;
+                5)
+                    [[ "$2" == "--content-file" && "$4" == "--content-owner" ]] \
+                        || fail "config-write accepts either a configuration key and content, or a configuration key with --content-file <path> --content-owner <uid>."
+                    run_target_config write "$1" --content-file "$3" --content-owner "$5"
+                    ;;
+                *)
+                    fail "config-write requires a configuration key plus content (either the deprecated <content> argument or --content-file <path> --content-owner <uid>)."
+                    ;;
+            esac
             ;;
         snapshots)
             run_snapshots "$@"

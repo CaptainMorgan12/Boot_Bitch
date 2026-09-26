@@ -1923,7 +1923,8 @@ Usage:
   $PROGRAM_NAME validate     <target-disk> <root-device>
   $PROGRAM_NAME diagnose     <target-disk> <root-device> <diagnostic|all>
   $PROGRAM_NAME config-read  <target-disk> <root-device> <config-key>
-  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>
+  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> --content-file <path> --content-owner <uid>
+  $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>   (deprecated argv transport)
   $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id]
   $PROGRAM_NAME host-snapshots <host-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id|@rollback-before-<stamp>]
   $PROGRAM_NAME repair       <target-disk> <root-device> <stage> [stage ...]
@@ -2926,6 +2927,159 @@ mount_recorded_modern()
     return "$rc"
 }
 
+# A1-02/A3-01: the real recovery-host /dev is copied into the private chroot
+# /dev through a whitelist, not a tree copy.  Only the essential character
+# nodes (null, zero, full, random, urandom, tty, console — matched by maj:min
+# via stat, never by name), the device-mapper control node, and block
+# devices/mappers whose canonical top disk is the SELECTED target disk are
+# copied; directories are recursed and disk/by-* alias links are recreated
+# only for allowed targets.  Plain files, sockets and fifos are refused, and
+# devices/mappers backed by any other disk never appear, so target tooling can
+# never accidentally reach the host's unrelated devices or another disk's
+# data.  This is a containment aid, not a sandbox: root inside the chroot
+# retains its mknod capability and can still create nodes deliberately.
+populate_writable_dev_filtered()
+{
+    local destination="$1" source="${2:-/dev}" entry rel name ftype major minor
+    local link_text resolved top allowed dev_ident copied_nodes=0 refused_entries=0
+    local -a allowed_tops=() entry_tops=() pending_links=()
+    local -a essential_nodes=(
+        'null c 1 3 666'
+        'zero c 1 5 666'
+        'full c 1 7 666'
+        'random c 1 8 666'
+        'urandom c 1 9 666'
+        'tty c 5 0 666'
+        'console c 5 1 600'
+    )
+    local -a allowed_nodes=() allowed_nodes_keys=()
+    local -a essential_by_dev=() essential_by_dev_keys=()
+    legacy_assoc_set essential_by_dev '1:3' null
+    legacy_assoc_set essential_by_dev '1:5' zero
+    legacy_assoc_set essential_by_dev '1:7' full
+    legacy_assoc_set essential_by_dev '1:8' random
+    legacy_assoc_set essential_by_dev '1:9' urandom
+    legacy_assoc_set essential_by_dev '5:0' tty
+    legacy_assoc_set essential_by_dev '5:1' console
+
+    mkdir -p -- "$destination"
+
+    # Every block-device/mapper copy must resolve through the same top-disk
+    # walk the write-safety gates use to the selected target disk.
+    if [[ -n "$TARGET_DISK" ]]; then
+        legacy_readarray -t allowed_tops < <(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)
+    fi
+    if ((${#allowed_tops[@]} == 0)); then
+        log "WARNING: private /dev filter: the selected target disk identity is unavailable; no block device or mapper will be exposed to the target chroot." | tee -a "$SESSION_LOG"
+    fi
+
+    while IFS= read -r -d '' entry; do
+        rel="${entry#"$source"/}"
+        name="${entry##*/}"
+        if [[ -L "$entry" ]]; then
+            # Symlinks are recreated below, once their targets are known.
+            pending_links+=("$entry")
+            continue
+        fi
+        if [[ -d "$entry" ]]; then
+            mkdir -p -- "$destination/$rel"
+            continue
+        fi
+        # %t/%T are the maj:min in hex (the only portable device-identity
+        # match).  %F differs between GNU ("character special file") and
+        # BusyBox ("character device") stat, and it contains spaces, so the
+        # two trailing fields (major minor) are split off and the remaining
+        # prefix is the type; both spellings are accepted below.
+        dev_ident="$(stat -c '%F %t %T' -- "$entry" 2>/dev/null || true)"
+        minor="${dev_ident##* }"
+        major="${dev_ident% *}"
+        major="${major##* }"
+        ftype="${dev_ident% * *}"
+        case "$ftype" in
+            'character special file'|'character device')
+                if [[ -n "$(legacy_assoc_get essential_by_dev "$major:$minor")" ]]; then
+                    cp -a -- "$entry" "$destination/$rel" 2>/dev/null || true
+                elif [[ "$major" == a && "$name" == control ]]; then
+                    # The device-mapper control node (canonically 10:236).
+                    cp -a -- "$entry" "$destination/$rel" 2>/dev/null || true
+                else
+                    refused_entries=$((refused_entries + 1))
+                fi
+                ;;
+            'block special file'|'block device')
+                allowed=""
+                legacy_readarray -t entry_tops < <(top_disks_for "$entry" 2>/dev/null | sort -u || true)
+                for top in "${entry_tops[@]:-}"; do
+                    for allowed_top in "${allowed_tops[@]:-}"; do
+                        if [[ "$top" == "$allowed_top" ]]; then
+                            allowed=yes
+                            break 2
+                        fi
+                    done
+                done
+                if [[ "$allowed" == yes ]]; then
+                    cp -a -- "$entry" "$destination/$rel" 2>/dev/null || true
+                    legacy_assoc_set allowed_nodes "$(readlink -f -- "$entry" 2>/dev/null || true)" 1
+                    copied_nodes=$((copied_nodes + 1))
+                else
+                    refused_entries=$((refused_entries + 1))
+                fi
+                ;;
+            *)
+                # Plain files, sockets and fifos never reach the private /dev.
+                refused_entries=$((refused_entries + 1))
+                ;;
+        esac
+    done < <(find "$source" -mindepth 1 \
+        \( -path "$source/pts" -o -path "$source/shm" -o -path "$source/mqueue" -o -path "$source/hugepages" \) -prune -o -print0 2>/dev/null)
+
+    # Recreate disk/by-* alias links only for targets that were actually
+    # copied (an allowed block device or mapper on the selected disk).
+    for entry in "${pending_links[@]:-}"; do
+        rel="${entry#"$source"/}"
+        case "$rel" in
+            disk/by-*/*)
+                resolved="$(readlink -f -- "$entry" 2>/dev/null || true)"
+                [[ -n "$resolved" && -n "$(legacy_assoc_get allowed_nodes "$resolved")" ]] || continue
+                link_text="$(readlink -- "$entry" 2>/dev/null || true)"
+                [[ -n "$link_text" ]] || continue
+                mkdir -p -- "$(dirname -- "$destination/$rel")"
+                ln -s -- "$link_text" "$destination/$rel" 2>/dev/null || true
+                ;;
+        esac
+    done
+
+    # The essential nodes are recreated here even when the source lacks them
+    # (on the real /dev they always exist; the fallback keeps the chroot
+    # functional on unusual layouts), followed by the proc descriptor links.
+    for entry in "${essential_nodes[@]:-}"; do
+        name="${entry%% *}"
+        [[ -e "$destination/$name" ]] && continue
+        read -r name type major minor mode <<<"$entry"
+        mknod -m "$mode" "$destination/$name" "$type" "$major" "$minor" 2>/dev/null || true
+    done
+    for name in fd stdin stdout stderr; do
+        [[ -e "$destination/$name" || -L "$destination/$name" ]] && continue
+        case "$name" in
+            fd) ln -s /proc/self/fd "$destination/fd" 2>/dev/null || true ;;
+            stdin) ln -s /proc/self/fd/0 "$destination/stdin" 2>/dev/null || true ;;
+            stdout) ln -s /proc/self/fd/1 "$destination/stdout" 2>/dev/null || true ;;
+            stderr) ln -s /proc/self/fd/2 "$destination/stderr" 2>/dev/null || true ;;
+        esac
+    done
+    mkdir -p -- "$destination/pts" "$destination/shm"
+    chmod 0755 -- "$destination/pts" 2>/dev/null || true
+    chmod 1777 -- "$destination/shm" 2>/dev/null || true
+    for name in mqueue hugepages; do
+        [[ -d "$source/$name" ]] || continue
+        mkdir -p -- "$destination/$name"
+        chmod --reference="$source/$name" "$destination/$name" 2>/dev/null || true
+    done
+    if (( refused_entries > 0 )); then
+        log "Private /dev filter: $copied_nodes allowed block devices/mappers copied; $refused_entries non-essential device-tree entries refused (plain files, sockets, fifos, and devices outside the selected target disk)." | tee -a "$SESSION_LOG"
+    fi
+}
+
 # Populate a private writable /dev tmpfs from the recovery host's device tree.
 # Device nodes, symlinks (for example /dev/disk/by-uuid) and directories are
 # copied so chroot tools see the same devices as before, but every write stays
@@ -2935,6 +3089,11 @@ mount_recorded_modern()
 # mount_special dev-rw), while shm/mqueue/hugepages stay plain directories so
 # the EXIT cleanup keeps unmounting exactly the recorded MOUNTS entries.  The
 # source directory is overridable for the shell contract test.
+# A1-02/A3-01: when the source is the real recovery-host /dev, the copy is
+# FILTERED instead of permissive (see populate_writable_dev_filtered below) so
+# no device that does not belong to the selected target disk can leak into the
+# chroot.  The permissive tree copy stays for the contract-test override
+# source, whose contents the test controls.
 populate_writable_dev()
 {
     local destination="$1" source="${2:-/dev}" entry name
@@ -2948,6 +3107,11 @@ populate_writable_dev()
         'tty c 5 0 666'
         'console c 5 1 600'
     )
+
+    if [[ "$source" == "/dev" ]]; then
+        populate_writable_dev_filtered "$destination" "$source"
+        return $?
+    fi
 
     shopt -s nullglob
     entries=("$source"/*)
@@ -4850,7 +5014,7 @@ validate_host_source()
 
 validate_host_destination()
 {
-    local destination="$1" real mount_target
+    local destination="$1" real mount_target mode
     [[ "$destination" == /* ]] || fail "Host destination must be an absolute path: $destination"
     [[ "$destination" != *$'\n'* && "$destination" != *$'\r'* ]] || fail "Paths containing line breaks are not supported."
     [[ -d "$destination" && ! -L "$destination" ]] || fail "Host destination must be an existing non-symlink directory: $destination"
@@ -4865,6 +5029,24 @@ validate_host_destination()
             ;;
     esac
 
+    # A4-03: shared scratch directories are refused for repair-to-host copies.
+    # A sticky or world-writable directory lets other users replace or delete
+    # files between the copy and its verification (the TOCTOU class this gate
+    # closes); a group-writable directory is only a warning because the owning
+    # group is a narrower set than "everyone".
+    mode="$(stat -c '%a' -- "$real" 2>/dev/null || true)"
+    if [[ -n "$mode" && "$mode" =~ ^[0-7]+$ ]]; then
+        if (( 8#$mode & 01000 )); then
+            fail "Host destination must not be sticky (a shared scratch directory lets other users replace copied files): $real"
+        fi
+        if (( 8#$mode & 0002 )); then
+            fail "Host destination must not be world-writable: $real"
+        fi
+        if (( 8#$mode & 0020 )); then
+            log "WARNING: host destination is group-writable; the copied files may be modified by the owning group: $real" | tee -a "$SESSION_LOG" >&2
+        fi
+    fi
+
     case "$real" in
         /home|/home/*|/mnt|/mnt/*|/media|/media/*|/run/media|/run/media/*|/tmp|/tmp/*)
             printf '%s\n' "$real"
@@ -4878,7 +5060,7 @@ validate_host_destination()
         return 0
     fi
 
-    fail "Host destination must be under /home, /mnt, /media, /run/media, /tmp, or a separate non-system mount: $real"
+    fail "Host destination must be under /home, /mnt, /media, /run/media, /tmp, or a separate non-system mount, and must not be sticky or world-writable: $real"
 }
 
 target_destination_sensitive()
@@ -4975,10 +5157,113 @@ verify_sha256_item()
     printf '%s\n' "$verified"
 }
 
+RSYNC_CHMOD_SUPPORTED=""
+RSYNC_XATTR_FILTER_SUPPORTED=""
+
+# True when this rsync accepts --chmod (GNU rsync 2.6.9+; BusyBox rsync does
+# not).  Probed once per helper run and cached.  The help text is captured
+# into a variable first: `grep -q` in a pipeline under pipefail would
+# SIGPIPE-kill rsync's writer and make the probe race-dependently flip.
+rsync_supports_chmod()
+{
+    if [[ -n "$RSYNC_CHMOD_SUPPORTED" ]]; then
+        [[ "$RSYNC_CHMOD_SUPPORTED" == yes ]]
+        return
+    fi
+    local help_out=""
+    help_out="$(rsync --help 2>/dev/null || true)"
+    if grep -Fq -- '--chmod' <<<"$help_out"; then
+        RSYNC_CHMOD_SUPPORTED=yes
+    else
+        RSYNC_CHMOD_SUPPORTED=no
+    fi
+    [[ "$RSYNC_CHMOD_SUPPORTED" == yes ]]
+}
+
+# True when this rsync supports xattr-name filters (`-f '-x <name>', rsync
+# 3.0+).  The --help text does not document the x modifier, so the probe is a
+# throwaway transfer with a filter that only xattr-capable rsyncs accept.
+rsync_supports_xattr_filter()
+{
+    if [[ -n "$RSYNC_XATTR_FILTER_SUPPORTED" ]]; then
+        [[ "$RSYNC_XATTR_FILTER_SUPPORTED" == yes ]]
+        return
+    fi
+    local probe_dir="$SESSION_DIR/rsync-xattr-filter-probe" rc=0
+    rm -rf -- "$probe_dir" 2>/dev/null || true
+    mkdir -p -- "$probe_dir/src" "$probe_dir/dst"
+    printf 'probe\n' > "$probe_dir/src/probe"
+    set +e
+    rsync -aX -f '-x user.boot-repair-probe' "$probe_dir/src/" "$probe_dir/dst/" >/dev/null 2>&1
+    rc=$?
+    set -e
+    rm -rf -- "$probe_dir" 2>/dev/null || true
+    if (( rc == 0 )); then
+        RSYNC_XATTR_FILTER_SUPPORTED=yes
+    else
+        RSYNC_XATTR_FILTER_SUPPORTED=no
+    fi
+    [[ "$RSYNC_XATTR_FILTER_SUPPORTED" == yes ]]
+}
+
+# A4-03: the repair-to-host destination is re-validated (allowlist, realpath
+# identity and the sticky/world-writable refusal) immediately before each
+# rsync and again before the post-copy verification, so a destination swap
+# between validation and use cannot redirect the write.
+reassert_host_destination()
+{
+    local virtual="$1" expected="$2" revalidated
+    revalidated="$(validate_host_destination "$virtual")" \
+        || fail "Repair-to-host destination failed revalidation; refusing to continue: $virtual"
+    [[ "$revalidated" == "$expected" ]] \
+        || fail "Repair-to-host destination changed during the copy (TOCTOU): validated as $expected, now resolves to $revalidated"
+}
+
+# A4-02: fail-closed post-copy security scan for repair-to-host items.  The
+# rsync-level stripping (--chmod and the security.capability xattr filter) is
+# defense in depth; this scan is the enforcement point and refuses the copy
+# when either bit class is still present.  When no xattr inspection tool
+# exists and this rsync cannot filter xattrs, capability removal cannot be
+# guaranteed and the copy is refused with a clear message.
+host_copy_security_scan()
+{
+    local dest_item="$1" setid_out rc caps_out
+    set +e
+    setid_out="$(find "$dest_item" -perm /6000 -print -quit 2>&1)"
+    rc=$?
+    set -e
+    (( rc == 0 )) \
+        || fail "Repair-to-host security scan: the setuid/setgid check could not run (find without '-perm /6000'); the copy is refused."
+    [[ -z "$setid_out" ]] \
+        || fail "Repair-to-host security scan found setuid/setgid bits in the copied files; the copy is refused: $(head -n1 <<<"$setid_out")"
+
+    if command -v getfattr >/dev/null 2>&1; then
+        caps_out="$(getfattr -R -m security.capability --absolute-names -- "$dest_item" 2>/dev/null || true)"
+        [[ -z "$caps_out" ]] \
+            || fail "Repair-to-host security scan found security.capability xattrs in the copied files; the copy is refused: $(head -n1 <<<"$caps_out")"
+    elif command -v getcap >/dev/null 2>&1; then
+        caps_out="$(getcap -r -- "$dest_item" 2>/dev/null || true)"
+        [[ -z "$caps_out" ]] \
+            || fail "Repair-to-host security scan found file capabilities in the copied files; the copy is refused: $(head -n1 <<<"$caps_out")"
+    elif ! rsync_supports_xattr_filter; then
+        fail "Repair-to-host security scan cannot verify that file capabilities were removed (no getfattr/getcap tool is installed and this rsync cannot filter xattrs); the copy is refused."
+    else
+        log "Repair-to-host capability scan: xattr inspection tooling is unavailable; the rsync security.capability filter was applied and trusted." | tee -a "$SESSION_LOG"
+    fi
+}
+
 run_rsync_item()
 {
-    local mode="$1" source="$2" destination="$3" chown_value="$4"
+    local mode="$1" source="$2" destination="$3" chown_value="$4" strip_setid="${5:-no}"
     local -a options=(-aHAX --numeric-ids --human-readable --itemize-changes)
+    if [[ "$strip_setid" == yes ]]; then
+        # A4-02: repair-to-host copies must not hand the running host a
+        # setuid/setgid binary or a capability-carrying file.  Strip the bits
+        # in the transfer itself when rsync supports it; the post-copy scan
+        # enforces the result either way.
+        rsync_supports_chmod && options+=('--chmod=u-s,g-s')
+        rsync_supports_xattr_filter && options+=(-f '-x security.capability')
+    fi
     [[ "$mode" == "preview" ]] && options+=(--dry-run)
     [[ "$mode" == "copy" ]] && options+=(--stats)
     [[ -n "$chown_value" ]] && options+=("--chown=$chown_value")
@@ -4988,8 +5273,16 @@ run_rsync_item()
 
 verify_rsync_item()
 {
-    local source="$1" destination="$2" chown_value="$3" output
+    local source="$1" destination="$2" chown_value="$3" strip_setid="${4:-no}" output
     local -a options=(-aHAX --numeric-ids --checksum --dry-run --itemize-changes)
+    if [[ "$strip_setid" == yes ]]; then
+        # A4-02 CRITICAL coupling: the verification must mask setuid/setgid
+        # and filter security.capability exactly like the copy did, or the
+        # stripped destination always reports phantom mode/xattr differences
+        # against the untouched source.
+        rsync_supports_chmod && options+=('--chmod=u-s,g-s')
+        rsync_supports_xattr_filter && options+=(-f '-x security.capability')
+    fi
     [[ -n "$chown_value" ]] && options+=("--chown=$chown_value")
     output="$(rsync "${options[@]:-}" -- "$source" "$destination/" 2>&1)" || fail "Post-copy rsync verification failed for $source: $output"
     [[ -z "$output" ]] || fail "Post-copy metadata/content verification still reports differences for $source: $output"
@@ -5029,7 +5322,18 @@ run_file_copy_modern()
     prepare_target ro
 
     local destination ownership_destination source virtual_path chown_value sha_count=0 item_count=0
+    local strip_setid=no
     local -a sources=()
+
+    [[ "$direction" == "repair-to-host" ]] && strip_setid=yes
+
+    if [[ "$direction" == "repair-to-host" ]] \
+        && [[ "$mode" == "copy" ]] \
+        && ! command -v getfattr >/dev/null 2>&1 \
+        && ! command -v getcap >/dev/null 2>&1 \
+        && ! rsync_supports_xattr_filter; then
+        fail "Repair-to-host File Copy cannot guarantee the removal of file capabilities: no getfattr/getcap tool is available and this rsync does not support xattr filtering. The copy is refused."
+    fi
 
     if [[ "$direction" == "host-to-repair" ]]; then
         validate_virtual_path "$destination_virtual"
@@ -5088,6 +5392,11 @@ run_file_copy_modern()
     log "File Copy $(legacy_uc "$mode"): ${direction}" | tee -a "$SESSION_LOG"
     log "Destination: $destination_virtual" | tee -a "$SESSION_LOG"
     log "Ownership policy: $ownership" | tee -a "$SESSION_LOG"
+    if [[ "$direction" == "repair-to-host" ]]; then
+        log "Security: setuid/setgid bits and file capabilities are removed on repair-to-host copies." | tee -a "$SESSION_LOG"
+    else
+        log "Security: host-to-repair copies keep -aHAX (modes, ownership and xattrs are copied from the trusted host source)." | tee -a "$SESSION_LOG"
+    fi
     log "Sources: ${#sources[@]}" | tee -a "$SESSION_LOG"
 
     for source in "${sources[@]:-}"; do
@@ -5095,12 +5404,19 @@ run_file_copy_modern()
         if [[ "$ownership" == "smart" ]]; then
             chown_value="$(smart_chown_for_item "$direction" "$source" "$ownership_destination")"
         fi
+        if [[ "$direction" == "repair-to-host" ]]; then
+            reassert_host_destination "$destination_virtual" "$destination"
+        fi
         log "$(legacy_uc "$mode"): $(basename -- "$source")" | tee -a "$SESSION_LOG"
-        run_rsync_item "$mode" "$source" "$destination" "$chown_value" 2>&1 | tee -a "$SESSION_LOG"
+        run_rsync_item "$mode" "$source" "$destination" "$chown_value" "$strip_setid" 2>&1 | tee -a "$SESSION_LOG"
         item_count=$((item_count + 1))
 
         if [[ "$mode" == "copy" ]]; then
-            verify_rsync_item "$source" "$destination" "$chown_value"
+            if [[ "$direction" == "repair-to-host" ]]; then
+                reassert_host_destination "$destination_virtual" "$destination"
+                host_copy_security_scan "$destination/$(basename -- "$source")"
+            fi
+            verify_rsync_item "$source" "$destination" "$chown_value" "$strip_setid"
             sha_count=$((sha_count + $(verify_sha256_item "$source" "$destination")))
         fi
     done
@@ -6282,7 +6598,12 @@ CHROOT_TRY_RC=0
 
 # Non-fatal chroot runner used by simulation/trial preflights: capture output
 # and status in CHROOT_TRY_OUTPUT/CHROOT_TRY_RC instead of failing, so callers
-# can inspect the result and apply known corrections.
+# can inspect the result and apply known corrections.  A3-02: the command
+# environment always carries GRUB_DISABLE_OS_PROBER=true — it is what makes
+# the apply-time update-grub/grub-mkconfig/grub2-mkconfig regeneration stop
+# probing other installations (the dual-boot entry set is only ever changed by
+# the user, never by an automatic repair), and it is harmless for every
+# non-grub command that shares this runner.
 run_chroot_try()
 {
     local label="$1"; shift
@@ -6296,6 +6617,7 @@ run_chroot_try()
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
+            GRUB_DISABLE_OS_PROBER=true \
             "$@" 2>&1
     )"
     rc=$?
@@ -8467,6 +8789,10 @@ bios_firmware_mode()
 # Generate a GRUB candidate configuration to an isolated path, syntax-check it,
 # require that every existing menu entry is preserved and only then allow the
 # real grub.cfg to be replaced.  A stale mapper-path failure is retried once.
+# A3-02: the trial generation runs with GRUB_DISABLE_OS_PROBER=true so the
+# candidate contains only this system's own entries; os-prober foreign entries
+# are therefore not propagated on regeneration (a deliberate dual-boot
+# behavior change, still guarded by the native-entry preservation check).
 preflight_grub()
 {
     local grub_mkconfig="" sim_path target_sim_path err_path output err_output rc
@@ -8503,6 +8829,7 @@ preflight_grub()
         output="$(
             run_selected_chroot /usr/bin/env \
                 HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                GRUB_DISABLE_OS_PROBER=true \
                 "$grub_mkconfig" -o "$target_sim_path" 2>"$err_path"
         )"
         rc=$?
@@ -8880,6 +9207,7 @@ preflight_fedora_grub()
     output="$(
         run_selected_chroot /usr/bin/env \
             HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            GRUB_DISABLE_OS_PROBER=true \
             "$generator" --no-grubenv-update -o "$target_sim_path" 2>"$err_path"
     )"
     rc=$?
@@ -14148,14 +14476,58 @@ target_config_path()
     printf '%s\n' "$candidate"
 }
 
+# A9-01 (config-write content transport): the caller-supplied content file must
+# be a regular file whose resolved path equals the raw argument, so a path that
+# resolves through ANY symlink (final component or intermediate directory) is
+# refused before the file is ever read.
+config_content_file_path_safe()
+{
+    local content_arg="$1" real=""
+    [[ -f "$content_arg" && ! -L "$content_arg" ]] || return 1
+    real="$(realpath_existing "$content_arg" 2>/dev/null || true)"
+    [[ -n "$real" && "$real" == "$content_arg" ]] || return 1
+    return 0
+}
+
+# A9-01: prove the content-file ownership instead of accepting the effective
+# uid, mirroring the unlock keyfile proof:
+#   - PKEXEC_UID/SUDO_UID present (pkexec/sudo recorded the invoker): the file
+#     uid must equal the recorded invoker and the --content-owner argument
+#     (when given) must equal it too;
+#   - no recorded invoker: a non-zero, numeric --content-owner must match the
+#     file uid;
+#   - anything else has no provable owner and fails closed.
+config_content_file_owner_proven()
+{
+    local content_arg="$1" owner_arg="${2:-}" uid="" invoker=""
+    uid="$(stat -c '%u' -- "$content_arg" 2>/dev/null || true)"
+    [[ -n "$uid" ]] || return 1
+    if [[ -n "${PKEXEC_UID:-}" ]]; then
+        invoker="$PKEXEC_UID"
+    elif [[ -n "${SUDO_UID:-}" ]]; then
+        invoker="$SUDO_UID"
+    fi
+    if [[ -n "$invoker" ]]; then
+        [[ "$uid" == "$invoker" ]] || return 1
+        if [[ -n "$owner_arg" ]]; then
+            [[ "$owner_arg" == "$invoker" ]] || return 1
+        fi
+        return 0
+    fi
+    if [[ -n "$owner_arg" && "$owner_arg" =~ ^[0-9]+$ && "$owner_arg" != "0" ]]; then
+        [[ "$uid" == "$owner_arg" ]] || return 1
+        return 0
+    fi
+    return 1
+}
+
 run_target_config()
 {
     local action="${1:-}" key="${2:-}" content="${3-}" virtual_path path tmp mode owner_group
+    local content_file="" content_owner="" content_size="" written_size=""
     [[ "$action" == "read" || "$action" == "write" ]] || fail "config requires read or write."
     if [[ "$action" == "read" ]]; then
         [[ $# -eq 2 ]] || fail "config read received an invalid argument count."
-    else
-        [[ $# -eq 3 ]] || fail "config write received an invalid argument count."
     fi
     virtual_path="$(config_path_for_key "$key")"
     if [[ "$action" == "read" ]]; then
@@ -14169,7 +14541,34 @@ run_target_config()
         return 0
     fi
 
-    [[ ${#content} -le 262144 ]] || fail "Target configuration is limited to 256 KiB."
+    # Parse the write transport.  The modern form is
+    #   write <key> --content-file <path> --content-owner <uid>
+    # The content is read from a private, caller-owned file so it never appears
+    # in argv, /proc/<pid>/cmdline or logs; the helper never deletes that file
+    # (the GUI unlinks it on every completion path).  The deprecated argv form
+    #   write <key> <content>
+    # is still accepted only for the legacy Qt3 GUI until its port lands.
+    if [[ "$content" == "--content-file" ]]; then
+        [[ $# -eq 6 ]] || fail "config write --content-file received an invalid argument count."
+        [[ "${5:-}" == "--content-owner" ]] \
+            || fail "config-write --content-file requires --content-owner <uid>."
+        content_file="${4:-}"
+        content_owner="${6:-}"
+        [[ -n "$content_file" ]] || fail "config-write --content-file requires a path."
+        [[ -n "$content_owner" ]] || fail "config-write --content-owner requires a uid."
+        config_content_file_path_safe "$content_file" \
+            || fail "The configuration content file is not a plain, symlink-free regular file: $content_file"
+        config_content_file_owner_proven "$content_file" "$content_owner" \
+            || fail "The configuration content file owner cannot be proven; refusing."
+        content_size="$(stat -c '%s' -- "$content_file" 2>/dev/null || true)"
+        [[ -n "$content_size" ]] || fail "Unable to stat the configuration content file."
+        [[ "$content_size" -le 1048576 ]] \
+            || fail "Target configuration is limited to 1 MiB; refusing."
+    else
+        [[ $# -eq 3 ]] || fail "config write received an invalid argument count."
+        [[ ${#content} -le 262144 ]] || fail "Target configuration is limited to 256 KiB."
+    fi
+
     prepare_target rw
     maybe_mount_target_path "$virtual_path" rw
     path="$(target_config_path "$virtual_path")"
@@ -14177,9 +14576,23 @@ run_target_config()
     mode="$(stat -c '%a' -- "$path")" || fail "Unable to inspect target configuration mode."
     owner_group="$(stat -c '%u:%g' -- "$path")" || fail "Unable to inspect target configuration ownership."
     tmp="$(mktemp "$(dirname -- "$path")/.boot-repair-config.XXXXXX")" || fail "Unable to create a temporary configuration file."
-    if ! printf '%s' "$content" > "$tmp"; then
-        rm -f -- "$tmp"
-        fail "Unable to write temporary target configuration."
+    if [[ -n "$content_file" ]]; then
+        # The content file is never echoed or logged; it is copied straight
+        # into the temporary target file.  Re-verify the result so a file that
+        # grew or changed during the copy can never exceed the 1 MiB cap or
+        # diverge from what was size-checked above.
+        if ! cp -- "$content_file" "$tmp"; then
+            rm -f -- "$tmp"
+            fail "Unable to copy the configuration content into the temporary target file."
+        fi
+        written_size="$(stat -c '%s' -- "$tmp" 2>/dev/null || true)"
+        [[ -n "$written_size" && "$written_size" -le 1048576 && "$written_size" == "$content_size" ]] \
+            || { rm -f -- "$tmp"; fail "The configuration content copy failed verification; refusing."; }
+    else
+        if ! printf '%s' "$content" > "$tmp"; then
+            rm -f -- "$tmp"
+            fail "Unable to write temporary target configuration."
+        fi
     fi
     chmod "$mode" -- "$tmp"
     chown "$owner_group" -- "$tmp"
@@ -21185,8 +21598,23 @@ main()
             run_target_config read "$1"
             ;;
         config-write)
-            [[ $# -eq 2 ]] || fail "config-write requires a configuration key and content."
-            run_target_config write "$1" "$2"
+            case "$#" in
+                2)
+                    # Deprecated argv-content transport; kept only for the
+                    # legacy Qt3 GUI until its port lands. The modern GUI
+                    # transports the content through the --content-file form
+                    # so file contents never appear in argv or /proc cmdline.
+                    run_target_config write "$1" "$2"
+                    ;;
+                5)
+                    [[ "$2" == "--content-file" && "$4" == "--content-owner" ]] \
+                        || fail "config-write accepts either a configuration key and content, or a configuration key with --content-file <path> --content-owner <uid>."
+                    run_target_config write "$1" --content-file "$3" --content-owner "$5"
+                    ;;
+                *)
+                    fail "config-write requires a configuration key plus content (either the deprecated <content> argument or --content-file <path> --content-owner <uid>)."
+                    ;;
+            esac
             ;;
         snapshots)
             run_snapshots "$@"

@@ -514,6 +514,13 @@ private:
     void copyDiagnosticResults();
     void saveDiagnosticResults();
     void editTargetConfig();
+    // A9-01: writes the edited target-file content to a private, mode-600,
+    // O_EXCL-created temporary file under the GUI's log directory (never argv,
+    // never the session log). The caller passes the path to the helper as
+    // --content-file and unlinks the file on every completion path. Fails
+    // closed: an existing file, an unwritable directory or a partial write
+    // leaves nothing behind.
+    bool writeConfigContentFile(const QByteArray &content, QString *path);
     QString diagnosticResultForKey(const QString &key) const;
     QString runTargetDiagnosticHelper(const QString &key, bool *succeeded = nullptr,
                                       bool showProgressDialog = false);
