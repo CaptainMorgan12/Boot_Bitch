@@ -126,6 +126,14 @@ AppImage; the build stops with installation instructions only when no
 RELR-capable `patchelf` exists. `PATCHELF`, `NO_STRIP` and
 `APPIMAGE_EXTRACT_AND_RUN` override the detection.
 
+The AppImage's zsync self-update channel (what Gear Lever/AppImageUpdate read
+through the embedded `gh-releases-zsync` update information) is
+transport-authenticated over HTTPS but not content-signed: the `.zsync`
+metadata carries zsync's SHA-1 block checksums, which verify that the update
+client received the bytes the server served, not who authored them. Gating
+AppImage self-updates behind a signed checksum (for example verifying the
+release `SHA256SUMS` before applying a fetched update) is future work.
+
 Validate generated packages without installing them:
 
 ```bash

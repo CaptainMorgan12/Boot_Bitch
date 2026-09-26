@@ -39,8 +39,12 @@ legacy_ucfirst()
     printf '%s%s' "$(printf '%s' "${s:0:1}" | LC_ALL=C tr '[:lower:]' '[:upper:]')" "${s:1}"
 }
 
-# Array-read replacement.  Accepts the option subset the helper uses (-t) and
-# assigns into the caller's dynamically scoped array by name.
+# Array-read replacement.  Accepts only the option subset the helper uses
+# (-t and the -- end-of-options marker) and assigns into the caller's
+# dynamically scoped array by name.  Everything else fails closed with a
+# reason: -n/-d/-O/-s (and any other unknown option) would change the read
+# semantics this shim cannot honour, so they are refused instead of being
+# silently consumed (A11-03).  Every ported call site is `mapfile -t`.
 legacy_readarray()
 {
     local __name="" __line="" __arg=""
@@ -48,9 +52,11 @@ legacy_readarray()
         __arg="$1"
         case "$__arg" in
             -t) ;;
-            -n|-d|-O|-s) shift; (( $# > 0 )) || break ;;
             --) ;;
-            -*) ;;
+            -n|-d|-O|-s|-*)
+                printf 'legacy_readarray: unsupported option %s (only -t is accepted)\n' "$__arg" >&2
+                return 1
+                ;;
             *) __name="$__arg" ;;
         esac
         shift

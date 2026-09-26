@@ -9,6 +9,7 @@ description after validating the variable's partition GUID and file path.
 import argparse
 import os
 import pathlib
+import stat
 import struct
 import sys
 import uuid
@@ -93,6 +94,16 @@ def encode_label(label: str) -> bytes:
     return encoded + b"\0\0"
 
 
+def write_all(fd: int, data: bytes) -> None:
+    """Write all of data to fd, raising OSError on a short write."""
+    view = memoryview(data)
+    while view:
+        count = os.write(fd, view)
+        if count == 0:
+            raise OSError("short write")
+        view = view[count:]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--bootnum", required=True)
@@ -124,30 +135,59 @@ def main() -> int:
         fail("internal EFI description size calculation failed")
     backup = pathlib.Path(args.backup)
     backup.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-    if not backup.exists():
-        backup.write_bytes(original)
-        os.chmod(backup, 0o600)
+    # Never follow a symlink and never clobber a non-regular path when saving
+    # the pristine bytes: lstat first, then create with O_WRONLY|O_CREAT|O_EXCL
+    # (plus O_NOFOLLOW where the platform provides it) and mode 0600, so no
+    # existing or racing path can redirect the write. An existing regular
+    # backup from an earlier run holds that run's original bytes; keep it.
+    try:
+        backup_stat = os.lstat(backup)
+    except FileNotFoundError:
+        backup_stat = None
+    if backup_stat is not None:
+        if not stat.S_ISREG(backup_stat.st_mode):
+            fail(f"refusing to write the backup to a non-regular path: {backup}")
+    else:
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        try:
+            backup_fd = os.open(backup, flags, 0o600)
+        except OSError as exc:
+            fail(f"cannot create the backup file {backup}: {exc}")
+        try:
+            os.fchmod(backup_fd, 0o600)
+            with os.fdopen(backup_fd, "wb") as backup_file:
+                backup_file.write(original)
+        except OSError as exc:
+            fail(f"cannot write the backup file {backup}: {exc}")
     try:
         fd = os.open(variable, os.O_WRONLY)
         try:
-            written = os.write(fd, updated)
+            write_all(fd, updated)
         finally:
             os.close(fd)
-        if written != len(updated):
-            raise OSError("short EFI variable write")
         check = variable.read_bytes()
         new_label, _ = parse_option(check, partuuid, args.loader)
         if new_label != args.label:
             raise OSError(f"firmware returned label {new_label!r}")
     except OSError as exc:
+        # Best-effort restore of the original bytes, reported honestly: if the
+        # rollback write itself fails (or the firmware does not take the
+        # restored bytes), say so loudly instead of silently swallowing it.
+        rollback_error = None
         try:
             fd = os.open(variable, os.O_WRONLY)
             try:
-                os.write(fd, original)
+                write_all(fd, original)
             finally:
                 os.close(fd)
-        except OSError:
-            pass
+            if variable.read_bytes() != original:
+                rollback_error = "the firmware does not match the restored original bytes"
+        except OSError as rollback_exc:
+            rollback_error = str(rollback_exc)
+        if rollback_error is not None:
+            print(f"ROLLBACK ALSO FAILED; original bytes remain in {backup}", file=sys.stderr)
+            fail(f"{exc}; rollback also failed ({rollback_error}); the original bytes remain in {backup}")
         fail(str(exc))
     print(f"EFI label changed for Boot{args.bootnum.upper()}: {old_label!r} -> {args.label!r}")
     return 0

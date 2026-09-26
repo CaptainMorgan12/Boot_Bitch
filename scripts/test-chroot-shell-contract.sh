@@ -67,6 +67,45 @@ if grep -Fq 'CHROOT_SHELL_PROMPT_REGEX' <<<"$host_shell_body"; then
 fi
 grep -q '^mount_target_resolver()' "$HELPER"
 grep -q 'mount_target_resolver' "$HELPER"
+# A2-03: the resolver's realpath/path_within containment validation must run
+# BEFORE any mkdir/touch of the destination, and a symlink final component is
+# refused instead of being created through.
+resolver_block="$(sed -n '/^mount_target_resolver()/,/^}/p' "$HELPER")"
+resolver_within_line="$(grep -n 'path_within "\$dest_real"' <<<"$resolver_block" | head -n1 | cut -d: -f1 || true)"
+resolver_symlink_line="$(grep -n 'target symlink: \$destination' <<<"$resolver_block" | head -n1 | cut -d: -f1 || true)"
+resolver_mkdir_line="$(grep -n 'mkdir -p -- "\$(dirname -- "\$destination")"' <<<"$resolver_block" | head -n1 | cut -d: -f1 || true)"
+resolver_touch_line="$(grep -n 'touch -- "\$destination"' <<<"$resolver_block" | head -n1 | cut -d: -f1 || true)"
+[[ -n "$resolver_within_line" && -n "$resolver_mkdir_line" && -n "$resolver_touch_line" ]] \
+    || { echo 'FAIL: the resolver containment/creation steps are missing' >&2; exit 1; }
+[[ "$resolver_within_line" -lt "$resolver_mkdir_line" && "$resolver_within_line" -lt "$resolver_touch_line" ]] \
+    || { echo 'FAIL: the resolver validates containment only after creating the destination' >&2; exit 1; }
+[[ -n "$resolver_symlink_line" && "$resolver_symlink_line" -lt "$resolver_mkdir_line" ]] \
+    || { echo 'FAIL: the resolver does not refuse a symlink final component before creating it' >&2; exit 1; }
+# A1-01/A2-02: the cleanup session-log append into the target is contained:
+# the resolved /var/log must stay inside the real target root and the log file
+# must not be an existing symlink, with an evidence line on refusal.
+cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
+grep -Fq 'session_logdir_real="$(realpath_existing "$TARGET_ROOT/var/log"' <<<"$cleanup_block" \
+    || { echo 'FAIL: cleanup does not resolve the target /var/log before the append' >&2; exit 1; }
+grep -Fq 'path_within "$session_logdir_real" "$session_root_real"' <<<"$cleanup_block" \
+    || { echo 'FAIL: cleanup does not contain the resolved /var/log under the target root' >&2; exit 1; }
+grep -Fq '[[ ! -L "$session_target_log" ]]' <<<"$cleanup_block" \
+    || { echo 'FAIL: cleanup does not refuse an existing symlinked session log file' >&2; exit 1; }
+grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' <<<"$cleanup_block" \
+    || { echo 'FAIL: cleanup refusal evidence line is missing' >&2; exit 1; }
+# A2-07: prepare_target's rw branch is the single deliberate write-boundary
+# crossing point (chroot shell + config-write), so TARGET_WRITE_INTENT must be
+# set there before the chroot mounts are installed.
+prepare_block="$(sed -n '/^prepare_target()/,/^}/p' "$HELPER")"
+grep -Fq 'TARGET_WRITE_INTENT=1' <<<"$prepare_block" \
+    || { echo 'FAIL: prepare_target rw does not set TARGET_WRITE_INTENT' >&2; exit 1; }
+awk '
+    index($0, "if [[ \"$mode\" == \"rw\" ]]; then") { in_rw = 1 }
+    in_rw && /TARGET_WRITE_INTENT=1/ { saw_intent = 1 }
+    in_rw && /mount_target_boot_entry/ && !saw_intent { exit 1 }
+    END { exit(saw_intent ? 0 : 1) }
+' <<<"$prepare_block" \
+    || { echo 'FAIL: TARGET_WRITE_INTENT is not set before the rw chroot mounts' >&2; exit 1; }
 # Some distributions (for example TUXEDO OS) disable the plain apt/apt-get
 # upgrade subcommand and demand full-upgrade instead.  Both shell paths must
 # recognize exactly that command shape, retry it once with the equivalent
@@ -78,8 +117,8 @@ grep -q 'apt_shell_full_upgrade_command' <<<"$chroot_shell_body"
 grep -q 'apt_shell_upgrade_policy_refused' <<<"$chroot_shell_body"
 grep -q 'apt_shell_full_upgrade_command' <<<"$host_shell_body"
 grep -q 'apt_shell_upgrade_policy_refused' <<<"$host_shell_body"
-grep -Fq "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" "$HELPER" \
-    || { echo 'FAIL: the apt-upgrade policy mapping is not logged' >&2; exit 1; }
+grep -Fq "apt upgrade is disabled by this distribution; running '\$retry_command' instead" "$HELPER" \
+    || { echo 'FAIL: the apt-upgrade policy mapping is not logged with the actual retry command' >&2; exit 1; }
 # Repairs begin with a read-only preflight and only then promote the target to
 # read-write.  Network-dependent stages must install the temporary host
 # resolver during that promotion, just as the chroot shell path does.
@@ -121,12 +160,20 @@ grep -q 'BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST=' "$HELPER" 
     || { echo 'FAIL: the broker does not arm the interactive channel env' >&2; exit 1; }
 grep -q '^host_command_guard_body()' "$HELPER" \
     || { echo 'FAIL: the firmware guard body is not shared with the interactive host shell' >&2; exit 1; }
-grep -Fq "printf 'PROMPT\\t%s\\t%s\\n' \"\${BOOT_REPAIR_SESSION_REQUEST:-0}\" \"\$encoded\"" "$HELPER" \
-    || { echo 'FAIL: the interactive runner lost the PROMPT wire record' >&2; exit 1; }
-grep -q 'IFS=\$'"'"'\\t'"'"' read -r -t "\$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded' "$HELPER" \
+grep -Fq "printf 'PROMPT\\t%s\\t%s\\t%s\\n' \"\${BOOT_REPAIR_SESSION_REQUEST:-0}\" \"\$pump_token\" \"\$encoded\"" "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the token-carrying PROMPT wire record' >&2; exit 1; }
+grep -Fq "printf 'PUMP\\t%s\\t%s\\n'" "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the PUMP registration record' >&2; exit 1; }
+grep -Fq 'pump_token="$(od -An -N8 -tx8 /dev/urandom 2>/dev/null | tr -d '"'"' \n'"'"' || true)"' "$HELPER" \
+    || { echo 'FAIL: the pump token is not generated from /dev/urandom into a plain variable' >&2; exit 1; }
+grep -Fq "export pump_token" "$HELPER" \
+    && { echo 'FAIL: the pump token must never be exported' >&2; exit 1; }
+grep -Fq 'IFS=$'"'"'\t'"'"' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded' "$HELPER" \
     || { echo 'FAIL: the interactive runner lost the bounded ANSWER read' >&2; exit 1; }
-grep -Fq "PROMPT\$'\\t'\"\$request_id\"\$'\\t'*" "$HELPER" \
-    || { echo 'FAIL: the broker lost the PROMPT passthrough for the active request' >&2; exit 1; }
+grep -Fq '"PROMPT"$'"'"'\t'"'"'"$request_id"$'"'"'\t'"'"'"$pump_token"$'"'"'\t'"'"'*' "$HELPER" \
+    || { echo 'FAIL: the broker lost the token-matching PROMPT passthrough for the active request' >&2; exit 1; }
+grep -Fq 'printf '"'"'PROMPT\t%s\t%s\n'"'"' "$request_id" "$prompt_payload"' "$HELPER" \
+    || { echo 'FAIL: the broker does not re-emit authenticated prompts in the 3-field GUI form' >&2; exit 1; }
 grep -Fq 'interactive prompt was cancelled or no answer arrived in time' "$HELPER" \
     || { echo 'FAIL: the no-answer fail-closed message is missing' >&2; exit 1; }
 grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$HELPER" \
@@ -152,6 +199,49 @@ grep -q 'shell_run_interactive "$transcript" 300' <<<"$host_shell_body" \
 # stays bound to /dev/null.
 grep -q 'DEBIAN_FRONTEND=noninteractive' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the plain chroot shell lost its non-interactive frontend' >&2; exit 1; }
+
+# A5-01/A5-03/A5-05/A5-09/A1-09 wiring: the deadline is checked at the top of
+# every pump iteration (EPOCHSECONDS with a date fallback), the dead-runner
+# drain reads are bounded, the answer echo is redacted through the same filter
+# logic, EOF is distinguished from a read timeout, and SIGPIPE is ignored.
+interactive_body="$(sed -n '/^shell_run_interactive()/,/^}/p' "$HELPER")"
+grep -Fq 'shell_now_epoch()' "$HELPER" \
+    || { echo 'FAIL: the epoch clock helper is missing' >&2; exit 1; }
+grep -Fq 'if (( now - begin >= deadline )); then' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump lost the top-of-loop deadline check' >&2; exit 1; }
+grep -Fq 'read -r -n 1 -t 2 -u 8 ch' <<<"$(sed -n '/^shell_pump_drain_dead()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the dead-runner drain is not a bounded timed read' >&2; exit 1; }
+grep -Fq '+ 5' <<<"$(sed -n '/^shell_pump_drain_dead()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the dead-runner drain lost its deadline cap' >&2; exit 1; }
+grep -Fq 'shell_expected_echo' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump does not compute the expected answer echo' >&2; exit 1; }
+grep -Fq 'redact_active=1' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump does not arm the answer-echo redaction' >&2; exit 1; }
+grep -Fq 'read_rc > 128' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump does not distinguish a read timeout from EOF' >&2; exit 1; }
+grep -Fq 'never emit a PROMPT' <<<"$interactive_body" \
+    || { echo 'FAIL: the EOF path does not document the never-PROMPT rule' >&2; exit 1; }
+grep -Fq "trap '' PIPE" "$HELPER" \
+    || { echo 'FAIL: the SIGPIPE guards are missing' >&2; exit 1; }
+# A1-06/A1-07 wiring: bounded protocol reads, overrun skip and the secret gate.
+grep -Fq 'session_read_bounded()' "$HELPER" \
+    || { echo 'FAIL: the bounded protocol reader is missing' >&2; exit 1; }
+grep -Fq 'session_skip_to_end' "$HELPER" \
+    || { echo 'FAIL: the bounded skip-to-END recovery is missing' >&2; exit 1; }
+grep -Fq 'session_read_bounded 262144' "$HELPER" \
+    || { echo 'FAIL: ARG/SECRET records are not bounded to 262144 encoded bytes' >&2; exit 1; }
+grep -Fq 'decoded_total > 4194304' "$HELPER" \
+    || { echo 'FAIL: the per-request 4 MiB decoded cap is missing' >&2; exit 1; }
+grep -Fq 'A privileged-session secret is only permitted for the unlock command.' "$HELPER" \
+    || { echo 'FAIL: the secret verb gate is missing' >&2; exit 1; }
+# A5-08: the apt intent probe targets the chroot's own apt for offline targets.
+grep -Fq 'RUNNING_HOST_MODE != 1 )) && [[ -n "$TARGET_ROOT" && -x "$TARGET_ROOT/usr/bin/apt" ]]' "$HELPER" \
+    || { echo 'FAIL: the apt intent probe does not chroot into the target apt' >&2; exit 1; }
+# A5-11: the chroot shell exits 124/125 explicitly instead of a generic 1.
+grep -Fq 'exit 125' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not exit 125 on a prompt cancel' >&2; exit 1; }
+grep -Fq 'exit 124' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not exit 124 on the deadline' >&2; exit 1; }
 
 # The chroot shell neuters snapper's apt hook (Debian/TUXEDO
 # /etc/apt/apt.conf.d/80snapper): its DPkg::Pre/Post-Invoke `snapper
@@ -198,6 +288,10 @@ grep -Fq 'MOUNTS+=("$target_file")' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard bind is not recorded for cleanup' >&2; exit 1; }
 grep -Fq 'Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard lost its evidence-named session log line' >&2; exit 1; }
+# A2-08: a failed guard bind must warn (session log evidence) and continue;
+# it must never abort the reviewed command.
+grep -Fq 'WARNING: could not bind the read-only snapper guard over $target_file; the chroot shell continues without the snapshot kill-switch.' <<<"$guard_block" \
+    || { echo 'FAIL: the snapper guard does not log a WARNING when its bind fails' >&2; exit 1; }
 grep -Fq 'chroot_shell_guard_snapper' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the chroot shell does not apply the snapper guard' >&2; exit 1; }
 if grep -Fq 'chroot_shell_guard_snapper' <<<"$host_shell_body"; then
@@ -221,8 +315,8 @@ grep -Fq 'shell_stream_filter | tee' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the plain chroot shell does not stream through the transcript filter' >&2; exit 1; }
 grep -Fq 'shell_stream_filter | tee' <<<"$host_shell_body" \
     || { echo 'FAIL: the plain running-host shell does not stream through the transcript filter' >&2; exit 1; }
-grep -q 'shell_filter_byte "$ch"' <<<"$(sed -n '/^shell_run_interactive()/,/^}/p' "$HELPER")" \
-    || { echo 'FAIL: the interactive pump does not use the transcript filter' >&2; exit 1; }
+grep -q 'shell_pump_input_byte "$ch"' <<<"$(sed -n '/^shell_run_interactive()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the interactive pump does not use the redacting transcript filter' >&2; exit 1; }
 
 # Target chroots receive a private writable /dev tmpfs instead of the
 # read-only recovery-host /dev bind.  rpm/dnf5 package payloads that own /dev
@@ -407,10 +501,10 @@ if grep -Fq 'full-upgrade' "$apt_retry_root/args-1"; then
     echo 'FAIL: the first chroot shell attempt was already rewritten' >&2
     exit 1
 fi
-grep -Fq '/bin/sh -c apt-get -y full-upgrade' "$apt_retry_root/args-2" \
-    || { echo 'FAIL: the chroot shell retry did not map upgrade to full-upgrade with the original options' >&2; exit 1; }
-grep -Fq "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" "$apt_retry_root/output" \
-    || { echo 'FAIL: the chroot shell retry mapping is not reported to the caller' >&2; exit 1; }
+grep -Fq '/bin/sh -c apt-get -y dist-upgrade' "$apt_retry_root/args-2" \
+    || { echo 'FAIL: the chroot shell retry did not map apt-get upgrade to dist-upgrade with the original options' >&2; exit 1; }
+grep -Fq "apt upgrade is disabled by this distribution; running 'apt-get -y dist-upgrade' instead" "$apt_retry_root/output" \
+    || { echo 'FAIL: the chroot shell retry mapping is not reported to the caller with the actual retry command' >&2; exit 1; }
 grep -Fq 'disabled on TUXEDO OS' "$apt_retry_root/output" \
     || { echo 'FAIL: the chroot shell transcript lost the original policy failure' >&2; exit 1; }
 
@@ -605,7 +699,7 @@ mkdir -p "$interactive_root"
 
 start_interactive_case()
 {
-    local name="$1" command="$2" window="$3"
+    local name="$1" command="$2" window="$3" deadline="${4:-30}"
     local root="$interactive_root/$name"
     mkdir -p "$root"
     : > "$root/output"
@@ -641,7 +735,7 @@ start_interactive_case()
         }
         setsid() { "$@"; }
         set +e
-        shell_run_interactive "$root/transcript" 30 "$command"
+        shell_run_interactive "$root/transcript" "$deadline" "$command"
         printf '%s\n' "$?" > "$root/rc"
         exit 0
     ) <"$root/answers" >"$root/output" 2>&1 &
@@ -673,15 +767,22 @@ finish_interactive_case()
 }
 
 # Case 1: one answered prompt.  The prompt is a partial line with no newline;
-# the base64 payload must round-trip byte-for-byte, the answer must reach the
-# command verbatim, and the run must exit 0.
+# the PROMPT record carries the PUMP-registered token (A1-05) and the base64
+# payload must round-trip byte-for-byte, the answer must reach the command
+# verbatim, and the run must exit 0.
 start_interactive_case one-prompt \
     "printf 'Continue? [Y/n] '; IFS= read -r a; printf 'got:%s\\n' \"\$a\"" 5
 one_root="$interactive_root/one-prompt"
 prompt_record="$(wait_prompt_record "$one_root/output")" \
     || { finish_interactive_case "$one_root"; exit 1; }
-prompt_b64="${prompt_record#*$'\t'}"
-prompt_b64="${prompt_b64#*$'\t'}"
+pump_line="$(grep '^PUMP	7	' "$one_root/output" 2>/dev/null | head -n1 || true)"
+pump_token="${pump_line#*$'\t'}"
+pump_token="${pump_token#*$'\t'}"
+[[ -n "$pump_token" ]] \
+    || { echo 'FAIL: the interactive runner never emitted the PUMP registration record' >&2; finish_interactive_case "$one_root"; exit 1; }
+IFS=$'\t' read -r ptag pid ptok prompt_b64 <<<"$prompt_record"
+[[ "$ptag" == "PROMPT" && "$pid" == "7" && "$ptok" == "$pump_token" ]] \
+    || { echo "FAIL: the PROMPT record is not the 4-field token-carrying form: $prompt_record" >&2; finish_interactive_case "$one_root"; exit 1; }
 expected_b64="$(printf 'Continue? [Y/n] ' | base64 | tr -d '\n')"
 [[ "$prompt_b64" == "$expected_b64" ]] \
     || { echo "FAIL: prompt text did not round-trip through base64: $prompt_b64" >&2; finish_interactive_case "$one_root"; exit 1; }
@@ -761,8 +862,11 @@ finish_interactive_case "$ansi_root"
 printf 'Downloading 10%%\nDownloading 50%%\nDownloading 100%%\nDone\n' > "$ansi_root/expected"
 cmp -s "$ansi_root/expected" "$ansi_root/transcript" \
     || { echo 'FAIL: the interactive transcript is not the clean one-shot-lines transcript' >&2; cat -A "$ansi_root/transcript" >&2; exit 1; }
-cmp -s "$ansi_root/expected" "$ansi_root/output" \
-    || { echo 'FAIL: the interactive wire stream is not clean' >&2; cat -A "$ansi_root/output" >&2; exit 1; }
+# The wire stream carries the one PUMP registration record on top of the clean
+# bytes; strip it before the byte-exact comparison.
+grep -v '^PUMP	7	' "$ansi_root/output" > "$ansi_root/output-clean" || true
+cmp -s "$ansi_root/expected" "$ansi_root/output-clean" \
+    || { echo 'FAIL: the interactive wire stream is not clean' >&2; cat -A "$ansi_root/output-clean" >&2; exit 1; }
 if grep -Fq $'\x1b' "$ansi_root/transcript"; then
     echo 'FAIL: the transcript still carries an ESC byte' >&2
     exit 1
@@ -843,6 +947,449 @@ if grep -Eq '^[[:space:]]+$' "$filter_case_root/output"; then
 fi
 if grep -q '^$' "$filter_case_root/output"; then
     echo 'FAIL: the filtered stream contains a blank line' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# A5-10 filter bounds: an unterminated CSI/OSC sequence longer than 2048 bytes
+# is dropped and the cap-triggering byte is reprocessed as plain content, so
+# one ESC sequence can never swallow the stream.  (Digits are CSI parameter
+# bytes and never final bytes, so the sequence cannot terminate by accident.)
+# ---------------------------------------------------------------------------
+filter_cap_root="$shell_stub_root/filter-seq-cap"
+mkdir -p "$filter_cap_root"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    {
+        printf '\033['
+        i=0
+        while (( i < 3000 )); do
+            printf '0'
+            i=$((i + 1))
+        done
+        printf 'tail\n'
+    } | shell_stream_filter
+) > "$filter_cap_root/output"
+[[ "$(wc -c < "$filter_cap_root/output")" == $((952 + 5)) ]] \
+    || { echo "FAIL: the CSI cap did not resync after 2048 bytes (got $(wc -c < "$filter_cap_root/output") bytes)" >&2; exit 1; }
+grep -Fq 'tail' "$filter_cap_root/output" \
+    || { echo 'FAIL: the CSI resync lost the stream content after the sequence' >&2; exit 1; }
+# OSC bound: BEL-terminated sequences still work and terminate below the cap.
+filter_osc_root="$shell_stub_root/filter-osc-bel"
+mkdir -p "$filter_osc_root"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    printf '\033]0;title\007ok\n' | shell_stream_filter
+) > "$filter_osc_root/output"
+grep -Fxq 'ok' "$filter_osc_root/output" \
+    || { echo 'FAIL: a BEL-terminated OSC title sequence was not dropped cleanly' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A1-05 (behavioural): the broker forward loop authenticates prompts with the
+# per-request pump token.  The PUMP registration line is consumed (never
+# forwarded), only token-matching PROMPT records are re-emitted in the 3-field
+# GUI form, and every other line -- including forged PROMPT-lookalikes -- goes
+# out as an OUT record with ESC/BEL stripped and one trailing CR dropped.
+# ---------------------------------------------------------------------------
+forward_root="$shell_stub_root/forward"
+mkdir -p "$forward_root"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    {
+        printf 'PUMP\t7\tTOKEN123\n'
+        printf 'PROMPT\t7\tTOKEN123\taGVsbG8=\n'
+        printf 'PROMPT\t7\tEVIL\tZm9yZ2Vk\n'
+        printf 'PROMPT\t6\tTOKEN123\tZm9yZ2Vk\n'
+        printf 'PROMPT\t7\tTOKEN123\textra\tfields\n'
+        printf 'forged without registration\n'
+        printf 'esc\x1b[31mred\x07\r\n'
+    } | session_forward_request 7
+) > "$forward_root/output"
+grep -Fxq 'PROMPT	7	aGVsbG8=' "$forward_root/output" \
+    || { echo 'FAIL: a token-matching prompt was not re-emitted in the 3-field GUI form' >&2; cat "$forward_root/output" >&2; exit 1; }
+grep -Fxq 'OUT	7	PROMPT	7	EVIL	Zm9yZ2Vk' "$forward_root/output" \
+    || { echo 'FAIL: a forged PROMPT-lookalike with a wrong token was not demoted to an OUT record' >&2; cat "$forward_root/output" >&2; exit 1; }
+grep -Fxq 'OUT	7	PROMPT	6	TOKEN123	Zm9yZ2Vk' "$forward_root/output" \
+    || { echo 'FAIL: a prompt for another request id was not demoted to an OUT record' >&2; exit 1; }
+grep -Fxq 'OUT	7	PROMPT	7	TOKEN123	extra	fields' "$forward_root/output" \
+    || { echo 'FAIL: a malformed token-carrying prompt line was not demoted to an OUT record' >&2; exit 1; }
+grep -Fxq 'OUT	7	forged without registration' "$forward_root/output" \
+    || { echo 'FAIL: an ordinary output line was not forwarded as an OUT record' >&2; exit 1; }
+grep -Fxq 'OUT	7	esc[31mred' "$forward_root/output" \
+    || { echo 'FAIL: the OUT payload was not stripped of ESC/BEL and the trailing CR' >&2; exit 1; }
+if grep -q '^OUT	7	PUMP' "$forward_root/output"; then
+    echo 'FAIL: the PUMP registration record leaked into the OUT stream' >&2
+    exit 1
+fi
+# No registration at all (the non-interactive fallback): prompts are never
+# forwarded.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    printf 'PROMPT\t7\tTOKEN123\tZm9yZ2Vk\n' | session_forward_request 7
+) > "$forward_root/no-reg"
+grep -Fxq 'OUT	7	PROMPT	7	TOKEN123	Zm9yZ2Vk' "$forward_root/no-reg" \
+    || { echo 'FAIL: an unregistered PROMPT-lookalike was forwarded without a PUMP registration' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-01 (behavioural): a continuously-printing command must hit the
+# interactive deadline and exit 124 even though the pump never goes quiet.
+# ---------------------------------------------------------------------------
+start_interactive_case deadline-124 \
+    "i=0; while :; do printf 'spin %s\\n' \"\$i\"; i=\$((i+1)); done" 5 3
+deadline_root="$interactive_root/deadline-124"
+deadline_start=$(date +%s)
+finish_interactive_case "$deadline_root"
+deadline_elapsed=$(( $(date +%s) - deadline_start ))
+[[ "$(cat "$deadline_root/rc")" == "124" ]] \
+    || { echo "FAIL: a continuously-printing command did not exit 124 (got $(cat "$deadline_root/rc"))" >&2; exit 1; }
+(( deadline_elapsed < 30 )) \
+    || { echo 'FAIL: the continuous-output deadline did not fire promptly' >&2; exit 1; }
+if grep -q '^PROMPT	7	' "$deadline_root/output"; then
+    echo 'FAIL: a continuous-output run emitted a PROMPT record' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# A5-03 (behavioural): after the runner dies the pump drains its FIFO with a
+# bounded read.  A writer that stays open (so EOF never arrives) must not hang
+# the pump: the drain finishes within its ~5 s deadline.
+# ---------------------------------------------------------------------------
+drain_root="$interactive_root/drain-bound"
+mkdir -p "$drain_root"
+: > "$drain_root/output"
+: > "$drain_root/session.log"
+: > "$drain_root/transcript"
+: > "$drain_root/rc"
+rm -f "$drain_root/answers"
+mkfifo "$drain_root/answers"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$drain_root"
+    SESSION_LOG="$drain_root/session.log"
+    BOOT_REPAIR_SESSION_PROTOCOL=1
+    BOOT_REPAIR_SESSION_REQUEST=7
+    SHELL_ANSWER_WINDOW_SECONDS=5
+    export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
+    script()
+    {
+        local cmd="" arg=""
+        while (($# > 0)); do
+            arg="$1"
+            shift
+            case "$arg" in
+                -c) cmd="$1"; shift; break ;;
+                -?*c*) cmd="$1"; shift; break ;;
+            esac
+        done
+        /bin/sh -c "$cmd"
+    }
+    setsid() { "$@"; }
+    set +e
+    shell_run_interactive "$drain_root/transcript" 30 "printf 'final bytes\n'; sleep 1"
+    printf '%s\n' "$?" > "$drain_root/rc"
+    exit 0
+) <"$drain_root/answers" >"$drain_root/output" 2>&1 &
+printf '%s\n' "$!" > "$drain_root/pid"
+exec 14>"$drain_root/answers"
+# Hold the runner's output FIFO open so its EOF never arrives; the pump's
+# post-mortem drain must still finish (bounded ~5 s) instead of hanging.
+drain_fifo_n=0
+while (( drain_fifo_n < 100 )) && [[ ! -p "$drain_root/shell-out" ]]; do
+    sleep 0.05
+    drain_fifo_n=$((drain_fifo_n + 1))
+done
+[[ -p "$drain_root/shell-out" ]] \
+    || { echo 'FAIL: the drain-bound output FIFO never appeared' >&2; exit 1; }
+exec 15>"$drain_root/shell-out"
+drain_start=$(date +%s)
+drain_pid="$(cat "$drain_root/pid")"
+wait "$drain_pid" 2>/dev/null || true
+exec 14>&-
+exec 15>&-
+drain_elapsed=$(( $(date +%s) - drain_start ))
+[[ "$(cat "$drain_root/rc")" == "0" ]] \
+    || { echo "FAIL: the drain-bound run did not exit 0 (got $(cat "$drain_root/rc"))" >&2; exit 1; }
+(( drain_elapsed < 12 )) \
+    || { echo "FAIL: the post-mortem drain blocked past its ~5 s bound (${drain_elapsed}s)" >&2; exit 1; }
+grep -Fq 'final bytes' "$drain_root/transcript" \
+    || { echo 'FAIL: the bounded drain lost the runner final bytes' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-05 (behavioural): the terminal echo of an answer is computed through the
+# same filter logic and redacted from the pump, so the answer never reaches
+# the wire, the session log, the transcript or the prompt buffer.  A
+# position-0 mismatch (echo off, like a password prompt) stops redacting at
+# once; a mid-match divergence suppresses only the rest of that line.
+# ---------------------------------------------------------------------------
+start_interactive_case redact-echo \
+    "printf 'Enter secret: '; IFS= read -r a; printf '%s\\n' \"\$a\"; printf 'done\\n'" 5
+redact_root="$interactive_root/redact-echo"
+wait_prompt_record "$redact_root/output" >/dev/null \
+    || { finish_interactive_case "$redact_root"; exit 1; }
+printf 'ANSWER\t7\t%s\n' "$(printf 'hunter2' | base64 | tr -d '\n')" >&14
+finish_interactive_case "$redact_root"
+[[ "$(cat "$redact_root/rc")" == "0" ]] \
+    || { echo "FAIL: the echo-redaction case did not exit 0 (got $(cat "$redact_root/rc"))" >&2; cat "$redact_root/output" >&2; exit 1; }
+grep -Fq 'Enter secret: ' "$redact_root/transcript" \
+    || { echo 'FAIL: the echo-redaction prompt text is missing from the transcript' >&2; exit 1; }
+grep -Fq 'done' "$redact_root/transcript" \
+    || { echo 'FAIL: the output after the redacted echo is missing' >&2; exit 1; }
+for redact_file in "$redact_root/transcript" "$redact_root/session.log" "$redact_root/output"; do
+    if grep -Fq 'hunter2' "$redact_file"; then
+        echo "FAIL: the answer leaked into $(basename "$redact_file")" >&2
+        cat "$redact_file" >&2
+        exit 1
+    fi
+done
+# Echo off (position-0 mismatch): redaction stops immediately, so later real
+# output -- including the answer printed by the command itself -- passes.
+start_interactive_case redact-echo-off \
+    "printf 'Key? '; IFS= read -r a; printf 'PROCESSING\\n'; printf '%s\\n' \"\$a\"" 5
+redact_off_root="$interactive_root/redact-echo-off"
+wait_prompt_record "$redact_off_root/output" >/dev/null \
+    || { finish_interactive_case "$redact_off_root"; exit 1; }
+printf 'ANSWER\t7\t%s\n' "$(printf 'hunter2' | base64 | tr -d '\n')" >&14
+finish_interactive_case "$redact_off_root"
+[[ "$(cat "$redact_off_root/rc")" == "0" ]] \
+    || { echo 'FAIL: the echo-off case did not exit 0' >&2; cat "$redact_off_root/output" >&2; exit 1; }
+grep -Fq 'PROCESSING' "$redact_off_root/transcript" \
+    || { echo 'FAIL: the echo-off case lost the command output before the answer echo position' >&2; exit 1; }
+grep -Fq 'hunter2' "$redact_off_root/transcript" \
+    || { echo 'FAIL: the echo-off case redacted real command output that only looks like an echo' >&2; exit 1; }
+# Mid-match divergence: the mangled echo suppresses only the rest of its line.
+start_interactive_case redact-mid \
+    "printf 'Pick: '; IFS= read -r a; printf '%sZZ\\nAFTER\\n' \"\$a\"" 5
+redact_mid_root="$interactive_root/redact-mid"
+wait_prompt_record "$redact_mid_root/output" >/dev/null \
+    || { finish_interactive_case "$redact_mid_root"; exit 1; }
+printf 'ANSWER\t7\t%s\n' "$(printf 'Y' | base64 | tr -d '\n')" >&14
+finish_interactive_case "$redact_mid_root"
+[[ "$(cat "$redact_mid_root/rc")" == "0" ]] \
+    || { echo 'FAIL: the mid-match redaction case did not exit 0' >&2; cat "$redact_mid_root/output" >&2; exit 1; }
+grep -Fq 'Pick: ' "$redact_mid_root/transcript" \
+    || { echo 'FAIL: the mid-match redaction prompt text is missing' >&2; exit 1; }
+grep -Fq 'AFTER' "$redact_mid_root/transcript" \
+    || { echo 'FAIL: the mid-match redaction swallowed output after the mangled echo line' >&2; exit 1; }
+if grep -Fq 'ZZ' "$redact_mid_root/transcript"; then
+    echo 'FAIL: the mid-match redaction did not suppress the rest of the diverged line' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# A5-09 (behavioural): EOF on the runner output stream means the runner is
+# dead -- no PROMPT is emitted, the input is closed and the runner's real
+# exit code is reported.  An answer arriving after the runner died takes the
+# death path instead of the 125-cancel path.
+# ---------------------------------------------------------------------------
+start_interactive_case dead-runner-no-prompt "printf 'output then exit\\n'; exit 3" 5
+dead_runner_root="$interactive_root/dead-runner-no-prompt"
+finish_interactive_case "$dead_runner_root"
+[[ "$(cat "$dead_runner_root/rc")" == "3" ]] \
+    || { echo "FAIL: a dead runner's real exit code was not reported (got $(cat "$dead_runner_root/rc"))" >&2; cat "$dead_runner_root/output" >&2; exit 1; }
+grep -Fq 'output then exit' "$dead_runner_root/transcript" \
+    || { echo 'FAIL: the dead-runner final output is missing from the transcript' >&2; exit 1; }
+if grep -q '^PROMPT	7	' "$dead_runner_root/output"; then
+    echo 'FAIL: a PROMPT record was emitted after the runner had already died' >&2
+    exit 1
+fi
+start_interactive_case dead-before-answer "printf 'Waiting? [y/N] '; sleep 3; exit 7" 5
+dead_answer_root="$interactive_root/dead-before-answer"
+wait_prompt_record "$dead_answer_root/output" >/dev/null \
+    || { finish_interactive_case "$dead_answer_root"; exit 1; }
+# The runner dies ~1 s after the prompt is emitted; the answer must then take
+# the death path instead of the 125-cancel path.
+sleep 2
+printf 'ANSWER\t7\t%s\n' "$(printf 'y' | base64 | tr -d '\n')" >&14
+finish_interactive_case "$dead_answer_root"
+[[ "$(cat "$dead_answer_root/rc")" == "7" ]] \
+    || { echo "FAIL: an answer to a dead runner did not take the death path with the real exit code (got $(cat "$dead_answer_root/rc"))" >&2; cat "$dead_answer_root/output" >&2; exit 1; }
+if grep -Fq 'interactive prompt was cancelled' "$dead_answer_root/output"; then
+    echo 'FAIL: an answer to a dead runner was misreported as a 125-cancel' >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# A5-11 (behavioural): the chroot shell propagates the interactive deadline
+# (124) and prompt-cancel (125) exit codes instead of collapsing them to 1.
+# ---------------------------------------------------------------------------
+prop_root="$shell_stub_root/exit-codes"
+mkdir -p "$prop_root"
+run_prop_case()
+{
+    local case_root="$1" command="$2"
+    mkdir -p "$case_root/target"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$case_root"
+        SESSION_LOG="$case_root/session.log"
+        TARGET_ROOT="$case_root/target"
+        BOOT_REPAIR_SESSION_PROTOCOL=1
+        export BOOT_REPAIR_SESSION_PROTOCOL
+        CHROOT_SHELL_TIMEOUT_SECONDS="$PROP_TIMEOUT"
+        SHELL_ANSWER_WINDOW_SECONDS="$PROP_WINDOW"
+        export CHROOT_SHELL_TIMEOUT_SECONDS SHELL_ANSWER_WINDOW_SECONDS
+        prepare_target() { :; }
+        log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+        script()
+        {
+            local cmd="" arg=""
+            while (($# > 0)); do
+                arg="$1"
+                shift
+                case "$arg" in
+                    -c) cmd="$1"; shift; break ;;
+                    -?*c*) cmd="$1"; shift; break ;;
+                esac
+            done
+            eval "$cmd"
+        }
+        setsid() { "$@"; }
+        chroot()
+        {
+            local cmd="" arg=""
+            while (($# > 0)); do
+                arg="$1"
+                shift
+                case "$arg" in
+                    -c) cmd="$1"; shift; break ;;
+                    -?*c*) cmd="$1"; shift; break ;;
+                esac
+            done
+            eval "$cmd"
+        }
+        timeout()
+        {
+            while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+                if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+            done
+            "$@"
+        }
+        set +e
+        if ( run_chroot_shell "$command" ) > "$case_root/output" 2>&1; then
+            printf '0\n' > "$case_root/rc"
+        else
+            printf '%s\n' "$?" > "$case_root/rc"
+        fi
+        exit 0
+    )
+}
+PROP_TIMEOUT=3 PROP_WINDOW=5 run_prop_case "$prop_root/timeout" 'i=0; while :; do printf "spin %s\n" "$i"; i=$((i+1)); done'
+[[ "$(cat "$prop_root/timeout/rc")" == "124" ]] \
+    || { echo "FAIL: the chroot shell collapsed the interactive deadline to $(cat "$prop_root/timeout/rc") instead of 124" >&2; cat "$prop_root/timeout/output" >&2; exit 1; }
+grep -Fq 'Chroot shell command timed out after 3 seconds.' "$prop_root/timeout/output" \
+    || { echo 'FAIL: the 124 exit lost its timeout report' >&2; exit 1; }
+PROP_TIMEOUT=30 PROP_WINDOW=1 run_prop_case "$prop_root/cancel" "printf 'Q? '; IFS= read -r a"
+[[ "$(cat "$prop_root/cancel/rc")" == "125" ]] \
+    || { echo "FAIL: the chroot shell collapsed the prompt cancel to $(cat "$prop_root/cancel/rc") instead of 125" >&2; cat "$prop_root/cancel/output" >&2; exit 1; }
+grep -Fq 'Chroot shell command was cancelled at an interactive prompt.' "$prop_root/cancel/output" \
+    || { echo 'FAIL: the 125 exit lost its cancel report' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-06 (behavioural): the apt-upgrade retry rewrite is binary-aware --
+# apt maps to full-upgrade, apt-get maps to dist-upgrade, and every other
+# binary is refused.
+# ---------------------------------------------------------------------------
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    [[ "$(apt_shell_full_upgrade_command 'apt upgrade')" == 'apt full-upgrade' ]] || exit 1
+    [[ "$(apt_shell_full_upgrade_command 'apt-get upgrade')" == 'apt-get dist-upgrade' ]] || exit 2
+    [[ "$(apt_shell_full_upgrade_command 'apt-get -y upgrade')" == 'apt-get -y dist-upgrade' ]] || exit 3
+    [[ "$(apt_shell_full_upgrade_command 'sudo apt -y upgrade')" == 'sudo apt -y full-upgrade' ]] || exit 4
+    apt_shell_full_upgrade_command 'dnf update' >/dev/null 2>&1 && exit 5
+    apt_shell_full_upgrade_command 'aptitude upgrade' >/dev/null 2>&1 && exit 6
+    exit 0
+) || { echo 'FAIL: the binary-aware apt-upgrade retry matrix broke' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-07 (behavioural): shell_command_string uses POSIX single-quote quoting;
+# a round-trip through dash -c must reproduce every argument byte-for-byte.
+# ---------------------------------------------------------------------------
+if grep -Fq -- "printf -v arg '%q'" "$HELPER"; then
+    echo "FAIL: shell_command_string still uses bash's %q instead of POSIX quoting" >&2
+    exit 1
+fi
+grep -Fq "quoted+=\"'\\\\''\"" <<<"$(sed -n '/^shell_command_string()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: shell_command_string lost the POSIX single-quote escaping' >&2; exit 1; }
+if command -v dash >/dev/null 2>&1; then
+    quote_root="$shell_stub_root/quoting"
+    mkdir -p "$quote_root"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        quote_args=("plain" "with space" "quote'inside" 'dollar$HOME' 'star*' '' 'a"b' "back\\slash" "-dash" "tab	in")
+        quote_cmd="$(shell_command_string printf '%s\n' "${quote_args[@]}")"
+        quote_expected="$(printf '%s\n' "${quote_args[@]}")"
+        quote_got="$(dash -c "$quote_cmd")"
+        [[ "$quote_got" == "$quote_expected" ]] || exit 1
+        exit 0
+    ) || { echo 'FAIL: the POSIX quoting round-trip through dash -c broke' >&2; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
+# A1-06 (behavioural): the protocol reader bounds every line (header 512,
+# ARG/SECRET 262144 encoded bytes, 4 MiB decoded per request).  An overrun
+# consumes the offending line, reports SESSION_ERROR + DONE 2 and skips to
+# the request's END so the next request still parses.
+# ---------------------------------------------------------------------------
+bounded_root="$shell_stub_root/bounded-reader"
+mkdir -p "$bounded_root"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    # Unit: exact bound, EOF boundary, overrun consumption and clean EOF.
+    printf 'hello\n' | { session_read_bounded 512 && [[ "$REPLY" == hello ]] || exit 1; }
+    printf '0123\n' | { session_read_bounded 4 && [[ "$REPLY" == 0123 ]] || exit 1; }
+    { printf 'x%.0s' $(seq 1 300); printf '\nNEXT\n'; } | {
+        if session_read_bounded 16; then exit 1; fi
+        session_read_bounded 16 || exit 1
+        [[ "$REPLY" == NEXT ]] || exit 1
+    }
+    printf '' | { if session_read_bounded 16; then exit 1; fi; }
+    exit 0
+) || { echo 'FAIL: session_read_bounded does not bound/consume protocol lines' >&2; exit 1; }
+# Broker level: an oversized ARG record is consumed, the request errors with
+# DONE 2 and the stream recovers at END; a secret on a non-unlock verb is
+# refused (A1-07).
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$bounded_root/state"
+    mkdir -p "$STATE_ROOT"
+    ensure_state_root() { :; }
+    mktemp() { printf '%s\n' "$STATE_ROOT/session-helper.stub"; }
+    cp() { :; }
+    chown() { :; }
+    chmod() { :; }
+    {
+        printf 'BEGIN\t1\t1\t0\n'
+        head -c 307200 /dev/zero | tr '\0' 'A'
+        printf '\nEND\t1\n'
+        printf 'BEGIN\t2\t1\t1\n'
+        printf 'ARG\t2\t%s\n' "$(printf 'shell' | base64 | tr -d '\n')"
+        printf 'SECRET\t2\t%s\n' "$(printf 'hunter2' | base64 | tr -d '\n')"
+        printf 'END\t2\n'
+        printf 'QUIT\n'
+    } | session_server
+) > "$bounded_root/output" 2>&1
+grep -Fq 'SESSION_READY	1' "$bounded_root/output" \
+    || { echo 'FAIL: the bounded-reader broker never became ready' >&2; cat "$bounded_root/output" >&2; exit 1; }
+grep -Fq 'SESSION_ERROR	1	Privileged-session argument record exceeds the protocol bound.' "$bounded_root/output" \
+    || { echo 'FAIL: the oversized ARG record was not reported' >&2; cat "$bounded_root/output" >&2; exit 1; }
+grep -Fq 'DONE	1	2' "$bounded_root/output" \
+    || { echo 'FAIL: the oversized-ARG request did not finish with DONE 2' >&2; exit 1; }
+grep -Fq 'SESSION_ERROR	2	A privileged-session secret is only permitted for the unlock command.' "$bounded_root/output" \
+    || { echo 'FAIL: a secret on a non-unlock verb was not refused' >&2; cat "$bounded_root/output" >&2; exit 1; }
+grep -Fq 'DONE	2	2' "$bounded_root/output" \
+    || { echo 'FAIL: the secret-refused request did not finish with DONE 2' >&2; exit 1; }
+if grep -Fq 'hunter2' "$bounded_root/output"; then
+    echo 'FAIL: a secret leaked into the broker output' >&2
     exit 1
 fi
 
@@ -975,5 +1522,80 @@ if grep -Fq 'guarding the chroot shell against snapshots' "$snapper_negative_roo
     cat "$snapper_negative_root/output" >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# A1-01/A2-02 (behavioural): cleanup() appends the session log into the target
+# only through a contained path.  A symlinked /var/log or a symlinked log file
+# must produce the refusal evidence line and create nothing outside the target;
+# the plain-dir positive path still appends.
+# ---------------------------------------------------------------------------
+cleanup_append_root="$(mktemp -d)"
+cleanup_dev_contract_append() { rm -rf -- "$cleanup_append_root"; }
+trap 'cleanup_dev_contract; cleanup_dev_contract_append' EXIT
+
+# Positive: plain /var/log directory, missing log file -> append happens.
+mkdir -p "$cleanup_append_root/positive/target/var/log"
+printf 'positive session evidence\n' > "$cleanup_append_root/positive/session.log"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    TARGET_WRITE_INTENT=1
+    TARGET_ROOT="$cleanup_append_root/positive/target"
+    SESSION_LOG="$cleanup_append_root/positive/session.log"
+    SESSION_DIR="" SESSION_HELPER_COPY=""
+    TEMP_TARGET_PATHS=() MOUNTS=() SESSION_OWNED_MAPPERS=() TEMP_MAPPER_ALIASES=()
+    target_path_is_mounted_rw() { return 0; }
+    (cleanup) > "$cleanup_append_root/positive/output" 2>&1 || true
+)
+grep -Fq '===== Boot Bitch session ' "$cleanup_append_root/positive/target/var/log/boot-repair-session.log" \
+    || { echo 'FAIL: the positive session-log append never happened' >&2; cat "$cleanup_append_root/positive/output" >&2; exit 1; }
+grep -Fq 'positive session evidence' "$cleanup_append_root/positive/target/var/log/boot-repair-session.log" \
+    || { echo 'FAIL: the appended session log does not carry the session content' >&2; exit 1; }
+if grep -Fq 'was NOT appended' "$cleanup_append_root/positive/output"; then
+    echo 'FAIL: the positive session-log append was refused' >&2
+    exit 1
+fi
+
+# Refusal: /var/log is a symlink out of the target root.
+mkdir -p "$cleanup_append_root/symlog/host-var-log" "$cleanup_append_root/symlog/target/var"
+ln -s "$cleanup_append_root/symlog/host-var-log" "$cleanup_append_root/symlog/target/var/log"
+printf 'symlog session evidence\n' > "$cleanup_append_root/symlog/session.log"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    TARGET_WRITE_INTENT=1
+    TARGET_ROOT="$cleanup_append_root/symlog/target"
+    SESSION_LOG="$cleanup_append_root/symlog/session.log"
+    SESSION_DIR="" SESSION_HELPER_COPY=""
+    TEMP_TARGET_PATHS=() MOUNTS=() SESSION_OWNED_MAPPERS=() TEMP_MAPPER_ALIASES=()
+    target_path_is_mounted_rw() { return 0; }
+    (cleanup) > "$cleanup_append_root/symlog/output" 2>&1 || true
+)
+grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' "$cleanup_append_root/symlog/output" \
+    || { echo 'FAIL: the symlinked /var/log refusal evidence line is missing' >&2; cat "$cleanup_append_root/symlog/output" >&2; exit 1; }
+[[ ! -e "$cleanup_append_root/symlog/host-var-log/boot-repair-session.log" ]] \
+    || { echo 'FAIL: the session log was written through the symlinked target /var/log' >&2; exit 1; }
+
+# Refusal: the log file itself exists as a symlink to a host-side file.
+mkdir -p "$cleanup_append_root/symfile/target/var/log" "$cleanup_append_root/symfile/host-logdir"
+printf 'host original content\n' > "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log"
+ln -s "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log" \
+    "$cleanup_append_root/symfile/target/var/log/boot-repair-session.log"
+printf 'symfile session evidence\n' > "$cleanup_append_root/symfile/session.log"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    TARGET_WRITE_INTENT=1
+    TARGET_ROOT="$cleanup_append_root/symfile/target"
+    SESSION_LOG="$cleanup_append_root/symfile/session.log"
+    SESSION_DIR="" SESSION_HELPER_COPY=""
+    TEMP_TARGET_PATHS=() MOUNTS=() SESSION_OWNED_MAPPERS=() TEMP_MAPPER_ALIASES=()
+    target_path_is_mounted_rw() { return 0; }
+    (cleanup) > "$cleanup_append_root/symfile/output" 2>&1 || true
+)
+grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' "$cleanup_append_root/symfile/output" \
+    || { echo 'FAIL: the symlinked log file refusal evidence line is missing' >&2; cat "$cleanup_append_root/symfile/output" >&2; exit 1; }
+[[ "$(cat "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log")" == 'host original content' ]] \
+    || { echo 'FAIL: the session log append followed the target symlink to a host file' >&2; exit 1; }
 
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."

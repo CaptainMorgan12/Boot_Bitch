@@ -92,6 +92,74 @@ grep -q 'mount_target_data_partitions "$mode"' "$HELPER"
 grep -q 'Remounting target data filesystem ' "$HELPER"
 grep -q 'same_single_top_disk "$TARGET_DISK" "$resolved"' "$HELPER"
 grep -q 'Repair requires the target ' "$HELPER"
+# A2-01/A4-01: the fstab-driven mount paths share one containment validator
+# (lexical ".." refusal, realpath-parent containment and final-component
+# symlink refusal) applied before any mkdir/mount.
+grep -q '^validate_target_mount_dest()' "$HELPER"
+boot_entry_block="$(sed -n '/^mount_target_boot_entry()/,/^}/p' "$HELPER")"
+grep -Fq 'validate_target_mount_dest "$dest"' <<<"$boot_entry_block" \
+    || { echo 'FAIL: mount_target_boot_entry bypasses the shared mount-destination containment' >&2; exit 1; }
+data_partitions_block="$(sed -n '/^mount_target_data_partitions()/,/^}/p' "$HELPER")"
+subvolumes_block="$(sed -n '/^mount_target_btrfs_subvolumes()/,/^}/p' "$HELPER")"
+for mount_block in "$data_partitions_block" "$subvolumes_block"; do
+    grep -Fq 'validate_target_mount_dest "$dest"' <<<"$mount_block" \
+        || { echo 'FAIL: a fstab-driven mount path does not run the shared destination containment' >&2; exit 1; }
+    awk '
+        /validate_target_mount_dest "\$dest"/ { saw_validate = 1 }
+        saw_validate && /mkdir -p -- "\$dest"/ { mkdir_after = 1 }
+        saw_validate && /mount_recorded "\$resolved" "\$dest"/ { mount_after = 1 }
+        END { exit(mkdir_after && mount_after ? 0 : 1) }
+    ' <<<"$mount_block" \
+        || { echo 'FAIL: the mount-destination containment does not precede mkdir/mount' >&2; exit 1; }
+done
+# A4-08: fstab context=/seclabel never pass through and nosuid,nodev is
+# appended last (rightmost wins over fstab suid,dev) in both data paths.
+for mount_block in "$data_partitions_block" "$subvolumes_block"; do
+    grep -Fq 'context=*|seclabel) continue ;;' <<<"$mount_block" \
+        || { echo 'FAIL: a data mount path still passes fstab context=/seclabel through' >&2; exit 1; }
+    grep -Fq 'mount_options="$requested_mode${filtered_options:+,$filtered_options},nosuid,nodev"' <<<"$mount_block" \
+        || { echo 'FAIL: a data mount path does not append the recovery nosuid,nodev hardening' >&2; exit 1; }
+done
+# A2-05: the offline repair release path never lazy-detaches; the read-only
+# inspection path keeps its existing best-effort release.
+release_for_device_block="$(sed -n '/^filesystem_release_mounts_for_device()/,/^}/p' "$HELPER")"
+if grep -Fq 'umount -l' <<<"$release_for_device_block"; then
+    echo 'FAIL: the offline repair path still falls back to a lazy umount' >&2
+    exit 1
+fi
+grep -Fq 'mount_cleanup_leak_evidence "$mountpath"' <<<"$release_for_device_block" \
+    || { echo 'FAIL: the offline repair path does not record leak evidence on an umount failure' >&2; exit 1; }
+release_all_block="$(sed -n '/^filesystem_release_all_mounts()/,/^}/p' "$HELPER")"
+grep -Fq 'umount "$mountpath" 2>/dev/null || umount -l "$mountpath" 2>/dev/null || true' <<<"$release_all_block" \
+    || { echo 'FAIL: the read-only inspection release path changed' >&2; exit 1; }
+# A4-04: the LUKS header UUID is validated against the canonical hyphenated
+# form before it composes the luks-<UUID> mapper name.
+grep -Fq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' "$HELPER" \
+    || { echo 'FAIL: the LUKS UUID canonical-form validation is missing' >&2; exit 1; }
+grep -Fq 'The LUKS header reported a malformed UUID; refusing to unlock' "$HELPER" \
+    || { echo 'FAIL: the malformed LUKS UUID refusal reason is missing' >&2; exit 1; }
+# A3-10: every EFI/bootloader apply stage re-runs the target/host identity
+# gate as its first statement (native host maintenance skips it inside the
+# helper itself).
+grep -q '^reassert_target_write_safety()' "$HELPER"
+for apply_fn in reinstall_efi_bootloader fedora_grub_reinstall_boot_code run_tuxedo_uki_builder; do
+    apply_body="$(sed -n "/^${apply_fn}()/,/^}/p" "$HELPER")"
+    grep -Fq 'reassert_target_write_safety' <<<"$apply_body" \
+        || { echo "FAIL: $apply_fn does not reassert target write safety" >&2; exit 1; }
+    awk '
+        /^[[:space:]]*[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*$/ { in_fn = 1; started = 0; found = 0; next }
+        in_fn && /^}/ { exit(found ? 0 : 1) }
+        in_fn && started == 0 {
+            if ($0 ~ /^[[:space:]]*local[[:space:]]/ || $0 ~ /^[[:space:]]*#/ || $0 ~ /^[[:space:]]*$/ || $0 ~ /^\{[[:space:]]*$/) next
+            started = 1
+            if ($0 ~ /reassert_target_write_safety/) found = 1
+            else exit 1
+            next
+        }
+        END { exit(found ? 0 : 1) }
+    ' <<<"$apply_body" \
+        || { echo "FAIL: $apply_fn does not reassert target write safety as its first statement" >&2; exit 1; }
+done
 # The data partitions are recorded in the same list the Btrfs subvolumes use,
 # so the single rw promotion covers both layouts.
 grep -q 'TARGET_DATA_MOUNTS+=("$dest")' "$HELPER"
@@ -1858,10 +1926,10 @@ grep -Fq "$sandbox/target/opt," <<<"$data_ro" \
     && { echo 'FAIL: a Btrfs /opt was mounted as a plain data partition' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
 grep -Fq "$sandbox/target/usr," <<<"$data_ro" \
     && { echo 'FAIL: a same-device /usr entry was mounted twice' >&2; printf '%s\n' "$data_ro" >&2; exit 1; }
-grep -Fq -- '-o ro,noatime -- /dev/test-var' "$FAKE_MOUNT_LOG" \
-    || { echo 'FAIL: /var was not mounted read-only with its fstab options' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-grep -Fq -- '-o ro,relatime -- /dev/test-srv' "$FAKE_MOUNT_LOG" \
-    || { echo 'FAIL: /srv was not mounted read-only with its fstab options' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+grep -Fq -- '-o ro,noatime,nosuid,nodev -- /dev/test-var' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: /var was not mounted read-only with its fstab options plus the recovery nosuid,nodev hardening' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+grep -Fq -- '-o ro,relatime,nosuid,nodev -- /dev/test-srv' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: /srv was not mounted read-only with its fstab options plus the recovery nosuid,nodev hardening' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
 grep -Fq -- 'tmpfs' "$FAKE_MOUNT_LOG" \
     && { echo 'FAIL: a tmpfs pseudo entry was mounted' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
 
@@ -1895,5 +1963,241 @@ grep -Fq "$sandbox/target/srv," <<<"$data_skip" \
     || { echo 'FAIL: the already-mounted /var suppressed the remaining data mounts' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
 grep -Fq "$sandbox/target/var," <<<"$data_skip" \
     && { echo 'FAIL: the already-mounted /var was recorded again' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 13: A2-01/A4-01/A4-08 fstab mount-destination containment.  A hostile
+# Btrfs subvolume mountpoint (".." traversal or a symlinked destination) is
+# refused with a WARNING and never reaches mkdir/mount, while the legit
+# subvolume still mounts.  context=/seclabel never pass through and
+# nosuid,nodev is appended last for both data-partition and subvolume mounts.
+# ---------------------------------------------------------------------------
+printf 'test-disk - disk - - - -\n' > "$FAKE_LSBLK_DB"
+printf 'test-root btrfs part 11111111-2222-3333-4444-555555555555 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+printf 'test-var ext4 part 66666666-7777-8888-9999-aaaaaaaaaaaa test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+printf 'test-home xfs part BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+touch "$sandbox/dev-test-root" "$sandbox/dev-test-var" "$sandbox/dev-test-home"
+mkdir -p "$sandbox/target/srv" "$sandbox/host-outside"
+# Earlier parts created /home as a real directory; the hostile fixture needs
+# it gone so the symlink can take its place.
+rm -rf "$sandbox/target/home" "$sandbox/target/usr"
+ln -s "$sandbox/host-outside" "$sandbox/target/home"
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+/dev/test-root  /               btrfs  subvol=/@    0 0
+/dev/test-root  /../../outside  btrfs  subvol=/@evil 0 0
+/dev/test-root  /home           btrfs  subvol=/@home 0 0
+/dev/test-root  /srv            btrfs  subvol=/@srv,context=system_u:object_r:etc_t:s0,seclabel 0 0
+FSTAB
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_MOUNTPOINT_DB"
+subvol_containment="$(run_harness '
+ROOT_CANONICAL=/dev/test-root
+TARGET_DISK=/dev/test-disk
+TARGET_ROOT="'"$sandbox"'/target"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+TARGET_DATA_MOUNTS=()
+mount_target_btrfs_subvolumes ro
+printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
+grep -Fq 'WARNING: refusing an unsafe target Btrfs subvolume mount path: '"$sandbox"'/target/../../outside' <<<"$subvol_containment" \
+    || { echo 'FAIL: the ".." Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
+grep -Fq 'WARNING: refusing an unsafe target Btrfs subvolume mount path: '"$sandbox"'/target/home' <<<"$subvol_containment" \
+    || { echo 'FAIL: the symlinked Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
+grep -Fq "$sandbox/target/srv," <<<"$subvol_containment" \
+    || { echo 'FAIL: the legitimate Btrfs subvolume was not mounted' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
+grep -Fq -- '-o ro,subvol=/@srv,nosuid,nodev -- /dev/test-root '"$sandbox"'/target/srv' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: the subvolume mount did not drop context=/seclabel and append nosuid,nodev' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+if grep -Fq 'context=' "$FAKE_MOUNT_LOG" || grep -Fq 'seclabel' "$FAKE_MOUNT_LOG" \
+   || grep -Fq '@evil' "$FAKE_MOUNT_LOG" || grep -Fq '/home' "$FAKE_MOUNT_LOG"; then
+    echo 'FAIL: a hostile or SELinux-labeled subvolume mount reached the mount command' >&2
+    cat "$FAKE_MOUNT_LOG" >&2
+    exit 1
+fi
+[[ -z "$(ls -A "$sandbox/host-outside" 2>/dev/null)" ]] \
+    || { echo 'FAIL: the symlinked subvolume mountpoint redirected a write outside the target' >&2; exit 1; }
+
+# Data partitions: the symlinked /usr destination is refused, the legitimate
+# /var entry keeps its passthrough options but loses context= and gains the
+# appended nosuid,nodev after the fstab suid,dev (rightmost wins).
+ln -s "$sandbox/host-outside" "$sandbox/target/usr"
+printf 'test-usr ext4 part USR-UUID test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+touch "$sandbox/dev-test-usr"
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+/dev/test-root  /     btrfs  subvol=/@  0 0
+/dev/test-var   /var  ext4   defaults,context=system_u:object_r:var_t:s0,suid,dev  0 2
+/dev/test-home  /home xfs    defaults  0 2
+/dev/test-usr   /usr  ext4   defaults  0 2
+FSTAB
+: > "$FAKE_MOUNT_LOG"
+: > "$FAKE_MOUNTPOINT_DB"
+data_containment="$(run_harness '
+ROOT_CANONICAL=/dev/test-root
+TARGET_DISK=/dev/test-disk
+TARGET_ROOT="'"$sandbox"'/target"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+TARGET_DATA_MOUNTS=()
+mount_target_data_partitions ro
+printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
+grep -Fq 'WARNING: refusing an unsafe target /usr mount path: '"$sandbox"'/target/usr' <<<"$data_containment" \
+    || { echo 'FAIL: the symlinked data-partition destination was not refused with a warning' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
+grep -Fq "$sandbox/target/var," <<<"$data_containment" \
+    || { echo 'FAIL: the legitimate data partition was not mounted' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
+grep -Fq -- '-o ro,suid,dev,nosuid,nodev -- /dev/test-var '"$sandbox"'/target/var' "$FAKE_MOUNT_LOG" \
+    || { echo 'FAIL: the data mount did not drop context= and append nosuid,nodev after the fstab suid,dev' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
+if grep -Fq 'context=' "$FAKE_MOUNT_LOG" || grep -Fq 'seclabel' "$FAKE_MOUNT_LOG"; then
+    echo 'FAIL: a SELinux label option leaked into the data mount passthrough' >&2
+    cat "$FAKE_MOUNT_LOG" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# Part 14: A2-05 offline repair never lazy-detaches.  A plain umount failure
+# leaves MOUNT_LEAK evidence and returns 2; `umount -l` is never invoked.
+# ---------------------------------------------------------------------------
+: > "$FAKE_FINDMNT_DB"
+printf '%s /dev/test-home xfs rw 77\n' "$sandbox/target/home" > "$FAKE_FINDMNT_DB"
+printf '%s\n' "$sandbox/target/home" > "$FAKE_MOUNTPOINT_DB"
+: > "$sandbox/umount-args.log"
+rm -f "$sandbox/state/mount-leaks.log"
+release_fail="$(run_harness '
+umount() { printf "%s\n" "$*" >> "'"$sandbox"'/umount-args.log"; return 1; }
+TARGET_ROOT="'"$sandbox"'/target"
+MOUNT_BASE="'"$sandbox"'/target"
+ROOT_DEVICE=/dev/test-root
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+MOUNTS=("'"$sandbox"'/target/home")
+set +e
+filesystem_release_mounts_for_device /dev/test-home
+release_rc=$?
+set -e
+printf "RELEASE_RC:%s\n" "$release_rc"
+' 2>&1 || true)"
+grep -Fq 'RELEASE_RC:2' <<<"$release_fail" \
+    || { echo 'FAIL: a failed offline umount did not fail closed with rc 2' >&2; printf '%s\n' "$release_fail" >&2; exit 1; }
+grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" <<<"$release_fail" \
+    || { echo 'FAIL: the offline umount failure did not leave MOUNT_LEAK evidence' >&2; printf '%s\n' "$release_fail" >&2; exit 1; }
+[[ "$(cat "$sandbox/umount-args.log")" == "$sandbox/target/home" ]] \
+    || { echo 'FAIL: the offline release path invoked umount -l or extra umounts' >&2; cat "$sandbox/umount-args.log" >&2; exit 1; }
+grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" "$sandbox/state/mount-leaks.log" \
+    || { echo 'FAIL: the offline umount failure was not persisted under STATE_ROOT' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 15: A4-06 same-disk scope gate.  A fstab /home on another disk is
+# skipped with a WARNING at resolution time and its tool is never invoked.
+# ---------------------------------------------------------------------------
+printf 'test-disk - disk - - - -\n' > "$FAKE_LSBLK_DB"
+printf 'test-root ext4 part 11111111-2222-3333-4444-555555555555 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+printf 'test-boot ext4 part 66666666-7777-8888-9999-aaaaaaaaaaaa test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+printf 'test-efi vfat part ABCD-1234 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
+printf 'test-outside ext4 part OUTSIDE-UUID other-disk 1 other-disk\n' >> "$FAKE_LSBLK_DB"
+touch "$sandbox/dev-test-outside"
+rm -f "$sandbox/target/usr"
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+/dev/test-root     /         ext4  defaults  0 1
+/dev/test-boot     /boot     ext4  defaults  0 2
+/dev/test-efi      /boot/efi vfat  defaults  0 2
+/dev/test-outside  /home     ext4  defaults  0 2
+FSTAB
+: > "$FAKE_TOOL_LOG"
+scope_gate="$(run_harness '
+top_disks_for() {
+    case "$1" in
+        */test-outside) printf "%s\n" "'"$sandbox"'/dev-other-disk" ;;
+        *) printf "%s\n" "'"$sandbox"'/dev-test-disk" ;;
+    esac
+}
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_OS_ID=arch
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=arch
+TARGET_ROOT="'"$sandbox"'/target"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+filesystem_scope_resolve
+printf "SCOPE:%s\n" "${FS_SCOPE_DEVICES[*]}"')"
+grep -Fq 'WARNING: fstab /home device /dev/test-outside is not on the selected disk /dev/test-disk; excluded from the file system scope.' <<<"$scope_gate" \
+    || { echo 'FAIL: the out-of-disk fstab /home was not skipped with a warning' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
+grep -Fq 'SCOPE:/dev/test-root /dev/test-boot /dev/test-efi' <<<"$scope_gate" \
+    || { echo 'FAIL: the same-disk scope devices were not resolved' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
+if grep -Fq '/dev/test-outside' <<<"$(grep -F 'SCOPE:' <<<"$scope_gate")"; then
+    echo 'FAIL: the out-of-disk /home device entered the repair scope' >&2
+    exit 1
+fi
+gate_inspect="$(run_harness '
+top_disks_for() {
+    case "$1" in
+        */test-outside) printf "%s\n" "'"$sandbox"'/dev-other-disk" ;;
+        *) printf "%s\n" "'"$sandbox"'/dev-test-disk" ;;
+    esac
+}
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_OS_ID=arch
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=arch
+TARGET_ROOT=""
+fs_inspect /dev/test-disk /dev/test-root
+' 2>&1 || true)"
+if grep -Fq '/dev/test-outside' "$FAKE_TOOL_LOG"; then
+    echo 'FAIL: the out-of-disk fstab device was handed to a filesystem tool' >&2
+    cat "$FAKE_TOOL_LOG" >&2
+    exit 1
+fi
+grep -Fq 'File system check summary: devices=3 clean=3 issues=0 unsupported=0 tool-missing=0 skipped=0' <<<"$gate_inspect" \
+    || { echo 'FAIL: the gated inspection scope is not the three same-disk devices' >&2; printf '%s\n' "$gate_inspect" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 16: A4-04 LUKS header UUID validation.  A malformed header UUID is
+# refused before any luks-<UUID> mapper name is composed; a canonical UUID
+# composes the mapper name.
+# ---------------------------------------------------------------------------
+if luks_bad="$(run_harness '
+need() { :; }
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+assert_target_not_host() { :; }
+same_single_top_disk() { return 0; }
+lsblk() { printf "crypto_LUKS\n"; }
+cryptsetup() {
+    if [[ "${1:-}" == luksUUID ]]; then printf "not-a-uuid/../../etc\n"; fi
+    return 0
+}
+unlock_target
+' 2>&1)"; then
+    echo 'FAIL: a malformed LUKS header UUID was accepted' >&2
+    exit 1
+fi
+grep -Fq 'The LUKS header reported a malformed UUID; refusing to unlock: not-a-uuid/../../etc' <<<"$luks_bad" \
+    || { echo 'FAIL: the malformed LUKS UUID refusal reason is missing' >&2; printf '%s\n' "$luks_bad" >&2; exit 1; }
+if grep -Fq 'luks-not-a-uuid' <<<"$luks_bad"; then
+    echo 'FAIL: a malformed LUKS UUID reached the mapper-name composition' >&2
+    exit 1
+fi
+
+if luks_ok="$(run_harness '
+need() { :; }
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+assert_target_not_host() { :; }
+same_single_top_disk() { return 0; }
+lsblk() { printf "crypto_LUKS\n"; }
+cryptsetup() {
+    case "${1:-}" in
+        luksUUID) printf "11111111-2222-3333-4444-555555555555\n" ;;
+        *) return 0 ;;
+    esac
+    return 0
+}
+find_crypt_mapper_for_device() { return 1; }
+unlock_target
+' 2>&1)"; then
+    echo 'FAIL: a canonical LUKS UUID unlock was refused' >&2
+    printf '%s\n' "$luks_ok" >&2
+    exit 1
+fi
+grep -Fq 'Mapper name: luks-11111111-2222-3333-4444-555555555555' <<<"$luks_ok" \
+    || { echo 'FAIL: the canonical LUKS UUID did not compose the luks-<UUID> mapper name' >&2; printf '%s\n' "$luks_ok" >&2; exit 1; }
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

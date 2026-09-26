@@ -16,6 +16,11 @@ set -euo pipefail
 #              release AppImage on a Debian-family desktop (reference host:
 #              TUXEDO OS) so the Qt platform themes and SVG icon engine can be
 #              bundled; other hosts warn.
+#              BUILD_DIR is removed for a clean build, so it must resolve
+#              (realpath) under $ROOT_DIR/build-* or
+#              $ROOT_DIR/Development/*build*; anything else is refused before
+#              any removal unless the one-off BUILD_DIR_ALLOW_PREFIX prefix
+#              authorizes it (see the guard below).
 
 # Package/staged-install modes must not depend on the builder's umask: a
 # restrictive agent umask (for example 077) would otherwise package 0700
@@ -72,20 +77,41 @@ done
 # Fail early if the shipped privileged helper is malformed.
 bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
 
+# Whitelist the build directory before rm -rf: only a path that resolves
+# under $ROOT_DIR/build-* or $ROOT_DIR/Development/*build* (which covers
+# Development/build-*) may be removed. Everything else — $HOME, /tmp,
+# $ROOT_DIR/legacy or any other repo subdirectory — is refused with a clear
+# message before any removal. BUILD_DIR_ALLOW_PREFIX is the documented escape
+# hatch for one-off out-of-tree builds: when set, the build directory may
+# instead live under that prefix (its own realpath).
 BUILD_DIR_REAL="$(realpath -m -- "$BUILD_DIR")"
 ROOT_DIR_REAL="$(realpath -m -- "$ROOT_DIR")"
-if [[ -z "$BUILD_DIR_REAL" || "$BUILD_DIR_REAL" == / || "$BUILD_DIR_REAL" == "$ROOT_DIR_REAL" ]]; then
-    echo "Refusing to remove unsafe build directory: $BUILD_DIR" >&2
+build_dir_allowed()
+{
+    local dir="$1"
+    [[ -n "$dir" ]] || return 1
+    [[ "$dir" == "$ROOT_DIR_REAL/build-"* ]] && return 0
+    [[ "$dir" == "$ROOT_DIR_REAL/Development/"*build* ]] && return 0
+    if [[ -n "${BUILD_DIR_ALLOW_PREFIX:-}" ]]; then
+        local prefix
+        prefix="$(realpath -m -- "$BUILD_DIR_ALLOW_PREFIX")"
+        if [[ "$prefix" == / ]]; then
+            [[ "$dir" == /* ]] && return 0
+        elif [[ -n "$prefix" && "$dir" == "$prefix"/* ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+if ! build_dir_allowed "$BUILD_DIR_REAL"; then
+    cat >&2 <<EOF
+Refusing to remove unsafe build directory: $BUILD_DIR (resolves to $BUILD_DIR_REAL).
+The build directory must live under $ROOT_DIR/build-* or
+$ROOT_DIR/Development/*build*; set BUILD_DIR_ALLOW_PREFIX=<parent> to authorize
+a one-off out-of-tree location under that prefix. Nothing was removed.
+EOF
     exit 1
 fi
-for protected in "$ROOT_DIR_REAL/src" "$ROOT_DIR_REAL/scripts" "$ROOT_DIR_REAL/data" \
-                 "$ROOT_DIR_REAL/resources" "$ROOT_DIR_REAL/tests"; do
-    if [[ "$BUILD_DIR_REAL" == "$protected" || "$BUILD_DIR_REAL" == ${protected}/* \
-          || "$protected" == "$BUILD_DIR_REAL" || "$protected" == ${BUILD_DIR_REAL}/* ]]; then
-        echo "Refusing to remove a source/protected directory as the build directory: $BUILD_DIR" >&2
-        exit 1
-    fi
-done
 rm -rf -- "$BUILD_DIR"
 
 cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \

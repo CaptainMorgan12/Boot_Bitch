@@ -505,19 +505,33 @@ mount_records_prune()
 cleanup()
 {
     local rc=$?
+    local session_target_log session_root_real session_logdir_real
     set +e
 
     # Read-only diagnostics, validation and rollback preflight must remain
     # genuinely read-only.  Append the helper log into the repaired system only
     # after this request deliberately crossed the read-write boundary, and only
-    # while the target log path is still backed by a rw mount.
+    # while the target log path is still backed by a rw mount.  The append is
+    # additionally contained: the resolved /var/log directory must stay inside
+    # the real target root and the log file itself must not be an existing
+    # symlink, or the append is refused with evidence instead of writing
+    # anywhere else.
     if (( TARGET_WRITE_INTENT == 1 )) \
        && [[ -n "$SESSION_LOG" && -f "$SESSION_LOG" && -n "$TARGET_ROOT" && -d "$TARGET_ROOT/var/log" ]] \
        && target_path_is_mounted_rw "$TARGET_ROOT/var/log"; then
-        {
-            printf '\n===== Boot Bitch session %s =====\n' "$(date --iso-8601=seconds 2>/dev/null || date)"
-            cat "$SESSION_LOG"
-        } >> "$TARGET_ROOT/var/log/boot-repair-session.log" 2>/dev/null || true
+        session_target_log="$TARGET_ROOT/var/log/boot-repair-session.log"
+        session_root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null || true)"
+        session_logdir_real="$(realpath_existing "$TARGET_ROOT/var/log" 2>/dev/null || true)"
+        if [[ -n "$session_root_real" && -n "$session_logdir_real" ]] \
+           && path_within "$session_logdir_real" "$session_root_real" \
+           && [[ ! -L "$session_target_log" ]]; then
+            {
+                printf '\n===== Boot Bitch session %s =====\n' "$(date --iso-8601=seconds 2>/dev/null || date)"
+                cat "$SESSION_LOG"
+            } >> "$session_target_log" 2>/dev/null || true
+        else
+            log "Session log was NOT appended into the target: unsafe target log path." | tee -a "$SESSION_LOG" || true
+        fi
     fi
 
     # Request-scoped helper files must be removed while the target is still
@@ -1181,6 +1195,16 @@ assert_target_not_host()
     done
 }
 
+# Re-run the target/host identity gate immediately before an apply stage.
+# The prepare/unlock checks above are repeated so a device topology change
+# between planning and execution cannot turn the selected target into the
+# running host.  Native host maintenance proves its own identity and skips.
+reassert_target_write_safety()
+{
+    (( RUNNING_HOST_MODE == 1 )) && return 0
+    assert_target_not_host "$TARGET_DISK"
+}
+
 # Prove that the supplied host disk and root component back the currently
 # running root filesystem and that every live /boot, /boot/efi and /efi mount
 # resolves to that same disk before native host maintenance is allowed.
@@ -1247,6 +1271,25 @@ fstab_entry_for_mountpoint()
         /^[[:space:]]*#/ { next }
         NF >= 4 && $2 == mp { print $1 "\t" $3 "\t" $4; exit }
     ' "$TARGET_ROOT/etc/fstab"
+}
+
+# Containment validation for a joined target mount destination, shared by every
+# fstab-driven mount path.  Before any mkdir/mount the destination must be
+# absolute and lexically inside the target root (a fstab mountpoint containing
+# ".." is refused), its parent must resolve inside the real target root
+# (realpath containment), and the final component must not be an existing
+# symlink.  Returns 0 when safe; callers log a WARNING and skip (data mounts
+# tolerate one bad fstab line) or fail (a fixed boot entry path).
+validate_target_mount_dest()
+{
+    local dest="$1" root_real dest_parent_real
+    [[ -n "$dest" && "$dest" == /* && ! -L "$dest" ]] || return 1
+    [[ "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ]] || return 1
+    root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null || true)"
+    dest_parent_real="$(realpath_existing "$(dirname -- "$dest")" 2>/dev/null || true)"
+    [[ -n "$root_real" && -n "$dest_parent_real" ]] || return 1
+    path_within "$dest_parent_real" "$root_real" || return 1
+    return 0
 }
 
 mount_recorded()
@@ -1415,10 +1458,18 @@ mount_target_resolver()
     fi
     root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null || true)"
     [[ -n "$root_real" ]] || return 0
+    # Containment validation must precede any target-path creation: resolve the
+    # destination lexically and refuse a symlink final component before the
+    # mkdir/touch below could follow it anywhere.
+    dest_real="$(realpath -m -- "$destination" 2>/dev/null || true)"
+    [[ -n "$dest_real" ]] \
+        || fail "Unable to resolve the target resolver path: $destination"
+    path_within "$dest_real" "$root_real" \
+        || fail "Target resolver path escapes the selected root: $destination"
+    [[ ! -L "$destination" ]] \
+        || fail "Refusing to bind the resolver through a target symlink: $destination"
     mkdir -p -- "$(dirname -- "$destination")"
     [[ -e "$destination" ]] || touch -- "$destination"
-    path_within "$(realpath -m -- "$destination")" "$root_real" \
-        || fail "Target resolver path escapes the selected root: $destination"
     mount --bind /etc/resolv.conf "$destination"
     mount -o remount,bind,ro "$destination"
     MOUNTS+=("$destination")
@@ -1445,17 +1496,8 @@ mount_target_boot_entry()
     # (mountpoint does not normalize the double slash), and the joined path
     # must stay inside the selected target root.
     dest="$(target_path "$mp")"
-    [[ -n "$dest" && "$dest" == /* && ! -L "$dest" ]] \
+    validate_target_mount_dest "$dest" \
         || fail "Refusing to mount target $mp through an unsafe path: $dest"
-    [[ "$TARGET_ROOT" == "/" || "$dest" == "$TARGET_ROOT"/* ]] \
-        || fail "Target $mp join escaped the selected root: $dest"
-    local root_real dest_parent_real
-    root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null)" \
-        || fail "Unable to resolve target root before mounting $mp."
-    dest_parent_real="$(realpath_existing "$(dirname -- "$dest")" 2>/dev/null)" \
-        || fail "Unable to resolve target mount parent for $mp."
-    path_within "$dest_parent_real" "$root_real" \
-        || fail "Target mount parent escapes the selected root for $mp."
     if mountpoint -q "$dest" 2>/dev/null; then
         local recorded_mount=false recorded_path
         for recorded_path in "${MOUNTS[@]}"; do
@@ -1591,7 +1633,7 @@ mount_target_data_partitions()
         [[ "$resolved" == "$ROOT_CANONICAL" ]] && continue
 
         dest="$TARGET_ROOT$mountpoint_name"
-        [[ -n "$dest" && "$dest" == /* && ! -L "$dest" ]] || {
+        validate_target_mount_dest "$dest" || {
             log "WARNING: refusing an unsafe target $mountpoint_name mount path: $dest" | tee -a "$SESSION_LOG"
             continue
         }
@@ -1602,16 +1644,20 @@ mount_target_data_partitions()
         mount_options="$options"
         [[ -n "$mount_options" && "$mount_options" != "defaults" ]] || mount_options=""
         # The recovery mode is authoritative even when fstab contains ro/rw.
+        # SELinux context= / seclabel options never pass through (the recovery
+        # mount is not the installed system's label domain), and nosuid,nodev
+        # is appended last so it overrides any fstab suid/dev (rightmost wins).
         IFS=',' read -ra option_parts <<< "$mount_options"
         filtered_options=""
         for option in "${option_parts[@]}"; do
             [[ -n "$option" ]] || continue
             case "$option" in
-                ro|rw|auto|noauto|nofail|_netdev|x-systemd.*|defaults) continue ;; 
+                ro|rw|auto|noauto|nofail|_netdev|x-systemd.*|defaults) continue ;;
+                context=*|seclabel) continue ;;
             esac
             filtered_options+="${filtered_options:+,}$option"
         done
-        mount_options="$requested_mode${filtered_options:+,$filtered_options}"
+        mount_options="$requested_mode${filtered_options:+,$filtered_options},nosuid,nodev"
 
         mkdir -p -- "$dest"
         if ! mount_recorded "$resolved" "$dest" -o "$mount_options"; then
@@ -1642,13 +1688,16 @@ mount_target_btrfs_subvolumes()
         [[ -n "$spec" && -n "$mountpoint_name" ]] || continue
         mountpoint_name="$(fstab_unescape "$mountpoint_name")"
         options="$(fstab_unescape "$options")"
-        [[ "$mountpoint_name" == /* ]] || continue
+        if [[ "$mountpoint_name" != /* ]]; then
+            log "WARNING: refusing an unsafe target Btrfs mountpoint (not absolute): $mountpoint_name" | tee -a "$SESSION_LOG"
+            continue
+        fi
         case "$mountpoint_name" in
             /|/boot|/boot/efi|/efi|/dev|/dev/*|/proc|/proc/*|/sys|/sys/*|/run|/run/*) continue ;;
         esac
 
         resolved="$(resolve_fstab_source "$spec")"
-        [[ -n "$resolved" && -b "$resolved" ]] || {
+        [[ -n "$resolved" ]] && is_block_device "$resolved" || {
             log "WARNING: skipping unresolved Btrfs fstab entry $mountpoint_name -> $spec" | tee -a "$SESSION_LOG"
             continue
         }
@@ -1656,6 +1705,13 @@ mount_target_btrfs_subvolumes()
         [[ "$resolved" == "$ROOT_CANONICAL" ]] || continue
 
         dest="$TARGET_ROOT$mountpoint_name"
+        # Containment before any mkdir/mount: the mountpoint is taken from the
+        # target fstab, so a hostile entry must never create or mount a path
+        # outside the selected root.  Diagnostics must not die on one bad line.
+        validate_target_mount_dest "$dest" || {
+            log "WARNING: refusing an unsafe target Btrfs subvolume mount path: $dest" | tee -a "$SESSION_LOG"
+            continue
+        }
         if mountpoint -q "$dest" 2>/dev/null; then
             continue
         fi
@@ -1663,16 +1719,20 @@ mount_target_btrfs_subvolumes()
         mount_options="$options"
         [[ -n "$mount_options" && "$mount_options" != "defaults" ]] || mount_options=""
         # The recovery mode is authoritative even when fstab contains ro/rw.
+        # SELinux context= / seclabel options never pass through (the recovery
+        # mount is not the installed system's label domain), and nosuid,nodev
+        # is appended last so it overrides any fstab suid/dev (rightmost wins).
         IFS=',' read -ra option_parts <<< "$mount_options"
         filtered_options=""
         for option in "${option_parts[@]}"; do
             [[ -n "$option" ]] || continue
             case "$option" in
                 ro|rw|auto|noauto|nofail|_netdev|x-systemd.*|defaults) continue ;;
+                context=*|seclabel) continue ;;
             esac
             filtered_options+="${filtered_options:+,}$option"
         done
-        mount_options="$requested_mode${filtered_options:+,$filtered_options}"
+        mount_options="$requested_mode${filtered_options:+,$filtered_options},nosuid,nodev"
 
         mkdir -p -- "$dest"
         log "Mounting target $mountpoint_name from $resolved ($requested_mode)" | tee -a "$SESSION_LOG"
@@ -2878,6 +2938,10 @@ prepare_target()
     mount_target_data_partitions "$mode"
 
     if [[ "$mode" == "rw" ]]; then
+        # One deliberate write-boundary crossing point: this branch covers the
+        # chroot-shell and config-write rw paths, so the EXIT cleanup can only
+        # append the session log into the target after an explicit rw request.
+        TARGET_WRITE_INTENT=1
         mount_target_boot_entry "/boot"
         mount_target_boot_entry "/boot/efi"
         mount_target_boot_entry "/efi"
@@ -4451,7 +4515,15 @@ arch_pacman_prepare_sandbox()
     ARCH_PACMAN_DB_REL="$ARCH_PACMAN_SANDBOX/db"
     ARCH_PACMAN_CACHE_REL="$ARCH_PACMAN_SANDBOX/cache"
     ARCH_PACMAN_LOG_REL="$ARCH_PACMAN_SANDBOX/pacman.log"
-    TEMP_TARGET_PATHS+=("$ARCH_PACMAN_SANDBOX")
+    # cleanup() removes TEMP_TARGET_PATHS entries with rm -rf, so the recorded
+    # path must be the host-joined target path: a bare chroot-relative
+    # /tmp/... spelling would rm -rf the recovery host's own /tmp directory.
+    TEMP_TARGET_PATHS+=("$TARGET_ROOT$ARCH_PACMAN_SANDBOX")
+    # Containment: the sandbox lives below the target root, so the target's
+    # /tmp must not be a symlink that could redirect the rm/mkdir/cp below
+    # outside the selected root.
+    [[ ! -L "$TARGET_ROOT/tmp" ]] \
+        || fail "Refusing the Arch pacman sandbox: the target /tmp is a symlink."
     rm -rf -- "$TARGET_ROOT$ARCH_PACMAN_SANDBOX"
     mkdir -p -- "$TARGET_ROOT$ARCH_PACMAN_DB_REL" "$TARGET_ROOT$ARCH_PACMAN_CACHE_REL"
     cp -a -- "$TARGET_ROOT/var/lib/pacman/." "$TARGET_ROOT$ARCH_PACMAN_DB_REL/"
@@ -7669,6 +7741,9 @@ fedora_grub_reinstall_boot_code()
     local install_tool table_before="" table_after=""
     local script_tool config
 
+    # The grub2-install apply is the first writer: re-prove the selected
+    # target is not the running host before the backup and the write.
+    reassert_target_write_safety
     preflight_fedora_grub_reinstall
     install_tool="$(grub_install_tool)"
     config="$(grub_config_path)"
@@ -8409,6 +8484,11 @@ unlock_target()
 
     uuid="$(cryptsetup luksUUID "$ROOT_DEVICE" 2>/dev/null || true)"
     [[ -n "$uuid" ]] || fail "Unable to determine the LUKS UUID."
+    # The header value composes the mapper name below; only a canonical
+    # hyphenated UUID is accepted so a corrupt/malicious header can never
+    # inject characters into /dev/mapper/<name>.
+    [[ "$uuid" =~ ^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$ ]] \
+        || fail "The LUKS header reported a malformed UUID; refusing to unlock: ${uuid:-none}"
 
     # Debian/TUXEDO crypttab convention uses luks-<UUID>.  Opening with the
     # installed-system style name from the beginning prevents a repair chroot
@@ -9976,7 +10056,12 @@ filesystem_release_mounts_for_device()
                 continue
             fi
         fi
-        if ! umount "$mountpath" 2>/dev/null && ! umount -l "$mountpath" 2>/dev/null; then
+        # Offline repair never falls back to a lazy detach: a busy mount must
+        # stay visible.  A plain umount failure leaves explicit leak evidence
+        # and fails the release closed instead of running a repair tool against
+        # a still-attached filesystem.
+        if ! umount "$mountpath" 2>/dev/null; then
+            mount_cleanup_leak_evidence "$mountpath"
             return 2
         fi
         released=1
@@ -10069,6 +10154,15 @@ filesystem_scope_resolve_target()
                 is_block_device "$resolved" || continue
                 resolved="$(canonical_block "$resolved" 2>/dev/null || true)"
                 [[ -n "$resolved" ]] || continue
+                # Same-disk containment at resolution time: a fstab /boot,
+                # /boot/efi, /efi or /home entry on another disk is that
+                # system's filesystem, never part of this repair scope.  An
+                # unprovable device identity is skipped with a warning too
+                # (fail closed), but never aborts the read-only resolution.
+                if ! same_single_top_disk "$TARGET_DISK" "$resolved"; then
+                    log "WARNING: fstab $mp device $resolved is not on the selected disk $TARGET_DISK; excluded from the file system scope." | tee -a "$SESSION_LOG" || true
+                    continue
+                fi
                 filesystem_device_record "$resolved" "$mp" || true
                 ;;
             *)
@@ -14063,6 +14157,11 @@ SHELL_FILTER_CR_PENDING=0     # previous input byte was CR
 SHELL_FILTER_LINE_HAS_CONTENT=0
 SHELL_FILTER_PENDING_WS=""    # deferred run of trailing spaces/tabs of the current line
 SHELL_FILTER_OUT=""
+# Bytes consumed inside the current CSI/OSC sequence.  A sequence longer than
+# SHELL_FILTER_SEQ_MAX is dropped and the trigger byte is reprocessed as plain
+# content so one unterminated ESC sequence can never swallow the stream.
+SHELL_FILTER_SEQ_BYTES=0
+SHELL_FILTER_SEQ_MAX=2048
 
 # Consume one byte of command output ($1) and set SHELL_FILTER_OUT to the
 # cleaned byte (or the empty string when the byte is dropped).  Trailing
@@ -14075,36 +14174,59 @@ shell_filter_byte()
     SHELL_FILTER_OUT=""
     if (( SHELL_FILTER_ESC == 1 )); then
         case "$byte" in
-            '[') SHELL_FILTER_ESC=2 ;;
-            ']') SHELL_FILTER_ESC=3 ;;
+            '[') SHELL_FILTER_ESC=2; SHELL_FILTER_SEQ_BYTES=0 ;;
+            ']') SHELL_FILTER_ESC=3; SHELL_FILTER_SEQ_BYTES=0 ;;
             *) SHELL_FILTER_ESC=0 ;;   # two-byte sequence: both bytes dropped
         esac
         return 0
     fi
     if (( SHELL_FILTER_ESC == 2 )); then
-        # CSI: consume until the final byte (0x40-0x7e).
-        case "$byte" in
-            [@-~]) SHELL_FILTER_ESC=0 ;;
-        esac
-        return 0
+        # CSI: consume until the final byte (0x40-0x7e).  A sequence longer
+        # than the cap is dropped and the cap-triggering byte is reprocessed
+        # as plain content (bounded resync).
+        SHELL_FILTER_SEQ_BYTES=$((SHELL_FILTER_SEQ_BYTES + 1))
+        if (( SHELL_FILTER_SEQ_BYTES > SHELL_FILTER_SEQ_MAX )); then
+            SHELL_FILTER_ESC=0
+            SHELL_FILTER_SEQ_BYTES=0
+        else
+            case "$byte" in
+                [@-~]) SHELL_FILTER_ESC=0; SHELL_FILTER_SEQ_BYTES=0 ;;
+            esac
+            return 0
+        fi
     fi
     if (( SHELL_FILTER_ESC == 3 )); then
-        # OSC: terminated by BEL or ESC \.
-        if [[ "$byte" == $'\x1b' ]]; then
-            SHELL_FILTER_ESC=4
-        elif [[ "$byte" == $'\a' ]]; then
+        # OSC: terminated by BEL or ESC \.  Same bounded resync as CSI.
+        SHELL_FILTER_SEQ_BYTES=$((SHELL_FILTER_SEQ_BYTES + 1))
+        if (( SHELL_FILTER_SEQ_BYTES > SHELL_FILTER_SEQ_MAX )); then
             SHELL_FILTER_ESC=0
+            SHELL_FILTER_SEQ_BYTES=0
+        else
+            if [[ "$byte" == $'\x1b' ]]; then
+                SHELL_FILTER_ESC=4
+            elif [[ "$byte" == $'\a' ]]; then
+                SHELL_FILTER_ESC=0
+                SHELL_FILTER_SEQ_BYTES=0
+            fi
+            return 0
         fi
-        return 0
     fi
     if (( SHELL_FILTER_ESC == 4 )); then
         # ESC inside OSC: ESC \ ends it, anything else resumes the OSC body.
-        if [[ "$byte" == '\' ]]; then
+        # Same bounded resync as CSI.
+        SHELL_FILTER_SEQ_BYTES=$((SHELL_FILTER_SEQ_BYTES + 1))
+        if (( SHELL_FILTER_SEQ_BYTES > SHELL_FILTER_SEQ_MAX )); then
             SHELL_FILTER_ESC=0
+            SHELL_FILTER_SEQ_BYTES=0
         else
-            SHELL_FILTER_ESC=3
+            if [[ "$byte" == '\' ]]; then
+                SHELL_FILTER_ESC=0
+                SHELL_FILTER_SEQ_BYTES=0
+            else
+                SHELL_FILTER_ESC=3
+            fi
+            return 0
         fi
-        return 0
     fi
     if [[ "$byte" == $'\x1b' ]]; then
         SHELL_FILTER_ESC=1
@@ -14176,6 +14298,7 @@ shell_stream_filter()
     SHELL_FILTER_CR_PENDING=0
     SHELL_FILTER_LINE_HAS_CONTENT=0
     SHELL_FILTER_PENDING_WS=""
+    SHELL_FILTER_SEQ_BYTES=0
     while IFS= read -r -n 1 ch; do
         if [[ -z "$ch" ]]; then
             ch=$'\n'
@@ -14208,16 +14331,32 @@ shell_interactive_ready()
     command -v base64 >/dev/null 2>&1 || return 1
     command -v tr >/dev/null 2>&1 || return 1
     command -v tail >/dev/null 2>&1 || return 1
+    command -v od >/dev/null 2>&1 || return 1
 }
 
 # Shell-quote every argument so the joined string can be executed safely by
-# /bin/sh -c inside script(1).
+# /bin/sh -c inside script(1).  POSIX single-quote quoting (with '\'' for an
+# embedded quote) instead of bash's %q, so the string stays portable; the
+# safe-character fast path keeps ordinary paths readable.
 shell_command_string()
 {
-    local out="" arg
+    local out="" arg quoted="" i ch
     for arg in "$@"; do
-        printf -v arg '%q' "$arg"
-        out+="${out:+ }$arg"
+        if [[ "$arg" =~ ^[a-zA-Z0-9_./:=+,@%-]+$ ]]; then
+            quoted="$arg"
+        else
+            quoted="'"
+            for ((i=0; i<${#arg}; ++i)); do
+                ch="${arg:i:1}"
+                if [[ "$ch" == "'" ]]; then
+                    quoted+="'\\''"
+                else
+                    quoted+="$ch"
+                fi
+            done
+            quoted+="'"
+        fi
+        out+="${out:+ }$quoted"
     done
     printf '%s\n' "$out"
 }
@@ -14239,6 +14378,131 @@ shell_pump_cleaned_byte()
     printf '%s' "$clean" >&12
 }
 
+# Current epoch seconds: EPOCHSECONDS when the shell provides it (no fork per
+# pump iteration), date +%s as the portable fallback.
+shell_now_epoch()
+{
+    if [[ -n "${EPOCHSECONDS:-}" ]]; then
+        printf '%s\n' "$EPOCHSECONDS"
+    else
+        date +%s
+    fi
+}
+
+# A5-05: compute the expected terminal echo for an answer -- the answer plus
+# a newline run through the same transcript filter logic (so an answer with
+# CR/control characters normalizes exactly like the real echo) -- without
+# disturbing the live filter state.  Sets SHELL_ECHO_EXPECTED.
+shell_expected_echo()
+{
+    local line="$1"$'\n' byte i ch out=""
+    local esc="$SHELL_FILTER_ESC" crp="$SHELL_FILTER_CR_PENDING"
+    local lhc="$SHELL_FILTER_LINE_HAS_CONTENT" pws="$SHELL_FILTER_PENDING_WS"
+    local seqb="$SHELL_FILTER_SEQ_BYTES"
+    for ((i=0; i<${#line}; ++i)); do
+        byte="${line:i:1}"
+        if [[ -z "$byte" ]]; then
+            ch=$'\n'
+        else
+            ch="$byte"
+        fi
+        shell_filter_byte "$ch"
+        out+="$SHELL_FILTER_OUT"
+    done
+    SHELL_FILTER_ESC="$esc"
+    SHELL_FILTER_CR_PENDING="$crp"
+    SHELL_FILTER_LINE_HAS_CONTENT="$lhc"
+    SHELL_FILTER_PENDING_WS="$pws"
+    SHELL_FILTER_SEQ_BYTES="$seqb"
+    SHELL_ECHO_EXPECTED="$out"
+}
+
+# Consume one raw runner output byte: apply the answer-echo redaction first
+# (A5-05), then the transcript filter, and pump the cleaned byte.  Reads the
+# redact_active/redact_pos/echo_expected/suppress_until_nl locals of the
+# shell_run_interactive frame via dynamic scoping.
+shell_pump_input_byte()
+{
+    local byte="$1" clean=""
+    if (( redact_active == 1 )); then
+        if (( redact_pos < ${#echo_expected} )) \
+            && [[ "$byte" == "${echo_expected:redact_pos:1}" ]]; then
+            redact_pos=$((redact_pos + 1))
+            if (( redact_pos >= ${#echo_expected} )); then
+                redact_active=0
+            fi
+            return 0
+        fi
+        # Divergence.  A mismatch at position 0 means the terminal does not
+        # echo the answer at all (for example a password prompt): stop
+        # redacting immediately.  A mid-match divergence means the echo was
+        # mangled (CRLF conversion, line wrap): suppress the rest of this
+        # line only, then stop.
+        redact_active=0
+        if (( redact_pos == 0 )); then
+            :
+        else
+            suppress_until_nl=1
+            return 0
+        fi
+    fi
+    if (( suppress_until_nl == 1 )); then
+        if [[ "$byte" == $'\n' ]]; then
+            suppress_until_nl=0
+        fi
+        return 0
+    fi
+    shell_filter_byte "$byte"
+    clean="$SHELL_FILTER_OUT"
+    if [[ -n "$clean" ]]; then
+        shell_pump_cleaned_byte "$clean"
+    fi
+}
+
+# A5-03: drain the runner's final output bytes after it dies.  Every read is
+# bounded (2 s) and the whole drain is capped at ~5 s so a writer that never
+# closes the FIFO cannot hang the pump; the flush keeps the last unterminated
+# line intact.
+shell_pump_drain_dead()
+{
+    local drain_deadline ch clean read_rc
+    drain_deadline=$(( $(shell_now_epoch) + 5 ))
+    while (( $(shell_now_epoch) < drain_deadline )); do
+        if IFS= read -r -n 1 -t 2 -u 8 ch; then
+            read_rc=0
+        else
+            read_rc=$?
+        fi
+        if (( read_rc == 0 )); then
+            if [[ -z "$ch" ]]; then
+                ch=$'\n'
+            fi
+            shell_pump_input_byte "$ch"
+            continue
+        fi
+        if (( read_rc > 128 )); then
+            continue    # 2 s quiet tick inside the drain deadline
+        fi
+        break           # EOF: the FIFO has nothing left
+    done
+    shell_filter_flush_pending
+    clean="$SHELL_FILTER_OUT"
+    if [[ -n "$clean" ]]; then
+        shell_pump_cleaned_byte "$clean"
+    fi
+}
+
+# True when the runner has exited but has not been reaped (a zombie): kill -0
+# still succeeds for it, so the death paths must detect and skip it instead of
+# waiting on a process that is already gone.
+shell_runner_is_zombie()
+{
+    local stat rest
+    stat="$(<"/proc/$runner_pid/stat" 2>/dev/null)" || return 1
+    rest="${stat##*) }"
+    [[ "$rest" == Z* ]]
+}
+
 # Run one shell command with the generic interactive channel.
 #   $1 = transcript path (raw command output evidence)
 #   $2 = overall deadline in seconds (paused while a prompt is pending)
@@ -14252,12 +14516,38 @@ shell_run_interactive()
     local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
     local tail_buf="" ch="" clean="" bytes="" encoded="" tag="" id="" answer=""
     local script_bin="" setsid_bin="" newline_done=1 wait_rc=0 grace=0
+    local read_rc=0 old_pipe_trap="" pump_token=""
+    local redact_active=0 redact_pos=0 echo_expected="" suppress_until_nl=0
 
     command -v script >/dev/null 2>&1 && script_bin=script
     command -v setsid >/dev/null 2>&1 && setsid_bin=setsid
 
+    # A1-05: one random pump token per run, kept in a plain (never exported)
+    # shell variable.  The broker consumes the PUMP registration record and
+    # only re-emits PROMPT records that carry this token, so a forged
+    # PROMPT-lookalike in the command output can never reach the GUI as a
+    # prompt.  A token that cannot be generated fails closed: no prompts are
+    # ever forwarded.
+    pump_token="$(od -An -N8 -tx8 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+    if [[ -n "$pump_token" ]]; then
+        printf 'PUMP\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$pump_token"
+    fi
+
+    # A1-09: a dead runner must not SIGPIPE-kill the pump mid-write; with the
+    # signal ignored the fd 9 writes fail with EPIPE instead and are checked
+    # below.  The runner's exit code still comes from wait.
+    old_pipe_trap="$(trap -p PIPE 2>/dev/null || true)"
+    trap '' PIPE
+
     rm -f -- "$in_fifo" "$out_fifo"
-    mkfifo -- "$in_fifo" "$out_fifo" || return 2
+    if ! mkfifo -- "$in_fifo" "$out_fifo"; then
+        if [[ -n "$old_pipe_trap" ]]; then
+            eval "$old_pipe_trap"
+        else
+            trap - PIPE
+        fi
+        return 2
+    fi
 
     # Spawn the runner first: its redirections block until the matching FIFO
     # ends are opened below (writer for its stdin, reader for its stdout).
@@ -14283,131 +14573,186 @@ shell_run_interactive()
     exec 11>>"$SESSION_LOG"
     exec 12>>"$transcript"
 
-    begin=$(date +%s)
+    begin=$(shell_now_epoch)
     rc=124
     quiet_ticks=0
     tail_buf=""
     newline_done=1
+    redact_active=0
+    redact_pos=0
+    echo_expected=""
+    suppress_until_nl=0
     SHELL_FILTER_ESC=0
     SHELL_FILTER_CR_PENDING=0
     SHELL_FILTER_LINE_HAS_CONTENT=0
     SHELL_FILTER_PENDING_WS=""
+    SHELL_FILTER_SEQ_BYTES=0
     while :; do
-        if ! kill -0 "$runner_pid" 2>/dev/null; then
-            # The runner is gone: drain whatever it already wrote to the
-            # output FIFO (the blocking read ends at EOF) so the transcript
-            # never loses the command's final bytes.
-            while IFS= read -r -n 1 -u 8 ch; do
-                if [[ -z "$ch" ]]; then
-                    ch=$'\n'
-                fi
-                shell_filter_byte "$ch"
-                clean="$SHELL_FILTER_OUT"
-                if [[ -n "$clean" ]]; then
-                    shell_pump_cleaned_byte "$clean"
-                fi
-            done
-            # An unterminated final line (a prompt) was not ended by CR: flush
-            # its deferred trailing whitespace so no byte is lost.
-            shell_filter_flush_pending
-            clean="$SHELL_FILTER_OUT"
-            if [[ -n "$clean" ]]; then
-                shell_pump_cleaned_byte "$clean"
-            fi
-            rc=1
-            break
-        fi
-        if IFS= read -r -n 1 -t 1 -u 8 ch; then
-            # read -n 1 delivers the newline byte as an empty string.
-            if [[ -z "$ch" ]]; then
-                ch=$'\n'
-            fi
-            # The transcript filter drops ANSI/control sequences and
-            # normalizes CR/CRLF; the cleaned byte is what reaches the wire,
-            # the logs, the prompt buffer and the GUI popup.
-            shell_filter_byte "$ch"
-            clean="$SHELL_FILTER_OUT"
-            if [[ -n "$clean" ]]; then
-                shell_pump_cleaned_byte "$clean"
-            fi
-            quiet_ticks=0
-            continue
-        fi
-        # One quiet tick: no byte arrived for a second while the command lives.
-        now=$(date +%s)
-        if [[ -n "$tail_buf" ]]; then
-            quiet_ticks=$((quiet_ticks + 1))
-        fi
-        if (( quiet_ticks >= SHELL_PROMPT_QUIET_TICKS )); then
-            # Alive, quiet and it has printed something: hand the trailing
-            # output to the GUI.  Flush the filter's deferred trailing
-            # whitespace first so an unterminated prompt line keeps every
-            # byte (including a trailing space) in the PROMPT payload, then
-            # close the current output line so the PROMPT record starts on a
-            # fresh line for the broker's reader.
-            shell_filter_flush_pending
-            clean="$SHELL_FILTER_OUT"
-            if [[ -n "$clean" ]]; then
-                shell_pump_cleaned_byte "$clean"
-            fi
-            if (( newline_done == 0 )); then
-                printf '\n'
-                printf '\n' >&11
-                printf '\n' >&12
-                newline_done=1
-            fi
-            bytes="$tail_buf"
-            if (( ${#bytes} > SHELL_PROMPT_TRAILING_BYTES )); then
-                bytes="$(printf '%s' "$bytes" | tail -c "$SHELL_PROMPT_TRAILING_BYTES")"
-            fi
-            encoded="$(printf '%s' "$bytes" | base64 | tr -d '\n')"
-            printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
-            paused_at=$now
-            tag=""
-            id=""
-            encoded=""
-            wait_rc=1
-            if IFS=$'\t' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded; then
-                wait_rc=0
-            fi
-            answer=""
-            if (( wait_rc == 0 )) \
-                && [[ "$tag" == "ANSWER" && "$id" == "${BOOT_REPAIR_SESSION_REQUEST:-0}" ]]; then
-                answer="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
-            else
-                wait_rc=2
-            fi
-            if (( wait_rc != 0 )); then
-                printf '%s\n' "Boot Bitch: the interactive prompt was cancelled or no answer arrived in time, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
-                rc=125
-                break
-            fi
-            if [[ -z "$answer" ]]; then
-                printf '%s\n' "Boot Bitch: the interactive prompt was cancelled, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
-                rc=125
-                break
-            fi
-            # Resume: hand the answer to the command and unpause the deadline.
-            now=$(date +%s)
-            begin=$((begin + now - paused_at))
-            printf '%s\n' "$answer" >&9
-            tail_buf=""
-            quiet_ticks=0
-            newline_done=1
-            continue
-        fi
+        # A5-01: the deadline is checked at the TOP of every iteration so a
+        # continuous-output command cannot overrun its budget; the prompt
+        # pause keeps shifting `begin` while an answer is pending.
+        now="$(shell_now_epoch)"
         if (( now - begin >= deadline )); then
             rc=124
             break
         fi
+        if ! kill -0 "$runner_pid" 2>/dev/null; then
+            # The runner is gone: close its input and drain the final bytes
+            # with a bounded read; the drain never blocks unboundedly (A5-03).
+            exec 9>&- || true
+            shell_pump_drain_dead
+            rc=1
+            break
+        fi
+        if IFS= read -r -n 1 -t 1 -u 8 ch; then
+            read_rc=0
+        else
+            read_rc=$?
+        fi
+        if (( read_rc == 0 )); then
+            # read -n 1 delivers the newline byte as an empty string.  The
+            # answer-echo redaction (A5-05) and the transcript filter run
+            # before any byte reaches the wire, the logs or the prompt
+            # buffer.
+            if [[ -z "$ch" ]]; then
+                ch=$'\n'
+            fi
+            shell_pump_input_byte "$ch"
+            quiet_ticks=0
+            continue
+        fi
+        if (( read_rc > 128 )); then
+            # One quiet tick: no byte arrived for a second while the command
+            # lives (read -t reports a timeout with a status above 128).
+            now="$(shell_now_epoch)"
+            if [[ -n "$tail_buf" ]]; then
+                quiet_ticks=$((quiet_ticks + 1))
+            fi
+            if (( quiet_ticks >= SHELL_PROMPT_QUIET_TICKS )); then
+                # Alive, quiet and it has printed something: hand the
+                # trailing output to the GUI.  Flush the filter's deferred
+                # trailing whitespace first so an unterminated prompt line
+                # keeps every byte (including a trailing space) in the
+                # PROMPT payload, then close the current output line so the
+                # PROMPT record starts on a fresh line for the broker's
+                # reader.
+                shell_filter_flush_pending
+                clean="$SHELL_FILTER_OUT"
+                if [[ -n "$clean" ]]; then
+                    shell_pump_cleaned_byte "$clean"
+                fi
+                if (( newline_done == 0 )); then
+                    printf '\n'
+                    printf '\n' >&11
+                    printf '\n' >&12
+                    newline_done=1
+                fi
+                bytes="$tail_buf"
+                if (( ${#bytes} > SHELL_PROMPT_TRAILING_BYTES )); then
+                    bytes="$(printf '%s' "$bytes" | tail -c "$SHELL_PROMPT_TRAILING_BYTES")"
+                fi
+                encoded="$(printf '%s' "$bytes" | base64 | tr -d '\n')"
+                # A1-05: the prompt carries the pump token; the broker only
+                # re-emits token-matching prompts to the GUI.
+                printf 'PROMPT\t%s\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$pump_token" "$encoded"
+                paused_at=$now
+                tag=""
+                id=""
+                encoded=""
+                wait_rc=1
+                if IFS=$'\t' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded; then
+                    wait_rc=0
+                fi
+                answer=""
+                if (( wait_rc == 0 )) \
+                    && [[ "$tag" == "ANSWER" && "$id" == "${BOOT_REPAIR_SESSION_REQUEST:-0}" ]]; then
+                    answer="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
+                else
+                    wait_rc=2
+                fi
+                # A5-09: the runner may have died while the popup waited.
+                # Never report a 125-cancel then: take the death path (the
+                # real exit code) instead.
+                if (( wait_rc != 0 )) \
+                    && ( ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie ); then
+                    exec 9>&- || true
+                    shell_pump_drain_dead
+                    rc=1
+                    break
+                fi
+                if (( wait_rc != 0 )); then
+                    printf '%s\n' "Boot Bitch: the interactive prompt was cancelled or no answer arrived in time, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                    rc=125
+                    break
+                fi
+                if [[ -z "$answer" ]]; then
+                    if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then
+                        exec 9>&- || true
+                        shell_pump_drain_dead
+                        rc=1
+                        break
+                    fi
+                    printf '%s\n' "Boot Bitch: the interactive prompt was cancelled, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                    rc=125
+                    break
+                fi
+                # A5-09: before writing the ANSWER re-check that the runner is
+                # still there; a dead runner gets the death path instead of
+                # the cancel/continue paths.
+                if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then
+                    exec 9>&- || true
+                    shell_pump_drain_dead
+                    rc=1
+                    break
+                fi
+                # Resume: hand the answer to the command and unpause the deadline.
+                now="$(shell_now_epoch)"
+                begin=$((begin + now - paused_at))
+                # A5-05: redact the terminal's echo of the answer so the
+                # answer never reaches the wire, the session log, the
+                # transcript or the prompt buffer.
+                shell_expected_echo "$answer"
+                echo_expected="$SHELL_ECHO_EXPECTED"
+                redact_active=1
+                redact_pos=0
+                suppress_until_nl=0
+                printf '%s\n' "$answer" >&9 2>/dev/null || true
+                tail_buf=""
+                quiet_ticks=0
+                newline_done=1
+                continue
+            fi
+            continue
+        fi
+        # A5-09 EOF: the runner's output stream ended while the runner was
+        # still reachable.  Treat the runner as dead: never emit a PROMPT,
+        # close its input and drain what is left.  A runner that closed its
+        # output but keeps running gets a bounded grace and then KILL; a
+        # zombie (an already-exited runner) is skipped so the normal exit
+        # path stays fast.
+        exec 9>&- || true
+        shell_pump_drain_dead
+        if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
+            grace=0
+            while (( grace < 10 )); do
+                kill -0 "$runner_pid" 2>/dev/null || break
+                sleep 1
+                grace=$((grace + 1))
+            done
+            if kill -0 "$runner_pid" 2>/dev/null; then
+                kill -KILL "$runner_pid" 2>/dev/null || true
+            fi
+        fi
+        rc=1
+        break
     done
 
     if (( rc == 124 || rc == 125 )); then
         # Fail closed: interrupt the command on its input, close the input,
         # then terminate the runner with a bounded grace period.
         printf '\003' >&9 2>/dev/null || true
-        exec 9>&-
-        if kill -0 "$runner_pid" 2>/dev/null; then
+        exec 9>&- || true
+        if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
             kill "$runner_pid" 2>/dev/null || true
             grace=0
             while (( grace < 10 )); do
@@ -14423,6 +14768,11 @@ shell_run_interactive()
     else
         wait "$runner_pid" 2>/dev/null
         rc=$?
+    fi
+    if [[ -n "$old_pipe_trap" ]]; then
+        eval "$old_pipe_trap"
+    else
+        trap - PIPE
     fi
     exec 8<&-
     exec 9>&-
@@ -14443,16 +14793,15 @@ shell_run_interactive()
 APT_SHELL_UPGRADE_COMMAND_REGEX='^[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?apt(-get)?([[:space:]]+-[^[:space:]]+)*[[:space:]]+upgrade([[:space:]]+-[^[:space:]]+)*[[:space:]]*$'
 APT_SHELL_UPGRADE_POLICY_REGEX="upgrade.*(disabled|not supported)|use .*(full-upgrade|dist-upgrade)|full-upgrade.*dist-upgrade|dist-upgrade.*full-upgrade"
 
-# Echo the same command with its plain 'upgrade' subcommand replaced by
-# 'full-upgrade', or return 1 when the command is not a confidently recognized
-# single-line apt/apt-get upgrade.
 # Evidence-based apt-intent translation: when the reviewed command is
 # exactly `apt <action>` with a supported action and the detected backend is
-# Debian-family (or unknown — the evidence decides), probe whether this apt
-# actually supports the action via its own --help exit status (read-only
-# evidence). When it does not, translate apt -> apt-get and full-upgrade ->
-# dist-upgrade with the machine-readable log line. Anything else runs
-# verbatim.
+# Debian-family (or unknown — the evidence decides), probe whether the apt
+# that will actually run the command supports the action via its own --help
+# exit status (read-only evidence).  An offline target is probed through its
+# own apt inside the chroot (A5-08); the running-host shell probes the host
+# apt.  When the apt rejects the action, translate apt -> apt-get and
+# full-upgrade -> dist-upgrade with the machine-readable log line.  Anything
+# else runs verbatim.
 apt_intent_translate()
 {
     local command="$1" first rest sub args
@@ -14470,7 +14819,14 @@ apt_intent_translate()
         ""|apt|apt-get|dpkg|debian*) : ;;
         *) { printf '%s\n' "$command"; return 0; } ;;
     esac
-    if command -v apt >/dev/null 2>&1 && apt "$sub" --help >/dev/null 2>&1; then
+    # Probe the apt that will run the command: the target's own apt inside
+    # the chroot for offline targets, the host apt otherwise.
+    if (( RUNNING_HOST_MODE != 1 )) && [[ -n "$TARGET_ROOT" && -x "$TARGET_ROOT/usr/bin/apt" ]]; then
+        if chroot "$TARGET_ROOT" apt "$sub" --help >/dev/null 2>&1; then
+            printf '%s\n' "$command"
+            return 0
+        fi
+    elif command -v apt >/dev/null 2>&1 && apt "$sub" --help >/dev/null 2>&1; then
         printf '%s\n' "$command"
         return 0
     fi
@@ -14483,12 +14839,25 @@ apt_intent_translate()
     fi
 }
 
+# Echo the same command with its plain 'upgrade' subcommand replaced by the
+# binary-appropriate equivalent -- 'apt' demands full-upgrade, 'apt-get'
+# demands dist-upgrade -- or return 1 when the command is not a confidently
+# recognized single-line apt/apt-get upgrade.  Anything else (dnf, pacman,
+# apk, a path-prefixed binary) is refused so no other command is ever
+# rewritten by the retry path.
 apt_shell_full_upgrade_command()
 {
-    local command="${1:-}"
+    local command="${1:-}" replacement=""
     [[ -n "$command" && "$command" != *$'\n'* ]] || return 1
     grep -Eq "$APT_SHELL_UPGRADE_COMMAND_REGEX" <<<"$command" || return 1
-    sed -E 's/(^|[[:space:]])upgrade([[:space:]]|$)/\1full-upgrade\2/' <<<"$command"
+    if grep -Eq '^[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?apt([[:space:]]|$)' <<<"$command"; then
+        replacement="full-upgrade"
+    elif grep -Eq '^[[:space:]]*(sudo[[:space:]]+)?([^[:space:]]*/)?apt-get([[:space:]]|$)' <<<"$command"; then
+        replacement="dist-upgrade"
+    else
+        return 1
+    fi
+    sed -E "s/(^|[[:space:]])upgrade([[:space:]]|$)/\1${replacement}\2/" <<<"$command"
 }
 
 # Return 0 when a failed run's transcript carries the distribution's policy
@@ -14533,7 +14902,13 @@ chroot_shell_guard_snapper()
         printf '%s\n' '# Temporary Boot Bitch guard: apt must never snapshot this target from a chroot shell.'
         printf '%s\n' 'DISABLE_APT_SNAPSHOT="yes"'
     } > "$stub"
-    mount --bind "$stub" "$target_file" || return 0
+    if ! mount --bind "$stub" "$target_file"; then
+        # The guard is defence-in-depth, not a transaction requirement: a
+        # failed bind must never abort the reviewed command, but the session
+        # log keeps the evidence that the snapshot kill-switch is not in place.
+        log "WARNING: could not bind the read-only snapper guard over $target_file; the chroot shell continues without the snapshot kill-switch." | tee -a "$SESSION_LOG"
+        return 0
+    fi
     mount -o remount,bind,ro "$target_file" 2>/dev/null || true
     MOUNTS+=("$target_file")
     log "Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)" | tee -a "$SESSION_LOG"
@@ -14618,7 +14993,7 @@ run_chroot_shell()
         if [[ -z "$retry_command" ]] || ! apt_shell_upgrade_policy_refused "$transcript"; then
             break
         fi
-        log "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" | tee -a "$SESSION_LOG"
+        log "apt upgrade is disabled by this distribution; running '$retry_command' instead" | tee -a "$SESSION_LOG"
         log "Command: $retry_command" | tee -a "$SESSION_LOG"
         run_command="$retry_command"
         retried=1
@@ -14629,11 +15004,24 @@ run_chroot_shell()
         printf '%s\n' "Boot Bitch: the command asked an interactive question, which the Chroot Shell cannot answer (stdin is /dev/null). Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'." | tee -a "$SESSION_LOG"
     fi
     if (( rc == 125 )); then
-        fail "Chroot shell command was cancelled at an interactive prompt."
+        # A5-11: the cancel/timeout verdicts exit with their own codes so the
+        # broker's DONE record (and the GUI) can tell 124/125 apart from a
+        # generic failure instead of collapsing everything to 1.
+        if [[ -n "$CURRENT_STAGE" ]]; then
+            log "ERROR: stage '$CURRENT_STAGE' failed: Chroot shell command was cancelled at an interactive prompt." >&2
+        else
+            log "ERROR: Chroot shell command was cancelled at an interactive prompt." >&2
+        fi
+        exit 125
     fi
     if (( rc == 124 || rc == 137 )); then
         printf '%s\n' "Boot Bitch: the command was aborted after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds. If it was waiting for input, re-run it with the non-interactive flag (for example 'dnf update -y')." | tee -a "$SESSION_LOG"
-        fail "Chroot shell command timed out after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds."
+        if [[ -n "$CURRENT_STAGE" ]]; then
+            log "ERROR: stage '$CURRENT_STAGE' failed: Chroot shell command timed out after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds." >&2
+        else
+            log "ERROR: Chroot shell command timed out after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds." >&2
+        fi
+        exit 124
     fi
     (( rc == 0 )) || fail "Chroot shell command failed (exit code $rc)."
 }
@@ -14712,7 +15100,7 @@ run_host_shell()
         if [[ -z "$retry_command" ]] || ! apt_shell_upgrade_policy_refused "$transcript"; then
             break
         fi
-        log "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" | tee -a "$SESSION_LOG"
+        log "apt upgrade is disabled by this distribution; running '$retry_command' instead" | tee -a "$SESSION_LOG"
         log "Command: $retry_command" | tee -a "$SESSION_LOG"
         run_command="$retry_command"
         retried=1
@@ -16815,6 +17203,10 @@ run_tuxedo_uki_builder()
     local session_tag="${SESSION_DIR##*/}" guard_parent guard_dir wrapper real_efibootmgr="" rc
     local target_real parent_real
 
+    # The vendor script is the first writer, so re-prove the selected target
+    # is not the running host immediately before it runs.
+    reassert_target_write_safety
+
     # The vendor script is the first writer and never mounts/remounts the ESP,
     # so re-probe the effective mount and refuse before any write if a
     # read-only or foreign layer appeared since the earlier preflight.
@@ -17377,6 +17769,11 @@ reinstall_efi_bootloader()
     local nvram_mode efi_dir
     local nvram_pre="" nvram_map="" efi_before=""
     local -a install_args
+
+    # Apply stage: re-prove the selected target is not the running host
+    # immediately before any bootloader write (UKI rebuild, GRUB EFI install
+    # or the Alpine path below).
+    reassert_target_write_safety
 
     # Alpine uses its own guarded path: grub-install --no-nvram plus an ESP
     # file backup/rollback and the shared firmware reconciler, or the
@@ -18664,6 +19061,106 @@ session_protocol_error()
     printf 'DONE\t%s\t2\n' "$request_id"
 }
 
+# A1-06: read one protocol line (through its terminating newline) with a hard
+# byte bound in $1; the result is left in REPLY without the trailing newline.
+# Return codes:
+#   0  complete line within the bound (or an unterminated final line at EOF)
+#   1  clean EOF with nothing read
+#   2  the line exceeds the bound (the whole line has been consumed)
+# read -n stops at the line delimiter, so the bound applies per line; LC_ALL=C
+# makes read count bytes, not locale characters.
+session_read_bounded()
+{
+    local max="$1" extra="" chunk
+    REPLY=""
+    if ! LC_ALL=C IFS= read -r -n "$max" REPLY; then
+        # EOF before max bytes: clean EOF, or an unterminated final line.
+        [[ -n "$REPLY" ]] || return 1
+        REPLY="${REPLY%$'\n'}"
+        return 0
+    fi
+    if (( ${#REPLY} < max )); then
+        # read stopped on the line's newline (the delimiter is consumed):
+        # a complete line within the bound.
+        return 0
+    fi
+    # Exactly max bytes were read, so the line may continue: probe one more
+    # byte (NUL delimiter keeps the newline visible as data).
+    if ! LC_ALL=C IFS= read -r -n 1 -d '' extra; then
+        # EOF exactly at the boundary: complete (unterminated) line.
+        return 0
+    fi
+    if [[ "$extra" == $'\n' ]]; then
+        return 0
+    fi
+    # The line continues beyond the cap: consume the remainder in bounded
+    # chunks and report the overrun.  A chunk shorter than the chunk size
+    # means read stopped on the line's newline (the delimiter is consumed),
+    # so the remainder of the overlong line is gone and the stream is
+    # aligned at the next record.
+    while LC_ALL=C IFS= read -r -n 65536 chunk; do
+        if (( ${#chunk} < 65536 )); then
+            break
+        fi
+    done
+    REPLY=""
+    return 2
+}
+
+# A1-06: after an overrun inside a request, consume input up to (and
+# including) the request's END record with a bounded line counter, so one
+# hostile request can never wedge the broker in a skip loop.
+session_skip_to_end()
+{
+    local request_id="$1" line="" n=0
+    while (( n < 512 )); do
+        if ! session_read_bounded 512; then
+            # The overrun/EOF path already consumed the line; keep counting.
+            n=$((n + 1))
+            continue
+        fi
+        line="$REPLY"
+        n=$((n + 1))
+        if [[ "$line" == "END"$'\t'"$request_id" ]]; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# A1-05: forward one request's child stdout lines to the GUI protocol.  The
+# first PUMP\t<id>\t<token> line registers the pump token for the request (it
+# is consumed, never forwarded); only PROMPT records carrying that token are
+# re-emitted as the 3-field PROMPT\t<id>\t<base64> the GUI expects.  Every
+# other line -- including a forged PROMPT-lookalike -- goes out as an OUT
+# record.  No registration (the non-interactive fallback) means no prompt is
+# ever forwarded.  A5-10: OUT payloads are sanitized (ESC/BEL stripped, one
+# trailing CR dropped) so control bytes never reach the wire.
+session_forward_request()
+{
+    local request_id="$1" line="" pump_token="" prompt_payload=""
+    while IFS= read -r line || [[ -n "$line" ]]; do
+        if [[ -z "$pump_token" && "$line" == "PUMP"$'\t'"$request_id"$'\t'?* ]]; then
+            pump_token="${line#*$'\t'}"
+            pump_token="${pump_token#*$'\t'}"
+            continue
+        fi
+        if [[ -n "$pump_token" && "$line" == "PROMPT"$'\t'"$request_id"$'\t'"$pump_token"$'\t'* ]]; then
+            prompt_payload="${line#"PROMPT"$'\t'"$request_id"$'\t'"$pump_token"$'\t'}"
+            # A well-formed prompt payload is one tab-free base64 field; an
+            # extra field makes the record malformed and it goes out as OUT.
+            if [[ "$prompt_payload" != *$'\t'* ]]; then
+                printf 'PROMPT\t%s\t%s\n' "$request_id" "$prompt_payload"
+                continue
+            fi
+        fi
+        line="${line//$'\x1b'/}"
+        line="${line//$'\a'/}"
+        line="${line%$'\r'}"
+        printf 'OUT\t%s\t%s\n' "$request_id" "$line"
+    done
+}
+
 # Long-lived pkexec broker: snapshot this helper into the root-owned state
 # directory, then read tab-separated BEGIN/ARG/SECRET/END requests and run each
 # whitelisted command through the authenticated copy, streaming OUT lines and
@@ -18672,6 +19169,7 @@ session_server()
 {
     local tag request_id argc has_secret i field_tag field_id encoded decoded end_tag end_id
     local command rc secret_b64 secret pre_mapper post_mapper unlock_device mapper_name
+    local line="" decoded_total=0 read_st=0
     local -a fields op_args
 
     need base64
@@ -18679,6 +19177,10 @@ session_server()
     need cp
     need chmod
     need bash
+
+    # A1-09: ignore SIGPIPE so a dying GUI reader (or a dead runner below)
+    # cannot kill the broker mid-record; the exit codes come from the runner.
+    trap '' PIPE
 
     # Do not repeatedly execute the user-writable source-tree helper after one
     # authorization. Snapshot the authenticated helper into a root-owned,
@@ -18697,7 +19199,26 @@ session_server()
 
     printf 'SESSION_READY\t1\n'
 
-    while IFS=$'\t' read -r tag request_id argc has_secret; do
+    # A1-06: every protocol line is read through the bounded reader (header
+    # <= 512 bytes, ARG/SECRET <= 262144 encoded bytes, END <= 512 bytes,
+    # decoded payloads capped at 4 MiB per request).  An overrun consumes the
+    # offending line, reports SESSION_ERROR + DONE 2 and skips to the
+    # request's END with a bounded counter.
+    while :; do
+        if session_read_bounded 512; then
+            read_st=0
+        else
+            read_st=$?
+        fi
+        if (( read_st == 1 )); then
+            break                       # clean EOF
+        fi
+        if (( read_st == 2 )); then
+            session_protocol_error 0 "Privileged-session line exceeds the protocol bound."
+            continue
+        fi
+        line="$REPLY"
+        IFS=$'\t' read -r tag request_id argc has_secret <<<"$line"
         [[ -n "$tag" ]] || continue
         if [[ "$tag" == "QUIT" ]]; then
             return 0
@@ -18708,15 +19229,29 @@ session_server()
         fi
         if (( argc < 1 || argc > 4096 )); then
             session_protocol_error "$request_id" "Privileged-session request has an invalid field count."
+            session_skip_to_end "$request_id" || return 1
             continue
         fi
 
         fields=()
+        decoded_total=0
         for ((i=0; i<argc; ++i)); do
-            if ! IFS=$'\t' read -r field_tag field_id encoded; then
+            if session_read_bounded 262144; then
+                read_st=0
+            else
+                read_st=$?
+            fi
+            if (( read_st == 1 )); then
                 session_protocol_error "$request_id" "Unexpected end of privileged-session request."
                 return 1
             fi
+            if (( read_st == 2 )); then
+                session_protocol_error "$request_id" "Privileged-session argument record exceeds the protocol bound."
+                session_skip_to_end "$request_id" || return 1
+                continue 2
+            fi
+            line="$REPLY"
+            IFS=$'\t' read -r field_tag field_id encoded <<<"$line"
             if [[ "$field_tag" != "ARG" || "$field_id" != "$request_id" ]]; then
                 session_protocol_error "$request_id" "Malformed privileged-session argument record."
                 return 1
@@ -18725,16 +19260,35 @@ session_server()
                 session_protocol_error "$request_id" "Unable to decode a privileged-session argument."
                 return 1
             fi
+            decoded_total=$((decoded_total + ${#decoded}))
+            if (( decoded_total > 4194304 )); then
+                session_protocol_error "$request_id" "Privileged-session request exceeds the decoded payload bound."
+                decoded=""
+                session_skip_to_end "$request_id" || return 1
+                continue 2
+            fi
             fields+=("$decoded")
         done
 
         secret_b64=""
         secret=""
         if [[ "$has_secret" == "1" ]]; then
-            if ! IFS=$'\t' read -r field_tag field_id secret_b64; then
+            if session_read_bounded 262144; then
+                read_st=0
+            else
+                read_st=$?
+            fi
+            if (( read_st == 1 )); then
                 session_protocol_error "$request_id" "Missing privileged-session secret record."
                 return 1
             fi
+            if (( read_st == 2 )); then
+                session_protocol_error "$request_id" "Privileged-session secret record exceeds the protocol bound."
+                session_skip_to_end "$request_id" || return 1
+                continue
+            fi
+            line="$REPLY"
+            IFS=$'\t' read -r field_tag field_id secret_b64 <<<"$line"
             if [[ "$field_tag" != "SECRET" || "$field_id" != "$request_id" ]]; then
                 session_protocol_error "$request_id" "Malformed privileged-session secret record."
                 return 1
@@ -18743,13 +19297,32 @@ session_server()
                 session_protocol_error "$request_id" "Unable to decode privileged-session secret."
                 return 1
             fi
+            decoded_total=$((decoded_total + ${#secret}))
+            if (( decoded_total > 4194304 )); then
+                session_protocol_error "$request_id" "Privileged-session request exceeds the decoded payload bound."
+                secret=""
+                session_skip_to_end "$request_id" || return 1
+                continue
+            fi
             secret_b64=""
         fi
 
-        if ! IFS=$'\t' read -r end_tag end_id; then
+        if session_read_bounded 512; then
+            read_st=0
+        else
+            read_st=$?
+        fi
+        if (( read_st == 1 )); then
             session_protocol_error "$request_id" "Missing privileged-session end record."
             return 1
         fi
+        if (( read_st == 2 )); then
+            session_protocol_error "$request_id" "Privileged-session end record exceeds the protocol bound."
+            session_skip_to_end "$request_id" || return 1
+            continue
+        fi
+        line="$REPLY"
+        IFS=$'\t' read -r end_tag end_id <<<"$line"
         if [[ "$end_tag" != "END" || "$end_id" != "$request_id" ]]; then
             session_protocol_error "$request_id" "Malformed privileged-session end record."
             return 1
@@ -18757,6 +19330,13 @@ session_server()
 
         command="${fields[0]}"
         op_args=("${fields[@]:1}")
+        # A1-07: a secret is only ever accepted for the unlock verb; any other
+        # request that presents one is refused before dispatch.
+        if [[ "$has_secret" == "1" && "$command" != "unlock" ]]; then
+            secret=""
+            session_protocol_error "$request_id" "A privileged-session secret is only permitted for the unlock command."
+            continue
+        fi
         case "$command" in
             unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair) ;;
             host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot) ;;
@@ -18779,24 +19359,12 @@ session_server()
             printf '%s' "$secret" |
                 BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
                 bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]}" 2>&1 |
-                while IFS= read -r line || [[ -n "$line" ]]; do
-                    if [[ "$line" == PROMPT$'\t'"$request_id"$'\t'* ]]; then
-                        printf '%s\n' "$line"
-                    else
-                        printf 'OUT\t%s\t%s\n' "$request_id" "$line"
-                    fi
-                done
+                session_forward_request "$request_id"
             rc=${PIPESTATUS[1]}
         else
             BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
                 bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]}" 2>&1 |
-                while IFS= read -r line || [[ -n "$line" ]]; do
-                    if [[ "$line" == PROMPT$'\t'"$request_id"$'\t'* ]]; then
-                        printf '%s\n' "$line"
-                    else
-                        printf 'OUT\t%s\t%s\n' "$request_id" "$line"
-                    fi
-                done
+                session_forward_request "$request_id"
             rc=${PIPESTATUS[0]}
         fi
         set -e

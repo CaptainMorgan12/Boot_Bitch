@@ -378,6 +378,41 @@ cmp "$fake_root/var/lib/pacman/local/example-1/desc" "$TARGET_ROOT$ARCH_PACMAN_D
 [[ -s "$fake_root/var/lib/pacman/sync/core.db" ]]
 grep -q '"Arch pacman full transaction preflight" -Syyuw --noconfirm' "$HELPER"
 
+# A2-04/A4-07: cleanup() removes TEMP_TARGET_PATHS entries with rm -rf, so the
+# recorded pacman sandbox path must be the host-joined target path — never the
+# chroot-relative /tmp/... spelling that would rm -rf the recovery host's own
+# /tmp subtree.
+grep -Fqx "$TARGET_ROOT$ARCH_PACMAN_SANDBOX" <(printf '%s\n' "${TEMP_TARGET_PATHS[@]:-}") \
+    || { echo 'FAIL: the pacman sandbox cleanup path is not host-joined to the target root' >&2; printf '%s\n' "${TEMP_TARGET_PATHS[@]:-}" >&2; exit 1; }
+if grep -Fqx "$ARCH_PACMAN_SANDBOX" <(printf '%s\n' "${TEMP_TARGET_PATHS[@]:-}"); then
+    echo 'FAIL: the pacman sandbox recorded a host-absolute /tmp path for cleanup' >&2
+    exit 1
+fi
+
+# A target whose /tmp is a symlink must refuse the sandbox before any
+# rm/mkdir/cp can be redirected outside the selected root.
+pacman_tmp_link_root="$(mktemp -d)"
+trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$pacman_tmp_link_root"' EXIT
+mkdir -p "$pacman_tmp_link_root/usr/bin" "$pacman_tmp_link_root/var/lib/pacman" "$pacman_tmp_link_root/etc"
+: > "$pacman_tmp_link_root/usr/bin/pacman"; chmod +x "$pacman_tmp_link_root/usr/bin/pacman"
+: > "$pacman_tmp_link_root/etc/pacman.conf"
+mkdir -p "$pacman_tmp_link_root/host-tmp"
+ln -s "$pacman_tmp_link_root/host-tmp" "$pacman_tmp_link_root/tmp"
+if pacman_tmp_refusal="$( (
+    TARGET_ROOT="$pacman_tmp_link_root"
+    TARGET_DISTRO_FAMILY=arch
+    TARGET_PACKAGE_MANAGER=pacman
+    SESSION_DIR="$pacman_tmp_link_root/session.contract"
+    arch_pacman_prepare_sandbox
+) 2>&1 )"; then
+    echo 'FAIL: the pacman sandbox accepted a symlinked target /tmp' >&2
+    exit 1
+fi
+grep -Fq 'Refusing the Arch pacman sandbox: the target /tmp is a symlink.' <<<"$pacman_tmp_refusal" \
+    || { echo 'FAIL: the symlinked /tmp pacman refusal reason is missing' >&2; printf '%s\n' "$pacman_tmp_refusal" >&2; exit 1; }
+[[ ! -e "$pacman_tmp_link_root/host-tmp/boot-repair-pacman-session" ]] \
+    || { echo 'FAIL: the refused pacman sandbox wrote through the target /tmp symlink' >&2; exit 1; }
+
 grep -q '^diagnostic_repair_capabilities()' "$HELPER"
 grep -q 'diagnostic_repair_capabilities$' "$HELPER"
 grep -Fq "printf 'Repair tool %s: available\\n' \"\$key\"" "$HELPER"
@@ -1119,8 +1154,8 @@ fi
 (
     source <(sed '/^main "\$@"/d' "$HELPER")
     trap - EXIT INT TERM HUP
-    SESSION_LOG="$fake_root/apk-status.log"
-    SESSION_DIR="$fake_root/apk-status-session"
+    SESSION_LOG="$fake_root/change-status.log"
+    SESSION_DIR="$fake_root/change-status-session"
     mkdir -p "$SESSION_DIR"
     : > "$SESSION_LOG"
     TARGET_DISTRO_FAMILY=alpine
@@ -2281,6 +2316,9 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     SESSION_DIR="$fake_root/change-status-session"
     mkdir -p "$SESSION_DIR"
     : > "$SESSION_LOG"
+    # This harness asserts change-status emission, not device topology: the
+    # apply-stage write-safety reassert resolves through the stub identity gate.
+    assert_target_not_host() { :; }
 
     assert_single_change_status() {
         local output="$1" key="$2" expected="$3"
@@ -3806,6 +3844,9 @@ fedora_reinstall_stub_env()
     validate_mapper_crypttab() { :; }
     bios_firmware_mode() { return 0; }
     preflight_fedora_grub_reinstall() { :; }
+    # The write-safety reassert resolves through the harness's own topology
+    # stubs; the disk here is a fixture file, not a block device.
+    assert_target_not_host() { :; }
     run_chroot_try()
     {
         CHROOT_TRY_RC=1

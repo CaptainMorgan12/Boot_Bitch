@@ -256,6 +256,13 @@ grep -q 'browse_target_directory' "$OVERLAY" \
     || fail "legacy browse-target override missing from the overlay"
 grep -q 'BROWSE_ENTRY' "$OVERLAY" \
     || fail "legacy browse record format missing from the overlay"
+# A9-13: TAB is percent-encoded by the helper and decoded by the picker.
+grep -q 's/\\t/%09/g' "$OVERLAY" \
+    || fail "legacy browse encoder does not percent-encode TAB"
+grep -q 'legacyPercentDecode' "$WINDOW" \
+    || fail "browse-result decoder missing"
+grep -q '"%09"' "$WINDOW" \
+    || fail "browse-result decoder lost the %09 TAB decode"
 # Cycle 4b: the display tool is the legacy host-scope SysV stage (runnable
 # with the helper's display capability line; offline stays disabled).
 grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
