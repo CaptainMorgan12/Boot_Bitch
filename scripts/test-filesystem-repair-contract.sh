@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# This contract test sources the helper under test dynamically (with the
+# dispatch main stripped) in the behavioural parts, so ShellCheck cannot
+# follow the source.
+# shellcheck disable=SC1090
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -244,7 +248,11 @@ fi
 # device, mount or filesystem is ever touched.
 # ---------------------------------------------------------------------------
 sandbox="$(mktemp -d)"
-cleanup_sandbox() { rm -rf -- "$sandbox"; }
+fc_root=""
+cleanup_sandbox() {
+    rm -rf -- "$sandbox"
+    [[ -n "$fc_root" ]] && rm -rf -- "$fc_root"
+}
 trap cleanup_sandbox EXIT
 
 mkdir -p "$sandbox/mockbin" "$sandbox/target/etc" "$sandbox/target/boot/efi" "$sandbox/state"
@@ -2199,5 +2207,219 @@ unlock_target
 fi
 grep -Fq 'Mapper name: luks-11111111-2222-3333-4444-555555555555' <<<"$luks_ok" \
     || { echo 'FAIL: the canonical LUKS UUID did not compose the luks-<UUID> mapper name' >&2; printf '%s\n' "$luks_ok" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 17: A4-02 repair-to-host File Copy strips setuid/setgid and drops file
+# capabilities.  The transfer carries --chmod=u-s,g-s and the
+# security.capability xattr filter when the probed rsync supports them, the
+# post-copy scan fails closed on either bit class, and the verification masks
+# modes exactly like the copy so a stripped destination reports no phantom
+# diff.  Host-to-repair keeps -aHAX with an explicit log note.
+# ---------------------------------------------------------------------------
+grep -q '^rsync_supports_chmod()' "$HELPER" \
+    || { echo 'FAIL: the rsync --chmod support probe is missing' >&2; exit 1; }
+grep -q '^rsync_supports_xattr_filter()' "$HELPER" \
+    || { echo 'FAIL: the rsync xattr-filter support probe is missing' >&2; exit 1; }
+grep -q '^reassert_host_destination()' "$HELPER" \
+    || { echo 'FAIL: the repair-to-host destination reassert helper is missing' >&2; exit 1; }
+grep -q '^host_copy_security_scan()' "$HELPER" \
+    || { echo 'FAIL: the repair-to-host post-copy security scan is missing' >&2; exit 1; }
+file_copy_block="$(sed -n '/^run_file_copy()/,/^}/p' "$HELPER")"
+rsync_block="$(sed -n '/^run_rsync_item()/,/^}/p' "$HELPER")"
+verify_block="$(sed -n '/^verify_rsync_item()/,/^}/p' "$HELPER")"
+scan_block="$(sed -n '/^host_copy_security_scan()/,/^}/p' "$HELPER")"
+grep -Fq -- '--chmod=u-s,g-s' <<<"$rsync_block" \
+    || { echo 'FAIL: repair-to-host rsync does not strip setuid/setgid with --chmod' >&2; exit 1; }
+grep -Fq -- "-f '-x security.capability'" <<<"$rsync_block" \
+    || { echo 'FAIL: repair-to-host rsync does not drop security.capability with an xattr filter' >&2; exit 1; }
+grep -Fq -- '--chmod=u-s,g-s' <<<"$verify_block" \
+    || { echo 'FAIL: the post-copy verification does not mask setuid/setgid modes' >&2; exit 1; }
+grep -Fq -- "-f '-x security.capability'" <<<"$verify_block" \
+    || { echo 'FAIL: the post-copy verification does not filter security.capability' >&2; exit 1; }
+grep -Fq -- '-perm /6000' <<<"$scan_block" \
+    || { echo 'FAIL: the post-copy scan does not use find -perm /6000' >&2; exit 1; }
+grep -Fq -- 'getfattr -R -m security.capability' <<<"$scan_block" \
+    || { echo 'FAIL: the post-copy scan does not check security.capability with getfattr' >&2; exit 1; }
+grep -Fq -- 'getcap -r' <<<"$scan_block" \
+    || { echo 'FAIL: the post-copy scan lacks the getcap fallback' >&2; exit 1; }
+grep -Fq 'cannot verify that file capabilities were removed' <<<"$scan_block" \
+    || { echo 'FAIL: the scan does not fail with a clear message when xattr tooling and the rsync filter are both unavailable' >&2; exit 1; }
+grep -Fq 'run_rsync_item "$mode" "$source" "$destination" "$chown_value" "$strip_setid"' <<<"$file_copy_block" \
+    || { echo 'FAIL: the strip flag is not plumbed into the File Copy rsync' >&2; exit 1; }
+grep -Fq 'verify_rsync_item "$source" "$destination" "$chown_value" "$strip_setid"' <<<"$file_copy_block" \
+    || { echo 'FAIL: the strip flag is not plumbed into the File Copy verification' >&2; exit 1; }
+grep -Fq 'host_copy_security_scan "$destination/$(basename -- "$source")"' <<<"$file_copy_block" \
+    || { echo 'FAIL: the post-copy security scan is not wired into File Copy' >&2; exit 1; }
+grep -Fq 'setuid/setgid bits and file capabilities are removed on repair-to-host copies' <<<"$file_copy_block" \
+    || { echo 'FAIL: the File Copy preview/summary text does not state that repair-to-host removes setuid/setgid/capabilities' >&2; exit 1; }
+grep -Fq 'host-to-repair copies keep -aHAX' <<<"$file_copy_block" \
+    || { echo 'FAIL: the host-to-repair trusted -aHAX note is missing' >&2; exit 1; }
+
+# Behavioural, non-root: a 4755 source file must arrive as 0755, the masked
+# verification must report no difference, and the post-copy scan must accept
+# the stripped tree and refuse a setuid-bearing one.  Uses the real host
+# rsync, so the probe functions must agree it supports both options.
+fc_root="$(mktemp -d)"
+mkdir -p "$fc_root/src" "$fc_root/dst"
+printf 'binary\n' > "$fc_root/src/tool"
+chmod 4755 "$fc_root/src/tool"
+printf 'plain\n' > "$fc_root/src/doc"
+chmod 0644 "$fc_root/src/doc"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$fc_root/session"
+    mkdir -p "$SESSION_DIR"
+    SESSION_LOG="$fc_root/session.log"
+    : > "$SESSION_LOG"
+    rsync_supports_chmod || exit 91
+    rsync_supports_xattr_filter || exit 92
+    run_rsync_item copy "$fc_root/src/tool" "$fc_root/dst" "" yes
+    run_rsync_item copy "$fc_root/src/doc" "$fc_root/dst" "" yes
+    verify_rsync_item "$fc_root/src/tool" "$fc_root/dst" "" yes
+    verify_rsync_item "$fc_root/src/doc" "$fc_root/dst" "" yes
+    host_copy_security_scan "$fc_root/dst/tool"
+    host_copy_security_scan "$fc_root/dst/doc"
+) > "$fc_root/copy.log" 2>&1
+fc_rc=$?
+if (( fc_rc != 0 )); then
+    echo "FAIL: repair-to-host strip/verify/scan path failed (rc $fc_rc)" >&2
+    cat "$fc_root/copy.log" >&2
+    exit 1
+fi
+[[ "$(stat -c '%a' -- "$fc_root/dst/tool")" == 755 ]] \
+    || { echo "FAIL: a 4755 source arrived as $(stat -c '%a' -- "$fc_root/dst/tool"), setuid/setgid was not stripped" >&2; exit 1; }
+[[ "$(stat -c '%a' -- "$fc_root/dst/doc")" == 644 ]] \
+    || { echo 'FAIL: the plain-file mode was not preserved' >&2; exit 1; }
+mkdir -p "$fc_root/bad"
+printf 'x\n' > "$fc_root/bad/tool"
+chmod 4755 "$fc_root/bad/tool"
+set +e
+scan_fail_out="$(
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$fc_root/session"
+        SESSION_LOG="$fc_root/session.log"
+        host_copy_security_scan "$fc_root/bad"
+    ) 2>&1
+)"
+set -e
+grep -Fq 'found setuid/setgid bits in the copied files; the copy is refused' <<<"$scan_fail_out" \
+    || { echo 'FAIL: the post-copy scan accepted a setuid-bearing copy' >&2; printf '%s\n' "$scan_fail_out" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part 18: A4-03 repair-to-host destination TOCTOU and permission hardening.
+# validate_host_destination refuses sticky and world-writable directories,
+# only warns on group-writable ones, and the destination is re-validated
+# immediately before each rsync and before the verification, failing when the
+# realpath changed.
+# ---------------------------------------------------------------------------
+grep -Fq 'must not be sticky' "$HELPER" \
+    || { echo 'FAIL: the sticky destination refusal is missing' >&2; exit 1; }
+grep -Fq 'must not be world-writable' "$HELPER" \
+    || { echo 'FAIL: the world-writable destination refusal is missing' >&2; exit 1; }
+grep -Fq 'group-writable; the copied files may be modified by the owning group' "$HELPER" \
+    || { echo 'FAIL: the group-writable destination is not a warning' >&2; exit 1; }
+grep -Fq 'and must not be sticky or world-writable' "$HELPER" \
+    || { echo 'FAIL: the GUI-visible destination allowlist wording does not name the permission requirement' >&2; exit 1; }
+grep -Fq 'changed during the copy (TOCTOU)' "$HELPER" \
+    || { echo 'FAIL: the destination-change refusal message is missing' >&2; exit 1; }
+awk '
+    BEGIN { n = 0 }
+    index($0, "reassert_host_destination \"$destination_virtual\" \"$destination\"") { n++; reassert[n] = NR }
+    index($0, "run_rsync_item \"$mode\"") { rsync_line = NR }
+    index($0, "verify_rsync_item \"$source\"") { verify_line = NR }
+    END {
+        if (n < 2 || reassert[1] > rsync_line || rsync_line > reassert[2] || reassert[2] > verify_line) exit 1
+    }
+' <<<"$file_copy_block" \
+    || { echo 'FAIL: the repair-to-host destination is not re-validated before rsync and before verification' >&2; exit 1; }
+
+fc_dest="$fc_root/host-dest"
+mkdir -p "$fc_dest"
+chmod 0755 "$fc_dest"
+dest_ok="$( (
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_LOG="$fc_root/session.log"
+    validate_host_destination "$fc_dest"
+) 2>&1 || true)"
+grep -Fxq "$(readlink -f -- "$fc_dest")" <<<"$dest_ok" \
+    || { echo 'FAIL: a clean host destination was refused' >&2; printf '%s\n' "$dest_ok" >&2; exit 1; }
+
+chmod 0777 "$fc_dest"
+if world_out="$( (
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_LOG="$fc_root/session.log"
+    validate_host_destination "$fc_dest"
+) 2>&1)"; then
+    echo 'FAIL: a world-writable host destination was accepted' >&2
+    exit 1
+fi
+grep -Fq 'must not be world-writable' <<<"$world_out" \
+    || { echo 'FAIL: the world-writable refusal reason is missing' >&2; exit 1; }
+
+chmod 1777 "$fc_dest"
+if sticky_out="$( (
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_LOG="$fc_root/session.log"
+    validate_host_destination "$fc_dest"
+) 2>&1)"; then
+    echo 'FAIL: a sticky host destination was accepted' >&2
+    exit 1
+fi
+grep -Fq 'must not be sticky' <<<"$sticky_out" \
+    || { echo 'FAIL: the sticky refusal reason is missing' >&2; exit 1; }
+
+chmod 0775 "$fc_dest"
+group_out="$( (
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_LOG="$fc_root/session.log"
+    validate_host_destination "$fc_dest"
+) 2>&1 || true)"
+grep -Fq 'group-writable' <<<"$group_out" \
+    || { echo 'FAIL: a group-writable host destination did not warn' >&2; printf '%s\n' "$group_out" >&2; exit 1; }
+grep -Fxq "$(readlink -f -- "$fc_dest")" <<<"$group_out" \
+    || { echo 'FAIL: a group-writable host destination was refused instead of warned' >&2; printf '%s\n' "$group_out" >&2; exit 1; }
+chmod 0755 "$fc_dest"
+
+# TOCTOU: a destination whose revalidation resolves elsewhere fails the
+# reassert; a stable destination passes it.
+toctou_out="$(
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_LOG="$fc_root/session.log"
+        validate_host_destination() { printf '%s\n' "$fc_root/host-dest-elsewhere"; }
+        reassert_host_destination "$fc_dest" "$fc_dest"
+    ) 2>&1 || true
+)"
+grep -Fq 'changed during the copy (TOCTOU)' <<<"$toctou_out" \
+    || { echo 'FAIL: a swapped repair-to-host destination was not refused on revalidation' >&2; printf '%s\n' "$toctou_out" >&2; exit 1; }
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_LOG="$fc_root/session.log"
+    validate_host_destination() { printf '%s\n' "$fc_dest"; }
+    reassert_host_destination "$fc_dest" "$fc_dest"
+) \
+    || { echo 'FAIL: a stable repair-to-host destination failed the revalidation reassert' >&2; exit 1; }
+reval_fail_out="$(
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_LOG="$fc_root/session.log"
+        validate_host_destination() { return 1; }
+        reassert_host_destination "$fc_dest" "$fc_dest"
+    ) 2>&1 || true
+)"
+grep -Fq 'failed revalidation' <<<"$reval_fail_out" \
+    || { echo 'FAIL: a failing destination revalidation was not reported' >&2; printf '%s\n' "$reval_fail_out" >&2; exit 1; }
+
+
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

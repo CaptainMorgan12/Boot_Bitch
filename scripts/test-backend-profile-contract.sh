@@ -4443,4 +4443,79 @@ cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
         || { echo 'FAIL: the Alpine EFI fallback loader was not restored after a reconcile failure' >&2; exit 1; }
 )
 
+# ---------------------------------------------------------------------------
+# A3-02: every GRUB configuration generation (preflight trial and apply,
+# update-grub/grub-mkconfig/grub2-mkconfig) runs with
+# GRUB_DISABLE_OS_PROBER=true so os-prober cannot add foreign-OS entries
+# during an automatic repair; the native-entry preservation guard stays.
+# ---------------------------------------------------------------------------
+run_chroot_try_block="$(sed -n '/^run_chroot_try()/,/^}/p' "$HELPER")"
+grep -Fq 'GRUB_DISABLE_OS_PROBER=true' <<<"$run_chroot_try_block" \
+    || { echo 'FAIL: run_chroot_try does not carry GRUB_DISABLE_OS_PROBER=true' >&2; exit 1; }
+preflight_grub_block="$(sed -n '/^preflight_grub()/,/^}/p' "$HELPER")"
+grep -Fq 'GRUB_DISABLE_OS_PROBER=true' <<<"$preflight_grub_block" \
+    || { echo 'FAIL: the GRUB trial generation does not carry GRUB_DISABLE_OS_PROBER=true' >&2; exit 1; }
+preflight_fedora_block="$(sed -n '/^preflight_fedora_grub()/,/^}/p' "$HELPER")"
+grep -Fq 'GRUB_DISABLE_OS_PROBER=true' <<<"$preflight_fedora_block" \
+    || { echo 'FAIL: the Fedora GRUB2 trial generation does not carry GRUB_DISABLE_OS_PROBER=true' >&2; exit 1; }
+grep -Fq 'guard_grub_candidate_preserves_entries' <<<"$preflight_grub_block" \
+    || { echo 'FAIL: the foreign-entry preservation guard is no longer wired into the GRUB preflight' >&2; exit 1; }
+grep -Fq 'os-prober foreign entries' "$HELPER" \
+    || { echo 'FAIL: the dual-boot behavior change is not documented next to the GRUB preflight' >&2; exit 1; }
+grep -Fq 'dual-boot' "$HELPER" \
+    || { echo 'FAIL: the dual-boot behavior change is not documented next to the GRUB preflight' >&2; exit 1; }
+
+# Behavioural: the trial generation runs the target's grub-mkconfig through
+# the real env assembly; the stubbed generator dumps GRUB_DISABLE_OS_PROBER
+# from its own environment, proving the switch reaches the generator.
+osprober_root="$(mktemp -d)"
+trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root" "$mixed_root" "$extlinux_debian_root" "$alpine_efi_root" "$rpm_root" "$rpm_preflight_root" "$dracut_pair_root" "$fedora_grub_root" "$fedora_reinstall_root" "$no_log_root" "$osprober_root"' EXIT
+mkdir -p "$osprober_root/usr/sbin" "$osprober_root/session"
+cat > "$osprober_root/usr/sbin/grub-mkconfig" <<'MOCK'
+#!/usr/bin/env bash
+printf '%s\n' "GRUB_DISABLE_OS_PROBER=${GRUB_DISABLE_OS_PROBER:-unset}" > "$CONTRACT_ENV_DUMP"
+printf 'menuentry "contract" {}\n'
+MOCK
+chmod +x "$osprober_root/usr/sbin/grub-mkconfig"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    TARGET_ROOT="$osprober_root"
+    SESSION_DIR="$osprober_root/session"
+    SESSION_LOG="$osprober_root/session/session.log"
+    : > "$SESSION_LOG"
+    run_selected_chroot()
+    {
+        local -a envs=()
+        shift  # drop /usr/bin/env
+        while (($#)); do
+            if [[ "$1" == *=* && "${1%%=*}" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+                envs+=("$1")
+                shift
+            else
+                break
+            fi
+        done
+        shift  # the generator command itself
+        local sim_path="${!#}"
+        printf '%s\n' "${envs[@]}" > "$osprober_root/env-dump"
+        CONTRACT_ENV_DUMP="$osprober_root/generated-env" \
+            env "${envs[@]}" "$TARGET_ROOT/usr/sbin/grub-mkconfig" -o "$sim_path"
+        mkdir -p "$TARGET_ROOT/run"
+        printf 'menuentry "contract" {}\n' > "$TARGET_ROOT$sim_path"
+        return 0
+    }
+    preflight_grub
+) > "$osprober_root/preflight.log" 2>&1 \
+    || { echo 'FAIL: the GRUB preflight trial did not complete against the env-dumping stub' >&2; cat "$osprober_root/preflight.log" >&2; exit 1; }
+grep -Fq 'GRUB_DISABLE_OS_PROBER=true' "$osprober_root/env-dump" \
+    || { echo 'FAIL: the trial env assembly lacks GRUB_DISABLE_OS_PROBER=true' >&2; cat "$osprober_root/env-dump" >&2; exit 1; }
+grep -Fxq 'GRUB_DISABLE_OS_PROBER=true' "$osprober_root/generated-env" \
+    || { echo 'FAIL: the generator did not observe GRUB_DISABLE_OS_PROBER=true in its environment' >&2; cat "$osprober_root/generated-env" >&2; exit 1; }
+if grep -Fq 'unset' "$osprober_root/generated-env"; then
+    echo 'FAIL: the generator saw GRUB_DISABLE_OS_PROBER unset' >&2
+    exit 1
+fi
+rm -rf -- "$osprober_root"
+
 echo "PASS: distribution and boot backend profile contract is wired and read-only."

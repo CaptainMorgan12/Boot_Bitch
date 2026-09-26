@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+- Modern Batch 4 (helper hardening): repair-to-host File Copy now strips
+  setuid/setgid bits (`--chmod=u-s,g-s`) and drops `security.capability`
+  xattrs (rsync xattr filter) during the transfer — both probed per run — and
+  a fail-closed post-copy scan (find `-perm /6000` plus a getfattr/getcap
+  check) refuses any copy that still carries either; when no xattr inspection
+  tool exists and this rsync cannot filter xattrs the copy is refused with a
+  clear message. The post-copy verification compares modes with suid/sgid
+  masked, so a stripped destination no longer reports phantom diffs; the
+  File Copy preview/summary text states the stripping. Host-to-repair keeps
+  -aHAX from the trusted host source. Repair-to-host destinations are now
+  re-validated immediately before each rsync and before verification (a
+  changed realpath fails the copy) and sticky or world-writable destination
+  directories are refused (group-writable ones only warn). Target chroots now
+  receive a filtered private /dev: only the essential character nodes
+  (matched by maj:min), the device-mapper control node and block
+  devices/mappers on the selected target disk are copied — other disks'
+  devices and mappers never appear — while root-in-chroot keeps its mknod
+  capability. Finally, every GRUB configuration generation (preflight trial
+  and apply, update-grub/grub-mkconfig/grub2-mkconfig) now runs with
+  `GRUB_DISABLE_OS_PROBER=true`, so an automatic repair never adds foreign-OS
+  entries to the regenerated menu (a deliberate dual-boot behavior change;
+  the native-entry preservation guard is unchanged).
+
 - Cycle 16 (interactive shell): the Chroot Shell and Host Shell can now
   answer interactive prompts. The helper runs shell commands under a PTY
   (with a plain stdin-pipe fallback) and, whenever the command is alive but

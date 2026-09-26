@@ -258,6 +258,16 @@ public:
     static QFileDialog::Options portableFileDialogOptions();
     static void applyPortableFileDialogPolicy();
 
+    // Splits the helper's shared capability preamble out of one diagnostic
+    // result. The preamble carries the `Repair tool <key>` gating contract and
+    // is cached under the dedicated capability key so it can never leak into
+    // the diagnostic result itself (fstab stays purely fstab); body receives
+    // the diagnostic-only output. Public so the file-local capability gate
+    // (cachedRepairToolAvailable) can extract the preamble fallback.
+    static void splitDiagnosticCapabilityPreamble(const QString &captured,
+                                                  QString *body,
+                                                  QString *preamble);
+
 signals:
     void busyStateChanged(bool busy, const QString &label);
 
@@ -536,6 +546,30 @@ private:
     void authorizePrivilegedSessionNow();
     void updateAuthorizationAffordance();
     QString currentPrivilegedScopeKey() const;
+    // Argument classes for the privileged-session request protocol. The class
+    // is decided structurally (request kind + argument position), never from
+    // the value itself, so a payload can never pick its own validation level.
+    // Exposed for the UI regression tests.
+    enum class HelperArgumentClass {
+        Verb,    // the helper command name (arguments[0])
+        Path,    // device paths, destination and source file paths
+        Command, // the user-supplied Chroot/Host shell command
+        Id,      // stage keys, snapshot ids, config keys, modes, directions
+        Flag,    // hardcoded helper options such as --post-efi
+        Content  // the config-write payload: arbitrary file text
+    };
+    static HelperArgumentClass helperArgumentClassFor(const QStringList &arguments, int index);
+    // A7-03: argument-class-aware validation for one privileged request.
+    // NUL is rejected in every class (the line-oriented session protocol
+    // cannot carry it). Verb/PATH/COMMAND/ID-class arguments additionally
+    // reject C0/C1 control characters, the bidi control characters
+    // (U+202A-U+202E, U+2066-U+2069) and a leading '-' (option injection).
+    // CONTENT-class arguments (the config-write payload) may contain
+    // tabs/newlines and are only checked for NUL. FLAG-class arguments are
+    // restricted to the known hardcoded helper options (an allow-list, not a
+    // shape check).
+    static bool safeHelperArgument(const QStringList &arguments, int index,
+                                   QString *reason = nullptr);
     QString runPrivilegedRequest(const QString &title, const QStringList &arguments,
                                  QByteArray secret = QByteArray(), bool *succeeded = nullptr,
                                  bool showProgressDialog = true,
@@ -579,14 +613,6 @@ private:
     // per-device "File system check ..." evidence.
     QString runFilesystemDiagnostic(bool hostScope, bool *succeeded = nullptr,
                                     bool showProgressDialog = false);
-    // Splits the helper's shared capability preamble out of one diagnostic
-    // result. The preamble carries the `Repair tool <key>` gating contract and
-    // is cached under the dedicated capability key so it can never leak into
-    // the diagnostic result itself (fstab stays purely fstab); body receives
-    // the diagnostic-only output.
-    static void splitDiagnosticCapabilityPreamble(const QString &captured,
-                                                  QString *body,
-                                                  QString *preamble);
     // Merges one freshly captured diagnostic section into the scope's cached
     // combined report. The report keeps its shared capability preamble and
     // every other section, so an individual re-run leaves the Full report
@@ -613,6 +639,12 @@ private:
                                            const QByteArray &explicitOverride,
                                            QString *resolution = nullptr);
     QString repairHelperPath(QString *resolution = nullptr) const;
+    // A7-01: trust gate for non-installed helper candidates (the helper is
+    // executed by pkexec as root, so it must not be replaceable by another
+    // local user): the canonicalized path must name a regular file owned by
+    // the invoking user and writable by neither group nor others. Installed
+    // /usr/libexec/ and /usr/lib/ helpers pass unconditionally.
+    static bool helperPathTrusted(const QString &candidatePath);
     // A helper prepared for a privileged pkexec launch. AppImage FUSE mounts
     // are only accessible to the user who mounted them (root gets EACCES) and
     // noexec mounts refuse execution, so those helpers are copied into a

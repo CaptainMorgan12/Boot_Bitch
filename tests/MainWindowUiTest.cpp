@@ -65,6 +65,7 @@
 #endif
 
 #include <algorithm>
+#include <limits>
 
 namespace {
 // Restores an environment variable on scope exit. A failing QVERIFY returns
@@ -730,6 +731,10 @@ void cacheRepairEvidence(MainWindow &window, const QString &evidence)
     window.m_hostDiagnosticsStaleSections.clear();
     auto &cache = window.m_hostMaintenanceMode ? window.m_hostDiagnosticCache : window.m_targetDiagnosticCache;
     cache.clear();
+    // Mirror the production split: the `Repair tool <key>` gating contract is
+    // cached under the dedicated capabilities entry, which the capability gate
+    // reads exclusively.
+    cache.insert(QStringLiteral("capabilities"), evidence);
     for (const QString &key : {QStringLiteral("report"), QStringLiteral("environment"),
                               QStringLiteral("kernel"), QStringLiteral("grub"), QStringLiteral("uki"),
                               QStringLiteral("display"), QStringLiteral("boot")}) {
@@ -1076,6 +1081,12 @@ QProcess *startFakePrivilegedSession(MainWindow &window, const QString &captureP
         "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
         "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
         "i=$((i+1)); done; "
+        "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
+        "  promptoversize) big=$(head -c 900 /dev/zero | tr '\\0' 'x'); "
+        "promptb64=$(printf '%s' \"$big\" | base64 | tr -d '\\n'); "
+        "printf 'OUT\\t%s\\tContinue? [y/N] \\n' \"$id\"; "
+        "printf 'PROMPT\\t%s\\t%s\\n' \"$id\" \"$promptb64\"; "
+        "IFS= read -r answer; printf '%s\\n' \"$answer\" >> \"$capture\"; "
         "printf 'DONE\\t%s\\t0\\n' \"$id\"; exit 0 ;;\n"
         "  promptafterdone) promptb64=$(printf 'Continue? [y/N] ' | base64 | tr -d '\\n'); "
         "printf 'DONE\\t%s\\t0\\n' \"$id\"; "
@@ -2273,6 +2284,14 @@ private slots:
     void hostDiagnosticsRequireHostMaintenanceScope();
     void snapshotPreloadIsDeduplicatedAcrossScopeTransitions();
     void helperPathResolutionPrefersInstalledUnlessOverridden();
+    void helperPathResolutionTrustMatrix();
+    void privilegedArgumentClassValidation();
+    void capabilityGateReadsOnlyCapabilitiesEntry();
+    void fallbackAdoptionRefusesProtectedAndCrossDisk();
+    void settingsFilePermissionsArePrivate();
+    void oversizedPromptPayloadIsDropped();
+    void scannerBoundsSanitizationAndConservativeDefaults();
+    void capabilityCheckerPathOrderPrefersSystemDirs();
     void helperPathResolutionStagesAppImageCopy();
     void helperPathResolutionStagesNoexecCopyAndKeepsNormalPaths();
     void appImageFileDialogsStayNonNativeAndListFolders();
@@ -3274,7 +3293,11 @@ void MainWindowUiTest::individualDiagnosticEnablesMatchingRepair()
     window.m_previewTargetPath = disk.path;
     window.m_previewTargetComponentPath = component.path;
     window.m_targetDiagnosticCacheIdentity = disk.path;
-    window.m_targetDiagnosticCache.insert(QStringLiteral("grub"), QStringLiteral("Diagnostic: grub\nRepair tool grub: available\nPASS"));
+    // The gating line lives in the dedicated capability entry (the production
+    // split); the diagnostic section stays purely its own subject.
+    window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"),
+                                          QStringLiteral("Repair tool grub: available\n"));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("grub"), QStringLiteral("Diagnostic: grub\nPASS"));
 
     QVERIFY(window.m_repairToolTree);
     for (int row = 0; row < window.m_repairToolTree->topLevelItemCount(); ++row) {
@@ -4172,7 +4195,11 @@ void MainWindowUiTest::fullRepairUsesFreshEvidenceForSelectedStage()
     window.m_previewTargetPath = disk.path;
     window.m_previewTargetComponentPath = component.path;
     window.m_targetDiagnosticCacheIdentity = disk.path;
-    window.m_targetDiagnosticCache.insert(QStringLiteral("display"), QStringLiteral("Diagnostic: display\nRepair tool display: available\nPASS"));
+    // The gating line lives in the dedicated capability entry (the production
+    // split); the diagnostic section stays purely its own subject.
+    window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"),
+                                          QStringLiteral("Repair tool display: available\n"));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("display"), QStringLiteral("Diagnostic: display\nPASS"));
 
     QVERIFY(window.m_fullRepairDisplayManager);
     window.m_fullRepairDpkg->setChecked(false);
@@ -6879,16 +6906,21 @@ void MainWindowUiTest::targetDiagnosticFallbackUpdatesCommittedComponent()
 
     DeviceNode boot;
     boot.path = QStringLiteral("/dev/test-vdb1");
+    boot.kernelName = QStringLiteral("vdb1");
+    boot.parentKernelName = QStringLiteral("vdb");
     boot.type = QStringLiteral("part");
     boot.fileSystem = QStringLiteral("ext4");
     boot.linuxCapableFileSystem = true;
     DeviceNode root;
     root.path = QStringLiteral("/dev/test-vdb3");
+    root.kernelName = QStringLiteral("vdb3");
+    root.parentKernelName = QStringLiteral("vdb");
     root.type = QStringLiteral("part");
     root.fileSystem = QStringLiteral("ext4");
     root.linuxCapableFileSystem = true;
     DeviceNode disk;
     disk.path = QStringLiteral("/dev/test-vdb");
+    disk.kernelName = QStringLiteral("vdb");
     disk.type = QStringLiteral("disk");
     disk.children.append(boot);
     disk.children.append(root);
@@ -16357,6 +16389,701 @@ void MainWindowUiTest::deviceStatusLayoutStableAcrossSortAndRefresh()
     QTreeWidgetItem *afterRefresh = deviceTreeTopLevelItem(window, longDisk.path);
     QVERIFY(afterRefresh);
     QCOMPARE(tree->visualItemRect(afterRefresh).height(), wrappedHeight);
+}
+
+// A7-01: the resolution matrix. The CWD-relative candidate is gone; the
+// UI-test binary honors the BOOT_REPAIR_HELPER_PATH override (production never
+// reads it); non-installed candidates must pass the ownership/writability
+// trust check; a group- or world-writable helper is refused.
+void MainWindowUiTest::helperPathResolutionTrustMatrix()
+{
+    // No candidate may resolve from the process working directory.
+    const QString cwdCandidate = QDir::cleanPath(QDir::current().absoluteFilePath(
+        QStringLiteral("scripts/boot-repair-helper.sh")));
+    for (const QString &appDir : {QStringLiteral("/usr/bin"), QStringLiteral("/home/user/build-release")}) {
+        const QList<MainWindow::HelperPathCandidate> candidates =
+            MainWindow::repairHelperCandidates(appDir, QByteArray());
+        for (const MainWindow::HelperPathCandidate &candidate : candidates) {
+            QVERIFY2(candidate.path != cwdCandidate,
+                     "the CWD-relative candidate must be removed");
+            QVERIFY2(!candidate.reason.contains(QStringLiteral("working directory")),
+                     qPrintable(candidate.reason));
+        }
+    }
+
+    QTemporaryDir helperDir;
+    QVERIFY(helperDir.isValid());
+
+    const auto writeHelper = [&helperDir](const QString &name,
+                                          QFileDevice::Permissions permissions) {
+        const QString path = helperDir.filePath(name);
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return QString();
+        }
+        file.write("#!/bin/sh\nexit 0\n");
+        file.close();
+        if (!QFile::setPermissions(path, permissions)) {
+            return QString();
+        }
+        return path;
+    };
+
+    // helperPathTrusted(): canonicalized regular file, user-owned, neither
+    // group- nor world-writable.
+    const QString trustedPath = writeHelper(QStringLiteral("trusted-helper"),
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner);
+    QVERIFY(!trustedPath.isEmpty());
+    QVERIFY(MainWindow::helperPathTrusted(trustedPath));
+    QVERIFY(!MainWindow::helperPathTrusted(helperDir.filePath(QStringLiteral("does-not-exist"))));
+
+    const QString groupWritable = writeHelper(QStringLiteral("group-writable-helper"),
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+        | QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup);
+    QVERIFY(!groupWritable.isEmpty());
+    QVERIFY2(!MainWindow::helperPathTrusted(groupWritable),
+             "a group-writable helper must be refused");
+
+    const QString worldWritable = writeHelper(QStringLiteral("world-writable-helper"),
+        QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner
+        | QFileDevice::ReadGroup | QFileDevice::WriteGroup | QFileDevice::ExeGroup
+        | QFileDevice::ReadOther | QFileDevice::WriteOther | QFileDevice::ExeOther);
+    QVERIFY(!worldWritable.isEmpty());
+    QVERIFY2(!MainWindow::helperPathTrusted(worldWritable),
+             "a world-writable helper must be refused");
+
+    // A symlink is canonicalized before the checks: the target's ownership
+    // and mode decide.
+    const QString symlink = helperDir.filePath(QStringLiteral("helper-link"));
+    QVERIFY2(QFile::link(trustedPath, symlink), "the symlink fixture must be creatable");
+    QVERIFY(MainWindow::helperPathTrusted(symlink));
+
+    // A portable helper beside the executable passes the trust checks and
+    // resolves first.
+    const QString appDir = helperDir.filePath(QStringLiteral("bin"));
+    const QString libexecDir = helperDir.filePath(QStringLiteral("libexec/boot-repair"));
+    QVERIFY(QDir().mkpath(appDir));
+    QVERIFY(QDir().mkpath(libexecDir));
+    const QString portableHelper = QDir(libexecDir).filePath(QStringLiteral("boot-repair-helper"));
+    {
+        QFile portable(portableHelper);
+        QVERIFY(portable.open(QIODevice::WriteOnly | QIODevice::Text));
+        portable.write("#!/bin/sh\nexit 0\n");
+        portable.close();
+    }
+    QVERIFY(QFile::setPermissions(portableHelper,
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    QString portableReason;
+    QCOMPARE(MainWindow::resolveRepairHelperPath(appDir, QByteArray(), &portableReason),
+             QFileInfo(portableHelper).canonicalFilePath());
+    QVERIFY2(portableReason.contains(QStringLiteral("portable")), qPrintable(portableReason));
+
+    // A world-writable explicit override is refused: resolution falls back to
+    // the trusted portable helper and names the unusable override.
+    QString fallbackReason;
+    const QString fallback = MainWindow::resolveRepairHelperPath(
+        appDir, worldWritable.toUtf8(), &fallbackReason);
+    QVERIFY2(!fallback.isEmpty(), "resolution must fall back to a trusted candidate");
+    QVERIFY2(fallback != QFileInfo(worldWritable).canonicalFilePath(),
+             "the world-writable override must never be resolved");
+    QVERIFY2(fallbackReason.contains(QStringLiteral("override was not usable")),
+             qPrintable(fallbackReason));
+
+    // The UI-test binary honors a trusted override (production semantics gate
+    // the environment read out entirely).
+    QString overrideReason;
+    QCOMPARE(MainWindow::resolveRepairHelperPath(appDir, trustedPath.toUtf8(), &overrideReason),
+             QFileInfo(trustedPath).canonicalFilePath());
+    QVERIFY2(overrideReason.contains(QStringLiteral("override")), qPrintable(overrideReason));
+}
+
+// A7-03: the argument-class matrix. The class is decided structurally
+// (request kind + position); NUL is rejected everywhere; Verb/Path/Command/Id
+// reject C0/C1, bidi controls and a leading '-'; Content (the config-write
+// payload) may carry tabs/newlines; Flag accepts only the fixed option shape.
+void MainWindowUiTest::privilegedArgumentClassValidation()
+{
+    using HelperArgumentClass = MainWindow::HelperArgumentClass;
+    const auto classOf = [](const QStringList &arguments, int index) {
+        return static_cast<int>(MainWindow::helperArgumentClassFor(arguments, index));
+    };
+    const QStringList repairArgs = {QStringLiteral("repair"), QStringLiteral("/dev/sda"),
+                                    QStringLiteral("/dev/sda2"), QStringLiteral("grub")};
+    QCOMPARE(classOf(repairArgs, 0), static_cast<int>(HelperArgumentClass::Verb));
+    QCOMPARE(classOf(repairArgs, 1), static_cast<int>(HelperArgumentClass::Path));
+    QCOMPARE(classOf(repairArgs, 2), static_cast<int>(HelperArgumentClass::Path));
+    QCOMPARE(classOf(repairArgs, 3), static_cast<int>(HelperArgumentClass::Id));
+    QCOMPARE(classOf({QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("efi"), QStringLiteral("boot-stack"), QStringLiteral("--post-efi")}, 5),
+             static_cast<int>(HelperArgumentClass::Flag));
+    QCOMPARE(classOf({QStringLiteral("shell"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("apt upgrade")}, 3),
+             static_cast<int>(HelperArgumentClass::Command));
+    QCOMPARE(classOf({QStringLiteral("config-write"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("fstab"), QStringLiteral("payload")}, 4),
+             static_cast<int>(HelperArgumentClass::Content));
+    QCOMPARE(classOf({QStringLiteral("copy"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("host-to-repair"), QStringLiteral("smart"),
+                      QStringLiteral("normal"), QStringLiteral("/home/user/out"),
+                      QStringLiteral("/home/user/src")}, 6),
+             static_cast<int>(HelperArgumentClass::Path));
+    QCOMPARE(classOf({QStringLiteral("fs-repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("/dev/sda1"), QStringLiteral("repair")}, 3),
+             static_cast<int>(HelperArgumentClass::Path));
+    QCOMPARE(classOf({QStringLiteral("fs-repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("/dev/sda1"), QStringLiteral("repair")}, 4),
+             static_cast<int>(HelperArgumentClass::Id));
+    QCOMPARE(classOf({QStringLiteral("snapshots"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+                      QStringLiteral("rollback"), QStringLiteral("7")}, 4),
+             static_cast<int>(HelperArgumentClass::Id));
+
+    QString reason;
+    // NUL is rejected in every class, including the CONTENT payload.
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("config-write"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("fstab"), QStringLiteral("line1\nline2") + QChar(0)}, 4, &reason));
+    QVERIFY2(reason.contains(QStringLiteral("NUL")), qPrintable(reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("diagnose"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("environment") + QChar(0)}, 3, &reason));
+
+    // C0/C1, bidi controls and a leading '-' are rejected for
+    // Verb/Path/Command/Id classes.
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("diagnose"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("grub\tx")}, 3, &reason));
+    QVERIFY2(reason.contains(QStringLiteral("control or bidi")), qPrintable(reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("gr") + QChar(0x202E) + QStringLiteral("ub")}, 3, &reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("diagnose"), QStringLiteral("-s"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("environment")}, 1, &reason));
+    QVERIFY2(reason.contains(QStringLiteral("start with '-'")), qPrintable(reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("--grub")}, 3, &reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("shell"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("-la")}, 3, &reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("e") + QChar(0x2066) + QStringLiteral("fi")}, 3, &reason));
+
+    // The CONTENT payload may contain tabs and newlines.
+    QVERIFY(MainWindow::safeHelperArgument(
+        {QStringLiteral("config-write"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("fstab"),
+         QStringLiteral("UUID=11111111-2222-3333-4444-555555555555 / ext4 defaults 0 1\n/dev/sda3\t/home ext4 0 2")},
+        4, &reason));
+
+    // The hardcoded --post-efi flag passes; a malformed flag is refused.
+    QVERIFY(MainWindow::safeHelperArgument(
+        {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("efi"), QStringLiteral("boot-stack"), QStringLiteral("--post-efi")}, 5, &reason));
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("repair"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("--post efi")}, 3, &reason));
+
+    // Ordinary arguments pass.
+    QVERIFY(MainWindow::safeHelperArgument(
+        {QStringLiteral("snapshots"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("rollback"), QStringLiteral("7")}, 4, &reason));
+    QVERIFY(MainWindow::safeHelperArgument(
+        {QStringLiteral("unlock"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/mapper/test")}, 2, &reason));
+
+    // An out-of-range index is refused.
+    QVERIFY(!MainWindow::safeHelperArgument(
+        {QStringLiteral("diagnose"), QStringLiteral("/dev/sda")}, 5, &reason));
+
+    // End to end: runPrivilegedRequest refuses an argument carrying a bidi
+    // control before any session or authorization is touched.
+    MainWindow window;
+    bool succeeded = true;
+    const QString refused = window.runPrivilegedRequest(
+        QStringLiteral("Argument validation probe"),
+        {QStringLiteral("shell"), QStringLiteral("/dev/sda"), QStringLiteral("/dev/sda2"),
+         QStringLiteral("echo x") + QChar(0x202B)},
+        QByteArray(), &succeeded, false, MainWindow::LogEntryKind::ChrootShell);
+    QVERIFY(!succeeded);
+    QVERIFY2(refused.contains(QStringLiteral("control or bidi")), qPrintable(refused));
+}
+
+// A6-05: the capability gate reads only the dedicated capabilities entry
+// (plus the combined report's extracted preamble as the legacy fallback).
+// A per-diagnostic section quoting a `Repair tool <key>` line can neither
+// open the gate nor override the genuine unavailable reason.
+void MainWindowUiTest::capabilityGateReadsOnlyCapabilitiesEntry()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+
+    // A per-key section quoting an available line can never open the gate
+    // while the dedicated capabilities entry says unavailable: the genuine
+    // reason wins.
+    window.m_targetDiagnosticCache.clear();
+    window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"), QStringLiteral(
+        "Repair tool efi: unavailable|no EFI System Partition candidate on the selected disk\n"));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("fstab"), QStringLiteral(
+        "Diagnostic: fstab\n"
+        "Repair tool efi: available\n"
+        "UUID=11111111-2222-3333-4444-555555555555 / ext4 defaults 0 1\n"));
+    QString reason;
+    QVERIFY(!window.repairToolAvailable(QStringLiteral("efi"), &reason));
+    QCOMPARE(reason, QStringLiteral("no EFI System Partition candidate on the selected disk"));
+
+    // No capabilities entry (and no report preamble): the gate fails closed
+    // even though a per-key section quotes an available line.
+    window.m_targetDiagnosticCache.remove(QStringLiteral("capabilities"));
+    QVERIFY(!window.repairToolAvailable(QStringLiteral("efi"), &reason));
+    QVERIFY2(reason.contains(QStringLiteral("No capability evidence")), qPrintable(reason));
+
+    // The dedicated entry opens the gate.
+    window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"),
+                                          QStringLiteral("Repair tool efi: available\n"));
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("efi"), &reason), qPrintable(reason));
+
+    // The report-preamble fallback gates on the same evidence for a cache
+    // captured before the split entry existed.
+    window.m_targetDiagnosticCache.remove(QStringLiteral("capabilities"));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("report"), QStringLiteral(
+        "Repair capability probes (read-only, selected target):\n"
+        "Repair tool efi: available\n"
+        "Repair capability evidence efi: efibootmgr present\n\n"
+        "Diagnostic: report\n..."));
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("efi"), &reason), qPrintable(reason));
+
+    // ... and an unavailable reason in the preamble also gates through the
+    // fallback.
+    window.m_targetDiagnosticCache.insert(QStringLiteral("report"), QStringLiteral(
+        "Repair capability probes (read-only, selected target):\n"
+        "Repair tool efi: unavailable|no EFI System Partition candidate on the selected disk\n\n"
+        "Diagnostic: report\n..."));
+    QVERIFY(!window.repairToolAvailable(QStringLiteral("efi"), &reason));
+    QCOMPARE(reason, QStringLiteral("no EFI System Partition candidate on the selected disk"));
+}
+
+// A6-06: a fallback-resolved component is adopted only when it neither backs
+// the protected running system nor (for a known previous component) lies on a
+// different top-level device; refusals log a WARNING and keep the committed
+// component.
+void MainWindowUiTest::fallbackAdoptionRefusesProtectedAndCrossDisk()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    DeviceNode bootA;
+    bootA.path = QStringLiteral("/dev/test-vda1");
+    bootA.kernelName = QStringLiteral("vda1");
+    bootA.parentKernelName = QStringLiteral("vda");
+    bootA.type = QStringLiteral("part");
+    bootA.fileSystem = QStringLiteral("ext4");
+    bootA.linuxCapableFileSystem = true;
+    DeviceNode rootA;
+    rootA.path = QStringLiteral("/dev/test-vda2");
+    rootA.kernelName = QStringLiteral("vda2");
+    rootA.parentKernelName = QStringLiteral("vda");
+    rootA.type = QStringLiteral("part");
+    rootA.fileSystem = QStringLiteral("ext4");
+    rootA.linuxCapableFileSystem = true;
+    DeviceNode diskA;
+    diskA.path = QStringLiteral("/dev/test-vda");
+    diskA.kernelName = QStringLiteral("vda");
+    diskA.type = QStringLiteral("disk");
+    DeviceNode rootB;
+    rootB.path = QStringLiteral("/dev/test-vdb1");
+    rootB.kernelName = QStringLiteral("vdb1");
+    rootB.parentKernelName = QStringLiteral("vdb");
+    rootB.type = QStringLiteral("part");
+    rootB.fileSystem = QStringLiteral("ext4");
+    rootB.linuxCapableFileSystem = true;
+    DeviceNode diskB;
+    diskB.path = QStringLiteral("/dev/test-vdb");
+    diskB.kernelName = QStringLiteral("vdb");
+    diskB.type = QStringLiteral("disk");
+
+    window.m_deviceIndex.insert(diskA.path, diskA);
+    window.m_deviceIndex.insert(bootA.path, bootA);
+    window.m_deviceIndex.insert(rootA.path, rootA);
+    window.m_deviceIndex.insert(diskB.path, diskB);
+    window.m_deviceIndex.insert(rootB.path, rootB);
+    window.m_previewTargetPath = diskA.path;
+    window.m_previewTargetComponentPath = bootA.path;
+
+    // Same-disk fallback (shared PKNAME top-level ancestor) is adopted.
+    window.appendDiagnosticLog(QStringLiteral("environment"),
+                               QStringLiteral("Environment validation"),
+                               QStringLiteral("Repair Target"),
+                               QStringLiteral("[12:00:02] Root component fallback: selected component /dev/test-vda1 (ext4) lacks /etc/os-release; resolved /dev/test-vda2 (ext4) from /dev/test-vda.\n"),
+                               true);
+    QCOMPARE(window.m_previewTargetComponentPath, QStringLiteral("/dev/test-vda2"));
+
+    // Cross-disk fallback: refused with a WARNING; the committed component is
+    // kept.
+    window.m_previewTargetComponentPath = bootA.path;
+    window.appendDiagnosticLog(QStringLiteral("environment"),
+                               QStringLiteral("Environment validation"),
+                               QStringLiteral("Repair Target"),
+                               QStringLiteral("[12:00:02] Root component fallback: selected component /dev/test-vda1 (ext4) lacks /etc/os-release; resolved /dev/test-vdb1 (ext4) from /dev/test-vdb.\n"),
+                               true);
+    QCOMPARE(window.m_previewTargetComponentPath, bootA.path);
+    QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("Root component fallback refused")),
+             qPrintable(log));
+    QVERIFY2(log.contains(QStringLiteral("not provably on the same top-level device")),
+             qPrintable(log));
+
+    // A resolved component that backs the protected running system is refused
+    // even when it shares the committed component's disk.
+    window.m_deviceIndex[rootA.path].protectedDevice = true;
+    window.appendDiagnosticLog(QStringLiteral("environment"),
+                               QStringLiteral("Environment validation"),
+                               QStringLiteral("Repair Target"),
+                               QStringLiteral("[12:00:02] Root component fallback: selected component /dev/test-vda1 (ext4) lacks /etc/os-release; resolved /dev/test-vda2 (ext4) from /dev/test-vda.\n"),
+                               true);
+    QCOMPARE(window.m_previewTargetComponentPath, bootA.path);
+    log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral("backs the protected running system")),
+             qPrintable(log));
+}
+
+// A7-04: the settings file is created private (0600) to the invoking user and
+// keeps that mode across persists. main() redirects XDG_CONFIG_HOME to a
+// throwaway directory, so the user's real configuration is never touched.
+void MainWindowUiTest::settingsFilePermissionsArePrivate()
+{
+    MainWindow window;
+    QVERIFY(window.m_settings);
+    const QString fileName = window.m_settings->fileName();
+    QVERIFY(!fileName.isEmpty());
+    QVERIFY2(QFileInfo::exists(fileName),
+             "the settings file must exist after window construction");
+#ifdef Q_OS_UNIX
+    // A7-04: owner read+write are set; every executable, group and other bit
+    // is clear.
+    const auto assertPrivateMode = [&fileName]() {
+        const QFileDevice::Permissions permissions = QFile::permissions(fileName);
+        QVERIFY(permissions & QFileDevice::ReadOwner);
+        QVERIFY(permissions & QFileDevice::WriteOwner);
+        QVERIFY2(!(permissions & (QFileDevice::ExeOwner
+                                  | QFileDevice::ReadGroup | QFileDevice::WriteGroup
+                                  | QFileDevice::ExeGroup
+                                  | QFileDevice::ReadOther | QFileDevice::WriteOther
+                                  | QFileDevice::ExeOther)),
+                 "the settings file must be private to the invoking user (0600)");
+    };
+    assertPrivateMode();
+    // A later persist keeps the private mode.
+    window.m_settings->setValue(QStringLiteral("settingsPermissionProbe"), true);
+    window.m_settings->sync();
+    assertPrivateMode();
+#endif
+}
+
+// A2-06: a PROMPT record whose base64 payload exceeds 1024 bytes is dropped
+// with a protocol note and answered with an empty ANSWER record so the helper
+// fails closed instead of hanging; no prompt dialog is ever shown for it.
+void MainWindowUiTest::oversizedPromptPayloadIsDropped()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window, false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.updateTargetLabels();
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.filePath(QStringLiteral("request.txt"));
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("promptoversize")));
+
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("apt upgrade"));
+
+    // If the bound were ever missing, the prompt dialog would open and block;
+    // dismiss it so the failure is a clean assertion instead of a hang.
+    QTimer safety;
+    safety.setInterval(50);
+    QObject::connect(&safety, &QTimer::timeout, &window, [&] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (dialog && dialog->objectName() == QStringLiteral("shellPromptDialog")) {
+                dialog->reject();
+            }
+        }
+    });
+    safety.start();
+    window.runChrootShellCommand();
+    safety.stop();
+
+    const QString shellOutput = window.m_chrootShellOutput->toPlainText();
+    QVERIFY2(shellOutput.contains(QStringLiteral("exceeded the 1024-byte payload bound")),
+             qPrintable(shellOutput));
+    QVERIFY2(!shellOutput.contains(QStringLiteral(">> ")),
+             "no prompt dialog may open for a dropped prompt");
+    QVERIFY2(shellOutput.contains(QStringLiteral("[exit 0]")),
+             "the helper must complete after the dropped prompt is answered");
+
+    QFile capture(capturePath);
+    QVERIFY(capture.open(QIODevice::ReadOnly | QIODevice::Text));
+    const QString captured = QString::fromUtf8(capture.readAll());
+    QVERIFY2(captured.contains(QRegularExpression(QStringLiteral("ANSWER\t[0-9]+\t\n"))),
+             "the dropped prompt must be answered with an empty ANSWER record");
+}
+
+// A8-01/A8-04/A8-06/A8-07/A8-08/A8-09: hostile and corrupt scanner input stays
+// bounded and sanitized — a huge os-release line is skipped, PRETTY_NAME and
+// every device display field are control/bidi-stripped, non-finite/negative/
+// oversized sizes clamp before the quint64 cast, an invalid MAJ:MIN never
+// builds a udev path, missing rm/ro default to true, and deep JSON nesting is
+// truncated at the recursion bound.
+void MainWindowUiTest::scannerBoundsSanitizationAndConservativeDefaults()
+{
+    QTemporaryDir fakeRoot;
+    QVERIFY(fakeRoot.isValid());
+
+    // The fake root's os-release starts with a 200 KiB single line and then
+    // carries a bidi-decorated PRETTY_NAME.
+    const QString osReleaseDir = fakeRoot.filePath(QStringLiteral("etc"));
+    QVERIFY(QDir().mkpath(osReleaseDir));
+    {
+        QFile osRelease(QDir(osReleaseDir).filePath(QStringLiteral("os-release")));
+        QVERIFY(osRelease.open(QIODevice::WriteOnly | QIODevice::Text));
+        osRelease.write(QByteArray(200 * 1024, 'x'));
+        osRelease.write("\nPRETTY_NAME=\"Tux");
+        osRelease.write(QByteArrayLiteral("\xE2\x80\xAE"));
+        osRelease.write("DOS\"\n");
+        osRelease.close();
+    }
+
+    // Hostile metadata in every display field, an invalid MAJ:MIN, an
+    // oversized double size, a negative disk size and missing rm/ro.
+    QJsonObject partition;
+    partition.insert(QStringLiteral("name"), QStringLiteral("test-vdb1"));
+    partition.insert(QStringLiteral("kname"), QStringLiteral("test-vdb1"));
+    partition.insert(QStringLiteral("path"), QStringLiteral("/dev/test-vdb1"));
+    partition.insert(QStringLiteral("maj:min"), QStringLiteral("99999:0"));
+    partition.insert(QStringLiteral("type"), QStringLiteral("part"));
+    partition.insert(QStringLiteral("size"), 1e30);
+    partition.insert(QStringLiteral("fstype"), QJsonValue::Null);
+    partition.insert(QStringLiteral("label"), QStringLiteral("ROOT\u202eLABEL"));
+    partition.insert(QStringLiteral("partlabel"), QStringLiteral("P\u202aART"));
+    partition.insert(QStringLiteral("uuid"), QStringLiteral("UUID\u2066x"));
+    partition.insert(QStringLiteral("model"), QStringLiteral("M\u009fODEL"));
+    partition.insert(QStringLiteral("serial"), QStringLiteral("S\u0007ERIAL"));
+    partition.insert(QStringLiteral("vendor"), QStringLiteral("V\u2069ENDOR"));
+    partition.insert(QStringLiteral("mountpoints"), QJsonArray());
+
+    QJsonObject explicitPartition;
+    explicitPartition.insert(QStringLiteral("name"), QStringLiteral("test-vdb2"));
+    explicitPartition.insert(QStringLiteral("kname"), QStringLiteral("test-vdb2"));
+    explicitPartition.insert(QStringLiteral("path"), QStringLiteral("/dev/test-vdb2"));
+    explicitPartition.insert(QStringLiteral("maj:min"), QStringLiteral("253:18"));
+    explicitPartition.insert(QStringLiteral("type"), QStringLiteral("part"));
+    explicitPartition.insert(QStringLiteral("size"), QStringLiteral("-5"));
+    explicitPartition.insert(QStringLiteral("rm"), false);
+    explicitPartition.insert(QStringLiteral("ro"), false);
+
+    QJsonObject disk;
+    disk.insert(QStringLiteral("name"), QStringLiteral("test-vdb"));
+    disk.insert(QStringLiteral("kname"), QStringLiteral("test-vdb"));
+    disk.insert(QStringLiteral("path"), QStringLiteral("/dev/test-vdb"));
+    disk.insert(QStringLiteral("maj:min"), QStringLiteral("253:16"));
+    disk.insert(QStringLiteral("type"), QStringLiteral("disk"));
+    disk.insert(QStringLiteral("size"), -5.0);
+    disk.insert(QStringLiteral("mountpoints"),
+                QJsonArray{fakeRoot.path(), QStringLiteral("/mnt/evil\u202eX")});
+    disk.insert(QStringLiteral("children"), QJsonArray{partition, explicitPartition});
+
+    QJsonObject lsblkRoot;
+    lsblkRoot.insert(QStringLiteral("blockdevices"), QJsonArray{disk});
+    const QByteArray lsblkJson = QJsonDocument(lsblkRoot).toJson(QJsonDocument::Compact);
+    const QString jsonPath = fakeRoot.filePath(QStringLiteral("lsblk-output.json"));
+    {
+        QFile jsonFile(jsonPath);
+        QVERIFY(jsonFile.open(QIODevice::WriteOnly | QIODevice::Text));
+        jsonFile.write(lsblkJson);
+        jsonFile.close();
+    }
+    const QString lsblkPath = fakeRoot.filePath(QStringLiteral("lsblk"));
+    {
+        QFile lsblk(lsblkPath);
+        QVERIFY(lsblk.open(QIODevice::WriteOnly | QIODevice::Text));
+        lsblk.write("#!/bin/sh\ncat '" + jsonPath.toUtf8() + "'\n");
+        lsblk.close();
+    }
+    QVERIFY(QFile::setPermissions(lsblkPath,
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+
+    // A udev entry exists for the invalid MAJ:MIN; it must never be consulted.
+    const QString udevDir = fakeRoot.filePath(QStringLiteral("udev-data"));
+    QVERIFY(QDir().mkpath(udevDir));
+    {
+        QFile entry(udevDir + QStringLiteral("/b99999:0"));
+        QVERIFY(entry.open(QIODevice::WriteOnly | QIODevice::Text));
+        entry.write("E:ID_FS_TYPE=ext4\nE:ID_FS_UUID=11111111-2222-3333-4444-555555555555\n");
+        entry.close();
+    }
+
+    ScopedEnvironmentVariable lsblkOverride("BOOT_REPAIR_LSBLK", lsblkPath.toLocal8Bit());
+    ScopedEnvironmentVariable udevOverride("BOOT_REPAIR_UDEV_DATA_DIR", udevDir.toLocal8Bit());
+
+    SystemScanner scanner;
+    QString error;
+    const QList<DeviceNode> devices = scanner.scan(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(devices.size(), 1);
+    const DeviceNode scanned = devices.first();
+
+    // The 200 KiB single line was skipped conservatively and the following
+    // PRETTY_NAME parsed; the bidi control was stripped at parse time.
+    QCOMPARE(scanned.osName, QStringLiteral("TuxDOS"));
+    QVERIFY2(!scanned.osName.contains(QChar(0x202E)), "bidi controls must not survive parsing");
+
+    // Mount points are sanitized at parse time too.
+    QVERIFY(scanned.mountPoints.contains(QStringLiteral("/mnt/evilX")));
+    QVERIFY2(!scanned.mountPoints.join(QLatin1Char(' ')).contains(QChar(0x202E)),
+             "bidi controls must not survive mount-point parsing");
+
+    // Missing rm/ro stay true (conservative); explicit false stays honored.
+    QVERIFY(scanned.removable);
+    QVERIFY(scanned.readOnly);
+    QCOMPARE(scanned.children.size(), 2);
+    const DeviceNode hostile = scanned.children.at(0);
+    const DeviceNode explicitPart = scanned.children.at(1);
+    QVERIFY(hostile.removable);
+    QVERIFY(hostile.readOnly);
+    QVERIFY(!explicitPart.removable);
+    QVERIFY(!explicitPart.readOnly);
+
+    // Oversized double clamps to quint64 max; negative size clamps to 0; the
+    // negative size string also resolves to 0.
+    QCOMPARE(hostile.sizeBytes, std::numeric_limits<quint64>::max());
+    QCOMPARE(scanned.sizeBytes, quint64(0));
+    QCOMPARE(explicitPart.sizeBytes, quint64(0));
+
+    // Display fields are control/bidi-stripped.
+    QCOMPARE(hostile.label, QStringLiteral("ROOTLABEL"));
+    QCOMPARE(hostile.partLabel, QStringLiteral("PART"));
+    QCOMPARE(hostile.uuid, QStringLiteral("UUIDx"));
+    QCOMPARE(hostile.model, QStringLiteral("MODEL"));
+    QCOMPARE(hostile.serial, QStringLiteral("SERIAL"));
+    QCOMPARE(hostile.vendor, QStringLiteral("VENDOR"));
+
+    // The invalid MAJ:MIN never built a udev path: the matching entry was
+    // ignored and the null FSTYPE stayed empty.
+    QVERIFY(hostile.fileSystem.isEmpty());
+
+    // ---- Deep JSON nesting is truncated at the 64-level recursion bound.
+    QTemporaryDir deepRoot;
+    QVERIFY(deepRoot.isValid());
+    QJsonObject leaf;
+    leaf.insert(QStringLiteral("name"), QStringLiteral("leaf"));
+    leaf.insert(QStringLiteral("kname"), QStringLiteral("leaf"));
+    leaf.insert(QStringLiteral("path"), QStringLiteral("/dev/test-leaf"));
+    leaf.insert(QStringLiteral("type"), QStringLiteral("part"));
+    QJsonObject current = leaf;
+    for (int level = 0; level < 100; ++level) {
+        QJsonObject parent;
+        parent.insert(QStringLiteral("name"), QStringLiteral("node%1").arg(level));
+        parent.insert(QStringLiteral("kname"), QStringLiteral("node%1").arg(level));
+        parent.insert(QStringLiteral("path"), QStringLiteral("/dev/test-node%1").arg(level));
+        parent.insert(QStringLiteral("type"), QStringLiteral("part"));
+        parent.insert(QStringLiteral("children"), QJsonArray{current});
+        current = parent;
+    }
+    const QString deepJsonPath = deepRoot.filePath(QStringLiteral("deep.json"));
+    {
+        QJsonObject deepLsblkRoot;
+        deepLsblkRoot.insert(QStringLiteral("blockdevices"), QJsonArray{current});
+        QFile deepJson(deepJsonPath);
+        QVERIFY(deepJson.open(QIODevice::WriteOnly | QIODevice::Text));
+        deepJson.write(QJsonDocument(deepLsblkRoot).toJson(QJsonDocument::Compact));
+        deepJson.close();
+    }
+    const QString deepLsblk = deepRoot.filePath(QStringLiteral("lsblk"));
+    {
+        QFile script(deepLsblk);
+        QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Text));
+        script.write("#!/bin/sh\ncat '" + deepJsonPath.toUtf8() + "'\n");
+        script.close();
+    }
+    QVERIFY(QFile::setPermissions(deepLsblk,
+            QFileDevice::ReadOwner | QFileDevice::WriteOwner | QFileDevice::ExeOwner));
+    ScopedEnvironmentVariable deepLsblkOverride("BOOT_REPAIR_LSBLK", deepLsblk.toLocal8Bit());
+
+    SystemScanner deepScanner;
+    const QList<DeviceNode> deepDevices = deepScanner.scan(&error);
+    QVERIFY2(error.isEmpty(), qPrintable(error));
+    QCOMPARE(deepDevices.size(), 1);
+    const DeviceNode *node = &deepDevices.first();
+    int depth = 0;
+    while (!node->children.isEmpty()) {
+        node = &node->children.first();
+        ++depth;
+    }
+    QCOMPARE(depth, 64);
+}
+
+// A8-05: the fixed system directories win over the environment PATH; the PATH
+// fallback is last, not gone.
+void MainWindowUiTest::capabilityCheckerPathOrderPrefersSystemDirs()
+{
+    QTemporaryDir fakePath;
+    QVERIFY(fakePath.isValid());
+    const auto writeFake = [&fakePath](const QString &name) {
+        const QString path = fakePath.filePath(name);
+        QFile file(path);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Text)) {
+            return QString();
+        }
+        file.write("#!/bin/sh\nexit 0\n");
+        file.close();
+        QFile::setPermissions(path, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                      | QFileDevice::ExeOwner);
+        return path;
+    };
+    const QString fakeLsblk = writeFake(QStringLiteral("lsblk"));
+    QVERIFY(!fakeLsblk.isEmpty());
+
+    ScopedEnvironmentVariable pathOverride("PATH", fakePath.path().toUtf8());
+
+    // A command present in both the fake PATH and the system directories
+    // resolves to the system binary, never the lookalike.
+    const QString resolvedLsblk = CapabilityChecker::findExecutablePortable(QStringLiteral("lsblk"));
+    QVERIFY2(!resolvedLsblk.isEmpty(), "lsblk must resolve on a test host");
+    QVERIFY2(resolvedLsblk != fakeLsblk,
+             "the PATH lookalike must never win over the system binary");
+    QVERIFY2(resolvedLsblk.startsWith(QStringLiteral("/usr/"))
+                 || resolvedLsblk.startsWith(QStringLiteral("/bin"))
+                 || resolvedLsblk.startsWith(QStringLiteral("/sbin")),
+             qPrintable(resolvedLsblk));
+
+    // The PATH fallback is last, not gone: a command that exists only in the
+    // fake PATH still resolves there.
+    const QString fakeOnly = writeFake(QStringLiteral("zefix-boot-repair-probe"));
+    QVERIFY(!fakeOnly.isEmpty());
+    QCOMPARE(CapabilityChecker::findExecutablePortable(QStringLiteral("zefix-boot-repair-probe")),
+             fakeOnly);
+
+    // scanHost() uses the same resolver for its requirement table.
+    const QList<Capability> capabilities = CapabilityChecker::scanHost();
+    bool sawLsblk = false;
+    for (const Capability &capability : capabilities) {
+        if (capability.command == QStringLiteral("lsblk")) {
+            sawLsblk = true;
+            QCOMPARE(capability.executablePath, resolvedLsblk);
+        }
+    }
+    QVERIFY(sawLsblk);
 }
 
 int main(int argc, char **argv)

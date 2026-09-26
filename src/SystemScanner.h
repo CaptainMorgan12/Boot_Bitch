@@ -68,7 +68,9 @@ public:
                                             const QString &udevDataDir = QString());
 
 private:
-    DeviceNode parseNode(const QJsonObject &object) const;
+    // A8-08: the JSON tree recursion is depth-capped at 64 levels so a
+    // hostile or corrupt lsblk tree can never exhaust the stack.
+    DeviceNode parseNode(const QJsonObject &object, int depth = 0) const;
     void classifyTree(DeviceNode &node) const;
     void applyProtection(DeviceNode &node, bool protectedTree) const;
     bool treeBacksRunningSystem(const DeviceNode &node) const;

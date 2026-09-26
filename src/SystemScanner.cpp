@@ -7,16 +7,111 @@
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QProcess>
-#include <QTextStream>
+#include <QRegularExpression>
+
+#include <cmath>
+#include <limits>
 
 namespace {
+// A8-04: strips C0/C1 control characters and the Unicode bidi control
+// characters (U+202A-U+202E, U+2066-U+2069) from kernel-reported display
+// strings. Device labels, UUIDs and mount points are shown verbatim in the
+// GUI, so hostile metadata must never be able to inject terminal control
+// sequences or bidi reordering into the interface.
+QString stripDisplayControls(const QString &text)
+{
+    QString cleaned;
+    cleaned.reserve(text.size());
+    for (const QChar character : text) {
+        const ushort code = character.unicode();
+        if (character.category() == QChar::Other_Control
+            || (code >= 0x202A && code <= 0x202E)
+            || (code >= 0x2066 && code <= 0x2069)) {
+            continue;
+        }
+        cleaned.append(character);
+    }
+    return cleaned;
+}
+
+// A8-01: bounded line reading for the world-visible files the scanner parses
+// (os-release, the udev database). Lines longer than 64 KiB are skipped
+// conservatively — their remainder is drained so the tail of a huge line can
+// never be misread as a separate entry — and at most 256 lines are inspected.
+class BoundedLineReader
+{
+public:
+    explicit BoundedLineReader(QFile &file)
+        : m_file(file)
+    {
+    }
+
+    // True while the line budget remains and the file may hold more data.
+    bool hasMore() const
+    {
+        return m_linesRead < kMaxLines && !m_file.atEnd();
+    }
+
+    // Reads the next complete line (newline stripped) into line. Returns
+    // false at EOF, after the line budget, or when the line exceeded the
+    // length bound (the oversized line is consumed and skipped).
+    bool readLine(QByteArray *line)
+    {
+        if (m_linesRead >= kMaxLines) {
+            return false;
+        }
+        bool draining = false;
+        for (;;) {
+            QByteArray raw = m_file.readLine(kMaxLineBytes + 2);
+            if (raw.isEmpty()) {
+                return false;
+            }
+            const bool complete = raw.endsWith('\n') || m_file.atEnd();
+            const qsizetype content = raw.size() - (raw.endsWith('\n') ? 1 : 0);
+            if (draining) {
+                if (complete) {
+                    return false;
+                }
+                continue;
+            }
+            if (content > kMaxLineBytes) {
+                ++m_linesRead;
+                if (complete) {
+                    return false;
+                }
+                draining = true;
+                continue;
+            }
+            if (raw.endsWith('\n')) {
+                raw.chop(1);
+            }
+            if (raw.endsWith('\r')) {
+                raw.chop(1);
+            }
+            *line = raw;
+            ++m_linesRead;
+            return true;
+        }
+    }
+
+private:
+    static constexpr qsizetype kMaxLineBytes = 64 * 1024;
+    static constexpr int kMaxLines = 256;
+    QFile &m_file;
+    int m_linesRead = 0;
+};
+
 QString jsonString(const QJsonObject &object, const char *key)
 {
     const QJsonValue value = object.value(QLatin1String(key));
     return value.isString() ? value.toString() : QString();
 }
 
-bool jsonBool(const QJsonObject &object, const char *key)
+// A8-09: conservative flag parse for rm/ro. An explicit false value (boolean
+// false, 0 or the words false/no/0) disables the flag; anything else —
+// including a missing, null or unrecognized field — leaves it true so
+// unverifiable removable/read-only state can never be presented as safe.
+bool jsonFlagDefaultTrue(const QJsonObject &object, const char *key)
 {
     const QJsonValue value = object.value(QLatin1String(key));
     if (value.isBool()) {
@@ -27,9 +122,10 @@ bool jsonBool(const QJsonObject &object, const char *key)
     }
     if (value.isString()) {
         const QString text = value.toString().trimmed().toLower();
-        return text == QStringLiteral("1") || text == QStringLiteral("true") || text == QStringLiteral("yes");
+        return text != QStringLiteral("0") && text != QStringLiteral("false")
+            && text != QStringLiteral("no");
     }
-    return false;
+    return true;
 }
 
 QStringList jsonMountPoints(const QJsonObject &object)
@@ -41,18 +137,20 @@ QStringList jsonMountPoints(const QJsonObject &object)
         const QJsonArray array = value.toArray();
         for (const QJsonValue &entry : array) {
             if (entry.isString() && !entry.toString().isEmpty()) {
-                result.append(entry.toString());
+                result.append(stripDisplayControls(entry.toString()));
             }
         }
     } else if (value.isString() && !value.toString().isEmpty()) {
-        result.append(value.toString());
+        result.append(stripDisplayControls(value.toString()));
     }
 
     return result;
 }
 
 // Reads PRETTY_NAME from the os-release file of a mounted root, so a repair
-// target is named the same way the running host is.
+// target is named the same way the running host is. A8-01: the read is bounded
+// (64 KiB lines, 256 lines, complete lines only); A8-04: the returned display
+// name carries no control or bidi characters.
 QString prettyNameFromOsRelease(const QString &root)
 {
     QString path;
@@ -63,13 +161,17 @@ QString prettyNameFromOsRelease(const QString &root)
     }
 
     QFile file(path);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         return QString();
     }
 
-    QTextStream stream(&file);
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine();
+    BoundedLineReader reader(file);
+    while (reader.hasMore()) {
+        QByteArray rawLine;
+        if (!reader.readLine(&rawLine)) {
+            continue; // oversized line skipped
+        }
+        const QString line = QString::fromUtf8(rawLine).trimmed();
         if (!line.startsWith(QStringLiteral("PRETTY_NAME="))) {
             continue;
         }
@@ -78,7 +180,7 @@ QString prettyNameFromOsRelease(const QString &root)
         if (value.size() >= 2 && value.startsWith(QLatin1Char('"')) && value.endsWith(QLatin1Char('"'))) {
             value = value.mid(1, value.size() - 2);
         }
-        return value;
+        return stripDisplayControls(value);
     }
 
     return QString();
@@ -249,14 +351,21 @@ void SystemScanner::applyUdevFilesystemEvidence(DeviceNode &node, const QString 
     }
 
     QFile file(directory + QStringLiteral("/b") + deviceNumber);
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         return;
     }
 
+    // A8-01: bounded read — 64 KiB lines, 256 lines, complete lines only — so
+    // a hostile or corrupt udev entry can neither balloon memory nor stall the
+    // parse. A8-04: the collected display properties are sanitized below.
     QHash<QString, QString> properties;
-    QTextStream stream(&file);
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine();
+    BoundedLineReader reader(file);
+    while (reader.hasMore()) {
+        QByteArray rawLine;
+        if (!reader.readLine(&rawLine)) {
+            continue; // oversized line skipped
+        }
+        const QString line = QString::fromUtf8(rawLine);
         if (!line.startsWith(QStringLiteral("E:"))) {
             continue;
         }
@@ -284,21 +393,23 @@ void SystemScanner::applyUdevFilesystemEvidence(DeviceNode &node, const QString 
         node.fileSystemVersion = property(QStringLiteral("ID_FS_VERSION"));
     }
     if (node.label.isEmpty()) {
-        node.label = property(QStringLiteral("ID_FS_LABEL"));
+        node.label = stripDisplayControls(property(QStringLiteral("ID_FS_LABEL")));
     }
     if (node.uuid.isEmpty()) {
-        node.uuid = property(QStringLiteral("ID_FS_UUID"));
+        node.uuid = stripDisplayControls(property(QStringLiteral("ID_FS_UUID")));
     }
     if (node.partLabel.isEmpty()) {
-        node.partLabel = property(QStringLiteral("ID_PART_ENTRY_NAME"));
+        node.partLabel = stripDisplayControls(property(QStringLiteral("ID_PART_ENTRY_NAME")));
     }
     if (node.partUuid.isEmpty()) {
-        node.partUuid = property(QStringLiteral("ID_PART_ENTRY_UUID"));
+        node.partUuid = stripDisplayControls(property(QStringLiteral("ID_PART_ENTRY_UUID")));
     }
 }
 
 // Recursively converts one lsblk JSON object (and its children) into a node.
-DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
+// A8-08: the recursion is depth-capped at 64 levels so a hostile or corrupt
+// lsblk tree can never exhaust the stack; deeper descendants are dropped.
+DeviceNode SystemScanner::parseNode(const QJsonObject &object, int depth) const
 {
     DeviceNode node;
     node.name = jsonString(object, "name");
@@ -307,24 +418,37 @@ DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
     node.type = jsonString(object, "type");
     node.fileSystem = jsonString(object, "fstype");
     node.fileSystemVersion = jsonString(object, "fsver");
-    node.label = jsonString(object, "label");
-    node.partLabel = jsonString(object, "partlabel");
-    node.uuid = jsonString(object, "uuid");
-    node.partUuid = jsonString(object, "partuuid");
-    node.model = jsonString(object, "model").trimmed();
-    node.serial = jsonString(object, "serial").trimmed();
-    node.vendor = jsonString(object, "vendor").trimmed();
-    node.transport = jsonString(object, "tran").trimmed();
+    // A8-04: kernel-reported display strings are sanitized at parse time.
+    node.label = stripDisplayControls(jsonString(object, "label"));
+    node.partLabel = stripDisplayControls(jsonString(object, "partlabel"));
+    node.uuid = stripDisplayControls(jsonString(object, "uuid"));
+    node.partUuid = stripDisplayControls(jsonString(object, "partuuid"));
+    node.model = stripDisplayControls(jsonString(object, "model").trimmed());
+    node.serial = stripDisplayControls(jsonString(object, "serial").trimmed());
+    node.vendor = stripDisplayControls(jsonString(object, "vendor").trimmed());
+    node.transport = stripDisplayControls(jsonString(object, "tran").trimmed());
     node.parentKernelName = jsonString(object, "pkname");
     node.mountPoints = jsonMountPoints(object);
-    node.removable = jsonBool(object, "rm");
-    node.readOnly = jsonBool(object, "ro");
+    // A8-09: a missing or malformed rm/ro field stays true (conservative).
+    node.removable = jsonFlagDefaultTrue(object, "rm");
+    node.readOnly = jsonFlagDefaultTrue(object, "ro");
 
     const QJsonValue sizeValue = object.value(QStringLiteral("size"));
     if (sizeValue.isDouble()) {
-        node.sizeBytes = static_cast<quint64>(sizeValue.toDouble());
+        // A8-06: clamp before the quint64 cast — non-finite or negative values
+        // become 0 (unknown) and values beyond quint64 become the maximum, so
+        // a hostile size can never wrap the cast.
+        const double raw = sizeValue.toDouble();
+        if (std::isfinite(raw) && raw > 0.0) {
+            const double maxSize = static_cast<double>(std::numeric_limits<quint64>::max());
+            node.sizeBytes = raw >= maxSize
+                ? std::numeric_limits<quint64>::max()
+                : static_cast<quint64>(raw);
+        }
     } else if (sizeValue.isString()) {
-        node.sizeBytes = sizeValue.toString().toULongLong();
+        bool converted = false;
+        const quint64 parsed = sizeValue.toString().toULongLong(&converted);
+        node.sizeBytes = converted ? parsed : 0;
     }
 
     // lsblk reports filesystem metadata only when it can probe the device or
@@ -332,12 +456,24 @@ DeviceNode SystemScanner::parseNode(const QJsonObject &object) const
     // linked against libudev and an unprivileged user cannot open block
     // devices, so fill missing evidence from the world-readable udev database
     // before the tree is classified.
-    applyUdevFilesystemEvidence(node, jsonString(object, "maj:min"));
+    // A8-07: the udev lookup is keyed by the kernel device number; only a
+    // well-formed MAJ:MIN string is ever turned into a file path.
+    static const QRegularExpression deviceNumberPattern(
+        QStringLiteral("^\\d{1,4}:\\d{1,4}$"));
+    const QString deviceNumber = jsonString(object, "maj:min");
+    applyUdevFilesystemEvidence(node,
+                                deviceNumberPattern.match(deviceNumber).hasMatch()
+                                    ? deviceNumber
+                                    : QString());
 
-    const QJsonArray children = object.value(QStringLiteral("children")).toArray();
-    for (const QJsonValue &child : children) {
-        if (child.isObject()) {
-            node.children.append(parseNode(child.toObject()));
+    // A8-08: depth-cap the recursion at 64 levels; deeper descendants are
+    // dropped conservatively instead of being parsed.
+    if (depth < 64) {
+        const QJsonArray children = object.value(QStringLiteral("children")).toArray();
+        for (const QJsonValue &child : children) {
+            if (child.isObject()) {
+                node.children.append(parseNode(child.toObject(), depth + 1));
+            }
         }
     }
 
@@ -462,11 +598,23 @@ bool SystemScanner::treeContainsEncryptedVolume(const DeviceNode &node) const
     return false;
 }
 
+// A8-03: the protected mount-point policy is a static prefix list. A mount
+// point protects its device tree when it equals one of the prefixes or lies
+// beneath one; the '/' boundary keeps siblings (for example /bootX or
+// /usr-local) from matching.
 bool SystemScanner::isProtectedMountPoint(const QString &mountPoint)
 {
-    return mountPoint == QStringLiteral("/")
-        || mountPoint == QStringLiteral("/boot")
-        || mountPoint == QStringLiteral("/boot/efi");
+    static const QStringList protectedPrefixes = {
+        QStringLiteral("/"), QStringLiteral("/boot"), QStringLiteral("/efi"),
+        QStringLiteral("/usr"), QStringLiteral("/var"), QStringLiteral("/home"),
+        QStringLiteral("/opt"), QStringLiteral("/srv"), QStringLiteral("/etc")
+    };
+    for (const QString &prefix : protectedPrefixes) {
+        if (mountPoint == prefix || mountPoint.startsWith(prefix + QLatin1Char('/'))) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool SystemScanner::isLinuxCapableFileSystem(const QString &fileSystem)
