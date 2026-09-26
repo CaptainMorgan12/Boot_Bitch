@@ -375,10 +375,12 @@ fi
 # populate_writable_dev copies the host device tree without recursing into the
 # nested /dev mounts and always provides the essential device nodes.
 dev_populate_root=""
+dev_filter_root=""
 shell_stub_root=""
 cleanup_dev_contract()
 {
     [[ -n "$dev_populate_root" ]] && rm -rf -- "$dev_populate_root"
+    [[ -n "$dev_filter_root" ]] && rm -rf -- "$dev_filter_root"
     [[ -n "$shell_stub_root" ]] && rm -rf -- "$shell_stub_root"
 }
 trap cleanup_dev_contract EXIT
@@ -403,6 +405,142 @@ printf 'shm\n' > "$dev_populate_root/src/shm/inside"
     [[ "$(stat -c '%a' "$dev_populate_root/dst/shm" 2>/dev/null)" == 1777 ]] || exit 1
     [[ -L "$dev_populate_root/dst/fd" && "$(readlink "$dev_populate_root/dst/fd" 2>/dev/null)" == /proc/self/fd ]] || exit 1
 ) || { echo 'FAIL: populate_writable_dev did not populate a private /dev' >&2; exit 1; }
+
+# A1-02/A3-01: when the source is the real /dev, populate_writable_dev
+# dispatches to the filtered populate, and the permissive tree copy stays
+# available for the contract-test override source (the block above).
+grep -q '^populate_writable_dev_filtered()' "$HELPER" \
+    || { echo 'FAIL: the filtered private /dev populate function is missing' >&2; exit 1; }
+grep -Fq 'populate_writable_dev_filtered "$destination" "$source"' "$HELPER" \
+    || { echo 'FAIL: the real-/dev populate is not filtered' >&2; exit 1; }
+grep -Fq 'cp -a "$entry" "$destination/$name" 2>/dev/null || true' "$HELPER" \
+    || { echo 'FAIL: the permissive populate copy for the contract-test override source is gone' >&2; exit 1; }
+grep -Fq "stat -c '%F %t %T'" "$HELPER" \
+    || { echo 'FAIL: the filtered populate does not match devices by maj:min via stat' >&2; exit 1; }
+grep -Fq "'character special file'|'character device'" "$HELPER" \
+    || { echo 'FAIL: the filtered populate does not accept both GNU and BusyBox stat spellings' >&2; exit 1; }
+grep -Fq 'disk/by-*/*' "$HELPER" \
+    || { echo 'FAIL: the filtered populate does not recreate disk/by-* links' >&2; exit 1; }
+grep -Fq 'retains its mknod capability' "$HELPER" \
+    || { echo 'FAIL: the filtered populate lost the documented mknod escape-hatch intent' >&2; exit 1; }
+
+# Behavioural filter check with a fake source tree: device identity is
+# reported through a stat stub (both the GNU and the BusyBox %F spelling),
+# the top-disk resolution is stubbed, and only the selected-disk devices plus
+# the essential nodes may reach the destination.
+dev_filter_root="$(mktemp -d)"
+mkdir -p "$dev_filter_root/src/disk/by-uuid" "$dev_filter_root/src/disk/by-id" \
+    "$dev_filter_root/src/mapper" "$dev_filter_root/src/input" \
+    "$dev_filter_root/src/pts" "$dev_filter_root/src/shm"
+for filter_node in null zero full random urandom tty console sda sda1 sdb sdb1 kvm plain-file sock; do
+    : > "$dev_filter_root/src/$filter_node"
+done
+: > "$dev_filter_root/src/mapper/control"
+: > "$dev_filter_root/src/mapper/crypt-target"
+: > "$dev_filter_root/src/mapper/vg-foreign"
+: > "$dev_filter_root/src/input/event0"
+mkfifo "$dev_filter_root/src/fifo"
+ln -s ../../sda1 "$dev_filter_root/src/disk/by-uuid/target-uuid"
+ln -s ../../sdb1 "$dev_filter_root/src/disk/by-uuid/foreign-uuid"
+ln -s ../../sda "$dev_filter_root/src/disk/by-id/ata-target"
+ln -s ../../sdb "$dev_filter_root/src/disk/by-id/ata-foreign"
+ln -s /proc/kcore "$dev_filter_root/src/core"
+
+run_dev_filter_case()
+{
+    local style="$1"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        MOUNTS=()
+        TARGET_DISK=/dev/sda
+        SESSION_LOG="$dev_filter_root/session-$style.log"
+        : > "$SESSION_LOG"
+        stat()
+        {
+            shift 2
+            [[ "${1:-}" == -- ]] && shift
+            local path="${1:-}" name ftype="" major="" minor=""
+            name="$(basename -- "$path")"
+            case "$name" in
+                null) major=1; minor=3 ;;
+                zero) major=1; minor=5 ;;
+                full) major=1; minor=7 ;;
+                random) major=1; minor=8 ;;
+                urandom) major=1; minor=9 ;;
+                tty) major=5; minor=0 ;;
+                console) major=5; minor=1 ;;
+                control) major=a; minor=ec ;;
+                kvm) major=a; minor=e8 ;;
+                event0) major=d; minor=40 ;;
+                sda|sda1|sdb|sdb1|crypt-target|vg-foreign) major=8; minor=0 ;;
+            esac
+            case "$name" in
+                null|zero|full|random|urandom|tty|console|control|kvm|event0)
+                    [[ "$style" == busybox ]] && ftype='character device' || ftype='character special file' ;;
+                sda|sda1|sdb|sdb1|crypt-target|vg-foreign)
+                    [[ "$style" == busybox ]] && ftype='block device' || ftype='block special file' ;;
+                *) ftype='regular file' ;;
+            esac
+            printf '%s %s %s\n' "$ftype" "$major" "$minor"
+        }
+        top_disks_for()
+        {
+            case "$1" in
+                */sdb|*/sdb1|*/vg-foreign) printf '%s\n' /dev/sdb ;;
+                */sda|*/sda1|*/crypt-target) printf '%s\n' /dev/sda ;;
+                *) return 1 ;;
+            esac
+        }
+        populate_writable_dev_filtered "$dev_filter_root/dst-$style" "$dev_filter_root/src" || exit 1
+    ) > "$dev_filter_root/filter-$style.log" 2>&1
+}
+
+if ! run_dev_filter_case gnu; then
+    echo 'FAIL: the filtered private /dev populate failed (GNU stat spelling)' >&2
+    cat "$dev_filter_root/filter-gnu.log" >&2
+    exit 1
+fi
+if ! run_dev_filter_case busybox; then
+    echo 'FAIL: the filtered private /dev populate failed (BusyBox stat spelling)' >&2
+    cat "$dev_filter_root/filter-busybox.log" >&2
+    exit 1
+fi
+for filter_style in gnu busybox; do
+    filter_dst="$dev_filter_root/dst-$filter_style"
+    for filter_essential in null zero full random urandom tty console; do
+        [[ -e "$filter_dst/$filter_essential" ]] \
+            || { echo "FAIL: essential node $filter_essential is missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    done
+    [[ -e "$filter_dst/mapper/control" ]] \
+        || { echo "FAIL: the device-mapper control node is missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -e "$filter_dst/sda" && -e "$filter_dst/sda1" ]] \
+        || { echo "FAIL: selected-disk block devices are missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -e "$filter_dst/mapper/crypt-target" ]] \
+        || { echo "FAIL: the selected-disk mapper is missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ ! -e "$filter_dst/sdb" && ! -e "$filter_dst/sdb1" ]] \
+        || { echo "FAIL: a foreign-disk block device reached the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ ! -e "$filter_dst/mapper/vg-foreign" ]] \
+        || { echo "FAIL: a foreign-disk mapper reached the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -L "$filter_dst/disk/by-uuid/target-uuid" && "$(readlink "$filter_dst/disk/by-uuid/target-uuid")" == ../../sda1 ]] \
+        || { echo "FAIL: the allowed by-uuid link was not recreated ($filter_style)" >&2; exit 1; }
+    [[ -L "$filter_dst/disk/by-id/ata-target" ]] \
+        || { echo "FAIL: the allowed by-id link was not recreated ($filter_style)" >&2; exit 1; }
+    [[ ! -L "$filter_dst/disk/by-uuid/foreign-uuid" && ! -e "$filter_dst/disk/by-uuid/foreign-uuid" ]] \
+        || { echo "FAIL: a by-uuid link to a foreign device was recreated ($filter_style)" >&2; exit 1; }
+    [[ ! -L "$filter_dst/disk/by-id/ata-foreign" && ! -e "$filter_dst/disk/by-id/ata-foreign" ]] \
+        || { echo "FAIL: a by-id link to a foreign device was recreated ($filter_style)" >&2; exit 1; }
+    [[ ! -e "$filter_dst/kvm" && ! -e "$filter_dst/input/event0" ]] \
+        || { echo "FAIL: a non-essential character device reached the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ ! -e "$filter_dst/plain-file" && ! -e "$filter_dst/sock" && ! -e "$filter_dst/fifo" && ! -e "$filter_dst/core" && ! -L "$filter_dst/core" ]] \
+        || { echo "FAIL: a plain file, socket, fifo or non-device symlink reached the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -L "$filter_dst/fd" && "$(readlink "$filter_dst/fd")" == /proc/self/fd ]] \
+        || { echo "FAIL: the /dev/fd proc link is missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -d "$filter_dst/pts" && -d "$filter_dst/shm" ]] \
+        || { echo "FAIL: the pts/shm directories are missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ "$(stat -c '%a' -- "$filter_dst/shm")" == 1777 ]] \
+        || { echo "FAIL: the filtered /dev/shm mode is not 1777 ($filter_style)" >&2; exit 1; }
+done
 
 # Behavioural check with stubbed chroot/timeout runners: the command must
 # receive stdin from /dev/null and the non-interactive dnf5/apt environment,

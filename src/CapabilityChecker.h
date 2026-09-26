@@ -27,6 +27,11 @@ public:
     static QList<Capability> scanHost();
     static QString distributionLabel();
     static QString packageManagerLabel();
+    // A8-05: resolves a command through the fixed system directories first and
+    // the environment PATH last, so a lookalike executable in a user- or
+    // attacker-controlled PATH directory can never win ahead of the real
+    // system binary. Public for the UI regression tests.
+    static QString findExecutablePortable(const QString &command);
 
 private:
     static QString distributionId();

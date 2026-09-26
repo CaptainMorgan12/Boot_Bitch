@@ -5,20 +5,16 @@
 #include <QRegularExpression>
 #include <QStandardPaths>
 #include <QStringList>
-#include <QTextStream>
 
 namespace {
-// Resolves a command through the normal PATH search and then through the
-// standard system directories, which are not always present in PATH when the
-// application is started from an AppImage or a desktop launcher.
-QString findExecutablePortable(const QString &command)
+// A8-05: resolve a command through the fixed system directories first and the
+// environment PATH last. A GUI launched from a desktop session can inherit a
+// PATH that differs from the user's shell PATH; the system directories are
+// tried first so a lookalike executable in a user- or attacker-controlled
+// directory can never win ahead of the real system binary.
+QString resolveExecutablePortable(const QString &command)
 {
-    QString path = QStandardPaths::findExecutable(command);
-    if (!path.isEmpty()) {
-        return path;
-    }
-
-    static const QStringList fallbackDirectories = {
+    static const QStringList systemDirectories = {
         QStringLiteral("/usr/local/sbin"),
         QStringLiteral("/usr/local/bin"),
         QStringLiteral("/usr/sbin"),
@@ -26,16 +22,101 @@ QString findExecutablePortable(const QString &command)
         QStringLiteral("/sbin"),
         QStringLiteral("/bin")
     };
-
-    for (const QString &directory : fallbackDirectories) {
-        path = QStandardPaths::findExecutable(command, {directory});
+    for (const QString &directory : systemDirectories) {
+        const QString path = QStandardPaths::findExecutable(command, {directory});
         if (!path.isEmpty()) {
             return path;
         }
     }
-
-    return QString();
+    // PATH fallback: last, and only for commands the system directories lack.
+    return QStandardPaths::findExecutable(command);
 }
+
+// A8-04: strips C0/C1 control characters and the Unicode bidi control
+// characters (U+202A-U+202E, U+2066-U+2069) from display strings, so a hostile
+// os-release can never inject terminal control sequences or bidi reordering
+// into the interface.
+QString stripDisplayControls(const QString &text)
+{
+    QString cleaned;
+    cleaned.reserve(text.size());
+    for (const QChar character : text) {
+        const ushort code = character.unicode();
+        if (character.category() == QChar::Other_Control
+            || (code >= 0x202A && code <= 0x202E)
+            || (code >= 0x2066 && code <= 0x2069)) {
+            continue;
+        }
+        cleaned.append(character);
+    }
+    return cleaned;
+}
+
+// A8-01: bounded line reading for os-release. Lines longer than 64 KiB are
+// skipped conservatively — their remainder is drained so the tail of a huge
+// line can never be misread as a separate entry — and at most 256 lines are
+// inspected; every line is decoded only after it was read completely.
+class BoundedLineReader
+{
+public:
+    explicit BoundedLineReader(QFile &file)
+        : m_file(file)
+    {
+    }
+
+    bool hasMore() const
+    {
+        return m_linesRead < kMaxLines && !m_file.atEnd();
+    }
+
+    // Reads the next complete line (newline stripped) into line. Returns
+    // false at EOF, after the line budget, or when the line exceeded the
+    // length bound (the oversized line is consumed and skipped).
+    bool readLine(QByteArray *line)
+    {
+        if (m_linesRead >= kMaxLines) {
+            return false;
+        }
+        bool draining = false;
+        for (;;) {
+            QByteArray raw = m_file.readLine(kMaxLineBytes + 2);
+            if (raw.isEmpty()) {
+                return false;
+            }
+            const bool complete = raw.endsWith('\n') || m_file.atEnd();
+            const qsizetype content = raw.size() - (raw.endsWith('\n') ? 1 : 0);
+            if (draining) {
+                if (complete) {
+                    return false;
+                }
+                continue;
+            }
+            if (content > kMaxLineBytes) {
+                ++m_linesRead;
+                if (complete) {
+                    return false;
+                }
+                draining = true;
+                continue;
+            }
+            if (raw.endsWith('\n')) {
+                raw.chop(1);
+            }
+            if (raw.endsWith('\r')) {
+                raw.chop(1);
+            }
+            *line = raw;
+            ++m_linesRead;
+            return true;
+        }
+    }
+
+private:
+    static constexpr qsizetype kMaxLineBytes = 64 * 1024;
+    static constexpr int kMaxLines = 256;
+    QFile &m_file;
+    int m_linesRead = 0;
+};
 
 // The running host's os-release. BOOT_REPAIR_OS_RELEASE is a read-only test
 // seam used by the UI regression test to simulate another distribution; normal
@@ -53,13 +134,17 @@ QMap<QString, QString> readOsRelease()
 {
     QMap<QString, QString> values;
     QFile file(osReleasePath());
-    if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+    if (!file.open(QIODevice::ReadOnly)) {
         return values;
     }
 
-    QTextStream stream(&file);
-    while (!stream.atEnd()) {
-        const QString line = stream.readLine().trimmed();
+    BoundedLineReader reader(file);
+    while (reader.hasMore()) {
+        QByteArray rawLine;
+        if (!reader.readLine(&rawLine)) {
+            continue; // oversized line skipped
+        }
+        const QString line = QString::fromUtf8(rawLine).trimmed();
         if (line.isEmpty() || line.startsWith(QLatin1Char('#'))) {
             continue;
         }
@@ -71,7 +156,11 @@ QMap<QString, QString> readOsRelease()
         if (value.size() >= 2 && value.startsWith(QLatin1Char('"')) && value.endsWith(QLatin1Char('"'))) {
             value = value.mid(1, value.size() - 2);
         }
-        values.insert(line.left(separator), value);
+        const QString key = line.left(separator);
+        // A8-04: PRETTY_NAME is a display string and is sanitized at parse
+        // time; the machine-read keys (ID, ID_LIKE, ...) are matched verbatim
+        // and stay untouched.
+        values.insert(key, key == QStringLiteral("PRETTY_NAME") ? stripDisplayControls(value) : value);
     }
     return values;
 }
@@ -134,6 +223,13 @@ bool isSuseLike(const QString &id, const QMap<QString, QString> &values)
 }
 } // namespace
 
+// A8-05: public wrapper over the file-local resolver so the UI regression
+// tests can pin the fixed-system-directories-first order directly.
+QString CapabilityChecker::findExecutablePortable(const QString &command)
+{
+    return resolveExecutablePortable(command);
+}
+
 // Probes the fixed requirement table in declaration order and returns one
 // Capability per entry, with the resolved executable path and the distribution
 // package that provides the command.
@@ -183,7 +279,7 @@ QList<Capability> CapabilityChecker::scanHost()
         capability.scope = QString::fromLatin1(requirement.scope);
         capability.note = QString::fromLatin1(requirement.note);
         capability.optional = requirement.optional;
-        capability.executablePath = findExecutablePortable(capability.command);
+        capability.executablePath = resolveExecutablePortable(capability.command);
         capability.available = !capability.executablePath.isEmpty();
         capability.packageName = packageForCommand(capability.command, distro);
         capabilities.append(capability);

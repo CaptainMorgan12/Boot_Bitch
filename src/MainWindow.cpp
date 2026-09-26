@@ -1080,39 +1080,53 @@ QString mergeEmbeddedDiagnosticSection(const QString &bundle, const QString &key
 // evidence through this helper, so the `Repair tool <key>` protocol is
 // implemented once instead of being re-checked in each action. `hadEvidence`
 // reports whether a line for the key was present at all.
+//
+// A6-05: the gate reads ONLY the dedicated capability cache entry
+// (cache.value("capabilities")). Per-diagnostic sections (fstab, kernel, ...)
+// are never scanned, because a section body may legitimately quote a
+// `Repair tool <key>` line without carrying the capability decision. When the
+// dedicated entry is missing, the shared capability preamble is extracted
+// from the combined report (splitDiagnosticCapabilityPreamble) so a cache
+// captured before the split entry existed still gates on the same evidence.
 static bool cachedRepairToolAvailable(const QMap<QString, QString> &cache, const QString &key,
                                       QString *reason, bool *hadEvidence = nullptr)
 {
     if (hadEvidence) {
         *hadEvidence = false;
     }
+    QString evidence = cache.value(QStringLiteral("capabilities"));
+    if (evidence.isEmpty()) {
+        QString ignoredBody;
+        QString preamble;
+        MainWindow::splitDiagnosticCapabilityPreamble(cache.value(QStringLiteral("report")),
+                                                      &ignoredBody, &preamble);
+        evidence = preamble;
+    }
     const QString prefix = QStringLiteral("Repair tool %1: ").arg(key);
     bool available = false;
-    for (const QString &evidence : cache) {
-        for (const QString &line : evidence.split(QLatin1Char('\n'))) {
-            if (!line.startsWith(prefix)) {
-                continue;
+    for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+        if (!line.startsWith(prefix)) {
+            continue;
+        }
+        if (hadEvidence) {
+            *hadEvidence = true;
+        }
+        const QString state = line.mid(prefix.size()).trimmed();
+        if (state == QStringLiteral("available")) {
+            available = true;
+        } else if (state.startsWith(QStringLiteral("unavailable|"))) {
+            const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+            if (reason) {
+                *reason = detail.isEmpty()
+                    ? QStringLiteral("Repair tool %1 is unavailable.").arg(key)
+                    : detail;
             }
-            if (hadEvidence) {
-                *hadEvidence = true;
+            return false;
+        } else {
+            if (reason) {
+                *reason = QStringLiteral("Repair tool %1 has unknown or unavailable diagnostic evidence.").arg(key);
             }
-            const QString state = line.mid(prefix.size()).trimmed();
-            if (state == QStringLiteral("available")) {
-                available = true;
-            } else if (state.startsWith(QStringLiteral("unavailable|"))) {
-                const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
-                if (reason) {
-                    *reason = detail.isEmpty()
-                        ? QStringLiteral("Repair tool %1 is unavailable.").arg(key)
-                        : detail;
-                }
-                return false;
-            } else {
-                if (reason) {
-                    *reason = QStringLiteral("Repair tool %1 has unknown or unavailable diagnostic evidence.").arg(key);
-                }
-                return false;
-            }
+            return false;
         }
     }
     if (!available) {
@@ -3787,6 +3801,25 @@ MainWindow::MainWindow(QWidget *parent)
     , m_scanner(new SystemScanner(this))
     , m_settings(new QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"), this))
 {
+    // A7-04: the settings file persists scoped UI state and the running-host
+    // reboot-required marker; keep it readable and writable only by the
+    // invoking user, including on the first run when QSettings has not yet
+    // created the file or its directory.
+#ifdef Q_OS_UNIX
+    if (m_settings && !m_settings->fileName().isEmpty()) {
+        const QString settingsPath = m_settings->fileName();
+        if (!QFileInfo::exists(settingsPath)) {
+            QDir().mkpath(QFileInfo(settingsPath).absolutePath());
+            QFile settingsFile(settingsPath);
+            const bool created = settingsFile.open(QIODevice::WriteOnly);
+            settingsFile.close();
+            Q_UNUSED(created); // a pre-existing readable file is sufficient
+        }
+        QFile::setPermissions(settingsPath,
+                              QFileDevice::ReadOwner | QFileDevice::WriteOwner);
+    }
+#endif
+
     applyPortableFileDialogPolicy();
 
     setWindowTitle(QStringLiteral("Boot Bitch"));
@@ -6844,10 +6877,26 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     // that request instead of launching a second pkexec dialog. The wait ends
     // as soon as the shared request publishes its outcome.
     if (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight) {
-        while (!privilegedSessionUsable() && !m_privilegedSessionRequestFailed
-               && (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight)) {
-            QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+        // A7-07: the owning request publishes its outcome; wait for it through
+        // a plain event loop with a 100 ms poll instead of a busy processEvents
+        // spin. The poll quits as soon as the session becomes usable, the
+        // owning request published a failure, or no request is in flight any
+        // more.
+        QEventLoop coalescingWait;
+        QTimer outcomePoll;
+        outcomePoll.setInterval(100);
+        QObject::connect(&outcomePoll, &QTimer::timeout, &coalescingWait, [this, &coalescingWait] {
+            if (privilegedSessionUsable() || m_privilegedSessionRequestFailed
+                || (!m_authorizationRequestInFlight && !m_privilegedSessionRequestInFlight)) {
+                coalescingWait.quit();
+            }
+        });
+        outcomePoll.start();
+        if (!privilegedSessionUsable() && !m_privilegedSessionRequestFailed
+            && (m_authorizationRequestInFlight || m_privilegedSessionRequestInFlight)) {
+            coalescingWait.exec();
         }
+        outcomePoll.stop();
         if (privilegedSessionUsable()) {
             m_authorizationDeferredScope.clear();
             updateAuthorizationAffordance();
@@ -7358,6 +7407,106 @@ bool promptLooksSecret(const QString &promptText)
     return secretPattern.match(promptText).hasMatch();
 }
 
+// A7-03: structural argument classification for one privileged request. The
+// class is decided only by the request kind (arguments[0]) and the argument
+// position — never by the value itself — so a payload can never choose its own
+// validation level. The documented request shapes:
+//   arguments[0]  the helper command name (Verb)
+//   arguments[1]  the request's disk path (Path)
+//   arguments[2]  the request's component/root path (Path)
+//   ...           verb-specific:
+//     shell / host-shell      [3] user command (Command)
+//     config-write            [3] config key (Id), [4] payload (Content)
+//     copy / copy-preview     [3..5] direction/ownership/approval (Id),
+//                             [6] destination (Path), [7..] sources (Path)
+//     fs-repair / host-fs-repair
+//                             [3] device (Path), [4] mode (Id)
+//     browse-target           [3] candidate path (Path)
+//     repair                  [3..] stage keys (Id); --post-efi (Flag)
+//     everything else         [3..] keys, subcommands and ids (Id)
+MainWindow::HelperArgumentClass MainWindow::helperArgumentClassFor(const QStringList &arguments,
+                                                                   int index)
+{
+    if (index == 0) {
+        return HelperArgumentClass::Verb;
+    }
+    if (index == 1 || index == 2) {
+        return HelperArgumentClass::Path;
+    }
+    const QString &verb = arguments.first();
+    if (verb == QStringLiteral("shell") || verb == QStringLiteral("host-shell")) {
+        return index == 3 ? HelperArgumentClass::Command : HelperArgumentClass::Id;
+    }
+    if (verb == QStringLiteral("config-write")) {
+        return index == 4 ? HelperArgumentClass::Content : HelperArgumentClass::Id;
+    }
+    if (verb == QStringLiteral("copy") || verb == QStringLiteral("copy-preview")) {
+        return index >= 6 ? HelperArgumentClass::Path : HelperArgumentClass::Id;
+    }
+    if (verb == QStringLiteral("fs-repair") || verb == QStringLiteral("host-fs-repair")) {
+        return index == 3 ? HelperArgumentClass::Path : HelperArgumentClass::Id;
+    }
+    if (verb == QStringLiteral("browse-target")) {
+        return index == 3 ? HelperArgumentClass::Path : HelperArgumentClass::Id;
+    }
+    // Only the hardcoded helper options may carry a leading '-'.
+    if (arguments.at(index).startsWith(QLatin1Char('-'))) {
+        return HelperArgumentClass::Flag;
+    }
+    return HelperArgumentClass::Id;
+}
+
+// A7-03: argument-class-aware validation for one privileged request. See the
+// declaration in MainWindow.h for the per-class rules; the CONTENT-class
+// config-write payload is the only class that may carry tabs/newlines.
+bool MainWindow::safeHelperArgument(const QStringList &arguments, int index, QString *reason)
+{
+    const auto refuse = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+        return false;
+    };
+    if (index < 0 || index >= arguments.size()) {
+        return refuse(QStringLiteral("Privileged helper argument index %1 is out of range.").arg(index));
+    }
+    const QString &argument = arguments.at(index);
+    // NUL can never be represented in the line-oriented privileged-session
+    // protocol or in a shell variable, in any argument class.
+    if (argument.contains(QChar::Null)) {
+        return refuse(QStringLiteral("Privileged helper arguments cannot contain NUL bytes."));
+    }
+    const HelperArgumentClass argumentClass = helperArgumentClassFor(arguments, index);
+    if (argumentClass == HelperArgumentClass::Content) {
+        // The config-write payload is arbitrary file text: tabs and newlines
+        // are legal here. NUL was already rejected above.
+        return true;
+    }
+    if (argumentClass == HelperArgumentClass::Flag) {
+        // Only the known hardcoded helper options may carry a leading '-'; an
+        // allow-list (not just a shape check) keeps every future or unknown
+        // option out until it is explicitly added here. The allow-list shape
+        // also excludes every control and bidi character.
+        static const QSet<QString> knownFlags = {QStringLiteral("--post-efi")};
+        if (!knownFlags.contains(argument)) {
+            return refuse(QStringLiteral("Privileged helper option '%1' is not a recognized flag.").arg(argument));
+        }
+        return true;
+    }
+    for (const QChar character : argument) {
+        const ushort code = character.unicode();
+        if (character.category() == QChar::Other_Control
+            || (code >= 0x202A && code <= 0x202E)
+            || (code >= 0x2066 && code <= 0x2069)) {
+            return refuse(QStringLiteral("Privileged helper arguments cannot contain control or bidi characters."));
+        }
+    }
+    if (argument.startsWith(QLatin1Char('-'))) {
+        return refuse(QStringLiteral("Privileged helper arguments cannot start with '-'."));
+    }
+    return true;
+}
+
 // Sends one request over the line-oriented privileged session and returns the
 // captured helper output. Exactly one request owns the gate at a time; a
 // re-entrant request is refused or deferred by its caller instead of being
@@ -7379,12 +7528,13 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     if (arguments.isEmpty()) {
         return QStringLiteral("ERROR: No privileged helper command was supplied.\n");
     }
-    // NUL cannot be represented in the line-oriented privileged-session
-    // protocol or in a shell variable. Reject it before any authorization or
-    // request is sent so malformed text never reaches the helper broker.
-    for (const QString &argument : arguments) {
-        if (argument.contains(QChar::Null)) {
-            return QStringLiteral("ERROR: Privileged helper arguments cannot contain NUL bytes.\n");
+    // A7-03: every argument is validated against its request-kind/position
+    // class (see safeHelperArgument()) before any authorization or request is
+    // sent, so malformed text never reaches the helper broker.
+    for (int index = 0; index < arguments.size(); ++index) {
+        QString argumentRefusal;
+        if (!safeHelperArgument(arguments, index, &argumentRefusal)) {
+            return QStringLiteral("ERROR: %1\n").arg(argumentRefusal);
         }
     }
 
@@ -7630,6 +7780,23 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             }
             if (tag == QByteArrayLiteral("PROMPT") && interactiveShellRequest) {
                 ++promptCount;
+                // A2-06: bound the decoded prompt payload. A PROMPT record
+                // whose base64 payload exceeds 1024 bytes is dropped with a
+                // protocol note and answered with an empty ANSWER record, so
+                // the helper fails closed instead of waiting forever and a
+                // runaway helper can never make the GUI allocate an unbounded
+                // base64 buffer.
+                if (payload.size() > 1024) {
+                    const QString oversizedNote = QStringLiteral(
+                        "Protocol note: a PROMPT record exceeded the 1024-byte payload bound and was dropped; the helper was answered with an empty ANSWER record.");
+                    if (appendCapturedLine(oversizedNote)) {
+                        output->appendPlainText(oversizedNote);
+                    }
+                    if (session && session->state() == QProcess::Running) {
+                        session->write("ANSWER\t" + requestId + "\t\n");
+                    }
+                    continue;
+                }
                 // A6-03/A6-04: no prompt handling after the DONE record,
                 // exactly one prompt dialog at a time, and a per-request
                 // prompt budget.  A dropped prompt is answered with an empty
@@ -9133,12 +9300,15 @@ void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
 
 QString MainWindow::currentBootId() const
 {
+#ifdef BOOT_REPAIR_UI_TEST
     // Read-only test seam: BOOT_REPAIR_BOOT_ID overrides the kernel boot id so
-    // the boot-id reconciliation can be exercised without rebooting.
+    // the boot-id reconciliation can be exercised without rebooting. Compiled
+    // into the UI-test binary only; production always reads the kernel value.
     const QByteArray override = qgetenv("BOOT_REPAIR_BOOT_ID").trimmed();
     if (!override.isEmpty()) {
         return QString::fromUtf8(override);
     }
+#endif
     QFile bootId(QStringLiteral("/proc/sys/kernel/random/boot_id"));
     if (!bootId.open(QIODevice::ReadOnly | QIODevice::Text)) {
         return QString();
@@ -12619,10 +12789,15 @@ void MainWindow::saveLogAs()
 
 QString MainWindow::sessionLogDirectory() const
 {
+#ifdef BOOT_REPAIR_UI_TEST
+    // Read-only test seam: BOOT_REPAIR_LOG_DIR redirects the session log
+    // directory for the UI regression tests. Compiled into the UI-test binary
+    // only; production always writes under AppDataLocation.
     const QByteArray override = qgetenv("BOOT_REPAIR_LOG_DIR");
     if (!override.isEmpty()) {
         return QString::fromLocal8Bit(override);
     }
+#endif
     return QStandardPaths::writableLocation(QStandardPaths::AppDataLocation) + QStringLiteral("/logs");
 }
 
@@ -13097,7 +13272,18 @@ bool MainWindow::hostDefaultUsesEfiFirmware() const
 {
     // Same decisive host evidence as currentDefaultUsesEfiFirmware(), read
     // from the running-host cache so a target scope can never change it.
-    const QString evidence = m_hostDiagnosticCache.values().join(QLatin1Char('\n'));
+    // A6-05: only the dedicated capability entry (plus the combined report's
+    // extracted preamble as the legacy fallback) is consulted; per-diagnostic
+    // sections are never joined into the decision, so a section body that
+    // merely quotes EFI evidence cannot change the Make Default wording.
+    QString evidence = m_hostDiagnosticCache.value(QStringLiteral("capabilities"));
+    if (evidence.isEmpty()) {
+        QString ignoredBody;
+        QString preamble;
+        splitDiagnosticCapabilityPreamble(m_hostDiagnosticCache.value(QStringLiteral("report")),
+                                          &ignoredBody, &preamble);
+        evidence = preamble;
+    }
     if (evidence.contains(QStringLiteral("Repair tool efi: available"), Qt::CaseInsensitive)
         || evidence.contains(QStringLiteral("BootCurrent"))
         || evidence.contains(QStringLiteral("BootOrder"))
@@ -13278,7 +13464,7 @@ void MainWindow::createSessionLogFile(const QString &scopeLabel, const QString &
     }
     // A7-02: session logs carry command evidence, so a log directory the app
     // itself creates is private (0700).  A pre-existing directory (including
-    // a BOOT_REPAIR_LOG_DIR override pointing at one) keeps its
+    // a UI-test BOOT_REPAIR_LOG_DIR override pointing at one) keeps its
     // administrator-chosen mode.
     if (!directoryExisted) {
         QFile::setPermissions(directory, QFileDevice::ReadOwner | QFileDevice::WriteOwner
@@ -14397,6 +14583,43 @@ void MainWindow::refreshLogView()
 // all name the same resolved system. The sentence is deliberately not emitted
 // for ordinary mapper/dm-N spelling changes, so reconciliation only follows a
 // real component change.
+namespace {
+
+// A6-06: resolves a device path to its top-level ancestor by walking the
+// PKNAME chain through the device index, bounded at 32 hops. An unknown path,
+// a PKNAME loop or a chain that exceeds the bound resolves to nothing (fail
+// closed), so two devices can only be proven to share a disk when both chains
+// terminate at the same top-level device.
+QString topLevelAncestorPath(const QMap<QString, DeviceNode> &index,
+                             const QString &componentPath)
+{
+    QString current = componentPath;
+    for (int hop = 0; hop < 32; ++hop) {
+        const auto it = index.constFind(current);
+        if (it == index.constEnd()) {
+            return QString();
+        }
+        const QString parentKernel = it->parentKernelName;
+        if (parentKernel.isEmpty()) {
+            return current;
+        }
+        QString parentPath;
+        for (const DeviceNode &candidate : index) {
+            if (!candidate.kernelName.isEmpty() && candidate.kernelName == parentKernel) {
+                parentPath = candidate.path;
+                break;
+            }
+        }
+        if (parentPath.isEmpty() || parentPath == current) {
+            return QString();
+        }
+        current = parentPath;
+    }
+    return QString();
+}
+
+} // namespace
+
 bool MainWindow::reconcileResolvedTargetComponent(const QString &output)
 {
     static const QRegularExpression fallbackPattern(QStringLiteral(
@@ -14414,6 +14637,34 @@ bool MainWindow::reconcileResolvedTargetComponent(const QString &output)
     }
     if (!m_deviceIndex.contains(resolved)) {
         return false;
+    }
+
+    // A6-06: adopting a fallback-resolved component commits the target to a
+    // new root. Refuse — keeping the committed component — when the resolved
+    // device backs the protected running system, and, when the previous
+    // component is known, when the two devices do not provably share the same
+    // top-level ancestor: the helper's fallback must never move the target
+    // onto a different disk or an unrelated device. The ancestry check is
+    // skipped when the previous component is unknown (for example a mapper
+    // alias that was never indexed).
+    const DeviceNode &resolvedNode = m_deviceIndex[resolved];
+    if (resolvedNode.protectedDevice) {
+        appendLog(QStringLiteral(
+                      "Root component fallback refused: resolved component %1 backs the protected running system; keeping %2 as the committed component.")
+                      .arg(resolved, m_previewTargetComponentPath),
+                  QStringLiteral("WARNING"), LogEntryKind::Diagnostic);
+        return false;
+    }
+    if (m_deviceIndex.contains(previous)) {
+        const QString previousTop = topLevelAncestorPath(m_deviceIndex, previous);
+        const QString resolvedTop = topLevelAncestorPath(m_deviceIndex, resolved);
+        if (previousTop.isEmpty() || resolvedTop.isEmpty() || previousTop != resolvedTop) {
+            appendLog(QStringLiteral(
+                          "Root component fallback refused: resolved component %1 is not provably on the same top-level device as %2; keeping %2 as the committed component.")
+                          .arg(resolved, m_previewTargetComponentPath),
+                      QStringLiteral("WARNING"), LogEntryKind::Diagnostic);
+            return false;
+        }
     }
 
     m_previewTargetComponentPath = resolved;
@@ -15923,10 +16174,17 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
     const QString &appDir, const QByteArray &explicitOverride)
 {
     QList<HelperPathCandidate> candidates;
+    // A7-01: the BOOT_REPAIR_HELPER_PATH override is a test seam.  Production
+    // never honors it (a launch environment must not be able to redirect the
+    // privileged helper); only the UI-test binary reads it.
+#ifdef BOOT_REPAIR_UI_TEST
     const QString overridePath = QString::fromLocal8Bit(explicitOverride).trimmed();
     if (!overridePath.isEmpty()) {
         candidates.append({overridePath, QStringLiteral("explicit BOOT_REPAIR_HELPER_PATH override")});
     }
+#else
+    Q_UNUSED(explicitOverride);
+#endif
 
     const QString appLibexec = QDir::cleanPath(QDir(appDir).absoluteFilePath(
         QStringLiteral("../libexec/boot-repair/boot-repair-helper")));
@@ -15934,9 +16192,10 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
         QStringLiteral("../scripts/boot-repair-helper.sh")));
     const QString appScriptsLocal = QDir::cleanPath(QDir(appDir).absoluteFilePath(
         QStringLiteral("scripts/boot-repair-helper.sh")));
-    const QString cwdScripts = QDir::cleanPath(QDir::current().absoluteFilePath(
-        QStringLiteral("scripts/boot-repair-helper.sh")));
-#ifdef BOOT_REPAIR_SOURCE_DIR
+    // A7-01: the working directory is attacker- or launcher-controlled and
+    // therefore never a resolution source; the CWD-relative candidate was
+    // removed.
+#if defined(BOOT_REPAIR_UI_TEST) && defined(BOOT_REPAIR_SOURCE_DIR)
     const QString sourceScripts = QStringLiteral(BOOT_REPAIR_SOURCE_DIR "/scripts/boot-repair-helper.sh");
 #else
     const QString sourceScripts;
@@ -15963,7 +16222,6 @@ QList<MainWindow::HelperPathCandidate> MainWindow::repairHelperCandidates(
         candidates.append({appLibexec, QStringLiteral("portable helper beside the executable")});
         candidates.append({appScripts, QStringLiteral("source-tree helper above the executable")});
         candidates.append({appScriptsLocal, QStringLiteral("source-tree helper beside the executable")});
-        candidates.append({cwdScripts, QStringLiteral("source-tree helper from the working directory")});
         if (!sourceScripts.isEmpty()) {
             candidates.append({sourceScripts, QStringLiteral("configured source-tree helper")});
         }
@@ -15982,6 +16240,17 @@ QString MainWindow::resolveRepairHelperPath(const QString &appDir,
     const bool overrideProvided = !QString::fromLocal8Bit(explicitOverride).trimmed().isEmpty();
     for (const HelperPathCandidate &candidate : repairHelperCandidates(appDir, explicitOverride)) {
         if (candidate.path.isEmpty()) {
+            continue;
+        }
+        // A7-01: installed helpers (/usr/libexec/, /usr/lib/) are protected by
+        // the package manager and pass unconditionally. Every other candidate
+        // (AppImage/portable/source-tree helper, test override) is executed by
+        // pkexec as root, so it must first pass the ownership/writability
+        // trust check — a root-executed helper must not be replaceable by
+        // another local user.
+        const bool installedCandidate = candidate.path.startsWith(QStringLiteral("/usr/libexec/"))
+            || candidate.path.startsWith(QStringLiteral("/usr/lib/"));
+        if (!installedCandidate && !helperPathTrusted(candidate.path)) {
             continue;
         }
         QFileInfo info(candidate.path);
@@ -16004,15 +16273,50 @@ QString MainWindow::resolveRepairHelperPath(const QString &appDir,
         }
     }
     if (resolution) {
-        *resolution = QStringLiteral("no usable privileged helper was found in the installed or source locations");
+        *resolution = QStringLiteral(
+            "no trusted usable privileged helper was found in the installed or source locations; "
+            "source-tree and portable helpers must be regular files owned by the current user and "
+            "must not be group- or world-writable");
     }
     return QString();
 }
 
+// A7-01: trust gate for non-installed helper candidates. The candidate is
+// canonicalized first (QFileInfo follows symlinks, so every metadata check
+// must run against the resolved real file), then required to be a regular
+// file owned by the invoking user and writable by neither group nor others.
+bool MainWindow::helperPathTrusted(const QString &candidatePath)
+{
+    const QString canonical = QFileInfo(candidatePath).canonicalFilePath();
+    if (canonical.isEmpty()) {
+        return false;
+    }
+    const QFileInfo info(canonical);
+    if (!info.isFile()) {
+        return false;
+    }
+#ifdef Q_OS_UNIX
+    if (info.ownerId() != static_cast<uint>(geteuid())) {
+        return false;
+    }
+    if (info.permissions() & (QFileDevice::WriteGroup | QFileDevice::WriteOther)) {
+        return false;
+    }
+#endif
+    return true;
+}
+
 QString MainWindow::repairHelperPath(QString *resolution) const
 {
+#ifdef BOOT_REPAIR_UI_TEST
     return resolveRepairHelperPath(QCoreApplication::applicationDirPath(),
                                    qgetenv("BOOT_REPAIR_HELPER_PATH"), resolution);
+#else
+    // A7-01: production never honors a BOOT_REPAIR_HELPER_PATH environment
+    // override; only the UI-test binary reads it.
+    return resolveRepairHelperPath(QCoreApplication::applicationDirPath(),
+                                   QByteArray(), resolution);
+#endif
 }
 
 namespace {
