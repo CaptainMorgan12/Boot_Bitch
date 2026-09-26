@@ -78,6 +78,9 @@ Elevation order: gksu --sudo-mode, gksudo, sudo, su (TTY prompt). The helper
 keeps its own runtime preflights; this launcher never weakens them and never
 puts a passphrase on argv. Helper discovery order: --helper, then
 BOOT_REPAIR_LEGACY_HELPER, then the installed path, then source-tree paths.
+Any ELEVATED run first verifies the resolved helper (a regular, non-symlink,
+root-owned, non-group/world-writable file whose realpath equals the path), so
+development/source-tree helpers run with --no-elevate only.
 
 Documented commands:
 $(list_commands | sed 's/^/  /')
@@ -137,6 +140,37 @@ helper_path()
         done
     fi
     return 1
+}
+
+# A10-04: verify the resolved helper before any ELEVATED run (the shipped GUI
+# enforces the same rule on its elevated path): a regular file (lstat: no
+# symlink), owned by root, not group/world-writable, whose resolved realpath
+# equals the raw path.  Development-only source-tree helpers stay usable
+# through --no-elevate (the caller is already root) but are never passed to an
+# elevation tool.  Prints the first failing reason and returns 1.
+verify_helper_trusted()
+{
+    _vhelper="$1"
+    case "$_vhelper" in
+        /*) ;;
+        *) printf 'not an absolute path\n'; return 1 ;;
+    esac
+    [ -f "$_vhelper" ] || { printf 'missing or not a regular file\n'; return 1; }
+    [ -L "$_vhelper" ] && { printf 'a symbolic link\n'; return 1; }
+    [ "$(stat -c '%u' -- "$_vhelper" 2>/dev/null)" = '0' ] \
+        || { printf 'not owned by root\n'; return 1; }
+    _vmode="$(stat -c '%a' -- "$_vhelper" 2>/dev/null)"
+    # Group and world writability live in the LAST two octal digits; the
+    # leading digit(s) carry the special bits (setuid 4/2/1) and must not
+    # participate in the check (a setuid sudo is mode 4755).
+    _vlast="${_vmode#${_vmode%??}}"
+    case "$_vlast" in
+        [2367]?|?[2367]) printf 'group or world writable\n'; return 1 ;;
+    esac
+    _vreal="$(realpath -- "$_vhelper" 2>/dev/null)" \
+        || { printf 'cannot resolve the real path\n'; return 1; }
+    [ "$_vreal" = "$_vhelper" ] || { printf 'the resolved path differs\n'; return 1; }
+    return 0
 }
 
 # Elevation is decided once: graphical gksu when an X session is present,
@@ -203,6 +237,11 @@ run_helper()
         else
             die 'no elevation tool found; install gksu or sudo'
         fi
+    fi
+    # A10-04: never hand an unverified helper to an elevation tool.
+    if [ "$ELEVATE_KIND" != 'none' ]; then
+        _trust_reason="$(verify_helper_trusted "$_helper")" \
+            || die "refusing to elevate an unverified helper: $_trust_reason (run as root or with --no-elevate to use a development/source-tree helper)"
     fi
     if [ "$DRY_RUN" -eq 1 ]; then
         printf 'helper: %s\n' "$_helper"

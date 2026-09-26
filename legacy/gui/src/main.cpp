@@ -222,12 +222,33 @@ int main(int argc, char **argv)
         }
     }
 
+    // A10-03: BOOT_REPAIR_LEGACY_ELEVATE stays an explicit escape hatch for
+    // the elevation prefix.  The resolved tool is still verified against the
+    // fixed trusted system locations (an absolute-path override is verified
+    // as-is); a bare name must resolve to one of those locations.
+    if (elevationOverride.isEmpty()) {
+        const char *envElevate = ::getenv("BOOT_REPAIR_LEGACY_ELEVATE");
+        if (envElevate && *envElevate) {
+            elevationOverride = QString::fromLocal8Bit(envElevate);
+        }
+    }
+
     const QString helper = discoverHelper(helperOverride, QString::fromLocal8Bit(argv[0]));
 
     if (printConfig) {
         std::printf("boot-repair-legacy-gui %s\n", LEGACY_VERSION);
         std::printf("helper: %s (%s)\n", helper.latin1(),
                     isExecutable(helper) ? "executable" : "missing or not executable");
+        // A10-04: the helper verification result used by the elevated path
+        // (a root-run GUI or --no-elevate keeps the previous semantics and
+        // runs an unverified helper directly).
+        QString trustReason;
+        if (legacy::HelperRunner::verifyHelperForElevation(helper, &trustReason)) {
+            std::printf("helper elevation trust: trusted\n");
+        } else {
+            std::printf("helper elevation trust: untrusted (%s)\n",
+                        trustReason.latin1());
+        }
         legacy::HelperRunner runner;
         runner.setHelperPath(helper);
         runner.setElevationOverride(elevationOverride);

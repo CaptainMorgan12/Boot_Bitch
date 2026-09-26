@@ -4,6 +4,22 @@
 // optional elevation prefix (sudo/gksu), streams merged stdout+stderr as lines
 // and reports the exit status. No secret is ever placed on the command line.
 //
+// Elevation trust (A10-03/A10-04): sudo/gksu/gksudo resolve ONLY from the
+// fixed trusted system locations (/usr/bin/sudo, /usr/local/bin/sudo,
+// /bin/sudo, /usr/bin/gksu, /usr/bin/gksudo); every candidate must be an
+// lstat-verified regular file owned by root, not group/world-writable, in a
+// root-owned, non-group/world-writable directory. The verified absolute path
+// is used in every probe and exec (never execvp with a bare name, never
+// PATH). Before any elevation the resolved helper is verified the same way
+// (regular, no symlink, uid 0, not group/world-writable, realpath == path),
+// so only an installed helper can be elevated; --no-elevate/root runs keep
+// the previous semantics.
+//
+// Cancellation (A10-05): when setCancelFile() was given a path, run() passes
+// --cancel-file <path> to the helper and cancel() touches that file
+// (existence signal) before the existing direct kill; the helper aborts at
+// its next stage boundary or shell-command tick.
+//
 // Qt3 (qprocess.h) notes: the program is the first argument added to the
 // process; there is no separate setProgram(); `launchFinished()` only fires for
 // a successful spawn, so a false `start()` return is reported directly.
@@ -36,8 +52,30 @@ public:
     void setElevationOverride(const QString &override);
     void setNoElevate(bool noElevate);
 
+    // A10-04: verifies a helper candidate for ELEVATION: an absolute path
+    // that lstats as a regular file (symlinks fail), owned by root, not
+    // group/world-writable, whose resolved realpath equals the raw path.
+    // `reason` receives the first failing property.  Used by run() before
+    // every elevated exec and printed by --print-config.
+    static bool verifyHelperForElevation(const QString &path, QString *reason = 0);
+
+    // A10-03: verifies one elevation tool candidate: an absolute path that
+    // lstats as a regular file (symlinks fail), owned by root, not
+    // group/world-writable, with a root-owned parent directory that is not
+    // group/world-writable.
+    static bool verifyTrustedToolPath(const QString &path, QString *reason = 0);
+
+    // A10-05: cancel-token file.  When set, run() passes --cancel-file <path>
+    // to the helper and cancel() touches the file (existence signal) before
+    // the direct-kill fallback.
+    void setCancelFile(const QString &path);
+    QString cancelFile() const;
+
     // Detects the elevation method once; fills `description` with the human
-    // readable choice ("root", "sudo -n", "gksu --sudo-mode", ...).
+    // readable choice ("root", "/usr/bin/sudo -n", "/usr/bin/gksu
+    // --sudo-mode", ...). Fails closed with
+    // "no trusted sudo/gksu found in the fixed system locations" when no
+    // verified tool exists.
     bool resolveElevation(QString *description);
 
     // True when the resolved elevation is a plain `sudo` that will ask for a
@@ -57,8 +95,8 @@ public:
 
     // Best-effort `sudo -k`: drops the cached sudo timestamp without ever
     // prompting or blocking (stdin is closed and output discarded). Returns
-    // false when sudo is not installed or the call failed; callers must not
-    // treat that as a session state.
+    // false when the trusted sudo is not available or the call failed;
+    // callers must not treat that as a session state.
     bool clearSudoTimestamp();
 
     // Authenticates the cached interactive `sudo` with `secret` by running
@@ -84,7 +122,8 @@ public:
     bool isRunning() const;
 
     // Starts the helper with `helperArgs`. Returns false (and emits an error
-    // line) when the helper cannot be started.
+    // line) when the helper cannot be started or cannot be verified for
+    // elevation.
     bool run(const QStringList &helperArgs);
 
     void cancel();
@@ -102,6 +141,9 @@ private slots:
 private:
     void flushBufferedLines();
     void emitErrorLine(const QString &text);
+    // Resolves the verified absolute paths of the elevation tools once
+    // (m_sudoPath/m_gksuPath/m_gksudoPath, empty = not verifiable).
+    void resolveTrustedTools();
 
     QProcess *m_process;
     QString m_helperPath;
@@ -117,6 +159,14 @@ private:
     QString m_buffer;
     QByteArray m_input;
     bool m_reported;
+    // A10-03: verified absolute elevation tool paths (empty when no fixed
+    // system location verifies).
+    QString m_sudoPath;
+    QString m_gksuPath;
+    QString m_gksudoPath;
+    bool m_toolsResolved;
+    // A10-05: the cancel-token file handed to the helper (--cancel-file).
+    QString m_cancelFile;
 };
 
 } // namespace legacy

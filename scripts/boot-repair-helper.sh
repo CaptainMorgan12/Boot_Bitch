@@ -312,6 +312,212 @@ ensure_state_root()
     done
 }
 
+# ---------------------------------------------------------------------------
+# A5-02: active-helper registry and bounded process-tree teardown
+# ---------------------------------------------------------------------------
+# Every helper run registers its own PID (with its parent PID at registration
+# time) in a root-owned, mode-0600 file under STATE_ROOT at main() entry and
+# removes it in cleanup().  When a helper dies without its cleanup (SIGKILL, a
+# wedged broker, a crash), the surviving helpers reap its registered children,
+# so request-owned mounts, mappers and commands can never be left behind by a
+# killed session.  The recorded parent makes reaping precise: a run whose
+# recorded owner is still alive belongs to a healthy tree and is never
+# touched, while an orphan (whose owner died and was reparented to init or a
+# subreaper) is reaped by the next pass.
+
+active_children_file()
+{
+    printf '%s\n' "$STATE_ROOT/active-children"
+}
+
+register_active_child()
+{
+    local file pid="${1:-$$}" ppid
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
+    [[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
+    file="$(active_children_file)"
+    mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
+    [[ -d "$STATE_ROOT" ]] || return 0
+    printf '%s %s\n' "$pid" "$ppid" >> "$file" 2>/dev/null || true
+    chmod 0600 -- "$file" 2>/dev/null || true
+    return 0
+}
+
+unregister_active_child()
+{
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    active_children_remove_pid "${1:-$$}"
+}
+
+# Remove one pid's registry line (atomic temp + mv).  The registry is tiny, so
+# the per-pid rewrite is cheaper than locking.
+active_children_remove_pid()
+{
+    local file pid="$1" tmp
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    file="$(active_children_file)"
+    [[ -f "$file" ]] || return 0
+    tmp="$(mktemp "${STATE_ROOT}/active-children.XXXXXX" 2>/dev/null || true)"
+    if [[ -n "$tmp" ]]; then
+        grep -v -E -- "^${pid}([[:space:]]|$)" "$file" > "$tmp" 2>/dev/null || true
+        mv -f -- "$tmp" "$file" 2>/dev/null || true
+        rm -f -- "$tmp" 2>/dev/null || true
+        chmod 0600 -- "$file" 2>/dev/null || true
+    else
+        rm -f -- "$file" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# True when the pid is its own process-group leader.  The proof is read from
+# ps (pgid column) with a /proc/stat pgrp fallback for BusyBox hosts; the
+# negative-pid group kill is only ever attempted on a proven leader, otherwise
+# it could signal an unrelated process group.
+is_process_group_leader()
+{
+    local pid="$1" pgrp
+    pgrp="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' \t' || true)"
+    if [[ -z "$pgrp" ]]; then
+        pgrp="$(awk '{print $5}' "/proc/$pid/stat" 2>/dev/null || true)"
+    fi
+    [[ -n "$pgrp" && "$pgrp" == "$pid" ]]
+}
+
+# True when the pid has exited but has not been reaped (a zombie): kill -0
+# still succeeds for it, but no signal can reach it.  The teardown grace loop
+# must never wait on a zombie (it is already dead), so a slow subreaper cannot
+# stretch a bounded teardown past its grace.
+pid_is_zombie()
+{
+    local stat rest
+    stat="$(<"/proc/$1/stat" 2>/dev/null)" || return 1
+    rest="${stat##*) }"
+    [[ "$rest" == Z* ]]
+}
+
+# Bounded teardown of one command tree: TERM the pid, group-TERM it when it is
+# a proven process-group leader, then scan /proc for its children and terminate
+# their groups too (a nested setsid child is a leader of its own group and
+# survives a plain pid kill).  After a bounded grace (<= 5 s) the survivors are
+# group-KILLed.  A zombie runner is left alone: kill -0 succeeds for it but no
+# signal can reach it, and its recorded group may still contain live members.
+# Every negative-pid group kill is only attempted on a ps-proven leader, and
+# the proof is captured while the pid is still alive: a dead leader is reaped
+# too quickly for a re-check to ever prove it, which would strand its
+# signal-ignoring group members.
+terminate_helper_tree()
+{
+    local pid="$1" grace=0 child child_pid ppid leader=0 child_leader=0
+    kill -0 "$pid" 2>/dev/null || return 0
+    if is_process_group_leader "$pid"; then
+        leader=1
+    fi
+    kill "$pid" 2>/dev/null || true
+    if (( leader == 1 )); then
+        kill -- -"$pid" 2>/dev/null || true
+    fi
+    if [[ -d /proc ]]; then
+        for child in /proc/[0-9]*; do
+            [[ -e "$child" ]] || continue
+            ppid="$(awk '{print $4}' "${child}/stat" 2>/dev/null || true)"
+            [[ -n "$ppid" && "$ppid" == "$pid" ]] || continue
+            child_pid="${child##*/}"
+            child_leader=0
+            if is_process_group_leader "$child_pid"; then
+                child_leader=1
+            fi
+            kill "$child_pid" 2>/dev/null || true
+            if (( child_leader == 1 )); then
+                kill -- -"$child_pid" 2>/dev/null || true
+            fi
+        done
+    fi
+    grace=0
+    while (( grace < 5 )); do
+        kill -0 "$pid" 2>/dev/null || break
+        # A zombie is already dead and no signal can reach it: never spend the
+        # grace on it (the group TERM above already reached its live group).
+        pid_is_zombie "$pid" && break
+        sleep 1
+        grace=$((grace + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+        if (( leader == 1 )); then
+            kill -KILL -- -"$pid" 2>/dev/null || true
+        fi
+        # Final sweep: a KILLed leader must not leave its own child groups
+        # behind.  The child leader proof is captured before each child is
+        # KILLed for the same reason the root proof is captured up front.
+        if [[ -d /proc ]]; then
+            for child in /proc/[0-9]*; do
+                [[ -e "$child" ]] || continue
+                ppid="$(awk '{print $4}' "${child}/stat" 2>/dev/null || true)"
+                [[ -n "$ppid" && "$ppid" == "$pid" ]] || continue
+                child_pid="${child##*/}"
+                child_leader=0
+                if is_process_group_leader "$child_pid"; then
+                    child_leader=1
+                fi
+                kill -KILL "$child_pid" 2>/dev/null || true
+                if (( child_leader == 1 )); then
+                    kill -KILL -- -"$child_pid" 2>/dev/null || true
+                fi
+            done
+        fi
+    fi
+    return 0
+}
+
+# Reap still-alive registered helper pids before this helper run exits or
+# before a locked request starts.  Only pids this run owns are terminated: its
+# own direct children and helpers reparented to init (a session/broker that
+# died without cleanup).  A registered pid whose live parent is another
+# registered helper (a healthy broker or a sibling run) is never touched, so
+# one finishing request can never kill an unrelated healthy session.
+# Reap still-alive registered helper pids before this helper run exits or
+# before a locked request starts.  A pid whose recorded owner is still alive
+# (and is not this run) belongs to a healthy helper tree and is never touched;
+# a pid whose recorded owner is this run is our own child; a pid whose
+# recorded owner is gone (reparented to init or a subreaper after a SIGKILLed
+# session) is reaped so request-owned mounts/commands can never be left behind.
+kill_registered_children()
+{
+    local file pid owner self="${1:-$$}"
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    file="$(active_children_file)"
+    [[ -f "$file" ]] || return 0
+    while IFS=' ' read -r pid owner; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        (( pid == self )) && continue
+        if ! kill -0 "$pid" 2>/dev/null; then
+            # Already gone: drop the stale registry entry.
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if [[ -z "$owner" || ! "$owner" =~ ^[0-9]+$ ]]; then
+            # A malformed/ownerless entry can only be reaped defensively.
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if (( owner == self )); then
+            # Our own direct child: ours to tear down.
+            terminate_helper_tree "$pid"
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if kill -0 "$owner" 2>/dev/null; then
+            # The recorded owner is still alive: a healthy helper tree.
+            continue
+        fi
+        terminate_helper_tree "$pid"
+        active_children_remove_pid "$pid"
+    done < "$file"
+    return 0
+}
+
 usage()
 {
     cat <<USAGE
@@ -507,6 +713,16 @@ cleanup()
     local rc=$?
     local session_target_log session_root_real session_logdir_real
     set +e
+
+    # A5-02: reap registered still-alive helpers FIRST, before the session-log
+    # append and the unmount loop below.  A request child that was left
+    # running when its broker was killed must be gone (with its own cleanup
+    # detaching its mounts) before this run starts unmounting, and the
+    # registry entry for this run is removed right after the reap so a
+    # concurrently finishing helper never terminates a run that is already in
+    # its teardown.
+    kill_registered_children
+    unregister_active_child
 
     # Read-only diagnostics, validation and rollback preflight must remain
     # genuinely read-only.  Append the helper log into the repaired system only
@@ -14515,7 +14731,7 @@ shell_run_interactive()
     local in_fifo="$SESSION_DIR/shell-in" out_fifo="$SESSION_DIR/shell-out"
     local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
     local tail_buf="" ch="" clean="" bytes="" encoded="" tag="" id="" answer=""
-    local script_bin="" setsid_bin="" newline_done=1 wait_rc=0 grace=0
+    local script_bin="" setsid_bin="" newline_done=1 wait_rc=0
     local read_rc=0 old_pipe_trap="" pump_token=""
     local redact_active=0 redact_pos=0 echo_expected="" suppress_until_nl=0
 
@@ -14727,42 +14943,30 @@ shell_run_interactive()
         # A5-09 EOF: the runner's output stream ended while the runner was
         # still reachable.  Treat the runner as dead: never emit a PROMPT,
         # close its input and drain what is left.  A runner that closed its
-        # output but keeps running gets a bounded grace and then KILL; a
+        # output but keeps running gets the bounded tree teardown below; a
         # zombie (an already-exited runner) is skipped so the normal exit
         # path stays fast.
         exec 9>&- || true
         shell_pump_drain_dead
         if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
-            grace=0
-            while (( grace < 10 )); do
-                kill -0 "$runner_pid" 2>/dev/null || break
-                sleep 1
-                grace=$((grace + 1))
-            done
-            if kill -0 "$runner_pid" 2>/dev/null; then
-                kill -KILL "$runner_pid" 2>/dev/null || true
-            fi
+            terminate_helper_tree "$runner_pid"
         fi
         rc=1
         break
     done
 
     if (( rc == 124 || rc == 125 )); then
-        # Fail closed: interrupt the command on its input, close the input,
-        # then terminate the runner with a bounded grace period.
+        # A5-02: fail closed and tear down the runner's whole tree, not just
+        # the single runner pid.  Interrupt the command on its input, close
+        # the input, then group-terminate the runner (its setsid spawn made
+        # it the leader of its own group when setsid is available) and every
+        # child group below it, with the shared bounded grace before KILL.
+        # A command that ignores TERM (or a child that detached) is still
+        # guaranteed to stop within the grace bound.
         printf '\003' >&9 2>/dev/null || true
         exec 9>&- || true
         if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
-            kill "$runner_pid" 2>/dev/null || true
-            grace=0
-            while (( grace < 10 )); do
-                kill -0 "$runner_pid" 2>/dev/null || break
-                sleep 1
-                grace=$((grace + 1))
-            done
-            if kill -0 "$runner_pid" 2>/dev/null; then
-                kill -KILL "$runner_pid" 2>/dev/null || true
-            fi
+            terminate_helper_tree "$runner_pid"
         fi
         wait "$runner_pid" 2>/dev/null || true
     else
@@ -15084,7 +15288,7 @@ run_host_shell()
                     /bin/bash -lc "$run_command")"
             rc=$?
         else
-            run_host_command_isolated timeout --foreground 300 /usr/bin/env \
+            run_host_command_isolated timeout --foreground --kill-after=10 300 /usr/bin/env \
                 HOME=/root \
                 TERM=dumb \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -19161,6 +19365,49 @@ session_forward_request()
     done
 }
 
+# ---------------------------------------------------------------------------
+# A1-04/A2-06: per-target-disk mutual exclusion.  Modifying requests take a
+# non-blocking flock on a per-canonical-disk lock file under STATE_ROOT, so
+# two GUI windows (or a window and a direct CLI run) can never mutate the same
+# disk at once.  Read-only requests skip the lock entirely.
+# ---------------------------------------------------------------------------
+disk_lock_file()
+{
+    local canonical="$1" sanitized
+    sanitized="${canonical//[!A-Za-z0-9._-]/_}"
+    printf '%s\n' "$STATE_ROOT/disk-lock.$sanitized"
+}
+
+# Acquire the non-blocking per-disk flock into the fd named by $2.
+# Return codes: 0 acquired, 1 lock tooling/state unavailable, 2 busy.
+acquire_disk_lock()
+{
+    local canonical="$1" fdvar="$2" file fd
+    [[ -n "${STATE_ROOT:-}" ]] || return 1
+    file="$(disk_lock_file "$canonical")"
+    command -v flock >/dev/null 2>&1 || return 1
+    mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
+    [[ -d "$STATE_ROOT" ]] || return 1
+    if ! exec {fd}>"$file" 2>/dev/null; then
+        return 1
+    fi
+    if ! flock -n "$fd" 2>/dev/null; then
+        eval "exec ${fd}>&-" 2>/dev/null || true
+        return 2
+    fi
+    printf -v "$fdvar" '%s' "$fd"
+    return 0
+}
+
+release_disk_lock()
+{
+    local fd="${1:-0}"
+    [[ "$fd" =~ ^[0-9]+$ && $fd -gt 2 ]] || return 0
+    flock -u "$fd" 2>/dev/null || true
+    eval "exec ${fd}>&-" 2>/dev/null || true
+    return 0
+}
+
 # Long-lived pkexec broker: snapshot this helper into the root-owned state
 # directory, then read tab-separated BEGIN/ARG/SECRET/END requests and run each
 # whitelisted command through the authenticated copy, streaming OUT lines and
@@ -19170,13 +19417,21 @@ session_server()
     local tag request_id argc has_secret i field_tag field_id encoded decoded end_tag end_id
     local command rc secret_b64 secret pre_mapper post_mapper unlock_device mapper_name
     local line="" decoded_total=0 read_st=0
-    local -a fields op_args
+    local request_disk="" request_lock_fd=0 request_lock_required=0 acquire_rc=0
+    local dispatch_setsid=""
+    local -a fields op_args dispatch_cmd
 
     need base64
     need tr
     need cp
     need chmod
     need bash
+
+    # A5-02 (d): each per-request dispatch runs in its own session when
+    # setsid is available, so the child and its process group can never
+    # signal or be signalled through the broker's group.  setsid execs the
+    # helper copy in place, so the PIPESTATUS indexes stay unchanged.
+    command -v setsid >/dev/null 2>&1 && dispatch_setsid=setsid
 
     # A1-09: ignore SIGPIPE so a dying GUI reader (or a dead runner below)
     # cannot kill the broker mid-record; the exit codes come from the runner.
@@ -19354,20 +19609,63 @@ session_server()
             pre_mapper="$(find_crypt_mapper_for_device "$unlock_device" 2>/dev/null || true)"
         fi
 
+        # A1-04/A2-06: serialise modifying requests per canonical target
+        # disk.  Read-only requests (diagnose/validate/config-read/
+        # fs-inspect/browse/snapshot list|inspect|plan) skip the lock.
+        request_lock_required=1
+        case "$command" in
+            diagnose|validate|config-read|fs-inspect|browse-target|host-diagnose|host-validate|host-fs-inspect)
+                request_lock_required=0 ;;
+            snapshots|host-snapshots)
+                case "${op_args[2]:-}" in
+                    list|inspect|plan) request_lock_required=0 ;;
+                esac
+                ;;
+        esac
+        if (( request_lock_required == 1 )); then
+            request_disk="$(canonical_block "${op_args[0]:-}" 2>/dev/null || true)"
+            if [[ -z "$request_disk" ]]; then
+                secret=""
+                session_protocol_error "$request_id" "Unable to canonicalize the request disk for the mutual-exclusion lock: ${op_args[0]:-missing}."
+                continue
+            fi
+            acquire_rc=0
+            acquire_disk_lock "$request_disk" request_lock_fd || acquire_rc=$?
+            if (( acquire_rc == 2 )); then
+                secret=""
+                session_protocol_error "$request_id" "Another Boot Bitch request is already working on $request_disk."
+                continue
+            fi
+            if (( acquire_rc != 0 )); then
+                secret=""
+                session_protocol_error "$request_id" "The per-disk mutual-exclusion lock could not be established for $request_disk."
+                continue
+            fi
+            # A5-02: a new locked request reaps helpers orphaned by a session
+            # that was killed without cleanup before it starts mutating.
+            kill_registered_children
+        fi
+
+        dispatch_cmd=(bash "$SESSION_HELPER_COPY" "$command")
+        [[ -n "$dispatch_setsid" ]] \
+            && dispatch_cmd=(setsid bash "$SESSION_HELPER_COPY" "$command")
+
         set +e
         if [[ "$has_secret" == "1" ]]; then
             printf '%s' "$secret" |
                 BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
-                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]}" 2>&1 |
+                "${dispatch_cmd[@]}" "${op_args[@]}" 2>&1 |
                 session_forward_request "$request_id"
             rc=${PIPESTATUS[1]}
         else
             BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
-                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]}" 2>&1 |
+                "${dispatch_cmd[@]}" "${op_args[@]}" 2>&1 |
                 session_forward_request "$request_id"
             rc=${PIPESTATUS[0]}
         fi
         set -e
+        release_disk_lock "$request_lock_fd"
+        request_lock_fd=0
 
         if [[ "$command" == "unlock" && "$rc" -eq 0 && -n "$unlock_device" && -z "$pre_mapper" ]]; then
             post_mapper="$(find_crypt_mapper_for_device "$unlock_device" 2>/dev/null || true)"
@@ -19394,6 +19692,10 @@ main()
 {
     [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "This helper must run as root (normally through pkexec)."
     ensure_state_root
+    # A5-02 (a): every helper run joins the root-owned active-children
+    # registry so a killed parent/broker's children are reaped by the
+    # survivors; cleanup() removes the entry again.
+    register_active_child
 
     (($# >= 1)) || { usage; exit 2; }
     local command="$1"; shift

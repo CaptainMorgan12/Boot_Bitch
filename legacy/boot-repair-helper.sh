@@ -1709,6 +1709,212 @@ ensure_state_root()
     done
 }
 
+# ---------------------------------------------------------------------------
+# A5-02: active-helper registry and bounded process-tree teardown
+# ---------------------------------------------------------------------------
+# Every helper run registers its own PID (with its parent PID at registration
+# time) in a root-owned, mode-0600 file under STATE_ROOT at main() entry and
+# removes it in cleanup().  When a helper dies without its cleanup (SIGKILL, a
+# wedged broker, a crash), the surviving helpers reap its registered children,
+# so request-owned mounts, mappers and commands can never be left behind by a
+# killed session.  The recorded parent makes reaping precise: a run whose
+# recorded owner is still alive belongs to a healthy tree and is never
+# touched, while an orphan (whose owner died and was reparented to init or a
+# subreaper) is reaped by the next pass.
+
+active_children_file()
+{
+    printf '%s\n' "$STATE_ROOT/active-children"
+}
+
+register_active_child()
+{
+    local file pid="${1:-$$}" ppid
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    [[ "$pid" =~ ^[0-9]+$ ]] || return 0
+    ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
+    [[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
+    file="$(active_children_file)"
+    mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
+    [[ -d "$STATE_ROOT" ]] || return 0
+    printf '%s %s\n' "$pid" "$ppid" >> "$file" 2>/dev/null || true
+    chmod 0600 -- "$file" 2>/dev/null || true
+    return 0
+}
+
+unregister_active_child()
+{
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    active_children_remove_pid "${1:-$$}"
+}
+
+# Remove one pid's registry line (atomic temp + mv).  The registry is tiny, so
+# the per-pid rewrite is cheaper than locking.
+active_children_remove_pid()
+{
+    local file pid="$1" tmp
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    file="$(active_children_file)"
+    [[ -f "$file" ]] || return 0
+    tmp="$(mktemp "${STATE_ROOT}/active-children.XXXXXX" 2>/dev/null || true)"
+    if [[ -n "$tmp" ]]; then
+        grep -v -E -- "^${pid}([[:space:]]|$)" "$file" > "$tmp" 2>/dev/null || true
+        mv -f -- "$tmp" "$file" 2>/dev/null || true
+        rm -f -- "$tmp" 2>/dev/null || true
+        chmod 0600 -- "$file" 2>/dev/null || true
+    else
+        rm -f -- "$file" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# True when the pid is its own process-group leader.  The proof is read from
+# ps (pgid column) with a /proc/stat pgrp fallback for BusyBox hosts; the
+# negative-pid group kill is only ever attempted on a proven leader, otherwise
+# it could signal an unrelated process group.
+is_process_group_leader()
+{
+    local pid="$1" pgrp
+    pgrp="$(ps -o pgid= -p "$pid" 2>/dev/null | tr -d ' \t' || true)"
+    if [[ -z "$pgrp" ]]; then
+        pgrp="$(awk '{print $5}' "/proc/$pid/stat" 2>/dev/null || true)"
+    fi
+    [[ -n "$pgrp" && "$pgrp" == "$pid" ]]
+}
+
+# True when the pid has exited but has not been reaped (a zombie): kill -0
+# still succeeds for it, but no signal can reach it.  The teardown grace loop
+# must never wait on a zombie (it is already dead), so a slow subreaper cannot
+# stretch a bounded teardown past its grace.
+pid_is_zombie()
+{
+    local stat rest
+    stat="$(<"/proc/$1/stat" 2>/dev/null)" || return 1
+    rest="${stat##*) }"
+    [[ "$rest" == Z* ]]
+}
+
+# Bounded teardown of one command tree: TERM the pid, group-TERM it when it is
+# a proven process-group leader, then scan /proc for its children and terminate
+# their groups too (a nested setsid child is a leader of its own group and
+# survives a plain pid kill).  After a bounded grace (<= 5 s) the survivors are
+# group-KILLed.  A zombie runner is left alone: kill -0 succeeds for it but no
+# signal can reach it, and its recorded group may still contain live members.
+# Every negative-pid group kill is only attempted on a ps-proven leader, and
+# the proof is captured while the pid is still alive: a dead leader is reaped
+# too quickly for a re-check to ever prove it, which would strand its
+# signal-ignoring group members.
+terminate_helper_tree()
+{
+    local pid="$1" grace=0 child child_pid ppid leader=0 child_leader=0
+    kill -0 "$pid" 2>/dev/null || return 0
+    if is_process_group_leader "$pid"; then
+        leader=1
+    fi
+    kill "$pid" 2>/dev/null || true
+    if (( leader == 1 )); then
+        kill -- -"$pid" 2>/dev/null || true
+    fi
+    if [[ -d /proc ]]; then
+        for child in /proc/[0-9]*; do
+            [[ -e "$child" ]] || continue
+            ppid="$(awk '{print $4}' "${child}/stat" 2>/dev/null || true)"
+            [[ -n "$ppid" && "$ppid" == "$pid" ]] || continue
+            child_pid="${child##*/}"
+            child_leader=0
+            if is_process_group_leader "$child_pid"; then
+                child_leader=1
+            fi
+            kill "$child_pid" 2>/dev/null || true
+            if (( child_leader == 1 )); then
+                kill -- -"$child_pid" 2>/dev/null || true
+            fi
+        done
+    fi
+    grace=0
+    while (( grace < 5 )); do
+        kill -0 "$pid" 2>/dev/null || break
+        # A zombie is already dead and no signal can reach it: never spend the
+        # grace on it (the group TERM above already reached its live group).
+        pid_is_zombie "$pid" && break
+        sleep 1
+        grace=$((grace + 1))
+    done
+    if kill -0 "$pid" 2>/dev/null; then
+        kill -KILL "$pid" 2>/dev/null || true
+        if (( leader == 1 )); then
+            kill -KILL -- -"$pid" 2>/dev/null || true
+        fi
+        # Final sweep: a KILLed leader must not leave its own child groups
+        # behind.  The child leader proof is captured before each child is
+        # KILLed for the same reason the root proof is captured up front.
+        if [[ -d /proc ]]; then
+            for child in /proc/[0-9]*; do
+                [[ -e "$child" ]] || continue
+                ppid="$(awk '{print $4}' "${child}/stat" 2>/dev/null || true)"
+                [[ -n "$ppid" && "$ppid" == "$pid" ]] || continue
+                child_pid="${child##*/}"
+                child_leader=0
+                if is_process_group_leader "$child_pid"; then
+                    child_leader=1
+                fi
+                kill -KILL "$child_pid" 2>/dev/null || true
+                if (( child_leader == 1 )); then
+                    kill -KILL -- -"$child_pid" 2>/dev/null || true
+                fi
+            done
+        fi
+    fi
+    return 0
+}
+
+# Reap still-alive registered helper pids before this helper run exits or
+# before a locked request starts.  Only pids this run owns are terminated: its
+# own direct children and helpers reparented to init (a session/broker that
+# died without cleanup).  A registered pid whose live parent is another
+# registered helper (a healthy broker or a sibling run) is never touched, so
+# one finishing request can never kill an unrelated healthy session.
+# Reap still-alive registered helper pids before this helper run exits or
+# before a locked request starts.  A pid whose recorded owner is still alive
+# (and is not this run) belongs to a healthy helper tree and is never touched;
+# a pid whose recorded owner is this run is our own child; a pid whose
+# recorded owner is gone (reparented to init or a subreaper after a SIGKILLed
+# session) is reaped so request-owned mounts/commands can never be left behind.
+kill_registered_children()
+{
+    local file pid owner self="${1:-$$}"
+    [[ -n "${STATE_ROOT:-}" ]] || return 0
+    file="$(active_children_file)"
+    [[ -f "$file" ]] || return 0
+    while IFS=' ' read -r pid owner; do
+        [[ "$pid" =~ ^[0-9]+$ ]] || continue
+        (( pid == self )) && continue
+        if ! kill -0 "$pid" 2>/dev/null; then
+            # Already gone: drop the stale registry entry.
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if [[ -z "$owner" || ! "$owner" =~ ^[0-9]+$ ]]; then
+            # A malformed/ownerless entry can only be reaped defensively.
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if (( owner == self )); then
+            # Our own direct child: ours to tear down.
+            terminate_helper_tree "$pid"
+            active_children_remove_pid "$pid"
+            continue
+        fi
+        if kill -0 "$owner" 2>/dev/null; then
+            # The recorded owner is still alive: a healthy helper tree.
+            continue
+        fi
+        terminate_helper_tree "$pid"
+        active_children_remove_pid "$pid"
+    done < "$file"
+    return 0
+}
+
 usage()
 {
     cat <<USAGE
@@ -1796,6 +2002,15 @@ Stage mode hints:
                    UKI/EFI rebuild and the duplicate GRUB regeneration while
                    still validating mapper/crypttab and reconciling initramfs.
                    The helper never infers this from the stage list.
+
+Cancellation:
+  --cancel-file <path>    Polled cancel surface accepted before the command
+                   verb: the helper aborts at the next stage boundary or
+                   shell-command tick when the file appears (the GUI's
+                   cancel() touches it), with the full session cleanup.
+  --cancel-token <value>  Token form: the helper aborts when
+                   $SESSION_DIR/cancel appears and carries exactly this value.
+  CANCEL_TOKEN=<value>    Environment form of --cancel-token.
 
 Shell:
   shell            Execute one reviewed command as root inside a fresh target chroot
@@ -1904,6 +2119,16 @@ cleanup_modern()
     local rc=$?
     local session_target_log session_root_real session_logdir_real
     set +e
+
+    # A5-02: reap registered still-alive helpers FIRST, before the session-log
+    # append and the unmount loop below.  A request child that was left
+    # running when its broker was killed must be gone (with its own cleanup
+    # detaching its mounts) before this run starts unmounting, and the
+    # registry entry for this run is removed right after the reap so a
+    # concurrently finishing helper never terminates a run that is already in
+    # its teardown.
+    kill_registered_children
+    unregister_active_child
 
     # Read-only diagnostics, validation and rollback preflight must remain
     # genuinely read-only.  Append the helper log into the repaired system only
@@ -8018,7 +8243,7 @@ adaptive_dracut_initramfs_repair()
 # Rebuild every installed kernel's initramfs (mkinitcpio on Arch, mkinitfs on
 # Alpine, update-initramfs on Debian), verify each image is readable and
 # compare the before/after image fingerprints for the change-status line.
-adaptive_initramfs_repair()
+adaptive_initramfs_repair_modern()
 {
     local fingerprint_before="" fingerprint_after=""
     if command -v sha256sum >/dev/null 2>&1; then
@@ -8459,7 +8684,7 @@ adaptive_grub_repair_modern()
 # reinstall); Debian/Arch/Alpine keep the existing generator path.  The
 # optional `config-only` mode skips the boot-code reinstall substage for
 # callers that must stay non-destructive (boot-stack reconciliation).
-adaptive_grub_stage()
+adaptive_grub_stage_modern()
 {
     local mode="${1:-full}"
     if grub2_layout_detected; then
@@ -15920,7 +16145,7 @@ shell_run_interactive()
     local in_fifo="$SESSION_DIR/shell-in" out_fifo="$SESSION_DIR/shell-out"
     local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
     local tail_buf="" ch="" clean="" bytes="" encoded="" tag="" id="" answer=""
-    local script_bin="" setsid_bin="" newline_done=1 wait_rc=0 grace=0
+    local script_bin="" setsid_bin="" newline_done=1 wait_rc=0
     local read_rc=0 old_pipe_trap="" pump_token=""
     local redact_active=0 redact_pos=0 echo_expected="" suppress_until_nl=0
 
@@ -16132,42 +16357,30 @@ shell_run_interactive()
         # A5-09 EOF: the runner's output stream ended while the runner was
         # still reachable.  Treat the runner as dead: never emit a PROMPT,
         # close its input and drain what is left.  A runner that closed its
-        # output but keeps running gets a bounded grace and then KILL; a
+        # output but keeps running gets the bounded tree teardown below; a
         # zombie (an already-exited runner) is skipped so the normal exit
         # path stays fast.
         exec 9>&- || true
         shell_pump_drain_dead
         if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
-            grace=0
-            while (( grace < 10 )); do
-                kill -0 "$runner_pid" 2>/dev/null || break
-                sleep 1
-                grace=$((grace + 1))
-            done
-            if kill -0 "$runner_pid" 2>/dev/null; then
-                kill -KILL "$runner_pid" 2>/dev/null || true
-            fi
+            terminate_helper_tree "$runner_pid"
         fi
         rc=1
         break
     done
 
     if (( rc == 124 || rc == 125 )); then
-        # Fail closed: interrupt the command on its input, close the input,
-        # then terminate the runner with a bounded grace period.
+        # A5-02: fail closed and tear down the runner's whole tree, not just
+        # the single runner pid.  Interrupt the command on its input, close
+        # the input, then group-terminate the runner (its setsid spawn made
+        # it the leader of its own group when setsid is available) and every
+        # child group below it, with the shared bounded grace before KILL.
+        # A command that ignores TERM (or a child that detached) is still
+        # guaranteed to stop within the grace bound.
         printf '\003' >&9 2>/dev/null || true
         exec 9>&- || true
         if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
-            kill "$runner_pid" 2>/dev/null || true
-            grace=0
-            while (( grace < 10 )); do
-                kill -0 "$runner_pid" 2>/dev/null || break
-                sleep 1
-                grace=$((grace + 1))
-            done
-            if kill -0 "$runner_pid" 2>/dev/null; then
-                kill -KILL "$runner_pid" 2>/dev/null || true
-            fi
+            terminate_helper_tree "$runner_pid"
         fi
         wait "$runner_pid" 2>/dev/null || true
     else
@@ -16489,7 +16702,7 @@ run_host_shell_modern()
                     /bin/bash -lc "$run_command")"
             rc=$?
         else
-            run_host_command_isolated timeout --foreground 300 /usr/bin/env \
+            run_host_command_isolated timeout --foreground --kill-after=10 300 /usr/bin/env \
                 HOME=/root \
                 TERM=dumb \
                 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
@@ -19488,7 +19701,7 @@ efi_promote_entry_first()
 # one combined change status: changed when any backend changed, unchanged only
 # when every backend proved unchanged.  Single-backend targets keep the exact
 # backend status line.
-run_package_stage()
+run_package_stage_modern()
 {
     local stage="$1" tool_key="$2" backend entry key state backend_status backend_feedback reason i
     local any_changed=false detail="" combined_state=""
@@ -20566,6 +20779,49 @@ session_forward_request()
     done
 }
 
+# ---------------------------------------------------------------------------
+# A1-04/A2-06: per-target-disk mutual exclusion.  Modifying requests take a
+# non-blocking flock on a per-canonical-disk lock file under STATE_ROOT, so
+# two GUI windows (or a window and a direct CLI run) can never mutate the same
+# disk at once.  Read-only requests skip the lock entirely.
+# ---------------------------------------------------------------------------
+disk_lock_file()
+{
+    local canonical="$1" sanitized
+    sanitized="${canonical//[!A-Za-z0-9._-]/_}"
+    printf '%s\n' "$STATE_ROOT/disk-lock.$sanitized"
+}
+
+# Acquire the non-blocking per-disk flock into the fd named by $2.
+# Return codes: 0 acquired, 1 lock tooling/state unavailable, 2 busy.
+acquire_disk_lock()
+{
+    local canonical="$1" fdvar="$2" file fd
+    [[ -n "${STATE_ROOT:-}" ]] || return 1
+    file="$(disk_lock_file "$canonical")"
+    command -v flock >/dev/null 2>&1 || return 1
+    mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
+    [[ -d "$STATE_ROOT" ]] || return 1
+    if ! exec {fd}>"$file" 2>/dev/null; then
+        return 1
+    fi
+    if ! flock -n "$fd" 2>/dev/null; then
+        eval "exec ${fd}>&-" 2>/dev/null || true
+        return 2
+    fi
+    printf -v "$fdvar" '%s' "$fd"
+    return 0
+}
+
+release_disk_lock()
+{
+    local fd="${1:-0}"
+    [[ "$fd" =~ ^[0-9]+$ && $fd -gt 2 ]] || return 0
+    flock -u "$fd" 2>/dev/null || true
+    eval "exec ${fd}>&-" 2>/dev/null || true
+    return 0
+}
+
 # Long-lived pkexec broker: snapshot this helper into the root-owned state
 # directory, then read tab-separated BEGIN/ARG/SECRET/END requests and run each
 # whitelisted command through the authenticated copy, streaming OUT lines and
@@ -20575,13 +20831,21 @@ session_server()
     local tag request_id argc has_secret i field_tag field_id encoded decoded end_tag end_id
     local command rc secret_b64 secret pre_mapper post_mapper unlock_device mapper_name
     local line="" decoded_total=0 read_st=0
-    local -a fields op_args
+    local request_disk="" request_lock_fd=0 request_lock_required=0 acquire_rc=0
+    local dispatch_setsid=""
+    local -a fields op_args dispatch_cmd
 
     need base64
     need tr
     need cp
     need chmod
     need bash
+
+    # A5-02 (d): each per-request dispatch runs in its own session when
+    # setsid is available, so the child and its process group can never
+    # signal or be signalled through the broker's group.  setsid execs the
+    # helper copy in place, so the PIPESTATUS indexes stay unchanged.
+    command -v setsid >/dev/null 2>&1 && dispatch_setsid=setsid
 
     # A1-09: ignore SIGPIPE so a dying GUI reader (or a dead runner below)
     # cannot kill the broker mid-record; the exit codes come from the runner.
@@ -20759,20 +21023,63 @@ session_server()
             pre_mapper="$(find_crypt_mapper_for_device "$unlock_device" 2>/dev/null || true)"
         fi
 
+        # A1-04/A2-06: serialise modifying requests per canonical target
+        # disk.  Read-only requests (diagnose/validate/config-read/
+        # fs-inspect/browse/snapshot list|inspect|plan) skip the lock.
+        request_lock_required=1
+        case "$command" in
+            diagnose|validate|config-read|fs-inspect|browse-target|host-diagnose|host-validate|host-fs-inspect)
+                request_lock_required=0 ;;
+            snapshots|host-snapshots)
+                case "${op_args[2]:-}" in
+                    list|inspect|plan) request_lock_required=0 ;;
+                esac
+                ;;
+        esac
+        if (( request_lock_required == 1 )); then
+            request_disk="$(canonical_block "${op_args[0]:-}" 2>/dev/null || true)"
+            if [[ -z "$request_disk" ]]; then
+                secret=""
+                session_protocol_error "$request_id" "Unable to canonicalize the request disk for the mutual-exclusion lock: ${op_args[0]:-missing}."
+                continue
+            fi
+            acquire_rc=0
+            acquire_disk_lock "$request_disk" request_lock_fd || acquire_rc=$?
+            if (( acquire_rc == 2 )); then
+                secret=""
+                session_protocol_error "$request_id" "Another Boot Bitch request is already working on $request_disk."
+                continue
+            fi
+            if (( acquire_rc != 0 )); then
+                secret=""
+                session_protocol_error "$request_id" "The per-disk mutual-exclusion lock could not be established for $request_disk."
+                continue
+            fi
+            # A5-02: a new locked request reaps helpers orphaned by a session
+            # that was killed without cleanup before it starts mutating.
+            kill_registered_children
+        fi
+
+        dispatch_cmd=(bash "$SESSION_HELPER_COPY" "$command")
+        [[ -n "$dispatch_setsid" ]] \
+            && dispatch_cmd=(setsid bash "$SESSION_HELPER_COPY" "$command")
+
         set +e
         if [[ "$has_secret" == "1" ]]; then
             printf '%s' "$secret" |
                 BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
-                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
+                "${dispatch_cmd[@]:-}" "${op_args[@]:-}" 2>&1 |
                 session_forward_request "$request_id"
             rc=${PIPESTATUS[1]}
         else
             BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" \
-                bash "$SESSION_HELPER_COPY" "$command" "${op_args[@]:-}" 2>&1 |
+                "${dispatch_cmd[@]:-}" "${op_args[@]:-}" 2>&1 |
                 session_forward_request "$request_id"
             rc=${PIPESTATUS[0]}
         fi
         set -e
+        release_disk_lock "$request_lock_fd"
+        request_lock_fd=0
 
         if [[ "$command" == "unlock" && "$rc" -eq 0 && -n "$unlock_device" && -z "$pre_mapper" ]]; then
             post_mapper="$(find_crypt_mapper_for_device "$unlock_device" 2>/dev/null || true)"
@@ -20799,6 +21106,32 @@ main()
 {
     [[ ${EUID:-$(id -u)} -eq 0 ]] || fail "This helper must run as root (normally through pkexec)."
     ensure_state_root
+    # A5-02 (a): every helper run joins the root-owned active-children
+    # registry so a killed parent/broker's children are reaped by the
+    # survivors; cleanup() removes the entry again.
+    register_active_child
+
+    # A10-05: optional leading cancel-token options, accepted before the
+    # command verb (the Qt3 GUI passes --cancel-file <path>; the documented
+    # token form is CANCEL_TOKEN=<value> in the environment or
+    # --cancel-token <value> on the command line).
+    while (($# > 0)); do
+        case "$1" in
+            --cancel-file)
+                [[ $# -ge 2 ]] || fail "--cancel-file requires a path."
+                CANCEL_FILE="$2"
+                shift 2
+                ;;
+            --cancel-token)
+                [[ $# -ge 2 ]] || fail "--cancel-token requires a value."
+                CANCEL_TOKEN="$2"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
 
     (($# >= 1)) || { usage; exit 2; }
     local command="$1"; shift
@@ -20945,6 +21278,15 @@ elif [[ -d /run ]]; then
 else
     STATE_ROOT=/var/run/boot-repair
 fi
+
+# A10-05 cancel surface.  The Qt3 GUI passes --cancel-file <path> (parsed by
+# main() before the command verb) and its cancel() touches that file; the
+# documented token form is CANCEL_TOKEN=<value> (environment) or
+# --cancel-token <value>, checked against $SESSION_DIR/cancel.  Both may also
+# arrive through the environment (an env CANCEL_TOKEN survives a direct
+# invocation; sudo strips it, which is why the GUI uses the argv form).
+CANCEL_FILE="${CANCEL_FILE:-}"
+CANCEL_TOKEN="${CANCEL_TOKEN:-}"
 
 # Set by read_target_os when the root was confirmed through legacy release
 # evidence instead of /etc/os-release.  Evidence wording only; never a gate.
@@ -21326,6 +21668,7 @@ grub_unavailable_reason()
 
 adaptive_grub_repair()
 {
+    legacy_cancel_stage_check
     if legacy_grub_legacy_target; then
         legacy_grub_repair
     else
@@ -21387,7 +21730,10 @@ legacy_boot_stack_repair()
     REPAIR_CHANGE_STATUS_COLLECTED=()
     REPAIR_CHANGE_STATUS_COLLECT=1
     validate_mapper_crypttab
+    # A10-05: the cancel surface is checked between the three components.
+    legacy_cancel_stage_check
     adaptive_initramfs_repair
+    legacy_cancel_stage_check
     adaptive_grub_repair
     REPAIR_CHANGE_STATUS_COLLECT=0
     for entry in "${REPAIR_CHANGE_STATUS_COLLECTED[@]:-}"; do
@@ -21412,6 +21758,7 @@ legacy_boot_stack_repair()
 
 repair_boot_stack()
 {
+    legacy_cancel_stage_check
     if legacy_grub_legacy_target; then
         legacy_boot_stack_repair
         return 0
@@ -21569,6 +21916,100 @@ legacy_require_feature()
     fi
     printf 'unavailable|%s: %s\n' "$feature" "$reason" >&2
     fail "$feature is unavailable: $reason"
+}
+
+# ---------------------------------------------------------------------------
+# Cancel token (A10-05)
+# ---------------------------------------------------------------------------
+# The helper-side cancel surface: the Qt3 GUI passes --cancel-file <path>
+# (parsed by main() before the command verb) and its cancel() touches that
+# file; the documented token form is CANCEL_TOKEN=<value> (environment or
+# --cancel-token <value>), checked against $SESSION_DIR/cancel.  A small
+# watcher polls the surface between repair stages and on shell-command ticks
+# and aborts with the modern bounded TERM -> KILL tree escalation of the
+# running command; it also reaps that command when the helper itself dies
+# (poll `kill -0 $PPID`), so a SIGKILLed helper never leaves a shell command
+# behind.  Etch deviation (documented): the GUI's SIGKILL reaches only the
+# elevation wrapper (sudo), so a helper inside a long single stage finishes
+# that stage and aborts at the next boundary instead of being interrupted.
+
+# True when the configured cancel surface signals a cancel request.
+# CANCEL_FILE: existence is the signal (the GUI's cancel() touches the file).
+# CANCEL_TOKEN: $SESSION_DIR/cancel must exist AND carry exactly the token,
+# so a stray file in the session directory can never abort a run.
+legacy_cancel_requested()
+{
+    local cancel_path="" line=""
+    if [[ -n "$CANCEL_FILE" ]]; then
+        [[ -e "$CANCEL_FILE" ]] || return 1
+        return 0
+    fi
+    if [[ -n "$CANCEL_TOKEN" && -n "${SESSION_DIR:-}" ]]; then
+        cancel_path="$SESSION_DIR/cancel"
+        [[ -e "$cancel_path" ]] || return 1
+        line="$(head -n1 "$cancel_path" 2>/dev/null || true)"
+        [[ "$line" == "$CANCEL_TOKEN" ]]
+        return $?
+    fi
+    return 1
+}
+
+# Stage-boundary check: abort (fail -> exit 1 -> cleanup) when a cancel was
+# requested.  Runs at the entry of every repair stage wrapper and between the
+# legacy boot-stack components.
+legacy_cancel_stage_check()
+{
+    if legacy_cancel_requested; then
+        log "Cancel requested; aborting at the stage boundary (the session teardown unmounts everything)." | tee -a "$SESSION_LOG" >&2
+        fail "Cancelled at the caller's request."
+    fi
+    return 0
+}
+
+# Shell-command tick watcher: polls the cancel surface every 0.2 s while
+# `child` (the backgrounded command pipeline) runs.  On a cancel request - or
+# when the helper itself died (kill -0 $PPID) - the child is terminated with
+# the modern bounded TERM -> KILL escalation.
+legacy_cancel_watcher()
+{
+    local child="${1:-}"
+    [[ -n "$child" ]] || return 0
+    while kill -0 "$child" 2>/dev/null; do
+        if ! kill -0 "$PPID" 2>/dev/null; then
+            log "Helper parent died; reaping the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            terminate_helper_tree "$child" || true
+            return 0
+        fi
+        if legacy_cancel_requested; then
+            log "Cancel token observed; terminating the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            terminate_helper_tree "$child" || true
+            return 0
+        fi
+        sleep 0.2 2>/dev/null || return 0
+    done
+    return 0
+}
+
+# A10-05 stage entry wrappers: the wrapped modern definitions were renamed by
+# port.sh; every stage entry (package stages, initramfs and GRUB) checks the
+# cancel surface before running, which is what "between repair stages" means
+# for the legacy Full Repair plan.
+run_package_stage()
+{
+    legacy_cancel_stage_check
+    run_package_stage_modern "$@"
+}
+
+adaptive_initramfs_repair()
+{
+    legacy_cancel_stage_check
+    adaptive_initramfs_repair_modern "$@"
+}
+
+adaptive_grub_stage()
+{
+    legacy_cancel_stage_check
+    adaptive_grub_stage_modern "$@"
 }
 
 # ---------------------------------------------------------------------------
@@ -21782,6 +22223,7 @@ display_unavailable_reason()
 adaptive_display_manager_repair()
 {
     local backend="" legacy_ok=""
+    legacy_cancel_stage_check
     backend="$(target_display_manager_backend)"
     legacy_ok="$(legacy_display_manager_probe 2>/dev/null || true)"
     if [[ "$backend" != systemd && "$backend" != OpenRC && -n "$legacy_ok" ]]; then
@@ -22098,13 +22540,27 @@ legacy_run_file_copy()
 # Legacy mount-options filter.  The generated helper adds `noload` to the
 # read-only ext2/ext3/ext4 mounts (the root ro mount, the boot-entry ro mount
 # and the os-release probe mount all funnel through mount_recorded); Etch's
-# util-linux 2.12r rejects `ro,noload` ("ext3: No journal on filesystem on
+# util-linux 2.12r can reject `ro,noload` ("ext3: No journal on filesystem on
 # dm-5" + "wrong fs type, bad option, bad superblock") while plain `ro` mounts
-# the same filesystem fine.  Strip the option so every ro ext mount uses plain
-# `ro` (a dirty-journal ro mount failing is acceptable fail-closed behavior).
+# the same filesystem fine.
+#
+# B6/A9-05: earlier behaviour stripped `noload` unconditionally.  That hides a
+# dirty journal: a plain `ro` mount of a dirty ext filesystem replays the
+# journal, silently turning the "read-only" mount into a modifying one.  The
+# filter now keeps `noload` for the FIRST attempt; mount_recorded retries with
+# the stripped options only when that first mount FAILS, after the tune2fs
+# journal-state check (a dirty journal logs a WARNING naming the replay risk
+# and the retry still proceeds - best-effort fail-soft; see mount_recorded).
 # The xfs `norecovery` option is left as-is: no xfs filesystem exists on Etch,
 # so the option is simply never exercised.
 legacy_filter_mount_options()
+{
+    printf '%s' "$1"
+}
+
+# Strip exactly the `noload` option from a comma-separated mount-option list
+# (the B6/A9-05 retry form).
+legacy_mount_options_without_noload()
 {
     printf '%s' "$1" | tr ',' '\n' | grep -v '^noload$' | paste -sd ',' -
 }
@@ -22138,7 +22594,66 @@ mount_recorded()
                 ;;
         esac
     done
-    mount_recorded_modern "$source" "$destination" "${args[@]:-}"
+
+    # B6/A9-05: the first attempt keeps `noload` (see the filter above).  The
+    # retry branch below applies to ext2/3/4 sources only: the generated
+    # helper adds `noload` to no other mount, so its presence IS the ext gate;
+    # non-ext and modern paths are unchanged.
+    local rc=0 had_noload=0
+    local -a retry_args=()
+    local i=0 retry_value=""
+    for ((i = 0; i < ${#args[@]}; i++)); do
+        opt="${args[$i]}"
+        case "$opt" in
+            -o)
+                retry_value="${args[$((i + 1))]:-}"
+                if [[ ",$retry_value," == *,noload,* ]]; then
+                    had_noload=1
+                    retry_value="$(legacy_mount_options_without_noload "$retry_value")"
+                fi
+                [[ -n "$retry_value" ]] && retry_args+=("-o" "$retry_value")
+                i=$((i + 1))
+                ;;
+            -o*)
+                retry_value="${opt#-o}"
+                if [[ ",$retry_value," == *,noload,* ]]; then
+                    had_noload=1
+                    retry_value="$(legacy_mount_options_without_noload "$retry_value")"
+                fi
+                [[ -n "$retry_value" ]] && retry_args+=("-o$retry_value")
+                ;;
+            *)
+                retry_args+=("$opt")
+                ;;
+        esac
+    done
+    mount_recorded_modern "$source" "$destination" "${args[@]:-}" || rc=$?
+    if (( rc == 0 || had_noload == 0 )); then
+        return "$rc"
+    fi
+
+    # The noload-carrying first mount failed.  Consult the journal state
+    # before retrying without noload: a clean journal makes the stripped
+    # retry safe; a dirty journal means the stripped retry replays the journal
+    # during a nominally read-only mount.  The dirty (and unknown) case logs a
+    # WARNING naming that risk and PROCEEDS - never a hard refusal: the
+    # 2.6.18/Etch behaviour is unconfirmed until the rig drill, so the retry
+    # keeps the mount reachable while the risk stays explicit in the log.
+    # TODO(rig): confirm Etch util-linux 2.12r mount/tune2fs output and, if
+    # the risk is real there, tighten this gate.
+    local journal_state="" tune2fs_output=""
+    tune2fs_output="$(tune2fs -l -- "$source" 2>/dev/null || true)"
+    journal_state="$(printf '%s\n' "$tune2fs_output" \
+        | sed -n 's/^Filesystem state:[[:space:]]*//p' | head -n1)"
+    if [[ "$journal_state" == "clean" ]]; then
+        log "Read-only mount with noload failed for $source; the journal is clean, retrying with plain ro"
+    else
+        log "WARNING: read-only mount with noload failed for $source and the journal state is not clean (${journal_state:-unknown}); retrying with plain ro may replay the target's journal during a nominally read-only mount"
+    fi
+    # rc still holds the failed first attempt: a successful retry must return 0.
+    rc=0
+    mount_recorded_modern "$source" "$destination" "${retry_args[@]:-}" || rc=$?
+    return "$rc"
 }
 
 # Etch-era fstab/crypttab entries name devices with bare host-relative paths
@@ -22643,18 +23158,66 @@ legacy_blkid_uuid_path()
 # Cycle 11/12: resolve the Linux root candidate on the opened mapper chain
 # with the port's read-only fstype probe (blkid; never a mount), so the GUI
 # can enable Select Target with the helper-confirmed component even though
-# its read-only inventory cannot see the mapped LV's filesystem. Prefer an LV
+# its read-only inventory cannot see the mapped LV's filesystem.  Prefer an LV
 # whose name matches root (case-insensitive); otherwise the first LV with a
-# known Linux filesystem. No candidate emits no line and the GUI keeps its
-# existing fail-closed behavior. The same probe runs for a mapper that was
+# known Linux filesystem.  No candidate emits no line and the GUI keeps its
+# existing fail-closed behavior.  The same probe runs for a mapper that was
 # already open (existing-mapper reuse).
+#
+# B6/A9-08: the candidates are scoped to the unlocked PV's OWN volume group
+# (pvs names the VG for this exact PV, lvs lists its logical volumes), so a
+# foreign running-host LV with a Linux filesystem can never become
+# UNLOCKED_ROOT.  When the LVM tooling is missing or no VG is provable, the
+# probe falls back to the previous unscoped behaviour with a WARNING - the
+# candidate is never silently dropped and the later same-disk/host guards
+# remain the hard backstop.
 legacy_unlock_root_probe()
 {
     local mapper_path="$1" unlocked_root="" unlocked_fstype=""
     local candidate_name="" fstype_probe="" root_match="" fallback_name="" fallback_fstype=""
+    local pvs_bin="" lvs_bin="" vg_name="" lv_item="" lv_path="" in_vg=0 scope_vg=0
+    local -a vg_lvs=()
+    pvs_bin="$(legacy_real_tool_path pvs || true)"
+    lvs_bin="$(legacy_real_tool_path lvs || true)"
+    vg_name=""
+    if [[ -n "$pvs_bin" ]]; then
+        vg_name="$("$pvs_bin" --noheadings -o vg_name -- "$mapper_path" 2>/dev/null \
+            | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' | grep -v '^$' | head -n1 || true)"
+    fi
+    if [[ -n "$vg_name" && -n "$lvs_bin" ]]; then
+        while IFS= read -r lv_path; do
+            lv_path="$(printf '%s' "$lv_path" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+            [[ -n "$lv_path" ]] || continue
+            vg_lvs+=("$lv_path")
+        done < <("$lvs_bin" --noheadings -o lv_path -- "$vg_name" 2>/dev/null || true)
+        if (( ${#vg_lvs[@]} > 0 )); then
+            scope_vg=1
+            log "Unlocked-root probe scoped to volume group '$vg_name' (${#vg_lvs[@]} logical volume(s))"
+        else
+            log "WARNING: volume group '$vg_name' was proven for $mapper_path but no logical volumes could be listed; falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+        fi
+    elif [[ -n "$vg_name" ]]; then
+        log "WARNING: volume group '$vg_name' was proven for $mapper_path but lvs is not installed in the recovery environment; falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+    else
+        log "WARNING: no volume group could be proven for $mapper_path (LVM tooling missing or the device is not a PV); falling back to the unscoped unlocked-root probe (the same-disk/host guards remain the hard backstop)"
+    fi
     while IFS= read -r entry; do
         [[ -n "$entry" ]] || continue
         [[ "$entry" == "$mapper_path" || "$entry" == *control* ]] && continue
+        if (( scope_vg == 1 )); then
+            in_vg=0
+            for lv_item in "${vg_lvs[@]}"; do
+                if [[ "$entry" == "$lv_item" \
+                    || "$(basename -- "$entry")" == "$(basename -- "$lv_item")" ]]; then
+                    in_vg=1
+                    break
+                fi
+            done
+            # Candidates not in the unlocked PV's volume group are skipped:
+            # they belong to the running host (or another target) and its LVs
+            # must never be offered as the unlocked root.
+            (( in_vg == 1 )) || continue
+        fi
         candidate_name="${entry##*/}"
         [[ -n "$candidate_name" ]] || continue
         # /dev/mapper entries on Etch are real block nodes (readlink -f is the
@@ -22775,6 +23338,7 @@ legacy_apt_intent_translate()
 legacy_chroot_shell()
 {
     local command="${1:-}" rc=0 transcript run_command retry_command="" retried=0
+    local run_pid=0 watcher_pid=0
     [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
     [[ -n "$command" ]] || fail "shell command cannot be empty."
     need chroot
@@ -22789,13 +23353,27 @@ legacy_chroot_shell()
     fi
     while :; do
         set +e
-        chroot "$TARGET_ROOT" /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            APT_LISTCHANGES_FRONTEND=none \
-            /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        # A10-05: the pipeline runs in a background subshell whose exit status
+        # is the command's own (PIPESTATUS captured inside the subshell), and
+        # the cancel watcher ticks alongside it: a cancel token (or a helper
+        # that died) terminates the pipeline with the bounded TERM -> KILL
+        # escalation.
+        ( set +e
+          chroot "$TARGET_ROOT" /usr/bin/env \
+              HOME=/root \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              DEBIAN_FRONTEND=noninteractive \
+              APT_LISTCHANGES_FRONTEND=none \
+              /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+          rc=${PIPESTATUS[0]}
+          exit "$rc" ) &
+        run_pid=$!
+        legacy_cancel_watcher "$run_pid" &
+        watcher_pid=$!
+        rc=0
+        wait "$run_pid" 2>/dev/null || rc=$?
+        kill "$watcher_pid" 2>/dev/null || true
+        wait "$watcher_pid" 2>/dev/null || true
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -22831,8 +23409,15 @@ run_host_shell()
 # same prepare_running_host identity/boot-mount checks and the reviewed
 # command-string guard as the modern host shell, executed directly (no
 # firmware namespace exists on this BIOS-only host, so prepare_host_command_guard
-# skipped the guard; no chroot).  The timeout/kill containment is not
-# expressible on Etch's timeout and is documented as such.
+# skipped the guard; no chroot).  B6/A9-03: the exec runs under
+# `timeout --foreground 300 --kill-after=10` - the compat.sh timeout shim
+# prefers a real coreutils timeout that supports --foreground and falls back
+# to the pure-bash watchdog on Etch (whose timeout binary predates
+# --foreground/--kill-after).  Etch deviation (documented): the watchdog can
+# only kill the direct child, so grandchildren of a killed shell may outlive
+# the bound.  EFI hosts keep the modern isolation+refusal path
+# (run_host_shell_modern): no firmware variables exist to isolate on this
+# BIOS-only host, so the legacy path is used here.
 legacy_host_shell()
 {
     local raw_disk="${1:-}" raw_root="${2:-}" command="${3:-}"
@@ -22849,7 +23434,7 @@ legacy_host_shell()
     log "BEGIN: Running-host shell command (legacy direct path)" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
     local transcript="$SESSION_DIR/host-shell-output" rc=0
-    local run_command="$command" retry_command="" retried=0
+    local run_command="$command" retry_command="" retried=0 run_pid=0 watcher_pid=0
     : > "$transcript"
     run_command="$(legacy_apt_intent_translate "$command")"
     if [[ "$run_command" != "$command" ]]; then
@@ -22857,12 +23442,23 @@ legacy_host_shell()
     fi
     while :; do
         set +e
-        /usr/bin/env \
-            HOME=/root \
-            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            DEBIAN_FRONTEND=noninteractive \
-            /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-        rc=${PIPESTATUS[0]}
+        # A10-05: same backgrounded-pipeline + cancel-watcher shape as the
+        # chroot shell; the subshell exit status is the command's own.
+        ( set +e
+          timeout --foreground 300 --kill-after=10 /usr/bin/env \
+              HOME=/root \
+              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+              DEBIAN_FRONTEND=noninteractive \
+              /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+          rc=${PIPESTATUS[0]}
+          exit "$rc" ) &
+        run_pid=$!
+        legacy_cancel_watcher "$run_pid" &
+        watcher_pid=$!
+        rc=0
+        wait "$run_pid" 2>/dev/null || rc=$?
+        kill "$watcher_pid" 2>/dev/null || true
+        wait "$watcher_pid" 2>/dev/null || true
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -23014,6 +23610,9 @@ run_host_repair()
 {
     local i=0 stage="" need_maintenance=0
     local -a args=("$@")
+    # A10-05: the cancel surface is checked before the host repair starts (the
+    # individual stage entry wrappers re-check it between stages).
+    legacy_cancel_stage_check
     # Package stages write only through the target package manager.  On a
     # BIOS-only legacy host there are no firmware variables to isolate, so
     # they do not need the unshare-based host command guard; every other host

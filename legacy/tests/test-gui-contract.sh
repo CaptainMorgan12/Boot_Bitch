@@ -708,6 +708,145 @@ grep -q 'setIcon(headerPixmap)' "$WINDOW" \
     || fail "GUI window does not use the packaged icon artwork"
 pass "legacy icons generated from the modern master (LANCZOS, fail-fast script)"
 
+# --- B3 hardening: secrets/logs/bounded waits (A10-01/06/07/08/09) ----------
+grep -q '<config-write content redacted>' "$WINDOW" \
+    || fail "startCommand does not redact the config-write payload element"
+grep -q '<keyfile path redacted>' "$WINDOW" \
+    || fail "startCommand does not redact the unlock keyfile path argument"
+grep -q 'O_WRONLY | O_CREAT | O_APPEND | O_NOFOLLOW' "$WINDOW" \
+    || fail "appendToLogFile does not open append-only with O_NOFOLLOW"
+grep -q 'fchmod(fd, 0600)' "$WINDOW" \
+    || fail "appendToLogFile does not re-tighten the log file to 0600"
+grep -q 'fdopen(fd' "$WINDOW" \
+    || fail "appendToLogFile no longer writes through fdopen(FILE*)"
+grep -q 'isDefaultLogTree' "$WINDOW" \
+    || fail "the private-log-tree check is missing"
+grep -q 'ensureLogDirectory' "$WINDOW" \
+    || fail "the private log-directory helper is missing"
+grep -q 'ensureDirectory(m_logDirectory, 0700)' "$WINDOW" \
+    || fail "the default log directory is not created 0700"
+grep -q 'chmod(m_logDirectory.local8Bit().data(), 0700)' "$WINDOW" \
+    || fail "the default log directory leaf is not re-tightened to 0700"
+grep -q 'm_logDirectory + QString::fromLatin1("/.keys")' "$WINDOW" \
+    || fail "unlock keyfiles are not moved to a dedicated .keys directory"
+grep -q 'mkdir(keysDirectory.local8Bit().data(), 0700)' "$WINDOW" \
+    || fail "the .keys directory is not created 0700"
+grep -q 'chmod(keysDirectory.local8Bit().data(), 0700)' "$WINDOW" \
+    || fail "the .keys directory is not re-tightened to 0700"
+grep -q 'legacyKeyfileTerminationHandler' "$WINDOW" \
+    || fail "the keyfile termination handlers are missing"
+grep -q 'SIGTERM' "$WINDOW" || fail "the SIGTERM keyfile handler is missing"
+grep -q 'SIGINT' "$WINDOW" || fail "the SIGINT keyfile handler is missing"
+grep -q 'SIGHUP' "$WINDOW" || fail "the SIGHUP keyfile handler is missing"
+grep -q '_exit(128 + signalNumber)' "$WINDOW" \
+    || fail "the keyfile handler does not exit with 128+signum"
+grep -q 'strncpy(gUnlockKeyfilePath' "$WINDOW" \
+    || fail "the created keyfile is not registered with the termination handlers"
+grep -q 'lstat(canonicalPath.local8Bit().data(), &earlier)' "$WINDOW" \
+    || fail "deleteSelectedSessionLog lost the pre-confirmation lstat"
+grep -q 'lstat(canonicalPath.local8Bit().data(), &current)' "$WINDOW" \
+    || fail "deleteSelectedSessionLog lost the immediate pre-unlink lstat"
+grep -q 'current.st_dev != earlier.st_dev' "$WINDOW" \
+    || fail "deleteSelectedSessionLog does not compare the device identity"
+grep -q 'current.st_ino != earlier.st_ino' "$WINDOW" \
+    || fail "deleteSelectedSessionLog does not compare the inode identity"
+grep -q '::unlink(canonicalPath.local8Bit().data()) != 0' "$WINDOW" \
+    || fail "deleteSelectedSessionLog no longer unlinks after the lstat"
+grep -q 'static const char \*const settingsFiles\[\]' "$WINDOW" \
+    || fail "the post-save settings permission pass is missing"
+for file in devicesrc logsrc diagnosticsrc repairrc; do
+    grep -q "\"$file\"" "$WINDOW" \
+        || fail "settings chmod pass misses ~/.qt/$file"
+done
+grep -q 'chmod(settingsPath.local8Bit().data(), 0600)' "$WINDOW" \
+    || fail "settings files are not chmod'ed 0600 after saves"
+RUNNER_CPP="$GUI_DIR/src/HelperRunner.cpp"
+grep -q 'boundedWaitPid' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the bounded waitpid helper"
+grep -q 'waitpid(pid, status, WNOHANG)' "$RUNNER_CPP" \
+    || fail "HelperRunner waitpids are not WNOHANG polls"
+grep -q 'kill(pid, SIGKILL)' "$RUNNER_CPP" \
+    || fail "HelperRunner does not SIGKILL a wedged child"
+grep -q 'time(NULL) + 10' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the 10-second wait deadline"
+grep -q 'poll(&pollFd' "$RUNNER_CPP" \
+    || fail "authenticateElevation stderr read is not poll-bounded"
+grep -q 'capturedLimit = 32 \* 1024' "$RUNNER_CPP" \
+    || fail "authenticateElevation stderr capture is not capped at 32 KiB"
+grep -q 'did not respond within the timeout' "$RUNNER_CPP" \
+    || fail "authenticateElevation lost the bounded-wait failure wording"
+pass "B3 hardening (redacted argv, O_NOFOLLOW/0600 log, 0700 log dir, .keys + signal handlers, lstat-before-unlink, rc 0600, bounded waits)"
+
+# --- B4 elevation trust: fixed paths, lstat checks, no bare execvp ----------
+RUNNER_CPP="$GUI_DIR/src/HelperRunner.cpp"
+for path in '/usr/bin/sudo' '/usr/local/bin/sudo' '/bin/sudo' \
+    '/usr/bin/gksu' '/usr/bin/gksudo'; do
+    grep -qF "\"$path\"" "$RUNNER_CPP" \
+        || fail "fixed trusted elevation path missing from HelperRunner: $path"
+done
+grep -q 'lstat(' "$RUNNER_CPP" \
+    || fail "HelperRunner does not lstat the elevation candidates"
+grep -q 'S_ISREG' "$RUNNER_CPP" \
+    || fail "HelperRunner does not require a regular elevation tool"
+grep -q 'st_uid != 0' "$RUNNER_CPP" \
+    || fail "HelperRunner does not require root ownership"
+grep -q 'S_IWGRP | S_IWOTH' "$RUNNER_CPP" \
+    || fail "HelperRunner does not refuse group/world-writable candidates"
+grep -q 'S_ISDIR' "$RUNNER_CPP" \
+    || fail "HelperRunner does not verify the candidate directory"
+grep -q 'execv(' "$RUNNER_CPP" \
+    || fail "HelperRunner does not exec the verified absolute path"
+grep -q 'execvp(' "$RUNNER_CPP" \
+    && fail "HelperRunner still execvp's with a bare name (never PATH)"
+grep -q 'no trusted sudo/gksu found in the fixed system locations' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the fail-closed elevation message"
+grep -q 'verifyTrustedToolPath' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the trusted-tool verification"
+# B4 helper verification for elevation + the --print-config surface.
+grep -q 'verifyHelperForElevation' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the helper elevation verification"
+grep -q 'realpath(' "$RUNNER_CPP" \
+    || fail "helper verification lost the realpath comparison"
+grep -q 'verifyHelperForElevation' "$GUI_DIR/src/main.cpp" \
+    || fail "--print-config does not verify the helper"
+grep -q 'helper elevation trust' "$GUI_DIR/src/main.cpp" \
+    || fail "--print-config lost the helper trust line"
+grep -q 'BOOT_REPAIR_LEGACY_ELEVATE' "$GUI_DIR/src/main.cpp" \
+    || fail "main() lost the BOOT_REPAIR_LEGACY_ELEVATE escape hatch"
+# B4 cancel wiring: the GUI-owned cancel file travels with every command and
+# cancel() touches it before the direct kill.
+grep -q -- '--cancel-file' "$GUI_DIR/src/LegacyMainWindow.cpp" \
+    || fail "the GUI does not pass --cancel-file to the helper"
+grep -q 'cancel-request' "$GUI_DIR/src/LegacyMainWindow.cpp" \
+    || fail "the GUI lost its private cancel-request path"
+grep -q 'setCancelFile' "$GUI_DIR/src/LegacyMainWindow.cpp" \
+    || fail "startCommand does not wire the cancel file into the runner"
+grep -q 'setCancelFile' "$RUNNER_CPP" \
+    || fail "HelperRunner lost setCancelFile"
+grep -q 'm_cancelFile' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the cancel-file state"
+grep -q 'O_WRONLY | O_CREAT | O_NOFOLLOW' "$RUNNER_CPP" \
+    || fail "cancel() does not touch the cancel file with O_NOFOLLOW"
+grep -q 'm_cancelFilePath' "$GUI_DIR/src/LegacyMainWindow.cpp" \
+    || fail "LegacyMainWindow lost the cancel-file path state"
+grep -q 'boundedPollSleep();' "$RUNNER_CPP" \
+    || fail "cancel() lost the grace sleep before the direct kill"
+# B4 helper-side cancel token (overlay source): the predicate, the watcher
+# with its parent-death poll and the stage-boundary check.
+grep -q 'legacy_cancel_requested' "$OVERLAY" \
+    || fail "overlay lost the cancel-token predicate"
+grep -q 'legacy_cancel_watcher' "$OVERLAY" \
+    || fail "overlay lost the shell-command cancel watcher"
+grep -q 'kill -0 "$PPID"' "$OVERLAY" \
+    || fail "overlay watcher does not poll kill -0 PPID"
+grep -q 'terminate_helper_tree' "$OVERLAY" \
+    || fail "overlay watcher lost the bounded TERM->KILL escalation"
+grep -q 'CANCEL_TOKEN' "$OVERLAY" \
+    || fail "overlay lost the CANCEL_TOKEN surface"
+grep -q 'legacy_cancel_stage_check' "$OVERLAY" \
+    || fail "overlay lost the stage-boundary cancel check"
+pass "B4 elevation trust (fixed paths, lstat/uid0/not-writable, no bare execvp), helper verification, cancel-file wiring, watcher kill -0 PPID"
+
 # --- Qt3 auth-pipe harness (runs on Etch; skips without qmake-qt3) ----------
 for file in "$TESTS_DIR/auth-pipe-test.cpp" "$TESTS_DIR/auth-pipe-test.pro" \
     "$TESTS_DIR/test-auth-pipe.sh"; do
@@ -721,6 +860,20 @@ grep -q 'SESSION-EXPIRY OK' "$TESTS_DIR/auth-pipe-test.cpp" \
     || fail "auth-pipe harness lost the cached-session expiry coverage"
 grep -q 'sessionIsCurrent' "$TESTS_DIR/auth-pipe-test.cpp" \
     || fail "auth-pipe harness does not exercise the session-validity probe"
+# B4: with fixed-path elevation trust the harness drives the fake sudo through
+# the documented test seam, never through PATH.
+grep -q 'BOOT_REPAIR_LEGACY_FAKE_SUDO' "$TESTS_DIR/auth-pipe-test.cpp" \
+    || fail "auth-pipe harness no longer uses the fixed-path fake-sudo test seam"
+grep -q 'BOOT_REPAIR_LEGACY_FAKE_SUDO' "$RUNNER_CPP" \
+    || fail "HelperRunner lost the fake-sudo test seam"
+# B3 (A10-06): the harness must also cover the slow-fake-sudo bounded-wait
+# case (the 10-second WNOHANG deadlines and the 32 KiB stderr cap).
+grep -q 'slow' "$TESTS_DIR/test-auth-pipe.sh" \
+    || fail "auth-pipe harness lost the slow-fake-sudo bounded-wait case"
+grep -q 'BOUNDED-WAIT OK' "$TESTS_DIR/auth-pipe-test.cpp" \
+    || fail "auth-pipe harness does not exercise the bounded-wait deadlines"
+grep -q '32 \* 1024' "$TESTS_DIR/auth-pipe-test.cpp" \
+    || fail "auth-pipe harness does not assert the 32 KiB stderr cap"
 bash -n "$TESTS_DIR/test-auth-pipe.sh" || fail "test-auth-pipe.sh failed bash -n"
 "$TESTS_DIR/test-auth-pipe.sh"
 pass "Qt3 auth-pipe harness present (Etch-runnable, host-skipped)"

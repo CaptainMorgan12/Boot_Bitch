@@ -164,7 +164,24 @@ controls re-establish it after an expiry, and before each privileged command
 the runner probes the cached session non-blockingly (`sudo -S -v` with stdin
 closed) so an expired timestamp fails closed with the exact remedy instead of
 blocking. The SIGPIPE-safe password write survives a sudo that exits without
-reading stdin (an already-valid timestamp). A repair that is not proven
+reading stdin (an already-valid timestamp). Elevation is trusted-only
+(A10-03/A10-04): sudo/gksu/gksudo resolve only from the fixed trusted system
+locations (`/usr/bin/sudo`, `/usr/local/bin/sudo`, `/bin/sudo`,
+`/usr/bin/gksu`, `/usr/bin/gksudo`), each candidate lstat-verified as a
+root-owned, non-group/world-writable regular file in a root-owned,
+non-group/world-writable directory, and the verified absolute path is used in
+every probe and exec (never `execvp` with a bare name, never PATH) - failing
+closed with `no trusted sudo/gksu found in the fixed system locations`; the
+`BOOT_REPAIR_LEGACY_ELEVATE` escape hatch stays and is verified the same way.
+Before any elevation the resolved helper is verified the same way (regular, no
+symlink, uid 0, not group/world-writable, `realpath == path`), so an
+env-override or source-tree-relative helper is refused for elevation while a
+root-run GUI and `--no-elevate` keep the previous semantics; `--print-config`
+prints the verification result. Cancellation goes through the helper-side
+cancel token (A10-05): every command passes `--cancel-file <path>` (the GUI's
+own `~/.boot-repair-legacy/cancel-request`), `cancel()` touches the file
+before the existing direct kill, and the helper aborts at its next stage
+boundary or shell-command tick with full cleanup. A repair that is not proven
 `unchanged` (or an unlock that changes the topology) invalidates the cache and
 disables the gated actions until diagnostics run again. The deliberately
 omitted modern-only features (snapshots, host default/reboot,
@@ -231,8 +248,12 @@ prompt). No passphrase is ever placed on a command line. A desktop-session
 launch with no terminal opens the menu inside `x-terminal-emulator`, `konsole`
 or `xterm`. The helper is discovered from `--helper`, then
 `BOOT_REPAIR_LEGACY_HELPER`, then `/usr/sbin/boot-repair-legacy-helper`, then
-source-tree-relative paths. The launcher never weakens the helper's own
-runtime preflights.
+source-tree-relative paths; any **elevated** run first verifies the resolved
+helper (a regular, non-symlink, root-owned, non-group/world-writable file
+whose `realpath` equals the path), so development/source-tree helpers run with
+`--no-elevate` only (the shipped GUI enforces the same A10-04 rule on its
+elevated path). The launcher never weakens the helper's own runtime
+preflights.
 
 ## Compatibility target and gated features
 
@@ -251,11 +272,16 @@ a distribution check. On an Etch-era host the expected picture is:
 | `grub` | available through the guarded GRUB-legacy branch (`update-grub` only; `menu.lst` backup, entry-preservation guard and rollback) |
 | `display` | available for the running host with a detected legacy SysV display manager (`/etc/X11/default-display-manager` kdm/gdm/xdm entry + executable binary + init script); the guarded repair restores the entry and the missing runlevel S-symlink with backup/rollback and never starts the GUI; the offline target form stays disabled with the host-scope reason |
 | `efi`, `dkms`, `extlinux`, `bootstack` | unavailable with the exact missing prerequisite as the reason |
-| `host-shell`, `host-default`, `host-snapshots`, `host-reboot`, `shell`, file copy, snapshots | unavailable on Etch (missing `unshare`/`timeout`/`rsync`/Btrfs evidence) |
-| LUKS `unlock` | available (cryptsetup 1.0.4, LUKS1): the legacy helper opens the component with the 1.0 action `cryptsetup --key-file - luksOpen <device> luks-<uuid>` (the modern `open --type luks` form does not exist in 1.0), then runs `vgscan --mknodes` + `vgchange -ay` best-effort so the target's LVM logical volumes appear for the GUI rescan (never deactivates anything); stdin only, never argv |
-| Read-only mounts (Etch) | the legacy helper strips `noload` from every ro ext mount (root, boot entry and the os-release probe all funnel through `mount_recorded`): util-linux 2.12r rejects `ro,noload` on ext3, plain `ro` is the correct 2.6.18 read-only mount (a dirty-journal ro mount failing is fail-closed); the xfs `norecovery` option is left as-is and simply never exercised |
+| `host-shell` (BIOS-only host) | available: one reviewed command runs directly on the live running host, bounded by `timeout --foreground 300 --kill-after=10` (the compat.sh timeout shim prefers a real coreutils `timeout` and falls back to the pure-bash watchdog on Etch); **Etch deviation**: the watchdog kills only the direct child, so grandchildren of a killed shell may outlive the bound; an EFI host keeps the modern isolation+refusal path |
+| `shell`, file copy, `host-default` | available behind their `Legacy feature` probes (guarded plain chroot / cp -a + cmp verification / GRUB-legacy `menu.lst` Make Default) |
+| `host-snapshots`, `host-reboot`, snapshots | unavailable on Etch (missing `rsync`/Btrfs evidence) |
+| LUKS `unlock` | available (cryptsetup 1.0.4, LUKS1): the legacy helper opens the component with the 1.0 action `cryptsetup --key-file - luksOpen <device> luks-<uuid>` (the modern `open --type luks` form does not exist in 1.0), then runs `vgscan --mknodes` + `vgchange -ay` best-effort so the target's LVM logical volumes appear for the GUI rescan (never deactivates anything); stdin only, never argv. The emitted `UNLOCKED_ROOT` is resolved by a probe scoped to the unlocked PV's **own** volume group (`pvs --noheadings -o vg_name` + `lvs --noheadings -o lv_path`), so a foreign running-host LV is never offered; when the LVM tooling is missing or no VG is provable the probe falls back to the unscoped behaviour with a WARNING — the candidate is never silently dropped and the same-disk/host guards stay the hard backstop |
+| Read-only mounts (Etch) | the legacy helper keeps `noload` on the **first** read-only ext2/3/4 mount attempt (root, boot entry and the os-release probe all funnel through `mount_recorded`) — util-linux 2.12r can reject `ro,noload` on ext3 while plain `ro` mounts the same filesystem; only when that first mount FAILS does the caller retry with `noload` stripped, after `tune2fs -l -- <device>` reports `Filesystem state: clean` (a dirty or unreadable journal logs a WARNING naming the journal-replay risk and the retry still proceeds — best-effort fail-soft, never a hard refusal, until the 2.6.18/Etch rig drill confirms the behaviour; TODO). Non-ext and modern mount paths are unchanged; the xfs `norecovery` option is left as-is and simply never exercised |
 | Target device naming (Etch fstab/crypttab) | Etch-era fstab/crypttab entries use bare host-relative device paths (`/dev/hda1` written from the installed system's perspective); the legacy port remaps such a source onto the selected target disk (e.g. `/dev/hda1` → `/dev/hdb1` on a `/dev/hdb` target) before the `same_single_top_disk` guard runs — UUID=/LABEL=/mapper/by-id forms pass through and the guard is never weakened (modern fstabs use UUIDs, which the modern resolution already handles) |
 | Root confirmation (Etch, split-LV safe) | an os-release-less root is confirmed by `/etc/debian_version` paired with any one of the dpkg status pair, `/etc/apt/sources.list` or `/etc/inittab` — the `/etc`-resident files keep the probe correct when `/var` (and the dpkg database) live on a separate LV, as in the etch2 split-LV layout (`debian-root`/`debian-usr`/`debian-var`/…); `/etc/debian_version` alone never confirms a root |
+| Elevation trust (GUI, A10-03) | sudo/gksu/gksudo resolve only from the fixed trusted system locations (`/usr/bin/sudo`, `/usr/local/bin/sudo`, `/bin/sudo`, `/usr/bin/gksu`, `/usr/bin/gksudo`): every candidate is lstat-verified as a regular file owned by root, not group/world-writable, in a root-owned, non-group/world-writable directory, and the verified absolute path is used in all probes and execs (never `execvp` with a bare name, never PATH). Fails closed with `no trusted sudo/gksu found in the fixed system locations`; `BOOT_REPAIR_LEGACY_ELEVATE` stays as the explicit escape hatch and is verified the same way |
+| Helper verification (GUI, A10-04) | before any elevation the resolved helper is verified: lstat regular file, not a symlink, uid 0, not group/world-writable, `realpath == path`. An env-override or source-tree-relative helper is refused for elevation (only the installed helper passes); a root-run GUI and `--no-elevate` keep the previous semantics, and `--print-config` prints the verification result. The development-only launcher applies the same rule to its elevated path (source-tree helpers run with `--no-elevate` only) |
+| Cancellation (A10-05) | the GUI passes `--cancel-file <path>` (its own private `~/.boot-repair-legacy/cancel-request`) with every command, and `cancel()` touches that file before the existing direct kill; a helper-side bash watcher polls the file between repair stages (each stage entry wrapper checks) and on shell-command ticks (`kill -0 $PPID` in the watcher also reaps the running command when the helper itself dies), aborting with a bounded TERM→KILL escalation plus full session cleanup. The documented token form is `CANCEL_TOKEN=<value>` (env) / `--cancel-token <value>`, checked against `$SESSION_DIR/cancel` with a content match. **Etch deviation**: the GUI's SIGKILL reaches only the elevation wrapper (sudo), so a helper inside a long single stage finishes that stage and aborts at the next boundary |
 
 The `lsblk`/`findmnt` fallbacks also cover kernel 2.6.18: it has no
 `/sys/class/block` class, no per-partition `partition` attribute and no
@@ -437,18 +463,25 @@ source contract, the legacy command set (including the guarded `grub` stage),
 the parity controls (tabs, menus, details panel, unlock status, session/search,
 Logs session management, settings filters/auto-refresh/capabilities,
 target/Host-Maintenance gating, modal sudo authorization,
-per-diagnostic runs, read-only config viewer, probe-based feature gating) and
+per-diagnostic runs, read-only config viewer, probe-based feature gating), the
+B4 elevation-trust markers (the fixed trusted path list, lstat/uid-0/
+not-writable checks, no bare `execvp`, the helper elevation verification, the
+cancel-file wiring and the watcher's `kill -0 $PPID`) and
 the layout guards. The full Qt3 compile and the extended `--smoke-test`
 (controls + 1024x768 layout assertions) are verified on the Etch guest by the
 packaging build.
 
 `legacy/tests/test-port-contract.sh` (fast `boot-repair-legacy-port-contract`)
 runs `legacy/port.sh --check`, asserts the generated helper is bash-3.1 syntax
-clean, exercises every compat shim and the evidence-based feature gating, and
+clean, exercises every compat shim and the evidence-based feature gating,
+pins the B4 cancel-token surface (the `--cancel-file`/`--cancel-token`
+options, the `CANCEL_TOKEN` environment form, the watcher, the stage-boundary
+checks and the renamed stage bodies) and
 proves the modern helper is untouched. `legacy/tests/test-smoke.sh` (fast
 `boot-repair-legacy-smoke`) runs read-only `validate`/`diagnose` against a
 synthetic `/etc/os-release`-less Etch root and covers the dpkg status fallback,
-the GRUB-legacy rollback and the 13-key capability report. Neither test touches
+the GRUB-legacy rollback, the 13-key capability report and the B4 cancel-token
+predicate. Neither test touches
 a real disk, builds a package or needs root.
 
 ## Licensing

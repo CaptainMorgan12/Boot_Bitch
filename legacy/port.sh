@@ -406,13 +406,77 @@ transform_legacy_behaviour()
                 dpkg-query -W -f='"'"'${db:Status-Status} ${Version}'"'"' "$pkg" 2>/dev/null || true)"' \
         '            status="$(legacy_dpkg_status_version "$pkg")"' \
         || return 1
+
+    # A10-05: optional leading cancel-token options, accepted before the
+    # command verb (the Qt3 GUI passes --cancel-file <path>).
+    replace_block "$file" \
+        '    register_active_child
+
+    (($# >= 1)) || { usage; exit 2; }
+    local command="$1"; shift' \
+        '    register_active_child
+
+    # A10-05: optional leading cancel-token options, accepted before the
+    # command verb (the Qt3 GUI passes --cancel-file <path>; the documented
+    # token form is CANCEL_TOKEN=<value> in the environment or
+    # --cancel-token <value> on the command line).
+    while (($# > 0)); do
+        case "$1" in
+            --cancel-file)
+                [[ $# -ge 2 ]] || fail "--cancel-file requires a path."
+                CANCEL_FILE="$2"
+                shift 2
+                ;;
+            --cancel-token)
+                [[ $# -ge 2 ]] || fail "--cancel-token requires a value."
+                CANCEL_TOKEN="$2"
+                shift 2
+                ;;
+            *)
+                break
+                ;;
+        esac
+    done
+
+    (($# >= 1)) || { usage; exit 2; }
+    local command="$1"; shift' \
+        || return 1
+
+    # A10-05: document the cancel surface in the helper usage text.
+    replace_block "$file" \
+        'Stage mode hints:
+  --post-efi       The caller already ran the EFI/UKI stage for this scope in
+                   the same plan/session.  boot-stack then skips its second
+                   UKI/EFI rebuild and the duplicate GRUB regeneration while
+                   still validating mapper/crypttab and reconciling initramfs.
+                   The helper never infers this from the stage list.
+
+Shell:' \
+        'Stage mode hints:
+  --post-efi       The caller already ran the EFI/UKI stage for this scope in
+                   the same plan/session.  boot-stack then skips its second
+                   UKI/EFI rebuild and the duplicate GRUB regeneration while
+                   still validating mapper/crypttab and reconciling initramfs.
+                   The helper never infers this from the stage list.
+
+Cancellation:
+  --cancel-file <path>    Polled cancel surface accepted before the command
+                   verb: the helper aborts at the next stage boundary or
+                   shell-command tick when the file appears (the GUI'"'"'s
+                   cancel() touches it), with the full session cleanup.
+  --cancel-token <value>  Token form: the helper aborts when
+                   $SESSION_DIR/cancel appears and carries exactly this value.
+  CANCEL_TOKEN=<value>    Environment form of --cancel-token.
+
+Shell:' \
+        || return 1
 }
 
 # 3. Rename the modern definitions the overlay wraps or replaces.
 transform_renames()
 {
     local file="$1"
-    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup"
+    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup run_package_stage adaptive_initramfs_repair adaptive_grub_stage"
     local func count=0
     for func in $funcs; do
         grep -qE "^${func}\(\)$" "$file" || {

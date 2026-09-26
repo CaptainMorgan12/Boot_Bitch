@@ -209,6 +209,10 @@ private:
     void appendLog(const QString &line);
     void appendToLogFile(const QString &line);
     void ensureLogFile();
+    // Ensures the session-log directory: the GUI's own default tree is
+    // created 0700 with the leaf re-tightened, a user-supplied --log-dir is
+    // created but never chmod'ed.
+    void ensureLogDirectory();
     QString identity() const;
     bool hostScope() const;
     QString selectedDisk() const;
@@ -461,6 +465,10 @@ private:
     QString m_logDirectory;
     QString m_logPath;
     QString m_lastHelperDescription;
+    // A10-05: the GUI-owned cancel-token file for the running helper command
+    // (~/.boot-repair-legacy/cancel-request); passed as --cancel-file and
+    // touched by HelperRunner::cancel() before the direct kill.
+    QString m_cancelFilePath;
     QString m_unlockDevice;
     QString m_unlockDisk;
     QString m_helperDisk;

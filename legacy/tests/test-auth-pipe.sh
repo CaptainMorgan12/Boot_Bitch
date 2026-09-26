@@ -2,14 +2,22 @@
 # Headless Qt3 test for HelperRunner::authenticateElevation's password pipe and
 # the cached-session expiry probe.
 #
-# A fake `sudo` is placed first in PATH:
+# A fake `sudo` is registered through the documented test seam
+# BOOT_REPAIR_LEGACY_FAKE_SUDO (the runner resolves elevation tools from the
+# fixed trusted system locations, so a PATH fake would never be seen; the seam
+# is test/development only and cannot elevate - the fake sudo runs as the
+# invoking user and the helper still requires root):
 #   - `sudo -n true` fails, forcing the interactive plain-sudo path;
 #   - `sudo -S -p '' -v` exits 0 immediately without reading stdin, exactly
 #     like a sudo whose timestamp is already valid; with the caller's `expired`
-#     marker present it exits 1, like an expired timestamp.
+#     marker present it exits 1, like an expired timestamp; with the `slow`
+#     marker it spams stderr past the 32 KiB cap and stalls past the 10-second
+#     deadlines, like a wedged sudo.
 # The harness must survive the write (EPIPE, never SIGPIPE), report success,
-# and prove that an expired cached session is detected non-blockingly and can
-# be re-established through resetElevation() (the GUI's Authorize control).
+# prove that an expired cached session is detected non-blockingly and can
+# be re-established through resetElevation() (the GUI's Authorize control),
+# and prove that a wedged sudo fails closed within the bounded-wait deadlines
+# with the captured stderr capped at 32 KiB.
 #
 # Runs on the Etch guest (qmake-qt3 + g++ 4.1); the modern host skips it with a
 # clear note because Qt3 is not available there. Never builds a package,
@@ -40,10 +48,18 @@ cat > "$FAKE_SUDO_DIR/sudo" <<'EOF'
 #!/bin/sh
 # Fake sudo: fails the -n probe, then exits 0 for `-S -p '' -v` without
 # reading its stdin (a valid-timestamp sudo). The `expired` marker makes the
-# timestamp probe fail, like a session whose timestamp expired.
+# timestamp probe fail, like a session whose timestamp expired. The `slow`
+# marker makes it a wedged sudo: it spams stderr far past the GUI's 32 KiB
+# capture cap and then stalls well beyond the 10-second deadlines, so the
+# harness can prove the bounded waits and the cap.
 case "$1" in
     -n) exit 1 ;;
     -S)
+        if [ -e "$FAKE_SUDO_STATE/slow" ]; then
+            dd if=/dev/zero bs=1 count=262144 1>&2 2>/dev/null || true
+            sleep 30
+            exit 0
+        fi
         if [ -e "$FAKE_SUDO_STATE/expired" ]; then exit 1; fi
         exit 0 ;;
 esac
@@ -79,4 +95,6 @@ grep -q 'AUTH-PIPE OK' <<<"$OUTPUT" \
     || { printf 'FAIL: the harness did not report success\n' >&2; exit 1; }
 grep -q 'SESSION-EXPIRY OK' <<<"$OUTPUT" \
     || { printf 'FAIL: the harness did not prove the session-expiry probe\n' >&2; exit 1; }
+grep -q 'BOUNDED-WAIT OK' <<<"$OUTPUT" \
+    || { printf 'FAIL: the harness did not prove the slow-sudo bounded waits\n' >&2; exit 1; }
 printf 'legacy auth-pipe test: PASS\n'

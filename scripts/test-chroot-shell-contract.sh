@@ -1,7 +1,9 @@
 #!/usr/bin/env bash
 # This contract test sources the helper under test dynamically and sets the
-# helper's globals directly so ShellCheck cannot track their use.
-# shellcheck disable=SC1090,SC2034
+# helper's globals directly so ShellCheck cannot track their use.  The
+# per-disk lock helpers assign fds through printf -v (dynamic fdvar), which
+# ShellCheck cannot follow either.
+# shellcheck disable=SC1090,SC2034,SC2154
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -1597,5 +1599,393 @@ grep -Fq 'Session log was NOT appended into the target: unsafe target log path.'
     || { echo 'FAIL: the symlinked log file refusal evidence line is missing' >&2; cat "$cleanup_append_root/symfile/output" >&2; exit 1; }
 [[ "$(cat "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log")" == 'host original content' ]] \
     || { echo 'FAIL: the session log append followed the target symlink to a host file' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-02 (static): process-tree lifecycle wiring.  The active-children registry
+# exists, main() registers every run, cleanup() unregisters and kills the
+# registered survivors BEFORE the session-log append and the unmount loop, and
+# the group-kill is only ever attempted on a ps-proven process-group leader.
+# ---------------------------------------------------------------------------
+grep -q '^active_children_file()' "$HELPER" \
+    || { echo 'FAIL: the active-children registry path helper is missing' >&2; exit 1; }
+grep -q '^register_active_child()' "$HELPER" \
+    || { echo 'FAIL: the helper-run registry entry point is missing' >&2; exit 1; }
+grep -q '^unregister_active_child()' "$HELPER" \
+    || { echo 'FAIL: the helper-run registry removal point is missing' >&2; exit 1; }
+grep -q '^kill_registered_children()' "$HELPER" \
+    || { echo 'FAIL: the registered-children reaper is missing' >&2; exit 1; }
+grep -q '^terminate_helper_tree()' "$HELPER" \
+    || { echo 'FAIL: the bounded tree teardown helper is missing' >&2; exit 1; }
+grep -q '^is_process_group_leader()' "$HELPER" \
+    || { echo 'FAIL: the process-group-leader proof is missing' >&2; exit 1; }
+main_block="$(sed -n '/^main()/,/^}/p' "$HELPER")"
+grep -Fq 'register_active_child' <<<"$main_block" \
+    || { echo 'FAIL: main() does not register the helper run in the active-children registry' >&2; exit 1; }
+kill_tree_block="$(sed -n '/^terminate_helper_tree()/,/^}/p' "$HELPER")"
+grep -Fq 'kill -KILL -- -"$pid"' <<<"$kill_tree_block" \
+    || { echo 'FAIL: the tree teardown lost the final group-KILL' >&2; exit 1; }
+grep -Fq 'for child in /proc/[0-9]*' <<<"$kill_tree_block" \
+    || { echo 'FAIL: the tree teardown lost the /proc child-group scan' >&2; exit 1; }
+grep -Fq 'kill -- -"$child_pid"' <<<"$kill_tree_block" \
+    || { echo 'FAIL: the tree teardown does not group-kill proven child leaders' >&2; exit 1; }
+leader_block="$(sed -n '/^is_process_group_leader()/,/^}/p' "$HELPER")"
+grep -Fq 'ps -o pgid=' <<<"$leader_block" \
+    || { echo 'FAIL: the process-group-leader proof is not read from ps' >&2; exit 1; }
+cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
+cleanup_kill_line="$(grep -n '^[[:space:]]*kill_registered_children$' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+cleanup_unregister_line="$(grep -n '^[[:space:]]*unregister_active_child$' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+cleanup_append_line="$(grep -n 'TARGET_WRITE_INTENT == 1' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+cleanup_unmount_line="$(grep -n 'for (( idx=${#MOUNTS\[@\]}-1' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+[[ -n "$cleanup_kill_line" && -n "$cleanup_unregister_line" && -n "$cleanup_append_line" && -n "$cleanup_unmount_line" ]] \
+    || { echo 'FAIL: cleanup() lost the kill/append/unmount steps' >&2; exit 1; }
+[[ "$cleanup_kill_line" -lt "$cleanup_unregister_line" \
+    && "$cleanup_unregister_line" -lt "$cleanup_append_line" \
+    && "$cleanup_append_line" -lt "$cleanup_unmount_line" ]] \
+    || { echo 'FAIL: cleanup() must kill registered children BEFORE the session-log append and the unmount loop' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-02 (behavioural): registry kill-on-exit.  A helper run registers its $$
+# (one pid per line, 0600) and a finishing run terminates its still-alive
+# registered child (TERM, bounded grace <= 5 s, then KILL), reaps an
+# init-reparented orphan, but never touches a pid whose live parent is
+# another registered helper (a healthy broker) or an unregistered live parent
+# (a foreign run).
+# ---------------------------------------------------------------------------
+registry_root="$(mktemp -d)"
+: > "$registry_root/skip-sleep.pid"
+
+# Case 1: a finishing run kills its registered child.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$registry_root/state"
+    mkdir -p "$STATE_ROOT"
+    register_active_child "$BASHPID"
+    ( register_active_child "$BASHPID"; sleep 300 ) &
+    reg_child=$!
+    reg_n=0
+    while (( reg_n < 200 )) && ! grep -qE "^${reg_child}[[:space:]]" "$STATE_ROOT/active-children" 2>/dev/null; do
+        sleep 0.05
+        reg_n=$((reg_n + 1))
+    done
+    grep -qE "^${reg_child}[[:space:]]" "$STATE_ROOT/active-children" \
+        || { echo 'FAIL: the child helper run never registered its pid' >&2; kill "$reg_child" 2>/dev/null; exit 1; }
+    [[ "$(stat -c '%a' "$STATE_ROOT/active-children" 2>/dev/null || true)" == "600" ]] \
+        || { echo 'FAIL: the active-children registry is not mode 0600' >&2; kill "$reg_child" 2>/dev/null; exit 1; }
+    kill_registered_children "$BASHPID"
+    unregister_active_child "$BASHPID"
+    if kill -0 "$reg_child" 2>/dev/null; then
+        echo 'FAIL: a finishing run left its registered child alive' >&2
+        kill -KILL "$reg_child" 2>/dev/null
+        exit 1
+    fi
+    exit 0
+) || exit 1
+if [[ -s "$registry_root/state/active-children" ]]; then
+    echo 'FAIL: unregister/kill left stale entries in the registry' >&2
+    cat "$registry_root/state/active-children" >&2
+    exit 1
+fi
+
+# Case 2: an orphan whose recorded owner died without cleanup is reaped by
+# the next reaper pass (even when the kernel reparented it to a subreaper
+# instead of init); a pid whose recorded owner is still alive (a healthy
+# helper tree or a live foreign run) is left alone.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$registry_root/state"
+    mkdir -p "$STATE_ROOT"
+    # A helper "session" dies without cleanup, leaving a registered child.
+    (
+        sleep 300 &
+        printf '%s %s\n' "$!" "$BASHPID" >> "$STATE_ROOT/active-children"
+        printf '%s\n' "$!" > "$registry_root/orphan.pid"
+        exit 0
+    )
+    wait "$!" 2>/dev/null || true
+    orphan_pid="$(cat "$registry_root/orphan.pid")"
+    [[ -n "$orphan_pid" ]] || { echo 'FAIL: the orphan fixture never started' >&2; exit 1; }
+    # A foreign run (recorded owner alive but not a registered helper) is in
+    # the registry but must not be touched.  Its intermediate owner stays
+    # alive across the reaper pass: a long sleep (instead of a short one)
+    # keeps the owner alive even while the reaper's /proc child scan forks
+    # awk for every process on a busy host.  Plain background sleeps are used
+    # (no subshell), so the owner can be stopped and waited on explicitly
+    # after the assertions without an exec-optimized wrapper keeping the wait
+    # from returning.
+    sleep 300 &
+    foreign_parent=$!
+    sleep 300 &
+    foreign_pid=$!
+    printf '%s %s\n' "$foreign_pid" "$foreign_parent" >> "$STATE_ROOT/active-children"
+    printf '%s\n' "$foreign_pid" > "$registry_root/foreign.pid"
+    foreign_n=0
+    while (( foreign_n < 100 )) && [[ ! -s "$registry_root/foreign.pid" ]]; do
+        sleep 0.05
+        foreign_n=$((foreign_n + 1))
+    done
+    [[ -n "$foreign_pid" ]] || { echo 'FAIL: the foreign fixture never started' >&2; exit 1; }
+    kill_registered_children "$BASHPID"
+    if kill -0 "$orphan_pid" 2>/dev/null; then
+        echo 'FAIL: the reaper left an orphaned helper child alive' >&2
+        kill -KILL "$orphan_pid" 2>/dev/null || true
+        kill "$foreign_pid" 2>/dev/null || true
+        kill "$foreign_parent" 2>/dev/null || true
+        exit 1
+    fi
+    if ! kill -0 "$foreign_pid" 2>/dev/null; then
+        echo 'FAIL: the reaper killed a foreign run whose recorded owner is still alive' >&2
+        kill "$foreign_parent" 2>/dev/null || true
+        exit 1
+    fi
+    kill "$foreign_parent" 2>/dev/null || true
+    wait "$foreign_parent" 2>/dev/null || true
+    kill "$foreign_pid" 2>/dev/null || true
+    exit 0
+) || exit 1
+
+# Case 3: a third run never kills a pid whose recorded owner is still alive
+# and registered (the healthy-broker guard), but the owner's own exit reaps
+# it.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$registry_root/state"
+    mkdir -p "$STATE_ROOT"
+    register_active_child "$BASHPID"
+    ( register_active_child "$BASHPID"; sleep 300 ) &
+    owned_child=$!
+    own_n=0
+    while (( own_n < 200 )) && ! grep -qE "^${owned_child}[[:space:]]" "$STATE_ROOT/active-children" 2>/dev/null; do
+        sleep 0.05
+        own_n=$((own_n + 1))
+    done
+    (
+        register_active_child "$BASHPID"
+        kill_registered_children "$BASHPID"
+        unregister_active_child "$BASHPID"
+        exit 0
+    )
+    # The third run above was synchronous.  The guard under test is: a pid
+    # whose recorded owner is still alive and registered is never touched, so
+    # the owned child must still be alive here (never wait on it: the owned
+    # child sleeps for minutes and is reaped by its owner below).
+    if ! kill -0 "$owned_child" 2>/dev/null; then
+        echo 'FAIL: a third run killed a child whose live registered owner still owns it' >&2
+        exit 1
+    fi
+    kill_registered_children "$BASHPID"
+    unregister_active_child "$BASHPID"
+    if kill -0 "$owned_child" 2>/dev/null; then
+        echo 'FAIL: the owning run did not reap its own registered child at exit' >&2
+        kill -KILL "$owned_child" 2>/dev/null
+        exit 1
+    fi
+    exit 0
+) || exit 1
+rm -rf -- "$registry_root"
+
+# ---------------------------------------------------------------------------
+# A1-04/A2-06 (static): per-target-disk mutual exclusion wiring.  The broker
+# must canonicalize the request disk, lock every modifying request through a
+# non-blocking flock, refuse a busy disk with the named error, release the
+# lock at request end and skip read-only verbs.
+# ---------------------------------------------------------------------------
+grep -q '^disk_lock_file()' "$HELPER" \
+    || { echo 'FAIL: the per-disk lock file helper is missing' >&2; exit 1; }
+grep -q '^acquire_disk_lock()' "$HELPER" \
+    || { echo 'FAIL: the per-disk lock acquisition helper is missing' >&2; exit 1; }
+grep -q '^release_disk_lock()' "$HELPER" \
+    || { echo 'FAIL: the per-disk lock release helper is missing' >&2; exit 1; }
+server_block="$(sed -n '/^session_server()/,/^}/p' "$HELPER")"
+grep -Fq 'canonical_block "${op_args[0]:-}"' <<<"$server_block" \
+    || { echo 'FAIL: the broker does not canonicalize the request disk before locking' >&2; exit 1; }
+grep -Fq 'acquire_disk_lock "$request_disk" request_lock_fd' <<<"$server_block" \
+    || { echo 'FAIL: the broker does not take the per-disk lock for modifying requests' >&2; exit 1; }
+grep -Fq 'Another Boot Bitch request is already working on $request_disk.' <<<"$server_block" \
+    || { echo 'FAIL: the disk-busy refusal does not name the busy disk' >&2; exit 1; }
+grep -Fq 'release_disk_lock "$request_lock_fd"' <<<"$server_block" \
+    || { echo 'FAIL: the broker does not release the per-disk lock at request end' >&2; exit 1; }
+grep -Fq 'list|inspect|plan) request_lock_required=0' <<<"$server_block" \
+    || { echo 'FAIL: read-only snapshot verbs do not skip the per-disk lock' >&2; exit 1; }
+grep -Fq 'diagnose|validate|config-read|fs-inspect|browse-target|host-diagnose|host-validate|host-fs-inspect' <<<"$server_block" \
+    || { echo 'FAIL: read-only request verbs do not skip the per-disk lock' >&2; exit 1; }
+grep -Fq 'command -v setsid >/dev/null 2>&1 && dispatch_setsid=setsid' <<<"$server_block" \
+    || { echo 'FAIL: the broker does not prepare the setsid dispatch' >&2; exit 1; }
+grep -Fq 'dispatch_cmd=(setsid bash "$SESSION_HELPER_COPY" "$command")' <<<"$server_block" \
+    || { echo 'FAIL: the broker dispatch is not wrapped in setsid' >&2; exit 1; }
+grep -Fq 'rc=${PIPESTATUS[1]}' <<<"$server_block" \
+    || { echo 'FAIL: the secret-pipe exit-code indexing changed' >&2; exit 1; }
+grep -Fq 'rc=${PIPESTATUS[0]}' <<<"$server_block" \
+    || { echo 'FAIL: the plain-pipe exit-code indexing changed' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A1-04/A2-06 (behavioural): flock refusal of a second holder on the same
+# disk.  A lock held by one holder refuses a second acquire (rc 2) and the
+# broker reports the named SESSION_ERROR/DONE without dispatching; releasing
+# the holder lets the next acquire through; read-only verbs skip the lock.
+# ---------------------------------------------------------------------------
+lock_root="$(mktemp -d)"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$lock_root/state"
+    mkdir -p "$STATE_ROOT"
+    # Unit: second holder refused, release lets a re-acquire through.
+    exec {lock_test_fd}>"$STATE_ROOT/disk-lock._dev_test-disk"
+    flock -n "$lock_test_fd"
+    acquire_disk_lock "/dev/test-disk" lock_fd_a
+    lock_unit_rc=$?
+    [[ "$lock_unit_rc" == "2" ]] \
+        || { echo 'FAIL: a second holder acquired the per-disk lock (rc '"$lock_unit_rc"')' >&2; exit 1; }
+    flock -u "$lock_test_fd"
+    acquire_disk_lock "/dev/test-disk" lock_fd_b \
+        || { echo 'FAIL: the released per-disk lock could not be re-acquired' >&2; exit 1; }
+    release_disk_lock "$lock_fd_b"
+    exit 0
+) || { rm -rf -- "$lock_root"; exit 1; }
+
+# Broker level: with the lock held the modifying request is refused by name
+# and the dispatch never runs; a read-only verb still runs.
+# The redirect opens in the outer shell, so the broker state directory must
+# exist before the subshell runs (the subshell cannot create the directory
+# the redirect already needs).
+mkdir -p "$lock_root/broker"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    STATE_ROOT="$lock_root/broker"
+    mkdir -p "$STATE_ROOT"
+    ensure_state_root() { :; }
+    mktemp() { printf '%s\n' "$STATE_ROOT/session-helper.stub"; }
+    cp() { :; }
+    chown() { :; }
+    chmod() { :; }
+    canonical_block() { printf '%s\n' "$1"; }
+    : > "$STATE_ROOT/dispatched"
+    setsid() { "$@"; }
+    bash()
+    {
+        if [[ "${3:-}" == repair ]]; then
+            printf 'dispatched\n' >> "$STATE_ROOT/dispatched"
+        fi
+        return 0
+    }
+    exec {lock_broker_fd}>"$STATE_ROOT/disk-lock._dev_test-disk"
+    flock -n "$lock_broker_fd"
+    {
+        printf 'BEGIN\t1\t3\t0\n'
+        printf 'ARG\t1\t%s\n' "$(printf 'repair' | base64 | tr -d '\n')"
+        printf 'ARG\t1\t%s\n' "$(printf '/dev/test-disk' | base64 | tr -d '\n')"
+        printf 'ARG\t1\t%s\n' "$(printf '/dev/test-root' | base64 | tr -d '\n')"
+        printf 'END\t1\n'
+        printf 'BEGIN\t2\t3\t0\n'
+        printf 'ARG\t2\t%s\n' "$(printf 'diagnose' | base64 | tr -d '\n')"
+        printf 'ARG\t2\t%s\n' "$(printf '/dev/test-disk' | base64 | tr -d '\n')"
+        printf 'ARG\t2\t%s\n' "$(printf '/dev/test-root' | base64 | tr -d '\n')"
+        printf 'END\t2\n'
+        printf 'QUIT\n'
+    } | session_server
+) > "$lock_root/broker/output" 2>&1
+grep -Fq 'SESSION_ERROR	1	Another Boot Bitch request is already working on /dev/test-disk.' "$lock_root/broker/output" \
+    || { echo 'FAIL: the busy disk was not refused with the named error' >&2; cat "$lock_root/broker/output" >&2; exit 1; }
+grep -Fq 'DONE	1	2' "$lock_root/broker/output" \
+    || { echo 'FAIL: the refused request did not finish with DONE 2' >&2; exit 1; }
+[[ -s "$lock_root/broker/dispatched" ]] \
+    && { echo 'FAIL: the modifying request was dispatched while the disk lock was held' >&2; exit 1; }
+grep -Fq 'DONE	2	0' "$lock_root/broker/output" \
+    || { echo 'FAIL: the read-only verb did not run with the lock held' >&2; cat "$lock_root/broker/output" >&2; exit 1; }
+rm -rf -- "$lock_root"
+
+# ---------------------------------------------------------------------------
+# A5-02 (pump): the interactive pump teardown kills the runner's whole group.
+# Static: the rc 124/125 teardown and the EOF death path route through the
+# shared tree teardown, which group-kills proven leaders and scans /proc for
+# child groups.
+# ---------------------------------------------------------------------------
+interactive_body="$(sed -n '/^shell_run_interactive()/,/^}/p' "$HELPER")"
+grep -Fq 'terminate_helper_tree "$runner_pid"' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump teardown does not use the shared tree teardown' >&2; exit 1; }
+[[ "$(grep -c 'terminate_helper_tree "$runner_pid"' <<<"$interactive_body")" -ge 2 ]] \
+    || { echo 'FAIL: the interactive pump does not tear the tree down on both the EOF and the 124/125 paths' >&2; exit 1; }
+grep -Fq 'shell_runner_is_zombie' <<<"$interactive_body" \
+    || { echo 'FAIL: the interactive pump teardown lost the zombie guard' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# A5-02 (pump, behavioural): a runner child that ignores TERM
+# (trap '' TERM; sleep 600) must still exit within the bounded grace after a
+# prompt cancel -- the runner is spawned through a real setsid so the
+# group-kill path is exercised end to end.  script(1) is deliberately kept
+# out of the fixture PATH so the /bin/sh runner is the proven group leader.
+# ---------------------------------------------------------------------------
+if command -v setsid >/dev/null 2>&1 && command -v mkfifo >/dev/null 2>&1; then
+    groupkill_root="$shell_stub_root/group-kill"
+    mkdir -p "$groupkill_root/bin"
+    for groupkill_tool in setsid mkfifo base64 tr od tail sleep date ps awk; do
+        ln -s "$(command -v "$groupkill_tool")" "$groupkill_root/bin/$groupkill_tool" 2>/dev/null || true
+    done
+    rm -f "$groupkill_root/bin/script"
+    : > "$groupkill_root/output"
+    : > "$groupkill_root/session.log"
+    : > "$groupkill_root/transcript"
+    : > "$groupkill_root/rc"
+    : > "$groupkill_root/sleep.pid"
+    rm -f "$groupkill_root/answers"
+    mkfifo "$groupkill_root/answers"
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        PATH="$groupkill_root/bin"
+        export PATH
+        SESSION_DIR="$groupkill_root"
+        SESSION_LOG="$groupkill_root/session.log"
+        BOOT_REPAIR_SESSION_PROTOCOL=1
+        BOOT_REPAIR_SESSION_REQUEST=7
+        SHELL_ANSWER_WINDOW_SECONDS=60
+        export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
+        set +e
+        shell_run_interactive "$groupkill_root/transcript" 30 \
+            "printf 'Continue? [y/N] '; trap '' TERM; /bin/sleep 600 & echo \$! > '$groupkill_root/sleep.pid'; wait"
+        printf '%s\n' "$?" > "$groupkill_root/rc"
+        exit 0
+    ) <"$groupkill_root/answers" >"$groupkill_root/output" 2>&1 &
+    printf '%s\n' "$!" > "$groupkill_root/pid"
+    exec 16>"$groupkill_root/answers"
+    groupkill_n=0
+    while (( groupkill_n < 200 )) && ! grep -q '^PROMPT	7	' "$groupkill_root/output" 2>/dev/null; do
+        sleep 0.05
+        groupkill_n=$((groupkill_n + 1))
+    done
+    grep -q '^PROMPT	7	' "$groupkill_root/output" 2>/dev/null \
+        || { echo 'FAIL: the group-kill fixture never emitted its prompt' >&2; cat "$groupkill_root/output" >&2; exec 16>&-; exit 1; }
+    cancel_epoch=$(date +%s)
+    printf 'ANSWER\t7\t\n' >&16
+    groupkill_pid="$(cat "$groupkill_root/pid")"
+    wait "$groupkill_pid" 2>/dev/null || true
+    exec 16>&-
+    groupkill_sleep_pid="$(cat "$groupkill_root/sleep.pid" 2>/dev/null || true)"
+    [[ -n "$groupkill_sleep_pid" ]] \
+        || { echo 'FAIL: the group-kill fixture never recorded its child pid' >&2; exit 1; }
+    if kill -0 "$groupkill_sleep_pid" 2>/dev/null; then
+        echo 'FAIL: the TERM-ignoring sleep 600 child survived the cancel teardown' >&2
+        kill -KILL "$groupkill_sleep_pid" 2>/dev/null || true
+        exit 1
+    fi
+    groupkill_elapsed=$(( $(date +%s) - cancel_epoch ))
+    (( groupkill_elapsed < 15 )) \
+        || { echo "FAIL: the TERM-ignoring child exited only after ${groupkill_elapsed}s (bound ~15s)" >&2; exit 1; }
+    [[ "$(cat "$groupkill_root/rc")" == "125" ]] \
+        || { echo "FAIL: the group-kill cancel did not fail closed with 125 (got $(cat "$groupkill_root/rc"))" >&2; cat "$groupkill_root/output" >&2; exit 1; }
+    grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$groupkill_root/output" \
+        || { echo 'FAIL: the group-kill cancel lost its fail-closed message' >&2; exit 1; }
+fi
+
+# ---------------------------------------------------------------------------
+# A5-02 (host shell): the non-interactive running-host runner must mirror the
+# chroot-shell bounded runtime (timeout --foreground --kill-after=10).
+# ---------------------------------------------------------------------------
+grep -Fq 'timeout --foreground --kill-after=10 300' <<<"$host_shell_body" \
+    || { echo 'FAIL: the host-shell non-interactive runner lost --kill-after=10' >&2; exit 1; }
 
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."
