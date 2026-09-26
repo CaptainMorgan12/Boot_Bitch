@@ -20,7 +20,12 @@ set -euo pipefail
 #            LINUXDEPLOY, LINUXDEPLOY_PLUGIN_QT, APPIMAGE_RUNTIME_FILE, QMAKE,
 #            ZSYNCMAKE, UPDATE_INFORMATION, EXTRA_QT_MODULES,
 #            DEPLOY_PLATFORM_THEMES, PATCHELF, NO_STRIP,
-#            APPIMAGE_EXTRACT_AND_RUN.
+#            APPIMAGE_EXTRACT_AND_RUN, BUILD_DIR_ALLOW_PREFIX.
+#
+# BUILD_DIR (default build-appimage) is removed for a clean build and must
+# resolve under $ROOT_DIR/build-* or $ROOT_DIR/Development/*build*; anything
+# else is refused before any removal unless the one-off
+# BUILD_DIR_ALLOW_PREFIX prefix authorizes it (see the guard below).
 #
 # Portability: linuxdeploy bundles binutils 2.35 strip and patchelf 0.15,
 # which cannot process SHT_RELR (".relr.dyn") sections emitted by modern
@@ -45,6 +50,15 @@ ZSYNCMAKE="${ZSYNCMAKE:-}"
 # The published release assets keep this version-agnostic name pattern; the
 # embedded string is what Gear Lever/AppImageUpdate resolve against GitHub.
 UPDATE_INFORMATION="${UPDATE_INFORMATION:-gh-releases-zsync|CaptainMorgan12|Boot_Bitch|latest|boot-repair_*_x86_64.AppImage.zsync}"
+
+# Self-update security note: the zsync channel is transport-authenticated
+# (HTTPS) but not content-signed. The .zsync carries zsync's SHA-1 block
+# checksums, which prove only that the update client received the bytes the
+# server served — not who authored them — so a compromised update server
+# could still substitute an update. Gating AppImage self-updates behind a
+# signed checksum (for example verifying the release SHA256SUMS before the
+# client applies a fetched update) is future work; there is no code gate for
+# it today.
 
 # The GUI's semantic icon atlas is SVG. Qt loads it through the SVG icon
 # engine plugin (iconengines/libqsvgicon.so), which linuxdeploy-plugin-qt only
@@ -101,7 +115,11 @@ run_appimagetool()
 
 # Print a usable zsyncmake path or return 1. Priority: explicit ZSYNCMAKE,
 # a binary in Development/tools/, PATH, then the copy bundled inside the
-# appimagetool AppImage (extracted into a temporary directory).
+# appimagetool AppImage (extracted into a temporary directory). The resolved
+# path is also assigned to the global ZSYNCMAKE, and the extraction directory
+# is registered with the EXIT cleanup trap; the caller must invoke this
+# function directly (no command substitution, which would run it in a
+# subshell and lose the registration).
 resolve_zsyncmake()
 {
     if [[ -n "$ZSYNCMAKE" ]]; then
@@ -113,11 +131,13 @@ resolve_zsyncmake()
         return 0
     fi
     if [[ -x "$ROOT_DIR/Development/tools/zsyncmake" ]]; then
-        printf '%s\n' "$ROOT_DIR/Development/tools/zsyncmake"
+        ZSYNCMAKE="$ROOT_DIR/Development/tools/zsyncmake"
+        printf '%s\n' "$ZSYNCMAKE"
         return 0
     fi
     if command -v zsyncmake >/dev/null 2>&1; then
-        command -v zsyncmake
+        ZSYNCMAKE="$(command -v zsyncmake)"
+        printf '%s\n' "$ZSYNCMAKE"
         return 0
     fi
     if [[ "$APPIMAGETOOL" == *.AppImage ]]; then
@@ -125,11 +145,17 @@ resolve_zsyncmake()
         extract_dir="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-zsyncmake.XXXXXX")"
         if (cd "$extract_dir" && "$APPIMAGETOOL" --appimage-extract 'usr/bin/zsyncmake' >/dev/null 2>&1) \
                 && [[ -x "$extract_dir/squashfs-root/usr/bin/zsyncmake" ]]; then
-            printf '%s\n' "$extract_dir/squashfs-root/usr/bin/zsyncmake"
+            # Keep the extracted zsyncmake alive until the script exits: the
+            # EXIT trap owns cleanup through PORTABILITY_TEMP_DIRS (declared
+            # below; this function is only called after the trap is set).
+            ZSYNCMAKE="$extract_dir/squashfs-root/usr/bin/zsyncmake"
+            PORTABILITY_TEMP_DIRS+=("$extract_dir")
+            printf '%s\n' "$ZSYNCMAKE"
             return 0
         fi
         rm -rf -- "$extract_dir"
     fi
+    ZSYNCMAKE=""
     return 1
 }
 
@@ -442,7 +468,10 @@ else
     echo "      Install linuxdeploy, linuxdeploy-plugin-qt, and appimagetool for a portable artifact." >&2
 fi
 
-ZSYNCMAKE="$(resolve_zsyncmake)" || {
+# resolve_zsyncmake assigns the resolved path to ZSYNCMAKE itself; it must be
+# invoked directly so the extracted zsyncmake directory is registered with the
+# EXIT cleanup trap in this shell (command substitution would lose it).
+if ! resolve_zsyncmake; then
     cat >&2 <<'EOF'
 ERROR: zsyncmake was not found; the release AppImage needs it to generate the
        .zsync update metadata that Gear Lever/AppImageUpdate read.
@@ -451,14 +480,43 @@ ERROR: zsyncmake was not found; the release AppImage needs it to generate the
        or use the appimagetool AppImage from Development/tools/ (it bundles one).
 EOF
     exit 1
-}
+fi
 
 bash -n "$ROOT_DIR/scripts/boot-repair-helper.sh"
 
+# Whitelist the build directory before rm -rf: only a path that resolves
+# under $ROOT_DIR/build-* or $ROOT_DIR/Development/*build* (which covers
+# Development/build-*) may be removed. Everything else — $HOME, /tmp,
+# $ROOT_DIR/legacy or any other repo subdirectory — is refused with a clear
+# message before any removal. BUILD_DIR_ALLOW_PREFIX is the documented escape
+# hatch for one-off out-of-tree builds: when set, the build directory may
+# instead live under that prefix (its own realpath).
 BUILD_DIR_REAL="$(realpath -m -- "$BUILD_DIR")"
 ROOT_DIR_REAL="$(realpath -m -- "$ROOT_DIR")"
-if [[ -z "$BUILD_DIR_REAL" || "$BUILD_DIR_REAL" == / || "$BUILD_DIR_REAL" == "$ROOT_DIR_REAL" ]]; then
-    echo "Refusing to remove unsafe build directory: $BUILD_DIR" >&2
+build_dir_allowed()
+{
+    local dir="$1"
+    [[ -n "$dir" ]] || return 1
+    [[ "$dir" == "$ROOT_DIR_REAL/build-"* ]] && return 0
+    [[ "$dir" == "$ROOT_DIR_REAL/Development/"*build* ]] && return 0
+    if [[ -n "${BUILD_DIR_ALLOW_PREFIX:-}" ]]; then
+        local prefix
+        prefix="$(realpath -m -- "$BUILD_DIR_ALLOW_PREFIX")"
+        if [[ "$prefix" == / ]]; then
+            [[ "$dir" == /* ]] && return 0
+        elif [[ -n "$prefix" && "$dir" == "$prefix"/* ]]; then
+            return 0
+        fi
+    fi
+    return 1
+}
+if ! build_dir_allowed "$BUILD_DIR_REAL"; then
+    cat >&2 <<EOF
+Refusing to remove unsafe build directory: $BUILD_DIR (resolves to $BUILD_DIR_REAL).
+The build directory must live under $ROOT_DIR/build-* or
+$ROOT_DIR/Development/*build*; set BUILD_DIR_ALLOW_PREFIX=<parent> to authorize
+a one-off out-of-tree location under that prefix. Nothing was removed.
+EOF
     exit 1
 fi
 rm -rf -- "$BUILD_DIR"

@@ -273,6 +273,45 @@ legacy_grub_guard_entries_preserved "$FIXTURE/decl.defopts.before" \
 LEGACY_GRUB_MANAGED=""
 pass "GRUB legacy defoptions/kopt expansion (guard accepts the expansion, refuses a drop)"
 
+# --- A9-06: backslash and pipe are escaped for both BRE and ERE ---------------
+escaped="$(legacy_grub_sed_escape 'a\b|c')"
+[[ "$escaped" == 'a\\b\|c' ]] \
+    || fail "sed escape did not escape backslash and pipe: $escaped"
+escaped="$(legacy_grub_grep_escape 'a\b|c')"
+[[ "$escaped" == 'a\\b\|c' ]] \
+    || fail "grep escape did not escape backslash and pipe: $escaped"
+# The escaped tokens must survive the real call-site delimiters/classes.
+tok='a\b|c'
+escaped="$(legacy_grub_sed_escape "$tok")"
+printf '%s\n' 'before a\b|c after' | sed "s| $escaped | X |g" | grep -q 'before X after' \
+    || fail "sed-escaped token broke the | delimiter"
+escaped="$(legacy_grub_grep_escape "$tok")"
+printf '%s\n' 'before a\b|c after' | grep -qE "(^|[[:space:]])$escaped([[:space:]]|$)" \
+    || fail "grep-escaped token did not match the literal token"
+pass "A9-06 escape classes (backslash and pipe escaped for BRE and ERE)"
+
+# --- A9-12: noglob around the managed-token loops ----------------------------
+# A managed token carrying wildcard characters must never be glob-expanded
+# against the working directory.
+mkdir -p "$FIXTURE/globdir"
+: > "$FIXTURE/globdir/aXb"
+cat > "$FIXTURE/globmenu.before" <<'EOF'
+title		glob
+kernel		/boot/vmlinuz-2.6.18-6-686 root=/dev/sda1 ro a*b
+EOF
+LEGACY_GRUB_MANAGED='a*b'
+legacy_grub_entry_declarations "$FIXTURE/globmenu.before" "$LEGACY_GRUB_MANAGED" \
+    > "$FIXTURE/glob.decl.before"
+( cd "$FIXTURE/globdir" \
+    && legacy_grub_guard_entries_preserved "$FIXTURE/glob.decl.before" "$FIXTURE/globmenu.before" ) \
+    || fail "managed-token glob expansion broke the entry-preservation guard"
+( cd "$FIXTURE/globdir" \
+    && legacy_grub_entry_declarations "$FIXTURE/globmenu.before" "$LEGACY_GRUB_MANAGED" \
+        | grep -q 'root=/dev/sda1 ro$' ) \
+    || fail "managed-token glob expansion broke the declarations normalization"
+LEGACY_GRUB_MANAGED=""
+pass "A9-12 noglob around the managed-token loops"
+
 # --- cycle 12: split-LV data mounts ------------------------------------------
 mkdir -p "$FIXTURE/etc" "$FIXTURE/usr" "$FIXTURE/var/lib/dpkg" "$FIXTURE/tmp" "$FIXTURE/home" "$FIXTURE/opt"
 cat > "$FIXTURE/etc/fstab" <<'EOF'
@@ -364,6 +403,16 @@ RUNNING_HOST_MODE=1
     || fail "legacy display entry probe: $(legacy_sysv_display_manager_entry)"
 legacy_display_manager_probe | grep -q 'sysvinit display manager kdm' \
     || fail "legacy display probe evidence line"
+# A9-10: uncanonical entries (. / .. / // segments) are refused before use.
+printf '/usr/bin/../sbin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+( legacy_sysv_display_manager_entry ) >/dev/null 2>&1 \
+    && fail "display entry with a .. segment was accepted"
+printf '/usr/bin//kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+( legacy_sysv_display_manager_entry ) >/dev/null 2>&1 \
+    && fail "display entry with a // segment was accepted"
+printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
+[[ "$(legacy_sysv_display_manager_entry)" == /usr/bin/kdm ]] \
+    || fail "canonical display entry was refused: $(legacy_sysv_display_manager_entry)"
 display_unavailable_reason || fail "display capability refused the legacy SysV host"
 repair_capability_evidence display | grep -q 'legacy SysV: sysvinit display manager kdm' \
     || fail "display capability evidence line"
@@ -481,7 +530,8 @@ pass "legacy unlock keyfile (one trailing newline/CR stripped, mode 600, empty r
 
 # The GUI --key-file channel: the argument file must be a regular file owned
 # by the caller, its content (one trailing newline tolerated) lands in the
-# session keyfile, and the argument file is deleted before the open attempt.
+# session keyfile, and the argument file itself is NEVER deleted by the
+# helper (the Qt3 GUI unlinks its own file when the command finishes).
 printf 'smoke-test-key\n' > "$FIXTURE/state/gui-key"
 out_path="$(legacy_unlock_keyfile_from_file "$FIXTURE/state/gui-key" "$FIXTURE/state/session-key")" \
     || fail "GUI keyfile channel failed"
@@ -497,7 +547,204 @@ legacy_unlock_keyfile_from_file "$FIXTURE/state/gui-key2" "$FIXTURE/state/sessio
     || fail "GUI keyfile channel mangled the passphrase"
 rm -f "$FIXTURE/state/gui-key" "$FIXTURE/state/gui-key2" \
     "$FIXTURE/state/session-key" "$FIXTURE/state/session-key2"
-pass "legacy GUI keyfile channel (regular file, mode 600, newline tolerated)"
+pass "legacy GUI keyfile channel (regular file, mode 600, newline tolerated, caller file survives)"
+
+# --- batch B2: unlock keyfile hardening (A9-01/A9-02/A9-14) ------------------
+set +e
+mkdir -p "$FIXTURE/unlock-state" "$FIXTURE/unlock-keydir"
+printf 'batch-b2-key\n' > "$FIXTURE/unlock-keydir/plain-key"
+key_canon="$(readlink -f -- "$FIXTURE/unlock-keydir/plain-key")"
+ln -s "$FIXTURE/unlock-keydir" "$FIXTURE/unlock-keydir-link"
+
+# A9-02: the unlock session directory is created (mode 0700) under STATE_ROOT
+# when none exists, is reused afterwards, and hosts the session keyfile so it
+# never lands at /unlock-keyfile.
+(
+    trap - EXIT
+    STATE_ROOT="$FIXTURE/ensure-state"
+    mkdir -p "$STATE_ROOT"
+    SESSION_DIR=""
+    SESSION_LOG=""
+    legacy_unlock_ensure_session
+    first="$SESSION_DIR"
+    [[ "$first" == "$FIXTURE/ensure-state/session."* ]] \
+        || fail "ensure session did not create the directory under STATE_ROOT"
+    [[ "$(stat -c '%a' "$first")" == 700 ]] \
+        || fail "ensure session directory is not mode 700"
+    [[ "$SESSION_LOG" == "$first/session.log" ]] \
+        || fail "ensure session did not set SESSION_LOG"
+    [[ -f "$SESSION_LOG" ]] || fail "ensure session did not create the session log"
+    legacy_unlock_ensure_session
+    [[ "$SESSION_DIR" == "$first" ]] \
+        || fail "ensure session did not reuse the existing session directory"
+    key_path="$(printf 'k\n' | legacy_unlock_keyfile_from_stdin "$SESSION_DIR/unlock-keyfile")"
+    [[ "$(dirname -- "$key_path")" == "$SESSION_DIR" ]] \
+        || fail "session keyfile escaped the session directory: $key_path"
+    rm -f -- "$key_path"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "unlock session ensure checks failed"
+pass "unlock session ensure (created 0700 under STATE_ROOT, reused, keyfile never at /unlock-keyfile)"
+
+# A9-01: provable ownership only - the effective-uid acceptance is gone.
+uid="$(id -u)"
+SUDO_UID="$uid" legacy_unlock_keyfile_owner_proven "$key_canon" "" \
+    || fail "SUDO_UID match was refused"
+SUDO_UID="$uid" legacy_unlock_keyfile_owner_proven "$key_canon" "$uid" \
+    || fail "SUDO_UID plus matching key-owner was refused"
+SUDO_UID="$uid" legacy_unlock_keyfile_owner_proven "$key_canon" "$((uid + 1))" \
+    && fail "a key-owner different from SUDO_UID was accepted"
+unset SUDO_UID
+# A root- or user-owned file with no SUDO_UID and no key-owner can never be
+# proven (this is the old "accept the effective uid" path, now removed).
+legacy_unlock_keyfile_owner_proven "$key_canon" "" \
+    && fail "a keyfile with no SUDO_UID and no key-owner was accepted"
+legacy_unlock_keyfile_owner_proven "$key_canon" "$uid" \
+    || fail "the gksu-style key-owner match was refused"
+legacy_unlock_keyfile_owner_proven "$key_canon" "0" \
+    && fail "a key-owner of 0 without SUDO_UID was accepted"
+pass "unlock keyfile owner proof (SUDO_UID / gksu-style key-owner, provable only)"
+
+# A9-01: symlinked paths are refused; a plain canonical path is accepted.
+legacy_unlock_keyfile_path_safe "$key_canon" \
+    || fail "a plain canonical keyfile path was refused"
+legacy_unlock_keyfile_path_safe "$FIXTURE/unlock-keydir-link/plain-key" \
+    && fail "a keyfile reached through a symlinked intermediate directory was accepted"
+ln -s "$key_canon" "$FIXTURE/unlock-keydir/final-link"
+legacy_unlock_keyfile_path_safe "$FIXTURE/unlock-keydir/final-link" \
+    && fail "a symlinked keyfile final component was accepted"
+pass "unlock keyfile path proof (plain path accepted, symlinked paths refused)"
+
+# A9-14: the first-line read is capped at 1024 characters and the keyfile is
+# sanity-capped at 65536 bytes (both the file and the stdin channels).
+head -c 2048 /dev/zero | tr '\0' 'x' > "$FIXTURE/unlock-keydir/long-line-key"
+printf '\n' >> "$FIXTURE/unlock-keydir/long-line-key"
+( legacy_unlock_keyfile_from_file "$FIXTURE/unlock-keydir/long-line-key" \
+    "$FIXTURE/state/cap-key" ) >/dev/null 2>&1 \
+    && fail "a 2 KiB first line was accepted"
+head -c 1024 /dev/zero | tr '\0' 'x' > "$FIXTURE/unlock-keydir/exact-line-key"
+printf '\n' >> "$FIXTURE/unlock-keydir/exact-line-key"
+( legacy_unlock_keyfile_from_file "$FIXTURE/unlock-keydir/exact-line-key" \
+    "$FIXTURE/state/cap-key" ) >/dev/null 2>&1 \
+    && fail "an exactly-1024-character first line was accepted"
+head -c 65537 /dev/zero > "$FIXTURE/unlock-keydir/oversize-key"
+( legacy_unlock_keyfile_from_file "$FIXTURE/unlock-keydir/oversize-key" \
+    "$FIXTURE/state/cap-key" ) >/dev/null 2>&1 \
+    && fail "a keyfile over the 65536-byte stat cap was accepted"
+head -c 1024 /dev/zero | tr '\0' 'y' | legacy_unlock_keyfile_from_stdin "$FIXTURE/state/cap-key" \
+    >/dev/null 2>&1 \
+    && fail "an exactly-1024-character stdin passphrase was accepted"
+head -c 2048 /dev/zero | tr '\0' 'y' | legacy_unlock_keyfile_from_stdin "$FIXTURE/state/cap-key" \
+    >/dev/null 2>&1 \
+    && fail "an over-cap stdin passphrase was accepted"
+pass "unlock keyfile length caps (1024-char first line, 65536-byte stat cap, file and stdin)"
+
+# A9-01/A9-02 through unlock_target itself: the accepted path creates the
+# 0700 session under STATE_ROOT and never deletes the caller file; refused
+# paths fail before any session state is created.
+mkdir -p "$FIXTURE/unlock-run1" "$FIXTURE/unlock-run2" "$FIXTURE/unlock-run3"
+set +e
+# Accepted (SUDO_UID matches): runs through to the stubbed open and then
+# fails at the mapper-appeared check - after the session directory exists.
+(
+    trap - EXIT
+    canonical_block() { printf '%s\n' "$1"; }
+    assert_target_not_host() { return 0; }
+    same_single_top_disk() { return 0; }
+    lsblk() { return 0; }
+    cryptsetup() {
+        case "$1" in
+            isLuks) return 0 ;;
+            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
+            luksOpen) return 0 ;;
+            luksClose) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    find_crypt_mapper_for_device() { return 1; }
+    SESSION_DIR=""
+    STATE_ROOT="$FIXTURE/unlock-run1"
+    SUDO_UID="$uid"
+    TARGET_DISK=/dev/null
+    ROOT_DEVICE=/dev/null
+    unlock_target --key-file "$key_canon" >/dev/null 2>&1
+    rc=$?
+    exit "$rc"
+)
+unlock_rc=$?
+[[ $unlock_rc -ne 0 ]] || fail "stubbed unlock unexpectedly succeeded"
+session_dirs=("$FIXTURE/unlock-run1"/session.*)
+[[ ${#session_dirs[@]} -eq 1 && -d "${session_dirs[0]}" ]] \
+    || fail "accepted unlock did not create its session directory"
+[[ "$(stat -c '%a' "${session_dirs[0]}")" == 700 ]] \
+    || fail "accepted unlock session directory is not mode 700"
+[[ -f "$key_canon" ]] || fail "accepted unlock deleted the caller-supplied keyfile"
+# Refused (no SUDO_UID, no key-owner): fails before any session state exists
+# and the caller file survives.
+(
+    trap - EXIT
+    canonical_block() { printf '%s\n' "$1"; }
+    assert_target_not_host() { return 0; }
+    same_single_top_disk() { return 0; }
+    lsblk() { return 0; }
+    cryptsetup() {
+        case "$1" in
+            isLuks) return 0 ;;
+            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
+            luksOpen) return 0 ;;
+            luksClose) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    find_crypt_mapper_for_device() { return 1; }
+    SESSION_DIR=""
+    STATE_ROOT="$FIXTURE/unlock-run2"
+    unset SUDO_UID
+    TARGET_DISK=/dev/null
+    ROOT_DEVICE=/dev/null
+    unlock_target --key-file "$key_canon" >/dev/null 2>"$FIXTURE/unlock-refusal.txt"
+    rc=$?
+    exit "$rc"
+)
+unlock_rc=$?
+[[ $unlock_rc -ne 0 ]] || fail "unprovable-owner unlock unexpectedly succeeded"
+grep -q 'cannot be proven' "$FIXTURE/unlock-refusal.txt" \
+    || fail "unprovable-owner refusal lacks the proof wording"
+[[ -z "$(find "$FIXTURE/unlock-run2" -mindepth 1 2>/dev/null | head -n1)" ]] \
+    || fail "refused unlock created session state"
+[[ -f "$key_canon" ]] || fail "refused unlock deleted the caller-supplied keyfile"
+# Refused (symlinked intermediate directory): same guarantees.
+(
+    trap - EXIT
+    canonical_block() { printf '%s\n' "$1"; }
+    assert_target_not_host() { return 0; }
+    same_single_top_disk() { return 0; }
+    lsblk() { return 0; }
+    cryptsetup() {
+        case "$1" in
+            isLuks) return 0 ;;
+            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
+            luksOpen) return 0 ;;
+            luksClose) return 0 ;;
+            *) return 1 ;;
+        esac
+    }
+    find_crypt_mapper_for_device() { return 1; }
+    SESSION_DIR=""
+    STATE_ROOT="$FIXTURE/unlock-run3"
+    SUDO_UID="$uid"
+    TARGET_DISK=/dev/null
+    ROOT_DEVICE=/dev/null
+    unlock_target --key-file "$FIXTURE/unlock-keydir-link/plain-key" >/dev/null 2>&1
+    rc=$?
+    exit "$rc"
+)
+unlock_rc=$?
+[[ $unlock_rc -ne 0 ]] || fail "symlinked-keyfile unlock unexpectedly succeeded"
+[[ -z "$(find "$FIXTURE/unlock-run3" -mindepth 1 2>/dev/null | head -n1)" ]] \
+    || fail "symlink-refused unlock created session state"
+pass "unlock_target keyfile acceptance (0700 session on accept, refusals leave no state, caller file survives)"
 
 # The path-based blkid TYPE probe parses both the modern `-o value -s TYPE`
 # and the Etch-era bare `TYPE="..."` output, and probes the given path
@@ -595,15 +842,20 @@ grep -q 'UMOUNT CALLED' "$FIXTURE/fs-check.txt" \
     && fail "the legacy file system check released the target mounts"
 pass "file system check skips devices mounted under the target (offline-only)"
 
-# --- cycle 12 loop 3: resolver copy with teardown restore --------------------
+# --- cycle 12 loop 3 + A9-09: resolver copy with teardown restore ------------
 # The legacy resolver is a file copy (the 2.6.18 kernel refuses a
 # remount,bind,ro of a single-file bind with EBUSY): the target's original is
 # backed up, the host resolver is copied over it, a second call reuses the
 # copy, and the exit cleanup restores the original and removes the backup.
+# A9-09: a destination that already equals the recovery-host resolver (an
+# interrupted session's leftover) is refused instead of re-backed up, and the
+# cleanup restores only while the destination still equals the copied
+# resolver - a user change is never overwritten.
 # Helper functions leave `set -e` enabled at their end, so the smoke re-arms
 # `set +e` here and the case exits 0 explicitly.
 set +e
 mkdir -p "$FIXTURE/etc"
+[[ -r /etc/resolv.conf ]] || fail "smoke fixture requires a readable /etc/resolv.conf"
 printf 'nameserver smoke-ns-target\n' > "$FIXTURE/etc/resolv.conf"
 (
     # The subshell must not inherit the smoke's EXIT trap (it would delete the
@@ -617,18 +869,14 @@ printf 'nameserver smoke-ns-target\n' > "$FIXTURE/etc/resolv.conf"
     cp_calls=0
     cp() {
         cp_calls=$((cp_calls + 1))
-        if [[ "$2" == /etc/resolv.conf ]]; then
-            printf 'nameserver smoke-ns-host\n' > "$FIXTURE/etc/resolv.conf"
-        else
-            command cp "$@"
-        fi
+        command cp "$@"
     }
     realpath_existing() { printf '%s\n' "$1"; }
     path_within() { return 0; }
     log() { :; }
     cleanup_modern() { :; }
     mount_target_resolver
-    [[ "$(cat "$FIXTURE/etc/resolv.conf")" == "nameserver smoke-ns-host" ]] \
+    cmp -s "$FIXTURE/etc/resolv.conf" /etc/resolv.conf \
         || fail "resolver copy did not land in the target"
     [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
         || fail "resolver backup was not created"
@@ -641,7 +889,68 @@ printf 'nameserver smoke-ns-target\n' > "$FIXTURE/etc/resolv.conf"
         && fail "resolver backup was not removed by the teardown"
     exit 0
 )
+rc=$?
+[[ $rc -eq 0 ]] || fail "resolver copy round-trip failed"
 pass "legacy resolver copy with teardown restore (idempotent, never remounted)"
+
+# --- A9-09: polluted-destination refusal and skip-restore-when-changed -------
+set +e
+mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
+(
+    trap - EXIT
+    TARGET_ROOT="$FIXTURE/resolver2"
+    SESSION_DIR="$FIXTURE/resolver2/session"
+    SESSION_LOG="$FIXTURE/resolver2/session/session.log"
+    : > "$SESSION_LOG"
+    LOG_FILE="$FIXTURE/resolver2/log.txt"
+    : > "$LOG_FILE"
+    LEGACY_RESOLVER_DESTINATION=""
+    LEGACY_RESOLVER_BACKUP=""
+    realpath_existing() { printf '%s\n' "$1"; }
+    path_within() { return 0; }
+    log() { printf '%s\n' "$*" >> "$LOG_FILE"; }
+    cleanup_modern() { :; }
+    # A clean destination is copied over (backup first).
+    printf 'nameserver original-target\n' > "$FIXTURE/resolver2/etc/resolv.conf"
+    mount_target_resolver >/dev/null 2>&1 \
+        || fail "resolver copy failed on a clean destination"
+    [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
+        || fail "resolver backup was not created on the clean destination"
+    # Interrupted-session refusal: simulate a fresh session whose destination
+    # still holds the recovery-host copy; the polluted file must never be
+    # re-backed-up and the refusal names the scenario.
+    LEGACY_RESOLVER_DESTINATION=""
+    LEGACY_RESOLVER_BACKUP=""
+    rm -f "$SESSION_DIR/resolv.conf.target.before"
+    ( mount_target_resolver ) >/dev/null 2>&1
+    polluted_rc=$?
+    [[ $polluted_rc -ne 0 ]] \
+        || fail "resolver accepted a polluted destination (interrupted-session copy)"
+    grep -q 'interrupted session' "$LOG_FILE" \
+        || fail "resolver pollution refusal does not name the interrupted-session scenario"
+    [[ -e "$SESSION_DIR/resolv.conf.target.before" ]] \
+        && fail "resolver re-backed-up the polluted destination"
+    # Skip-restore-when-changed: a user edit after the copy is never
+    # overwritten and the skip is logged.
+    rm -f "$LOG_FILE" "$SESSION_DIR/resolv.conf.target.before"
+    LEGACY_RESOLVER_DESTINATION=""
+    LEGACY_RESOLVER_BACKUP=""
+    printf 'nameserver original-target\n' > "$FIXTURE/resolver2/etc/resolv.conf"
+    mount_target_resolver >/dev/null 2>&1 \
+        || fail "resolver copy failed for the skip-restore case"
+    printf 'nameserver user-changed\n' > "$FIXTURE/resolver2/etc/resolv.conf"
+    cleanup >/dev/null 2>&1 || true
+    [[ "$(cat "$FIXTURE/resolver2/etc/resolv.conf")" == "nameserver user-changed" ]] \
+        || fail "resolver cleanup overwrote the user's change"
+    grep -q 'NOT overwritten' "$LOG_FILE" \
+        || fail "resolver cleanup left no skip evidence"
+    [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
+        || fail "resolver cleanup removed the backup evidence"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "resolver A9-09 hardening checks failed"
+pass "legacy resolver A9-09 (polluted-destination refusal, skip-restore-when-changed)"
 
 # --- cycle 12 loop 4: shared data mount promotion ---------------------------
 # The split-LV data mounts (usr/var/tmp/home) must be promoted read-write
@@ -752,10 +1061,13 @@ pass "legacy Make Default (canonical entry, idempotent, fail-closed)"
     || fail "apt-cache was rewritten"
 pass "legacy apt intent translation (apt -> apt-get, full-upgrade -> dist-upgrade)"
 
-# --- legacy browse-target record format (cycle 8) ----------------------------
+# --- legacy browse-target record format (cycle 8 + A9-13) --------------------
 # The legacy port emits BROWSE_ENTRY records with raw percent-encoded names
 # (Qt 3.3.7 has no QByteArray::fromBase64); the Qt3 picker decodes them.
+# A9-13: TAB inside a name is percent-encoded (%09) so the tab-delimited
+# record format stays unambiguous.
 mkdir -p "$FIXTURE/browse-root/alpha" "$FIXTURE/browse-root/beta"
+mkdir -p "$FIXTURE/browse-root/$(printf 'tab\tname')"
 prepare_target() { :; }
 maybe_mount_target_path() { :; }
 realpath_existing() { printf '%s\n' "$1"; }
@@ -765,8 +1077,12 @@ printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	alpha' \
     || fail "browse-target did not list alpha"
 printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	beta' \
     || fail "browse-target did not list beta"
+printf '%s\n' "$browse_out" | grep -q $'BROWSE_ENTRY\ttab%09name' \
+    || fail "browse-target did not percent-encode the TAB in a directory name"
+printf '%s\n' "$browse_out" | grep -q $'tab\tname' \
+    && fail "browse-target emitted a raw TAB inside a record name"
 printf '%s\n' "$browse_out" | grep -q 'BROWSE_ENTRY	' \
     || fail "browse-target emitted no BROWSE_ENTRY records"
-pass "legacy browse-target records (raw percent-encoded names)"
+pass "legacy browse-target records (raw percent-encoded names, TAB encoded as %09)"
 
 echo "legacy helper smoke: PASS"

@@ -28,13 +28,8 @@ def make_variable(label: str) -> bytes:
     return b"\x07\x00\x00\x00" + option
 
 
-with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
-    efivarfs = Path(temp)
-    variable = efivarfs / VARIABLE
-    original = make_variable("UEFI OS")
-    variable.write_bytes(original)
-    backup = efivarfs / "backup" / "Boot0008.bin"
-    subprocess.run(
+def run_updater(efivarfs: Path, label: str, backup: Path) -> subprocess.CompletedProcess:
+    return subprocess.run(
         [
             "python3",
             str(ROOT / "scripts/boot-repair-efi-label.py"),
@@ -45,15 +40,77 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
             "--loader",
             r"\EFI\BOOT\BOOTX64.EFI",
             "--label",
-            "UEFI OS Example NVMe 1TB",
+            label,
             "--backup",
             str(backup),
         ],
-        check=True,
+        capture_output=True,
+        text=True,
         env={**os.environ, "EFI_LABEL_EFIVARFS": str(efivarfs)},
     )
+
+
+with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+    efivarfs = Path(temp)
+    variable = efivarfs / VARIABLE
+    original = make_variable("UEFI OS")
+    variable.write_bytes(original)
+    backup = efivarfs / "backup" / "Boot0008.bin"
+    result = run_updater(efivarfs, "UEFI OS Example NVMe 1TB", backup)
+    assert result.returncode == 0, result.stderr
     updated = variable.read_bytes()
     assert updated != original
     assert "UEFI OS Example NVMe 1TB".encode("utf-16-le") in updated
     assert backup.read_bytes() == original
-print("PASS: EFI label updater preserves and verifies EFI_LOAD_OPTION destinations")
+
+    # A symlinked backup path must be refused before anything is written, and
+    # the symlink target must stay untouched.
+    symlink_target = efivarfs / "innocent.bin"
+    symlink_target.write_bytes(b"untouched")
+    symlink = efivarfs / "backup-symlink.bin"
+    symlink.symlink_to(symlink_target)
+    result = run_updater(efivarfs, "UEFI OS via symlink", symlink)
+    assert result.returncode != 0
+    assert "non-regular path" in result.stderr
+    assert symlink_target.read_bytes() == b"untouched"
+
+    # A non-regular (directory) backup path must be refused as well.
+    backup_dir = efivarfs / "backup-dir"
+    backup_dir.mkdir()
+    result = run_updater(efivarfs, "UEFI OS via dir", backup_dir)
+    assert result.returncode != 0
+    assert "non-regular path" in result.stderr
+
+    # An existing regular backup is the pristine original: a later run must
+    # keep it byte-identical instead of overwriting it.
+    backup2 = efivarfs / "backup2" / "Boot0008.bin"
+    variable.write_bytes(make_variable("UEFI OS"))
+    result = run_updater(efivarfs, "First label", backup2)
+    assert result.returncode == 0, result.stderr
+    first_backup = backup2.read_bytes()
+    result = run_updater(efivarfs, "Second label", backup2)
+    assert result.returncode == 0, result.stderr
+    assert backup2.read_bytes() == first_backup
+    assert "Second label".encode("utf-16-le") in variable.read_bytes()
+
+# Rollback honesty: when the restore write also fails, the tool must say so on
+# stderr and in the failure message instead of swallowing it. A read-only
+# variable simulates the write failure without root; skip when running as
+# root (root bypasses the permission bit).
+if os.geteuid() != 0:
+    with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+        efivarfs = Path(temp)
+        variable = efivarfs / VARIABLE
+        original = make_variable("UEFI OS")
+        variable.write_bytes(original)
+        backup = efivarfs / "backup" / "Boot0008.bin"
+        result = run_updater(efivarfs, "New label", backup)
+        assert result.returncode == 0, result.stderr
+        variable.chmod(0o444)
+        result = run_updater(efivarfs, "Another label", backup)
+        assert result.returncode != 0
+        assert "ROLLBACK ALSO FAILED; original bytes remain in" in result.stderr
+        assert str(backup) in result.stderr
+        assert backup.read_bytes() == original
+
+print("PASS: EFI label updater preserves, verifies and backs up EFI_LOAD_OPTION destinations safely")

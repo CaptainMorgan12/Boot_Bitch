@@ -9035,23 +9035,17 @@ void LegacyMainWindow::fileCopyBrowse()
 }
 
 // Qt 3.3.7 has no QByteArray::fromBase64, so the legacy helper emits the
-// browse names raw with only %, CR and LF percent-encoded; decode inline.
+// browse names raw with only %, TAB, CR and LF percent-encoded
+// (% -> %25, TAB -> %09, CR -> %0D, LF -> %0A); decode inline.  The chain
+// reverses the helper's encode order so a name whose text literally contains
+// "%0A" / "%0D" / "%09" / "%25" round-trips instead of double-decoding.
 static QString legacyPercentDecode(const QString &encoded)
 {
-    QString out;
-    for (int i = 0; i < static_cast<int>(encoded.length()); ++i) {
-        if (encoded[i] == QChar('%')
-            && i + 2 < static_cast<int>(encoded.length())) {
-            bool ok = false;
-            const int value = encoded.mid(i + 1, 2).toInt(&ok, 16);
-            if (ok) {
-                out += QChar(value);
-                i += 2;
-                continue;
-            }
-        }
-        out += encoded[i];
-    }
+    QString out = encoded;
+    out.replace(QString::fromLatin1("%0A"), QString::fromLatin1("\n"));
+    out.replace(QString::fromLatin1("%0D"), QString::fromLatin1("\r"));
+    out.replace(QString::fromLatin1("%09"), QString::fromLatin1("\t"));
+    out.replace(QString::fromLatin1("%25"), QString::fromLatin1("%"));
     return out;
 }
 

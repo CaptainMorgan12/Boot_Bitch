@@ -8,6 +8,12 @@
 #     unprivileged guest user can launch the GUI from the KDE menu and a shell
 #   - the shell-only boot-repair-legacy TUI launcher (and its desktop entry
 #     and man page) is deliberately NOT shipped: the GUI is the entry point
+#   - the generated-helper drift gate: advisory on --dry-run (NOTE-skip for an
+#     override or a missing port tool), mandatory on a real build (a missing
+#     legacy/port.sh, a failing --check or a LEGACY_HELPER_SRC override that
+#     is not byte-identical to the generated helper all fail, never skip)
+#   - the A12-01 stage_tree rm -rf whitelist: a stage path outside the output
+#     directory is refused and never wiped
 #   - the off-Etch refusal (including --install-vm) and the missing-helper
 #     failure stay clear and safe
 #
@@ -70,11 +76,16 @@ chmod 0755 "$FIXTURE_HELPER"
 
 STAGE="$TMP/stage"
 OUT="$TMP/out"
+# A12-01: the stage tree must live inside the output directory; the tests
+# stage under <output>/stage to exercise the whitelist on every run.
+STAGE="$OUT/stage"
 if ! LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --dry-run --stage-dir "$STAGE" --output "$OUT" \
         > "$TMP/dry-run.log" 2>&1; then
     cat "$TMP/dry-run.log" >&2
     fail "scripts/package-legacy.sh --dry-run failed"
 fi
+grep -q 'NOTE: LEGACY_HELPER_SRC override set; skipping the generated-helper drift gate.' "$TMP/dry-run.log" \
+    || fail "dry-run with LEGACY_HELPER_SRC must NOTE-skip the drift gate (never fail)"
 
 for path in \
     "$STAGE/DEBIAN/control" \
@@ -157,18 +168,72 @@ printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.
 cp "$FIXTURE_HELPER" "$TREE/legacy/boot-repair-helper.sh"
 printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"
 
-"$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-stage" --output "$TMP/tree-out" \
+# Dry run: default discovery finds the tree helper and the drift gate runs.
+"$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-out/stage" --output "$TMP/tree-out" \
     > "$TMP/tree-ok.log" 2>&1 || { cat "$TMP/tree-ok.log" >&2; fail "default helper discovery failed"; }
 grep -q 'legacy/port.sh --check' "$TMP/tree-ok.log" || fail "drift gate did not run"
 grep -q "$TREE/legacy/boot-repair-helper.sh" "$TMP/tree-ok.log" \
     || fail "default helper discovery did not find legacy/boot-repair-helper.sh"
 
+# Dry run: a failing port.sh --check aborts.
 printf '#!/bin/bash\nexit 1\n' > "$TREE/legacy/port.sh"
-if "$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-stage2" --output "$TMP/tree-out2" \
+if "$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-out2/stage" --output "$TMP/tree-out2" \
         > "$TMP/tree-fail.log" 2>&1; then
     fail "a failing port-helper.sh --check did not abort the dry run"
 fi
 grep -q 'port.sh --check failed' "$TMP/tree-fail.log" || fail "drift-gate failure message is unclear"
+
+# Dry run: a missing port.sh is only a NOTE (never fatal in dry-run).
+rm -f "$TREE/legacy/port.sh"
+"$TREE/scripts/package-legacy.sh" --dry-run --stage-dir "$TMP/tree-out3/stage" --output "$TMP/tree-out3" \
+    > "$TMP/tree-noport.log" 2>&1 || { cat "$TMP/tree-noport.log" >&2; fail "dry run without port.sh must still stage"; }
+grep -q 'not present; skipping the generated-helper drift gate' "$TMP/tree-noport.log" \
+    || fail "dry run without port.sh must NOTE-skip the drift gate"
+
+# Real (non-dry-run) builds: the drift gate is mandatory (A10-16).  These run
+# before the off-Etch refusal and must fail, never NOTE-skip.
+if "$TREE/scripts/package-legacy.sh" --stage-dir "$TMP/tree-out4/stage" --output "$TMP/tree-out4" \
+        > "$TMP/tree-real-noport.log" 2>&1; then
+    fail "a real build without legacy/port.sh must fail, not skip"
+fi
+grep -q 'legacy/port.sh is missing' "$TMP/tree-real-noport.log" \
+    || fail "real build without port.sh must name the missing port tool"
+
+printf '#!/bin/bash\nexit 1\n' > "$TREE/legacy/port.sh"
+if "$TREE/scripts/package-legacy.sh" --stage-dir "$TMP/tree-out5/stage" --output "$TMP/tree-out5" \
+        > "$TMP/tree-real-fail.log" 2>&1; then
+    fail "a real build with a failing port.sh --check must fail"
+fi
+grep -q 'port.sh --check failed' "$TMP/tree-real-fail.log" \
+    || fail "real build with a failing port.sh must report the drift-gate failure"
+
+# Real builds: a LEGACY_HELPER_SRC override that is not byte-identical to the
+# generated helper must be refused (A11-09)...
+printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"
+printf '#!/bin/bash\n# drift\n' > "$TMP/override-helper.sh"
+if LEGACY_HELPER_SRC="$TMP/override-helper.sh" "$TREE/scripts/package-legacy.sh" \
+        --stage-dir "$TMP/tree-out6/stage" --output "$TMP/tree-out6" \
+        > "$TMP/tree-real-override.log" 2>&1; then
+    fail "a real build with a non-identical LEGACY_HELPER_SRC must fail"
+fi
+grep -q 'not byte-identical to the generated' "$TMP/tree-real-override.log" \
+    || fail "non-identical override refusal is unclear"
+
+# ...but a byte-identical override passes the gate and reaches the off-Etch
+# refusal (the drift gate still runs).
+cp "$TREE/legacy/boot-repair-helper.sh" "$TMP/identical-helper.sh"
+if LEGACY_HELPER_SRC="$TMP/identical-helper.sh" "$TREE/scripts/package-legacy.sh" \
+        --stage-dir "$TMP/tree-out7/stage" --output "$TMP/tree-out7" \
+        > "$TMP/tree-real-identical.log" 2>&1; then
+    fail "a real build off-Etch must still refuse to build"
+fi
+grep -q 'legacy/port.sh --check' "$TMP/tree-real-identical.log" \
+    || fail "an identical override must not skip the drift gate"
+grep -qi 'etch' "$TMP/tree-real-identical.log" \
+    || fail "an identical override must proceed to the off-Etch refusal"
+if grep -q 'not byte-identical' "$TMP/tree-real-identical.log"; then
+    fail "an identical override was wrongly refused"
+fi
 
 # --- GUI desktop entry ------------------------------------------------------
 grep -qx 'Type=Application' "$GUI_DESKTOP" || fail "GUI desktop entry Type is wrong"
@@ -188,7 +253,9 @@ fi
 grep -q "boot-repair-legacy_${VERSION}-etch1_amd64.deb" "$TMP/dry-run.log" \
     || fail "dry-run did not report the expected artifact name"
 
-if LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --output "$TMP/offetch-out" \
+# Off-Etch real builds use the default (generated) helper so the mandatory
+# drift gate passes and the refusal is the documented Etch message.
+if "$PKG" --output "$TMP/offetch-out" \
         > "$TMP/offetch.log" 2>&1; then
     fail "package-legacy.sh attempted a real build off-Etch"
 fi
@@ -197,12 +264,33 @@ if find "$TMP/offetch-out" -name '*.deb' -print 2>/dev/null | grep -q .; then
     fail "off-Etch refusal still produced a .deb"
 fi
 
-if LEGACY_HELPER_SRC="$TMP/does-not-exist.sh" "$PKG" --dry-run --stage-dir "$TMP/stage-missing" \
+if LEGACY_HELPER_SRC="$TMP/does-not-exist.sh" "$PKG" --dry-run --stage-dir "$TMP/out-missing/stage" \
         > "$TMP/missing.log" 2>&1; then
     fail "package-legacy.sh accepted a missing helper source"
 fi
 grep -q 'LEGACY_HELPER_SRC' "$TMP/missing.log" \
     || fail "missing-helper error does not name the documented LEGACY_HELPER_SRC variable"
+
+# --- A12-01 stage_tree rm -rf whitelist --------------------------------------
+# The stage tree must live inside the output directory: a stage path outside
+# it is refused before rm -rf and never wipes anything.
+mkdir -p "$TMP/precious"
+printf 'keep\n' > "$TMP/precious/sentinel"
+if LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --dry-run \
+        --stage-dir "$TMP/precious" --output "$OUT" \
+        > "$TMP/stage-refuse.log" 2>&1; then
+    fail "stage_tree accepted a stage path outside the output directory"
+fi
+grep -q 'refusing to stage outside the output directory' "$TMP/stage-refuse.log" \
+    || fail "stage refusal message is unclear"
+[[ -f "$TMP/precious/sentinel" ]] \
+    || fail "stage refusal wiped an out-of-output tree"
+if LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --dry-run \
+        --stage-dir "$OUT" --output "$OUT" \
+        > "$TMP/stage-refuse2.log" 2>&1; then
+    fail "stage_tree accepted the output directory itself as the stage tree"
+fi
+[[ -d "$OUT" ]] || fail "refused stage should not have removed the output directory"
 
 # --- --install-vm: documented, dry-run safe, off-Etch refused ---------------
 "$PKG" --help | grep -q -- '--dry-run' || fail "package-legacy.sh --help is missing --dry-run"
@@ -210,7 +298,7 @@ grep -q 'LEGACY_HELPER_SRC' "$TMP/missing.log" \
 "$PKG" --help | grep -q -- '--install-vm' || fail "package-legacy.sh --help is missing --install-vm"
 
 if ! LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --dry-run --install-vm \
-        --stage-dir "$TMP/stage-install" --output "$TMP/out-install" \
+        --stage-dir "$TMP/out-install/stage" --output "$TMP/out-install" \
         > "$TMP/dry-run-install.log" 2>&1; then
     cat "$TMP/dry-run-install.log" >&2
     fail "scripts/package-legacy.sh --dry-run --install-vm failed"
@@ -221,7 +309,7 @@ if find "$TMP/out-install" -name '*.deb' -print | grep -q .; then
     fail "--dry-run --install-vm produced a .deb"
 fi
 
-if LEGACY_HELPER_SRC="$FIXTURE_HELPER" "$PKG" --install-vm --output "$TMP/offetch-install" \
+if "$PKG" --install-vm --output "$TMP/offetch-install" \
         > "$TMP/offetch-install.log" 2>&1; then
     fail "package-legacy.sh attempted a real --install-vm build off-Etch"
 fi

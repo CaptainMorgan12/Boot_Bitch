@@ -36,6 +36,12 @@
 #                            legacy/boot-repair-helper-legacy.sh
 #                            scripts/legacy/boot-repair-helper-legacy.sh
 #                            scripts/boot-repair-legacy-helper.sh
+#                          On a real build (--dry-run off) the drift gate is
+#                          mandatory: legacy/port.sh must exist, --check must
+#                          pass, and a LEGACY_HELPER_SRC override must be
+#                          byte-identical (cmp -s) to the generated
+#                          legacy/boot-repair-helper.sh — never NOTE-skipped.
+#                          Dry runs keep the override/missing-tool NOTE.
 #   LEGACY_ARCH            package architecture, default amd64.
 #   LEGACY_OUTPUT_DIR      output directory, default Development/build-legacy-package.
 #   LEGACY_STAGE_DIR       staging root, default <output>/stage.
@@ -143,11 +149,32 @@ find_helper()
 
 run_drift_check()
 {
+    _tool=''
+    if [ "$DRY_RUN" -eq 0 ]; then
+        # Real builds: the drift gate is mandatory and never NOTE-skipped
+        # (A10-16/A11-09).  legacy/port.sh must exist, a LEGACY_HELPER_SRC
+        # override must be byte-identical to the generated helper (cmp -s),
+        # and --check must pass before anything is packaged.
+        [ -f "$PORT_TOOL" ] \
+            || fail "legacy/port.sh is missing; the generated-helper drift gate cannot run before packaging (never skipped on a real build)."
+        if [ -n "$HELPER_SRC_ENV" ]; then
+            if [ -f "$ROOT_DIR/legacy/boot-repair-helper.sh" ] \
+                && cmp -s "$HELPER_SRC" "$ROOT_DIR/legacy/boot-repair-helper.sh"; then
+                printf 'NOTE: LEGACY_HELPER_SRC is byte-identical to the generated helper; the drift gate still runs.\n'
+            else
+                fail 'LEGACY_HELPER_SRC is set but is not byte-identical to the generated legacy/boot-repair-helper.sh; refusing to package an unverified helper.'
+            fi
+        fi
+        printf 'Checking generated legacy helper drift (%s --check)...\n' "${PORT_TOOL#"$ROOT_DIR"/}"
+        ( cd -- "$ROOT_DIR" && bash "$PORT_TOOL" --check ) \
+            || fail "$PORT_TOOL --check failed; regenerate the legacy helper before packaging."
+        return 0
+    fi
+    # Dry runs stay advisory: an override or a missing port tool is a NOTE.
     if [ -n "$HELPER_SRC_ENV" ]; then
         printf 'NOTE: LEGACY_HELPER_SRC override set; skipping the generated-helper drift gate.\n'
         return 0
     fi
-    _tool=''
     for _candidate in "$PORT_TOOL" "$PORT_TOOL_FALLBACK"; do
         if [ -f "$_candidate" ]; then
             _tool="$_candidate"
@@ -221,6 +248,15 @@ stage_tree()
     _stage="$1"
     case "$_stage" in
         ''|'/'|'.'|'..') fail "refusing to stage into '$_stage'" ;;
+    esac
+    # A12-01 rm -rf whitelist: the stage tree must live inside the output
+    # directory, so a blank, unset or hostile override can never wipe an
+    # arbitrary tree (the output directory itself is refused, too, since it
+    # would erase the build artifacts).
+    case "$_stage" in
+        "$OUTPUT_DIR") fail "refusing to stage into the output directory itself: $_stage" ;;
+        "$OUTPUT_DIR"/*) ;;
+        *) fail "refusing to stage outside the output directory: $_stage" ;;
     esac
     rm -rf -- "$_stage"
     mkdir -p \
@@ -404,6 +440,11 @@ main()
         || fail "legacy helper source not found. Set LEGACY_HELPER_SRC=<path> (documented variable; see the script header)."
     [ -f "$HELPER_SRC" ] || fail "LEGACY_HELPER_SRC does not exist: $HELPER_SRC"
 
+    # The drift gate runs before the off-Etch refusal so a real build attempt
+    # can never skip it on any host (A10-16): a missing legacy/port.sh, an
+    # unverified LEGACY_HELPER_SRC override or a drifted helper aborts here.
+    run_drift_check
+
     if [ "$DRY_RUN" -eq 0 ]; then
         if ! is_etch_host; then
             cat >&2 <<'EOF'
@@ -420,8 +461,6 @@ EOF
                 || fail "missing required Etch packaging command: $_cmd"
         done
     fi
-
-    run_drift_check
 
     if [ -n "$STAGE_DIR_OVERRIDE" ]; then
         STAGE="$STAGE_DIR_OVERRIDE"

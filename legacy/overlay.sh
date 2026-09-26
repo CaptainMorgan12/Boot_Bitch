@@ -208,17 +208,22 @@ legacy_grub_legacy_target()
 }
 
 # Escape a token for a BRE (sed) pattern. The bracket class carries the
-# literal `]` first (the POSIX idiom); kernel-argument tokens never contain
-# backslashes, so the backslash itself is not in the class.
+# literal `]` first (the POSIX idiom: GNU sed/BRE has no escaped-] form) and
+# the backslash immediately after it (a backslash cannot be the first member
+# while `]` stays in the class: `[\\]` closes the bracket expression, so any
+# class starting with `\` loses the `]` member). A9-06: the backslash and `|`
+# are now members too - `|` is the delimiter the call sites use, so a raw `|`
+# in a token would terminate the s-command pattern.
 legacy_grub_sed_escape()
 {
-    printf '%s' "$1" | sed 's/[].*^$[]/\\&/g'
+    printf '%s' "$1" | sed 's/[]\.*^$|[]/\\&/g'
 }
 
-# Escape a token for an ERE (grep -E) pattern.
+# Escape a token for an ERE (grep -E) pattern. Same bracket-expression
+# constraint as legacy_grub_sed_escape: `]` first, backslash second.
 legacy_grub_grep_escape()
 {
-    printf '%s' "$1" | sed 's/[].[*^$+?|(){}]/\\&/g'
+    printf '%s' "$1" | sed 's/[]\.[*^$+?|(){}]/\\&/g'
 }
 
 # The kernel-line arguments managed by the menu.lst defoptions/kopt comments
@@ -259,11 +264,16 @@ legacy_grub_entry_declarations()
         | while IFS= read -r line; do
             if [[ "$line" == kernel\ * && -n "$managed" ]]; then
                 normalized="$line"
+                # A9-12: disable globbing while the managed tokens are split,
+                # so an argument carrying wildcard characters is never
+                # expanded against the working directory.
+                set -f
                 for token in $managed; do
                     escaped="$(legacy_grub_sed_escape "$token")"
                     normalized="$(printf '%s' "$normalized" \
                         | sed "s| $escaped | |g; s| $escaped\$||; s|^$escaped ||")"
                 done
+                set +f
                 printf '%s\n' "$normalized"
             else
                 printf '%s\n' "$line"
@@ -320,13 +330,18 @@ legacy_grub_guard_entries_preserved()
     # defoptions/kopt-managed argument (update-grub expands them).
     if [[ -n "$LEGACY_GRUB_MANAGED" ]]; then
         kernel_lines="$(legacy_grub_kernel_lines "$after")"
+        # A9-12: noglob around the managed-token split (see the declarations
+        # loop); restored on both exits so the caller never inherits it.
+        set -f
         for token in $LEGACY_GRUB_MANAGED; do
             escaped="$(legacy_grub_grep_escape "$token")"
             if ! printf '%s\n' "$kernel_lines" | grep -qE "(^|[[:space:]])$escaped([[:space:]]|$)"; then
                 log "ERROR: GRUB legacy regeneration dropped the defoptions/kopt-managed argument '$token'; the target configuration was rolled back." | tee -a "$SESSION_LOG"
+                set +f
                 return 1
             fi
         done
+        set +f
     fi
     return 0
 }
@@ -687,14 +702,22 @@ run_selected_chroot()
 # token of /etc/X11/default-display-manager), or return 1.
 legacy_sysv_display_manager_entry()
 {
-    local entry=""
+    local entry="" canonical=""
     [[ -r "$TARGET_ROOT/etc/X11/default-display-manager" ]] || return 1
     while read -r entry _ignored; do
         [[ -n "$entry" && "${entry:0:1}" != "#" ]] || continue
         case "$entry" in
-            /usr/bin/*|/usr/sbin/*) printf '%s\n' "$entry"; return 0 ;;
+            /usr/bin/*|/usr/sbin/*) ;;
             *) return 1 ;;
         esac
+        # A9-10: refuse entries whose lexical canonicalization differs from
+        # the raw token (. / .. / // segments, e.g. /usr/bin/../sbin/kdm).
+        # legacy_realpath -m resolves the segments without touching the
+        # filesystem; an uncanonical token (or a failing resolver) is refused.
+        canonical="$(legacy_realpath -m "$entry" 2>/dev/null || true)"
+        [[ -n "$canonical" && "$canonical" == "$entry" ]] || return 1
+        printf '%s\n' "$entry"
+        return 0
     done < "$TARGET_ROOT/etc/X11/default-display-manager"
     return 1
 }
@@ -1145,17 +1168,11 @@ legacy_run_file_copy()
     fi
 }
 
-run_chroot_shell()
-{
-    legacy_require_feature shell
-    run_chroot_shell_modern "$@"
-}
-
-run_host_shell()
-{
-    legacy_require_feature host-shell
-    run_host_shell_modern "$@"
-}
+# NOTE (A11-08): run_chroot_shell / run_host_shell are defined exactly once
+# each, further down, where they branch on HOST_COMMAND_GUARD.  An earlier
+# plain-delegate pair used to sit here and was shadowed by those definitions
+# (dead code, removed); port.sh's verify_function_definitions now fails the
+# build if any function name is ever defined twice again.
 
 # Legacy mount-options filter.  The generated helper adds `noload` to the
 # read-only ext2/ext3/ext4 mounts (the root ro mount, the boot-entry ro mount
@@ -1260,13 +1277,23 @@ legacy_unlock_keyfile_from_stdin()
 {
     local keyfile="${1:-}" passphrase=""
     [[ -n "$keyfile" ]] || fail "Internal unlock keyfile error."
-    IFS= read -r passphrase || true
+    # A9-14: cap the first line at 1024 characters.  `read -n` stops at the
+    # cap even when the line continues, so a full-cap read proves the line
+    # was truncated (the exact-1024 case is refused too - the boundary is
+    # indistinguishable from truncation).
+    IFS= read -r -n 1024 passphrase || true
+    if [[ ${#passphrase} -eq 1024 ]]; then
+        printf 'UNLOCK_AUTH_FAILED=1\n' >&2
+        fail "The LUKS passphrase is longer than 1024 characters; refusing."
+    fi
     passphrase="${passphrase%$'\r'}"
     if [[ -z "$passphrase" ]]; then
         printf 'UNLOCK_AUTH_FAILED=1\n' >&2
         fail "An empty LUKS passphrase was received on stdin."
     fi
-    : > "$keyfile" || fail "Cannot create the session keyfile."
+    # A9-02: create the session keyfile umask-insensitively so no
+    # world-readable window exists between creation and the chmod.
+    ( umask 077; : > "$keyfile" ) || fail "Cannot create the session keyfile."
     chmod 600 "$keyfile" || fail "Cannot restrict the session keyfile."
     printf '%s' "$passphrase" > "$keyfile" || fail "Cannot write the session keyfile."
     passphrase=""
@@ -1276,18 +1303,29 @@ legacy_unlock_keyfile_from_stdin()
 # Read the LUKS passphrase from the GUI's mode-600 keyfile argument
 # (Qt 3.3.7 QProcess cannot deliver stdin), strip exactly one trailing CR/LF
 # and write it to the mode-600 session keyfile. The caller deletes the
-# argument file before the open attempt and the session keyfile after it.
+# session keyfile after the open attempt; the argument file itself is NEVER
+# deleted here (the Qt3 GUI unlinks its own file when the command finishes).
 legacy_unlock_keyfile_from_file()
 {
-    local source="${1:-}" keyfile="${2:-}" passphrase=""
+    local source="${1:-}" keyfile="${2:-}" passphrase="" keyfile_size=""
     [[ -n "$source" && -n "$keyfile" ]] || fail "Internal unlock keyfile error."
-    IFS= read -r passphrase < "$source" || true
+    # A9-14: stat sanity cap before anything is read from the file.
+    keyfile_size="$(stat -c '%s' -- "$source" 2>/dev/null || true)"
+    [[ -n "$keyfile_size" ]] || fail "Unable to stat the unlock keyfile."
+    [[ "$keyfile_size" -le 65536 ]] \
+        || fail "The unlock keyfile exceeds the 65536-byte sanity cap; refusing."
+    IFS= read -r -n 1024 passphrase < "$source" || true
+    if [[ ${#passphrase} -eq 1024 ]]; then
+        printf 'UNLOCK_AUTH_FAILED=1\n' >&2
+        fail "The LUKS passphrase is longer than 1024 characters; refusing."
+    fi
     passphrase="${passphrase%$'\r'}"
     if [[ -z "$passphrase" ]]; then
         printf 'UNLOCK_AUTH_FAILED=1\n' >&2
         fail "An empty LUKS passphrase was read from the keyfile."
     fi
-    : > "$keyfile" || fail "Cannot create the session keyfile."
+    # A9-02: umask-insensitive creation (see the stdin form).
+    ( umask 077; : > "$keyfile" ) || fail "Cannot create the session keyfile."
     chmod 600 "$keyfile" || fail "Cannot restrict the session keyfile."
     printf '%s' "$passphrase" > "$keyfile" || fail "Cannot write the session keyfile."
     passphrase=""
@@ -1415,6 +1453,13 @@ mount_target_resolver()
     fi
     mkdir -p -- "$(dirname -- "$destination")"
     if [[ -e "$destination" ]]; then
+        # A9-09: a destination that already equals the recovery-host resolver
+        # is the leftover copy of an interrupted session whose backup was
+        # lost.  Backing it up again would preserve a polluted file as the
+        # target's "original"; refuse and name the scenario instead.
+        if cmp -s -- "$destination" /etc/resolv.conf 2>/dev/null; then
+            fail "The target resolver already holds the recovery-host copy from an interrupted session; refusing to re-backup a polluted file. Restore the target's original $destination manually and retry."
+        fi
         LEGACY_RESOLVER_BACKUP="$SESSION_DIR/resolv.conf.target.before"
         cp -a -- "$destination" "$LEGACY_RESOLVER_BACKUP" \
             || fail "Unable to back up the target resolver before the temporary copy."
@@ -1432,12 +1477,21 @@ cleanup()
 {
     local rc=$?
     if [[ -n "$LEGACY_RESOLVER_DESTINATION" ]]; then
-        if [[ -n "$LEGACY_RESOLVER_BACKUP" && -e "$LEGACY_RESOLVER_BACKUP" ]]; then
-            cp -a -- "$LEGACY_RESOLVER_BACKUP" "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null \
-                || log "WARN: could not restore the target resolver copy." | tee -a "$SESSION_LOG"
-            rm -f -- "$LEGACY_RESOLVER_BACKUP" 2>/dev/null || true
+        # A9-09: restore only while the destination still equals the
+        # recovery-host resolver (the copy we made).  A destination that was
+        # changed by the user or another tool after the copy is never
+        # overwritten: log the skip and keep the backup as evidence.
+        if [[ -e "$LEGACY_RESOLVER_DESTINATION" ]] \
+            && cmp -s -- "$LEGACY_RESOLVER_DESTINATION" /etc/resolv.conf 2>/dev/null; then
+            if [[ -n "$LEGACY_RESOLVER_BACKUP" && -e "$LEGACY_RESOLVER_BACKUP" ]]; then
+                cp -a -- "$LEGACY_RESOLVER_BACKUP" "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null \
+                    || log "WARN: could not restore the target resolver copy." | tee -a "$SESSION_LOG"
+                rm -f -- "$LEGACY_RESOLVER_BACKUP" 2>/dev/null || true
+            else
+                rm -f -- "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null || true
+            fi
         else
-            rm -f -- "$LEGACY_RESOLVER_DESTINATION" 2>/dev/null || true
+            log "ERROR: the resolver destination no longer equals the recovery-host resolver (changed by the user or another tool); the target's original file was NOT overwritten and the pre-copy backup was kept at $LEGACY_RESOLVER_BACKUP." | tee -a "$SESSION_LOG"
         fi
         LEGACY_RESOLVER_DESTINATION=""
         LEGACY_RESOLVER_BACKUP=""
@@ -1459,6 +1513,59 @@ legacy_blkid_value_path()
         value="$("$real" -- "$path" 2>/dev/null | head -n1 | sed -n 's/.*TYPE="\([^"]*\)".*/\1/p' || true)"
     fi
     printf '%s\n' "$value"
+}
+
+# A9-02: create the root-owned mode-0700 session directory when none exists
+# (the unlock verb runs before prepare_target in a session).  prepare_target
+# reuses the directory afterwards instead of replacing it with a fresh one.
+legacy_unlock_ensure_session()
+{
+    if [[ -z "$SESSION_DIR" ]]; then
+        SESSION_DIR="$(mktemp -d "$STATE_ROOT/session.XXXXXX")" \
+            || fail "Unable to create the session directory for unlock."
+        chmod 0700 -- "$SESSION_DIR" \
+            || fail "Unable to secure the session directory for unlock."
+        SESSION_LOG="$SESSION_DIR/session.log"
+        touch "$SESSION_LOG" || fail "Unable to create the session log for unlock."
+    fi
+}
+
+# A9-01: the caller-supplied unlock keyfile must be a regular file whose
+# resolved path equals the raw argument, so a path that resolves through ANY
+# symlink (final component or intermediate directory) is refused before the
+# file is ever read.
+legacy_unlock_keyfile_path_safe()
+{
+    local keyfile_arg="$1" real=""
+    [[ -f "$keyfile_arg" && ! -L "$keyfile_arg" ]] || return 1
+    real="$(realpath -- "$keyfile_arg" 2>/dev/null || true)"
+    [[ -n "$real" && "$real" == "$keyfile_arg" ]] || return 1
+    return 0
+}
+
+# A9-01: prove the keyfile ownership instead of accepting the effective uid.
+#   - SUDO_UID present (sudo recorded the invoker): the file uid must equal
+#     SUDO_UID and a given --key-owner must equal it too;
+#   - no SUDO_UID: a non-zero --key-owner must match the file uid (the
+#     gksu/gksudo case, which records no SUDO_UID);
+#   - anything else has no provable owner and fails closed.
+legacy_unlock_keyfile_owner_proven()
+{
+    local keyfile_arg="$1" key_owner_arg="${2:-}" uid=""
+    uid="$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || true)"
+    [[ -n "$uid" ]] || return 1
+    if [[ -n "${SUDO_UID:-}" ]]; then
+        [[ "$uid" == "$SUDO_UID" ]] || return 1
+        if [[ -n "$key_owner_arg" ]]; then
+            [[ "$key_owner_arg" == "$SUDO_UID" ]] || return 1
+        fi
+        return 0
+    fi
+    if [[ -n "$key_owner_arg" && "$key_owner_arg" != "0" ]]; then
+        [[ "$uid" == "$key_owner_arg" ]] || return 1
+        return 0
+    fi
+    return 1
 }
 
 unlock_target()
@@ -1532,36 +1639,25 @@ unlock_target()
 
     # The passphrase arrives either on stdin (one trailing newline/CR is
     # tolerated) or through the GUI's --key-file argument (a mode-600 regular
-    # file owned by the caller, because Qt 3.3.7 QProcess cannot deliver
-    # stdin). Both channels land in a mode-600 session keyfile that is
-    # deleted on every path, failure included; the argument file is deleted
-    # before the open attempt and is never logged.
+    # file whose ownership can be proven, because Qt 3.3.7 QProcess cannot
+    # deliver stdin). Both channels land in a mode-600 session keyfile that
+    # is deleted on every path, failure included. The helper NEVER deletes a
+    # caller-supplied keyfile: the Qt3 GUI unlinks its own file when the
+    # command finishes.
     local keyfile=""
     if [[ -n "$keyfile_arg" ]]; then
-        [[ -f "$keyfile_arg" && ! -L "$keyfile_arg" ]] \
-            || fail "The unlock keyfile is not a regular file: $keyfile_arg"
-        # The helper may run as root under sudo or gksu; the GUI passes its
-        # own uid as --key-owner. Accept the keyfile when its owner equals
-        # that uid, or SUDO_UID (sudo recorded the invoker), or the effective
-        # uid (a direct root run). A foreign-owned file still fails.
-        local accepted=0
-        if [[ -n "$key_owner_arg" ]] \
-            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$key_owner_arg" ]]; then
-            accepted=1
-        fi
-        if (( accepted == 0 )) && [[ -n "${SUDO_UID:-}" ]] \
-            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$SUDO_UID" ]]; then
-            accepted=1
-        fi
-        if (( accepted == 0 )) \
-            && [[ "$(stat -c '%u' -- "$keyfile_arg" 2>/dev/null || printf x)" == "$(id -u)" ]]; then
-            accepted=1
-        fi
-        (( accepted == 1 )) \
-            || fail "The unlock keyfile is not owned by the calling user."
+        legacy_unlock_keyfile_path_safe "$keyfile_arg" \
+            || fail "The unlock keyfile is not a plain, symlink-free regular file: $keyfile_arg"
+        legacy_unlock_keyfile_owner_proven "$keyfile_arg" "$key_owner_arg" \
+            || fail "The unlock keyfile owner cannot be proven; refusing."
+        # A9-02: the unlock verb runs before prepare_target, so the session
+        # directory does not exist yet.  Create it first (root-owned, mode
+        # 0700) so the passphrase keyfile never lands at /unlock-keyfile and
+        # the session log has a home; prepare_target reuses it afterwards.
+        legacy_unlock_ensure_session
         keyfile="$(legacy_unlock_keyfile_from_file "$keyfile_arg" "$SESSION_DIR/unlock-keyfile")"
-        rm -f -- "$keyfile_arg"
     else
+        legacy_unlock_ensure_session
         keyfile="$(legacy_unlock_keyfile_from_stdin "$SESSION_DIR/unlock-keyfile")"
     fi
 
@@ -1690,9 +1786,9 @@ run_chroot_shell()
 # The modern browse-target protocol base64-encodes directory names, but Qt
 # 3.3.7 has no QByteArray::fromBase64 for the GUI side.  The legacy port
 # emits the same BROWSE_ENTRY records with the raw name, percent-encoding
-# only the three record-breaking bytes (%, CR, LF); the Qt3 picker decodes
-# them inline.  A directory whose name embeds a newline stays unlistable on
-# the Qt3 picker (documented deviation).
+# only the four record-breaking bytes (%, TAB, CR, LF); the Qt3 picker
+# decodes them inline.  A directory whose name embeds a newline stays
+# unlistable on the Qt3 picker (documented deviation).
 browse_target_directory()
 {
     local virtual_path="$1" candidate root_real candidate_real entry name encoded
@@ -1714,7 +1810,9 @@ browse_target_directory()
 
     while IFS= read -r -d '' entry; do
         name="${entry##*/}"
-        encoded="$(printf '%s' "$name" | sed -e 's/%/%25/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g' | tr -d '\n')"
+        # A9-13: % first (so the later escapes are not re-escaped), then TAB,
+        # CR and LF in that order.
+        encoded="$(printf '%s' "$name" | sed -e 's/%/%25/g' -e 's/\t/%09/g' -e 's/\r/%0D/g' -e 's/\n/%0A/g' | tr -d '\n')"
         printf 'BROWSE_ENTRY\t%s\n' "$encoded"
     done < <(find "$candidate_real" -mindepth 1 -maxdepth 1 -type d ! -type l -print0)
 }
