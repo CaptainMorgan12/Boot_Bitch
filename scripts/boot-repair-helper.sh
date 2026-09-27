@@ -1864,7 +1864,29 @@ mount_target_boot_entry()
 {
     local mp="$1" requested_mode="${2:-rw}" entry spec fstype options resolved dest mount_options
     entry="$(fstab_entry_for_mountpoint "$mp")"
-    [[ -n "$entry" ]] || return 0
+    if [[ -z "$entry" ]]; then
+        # No fstab entry: a helper-recorded read-only mount (an ESP discovered
+        # by GPT type) must still be promoted when rw is requested, so the
+        # later write stages see it read-write.  Foreign pre-existing mounts
+        # are never remounted.
+        if [[ "$requested_mode" == "rw" ]]; then
+            dest="$(target_path "$mp")"
+            if mountpoint -q "$dest" 2>/dev/null; then
+                local recorded_mount=false recorded_path
+                for recorded_path in "${MOUNTS[@]:-}"; do
+                    if [[ "$recorded_path" == "$dest" ]]; then
+                        recorded_mount=true
+                        break
+                    fi
+                done
+                if [[ "$recorded_mount" == true ]]; then
+                    log "Remounting target $mp read-write"
+                    mount -o remount,rw "$dest"
+                fi
+            fi
+        fi
+        return 0
+    fi
     IFS=$'\t' read -r spec fstype options <<< "$entry"
 
     resolved="$(resolve_fstab_source "$spec")"
@@ -9766,6 +9788,21 @@ efi_unavailable_reason()
         fi
         return 1
     fi
+    # A target whose ESP cannot be derived must report unavailable: the cached
+    # capability line drives Full Repair stage selection, and scheduling an EFI
+    # stage whose mandatory preflight can never derive the ESP turns a
+    # plan-time gap into a mid-preflight failure.  Derivable means a mounted
+    # ESP, an fstab ESP entry resolving to a same-disk FAT block device, or
+    # exactly one ESP partition on the selected disk.  The Arch branch below
+    # keeps its own (stricter) resolved-ESP gate and message, and the running
+    # host scope keeps its live-mount evidence (TARGET_ROOT is empty before a
+    # target is mounted, so the probe must never read the recovery host fstab).
+    if [[ "$TARGET_DISTRO_FAMILY" != arch ]] \
+        && (( RUNNING_HOST_MODE != 1 )) && [[ -n "${TARGET_ROOT:-}" ]] \
+        && ! target_esp_derivable; then
+        printf 'no EFI System Partition is present or derivable on the selected disk (no mounted ESP, no resolvable fstab ESP entry and no ESP partition)'
+        return 1
+    fi
     if [[ "$TARGET_DISTRO_FAMILY" == arch ]]; then
         esp_root="$(profile_esp_root 2>/dev/null || true)"
         if [[ -z "$esp_root" ]]; then
@@ -13246,6 +13283,20 @@ run_target_config()
     if [[ "$action" == "read" ]]; then
         prepare_target ro
         maybe_mount_target_path "$virtual_path" ro
+        # A missing configuration parent is backend evidence, not an error: an
+        # Alpine extlinux target has no /etc/default (and therefore no GRUB
+        # configuration path), so the read degrades to an informative skip
+        # instead of ERROR-level noise.  The containment checks still apply to
+        # every path whose parent exists.
+        if [[ ! -d "$TARGET_ROOT$(dirname -- "$virtual_path")" \
+              && ! -L "$TARGET_ROOT$(dirname -- "$virtual_path")" ]]; then
+            [[ -n "${TARGET_BOOTLOADER_BACKEND:-}" ]] || profile_target_backends
+            log "Configuration read skipped: $virtual_path has no parent directory in the target (bootloader backend: ${TARGET_BOOTLOADER_BACKEND:-unknown})." | tee -a "$SESSION_LOG"
+            printf 'Target configuration: %s\n' "$virtual_path"
+            printf 'Inspection is read-only.\n\n'
+            printf 'Not present in this target (bootloader backend: %s); no configuration path exists.\n' "${TARGET_BOOTLOADER_BACKEND:-unknown}"
+            return 0
+        fi
         path="$(target_config_path "$virtual_path")"
         [[ -f "$path" && -r "$path" ]] || fail "Target configuration is unavailable or unreadable: $virtual_path"
         printf 'Target configuration: %s\n' "$virtual_path"
@@ -13284,6 +13335,15 @@ run_target_config()
 
     prepare_target rw
     maybe_mount_target_path "$virtual_path" rw
+    # Same backend-evidence check as the read path: a missing parent means the
+    # configuration does not exist in this target.  Refuse creation with the
+    # explicit message instead of the parent-resolution error, without
+    # weakening the guard (a write still fails closed and never creates a
+    # configuration path the target does not have).
+    if [[ ! -d "$TARGET_ROOT$(dirname -- "$virtual_path")" \
+          && ! -L "$TARGET_ROOT$(dirname -- "$virtual_path")" ]]; then
+        fail "Target configuration does not exist; refusing to create: $virtual_path"
+    fi
     path="$(target_config_path "$virtual_path")"
     [[ -f "$path" ]] || fail "Target configuration does not exist; refusing to create: $virtual_path"
     mode="$(stat -c '%a' -- "$path")" || fail "Unable to inspect target configuration mode."
@@ -16181,6 +16241,77 @@ detect_mounted_esp()
         return 0
     done
     return 1
+}
+
+# Exactly-one ESP partition of the selected disk, discovered by GPT type.
+# Zero or several ESP partitions are not a guessable situation and yield
+# nothing.  Read-only; shared by the efi capability gate and the repair
+# preflight mount.
+target_esp_partition_by_type()
+{
+    local disk_name count=0 found="" line
+    [[ -n "${TARGET_DISK:-}" ]] && is_block_device "$TARGET_DISK" || return 1
+    disk_name="$(basename -- "$TARGET_DISK")"
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        count=$((count + 1))
+        found="$line"
+    done < <(lsblk -rno NAME,PARTTYPE "$TARGET_DISK" 2>/dev/null \
+        | awk -v disk="$disk_name" '$1 != disk && toupper($2) == "C12A7328-F81F-11D2-BA4B-00A0C93EC93B" {print $1}')
+    (( count == 1 )) || return 1
+    printf '%s\n' "$found"
+}
+
+# True when the EFI preflight can derive an ESP for the selected target:
+# a mounted ESP (profile-resolved), an fstab /boot/efi, /efi or /boot entry
+# whose device is a FAT block device on the selected disk, or exactly one
+# ESP partition on the selected disk (GPT type) when the /boot/efi mountpoint
+# exists.  Read-only; keeps the efi capability line consistent with the
+# mandatory preflight so a Full Repair plan never schedules an EFI stage it
+# can never derive.
+target_esp_derivable()
+{
+    local mp entry spec fstype resolved actual
+    [[ "${TARGET_ESP_MOUNT:-unresolved}" != unresolved ]] && return 0
+    for mp in /boot/efi /efi /boot; do
+        entry="$(fstab_entry_for_mountpoint "$mp" 2>/dev/null || true)"
+        [[ -n "$entry" ]] || continue
+        IFS=$'\t' read -r spec fstype _ <<<"$entry"
+        resolved="$(resolve_fstab_source "$spec" 2>/dev/null || true)"
+        [[ -n "$resolved" ]] && is_block_device "$resolved" || continue
+        same_single_top_disk "$TARGET_DISK" "$resolved" || continue
+        actual="$(lsblk -ndo FSTYPE "$resolved" 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]' || true)"
+        case "$actual" in
+            vfat|fat|fat16|fat32|msdos) return 0 ;;
+        esac
+    done
+    [[ -d "$(target_path /boot/efi)" ]] \
+        && [[ -n "$(target_esp_partition_by_type 2>/dev/null || true)" ]]
+}
+
+# Mount an unmounted ESP discovered by GPT type at /boot/efi.  Repair
+# preflight paths only; guarded exactly like a fstab-driven boot entry
+# (same-disk gate, FAT proof, destination containment, recorded mount).
+mount_target_esp_by_type()
+{
+    local requested_mode="${1:-ro}" esp_part source dest
+    [[ "$requested_mode" == "ro" || "$requested_mode" == "rw" ]] || return 1
+    [[ "${TARGET_ESP_MOUNT:-unresolved}" == unresolved ]] || return 0
+    esp_part="$(target_esp_partition_by_type)" || return 1
+    source="/dev/$esp_part"
+    is_block_device "$source" || return 1
+    case "$(lsblk -ndo FSTYPE "$source" 2>/dev/null | head -n1 | tr '[:upper:]' '[:lower:]' || true)" in
+        vfat|fat|fat16|fat32|msdos) ;;
+        *) return 1 ;;
+    esac
+    same_single_top_disk "$TARGET_DISK" "$source" || return 1
+    dest="$(target_path /boot/efi)"
+    validate_target_mount_dest "$dest" || return 1
+    mountpoint -q "$dest" 2>/dev/null && return 0
+    mkdir -p -- "$dest"
+    mount_recorded "$source" "$dest" -o "$requested_mode" || return 1
+    log "Mounted target ESP discovered by GPT type: $source at /boot/efi ($requested_mode)" | tee -a "$SESSION_LOG"
+    return 0
 }
 
 # Read-only vendor UKI builder check.  The builder path matches
@@ -19743,6 +19874,11 @@ run_repair()
     mount_target_boot_entry "/boot" ro
     mount_target_boot_entry "/boot/efi" ro
     mount_target_boot_entry "/efi" ro
+    # A UEFI target whose fstab carries no ESP entry is still repairable: the
+    # ESP partition is discovered by GPT type on the selected disk and mounted
+    # through the same guarded boot-entry path (same-disk gate, FAT proof,
+    # destination containment).  Zero or several ESP partitions are left alone.
+    mount_target_esp_by_type ro || true
     profile_target_backends
     validate_repair_stages_against_backends "${REPAIR_STAGES[@]}"
     if [[ "$efi_requested" == true ]]; then

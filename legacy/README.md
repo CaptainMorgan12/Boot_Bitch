@@ -36,9 +36,13 @@ and is **not shipped** in the `.deb` any more.
 CLI. It mirrors the Qt6 information hierarchy where Qt3 allows it: a global
 header (the real Boot Bitch icon resized from the modern master PNG,
 **Boot Bitch**, the recovery subtitle, the
-**GUARDED REPAIR • 0.2.25** badge flush against the window's right edge and
-a reserved-slot **Working...** busy
-indicator shown only while a helper command runs), **Systems** leading with
+**GUARDED REPAIR • 0.2.25** badge flush against the window's right edge and,
+below it in a reserved row right-aligned under the badge, a busy indicator
+that shows the modern working text only while a helper command runs —
+**Running all diagnostics** / **Running diagnostic: <title>** /
+**Regenerating diagnostics automatically** / **Unlocking <device>** or the
+tool/operation title — animated with a lightweight QTimer ellipsis cycle
+(0..3 trailing dots, no threads) and keeping the header layout stable), **Systems** leading with
 the permanently-protected running-host card (green-check indicator,
 probe-based identity/storage line, **PROTECTED** badge, **Details** /
 **Host Maintenance** / **Make Default** actions) above the **Available repair

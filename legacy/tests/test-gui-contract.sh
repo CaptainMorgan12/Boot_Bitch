@@ -195,6 +195,19 @@ for marker in 'writeUnlockKeyfile' 'discardUnlockKeyfile' \
     'legacySmokeSettingsIsolation' 'applyLegacySettingsDefaults'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-9 loop-2 marker missing: $marker"
 done
+# Cycle 16: the parsed --log-dir is published BEFORE the window is
+# constructed, so the constructor's readiness lines follow it and a
+# HOME-preserved root run can never litter the invoking user's log tree.
+for marker in 'legacySetInitialLogDirectory' 'legacyInitialLogDirectory'; do
+    grep -q "$marker" "$WINDOW" || fail "pre-construction log-dir marker missing: $marker"
+done
+MAIN_SRC="$GUI_DIR/src/main.cpp"
+grep -q 'legacySetInitialLogDirectory(logDir)' "$MAIN_SRC" \
+    || fail "main() does not publish --log-dir before the window is constructed"
+awk '/legacySetInitialLogDirectory\(logDir\)/{iso=NR} /LegacyMainWindow window;/{win=NR} END{exit !(iso && iso < win)}' "$MAIN_SRC" \
+    || fail "--log-dir must be published before the window is constructed"
+grep -q 'path != m_logDirectory' "$WINDOW" \
+    || fail "setLogDirectory no longer skips the identical pre-construction directory"
 # Cycle 10 markers: --key-owner unlock channel, ASCII repair summary, the
 # wrapped confirmation helper and the /host save-log default.
 for marker in '"--key-owner"' 'getuid()' 'confirmWrapped' \
@@ -369,12 +382,30 @@ for removed in 'm_diskCombo' 'm_rootCombo' 'm_unlockCombo' \
     grep -q "$removed" "$WINDOW" && fail "removed Systems element still present: $removed"
 done
 # Global header (modern parity): icon, title, subtitle, version badge and the
-# reserved busy-indicator slot.
+# reserved busy-indicator slot (below the badge, animated with a QTimer).
 for marker in 'm_headerTitle' 'Boot Bitch' 'Linux recovery and boot-repair utility' \
     'm_headerBadge' 'GUARDED REPAIR' 'LEGACY_VERSION' 'legacyHeaderPixmap' \
-    'setPointSizeFloat' 'm_busyLabel' 'Working...' 'updateBusyIndicator'; do
+    'setPointSizeFloat' 'm_busyLabel' 'updateBusyIndicator' \
+    'm_busyTimer' 'advanceBusyAnimation' 'busyIndicatorText' 'busyRow'; do
     grep -q "$marker" "$WINDOW" || fail "global header marker missing: $marker"
 done
+# Cycle 16: the busy indicator sits BELOW the guarded-repair badge (modern
+# parity), carries the modern working text for the equivalent operation and
+# animates with a lightweight QTimer ellipsis cycle; the pre-parity
+# "Working..." text must be gone.
+for marker in 'busyRow->addStretch(1)' \
+    'busyRow->addWidget(m_busyLabel, 0, Qt::AlignRight)' \
+    '"Running all diagnostics"' '"Running diagnostic: %1"' \
+    '"Regenerating diagnostics automatically"' \
+    'kBusyAnimationIntervalMs' 'kBusyBadgeEdgeTolerance' \
+    'is not below the guarded-repair badge' \
+    'is not right-aligned with the guarded-repair badge' \
+    'QString::fromLatin1("Unlocking %1")' \
+    'm_pendingQuiet' 'm_pendingDiagnosticKey'; do
+    grep -q "$marker" "$WINDOW" || fail "busy-indicator parity marker missing: $marker"
+done
+grep -q 'Working\.\.\.' "$WINDOW" \
+    && fail "legacy busy indicator still uses the pre-parity Working... text"
 # Diagnostics parity: Selected diagnostic pane, Run All / Run Diagnostic,
 # Results + Copy/Save Results, no Cancel button.
 for marker in 'm_diagnosticList' 'm_runDiagnosticButton' 'Run Diagnostic' \
@@ -535,6 +566,15 @@ for marker in 'Save As...' 'Clear Register' 'New Session Log' 'Add Note' \
     'startNewSessionLog' 'addSessionNote' 'deleteSelectedSessionLog' \
     'm_priorLogBanner' 'Viewing a prior session log'; do
     grep -q "$marker" "$WINDOW" || fail "Logs parity marker missing: $marker"
+done
+# Cycle 16: the Logs Save As... dialog defaults to the mounted /host share
+# when it exists and is writable (the log directory stays the fallback), so
+# saved logs land on the etch-share disk for the documented offline mirror
+# fetch; the dialog still allows any directory.
+for marker in 'QString::fromLatin1("/host")' 'hostShare.isWritable()' \
+    'getSaveFileName(' 'save-log' \
+    'The host fetches the files offline: save to /host'; do
+    grep -q "$marker" "$WINDOW" || fail "save-as /host default marker missing: $marker"
 done
 grep -q 'Save log\.\.\.' "$WINDOW" && fail "Logs still shows the removed Save log... button"
 grep -q '"Clear log"' "$WINDOW" && fail "Logs still shows the removed Clear log button"

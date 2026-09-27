@@ -2416,6 +2416,7 @@ private slots:
     void repairTargetSelectionRegeneratesCompleteSet();
     void hostMaintenanceRequestsPrivilegedSessionOnce();
     void concurrentAuthorizationRequestsCoalesce();
+    void repairProgressDialogVisibleDuringAuthorizationWait();
     void authorizationFailureSurfacesPolkitAgentHint();
     void authorizationHintTracksDetectedBackendFamily();
     void authorizeNowRetriesAndSurfacesFreshFailure();
@@ -2431,6 +2432,7 @@ private slots:
     void busyIndicatorPaintsClassicStripedBar();
     void busyIndicatorCoversDiagnosticsAndFailedOperations();
     void busyIndicatorDoesNotShiftLayout();
+    void runAllDiagnosticsPaintsBusyIndicatorBeforeCompleting();
     void logsTabReorientsWithWindowWidth();
     void fileCopyButtonsDoNotOverlapAtMinimumWidth();
     void hostDriveSummaryWrapsAtMinimumWidth();
@@ -11947,6 +11949,97 @@ void MainWindowUiTest::concurrentAuthorizationRequestsCoalesce()
     window.m_uiTestPrivilegedSessionDelayMs = 0;
 }
 
+// The first user feedback of a repair must not wait for the (slow)
+// authorization/session handshake: the progress dialog is shown and painted
+// before ensurePrivilegedSession() is entered, so it is already visible while
+// the fake session is still held in its in-flight authorization delay and has
+// not received (or produced) a single byte yet.
+void MainWindowUiTest::repairProgressDialogVisibleDuringAuthorizationWait()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("auth-wait-requests.log"));
+    QVERIFY2(startRepairFakePrivilegedSession(window, capturePath),
+             "the scripted privileged session must start");
+
+    // Authorization is still pending when the repair starts: the fake session
+    // process is running, but the ready handshake has not happened. The seam
+    // holds ensurePrivilegedSession() in its in-flight delay, exactly like a
+    // live pkexec/Polkit conversation that has not resolved yet.
+    window.m_privilegedSessionReady = false;
+    window.m_uiTestPrivilegedSessionGranted = true;
+    window.m_uiTestPrivilegedSessionDelayMs = 250;
+    window.m_privilegedSessionRequestCount = 0;
+
+    // Sample while the flow is blocked inside the authorization delay: the
+    // progress dialog must already be visible and the busy indicator active
+    // while the session's first request/output has not arrived yet.
+    bool observedDialogDuringDelay = false;
+    bool observedBusyDuringDelay = false;
+    qint64 captureSizeAtObservation = -1;
+    QTimer probe;
+    probe.setInterval(5);
+    QObject::connect(&probe, &QTimer::timeout, &window, [&] {
+        if (window.m_privilegedSessionReady) {
+            return;
+        }
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || !dialog->isVisible()) {
+                continue;
+            }
+            // The progress dialog carries the output pane plus a Close button
+            // that stays disabled until the helper answers; the confirmation
+            // message boxes have neither.
+            if (!dialog->findChild<QPlainTextEdit *>()) {
+                continue;
+            }
+            auto *buttons = dialog->findChild<QDialogButtonBox *>();
+            if (!buttons) {
+                continue;
+            }
+            QPushButton *close = buttons->button(QDialogButtonBox::Close);
+            if (!close || close->isEnabled()) {
+                continue;
+            }
+            observedDialogDuringDelay = true;
+            observedBusyDuringDelay = !window.m_activeBusyOperations.isEmpty();
+            captureSizeAtObservation = QFileInfo(capturePath).size();
+            probe.stop();
+            return;
+        }
+    });
+    probe.start();
+    closeRepairProgressDialogWhenDone(&window);
+
+    // Validate dispatches without a confirmation dialog, so the progress
+    // dialog is the first Boot Bitch window of the flow.
+    QTreeWidgetItem *item = repairItem(window, QStringLiteral("validate"));
+    QVERIFY(item);
+    window.m_repairToolTree->setCurrentItem(item);
+    window.runSelectedRepairTool();
+
+    QVERIFY2(observedDialogDuringDelay,
+             "the repair progress dialog must be visible while authorization is still pending, before the helper session's first output arrives");
+    QVERIFY2(observedBusyDuringDelay,
+             "the busy indicator must be active while the authorization wait is pending");
+    QCOMPARE(captureSizeAtObservation, qint64(0));
+    QVERIFY(window.m_privilegedSessionReady);
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY2(capturedHelperArguments(capturePath).contains(QStringLiteral("validate")),
+             "the validate request must still be dispatched after the dialog-first reordering");
+    window.m_uiTestPrivilegedSessionDelayMs = 0;
+}
+
 namespace {
 
 // Attaches a finished session process whose merged output carries the pkexec
@@ -12740,6 +12833,50 @@ void MainWindowUiTest::busyIndicatorDoesNotShiftLayout()
     QCOMPARE(window.size(), settledWindowSize);
     QCOMPARE(window.m_tabs->geometry(), settledTabs);
     QCOMPARE(window.m_logView->geometry(), settledLogView);
+}
+
+// Run All is synchronous: without an explicit paint flush inside the flow no
+// timer can fire between the click and the finished report, so the busy
+// indicator could never be observed mid-run. The probe below only gets an
+// event-loop turn inside the flow's own processEvents() flush, which proves
+// the indicator is marked visible (and therefore painted) before the cache
+// reset and the diagnostic work run — the first feedback the user asked for.
+void MainWindowUiTest::runAllDiagnosticsPaintsBusyIndicatorBeforeCompleting()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    bool observedBusyDuringRun = false;
+    QString observedBusyLabel;
+    QTimer probe;
+    probe.setInterval(0);
+    QObject::connect(&probe, &QTimer::timeout, &window, [&] {
+        if (window.m_busyIndicator && window.m_busyIndicator->isVisible()) {
+            observedBusyDuringRun = true;
+            observedBusyLabel = window.m_busyStatusLabel
+                ? window.m_busyStatusLabel->text() : QString();
+            probe.stop();
+        }
+    });
+    probe.start();
+
+    window.runAllDiagnostics();
+
+    QVERIFY2(observedBusyDuringRun,
+             "the busy indicator must be flushed to the screen while Run All is still running, before the flow completes");
+    QVERIFY2(observedBusyLabel.contains(QStringLiteral("Running all diagnostics")),
+             "the busy label observed mid-run must carry the Run All operation label");
+    QVERIFY(window.m_busyIndicator->isHidden());
+    QVERIFY(window.m_activeBusyOperations.isEmpty());
+    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty(),
+             "the Run All report must still be cached after the paint flush");
 }
 
 void MainWindowUiTest::logsTabReorientsWithWindowWidth()

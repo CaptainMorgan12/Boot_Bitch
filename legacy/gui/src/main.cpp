@@ -291,6 +291,14 @@ int main(int argc, char **argv)
     if (smokeTest) {
         legacy::legacySetSmokeSettingsIsolation(true);
     }
+    // Cycle 16: publish the parsed --log-dir BEFORE the window is
+    // constructed, so the constructor's own readiness lines follow it (a
+    // root run with a preserved HOME must never write into the invoking
+    // user's log tree). setLogDirectory below then re-applies the same
+    // directory as a no-op.
+    if (!logDir.isEmpty()) {
+        legacy::legacySetInitialLogDirectory(logDir);
+    }
     legacy::LegacyMainWindow window;
     window.setHelperPath(helper);
     window.setElevationOverride(elevationOverride);

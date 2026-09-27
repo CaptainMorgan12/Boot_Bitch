@@ -69,6 +69,7 @@ class QSplitter;
 class QTabWidget;
 class QTable;
 class QTextEdit;
+class QTimer;
 class QSignalMapper;
 
 namespace legacy {
@@ -80,6 +81,11 @@ class HelperRunner;
 // smoke never reads or writes those files.
 void legacySetSmokeSettingsIsolation(bool enabled);
 bool legacySmokeSettingsIsolation();
+// Cycle 16: the parsed --log-dir is published here BEFORE the window is
+// constructed, so the constructor's own readiness lines follow it instead of
+// landing in the default $HOME log tree (see the cpp comment).
+void legacySetInitialLogDirectory(const QString &dir);
+QString legacyInitialLogDirectory();
 
 // One application-log register entry, tagged at capture time so the Logs
 // filter combo (modern 1:1) can select entries by kind: lines captured while
@@ -181,6 +187,9 @@ private slots:
     int toolIndexForTitle(const QString &title) const;
     void runScheduledAutoRefresh();
     void runSmokeStep();
+    // Advances the busy-indicator ellipsis animation (0..3 trailing dots
+    // behind the base working text) while a helper command runs.
+    void advanceBusyAnimation();
 
 private:
     void buildMenus();
@@ -254,9 +263,14 @@ private:
     // bracketed, Repair-tagged) appended after every repair command, built
     // from the parsed `Repair change status` lines.
     void appendRepairSummaryBlock(const ParsedTranscript &parsed, bool commandOk);
-    // Shows/hides the reserved header busy indicator ("Working...") from
-    // m_running; the fixed slot width keeps the header layout stable.
+    // Shows/hides the global busy indicator (modern parity) from m_running:
+    // a reserved row below the guarded-repair badge with the modern working
+    // text, animated by a plain QTimer cycling 0..3 trailing dots. The fixed
+    // row height keeps the header and the tab pages stable.
     void updateBusyIndicator();
+    // The exact working text the modern Qt6 GUI's busy status label shows
+    // for the equivalent in-flight operation (no helper command = empty).
+    QString busyIndicatorText() const;
     void updateScopeLabel();
     void updateElevationLabel();
     void updatePlanView();
@@ -369,6 +383,11 @@ private:
     QLabel *m_headerSubtitle;
     QLabel *m_headerBadge;
     QLabel *m_busyLabel;
+    // Lightweight busy animation state: a plain QTimer (no threads) cycles
+    // 0..3 trailing dots behind m_busyBaseText while a helper command runs.
+    QTimer *m_busyTimer;
+    int m_busyFrame;
+    QString m_busyBaseText;
     QLabel *m_systemsHeading;
     QLabel *m_targetsHeading;
     QLabel *m_repairHeading;
@@ -535,6 +554,10 @@ private:
     bool m_updatingSelection;
     bool m_running;
     bool m_pendingDiagnostic;
+    // Quiet diagnostic runs are the scheduled auto-regeneration; the busy
+    // indicator names them like the modern GUI does.
+    bool m_pendingQuiet;
+    QString m_pendingDiagnosticKey;
     bool m_pendingUnlock;
     bool m_pendingConfig;
     bool m_pendingShell;

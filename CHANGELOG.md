@@ -2,7 +2,23 @@
 
 ## Unreleased
 
-- (no unreleased changes yet)
+- Legacy GUI parity: the busy indicator moves out of the header row into a
+  reserved row below the GUARDED REPAIR badge (right-aligned under it, like
+  the modern Qt6 window), shows the modern working text for the operation in
+  flight (Running all diagnostics / Running diagnostic: <title> /
+  Regenerating diagnostics automatically / Unlocking <device> or the
+  tool/operation title) instead of the generic Working..., and animates with
+  a lightweight QTimer ellipsis cycle (0..3 trailing dots; no threads) while
+  keeping the header layout stable. The Logs Save As... default is pinned
+  down: with a writable /host share mounted the dialog starts there, the rig
+  is shut down and the share is mirrored host-side, so the saved log lands
+  under the host's shared folder; the dialog still allows any directory. The
+  legacy GUI contract gains static markers for the busy-indicator parity and
+  the save-as /host default. The parsed `--log-dir` is now applied before the
+  window is constructed, so a root-run session started with a preserved HOME
+  can no longer drop its first log lines into the invoking user's log tree
+  (the constructor's readiness preamble previously predated the `--log-dir`
+  move).
 
 ## 0.2.26 — 2026-09-26
 

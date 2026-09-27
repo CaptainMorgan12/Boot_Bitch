@@ -7667,26 +7667,21 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     m_privilegedOperationTitle = title;
     gate.armed = true;
 
-    QString authorizationError;
-    if (!ensurePrivilegedSession(&authorizationError)) {
-        if (!authorizationError.isEmpty() && !m_evidenceRefreshInProgress) {
-            QMessageBox::warning(this, QStringLiteral("Authorization unavailable"), authorizationError);
-        }
-        secret.fill('\0');
-        secret.clear();
-        return QStringLiteral("ERROR: %1\n").arg(authorizationError);
-    }
-
-    QPointer<QProcess> session = m_privilegedSession;
-    if (!session || session->state() == QProcess::NotRunning) {
-        secret.fill('\0');
-        secret.clear();
-        return QStringLiteral("ERROR: Privileged helper session is not running.\n");
-    }
+    // Immediate feedback: the busy indicator state set above only paints on
+    // the next event-loop turn. Flush the paint now — before the potentially
+    // slow helper resolution/staging, the authorization conversation or the
+    // request wait below — so the user sees the indicator the moment the
+    // action starts. User input stays excluded so no deferred click can slip
+    // a second operation in between the guards; the request gate is armed and
+    // every entry point refuses re-entrant requests anyway.
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     const QByteArray requestId = QByteArray::number(++m_privilegedRequestCounter);
     const bool hasSecret = !secret.isEmpty();
 
+    // Build the progress dialog before the (potentially slow) authorization
+    // and session handshake so the request can show it immediately: the window
+    // appears and paints first, and the blocking work starts after it.
     RepairProgressDialog dialog(this);
     dialog.setWindowTitle(title);
     dialog.resize(840, 540);
@@ -7694,7 +7689,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
 
     auto *layout = new QVBoxLayout(&dialog);
     auto *status = new QLabel(QStringLiteral(
-        "Using the authorized Boot Bitch administrator session. The GUI itself is still running as your normal user."));
+        "Preparing the Boot Bitch administrator session; authorization may be requested before the action starts."));
     status->setWordWrap(true);
     layout->addWidget(status);
 
@@ -7713,6 +7708,46 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     closeButton->setEnabled(false);
     layout->addWidget(buttons);
     connect(buttons, &QDialogButtonBox::rejected, &dialog, &RepairProgressDialog::reject);
+
+    if (showProgressDialog) {
+        // Immediate feedback for repairs and other dialog-backed actions:
+        // show and paint the progress window before any blocking
+        // authorization or session work starts. The dialog is already marked
+        // modal, so the main window stays input-blocked exactly like during
+        // the modal exec() loop this dialog will run in later.
+        dialog.show();
+        dialog.raise();
+        dialog.activateWindow();
+        QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
+
+    QString authorizationError;
+    if (!ensurePrivilegedSession(&authorizationError)) {
+        if (dialog.isVisible()) {
+            dialog.hide();
+        }
+        if (!authorizationError.isEmpty() && !m_evidenceRefreshInProgress) {
+            QMessageBox::warning(this, QStringLiteral("Authorization unavailable"), authorizationError);
+        }
+        secret.fill('\0');
+        secret.clear();
+        return QStringLiteral("ERROR: %1\n").arg(authorizationError);
+    }
+
+    QPointer<QProcess> session = m_privilegedSession;
+    if (!session || session->state() == QProcess::NotRunning) {
+        if (dialog.isVisible()) {
+            dialog.hide();
+        }
+        secret.fill('\0');
+        secret.clear();
+        return QStringLiteral("ERROR: Privileged helper session is not running.\n");
+    }
+
+    // The session is established; the already-visible dialog switches to the
+    // established-session status before the request is written.
+    status->setText(QStringLiteral(
+        "Using the authorized Boot Bitch administrator session. The GUI itself is still running as your normal user."));
 
     QByteArray wireBuffer;
     QString captured;
@@ -12677,6 +12712,16 @@ void MainWindow::runAllDiagnostics()
         // status message (or queues the full report) instead of being blocked.
         m_runAllDiagnosticsButton->setText(QStringLiteral("Running…"));
     }
+
+    // Immediate feedback: the busy indicator and the "Running…" button state
+    // set above only paint on the next event-loop turn. Flush the paint now,
+    // before the cache reset and the (potentially slow) privileged diagnostic
+    // request below. Re-entrancy is safe: m_diagnosticsRunInProgress is
+    // already set, so a click arriving during this flush is answered with the
+    // queued-run status message instead of starting a second run. User input
+    // stays excluded so deferred clicks are handled by those guards on the
+    // next normal event-loop turn.
+    QApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
 
     // Clear stale evidence before collecting a fresh report. If collection
     // fails, repair controls remain blocked instead of reusing old data.

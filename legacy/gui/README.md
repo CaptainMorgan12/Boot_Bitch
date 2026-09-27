@@ -408,7 +408,8 @@ boot-repair-legacy-gui --help | --version | --print-config
 `--help`, `--version` and `--print-config` work without an X display.
 `--smoke-test` runs `host-diagnose all` followed by `host-validate` through the
 helper, verifies the global header (title/subtitle/version badge and the
-reserved busy-indicator slot), the
+reserved busy-indicator row below the badge with its modern working text,
+QTimer ellipsis animation and right-edge/below-badge geometry), the
 section titles, the File/View/Help menus (including the Wrap Log Lines
 sync and the View tab shortcuts), the details/unlock/session/search/gating
 controls, the Repair plan controls (paragraph, count/readiness labels, stage
