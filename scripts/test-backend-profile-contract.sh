@@ -3554,10 +3554,12 @@ rpm_preflight_expect_fail 'The target /boot is not mounted read-write' boot-ro
 rpm_preflight_expect_fail 'not a supported dnf5 5.x release' bad-version
 
 # ---------------------------------------------------------------------------
-# Fedora kernel pairing and dracut trial/apply/rollback.  The rescue pair is
-# excluded, an orphan module directory fails the strict pairing, a trial must
-# leave /boot byte-identical and a post-apply lsinitrd failure must restore the
-# previous image before the stage fails.
+# Fedora kernel pairing and the single-build dracut repair.  The rescue pair is
+# excluded, an orphan module directory fails the strict pairing, every kernel
+# is built exactly once into the session temp dir, a build must leave /boot
+# byte-identical, a byte-identical rebuild is reported unchanged and discarded
+# and a post-install verification/digest failure must restore the previous
+# image before the stage fails.
 # ---------------------------------------------------------------------------
 mkdir -p "$dracut_pair_root"/lib/modules/6.19.10-300.fc44.x86_64 \
     "$dracut_pair_root"/lib/modules/0-rescue-deadbeef \
@@ -3603,10 +3605,40 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
     : > "$SESSION_LOG"
     dracut_image="$TARGET_ROOT/boot/initramfs-6.19.10-300.fc44.x86_64.img"
     dracut_kver=6.19.10-300.fc44.x86_64
+    dracut_build_dir="$TARGET_ROOT/run/boot-repair-initramfs"
+    dracut_build_image="$dracut_build_dir/initramfs-$dracut_kver.img"
+    # The build count is tracked through a file: adaptive_initramfs_repair runs
+    # inside a command substitution, so a plain variable increment would be
+    # lost with the subshell.
+    dracut_build_count_file="$SESSION_DIR/dracut-build-count"
+    printf '0\n' > "$dracut_build_count_file"
+    dracut_builds() { cat "$dracut_build_count_file" 2>/dev/null || printf '0\n'; }
+    dracut_mode=success
     validate_mapper_crypttab() { :; }
     target_path_is_mounted_rw() { return 0; }
-    run_selected_chroot() { return 0; }
-    dracut_mode=success
+    run_selected_chroot()
+    {
+        # corrupt-after-install: the post-install lsinitrd read silently
+        # corrupts the installed image so the digest recheck must catch it.
+        if [[ "$dracut_mode" == corrupt-after-install ]] \
+            && [[ "$*" == *"lsinitrd /boot/"* ]]; then
+            printf 'corrupted\n' > "$dracut_image"
+        fi
+        return 0
+    }
+    # Mode-aware lsinitrd stub with the same reader contract as the helper:
+    # nonzero for anything but the session temp output in verify-fail mode.
+    dracut_initramfs_verify_rc()
+    {
+        local image="$1"
+        [[ -n "$image" ]] || return 1
+        if [[ "$dracut_mode" == verify-fail && "$image" != /run/boot-repair-initramfs/* ]]; then
+            return 1
+        fi
+        run_selected_chroot /usr/bin/env \
+            HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            lsinitrd "$image" >/dev/null 2>&1
+    }
     run_chroot_try()
     {
         CHROOT_TRY_RC=0
@@ -3614,51 +3646,76 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
             *'dracut --version'*) CHROOT_TRY_OUTPUT='dracut 108-6.fc44' ;;
             *'dracut -f --kver'*)
                 local last="${!#}"
-                if [[ "$last" == /tmp/* ]]; then
-                    printf 'trial\n' > "$TARGET_ROOT$last"
-                    if [[ "$dracut_mode" == touches-boot ]]; then
-                        printf 'tampered\n' > "$dracut_image"
-                    fi
-                elif [[ "$dracut_mode" == unchanged ]]; then
-                    printf 'original\n' > "$TARGET_ROOT$last"
-                else
-                    printf 'rebuilt\n' > "$TARGET_ROOT$last"
+                printf '%s\n' "$(( $(dracut_builds) + 1 ))" > "$dracut_build_count_file"
+                [[ "$last" == /run/boot-repair-initramfs/* ]] \
+                    || { echo "FAIL: dracut was asked to build outside the session temp dir: $last" >&2; exit 1; }
+                if [[ "$dracut_mode" == touches-boot ]]; then
+                    printf 'tampered\n' > "$dracut_image"
                 fi
+                case "$dracut_mode" in
+                    unchanged) printf 'original\n' > "$TARGET_ROOT$last" ;;
+                    two-kernel)
+                        if [[ "$*" == *"--kver $dracut_kver"* ]]; then
+                            printf 'original\n' > "$TARGET_ROOT$last"
+                        else
+                            printf 'rebuilt-v2\n' > "$TARGET_ROOT$last"
+                        fi
+                        ;;
+                    *) printf 'rebuilt\n' > "$TARGET_ROOT$last" ;;
+                esac
                 CHROOT_TRY_OUTPUT='' ;;
             *) CHROOT_TRY_OUTPUT='' ;;
         esac
     }
 
+    # The preflight performs no build at all: the double build is eliminated.
     printf 'original\n' > "$dracut_image"
+    printf '0\n' > "$dracut_build_count_file"
     preflight_dracut_initramfs || exit 1
-    [[ ! -e "$TARGET_ROOT/tmp/boot-repair-initramfs-preflight-$dracut_kver.img" ]] \
-        || { echo 'FAIL: dracut trial output was left behind' >&2; exit 1; }
+    [[ "$(dracut_builds)" == 0 ]] \
+        || { echo 'FAIL: dracut preflight still performs a build' >&2; exit 1; }
 
+    # Different image: exactly one build, then install + verify + changed.
     printf 'original\n' > "$dracut_image"
+    printf '0\n' > "$dracut_build_count_file"
+    dracut_mode=success
     dracut_status="$(adaptive_initramfs_repair)"
+    [[ "$(dracut_builds)" == 1 ]] \
+        || { echo 'FAIL: dracut image was not built exactly once (changed case)' >&2; exit 1; }
     grep -Fqx 'Repair change status initramfs: changed' <<<"$dracut_status" \
         || { echo 'FAIL: dracut rebuild did not report changed' >&2; printf '%s\n' "$dracut_status" >&2; exit 1; }
     [[ "$(cat "$dracut_image")" == rebuilt ]] \
         || { echo 'FAIL: dracut rebuild did not install the new image' >&2; exit 1; }
+    [[ ! -e "$dracut_build_image" ]] \
+        || { echo 'FAIL: dracut temporary build was not consumed by the install' >&2; exit 1; }
 
+    # Byte-identical image: exactly one build, unchanged, temp deleted.
     printf 'original\n' > "$dracut_image"
+    printf '0\n' > "$dracut_build_count_file"
     dracut_mode=unchanged
     dracut_status="$(adaptive_initramfs_repair)"
+    [[ "$(dracut_builds)" == 1 ]] \
+        || { echo 'FAIL: dracut image was not built exactly once (identical case)' >&2; exit 1; }
     grep -Fqx 'Repair change status initramfs: unchanged|rebuilt initramfs images are byte-identical' <<<"$dracut_status" \
         || { echo 'FAIL: byte-identical dracut rebuild was not unchanged' >&2; printf '%s\n' "$dracut_status" >&2; exit 1; }
+    [[ ! -e "$dracut_build_image" ]] \
+        || { echo 'FAIL: byte-identical dracut temporary build was not deleted' >&2; exit 1; }
+    [[ "$(cat "$dracut_image")" == original ]] \
+        || { echo 'FAIL: byte-identical dracut rebuild touched the installed image' >&2; exit 1; }
 
+    # A build that touches /boot is refused before any install.
     printf 'original\n' > "$dracut_image"
     dracut_mode=touches-boot
-    if (preflight_dracut_initramfs) >"$SESSION_DIR/trial-touch.out" 2>&1; then
-        echo 'FAIL: a dracut trial that touched /boot was accepted' >&2
+    if (adaptive_initramfs_repair) >"$SESSION_DIR/build-touch.out" 2>&1; then
+        echo 'FAIL: a dracut build that touched /boot was accepted' >&2
         exit 1
     fi
-    grep -Fq 'The dracut trial build modified a /boot initramfs image' "$SESSION_DIR/trial-touch.out" \
-        || { echo 'FAIL: dracut /boot-unchanged proof reason changed' >&2; cat "$SESSION_DIR/trial-touch.out" >&2; exit 1; }
+    grep -Fq 'modified a /boot initramfs image before it was verified' "$SESSION_DIR/build-touch.out" \
+        || { echo 'FAIL: dracut /boot-unchanged proof reason changed' >&2; cat "$SESSION_DIR/build-touch.out" >&2; exit 1; }
 
+    # A post-install lsinitrd failure restores the backup and fails the stage.
     printf 'original\n' > "$dracut_image"
-    dracut_mode=success
-    dracut_initramfs_verify_rc() { [[ "$1" == /tmp/* ]]; }
+    dracut_mode=verify-fail
     if (adaptive_initramfs_repair) >"$SESSION_DIR/verify-fail.out" 2>&1; then
         echo 'FAIL: a dracut verification failure did not fail the stage' >&2
         exit 1
@@ -3667,19 +3724,92 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
         || { echo 'FAIL: dracut rollback reason is missing' >&2; cat "$SESSION_DIR/verify-fail.out" >&2; exit 1; }
     [[ "$(cat "$dracut_image")" == original ]] \
         || { echo 'FAIL: dracut rollback did not restore the previous image' >&2; exit 1; }
+
+    # A post-install sha256 mismatch (corrupted move) restores the backup too.
+    printf 'original\n' > "$dracut_image"
+    dracut_mode=corrupt-after-install
+    if (adaptive_initramfs_repair) >"$SESSION_DIR/digest-fail.out" 2>&1; then
+        echo 'FAIL: a post-install digest mismatch did not fail the stage' >&2
+        exit 1
+    fi
+    grep -Fq 'the previous initramfs was restored' "$SESSION_DIR/digest-fail.out" \
+        || { echo 'FAIL: digest-mismatch rollback reason is missing' >&2; cat "$SESSION_DIR/digest-fail.out" >&2; exit 1; }
+    [[ "$(cat "$dracut_image")" == original ]] \
+        || { echo 'FAIL: digest-mismatch rollback did not restore the previous image' >&2; exit 1; }
+
+    # A missing installed image is created by the repair; a post-install
+    # failure without a backup removes the created image again (previous
+    # missing state restored), and a clean run reports changed.
+    rm -f "$dracut_image"
+    dracut_mode=verify-fail
+    if (adaptive_initramfs_repair) >"$SESSION_DIR/missing-fail.out" 2>&1; then
+        echo 'FAIL: a dracut verification failure did not fail the missing-image stage' >&2
+        exit 1
+    fi
+    grep -Fq 'no previous initramfs backup was available' "$SESSION_DIR/missing-fail.out" \
+        || { echo 'FAIL: missing-image rollback reason is missing' >&2; cat "$SESSION_DIR/missing-fail.out" >&2; exit 1; }
+    [[ ! -e "$dracut_image" ]] \
+        || { echo 'FAIL: missing-image rollback left the created image behind' >&2; exit 1; }
+
+    rm -f "$dracut_image"
+    printf '0\n' > "$dracut_build_count_file"
+    dracut_mode=success
+    dracut_status="$(adaptive_initramfs_repair)"
+    [[ "$(dracut_builds)" == 1 ]] \
+        || { echo 'FAIL: missing-image creation did not build exactly once' >&2; exit 1; }
+    grep -Fqx 'Repair change status initramfs: changed' <<<"$dracut_status" \
+        || { echo 'FAIL: missing-image creation did not report changed' >&2; printf '%s\n' "$dracut_status" >&2; exit 1; }
+    [[ "$(cat "$dracut_image")" == rebuilt ]] \
+        || { echo 'FAIL: missing-image creation did not install the new image' >&2; exit 1; }
+    [[ ! -e "$dracut_build_image" ]] \
+        || { echo 'FAIL: missing-image creation left the temporary build behind' >&2; exit 1; }
+
+    # Two kernels: exactly one build per kernel; the changed kernel is
+    # installed and the byte-identical one is left in place (status changed).
+    mkdir -p "$TARGET_ROOT/lib/modules/5.14.0-200.fc40.x86_64"
+    : > "$TARGET_ROOT/boot/vmlinuz-5.14.0-200.fc40.x86_64"
+    printf 'old-v2\n' > "$TARGET_ROOT/boot/initramfs-5.14.0-200.fc40.x86_64.img"
+    printf 'original\n' > "$dracut_image"
+    printf '0\n' > "$dracut_build_count_file"
+    dracut_mode=two-kernel
+    dracut_status="$(adaptive_initramfs_repair)"
+    [[ "$(dracut_builds)" == 2 ]] \
+        || { echo 'FAIL: two-kernel repair did not build exactly one image per kernel' >&2; exit 1; }
+    grep -Fqx 'Repair change status initramfs: changed' <<<"$dracut_status" \
+        || { echo 'FAIL: two-kernel dracut repair did not report changed' >&2; printf '%s\n' "$dracut_status" >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/boot/initramfs-5.14.0-200.fc40.x86_64.img")" == rebuilt-v2 ]] \
+        || { echo 'FAIL: two-kernel repair did not install the changed image' >&2; exit 1; }
+    [[ "$(cat "$dracut_image")" == original ]] \
+        || { echo 'FAIL: two-kernel repair replaced the byte-identical image' >&2; exit 1; }
+    [[ ! -e "$TARGET_ROOT/run/boot-repair-initramfs/initramfs-5.14.0-200.fc40.x86_64.img" \
+        && ! -e "$dracut_build_image" ]] \
+        || { echo 'FAIL: two-kernel repair left a temporary build behind' >&2; exit 1; }
 ) || exit 1
 
-# Dracut repair must never pass a hostonly/rescue override and must never
-# touch the rescue image, BLS entries, grubenv or grub.cfg.
+# Dracut repair must build exactly one image per kernel into the session temp
+# dir and only move a verified, different image into /boot.  It must never
+# pass a hostonly/rescue override and must never touch the rescue image, BLS
+# entries, grubenv or grub.cfg.
 dracut_apply_body="$(sed -n '/^adaptive_dracut_initramfs_repair()/,/^}/p' "$HELPER")"
-grep -Fq 'dracut -f --kver "$kver" "$image"' <<<"$dracut_apply_body" \
-    || { echo 'FAIL: dracut per-kernel apply is not wired' >&2; exit 1; }
+grep -Fq 'dracut -f --kver "$kver" "$build_path"' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut single-build-per-kernel invocation is not wired' >&2; exit 1; }
+grep -Fq 'mv -- "$TARGET_ROOT$build_path" "$TARGET_ROOT$image"' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut verified-image install (mv) is not wired' >&2; exit 1; }
+grep -Fq 'initramfs-before-$kver.img' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut session backup convention is missing' >&2; exit 1; }
+grep -Fq 'rebuilt byte-identical; temporary build discarded' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut identical-image discard is not wired' >&2; exit 1; }
 if grep -Eq -- '--regenerate-all|--no-hostonly|--uefi|--noimageifnotneeded|--no-kernel|restorecon|setenforce|fixfiles' <<<"$dracut_apply_body"; then
     echo 'FAIL: dracut apply passes a forbidden override or relabels SELinux' >&2
     exit 1
 fi
 if grep -Fq '0-rescue' <<<"$dracut_apply_body"; then
     echo 'FAIL: dracut apply references the rescue pseudo-kernel' >&2
+    exit 1
+fi
+dracut_preflight_body="$(sed -n '/^preflight_dracut_initramfs()/,/^}/p' "$HELPER")"
+if grep -Fq 'dracut -f' <<<"$dracut_preflight_body"; then
+    echo 'FAIL: dracut preflight still performs a build (the double build is not eliminated)' >&2
     exit 1
 fi
 

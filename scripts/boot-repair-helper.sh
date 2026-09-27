@@ -7150,7 +7150,8 @@ adaptive_alpine_initramfs_repair()
 }
 
 # ---------------------------------------------------------------------------
-# Fedora/dracut initramfs backend (trial-verified per-kernel rebuilds)
+# Fedora/dracut initramfs backend (single build per kernel: build, verify,
+# compare, install)
 # ---------------------------------------------------------------------------
 # Read-only lsinitrd verification.  The non-fatal variant lets the apply path
 # restore a backup before failing; the public wrapper fails closed.
@@ -7174,14 +7175,16 @@ dracut_initramfs_verify()
     log "PASS: lsinitrd verified $image" | tee -a "$SESSION_LOG"
 }
 
-# Trial-build a dracut initramfs for every installed rpm kernel into a
-# temporary /tmp path inside the target and prove the trial never touched
-# /boot.  The target images are not modified; the trial output is verified
-# with the same lsinitrd reader used after apply.
+# Validate the Fedora/dracut environment for a guarded per-kernel rebuild:
+# tooling, kernel/image pairs, /boot write access and free space.  The image
+# build itself is deliberately NOT performed here.  adaptive_dracut_initramfs_repair
+# builds every kernel exactly once into a session-scoped temporary path under
+# the target /run tmpfs (never /boot), verifies that temporary image and only
+# moves it into /boot when it differs from the installed one — so the previous
+# separate trial-build pass would only duplicate work and is gone.
 preflight_dracut_initramfs()
 {
-    local pair kver vmlinuz image sim_path free_kb largest=0 size required_kb
-    local fingerprint_before="" fingerprint_after=""
+    local pair kver vmlinuz image free_kb largest=0 size required_kb
     local -a pairs=()
 
     [[ "$TARGET_INITRAMFS_BACKEND" == dracut ]] \
@@ -7224,72 +7227,122 @@ preflight_dracut_initramfs()
         fail "The target /boot has ${free_kb} KiB free; at least ${required_kb} KiB is required for a safe dracut rebuild."
     fi
 
-    log "SIMULATE/PREFLIGHT: dracut trial builds for ${#pairs[@]} installed kernel(s)" | tee -a "$SESSION_LOG"
-    fingerprint_before="$(initramfs_image_fingerprint)"
-    for pair in "${pairs[@]}"; do
-        read -r kver vmlinuz image <<<"$pair"
-        [[ -n "$kver" ]] || continue
-        sim_path="/tmp/boot-repair-initramfs-preflight-${kver}.img"
-        rm -f -- "$TARGET_ROOT$sim_path"
-        run_chroot_try "Trial dracut build for $kver (temporary output only)" \
-            dracut -f --kver "$kver" "$sim_path"
-        (( CHROOT_TRY_RC == 0 )) \
-            || fail "Trial dracut build failed for $kver; target initramfs files were not changed."
-        [[ -s "$TARGET_ROOT$sim_path" ]] \
-            || fail "Trial dracut build for $kver produced no image."
-        dracut_initramfs_verify "$sim_path"
-        rm -f -- "$TARGET_ROOT$sim_path"
-        log "PASS: trial dracut build for $kver" | tee -a "$SESSION_LOG"
-    done
-    # A trial must never touch /boot: prove every image fingerprint is
-    # unchanged before the apply is allowed to run.
-    fingerprint_after="$(initramfs_image_fingerprint)"
-    [[ "$fingerprint_before" == "$fingerprint_after" ]] \
-        || fail "The dracut trial build modified a /boot initramfs image; refusing the repair."
+    log "SIMULATE/PREFLIGHT: dracut guarded per-kernel rebuild for ${#pairs[@]} installed kernel(s) (single build per kernel; verified before any /boot write)" | tee -a "$SESSION_LOG"
     run_chroot_try "Record dracut version" dracut --version
     (( CHROOT_TRY_RC == 0 )) \
         || fail "dracut --version failed with exit code $CHROOT_TRY_RC; refusing the dracut rebuild."
     log "dracut preflight version: $(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")" | tee -a "$SESSION_LOG"
 }
 
-# Apply dracut per installed rpm kernel after the guarded trial preflight:
-# back up the existing image, rebuild it, verify it with lsinitrd and restore
-# the backup (with a proven fingerprint) when the applied image cannot be read
-# back.  The rescue image, BLS entries, grubenv and grub.cfg are never touched.
+# Apply dracut per installed rpm kernel with exactly one build per kernel:
+# build the image into a session-scoped temporary path under the target /run
+# tmpfs, verify it with lsinitrd, compare it with the installed image and only
+# then install it.  A byte-identical rebuild is reported unchanged and
+# discarded; a different (or missing) image is backed up under SESSION_DIR,
+# moved into /boot with sync and re-verified in place, with a proven backup
+# restore on any post-install failure.  The rescue image, BLS entries, grubenv
+# and grub.cfg are never touched.
 adaptive_dracut_initramfs_repair()
 {
-    local pair kver vmlinuz image backup restore_fingerprint
+    local pair kver vmlinuz image build_dir build_path backup restore_fingerprint
+    local fingerprint_before="" fingerprint_after="" built_digest installed_digest recheck_digest
+    local verify_ok=true
     local -a pairs=()
 
     preflight_dracut_initramfs
     mapfile -t pairs < <(rpm_kernel_pairs)
+
+    # The repair chroot mounts a fresh tmpfs at the target /run for this
+    # request, so a directory there is session-scoped storage that never lands
+    # on a target filesystem and disappears with the session even if a build is
+    # interrupted.  cleanup() additionally removes the recorded host-joined
+    # path while the target is still mounted.
+    build_dir="/run/boot-repair-initramfs"
+    rm -rf -- "$TARGET_ROOT$build_dir"
+    mkdir -p -- "$TARGET_ROOT$build_dir"
+    TEMP_TARGET_PATHS+=("$TARGET_ROOT$build_dir")
+
     for pair in "${pairs[@]}"; do
         read -r kver vmlinuz image <<<"$pair"
         [[ -n "$kver" ]] || continue
+        build_path="$build_dir/initramfs-$kver.img"
         backup="$SESSION_DIR/initramfs-before-$kver.img"
+
+        # 1. One build per kernel, into the temporary path only.  A build must
+        #    never touch /boot: prove every image fingerprint is unchanged
+        #    after the build and before any install is allowed.
+        fingerprint_before="$(initramfs_image_fingerprint)"
+        run_chroot_try "Build and verify Fedora initramfs for $kver (temporary output only)" \
+            dracut -f --kver "$kver" "$build_path"
+        (( CHROOT_TRY_RC == 0 )) \
+            || fail "dracut build failed for $kver; target initramfs files were not changed."
+        [[ -s "$TARGET_ROOT$build_path" ]] \
+            || fail "dracut build for $kver produced no image."
+        dracut_initramfs_verify "$build_path"
+        fingerprint_after="$(initramfs_image_fingerprint)"
+        [[ "$fingerprint_before" == "$fingerprint_after" ]] \
+            || fail "The dracut build for $kver modified a /boot initramfs image before it was verified; refusing the repair."
+
+        # 2. Compare the verified temporary image with the installed one.  A
+        #    byte-identical rebuild proves no repair is needed: report it and
+        #    discard the temporary image.
+        built_digest=""
+        installed_digest=""
+        if command -v sha256sum >/dev/null 2>&1; then
+            built_digest="$(sha256sum "$TARGET_ROOT$build_path" 2>/dev/null | awk '{print $1}')"
+            installed_digest="$(sha256sum "$TARGET_ROOT$image" 2>/dev/null | awk '{print $1}')"
+        fi
+        if [[ -n "$built_digest" && -n "$installed_digest" && -s "$TARGET_ROOT$image" \
+            && "$built_digest" == "$installed_digest" ]]; then
+            rm -f -- "$TARGET_ROOT$build_path"
+            log "PASS: Fedora initramfs for $kver rebuilt byte-identical; temporary build discarded." | tee -a "$SESSION_LOG"
+            continue
+        fi
+
+        # 3. The image differs (or is missing): back it up, then move the
+        #    verified temporary image into /boot and sync.
         if [[ -s "$TARGET_ROOT$image" ]]; then
             install -m 0600 "$TARGET_ROOT$image" "$backup"
         else
             log "KNOWN ISSUE: $image is missing; creating it instead of attempting an update." | tee -a "$SESSION_LOG"
             rm -f -- "$backup"
         fi
-        run_chroot_try "Rebuild Fedora initramfs for $kver with dracut" \
-            dracut -f --kver "$kver" "$image"
-        if (( CHROOT_TRY_RC != 0 )); then
-            # dracut writes <outfile>.tmp and only mv -f's it on success, so
-            # the previous image is retained by dracut itself.
-            fail "dracut failed for $kver after transaction-specific preflight; the previous initramfs is retained by dracut."
-        fi
-        [[ -s "$TARGET_ROOT$image" ]] \
-            || fail "dracut completed but $image is missing or empty."
-        if ! dracut_initramfs_verify_rc "$image"; then
+        if ! mv -- "$TARGET_ROOT$build_path" "$TARGET_ROOT$image"; then
             if [[ -s "$backup" ]]; then
                 install -m 0600 "$backup" "$TARGET_ROOT$image"
+                sync
+                [[ "$(repair_file_fingerprint "$TARGET_ROOT$image")" == "$(repair_file_fingerprint "$backup")" ]] \
+                    || fail "installing the rebuilt initramfs for $kver failed and the previous initramfs restore could not be proven."
+                fail "installing the rebuilt initramfs for $kver failed; the previous initramfs was restored."
+            fi
+            rm -f -- "$TARGET_ROOT$image"
+            fail "installing the rebuilt initramfs for $kver failed and no previous initramfs backup was available."
+        fi
+        sync
+
+        # 4. Re-verify the installed path (reader plus digest) and restore the
+        #    backup on any failure after the move.
+        verify_ok=true
+        if ! dracut_initramfs_verify_rc "$image"; then
+            verify_ok=false
+        fi
+        if [[ "$verify_ok" == true && -n "$built_digest" ]]; then
+            recheck_digest="$(sha256sum "$TARGET_ROOT$image" 2>/dev/null | awk '{print $1}')"
+            [[ "$recheck_digest" == "$built_digest" ]] || verify_ok=false
+        fi
+        if [[ "$verify_ok" != true ]]; then
+            if [[ -s "$backup" ]]; then
+                install -m 0600 "$backup" "$TARGET_ROOT$image"
+                sync
                 restore_fingerprint="$(repair_file_fingerprint "$TARGET_ROOT$image")"
                 [[ "$restore_fingerprint" == "$(repair_file_fingerprint "$backup")" ]] \
                     || fail "dracut verification failed for $kver and the previous initramfs restore could not be proven."
                 fail "dracut verification failed for $kver; the previous initramfs was restored."
             fi
+            # The image did not exist before the repair: undo the creation so
+            # the target returns to its previous missing-image state.
+            rm -f -- "$TARGET_ROOT$image"
+            sync
             fail "dracut verification failed for $kver and no previous initramfs backup was available."
         fi
         log "PASS: Fedora initramfs rebuilt and verified for $kver" | tee -a "$SESSION_LOG"

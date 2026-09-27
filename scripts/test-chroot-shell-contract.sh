@@ -2142,8 +2142,16 @@ if command -v setsid >/dev/null 2>&1 && command -v mkfifo >/dev/null 2>&1; then
         exit 1
     fi
     groupkill_elapsed=$(( $(date +%s) - cancel_epoch ))
-    (( groupkill_elapsed < 15 )) \
-        || { echo "FAIL: the TERM-ignoring child exited only after ${groupkill_elapsed}s (bound ~15s)" >&2; exit 1; }
+    # This bound guards against an unbounded teardown hang, not against precise
+    # timing.  The product's grace stays bounded at 5 s inside
+    # terminate_helper_tree; the wall-clock margin here only has to stay well
+    # above that while tolerating a heavily loaded CI/dev host (load average
+    # 100+, several VMs), where the same correctly-bounded teardown has been
+    # observed taking 19-24 s.  A run whose runner deadline (30 s above) fires
+    # first still fails loudly on the rc 125 check below, so the wider bound
+    # cannot mask a real hang.
+    (( groupkill_elapsed < 45 )) \
+        || { echo "FAIL: the TERM-ignoring child exited only after ${groupkill_elapsed}s (bound ~45s)" >&2; exit 1; }
     [[ "$(cat "$groupkill_root/rc")" == "125" ]] \
         || { echo "FAIL: the group-kill cancel did not fail closed with 125 (got $(cat "$groupkill_root/rc"))" >&2; cat "$groupkill_root/output" >&2; exit 1; }
     grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$groupkill_root/output" \
