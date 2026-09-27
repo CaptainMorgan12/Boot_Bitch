@@ -2117,7 +2117,7 @@ mount_records_prune()
 # exits with the status captured on entry so the original failure is preserved.
 cleanup_modern()
 {
-    local rc=$?
+    local rc="${LEGACY_CLEANUP_RC:-$?}"
     local session_target_log session_root_real session_logdir_real
     set +e
 
@@ -5126,18 +5126,54 @@ smart_chown_for_item()
     printf '%s:%s\n' "$destination_uid" "$destination_gid"
 }
 
+# Record one SHA-256 verification failure for the File Copy summary.  The
+# message reaches stderr (the live session stream) and the session log; the
+# caller derives the failure count and the failed source from the function's
+# exit status, because verify_sha256_item() runs in a command substitution and
+# in-memory counters cannot cross that subshell boundary.  This helper never
+# writes to stdout: verify_sha256_item()'s stdout stays one bare integer.
+sha256_verify_failure()
+{
+    local message="$1"
+    log "ERROR: $message" | tee -a "$SESSION_LOG" >&2
+}
+
+# SHA-256 verification of one copied item.  stdout is always exactly one bare
+# integer — the number of regular files verified, 0 on every failure path — so
+# command-substitution callers can consume it safely (the caller must treat
+# any non-integer output as 0 rather than feed it to arithmetic expansion).
+# Error detail goes through sha256_verify_failure() (stderr + session log) and
+# the return status is nonzero whenever any listed file failed verification.
+# Symlinks and special files carry no regular-file content to hash; the rsync
+# --checksum re-check is their verification, so their count is legitimately 0.
 verify_sha256_item()
 {
     local source="$1" destination_dir="$2" source_file destination_file relative base source_hash destination_hash
-    local verified=0
+    local verified=0 failed=0
     base="$(basename -- "$source")"
 
     if [[ -f "$source" && ! -L "$source" ]]; then
         destination_file="$destination_dir/$base"
-        [[ -f "$destination_file" && ! -L "$destination_file" ]] || fail "Verification failed; destination file missing: $destination_file"
-        source_hash="$(sha256sum -- "$source" | awk '{print $1}')"
-        destination_hash="$(sha256sum -- "$destination_file" | awk '{print $1}')"
-        [[ "$source_hash" == "$destination_hash" ]] || fail "SHA-256 verification failed: $source"
+        if [[ ! -f "$destination_file" || -L "$destination_file" ]]; then
+            sha256_verify_failure "Verification failed; destination file missing or not a regular file: $destination_file"
+            printf '0\n'
+            return 1
+        fi
+        # `|| true` keeps a failed sha256sum (source vanished mid-hash) from
+        # killing the function under `set -euo pipefail`; the empty hash is
+        # caught below and reported as the failure it is.
+        source_hash="$(sha256sum -- "$source" 2>/dev/null | awk '{print $1}' || true)"
+        destination_hash="$(sha256sum -- "$destination_file" 2>/dev/null | awk '{print $1}' || true)"
+        if [[ -z "$source_hash" || -z "$destination_hash" ]]; then
+            sha256_verify_failure "SHA-256 verification failed; hashing did not complete (source or destination unreadable): $source"
+            printf '0\n'
+            return 1
+        fi
+        if [[ "$source_hash" != "$destination_hash" ]]; then
+            sha256_verify_failure "SHA-256 verification failed: $source"
+            printf '0\n'
+            return 1
+        fi
         printf '1\n'
         return 0
     fi
@@ -5146,15 +5182,52 @@ verify_sha256_item()
         while IFS= read -r -d '' source_file; do
             relative="${source_file#"$source"/}"
             destination_file="$destination_dir/$base/$relative"
-            [[ -f "$destination_file" && ! -L "$destination_file" ]] || fail "Verification failed; destination file missing: $destination_file"
-            source_hash="$(sha256sum -- "$source_file" | awk '{print $1}')"
-            destination_hash="$(sha256sum -- "$destination_file" | awk '{print $1}')"
-            [[ "$source_hash" == "$destination_hash" ]] || fail "SHA-256 verification failed: $source_file"
+            if [[ ! -f "$destination_file" || -L "$destination_file" ]]; then
+                sha256_verify_failure "Verification failed; destination file missing or not a regular file: $destination_file"
+                failed=$((failed + 1))
+                continue
+            fi
+            # `|| true` keeps a failed sha256sum (the file disappeared while
+            # the list was being verified) from killing the function under
+            # `set -euo pipefail`; the empty hash is caught below and reported.
+            source_hash="$(sha256sum -- "$source_file" 2>/dev/null | awk '{print $1}' || true)"
+            destination_hash="$(sha256sum -- "$destination_file" 2>/dev/null | awk '{print $1}' || true)"
+            if [[ -z "$source_hash" || -z "$destination_hash" ]]; then
+                sha256_verify_failure "SHA-256 verification failed; the file disappeared or is unreadable while hashing: $source_file"
+                failed=$((failed + 1))
+                continue
+            fi
+            if [[ "$source_hash" != "$destination_hash" ]]; then
+                sha256_verify_failure "SHA-256 verification failed: $source_file"
+                failed=$((failed + 1))
+                continue
+            fi
             verified=$((verified + 1))
-        done < <(find "$source" -type f -print0)
+        done < <(find "$source" -type f -print0 2>/dev/null)
+        if [[ ! -d "$source" ]]; then
+            # The directory itself vanished while its file list was being
+            # verified; the partial count must not look like a clean success.
+            sha256_verify_failure "SHA-256 verification incomplete; the source directory disappeared during verification: $source"
+            printf '%s\n' "$verified"
+            return 1
+        fi
+        printf '%s\n' "$verified"
+        (( failed > 0 )) && return 1
+        return 0
     fi
 
-    printf '%s\n' "$verified"
+    if [[ -L "$source" || -e "$source" ]]; then
+        # A symlink or a special file (fifo/socket/device) has no regular-file
+        # content to hash; rsync --checksum above is its verification.
+        printf '0\n'
+        return 0
+    fi
+
+    # The source existed when the copy ran and no longer does: verification
+    # cannot run and must be reported, never silently counted as complete.
+    sha256_verify_failure "SHA-256 verification failed; the source no longer exists: $source"
+    printf '0\n'
+    return 1
 }
 
 RSYNC_CHMOD_SUPPORTED=""
@@ -5321,9 +5394,11 @@ run_file_copy_modern()
     # promoted to rw only after all target identity/safety checks have passed.
     prepare_target ro
 
-    local destination ownership_destination source virtual_path chown_value sha_count=0 item_count=0
+    local destination ownership_destination source virtual_path chown_value sha_count=0 item_count=0 verified=0
+    local sha_failures=0 failed_source
     local strip_setid=no
     local -a sources=()
+    local -a sha_failed_sources=()
 
     [[ "$direction" == "repair-to-host" ]] && strip_setid=yes
 
@@ -5417,12 +5492,40 @@ run_file_copy_modern()
                 host_copy_security_scan "$destination/$(basename -- "$source")"
             fi
             verify_rsync_item "$source" "$destination" "$chown_value" "$strip_setid"
-            sha_count=$((sha_count + $(verify_sha256_item "$source" "$destination")))
+            # verify_sha256_item() prints one bare integer on stdout for every
+            # exit path, reports failures through sha256_verify_failure()
+            # (stderr + session log) and returns nonzero when a listed file
+            # failed.  The regex guard keeps the arithmetic expansion safe even
+            # if the stdout contract were ever broken, so a mid-copy source
+            # loss can no longer crash the session with an "operand expected"
+            # arithmetic error.  The nonzero status is captured here (it cannot
+            # cross the command-substitution boundary as an in-memory marker)
+            # so the final summary counts and names each failed source.
+            verified=0
+            if ! verified="$(verify_sha256_item "$source" "$destination")"; then
+                failed_source="$(basename -- "$source")"
+                sha_failures=$((sha_failures + 1))
+                sha_failed_sources+=("$failed_source")
+            fi
+            [[ "$verified" =~ ^[0-9]+$ ]] || verified=0
+            sha_count=$((sha_count + verified))
         fi
     done
 
     if [[ "$mode" == "copy" ]]; then
         sync
+        if (( sha_failures > 0 )); then
+            log "COPY COMPLETE — SHA-256 verification FAILED" | tee -a "$SESSION_LOG"
+            log "  Source items: $item_count" | tee -a "$SESSION_LOG"
+            log "  SHA-256 regular files verified: $sha_count" | tee -a "$SESSION_LOG"
+            log "  SHA-256 verification FAILURES: $sha_failures (the copy is not verified complete)" | tee -a "$SESSION_LOG"
+            for failed_source in "${sha_failed_sources[@]:-}"; do
+                log "  FAILED verification: $failed_source" | tee -a "$SESSION_LOG"
+            done
+            log "  rsync metadata/content re-check: PASS" | tee -a "$SESSION_LOG"
+            log "  Unrelated destination files: retained (no --delete used)" | tee -a "$SESSION_LOG"
+            fail "SHA-256 verification failed for $sha_failures source item(s); the File Copy is not verified complete."
+        fi
         log "COPY COMPLETE" | tee -a "$SESSION_LOG"
         log "  Source items: $item_count" | tee -a "$SESSION_LOG"
         log "  SHA-256 regular files verified: $sha_count" | tee -a "$SESSION_LOG"
@@ -7401,6 +7504,21 @@ rpm_missing_file_packages()
     printf '%s\n' "${packages[@]:-}"
 }
 
+# Extract the download size a dnf5 simulation names, so the UI can announce it
+# before a buffered apply step makes a large upgrade look like a hang.  dnf5
+# prints `Total size of inbound packages is <N>.` (usually followed by `Need to
+# download <N>.`); older dnf prints `Total download size: <N>`.  Returns the
+# first `<number> <unit>` pair found and prints nothing when the transcript
+# carries no size line, so callers skip the note instead of guessing.
+rpm_simulation_download_size()
+{
+    local output="$1" size=""
+    size="$(legacy_sed_ext -n 's/^.*Total size of inbound packages is[[:space:]]+([0-9][0-9.,]*[[:space:]]+[A-Za-z]+).*$/\1/p' <<<"$output" | head -n1)"
+    [[ -n "$size" ]] || size="$(legacy_sed_ext -n 's/^.*Need to download[[:space:]]+([0-9][0-9.,]*[[:space:]]+[A-Za-z]+).*$/\1/p' <<<"$output" | head -n1)"
+    [[ -n "$size" ]] || size="$(legacy_sed_ext -n 's/^.*Total download size:[[:space:]]+([0-9][0-9.,]*[[:space:]]+[A-Za-z]+).*$/\1/p' <<<"$output" | head -n1)"
+    printf '%s\n' "$size"
+}
+
 # Shared simulate/apply engine for the rpm package stages.  The caller has
 # already run rpm_preflight() so the fix-broken stage can inject the packages
 # owning missing files into the exact simulated command: fingerprint the rpm
@@ -7410,7 +7528,7 @@ rpm_missing_file_packages()
 adaptive_rpm_apply()
 {
     local label="$1" tool_key="$2" fingerprint_before="" fingerprint_after=""
-    local no_changes=false apply_output="" state=""
+    local no_changes=false apply_output="" state="" download_size=""
     shift 2
     local -a rpm_command=("$@")
     local -a reinstall_names=()
@@ -7430,6 +7548,15 @@ adaptive_rpm_apply()
         || fail "The dnf5 ${rpm_command[*]} simulation modified the rpm database; refusing to continue."
     if rpm_transaction_reported_no_changes "$RPM_SIM_OUTPUT"; then
         no_changes=true
+    fi
+
+    # UX heads-up for large transactions: run_chroot_try buffers the apply
+    # transcript until the command finishes, so a multi-GiB upgrade would
+    # otherwise look like a hang.  Name the simulated download size when the
+    # transcript carries one; skip the note silently when it does not.
+    download_size="$(rpm_simulation_download_size "$RPM_SIM_OUTPUT")"
+    if [[ -n "$download_size" ]]; then
+        log "This transaction downloads approximately $download_size; the apply step reports its progress only when it finishes." | tee -a "$SESSION_LOG"
     fi
 
     run_chroot_try "$label" "${RPM_DNF_TOOL:-dnf5}" "${rpm_command[@]:-}" -y
@@ -23360,6 +23487,13 @@ cleanup()
         LEGACY_RESOLVER_DESTINATION=""
         LEGACY_RESOLVER_BACKUP=""
     fi
+    # A9-09 follow-up (rc preservation): the modern teardown body
+    # (cleanup_modern, renamed by port.sh) captures $? itself, and the
+    # resolver block above runs before that capture, so a helper failure's
+    # exit status (or an INT/TERM/HUP status) must be handed over explicitly.
+    # cleanup_modern reads LEGACY_CLEANUP_RC first (port.sh rewrites its
+    # capture line), so the original status survives every teardown path.
+    LEGACY_CLEANUP_RC="$rc"
     cleanup_modern
     return $rc
 }

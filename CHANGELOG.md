@@ -2,29 +2,74 @@
 
 ## Unreleased
 
-- Modern Batch 4 (helper hardening): repair-to-host File Copy now strips
-  setuid/setgid bits (`--chmod=u-s,g-s`) and drops `security.capability`
-  xattrs (rsync xattr filter) during the transfer — both probed per run — and
-  a fail-closed post-copy scan (find `-perm /6000` plus a getfattr/getcap
-  check) refuses any copy that still carries either; when no xattr inspection
-  tool exists and this rsync cannot filter xattrs the copy is refused with a
-  clear message. The post-copy verification compares modes with suid/sgid
-  masked, so a stripped destination no longer reports phantom diffs; the
-  File Copy preview/summary text states the stripping. Host-to-repair keeps
-  -aHAX from the trusted host source. Repair-to-host destinations are now
-  re-validated immediately before each rsync and before verification (a
-  changed realpath fails the copy) and sticky or world-writable destination
-  directories are refused (group-writable ones only warn). Target chroots now
-  receive a filtered private /dev: only the essential character nodes
-  (matched by maj:min), the device-mapper control node and block
-  devices/mappers on the selected target disk are copied — other disks'
-  devices and mappers never appear — while root-in-chroot keeps its mknod
-  capability. Finally, every GRUB configuration generation (preflight trial
-  and apply, update-grub/grub-mkconfig/grub2-mkconfig) now runs with
-  `GRUB_DISABLE_OS_PROBER=true`, so an automatic repair never adds foreign-OS
-  entries to the regenerated menu (a deliberate dual-boot behavior change;
-  the native-entry preservation guard is unchanged).
+- (no unreleased changes yet)
 
+## 0.2.26 — 2026-09-26
+
+- Security sweep: a comprehensive security review of the modern helper, both GUIs,
+  the legacy port generator and the packaging tooling produced a large
+  hardening pass. Mount containment: target-controlled fstab mountpoints
+  (btrfs subvolumes and data partitions) are lexically, realpath- and
+  symlink-validated before mounting; the session-log append into the repaired
+  system refuses symlinked target log paths; the resolver validates before
+  creating; the pacman sandbox no longer resolves through a target /tmp
+  symlink and cleanup never removes a host-absolute path; offline filesystem
+  repair fails closed on busy mounts instead of lazy-detaching; fs scope
+  resolution gates fstab devices to the selected disk; recovery mounts force
+  nosuid,nodev and drop context=/seclabel; LUKS UUIDs are validated before
+  mapper-name composition; EFI/bootloader apply stages re-assert the
+  protected-host identity gate; and a per-target-disk lock refuses
+  concurrent repair sessions on the same disk. Interactive shell and wire
+  protocol: a per-pump random token gates PROMPT forwarding so a command
+  cannot forge prompt dialogs; the shell deadline is evaluated on every pump
+  iteration (continuously-streaming commands time out); the runner-death
+  drain is bounded; the pty echo of answers is redacted so typed secrets
+  never reach the wire, session log or transcript; a dead runner never
+  produces a prompt; SIGPIPE can no longer kill the root session; CSI/OSC
+  sequences are bounded; chroot-shell exit codes 124/125 propagate; apt
+  retries are binary-aware (apt full-upgrade / apt-get dist-upgrade); shell
+  command quoting is POSIX-safe; apt probing happens inside the target
+  chroot; protocol records are length-capped; a session secret is only
+  accepted for unlock. Process lifecycle: helper runs register in a
+  root-owned PID registry and cleanup kills still-alive registered children
+  before unmounting; the interactive pump group-kills the runner's whole
+  tree; the broker dispatches under setsid; the host-shell timeout gains
+  --kill-after; the GUI watchdog sends QUIT before terminating and pauses
+  while a prompt popup is open. Repair chroots receive a filtered private
+  /dev (essential nodes, dm control and devices on the selected target disk
+  only). File Copy to the host strips setuid/setgid and drops
+  security.capability (probed flags, suid-masked verification, fail-closed
+  post-copy scan) and refuses sticky/world-writable destinations with
+  TOCTOU re-validation before every transfer. GRUB regeneration runs with
+  GRUB_DISABLE_OS_PROBER=true (a deliberate dual-boot behavior change; the
+  native-entry preservation guard is unchanged). GUI hardening: helper
+  resolution never uses the current directory and the environment override
+  is test-only, portable helpers must be owner-matched and not
+  group/world-writable; privileged arguments are validated per argument
+  class; the capability gate reads only the dedicated capabilities entry
+  (target-controlled file content can no longer forge gating lines); the
+  root-component fallback requires the same disk and a non-protected
+  component; password-shaped prompt answers are masked in the transcript
+  while the raw answer still reaches the helper; session logs are 0600 and
+  the log directory 0700; settings are 0600; one prompt dialog at a time
+  with a bounded prompt budget; per-request transcript caps; scanner reads
+  are bounded and device display strings are control-character-stripped;
+  config-write content now travels through a guarded mode-600 secret file
+  instead of process arguments (1 MiB cap, never logged, never deleted by
+  the helper). Legacy edition: the port generator fails loudly on no-op
+  transforms and completed its bash-4 blacklist; the unlock keyfile can no
+  longer land at the filesystem root and requires provable ownership (the
+  helper never deletes a caller-supplied file); sudo/gksu/gksudo resolve
+  from fixed trusted paths only and the elevated helper is verified before
+  running; cancel now carries a helper-side cancel token with bounded
+  TERM/KILL escalation; the host shell is timeout-bounded; the config-write
+  secret-file transport is ported; logs are 0600 with O_NOFOLLOW opens.
+  Tooling: build scripts whitelist their rm -rf targets, the EFI label
+  updater refuses symlinked backups and reports rollback failures honestly,
+  the zsync update channel is documented as transport-only-authenticated,
+  zsyncmake temp dirs are cleaned up, and the dev rig scripts scrub guest
+  passwords from serial logs, validate and quote guest-shell interpolations
+  and serialize release-artifact syncs.
 - Cycle 16 (interactive shell): the Chroot Shell and Host Shell can now
   answer interactive prompts. The helper runs shell commands under a PTY
   (with a plain stdin-pipe fallback) and, whenever the command is alive but

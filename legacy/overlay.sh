@@ -1678,6 +1678,13 @@ cleanup()
         LEGACY_RESOLVER_DESTINATION=""
         LEGACY_RESOLVER_BACKUP=""
     fi
+    # A9-09 follow-up (rc preservation): the modern teardown body
+    # (cleanup_modern, renamed by port.sh) captures $? itself, and the
+    # resolver block above runs before that capture, so a helper failure's
+    # exit status (or an INT/TERM/HUP status) must be handed over explicitly.
+    # cleanup_modern reads LEGACY_CLEANUP_RC first (port.sh rewrites its
+    # capture line), so the original status survives every teardown path.
+    LEGACY_CLEANUP_RC="$rc"
     cleanup_modern
     return $rc
 }

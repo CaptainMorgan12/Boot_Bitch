@@ -16,6 +16,10 @@
 # The full Qt3 build runs natively on the Etch guest via scripts/package-legacy.sh;
 # this test never builds a package, installs anything or touches a disk.
 set -euo pipefail
+# Every assertion is an explicit ||/&& check; pipefail adds no coverage but
+# turns `producer | grep -q` into a load-dependent false failure whenever
+# grep -q exits early and the producer takes SIGPIPE (141). Disable it.
+set +o pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 GUI_DIR="$ROOT_DIR/legacy/gui"

@@ -87,6 +87,13 @@ source "$HELPER_SRC"
 trap - EXIT INT TERM HUP
 trap smoke_cleanup EXIT
 set +e
+# The sourced helper set `set -o pipefail`; with it active, `producer |
+# grep -q` flips the pipeline nonzero whenever grep -q exits early and the
+# producer takes SIGPIPE (141) - a load-dependent false failure observed on
+# the 2-vCPU Alpine rig (e.g. the A9-12 noglob and unlock-probe checks).
+# Every assertion here is an explicit ||/&& check, so pipefail only adds
+# that hazard: disable it for the rest of the run.
+set +o pipefail
 
 # B6/A9-05: the split-LV data-mount tests below replace mount_recorded with
 # stubs; capture the real wrapper now so the mount-option retry tests can
@@ -1240,6 +1247,25 @@ mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
 rc=$?
 [[ $rc -eq 0 ]] || fail "resolver A9-09 hardening checks failed"
 pass "legacy resolver A9-09 (polluted-destination refusal, skip-restore-when-changed)"
+
+# --- A9-09 follow-up: a failed helper run must keep its exit status through
+# the EXIT-trap cleanup chain.  Regression: the resolver wrapper reset $?
+# before the renamed modern teardown (cleanup_modern) re-captured it, so
+# fail() exited 0.  Run the real chain in a fresh bash: source the staged
+# helper (no main), trigger fail() and expect the trap to preserve rc 1. ---
+(
+    export BOOT_REPAIR_STATE_ROOT="$FIXTURE/rc-preserve-state"
+    mkdir -p "$BOOT_REPAIR_STATE_ROOT"
+    bash -c '
+        # shellcheck disable=SC1090
+        source "$1"
+        fail "rc-preservation contract probe"
+    ' _ "$HELPER_SRC" >/dev/null 2>&1
+)
+rc=$?
+[[ $rc -eq 1 ]] \
+    || fail "helper fail path exited $rc, expected 1 (cleanup rc preservation)"
+pass "legacy fail path exits nonzero through the cleanup chain (rc preservation)"
 
 # --- cycle 12 loop 4: shared data mount promotion ---------------------------
 # The split-LV data mounts (usr/var/tmp/home) must be promoted read-write

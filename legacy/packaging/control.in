@@ -17,5 +17,5 @@ Description: legacy Boot Bitch recovery GUI and helper (Debian Etch era)
  diagnostics are the default; every repair stage stays behind the helper's
  own runtime preflights.
  .
- This package is a separate experimental artifact (version line 0.2.25-etch1);
+ This package is a separate experimental artifact (version line 0.2.26-etch1);
  it is not the modern Qt6 boot-repair package.

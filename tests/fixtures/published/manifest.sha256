@@ -41,6 +41,17 @@
 #     exclude dropping the frozen copies. They are checked only when
 #     Development/release-<v>/ exists.
 #
+#
+#   - 0.2.25 README/CHANGELOG sections, docs/release-notes-0.2.25.md and the
+#     Development/release-0.2.25 capture (SHA256SUMS + release notes): frozen
+#     when preparing 0.2.26 (the fixture freeze step missing at publish).
+d54063c42cc30f5fd09d703602471f835e792511e44555858a8e436afdb8ea64  captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
+640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  captures/release-0.2.23/release-notes-0.2.23.md
+9004e167e66719b2aa83b176f6ce4b4ee3956463e6f06364b550040ccf123f84  captures/release-0.2.23/SHA256SUMS
+87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  captures/release-0.2.24/release-notes-0.2.24.md
+dabf3b6e3924f5f27735f8d190233e5ab53a545b850e7dbcfa383de014957c92  captures/release-0.2.24/SHA256SUMS
+3bb1d313fe0179def64596dae42309aac57724ec02bb8ba6f9a16fb32790f303  captures/release-0.2.25/release-notes-0.2.25.md
+2cbb425cc4468a551fe95495517506b1049eead6889a2f0d18f7f96941fc282a  captures/release-0.2.25/SHA256SUMS
 a3aa94e54433fa80643f43159b864f99bcd03d3f53f40e8d63e23b6c55328e79  CHANGELOG-0.2.15.section
 f7d47ea1ab8da2e7ef9f02ea38fe416cd950dc144793f048ca91f6405e6e430e  CHANGELOG-0.2.16.section
 6d2b83d4fd9bd1a70644bd3a3d08fe2cb4da0f339f15c17cc7cdbd4a13ab4146  CHANGELOG-0.2.17.section
@@ -51,6 +62,13 @@ f549291e36500c3d14d6e132bd9a12dc362bfa915fc322d9541c5c5c07ece33a  CHANGELOG-0.2.
 f6e324f64f8526f32df3b0376b09a6fad3edacb2a651acf61f39d74f90f671ee  CHANGELOG-0.2.22.section
 da56c77c22ea2755964832c447484cf9bce8122fe75c6b33f9237de086f92c85  CHANGELOG-0.2.23.section
 f3b9d181e39563d98d027a257fb10302a848be4525bb5529e1fd5cd6d18e9ce7  CHANGELOG-0.2.24.section
+1801ecdae533933b712e07bc86c6e7ff65066dc482ec52637fa0a59102abd3d9  CHANGELOG-0.2.25.section
+4c5349793140662ff0d6ecdf9f33dc00a59d84c49278601004434ffb937b36c6  docs/release-notes-0.2.20.md
+388ebedb586fcdd0f17106f92dd15aa4be10e738a40b527a65e8c64c280ae87b  docs/release-notes-0.2.21.md
+58b95987679839b537ed5ce6834f0f8327ed6951139de5bcc89d61b8cbd4aeaf  docs/release-notes-0.2.22.md
+640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  docs/release-notes-0.2.23.md
+87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  docs/release-notes-0.2.24.md
+3bb1d313fe0179def64596dae42309aac57724ec02bb8ba6f9a16fb32790f303  docs/release-notes-0.2.25.md
 fbf1a689730399628422936c6cd3c4fa19b0829170bf34ccda803988901b112b  README-0.2.15.section
 faed4dfb46100e036ba5b93b02b150f1c2c3fb82408224c3524fa41063e46c5c  README-0.2.16.section
 94f3c7309f1c05617ee9aeb33b394106cecfcf50c43b2145668081c09c4a353c  README-0.2.17.section
@@ -61,13 +79,4 @@ d0dc076f1ec0a2900ce23fb9a854efb96f61eb4c74945775458abbda7b6d4a00  README-0.2.19.
 544a46284bf85ef364b279c5ac1ab995f03d78a623c40b185c8461a7245b43a7  README-0.2.22.section
 7ff248b43354933cae2a2f3d7f53d54a47132084567f6a420b1f861803741ba7  README-0.2.23.section
 d58d0c059c4260783a70b0cff1a6f5942bbd7ea93c23d9c0ba86930392ab6f2e  README-0.2.24.section
-9004e167e66719b2aa83b176f6ce4b4ee3956463e6f06364b550040ccf123f84  captures/release-0.2.23/SHA256SUMS
-d54063c42cc30f5fd09d703602471f835e792511e44555858a8e436afdb8ea64  captures/release-0.2.23/changes-v0.2.20-to-v0.2.23.patch
-640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  captures/release-0.2.23/release-notes-0.2.23.md
-dabf3b6e3924f5f27735f8d190233e5ab53a545b850e7dbcfa383de014957c92  captures/release-0.2.24/SHA256SUMS
-87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  captures/release-0.2.24/release-notes-0.2.24.md
-4c5349793140662ff0d6ecdf9f33dc00a59d84c49278601004434ffb937b36c6  docs/release-notes-0.2.20.md
-388ebedb586fcdd0f17106f92dd15aa4be10e738a40b527a65e8c64c280ae87b  docs/release-notes-0.2.21.md
-58b95987679839b537ed5ce6834f0f8327ed6951139de5bcc89d61b8cbd4aeaf  docs/release-notes-0.2.22.md
-640aeaf74624b29e86179c02fb41468cf27d48d9997981060a3107b97a15e3a7  docs/release-notes-0.2.23.md
-87fb78a240041d3ad7a28c59144fd9ad2c92213ad277c6434c453cc7b236c5ae  docs/release-notes-0.2.24.md
+ef3f3e0cad137e5d76a79d0405a4caa77494517070ad431dd843a16ea8f5cb81  README-0.2.25.section

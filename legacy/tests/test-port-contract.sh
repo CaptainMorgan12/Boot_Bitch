@@ -5,6 +5,13 @@
 # syntax in the generated helper, the modern helper staying untransformed,
 # compat shim behaviour, and evidence-based legacy feature gating.
 set -euo pipefail
+# Every assertion here is an explicit ||/&& check; pipefail adds no coverage
+# but turns `producer | grep -q` into a load-dependent false failure whenever
+# grep -q exits early and the producer takes SIGPIPE (141) - observed on the
+# 2-vCPU Alpine rig after the security sweep widened this suite. Disable it
+# (gating_checks re-disables it after sourcing the helper, which re-enables
+# it through its own set -Eeuo pipefail).
+set +o pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.." && pwd)"
 LEGACY_DIR="$ROOT_DIR/legacy"
@@ -95,10 +102,10 @@ for rule in \
     'case conversion ,, +64' \
     'case conversion \^\^ +15' \
     'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +299' \
+    'array \[@\] expansions \(all forms\) +300' \
     'mapfile call sites +60' \
     'sed -i -E +1' \
-    'sed -nE +61' \
+    'sed -nE +64' \
     'sed -E +16' \
     'sort -V +12' \
     'date --iso-8601 +4' \
@@ -115,7 +122,7 @@ for rule in \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
     'shim calls: legacy_readarray +60' \
-    'shim calls: legacy_sed_ext +78' \
+    'shim calls: legacy_sed_ext +81' \
     'shim calls: legacy_sort_versions +12' \
     'shim calls: legacy_date_iso +4' \
     'shim calls: legacy_lc +64' \
@@ -349,6 +356,10 @@ grep -q 'cleanup_modern' "$HELPER" \
     || fail "generated helper lost the cleanup wrap"
 grep -q 'LEGACY_RESOLVER_DESTINATION' "$HELPER" \
     || fail "generated helper lost the resolver-copy teardown state"
+grep -q 'LEGACY_CLEANUP_RC="$rc"' "$HELPER" \
+    || fail "generated helper lost the cleanup rc handover (A9-09 follow-up)"
+grep -q 'local rc="${LEGACY_CLEANUP_RC:-$?}"' "$HELPER" \
+    || fail "generated helper cleanup_modern no longer preserves the handed-over rc (A9-09 follow-up)"
 grep -q 'Copied recovery-host resolver into the target chroot' "$HELPER" \
     || fail "generated helper lost the resolver copy path"
 grep -q 'Remounting target data filesystem ' "$HELPER" \
@@ -710,6 +721,8 @@ gating_checks()
     rm -f -- "$helper_src"
     trap - EXIT INT TERM HUP
     set +e
+    # The sourced helper re-enabled pipefail; see the header note.
+    set +o pipefail
 
     local report line feature reason out
     report="$(legacy_feature_gating_report)"
@@ -766,7 +779,12 @@ gating_checks()
     out="$(PATH=/nonexistent run_chroot_shell true 2>&1)"
     [[ $? -ne 0 ]] || fail "run_chroot_shell must refuse on a legacy host"
     [[ "$out" == *'unavailable|shell:'* ]] || fail "run_chroot_shell refusal: $out"
-    out="$(PATH=/nonexistent run_host_shell /dev/null /dev/null true 2>&1)"
+    # The host-shell gate is firmware-dependent: on a BIOS-only machine the
+    # legacy host shell is legitimately available (no firmware namespace to
+    # isolate), so pin the EFI seam here - the probe's own read-only test
+    # seam - to exercise the fail-closed unavailable|host-shell: refusal on
+    # every machine, not just the EFI hosts the suite was written on.
+    out="$(BOOT_REPAIR_LEGACY_HOST_EFI=yes PATH=/nonexistent run_host_shell /dev/null /dev/null true 2>&1)"
     [[ $? -ne 0 ]] || fail "run_host_shell must refuse on a legacy host"
     [[ "$out" == *'unavailable|host-shell:'* ]] || fail "run_host_shell refusal: $out"
 

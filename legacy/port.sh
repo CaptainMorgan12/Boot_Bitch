@@ -64,7 +64,25 @@ note()
 
 count_literal()
 {
-    grep -oF -- "$1" "$2" 2>/dev/null | wc -l | tr -d '[:space:]'
+    # Count non-overlapping occurrences of the literal, not matching lines:
+    # busybox grep -o prints at most one match per line while GNU grep -o
+    # prints one per occurrence, so the audited drift counts (A11-04) silently
+    # shift depending on which grep is in PATH (seen on Alpine's /bin/grep ->
+    # /bin/busybox, where the array [@] count dropped from 299 to 287). awk
+    # index() is a pure literal search with identical semantics on every awk
+    # (gawk, mawk, busybox awk). The needle travels through the environment so
+    # awk -v escape processing can never reinterpret its bytes.
+    NEEDLE="$1" awk '
+        BEGIN { s = ENVIRON["NEEDLE"]; n = length(s) }
+        n == 0 { exit }
+        {
+            line = $0
+            while ((pos = index(line, s)) > 0) {
+                count++
+                line = substr(line, pos + n)
+            }
+        }
+        END { print count + 0 }' "$2"
 }
 
 count_regex()
@@ -499,6 +517,26 @@ Cancellation:
 
 Shell:' \
         || return 1
+
+    # A9-09 follow-up (rc preservation): the legacy overlay defines its own
+    # cleanup() wrapper (resolver restore + the modern teardown) and the
+    # modern body is renamed to cleanup_modern later.  cleanup_modern
+    # re-captures $? on entry, but the wrapper's resolver if-block resets it
+    # to 0, so every helper run that failed via fail() (or was killed with
+    # INT/TERM/HUP) exited 0 — the fail-closed rc contract broke.  The
+    # wrapper exports the original status as LEGACY_CLEANUP_RC; this rewrite
+    # makes the renamed body read it first and fall back to $? otherwise
+    # (drift-gated: a modern edit to the capture line aborts generation,
+    # A11-01).  The rewrite targets the pre-rename name because this
+    # transform runs before transform_renames.
+    replace_block "$file" \
+        'cleanup()
+{
+    local rc=$?' \
+        'cleanup()
+{
+    local rc="${LEGACY_CLEANUP_RC:-$?}"' \
+        || return 1
 }
 
 # 3. Rename the modern definitions the overlay wraps or replaces.
@@ -559,7 +597,7 @@ verify_transform_counts()
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
     check_count 'legacy_readarray' 'legacy_readarray' 60
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 78
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 81
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 12
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
     check_count 'legacy_lc' 'legacy_lc ' 64
