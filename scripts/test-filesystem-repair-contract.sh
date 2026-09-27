@@ -2420,6 +2420,249 @@ reval_fail_out="$(
 grep -Fq 'failed revalidation' <<<"$reval_fail_out" \
     || { echo 'FAIL: a failing destination revalidation was not reported' >&2; printf '%s\n' "$reval_fail_out" >&2; exit 1; }
 
+# ---------------------------------------------------------------------------
+# Part 19: SHA-256 verification robustness.  verify_sha256_item() prints one
+# bare integer on stdout for every outcome (the verified count; 0 on failure)
+# and returns nonzero when a listed file failed, so a source lost mid-copy can
+# never crash the File Copy arithmetic.  run_file_copy counts failures, names
+# them in the final summary and fails closed instead of reporting a silently
+# "complete" copy with 0 verified files.
+# ---------------------------------------------------------------------------
+grep -q '^sha256_verify_failure()' "$HELPER" \
+    || { echo 'FAIL: the SHA-256 verification failure marker helper is missing' >&2; exit 1; }
+sha_v_block="$(sed -n '/^verify_sha256_item()/,/^}/p' "$HELPER")"
+grep -Fq "printf '0\\n'" <<<"$sha_v_block" \
+    || { echo 'FAIL: verify_sha256_item no longer prints a bare 0 on failure paths' >&2; exit 1; }
+grep -Fq 'sha256_verify_failure' <<<"$sha_v_block" \
+    || { echo 'FAIL: verify_sha256_item no longer routes failures through the error reporter' >&2; exit 1; }
+grep -Fq 'if ! verified="$(verify_sha256_item "$source" "$destination")"; then' <<<"$file_copy_block" \
+    || { echo 'FAIL: the File Copy loop does not capture the verification status robustly' >&2; exit 1; }
+grep -Fq '[[ "$verified" =~ ^[0-9]+$ ]] || verified=0' <<<"$file_copy_block" \
+    || { echo 'FAIL: the File Copy verification count is not regex-guarded' >&2; exit 1; }
+grep -Fq 'SHA-256 verification FAILURES:' <<<"$file_copy_block" \
+    || { echo 'FAIL: the File Copy summary does not name verification failures' >&2; exit 1; }
+
+# (b) verify_sha256_item stdout is always a bare integer; nonzero status only
+# on failure.  Success file/dir, vanished source, missing/wrong-type
+# destination, content mismatch and a file that disappears mid-hash.
+sha_v_root="$fc_root/sha-verify"
+mkdir -p "$sha_v_root/session"
+: > "$sha_v_root/session.log"
+sha_v_call() {
+    # Run verify_sha256_item in a clean helper context; stdout lands in
+    # sha_v_out, the function's status becomes sha_v_call's status.  The
+    # caller owns set -e restoration: this function must not re-enable it
+    # before returning a nonzero status (functions run in the caller's shell).
+    local _rc
+    set +e
+    sha_v_out="$(
+        SHAV_VANISH_AT="${SHAV_VANISH_AT:-}" bash -c '
+            source <(sed '\''/^main "\$@"/d'\'' "$1")
+            trap - EXIT INT TERM HUP
+            SESSION_DIR="$2/session"
+            SESSION_LOG="$2/session.log"
+            : > "$SESSION_LOG"
+            if [[ -n "${SHAV_VANISH_AT:-}" ]]; then
+                sha256sum()
+                {
+                    local arg
+                    for arg in "$@"; do
+                        if [[ "$arg" == "$SHAV_VANISH_AT" ]]; then
+                            rm -f -- "$SHAV_VANISH_AT"
+                            break
+                        fi
+                    done
+                    command sha256sum "$@"
+                }
+            fi
+            verify_sha256_item "${@:4}"
+        ' _ "$HELPER" "$sha_v_root" "$@" 2>/dev/null
+    )"
+    _rc=$?
+    return $_rc
+}
+
+mkdir -p "$sha_v_root/one/src" "$sha_v_root/one/dst"
+printf 'alpha\n' > "$sha_v_root/one/src/f"
+cp -p "$sha_v_root/one/src/f" "$sha_v_root/one/dst/f"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/one/src/f" "$sha_v_root/one/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 1 ]] \
+    || { echo "FAIL: successful single-file verification returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=1)" >&2; exit 1; }
+
+mkdir -p "$sha_v_root/two/src/d" "$sha_v_root/two/dst/d"
+printf 'beta\n' > "$sha_v_root/two/src/d/a"
+printf 'gamma\n' > "$sha_v_root/two/src/d/b"
+cp -p "$sha_v_root/two/src/d/a" "$sha_v_root/two/dst/d/a"
+cp -p "$sha_v_root/two/src/d/b" "$sha_v_root/two/dst/d/b"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/two/src/d" "$sha_v_root/two/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 2 ]] \
+    || { echo "FAIL: successful directory verification returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=2)" >&2; exit 1; }
+
+mkdir -p "$sha_v_root/three/src" "$sha_v_root/three/dst"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/three/src/gone" "$sha_v_root/three/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
+    || { echo "FAIL: a vanished source returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
+grep -Fq 'the source no longer exists' "$sha_v_root/session.log" \
+    || { echo 'FAIL: the vanished source failure was not recorded in the session log' >&2; exit 1; }
+
+mkdir -p "$sha_v_root/four/src" "$sha_v_root/four/dst"
+printf 'delta\n' > "$sha_v_root/four/src/f"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/four/src/f" "$sha_v_root/four/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
+    || { echo "FAIL: a missing destination returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
+grep -Fq 'destination file missing or not a regular file' "$sha_v_root/session.log" \
+    || { echo 'FAIL: the missing-destination failure was not recorded in the session log' >&2; exit 1; }
+
+mkdir -p "$sha_v_root/five/src" "$sha_v_root/five/dst"
+printf 'epsilon\n' > "$sha_v_root/five/src/f"
+printf 'different\n' > "$sha_v_root/five/dst/f"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/five/src/f" "$sha_v_root/five/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
+    || { echo "FAIL: a content mismatch returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
+grep -Fq 'SHA-256 verification failed:' "$sha_v_root/session.log" \
+    || { echo 'FAIL: the hash-mismatch failure was not recorded in the session log' >&2; exit 1; }
+
+mkdir -p "$sha_v_root/six/src/d" "$sha_v_root/six/dst/d"
+printf 'zeta\n' > "$sha_v_root/six/src/d/keep"
+printf 'vanishes\n' > "$sha_v_root/six/src/d/vanishes"
+cp -p "$sha_v_root/six/src/d/keep" "$sha_v_root/six/dst/d/keep"
+cp -p "$sha_v_root/six/src/d/vanishes" "$sha_v_root/six/dst/d/vanishes"
+set +e
+SHAV_VANISH_AT="$sha_v_root/six/src/d/vanishes" \
+    sha_v_call verify_sha256_item "$sha_v_root/six/src/d" "$sha_v_root/six/dst"
+sha_v_rc=$?
+set -e
+SHAV_VANISH_AT=""
+[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 1 ]] \
+    || { echo "FAIL: a mid-hash source loss returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=1)" >&2; exit 1; }
+grep -Fq 'disappeared or is unreadable while hashing' "$sha_v_root/session.log" \
+    || { echo 'FAIL: the mid-hash source loss was not recorded in the session log' >&2; exit 1; }
+
+mkdir -p "$sha_v_root/seven/src" "$sha_v_root/seven/dst"
+printf 'target\n' > "$sha_v_root/seven/src/real"
+ln -s real "$sha_v_root/seven/src/link"
+set +e
+sha_v_call verify_sha256_item "$sha_v_root/seven/src/link" "$sha_v_root/seven/dst"
+sha_v_rc=$?
+set -e
+[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 0 ]] \
+    || { echo "FAIL: a symlink source returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=0)" >&2; exit 1; }
+
+# (a) a source file removed between copy and verification: the loop completes,
+# no arithmetic error is printed, the failure is counted and named in the
+# final summary, and the request fails closed.
+sha_a_root="$fc_root/sha-copy"
+mkdir -p "$sha_a_root/src" "$sha_a_root/dst" "$sha_a_root/session"
+printf 'keep-me\n' > "$sha_a_root/src/keep"
+printf 'vanishing\n' > "$sha_a_root/src/vanishes"
+sha_a_run() {
+    (
+        source <(sed '/^main "\$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$sha_a_root/session"
+        SESSION_LOG="$sha_a_root/session.log"
+        : > "$SESSION_LOG"
+        prepare_target() { :; }
+        maybe_mount_target_path() { :; }
+        promote_target_data_rw() { :; }
+        validate_virtual_path() { :; }
+        validate_host_source() { :; }
+        target_destination_sensitive() { return 1; }
+        target_destination_path() { printf '%s\n' "$sha_a_root/dst"; }
+        if [[ -n "${SHAV_VANISH_AT:-}" ]]; then
+            sha256sum()
+            {
+                local arg
+                for arg in "$@"; do
+                    if [[ "$arg" == "$SHAV_VANISH_AT" ]]; then
+                        rm -f -- "$SHAV_VANISH_AT"
+                        break
+                    fi
+                done
+                command sha256sum "$@"
+            }
+        fi
+        run_file_copy "$@"
+    )
+}
+
+set +e
+SHAV_VANISH_AT="$sha_a_root/src/vanishes" \
+    sha_a_run copy host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
+    > "$sha_a_root/copy-fail.out" 2>&1
+sha_a_rc=$?
+set -e
+SHAV_VANISH_AT=""
+(( sha_a_rc != 0 )) \
+    || { echo 'FAIL: a copy with a failed SHA-256 verification succeeded instead of failing closed' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq 'operand expected' "$sha_a_root/copy-fail.out" \
+    && { echo 'FAIL: the verification failure still triggers an arithmetic error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq 'syntax error' "$sha_a_root/copy-fail.out" \
+    && { echo 'FAIL: the verification failure still triggers an arithmetic syntax error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq 'COPY COMPLETE — SHA-256 verification FAILED' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy did not report the verification failure in its summary' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Eq 'SHA-256 regular files verified: 1$' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy did not count the one healthy verified file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Eq 'SHA-256 verification FAILURES: 1 \(the copy is not verified complete\)$' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy did not count the verification failure' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq '  FAILED verification:' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy summary did not name the failed verification' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq 'vanishes' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy summary did not name the vanished source file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+grep -Fq 'the File Copy is not verified complete' "$sha_a_root/copy-fail.out" \
+    || { echo 'FAIL: the failed copy did not fail closed with the verification failure reason' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
+[[ -f "$sha_a_root/dst/src/keep" ]] \
+    || { echo 'FAIL: the copy loop did not complete: the healthy file never reached the destination' >&2; exit 1; }
+
+# The same tree without the mid-copy loss verifies cleanly and stays on the
+# success path, and the preview path is untouched (no verification, rc 0).
+printf 'vanishing\n' > "$sha_a_root/src/vanishes"
+rm -f "$sha_a_root/dst/src/vanishes"
+set +e
+sha_a_run copy host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
+    > "$sha_a_root/copy-ok.out" 2>&1
+sha_a_rc=$?
+set -e
+(( sha_a_rc == 0 )) \
+    || { echo "FAIL: a clean copy failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
+grep -Eq 'COPY COMPLETE$' "$sha_a_root/copy-ok.out" \
+    || { echo 'FAIL: the clean copy did not report COPY COMPLETE' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
+grep -Eq 'SHA-256 regular files verified: 2$' "$sha_a_root/copy-ok.out" \
+    || { echo 'FAIL: the clean copy did not count both verified files' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
+if grep -Fq 'SHA-256 verification FAILURES' "$sha_a_root/copy-ok.out"; then
+    echo 'FAIL: the clean copy summary names verification failures' >&2
+    cat "$sha_a_root/copy-ok.out" >&2
+    exit 1
+fi
+set +e
+sha_a_run copy-preview host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
+    > "$sha_a_root/preview.out" 2>&1
+sha_a_rc=$?
+set -e
+(( sha_a_rc == 0 )) \
+    || { echo "FAIL: a copy preview failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
+grep -Fq 'PREVIEW COMPLETE — no files were changed.' "$sha_a_root/preview.out" \
+    || { echo 'FAIL: the preview path changed its completion wording' >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
+if grep -Fq 'COPY COMPLETE' "$sha_a_root/preview.out"; then
+    echo 'FAIL: the preview path reports a copy completion' >&2
+    cat "$sha_a_root/preview.out" >&2
+    exit 1
+fi
 
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

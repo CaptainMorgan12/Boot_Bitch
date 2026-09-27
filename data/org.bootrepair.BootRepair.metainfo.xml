@@ -57,6 +57,19 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.26" date="2026-09-26">
+      <description>
+        <p>Comprehensive security hardening of the helper, both GUIs, the legacy port generator and the packaging tooling:</p>
+        <ul>
+          <li>Mount containment: validated target mountpoints, refusal of symlinked session-log paths, no host-absolute cleanup paths, fail-closed offline filesystem repair and a per-target-disk lock against concurrent repair sessions.</li>
+          <li>Interactive shell and wire protocol: per-pump random prompt tokens, bounded answer streaming and timeouts, redacted typed secrets, SIGPIPE-proof sessions and bounded escape sequences.</li>
+          <li>Process lifecycle: root-owned PID registry with child reaping, setsid-dispatched broker, host-shell timeout with --kill-after and a prompt-aware GUI watchdog.</li>
+          <li>Repair chroots receive a filtered private /dev limited to the selected target disk; File Copy strips setuid/setgid/capabilities and re-validates destinations; GRUB regeneration runs with os-prober disabled.</li>
+          <li>GUI hardening: owner-matched helper resolution, per-class argument validation, prompt masking, 0600 session logs and settings, bounded transcript and scanner reads, and guarded secret-file config transport.</li>
+          <li>Legacy edition: fails-loud port transforms, a completed bash-4 blacklist, guarded unlock keyfiles and distro-aware authorization hints.</li>
+        </ul>
+      </description>
+    </release>
     <release version="0.2.25" date="2026-09-19">
       <description>
         <p>Adds native RPM and APK release artifacts and the Alpine, Arch and Fedora repair backends:</p>

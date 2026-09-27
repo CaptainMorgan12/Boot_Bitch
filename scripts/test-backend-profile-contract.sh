@@ -116,6 +116,7 @@ grep -q '^rpm_transaction_reported_no_changes()' "$HELPER"
 grep -q '^rpm_verify_missing_paths()' "$HELPER"
 grep -q '^rpm_missing_file_packages()' "$HELPER"
 grep -q '^adaptive_rpm_apply()' "$HELPER"
+grep -q '^rpm_simulation_download_size()' "$HELPER"
 grep -q '^adaptive_rpm_stage()' "$HELPER"
 grep -q '^adaptive_rpm_fix_broken()' "$HELPER"
 grep -q '^adaptive_rpm_metadata_refresh()' "$HELPER"
@@ -2671,6 +2672,58 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
         || { echo 'FAIL: dnf5 skipped summary is missing' >&2; printf '%s\n' "$rpm_feedback_out" >&2; exit 1; }
     grep -Fqx 'Repair change status upgrade: changed|1 package skipped: broken-pkg' <<<"$rpm_feedback_out" \
         || { echo 'FAIL: dnf5 skipped status is wrong' >&2; printf '%s\n' "$rpm_feedback_out" >&2; exit 1; }
+)
+
+# dnf5: the simulation's download size is announced before the buffered apply
+# step so a large upgrade does not look like a hang, and the note is skipped
+# when the transcript carries no size line.  run_chroot_try is stubbed to
+# capture that the note precedes the apply and the transaction flags stay put.
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    TARGET_ROOT="$fake_root"
+    SESSION_LOG="$fake_root/rpm-size.log"
+    SESSION_DIR="$fake_root/rpm-size-session"
+    mkdir -p "$SESSION_DIR"
+    : > "$SESSION_LOG"
+    rpm_preflight() { :; }
+    rpm_database_fingerprint() { printf 'stable\n'; }
+    rpm_size_sim=$'Upgrading:\n foo.x86_64 1.0 -> 2.0\nTotal size of inbound packages is 245 MiB. Need to download 245 MiB.\nOperation aborted by the user.'
+    rpm_transaction_try()
+    {
+        RPM_SIM_RC=1
+        RPM_SIM_OUTPUT="$rpm_size_sim"
+    }
+    run_chroot_try()
+    {
+        CHROOT_TRY_RC=0
+        CHROOT_TRY_OUTPUT=$'Upgrading:\n foo.x86_64 1.0 -> 2.0'
+        printf 'apply:%s\n' "$*" >> "$SESSION_LOG"
+    }
+    rpm_size_out="$(adaptive_rpm_upgrade)"
+    grep -Fq 'This transaction downloads approximately 245 MiB; the apply step reports its progress only when it finishes.' <<<"$rpm_size_out" \
+        || { echo 'FAIL: the dnf5 download-size heads-up is missing from the live output' >&2; printf '%s\n' "$rpm_size_out" >&2; exit 1; }
+    grep -Fq 'This transaction downloads approximately 245 MiB; the apply step reports its progress only when it finishes.' "$SESSION_LOG" \
+        || { echo 'FAIL: the dnf5 download-size heads-up is missing from the session log' >&2; exit 1; }
+    grep -Fq -- '-y' <(grep '^apply:' "$SESSION_LOG" | tail -n1) \
+        || { echo 'FAIL: the dnf5 apply transaction no longer carries -y' >&2; exit 1; }
+    grep -Fq -- '--assumeno' "$SESSION_LOG" \
+        || { echo 'FAIL: the dnf5 simulation no longer carries --assumeno' >&2; exit 1; }
+
+    # "Need to download <N>" variant (dnf5 without the inbound-size phrasing).
+    rpm_size_sim=$'Upgrading:\n foo.x86_64 1.0 -> 2.0\nNeed to download 1.2 GiB.\nOperation aborted by the user.'
+    rpm_size_out="$(adaptive_rpm_upgrade)"
+    grep -Fq 'This transaction downloads approximately 1.2 GiB; the apply step reports its progress only when it finishes.' <<<"$rpm_size_out" \
+        || { echo 'FAIL: the Need-to-download size variant was not announced' >&2; printf '%s\n' "$rpm_size_out" >&2; exit 1; }
+
+    # No size line in the transcript -> no note.
+    rpm_size_sim=$'Upgrading:\n foo.x86_64 1.0 -> 2.0\nOperation aborted by the user.'
+    rpm_size_out="$(adaptive_rpm_upgrade)"
+    if grep -Fq 'This transaction downloads approximately' <<<"$rpm_size_out"; then
+        echo 'FAIL: a download-size note was emitted for a transcript without a size line' >&2
+        printf '%s\n' "$rpm_size_out" >&2
+        exit 1
+    fi
 )
 
 # pacman: an ignored package upgrade is non-fatal and surfaced in the
