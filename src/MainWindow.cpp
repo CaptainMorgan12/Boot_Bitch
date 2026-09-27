@@ -1663,6 +1663,49 @@ QString hostDefaultSuccessSummary(const HostDefaultVerification &verification,
 }
 } // namespace
 
+namespace {
+
+// Persisted Settings key and safe default for every Settings → Full Repair
+// plan stage. The capability key names the `Repair tool <key>` gate that
+// decides whether the stage can run on the current scope; the setting key is
+// where the user's preference is saved independently of the checkbox widget's
+// scope-dependent display state.
+struct FullRepairStageConfig {
+    const char *key;
+    const char *settingKey;
+    bool defaultChecked;
+};
+
+const QList<FullRepairStageConfig> &fullRepairStageConfigs()
+{
+    static const QList<FullRepairStageConfig> configs = {
+        {"filesystem", "repair/filesystem", true},
+        {"dpkg", "repair/dpkgConfigure", true},
+        {"fixbroken", "repair/fixBroken", true},
+        {"aptupdate", "repair/refreshMetadata", true},
+        {"upgrade", "repair/upgradePackages", false},
+        {"dkms", "repair/dkms", true},
+        {"display", "repair/displayManager", false},
+        {"initramfs", "repair/initramfs", true},
+        {"efi", "repair/efiBootloader", false},
+        {"grub", "repair/grub", true},
+        {"extlinux", "repair/extlinux", true},
+    };
+    return configs;
+}
+
+const FullRepairStageConfig *fullRepairStageConfigFor(const QString &key)
+{
+    for (const FullRepairStageConfig &config : fullRepairStageConfigs()) {
+        if (config.key == key) {
+            return &config;
+        }
+    }
+    return nullptr;
+}
+
+} // namespace
+
 // A soft shadow gradient at the top and bottom edge of a scroll area hints
 // that more content is available in that direction; the overlay never takes
 // mouse input and repaints with the scroll position and viewport size.
@@ -5857,14 +5900,22 @@ QWidget *MainWindow::buildSettingsPage()
     connect(m_showRemovable, &QCheckBox::toggled, this, refilterDevices);
     connect(m_showEncrypted, &QCheckBox::toggled, this, refilterDevices);
 
-    const QList<QCheckBox *> repairToggles = {
-        m_fullRepairFilesystem,
-        m_fullRepairDpkg, m_fullRepairBrokenPackages, m_fullRepairAptUpdate,
-        m_fullRepairUpgrade, m_fullRepairDkms, m_fullRepairDisplayManager, m_fullRepairInitramfs, m_fullRepairEfi, m_fullRepairGrub,
-        m_fullRepairExtlinux
-    };
-    for (QCheckBox *check : repairToggles) {
-        connect(check, &QCheckBox::toggled, this, &MainWindow::updateFullRepairSummary);
+    // Every Full Repair plan checkbox refreshes the plan summary on toggle and
+    // records the user's preference while the stage is usable on the current
+    // scope. The scope-dependent presentation pass (updateRepairScopeControls)
+    // blocks signals, and a disabled stage cannot be toggled by the user, so
+    // the only toggles that reach this handler for an unavailable stage are
+    // programmatic and must not clobber the saved choice.
+    for (const auto &stage : fullRepairStageCheckboxes()) {
+        if (!stage.first) {
+            continue;
+        }
+        connect(stage.first, &QCheckBox::toggled, this, [this, key = stage.second](bool checked) {
+            if (repairToolAvailable(key)) {
+                m_fullRepairStagePreferences.insert(key, checked);
+            }
+            updateFullRepairSummary();
+        });
     }
 
     connect(m_autoRefreshDiagnostics, &QCheckBox::toggled, this, [this](bool enabled) {
@@ -5900,17 +5951,25 @@ void MainWindow::loadSettings()
     m_showEncrypted->setChecked(m_settings->value(QStringLiteral("devices/showEncrypted"), true).toBool());
     m_autoRefreshDiagnostics->setChecked(m_settings->value(QStringLiteral("diagnostics/autoRefreshStale"), true).toBool());
 
-    m_fullRepairFilesystem->setChecked(m_settings->value(QStringLiteral("repair/filesystem"), true).toBool());
-    m_fullRepairDpkg->setChecked(m_settings->value(QStringLiteral("repair/dpkgConfigure"), true).toBool());
-    m_fullRepairBrokenPackages->setChecked(m_settings->value(QStringLiteral("repair/fixBroken"), true).toBool());
-    m_fullRepairAptUpdate->setChecked(m_settings->value(QStringLiteral("repair/refreshMetadata"), true).toBool());
-    m_fullRepairUpgrade->setChecked(m_settings->value(QStringLiteral("repair/upgradePackages"), false).toBool());
-    m_fullRepairDkms->setChecked(m_settings->value(QStringLiteral("repair/dkms"), true).toBool());
-    m_fullRepairDisplayManager->setChecked(m_settings->value(QStringLiteral("repair/displayManager"), false).toBool());
-    m_fullRepairInitramfs->setChecked(m_settings->value(QStringLiteral("repair/initramfs"), true).toBool());
-    m_fullRepairEfi->setChecked(m_settings->value(QStringLiteral("repair/efiBootloader"), false).toBool());
-    m_fullRepairGrub->setChecked(m_settings->value(QStringLiteral("repair/grub"), true).toBool());
-    m_fullRepairExtlinux->setChecked(m_settings->value(QStringLiteral("repair/extlinux"), true).toBool());
+    // Full Repair plan stage preferences. The checkbox widgets only ever show
+    // the current scope's usable state (updateRepairScopeControls forces
+    // unavailable stages off), so the persisted preference lives in
+    // m_fullRepairStagePreferences and the widgets are initialized from it
+    // here with signals blocked to keep this pass out of the summary refresh.
+    m_fullRepairStagePreferences.clear();
+    for (const auto &stage : fullRepairStageCheckboxes()) {
+        const FullRepairStageConfig *config = fullRepairStageConfigFor(stage.second);
+        if (!stage.first || !config) {
+            continue;
+        }
+        const bool checked = m_settings->value(
+            QString::fromLatin1(config->settingKey), config->defaultChecked).toBool();
+        m_fullRepairStagePreferences.insert(stage.second, checked);
+        {
+            QSignalBlocker blocker(stage.first);
+            stage.first->setChecked(checked);
+        }
+    }
 
     const bool wrapLogs = m_settings->value(QStringLiteral("logs/wrapLines"), true).toBool();
     if (m_wrapLogsAction) {
@@ -5988,17 +6047,14 @@ void MainWindow::saveSettings()
     m_settings->setValue(QStringLiteral("devices/showRemovable"), m_showRemovable->isChecked());
     m_settings->setValue(QStringLiteral("devices/showEncrypted"), m_showEncrypted->isChecked());
     m_settings->setValue(QStringLiteral("diagnostics/autoRefreshStale"), m_autoRefreshDiagnostics->isChecked());
-    m_settings->setValue(QStringLiteral("repair/filesystem"), m_fullRepairFilesystem->isChecked());
-    m_settings->setValue(QStringLiteral("repair/dpkgConfigure"), m_fullRepairDpkg->isChecked());
-    m_settings->setValue(QStringLiteral("repair/fixBroken"), m_fullRepairBrokenPackages->isChecked());
-    m_settings->setValue(QStringLiteral("repair/refreshMetadata"), m_fullRepairAptUpdate->isChecked());
-    m_settings->setValue(QStringLiteral("repair/upgradePackages"), m_fullRepairUpgrade->isChecked());
-    m_settings->setValue(QStringLiteral("repair/dkms"), m_fullRepairDkms->isChecked());
-    m_settings->setValue(QStringLiteral("repair/displayManager"), m_fullRepairDisplayManager->isChecked());
-    m_settings->setValue(QStringLiteral("repair/initramfs"), m_fullRepairInitramfs->isChecked());
-    m_settings->setValue(QStringLiteral("repair/efiBootloader"), m_fullRepairEfi->isChecked());
-    m_settings->setValue(QStringLiteral("repair/grub"), m_fullRepairGrub->isChecked());
-    m_settings->setValue(QStringLiteral("repair/extlinux"), m_fullRepairExtlinux->isChecked());
+    // Persist the Full Repair stage preferences, not the live checkbox state:
+    // an unavailable stage is displayed unchecked on this scope, and that
+    // forced display state must never overwrite the user's saved choice.
+    for (const FullRepairStageConfig &config : fullRepairStageConfigs()) {
+        m_settings->setValue(QString::fromLatin1(config.settingKey),
+                             m_fullRepairStagePreferences.value(
+                                 QString::fromLatin1(config.key), config.defaultChecked));
+    }
     m_settings->setValue(QStringLiteral("logs/wrapLines"), m_wrapLogsAction ? m_wrapLogsAction->isChecked() : true);
 
     if (m_deviceTree) {
@@ -15901,13 +15957,19 @@ void MainWindow::updateFullRepairSummary()
     QString excludedReason;
 
     for (const StageEntry &entry : stageEntries) {
-        if (!entry.check || !entry.check->isChecked()) continue;
+        if (!entry.check) continue;
+        // The saved preference decides inclusion, not the widget's checked
+        // state: the presentation pass above forces unavailable stages off
+        // visually, so the durable preference is the only stable truth (and
+        // it can never silently drop a stage whose backend became available
+        // through an individual diagnostic before this refresh).
+        const FullRepairStageConfig *stageConfig = fullRepairStageConfigFor(entry.diagnosticKey);
+        if (!m_fullRepairStagePreferences.value(entry.diagnosticKey,
+                                                stageConfig ? stageConfig->defaultChecked : true)) {
+            continue;
+        }
         QString availabilityReason;
-        // The cached capability evidence gates the stage. The checkbox's own
-        // enabled state is presentation only and is refreshed by
-        // updateRepairScopeControls() above; relying on it here could exclude
-        // a checked stage whose backend became available through an
-        // individual diagnostic before the next summary refresh.
+        // The cached capability evidence gates the stage.
         if (!repairToolAvailable(entry.diagnosticKey, &availabilityReason)) {
             if (excludedReason.isEmpty()) excludedReason = availabilityReason;
             continue;
@@ -15941,8 +16003,11 @@ void MainWindow::updateFullRepairSummary()
         bool diagnosticsReady = targetReady;
         if (diagnosticsReady) {
             for (const StageEntry &entry : stageEntries) {
-                if (!entry.check || !entry.check->isChecked()
-                    || !repairToolAvailable(entry.diagnosticKey)) continue;
+                if (!entry.check) continue;
+                const FullRepairStageConfig *stageConfig = fullRepairStageConfigFor(entry.diagnosticKey);
+                const bool preferred = m_fullRepairStagePreferences.value(
+                    entry.diagnosticKey, stageConfig ? stageConfig->defaultChecked : true);
+                if (!preferred || !repairToolAvailable(entry.diagnosticKey)) continue;
                 QString stageReason;
                 if (!repairEvidenceReadyForTool(entry.diagnosticKey, &stageReason)) {
                     diagnosticsReady = false;
@@ -16788,31 +16853,34 @@ void MainWindow::cleanupStagedHelpers()
 QStringList MainWindow::selectedRepairStages() const
 {
     QStringList stages;
-    // The cached capability evidence is the single gate for a selected stage.
-    // The Settings checkbox's own enabled state is presentation only: a stale
-    // enablement (for example evidence that arrived through an individual
-    // diagnostic before the next summary refresh) must never silently drop a
-    // stage whose backend is available and whose setting is on.
-    auto selected = [this](QCheckBox *check, const QString &key) {
-        return check && check->isChecked() && repairToolAvailable(key);
+    // The saved preference plus the cached capability evidence gate a stage;
+    // the Settings checkbox's checked/enabled state is presentation only. A
+    // stale display (for example a stage forced off before its backend became
+    // available through an individual diagnostic, or evidence that arrived
+    // before the next summary refresh) must never silently drop a stage whose
+    // backend is available and whose setting is on.
+    auto selected = [this](const QString &key) {
+        const FullRepairStageConfig *config = fullRepairStageConfigFor(key);
+        return m_fullRepairStagePreferences.value(key, config ? config->defaultChecked : true)
+            && repairToolAvailable(key);
     };
-    if (selected(m_fullRepairFilesystem, QStringLiteral("filesystem"))) stages << QStringLiteral("filesystem");
-    if (selected(m_fullRepairDpkg, QStringLiteral("dpkg"))) stages << QStringLiteral("dpkg-configure");
-    if (selected(m_fullRepairBrokenPackages, QStringLiteral("fixbroken"))) stages << QStringLiteral("fix-broken");
-    if (selected(m_fullRepairAptUpdate, QStringLiteral("aptupdate"))) stages << QStringLiteral("apt-update");
-    if (selected(m_fullRepairUpgrade, QStringLiteral("upgrade"))) stages << QStringLiteral("apt-upgrade");
-    if (selected(m_fullRepairDkms, QStringLiteral("dkms"))) stages << QStringLiteral("dkms");
-    if (selected(m_fullRepairDisplayManager, QStringLiteral("display"))) stages << QStringLiteral("display-manager");
-    if (selected(m_fullRepairInitramfs, QStringLiteral("initramfs"))) stages << QStringLiteral("initramfs");
-    if (selected(m_fullRepairEfi, QStringLiteral("efi"))) stages << QStringLiteral("efi");
-    if (selected(m_fullRepairGrub, QStringLiteral("grub"))) stages << QStringLiteral("grub");
-    if (selected(m_fullRepairExtlinux, QStringLiteral("extlinux"))) stages << QStringLiteral("extlinux");
+    if (selected(QStringLiteral("filesystem"))) stages << QStringLiteral("filesystem");
+    if (selected(QStringLiteral("dpkg"))) stages << QStringLiteral("dpkg-configure");
+    if (selected(QStringLiteral("fixbroken"))) stages << QStringLiteral("fix-broken");
+    if (selected(QStringLiteral("aptupdate"))) stages << QStringLiteral("apt-update");
+    if (selected(QStringLiteral("upgrade"))) stages << QStringLiteral("apt-upgrade");
+    if (selected(QStringLiteral("dkms"))) stages << QStringLiteral("dkms");
+    if (selected(QStringLiteral("display"))) stages << QStringLiteral("display-manager");
+    if (selected(QStringLiteral("initramfs"))) stages << QStringLiteral("initramfs");
+    if (selected(QStringLiteral("efi"))) stages << QStringLiteral("efi");
+    if (selected(QStringLiteral("grub"))) stages << QStringLiteral("grub");
+    if (selected(QStringLiteral("extlinux"))) stages << QStringLiteral("extlinux");
     return stages;
 }
 
-void MainWindow::updateRepairScopeControls()
+QList<QPair<QCheckBox *, QString>> MainWindow::fullRepairStageCheckboxes() const
 {
-    const QList<QPair<QCheckBox *, QString>> allStages = {
+    return {
         {m_fullRepairFilesystem, QStringLiteral("filesystem")},
         {m_fullRepairDpkg, QStringLiteral("dpkg")},
         {m_fullRepairBrokenPackages, QStringLiteral("fixbroken")},
@@ -16825,6 +16893,11 @@ void MainWindow::updateRepairScopeControls()
         {m_fullRepairGrub, QStringLiteral("grub")},
         {m_fullRepairExtlinux, QStringLiteral("extlinux")}
     };
+}
+
+void MainWindow::updateRepairScopeControls()
+{
+    const QList<QPair<QCheckBox *, QString>> allStages = fullRepairStageCheckboxes();
     for (const auto &stage : allStages) {
         if (!stage.first) continue;
         QString reason;
@@ -16839,7 +16912,30 @@ void MainWindow::updateRepairScopeControls()
             reason += QStringLiteral(" This stage is off by default: select it here to include it in Full Repair.");
         }
         stage.first->setToolTip(reason);
-        stage.first->setEnabled(available);
+        // The checkbox mirrors the scope's usable stages only: an unavailable
+        // tool is shown disabled AND unchecked (the cached capability gate is
+        // the single source of truth; a checked unavailable stage would look
+        // selected while the plan silently drops it), while the user's saved
+        // preference is kept in m_fullRepairStagePreferences and restored when
+        // the tool becomes available again. Signals are blocked so this
+        // presentation pass never re-records the preference or re-enters the
+        // summary refresh. The checked state is applied while the checkbox is
+        // still checkable: QAbstractButton::setChecked() ignores calls on a
+        // non-checkable button.
+        {
+            QSignalBlocker blocker(stage.first);
+            const FullRepairStageConfig *config = fullRepairStageConfigFor(stage.second);
+            const bool preference = m_fullRepairStagePreferences.value(stage.second,
+                                                                        config ? config->defaultChecked : true);
+            if (available) {
+                stage.first->setCheckable(true);
+                stage.first->setChecked(preference);
+            } else {
+                stage.first->setChecked(false);
+                stage.first->setCheckable(false);
+            }
+            stage.first->setEnabled(available);
+        }
     }
     // Labels derive from the backends the helper detected on the selected
     // scope, never from the distribution family.  A mixed-manager target gets

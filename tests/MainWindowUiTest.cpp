@@ -756,6 +756,10 @@ void prepareFilesystemPlan(MainWindow &window)
     QString evidence = capabilityEvidence(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     cacheRepairEvidence(window, evidence);
+    // Apply the scope's availability to the widgets first: the presentation
+    // pass restores the saved preferences, so the explicit setChecked calls
+    // below emit toggled and record the new preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
                               window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
@@ -2380,6 +2384,7 @@ private slots:
     void stageLabelsTrackBackendFamilyWithoutLeaking();
     void mixedPackageManagerLabelsStayGeneric();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
+    void unavailablePlanStagesAreDisabledAndUnchecked();
     void autoRefreshSettingDefaultsOnAndPersists();
     void autoRefreshDecisionRespectsSettingScopeAndEvidence();
     void autoRefreshStaysIdleWithoutSessionOrSetting();
@@ -2773,6 +2778,9 @@ void MainWindowUiTest::fullRepairPlanListUsesSplitterAdjustableHeight()
                      QStringLiteral("Repair tool display: available"));
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     cacheRepairEvidence(window, evidence);
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     QVERIFY(window.m_fullRepairStageList);
     QVERIFY(window.m_fullRepairPlanBox);
@@ -3620,6 +3628,9 @@ void MainWindowUiTest::fullRepairFilesystemStageIsFirstWhenEnabled()
     QString evidence = capabilityEvidence(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     cacheRepairEvidence(window, evidence);
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
                               window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
@@ -3665,9 +3676,18 @@ void MainWindowUiTest::fullRepairFilesystemCheckboxExistsAndPersists()
         MainWindow window;
         window.show();
         QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
         QVERIFY(window.m_fullRepairFilesystem);
         QVERIFY2(window.m_fullRepairFilesystem->text().contains(QStringLiteral("Repair file system errors")),
                  "the Settings checkbox must be labelled for file system repair");
+        // The preference is only meaningful while the stage is usable on the
+        // current scope: establish a scope whose capability evidence keeps
+        // the filesystem tool available.
+        prepareRepairScope(window);
+        QString evidence = capabilityEvidence(false, true);
+        evidence += QStringLiteral("Repair tool filesystem: available\n");
+        cacheRepairEvidence(window, evidence);
+        window.updateFullRepairSummary();
         QVERIFY2(window.m_fullRepairFilesystem->isChecked(),
                  "file system repair must default to enabled like the other safe stages");
         window.m_fullRepairFilesystem->setChecked(false);
@@ -3679,7 +3699,13 @@ void MainWindowUiTest::fullRepairFilesystemCheckboxExistsAndPersists()
         MainWindow window;
         window.show();
         QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
         QVERIFY(window.m_fullRepairFilesystem);
+        prepareRepairScope(window);
+        QString evidence = capabilityEvidence(false, true);
+        evidence += QStringLiteral("Repair tool filesystem: available\n");
+        cacheRepairEvidence(window, evidence);
+        window.updateFullRepairSummary();
         QVERIFY2(!window.m_fullRepairFilesystem->isChecked(),
                  "the disabled file system repair preference must persist across windows");
         window.m_fullRepairFilesystem->setChecked(true);
@@ -3993,6 +4019,9 @@ void MainWindowUiTest::filesystemRepairFlowUsesHostCommandsInHostMode()
     QString evidence = capabilityEvidence(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     cacheRepairEvidence(window, evidence);
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
                               window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
@@ -4282,6 +4311,9 @@ void MainWindowUiTest::fullRepairUsesFreshEvidenceForSelectedStage()
     window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"),
                                           QStringLiteral("Repair tool display: available\n"));
     window.m_targetDiagnosticCache.insert(QStringLiteral("display"), QStringLiteral("Diagnostic: display\nPASS"));
+    // Apply the scope's availability first so the display-manager stage is
+    // checkable and the explicit selection below is recorded.
+    window.updateFullRepairSummary();
 
     QVERIFY(window.m_fullRepairDisplayManager);
     window.m_fullRepairDpkg->setChecked(false);
@@ -4361,6 +4393,9 @@ JSON
     QString evidence = capabilityEvidence(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     cacheRepairEvidence(window, evidence);
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
                               window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
@@ -7669,7 +7704,8 @@ void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
     window.m_hostMaintenanceMode = false;
     window.updateFullRepairSummary();
     QVERIFY(!window.m_fullRepairDkms->isEnabled());
-    QVERIFY(window.m_fullRepairDkms->isChecked());
+    QVERIFY(!window.m_fullRepairDkms->isChecked());
+    QVERIFY(!window.m_fullRepairDkms->isCheckable());
     QVERIFY(!window.m_repairToolButton->isEnabled());
     QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dkms")));
     QVERIFY(item->text(1).contains(QStringLiteral("DKMS is not installed")));
@@ -7769,9 +7805,13 @@ void MainWindowUiTest::archDkmsAvailableGatesDkmsTool()
             QCOMPARE(window.repairToolAvailable(QStringLiteral("dkms")), installed);
             QCOMPARE(window.repairEvidenceReadyForTool(QStringLiteral("dkms")), installed);
             QCOMPARE(window.m_fullRepairDkms->isEnabled(), installed);
+            QCOMPARE(window.m_fullRepairDkms->isCheckable(), installed);
             QCOMPARE(window.m_repairToolButton->isEnabled(), installed);
             QCOMPARE(window.selectedRepairStages().contains(QStringLiteral("dkms")), installed);
-            QVERIFY(window.m_fullRepairDkms->isChecked());
+            // The display follows the capability: an unavailable stage is
+            // disabled AND unchecked, while the saved preference is restored
+            // when the capability returns.
+            QCOMPARE(window.m_fullRepairDkms->isChecked(), installed);
             if (!installed) {
                 QVERIFY(item->text(1).contains(QStringLiteral("DKMS is not installed")));
                 QVERIFY(window.m_fullRepairDkms->toolTip().contains(QStringLiteral("DKMS is not installed")));
@@ -7959,10 +7999,14 @@ void MainWindowUiTest::alpineExtlinuxToolRowIsGatedByCapabilityEvidence()
             QCOMPARE(window.repairToolAvailable(QStringLiteral("extlinux")), available);
             QCOMPARE(window.repairEvidenceReadyForTool(QStringLiteral("extlinux")), available);
             QCOMPARE(window.m_fullRepairExtlinux->isEnabled(), available);
+            QCOMPARE(window.m_fullRepairExtlinux->isCheckable(), available);
             QCOMPARE(window.m_repairToolButton->isEnabled(), available);
             QCOMPARE(window.selectedRepairStages().contains(QStringLiteral("extlinux")), available);
-            QVERIFY2(window.m_fullRepairExtlinux->isChecked(),
-                     "an unavailable stage must keep the user's Settings selection");
+            // The display follows the capability: an unavailable stage is
+            // shown disabled AND unchecked instead of selected-but-gated; the
+            // saved preference survives and is restored when the capability
+            // returns.
+            QCOMPARE(window.m_fullRepairExtlinux->isChecked(), available);
 
             if (available) {
                 QCOMPARE(extlinuxItem->text(1), QStringLiteral("Enabled in Settings"));
@@ -7985,12 +8029,15 @@ void MainWindowUiTest::alpineExtlinuxToolRowIsGatedByCapabilityEvidence()
 
 // Enabling the extlinux stage must add it to the Full Repair execution plan
 // directly after GRUB, and an unavailable capability line must remove it again
-// without unchecking the user's Settings selection.
+// while the checkbox is shown off (disabled AND unchecked); the saved
+// preference survives and is restored when the capability returns.
 void MainWindowUiTest::alpineFullRepairPlanIncludesExtlinuxStage()
 {
     MainWindow window;
     prepareRepairScope(window);
     window.m_snapshotPreloadScheduled = true;
+    cacheRepairEvidence(window, capabilityEvidenceAlpine(false, true, true));
+    window.updateFullRepairSummary();
     for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
                               window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
                               window.m_fullRepairUpgrade, window.m_fullRepairDkms,
@@ -8002,9 +8049,8 @@ void MainWindowUiTest::alpineFullRepairPlanIncludesExtlinuxStage()
     }
     window.m_fullRepairGrub->setChecked(true);
     window.m_fullRepairExtlinux->setChecked(true);
-
-    cacheRepairEvidence(window, capabilityEvidenceAlpine(false, true, true));
     window.updateFullRepairSummary();
+
     QCOMPARE(window.selectedRepairStages(),
              QStringList({QStringLiteral("grub"), QStringLiteral("extlinux")}));
     QCOMPARE(window.m_fullRepairStageList->count(), 2);
@@ -8015,14 +8061,16 @@ void MainWindowUiTest::alpineFullRepairPlanIncludesExtlinuxStage()
              "the extlinux stage must be runnable with cached Alpine evidence");
 
     // An unavailable extlinux capability fails closed: the stage leaves the
-    // plan while the Settings selection is preserved.
+    // plan and the checkbox is shown disabled AND unchecked; the saved
+    // preference is untouched.
     cacheRepairEvidence(window, capabilityEvidenceAlpine(false, true, false));
     window.updateFullRepairSummary();
     QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("grub")});
     QCOMPARE(window.m_fullRepairStageList->count(), 1);
     QVERIFY(!window.m_fullRepairStageList->item(0)->text().contains(QStringLiteral("extlinux")));
-    QVERIFY(window.m_fullRepairExtlinux->isChecked());
+    QVERIFY(!window.m_fullRepairExtlinux->isChecked());
     QVERIFY(!window.m_fullRepairExtlinux->isEnabled());
+    QVERIFY(!window.m_fullRepairExtlinux->isCheckable());
 }
 
 // Alpine UEFI GRUB targets must offer the EFI and GRUB stages from the cached
@@ -8081,13 +8129,16 @@ void MainWindowUiTest::alpineUefiEfiGrubRepairIsOfferedAndLabelled()
         QVERIFY2(sawEfi, "the EFI stage must be in the Full Repair plan");
         QVERIFY2(sawGrub, "the GRUB stage must be in the Full Repair plan");
 
-        // An unavailable EFI capability removes the stage from the plan while
-        // preserving the Settings selection, exactly like every other key.
+        // An unavailable EFI capability removes the stage from the plan and
+        // shows its checkbox off (disabled AND unchecked); the saved
+        // preference survives for when the capability returns, exactly like
+        // every other key.
         cacheRepairEvidence(window, capabilityEvidenceAlpineUefi(false, true));
         window.updateFullRepairSummary();
         QVERIFY(!window.repairToolAvailable(QStringLiteral("efi")));
         QVERIFY(!window.m_fullRepairEfi->isEnabled());
-        QVERIFY(window.m_fullRepairEfi->isChecked());
+        QVERIFY(!window.m_fullRepairEfi->isChecked());
+        QVERIFY(!window.m_fullRepairEfi->isCheckable());
         QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("efi")));
         QVERIFY(window.m_fullRepairGrub->isEnabled());
         QVERIFY(window.selectedRepairStages().contains(QStringLiteral("grub")));
@@ -8241,10 +8292,17 @@ void MainWindowUiTest::fedoraDetectionLabelsAndCapabilityGating()
         QVERIFY(!window.m_fullRepairBrokenPackages->isEnabled());
         QVERIFY(!window.m_fullRepairInitramfs->isEnabled());
         QVERIFY(!window.m_fullRepairGrub->isEnabled());
-        QVERIFY2(window.m_fullRepairInitramfs->isChecked(),
-                 "an unavailable stage must keep the user's Settings selection");
-        QVERIFY2(window.m_fullRepairGrub->isChecked(),
-                 "an unavailable stage must keep the user's Settings selection");
+        // An unavailable stage is shown disabled AND unchecked instead of
+        // selected-but-gated; the saved preference survives the forced-off
+        // display.
+        QVERIFY2(!window.m_fullRepairInitramfs->isChecked(),
+                 "an unavailable stage must not stay checked");
+        QVERIFY2(!window.m_fullRepairInitramfs->isCheckable(),
+                 "an unavailable stage must not be checkable");
+        QVERIFY2(!window.m_fullRepairGrub->isChecked(),
+                 "an unavailable stage must not stay checked");
+        QVERIFY2(!window.m_fullRepairGrub->isCheckable(),
+                 "an unavailable stage must not be checkable");
         QVERIFY(window.selectedRepairStages().isEmpty());
         QCOMPARE(window.m_fullRepairBrokenPackages->text(),
                  QStringLiteral("Repair Fedora packages (dnf)"));
@@ -9467,10 +9525,14 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         window.m_fullRepairDkms->setChecked(true);
         window.m_fullRepairDpkg->setChecked(true);
         window.updateFullRepairSummary();
-        QVERIFY(window.m_fullRepairDkms->isChecked());
+        // An unavailable stage is shown disabled AND unchecked; the saved
+        // preference is untouched by the forced-off display.
+        QVERIFY(!window.m_fullRepairDkms->isChecked());
         QVERIFY(!window.m_fullRepairDkms->isEnabled());
-        QVERIFY(window.m_fullRepairDpkg->isChecked());
+        QVERIFY(!window.m_fullRepairDkms->isCheckable());
+        QVERIFY(!window.m_fullRepairDpkg->isChecked());
         QVERIFY(!window.m_fullRepairDpkg->isEnabled());
+        QVERIFY(!window.m_fullRepairDpkg->isCheckable());
         QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dkms")));
         QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
         window.m_fullRepairGrub->setChecked(true);
@@ -9483,6 +9545,8 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("grub")});
         window.m_fullRepairGrub->setChecked(false);
         QVERIFY(!window.m_runFullRepairButton->isEnabled());
+        // An unavailable stage cannot change the saved preference: the forced
+        // display state is never persisted over the user's choice.
         window.m_fullRepairExtlinux->setChecked(false);
         window.saveSettings();
         QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
@@ -9490,13 +9554,13 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
                      .value(QStringLiteral("repair/dpkgConfigure")).toBool(), true);
         QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
-                     .value(QStringLiteral("repair/extlinux")).toBool(), false);
+                     .value(QStringLiteral("repair/extlinux")).toBool(), true);
     }
     {
         MainWindow window;
         window.loadSettings();
-        QVERIFY(window.m_fullRepairDkms->isChecked());
-        QVERIFY(window.m_fullRepairDpkg->isChecked());
+        QVERIFY(!window.m_fullRepairDkms->isChecked());
+        QVERIFY(!window.m_fullRepairDpkg->isChecked());
         QVERIFY(!window.m_fullRepairExtlinux->isChecked());
         QVERIFY(!window.m_fullRepairDkms->isEnabled());
         QVERIFY(!window.m_fullRepairDpkg->isEnabled());
@@ -9510,6 +9574,114 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         QVERIFY(!window.m_runFullRepairButton->isEnabled());
     }
     qputenv("XDG_CONFIG_HOME", savedConfig);
+}
+
+// Settings → Full Repair plan: a stage whose capability gate is unavailable on
+// the current scope must be shown disabled AND unchecked (the tool cannot
+// run), while available stages keep the saved user preference and the built
+// plan excludes the unavailable keys. Re-availabling a stage restores the
+// saved preference instead of the forced-off display state.
+void MainWindowUiTest::unavailablePlanStagesAreDisabledAndUnchecked()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+
+    // Establish the saved preferences through a scope where every involved
+    // stage is available first, exactly like a user on a Debian target:
+    // dpkg/aptupdate/dkms/grub on, initramfs off.
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    window.updateFullRepairSummary();
+    window.m_fullRepairDpkg->setChecked(true);
+    window.m_fullRepairAptUpdate->setChecked(true);
+    window.m_fullRepairDkms->setChecked(true);
+    window.m_fullRepairGrub->setChecked(true);
+    window.m_fullRepairInitramfs->setChecked(false);
+    window.updateFullRepairSummary();
+    QVERIFY2(window.m_fullRepairDkms->isChecked(),
+             "the saved dkms preference must be on in the available scope");
+    QVERIFY2(window.m_fullRepairGrub->isChecked(),
+             "the saved grub preference must be on in the available scope");
+
+    // The scope's diagnostics now mark dkms and grub unavailable; dpkg and
+    // aptupdate stay available for the saved-preference assertions.
+    QString evidence = capabilityEvidence(false, false);
+    evidence.replace(QStringLiteral("Repair tool grub: available"),
+                     QStringLiteral("Repair tool grub: unavailable|grub-mkconfig is not installed"));
+    cacheRepairEvidence(window, evidence);
+    window.updateFullRepairSummary();
+
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("dpkg")), "dpkg must be available");
+    QVERIFY2(window.repairToolAvailable(QStringLiteral("aptupdate")), "aptupdate must be available");
+    QVERIFY2(!window.repairToolAvailable(QStringLiteral("dkms")), "dkms must be unavailable");
+    QVERIFY2(!window.repairToolAvailable(QStringLiteral("grub")), "grub must be unavailable");
+
+    // Available stages keep the saved preference, checked and unchecked alike.
+    QVERIFY(window.m_fullRepairDpkg->isEnabled());
+    QVERIFY(window.m_fullRepairDpkg->isCheckable());
+    QVERIFY(window.m_fullRepairDpkg->isChecked());
+    QVERIFY(window.m_fullRepairAptUpdate->isEnabled());
+    QVERIFY(window.m_fullRepairAptUpdate->isCheckable());
+    QVERIFY(window.m_fullRepairAptUpdate->isChecked());
+    QVERIFY(window.m_fullRepairInitramfs->isEnabled());
+    QVERIFY(window.m_fullRepairInitramfs->isCheckable());
+    QVERIFY(!window.m_fullRepairInitramfs->isChecked());
+
+    // Unavailable stages are disabled AND unchecked AND not checkable, with
+    // the helper's reason on the tooltip.
+    QVERIFY2(!window.m_fullRepairDkms->isEnabled(),
+             "an unavailable dkms stage must be disabled");
+    QVERIFY2(!window.m_fullRepairDkms->isChecked(),
+             "an unavailable dkms stage must not stay checked");
+    QVERIFY2(!window.m_fullRepairDkms->isCheckable(),
+             "an unavailable dkms stage must not be checkable");
+    QVERIFY2(window.m_fullRepairDkms->toolTip().contains(QStringLiteral("DKMS is not installed")),
+             "the disabled stage must keep the helper's reason in its tooltip");
+    QVERIFY2(!window.m_fullRepairGrub->isEnabled(),
+             "an unavailable grub stage must be disabled");
+    QVERIFY2(!window.m_fullRepairGrub->isChecked(),
+             "an unavailable grub stage must not stay checked");
+    QVERIFY2(!window.m_fullRepairGrub->isCheckable(),
+             "an unavailable grub stage must not be checkable");
+    QVERIFY2(window.m_fullRepairGrub->toolTip().contains(QStringLiteral("grub-mkconfig")),
+             "the disabled stage must keep the helper's reason in its tooltip");
+
+    // The built plan excludes the unavailable keys even though their saved
+    // preferences are on, and neither title appears in the plan list.
+    QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dkms")));
+    QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("grub")));
+    QVERIFY(window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
+    QVERIFY(window.selectedRepairStages().contains(QStringLiteral("apt-update")));
+    QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("initramfs")));
+    for (int row = 0; row < window.m_fullRepairStageList->count(); ++row) {
+        QVERIFY2(!window.m_fullRepairStageList->item(row)->text().contains(QStringLiteral("DKMS")),
+                 "an unavailable stage must not appear in the plan list");
+        QVERIFY2(!window.m_fullRepairStageList->item(row)->text().contains(QStringLiteral("GRUB")),
+                 "an unavailable stage must not appear in the plan list");
+    }
+
+    // The forced-off display never clobbers the saved preference: when the
+    // tools become available again the checkboxes come back checked, and the
+    // user's explicit off preference (initramfs) stays off.
+    evidence.replace(QStringLiteral("Repair tool dkms: unavailable|DKMS is not installed"),
+                     QStringLiteral("Repair tool dkms: available"));
+    evidence.replace(QStringLiteral("Repair tool grub: unavailable|grub-mkconfig is not installed"),
+                     QStringLiteral("Repair tool grub: available"));
+    cacheRepairEvidence(window, evidence);
+    window.updateFullRepairSummary();
+    QVERIFY(window.m_fullRepairDkms->isEnabled());
+    QVERIFY(window.m_fullRepairDkms->isCheckable());
+    QVERIFY2(window.m_fullRepairDkms->isChecked(),
+             "a re-available stage must restore the saved user preference");
+    QVERIFY(window.m_fullRepairGrub->isEnabled());
+    QVERIFY(window.m_fullRepairGrub->isCheckable());
+    QVERIFY2(window.m_fullRepairGrub->isChecked(),
+             "a re-available stage must restore the saved user preference");
+    QVERIFY(window.selectedRepairStages().contains(QStringLiteral("dkms")));
+    QVERIFY(window.selectedRepairStages().contains(QStringLiteral("grub")));
+    QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("initramfs")));
 }
 
 void MainWindowUiTest::autoRefreshSettingDefaultsOnAndPersists()
@@ -9847,6 +10019,9 @@ void MainWindowUiTest::fullRepairPlanRegeneratesOnlyChangedSectionsOnce()
     window.m_snapshotPreloadScheduled = true;
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
                               window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
@@ -9916,6 +10091,9 @@ void MainWindowUiTest::fullRepairPlanRegeneratesOnlyChangedSectionsOnce()
         window.m_snapshotPreloadScheduled = true;
         window.m_autoRefreshDiagnostics->setChecked(true);
         cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+        // Apply the scope's availability first so the explicit setChecked calls
+        // below change widget state, emit toggled and record the preferences.
+        window.updateFullRepairSummary();
 
         for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
                                   window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
@@ -11474,6 +11652,9 @@ void MainWindowUiTest::fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged()
     window.m_snapshotPreloadScheduled = true;
     window.m_autoRefreshDiagnostics->setChecked(true);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
                               window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
@@ -11558,6 +11739,9 @@ void MainWindowUiTest::fullRepairPlanFailureAttributesOnlyFailingStage()
     window.m_snapshotPreloadScheduled = true;
     window.m_autoRefreshDiagnostics->setChecked(false);
     cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
                               window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,

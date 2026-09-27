@@ -230,6 +230,26 @@ grep -Fq 'esp_writable_preflight clear' <<<"$rebuild_uki_body" \
 builder_body="$(sed -n '/^run_tuxedo_uki_builder()/,/^}/p' "$HELPER")"
 grep -Fq 'esp_writable_preflight check' <<<"$builder_body" \
     || { echo 'FAIL: run_tuxedo_uki_builder does not re-probe before the vendor script' >&2; exit 1; }
+# The TUXEDO vendor builder resolves the root UUID from the chroot's bound
+# host /proc (host-tainted) and its blkid fallback fails closed on the
+# filtered chroot /dev; the helper therefore exports the known target root
+# UUID as HOST_ROOT_UUID in both chroot command environments and reuses the
+# same hoisted value for the post-build root binding verification.
+[[ "$(grep -Fc 'HOST_ROOT_UUID="$root_uuid"' <<<"$builder_body")" -eq 2 ]] \
+    || { echo 'FAIL: run_tuxedo_uki_builder does not export HOST_ROOT_UUID in both chroot envs' >&2; exit 1; }
+grep -Fq 'root_uuid="${TUXEDO_UKI_ROOT_UUID:-}"' <<<"$builder_body" \
+    || { echo 'FAIL: run_tuxedo_uki_builder does not reuse the caller-hoisted root UUID' >&2; exit 1; }
+grep -Fq 'root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"' <<<"$builder_body" \
+    || { echo 'FAIL: run_tuxedo_uki_builder does not hoist the target root UUID from $ROOT_CANONICAL' >&2; exit 1; }
+grep -Fq 'root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"' <<<"$rebuild_uki_body" \
+    || { echo 'FAIL: rebuild_tuxedo_uki does not hoist the target root UUID before the vendor builder' >&2; exit 1; }
+grep -Fq 'TUXEDO_UKI_ROOT_UUID="$root_uuid"' <<<"$rebuild_uki_body" \
+    || { echo 'FAIL: rebuild_tuxedo_uki does not publish the hoisted root UUID' >&2; exit 1; }
+verify_uki_body="$(sed -n '/^verify_tuxedo_uki_root_binding()/,/^}/p' "$HELPER")"
+grep -Fq 'root_uuid="${TUXEDO_UKI_ROOT_UUID:-}"' <<<"$verify_uki_body" \
+    || { echo 'FAIL: verify_tuxedo_uki_root_binding does not reuse the hoisted root UUID' >&2; exit 1; }
+grep -Fq 'Rebuilt TUXEDO UKI does not reference the promoted root filesystem UUID $root_uuid.' <<<"$verify_uki_body" \
+    || { echo 'FAIL: the post-build root binding failure message changed' >&2; exit 1; }
 host_prepare_body="$(sed -n '/^prepare_running_host()/,/^}/p' "$HELPER")"
 grep -Fq 'esp_writable_preflight clear' <<<"$host_prepare_body" \
     || { echo 'FAIL: prepare_running_host does not run the ESP writability preflight' >&2; exit 1; }
@@ -1718,6 +1738,147 @@ grep -Fq 'PASS: vendor UKI command produced a changed TUX.EFI image.' <<<"$rebui
     || { echo 'FAIL: the vendor stub did not write TUX.EFI' >&2; exit 1; }
 [[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
     || { echo 'FAIL: rebuild did not clear exactly the two leaked layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
+
+# 11l: the vendor builder exports the hoisted target root UUID into the
+# vendor command environment.  Inside a real chroot /proc is the bound host
+# /proc, so the vendor script's findmnt-based resolution is host-tainted and
+# the filtered chroot /dev makes its blkid fallback fail closed;
+# HOST_ROOT_UUID keeps the vendor build deterministic.  Both the guarded and
+# the unguarded command environments must carry it.
+mkdir -p "$sandbox/target/usr/sbin" "$sandbox/target/usr/bin"
+cat > "$sandbox/target/usr/sbin/create_boot_uki_base.sh" <<VENDOR
+#!/bin/sh
+env | grep '^HOST_ROOT_UUID=' > "$sandbox/vendor-env.txt" || true
+env > "$sandbox/vendor-env-full.txt"
+exit 0
+VENDOR
+chmod +x "$sandbox/target/usr/sbin/create_boot_uki_base.sh"
+
+cat > "$FAKE_FINDMNT_DB" <<MNT
+$esp_dir /dev/test-efi vfat rw 902
+MNT
+printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
+rm -f "$sandbox/target/usr/bin/efibootmgr"
+: > "$sandbox/vendor-env.txt"
+: > "$sandbox/vendor-env-full.txt"
+builder_ok="$(run_harness '
+run_selected_chroot() {
+    # Emulate the chroot for the fixture: keep /usr/bin/env (it applies the
+    # NAME=value words exactly as the real chroot invocation does) and point
+    # the absolute vendor path at the fixture target copy.
+    local -a args=("$@")
+    local i
+    for ((i = 0; i < ${#args[@]}; ++i)); do
+        if [[ "${args[$i]}" == /usr/sbin/* ]]; then
+            args[$i]="$TARGET_ROOT${args[$i]}"
+        fi
+    done
+    "${args[@]}"
+}
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+ROOT_CANONICAL=/dev/test-root
+SESSION_DIR="'"$sandbox"'/session.hostrootuuid"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+run_tuxedo_uki_builder "TUXEDO UKI vendor run (HOST_ROOT_UUID contract)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
+')"
+grep -Fq 'Vendor command completed successfully: TUXEDO UKI vendor run (HOST_ROOT_UUID contract)' <<<"$builder_ok" \
+    || { echo 'FAIL: the vendor builder run failed (unguarded env)' >&2; printf '%s\n' "$builder_ok" >&2; exit 1; }
+[[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
+    || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (unguarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
+
+# The guarded branch (target efibootmgr present) must export the same value
+# and still remove the request-scoped guard directory afterwards.
+cat > "$sandbox/target/usr/bin/efibootmgr" <<'EFIBOOTMGR'
+#!/bin/sh
+echo "stub efibootmgr $*"
+exit 0
+EFIBOOTMGR
+chmod +x "$sandbox/target/usr/bin/efibootmgr"
+: > "$sandbox/vendor-env.txt"
+: > "$sandbox/vendor-env-full.txt"
+builder_guard_ok="$(run_harness '
+run_selected_chroot() {
+    # Emulate the chroot for the fixture: keep /usr/bin/env (it applies the
+    # NAME=value words exactly as the real chroot invocation does) and point
+    # the absolute vendor path at the fixture target copy.
+    local -a args=("$@")
+    local i
+    for ((i = 0; i < ${#args[@]}; ++i)); do
+        if [[ "${args[$i]}" == /usr/sbin/* ]]; then
+            args[$i]="$TARGET_ROOT${args[$i]}"
+        fi
+    done
+    "${args[@]}"
+}
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_ESP_MOUNT=/boot/efi
+EFI_ESP_SOURCE=/dev/test-efi
+ROOT_CANONICAL=/dev/test-root
+SESSION_DIR="'"$sandbox"'/session.hostrootuuid-guard"
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+run_tuxedo_uki_builder "TUXEDO UKI vendor run (guarded env)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
+')"
+grep -Fq 'Vendor command completed successfully: TUXEDO UKI vendor run (guarded env)' <<<"$builder_guard_ok" \
+    || { echo 'FAIL: the vendor builder run failed (guarded env)' >&2; printf '%s\n' "$builder_guard_ok" >&2; exit 1; }
+[[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
+    || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (guarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
+grep -Fq 'PATH=/usr/local/libexec/boot-repair-efi-guard.session.hostrootuuid-guard:' "$sandbox/vendor-env-full.txt" \
+    || { echo 'FAIL: the guarded env did not prepend the request-scoped EFI guard directory' >&2; exit 1; }
+[[ ! -e "$sandbox/target/usr/local/libexec/boot-repair-efi-guard.session.hostrootuuid-guard" ]] \
+    || { echo 'FAIL: the vendor builder left the request-scoped guard directory behind' >&2; exit 1; }
+
+# 11m: the post-build root binding verification reuses the same hoisted UUID
+# that was exported to the vendor builder, so the two can never diverge.  A
+# diverging blkid probe (9999...) must not influence the check when the
+# hoisted value is present, and the refusal names the hoisted UUID.
+printf 'uki-image\n' > "$esp_dir/EFI/BOOT/TUX.EFI"
+verify_reuse="$(run_harness '
+need() { :; }
+objcopy_dump_section() {
+    local dest="${1#*=}"
+    printf "root=UUID=11111111-2222-3333-4444-555555555555\n" > "$dest"
+    return 0
+}
+blkid() { printf "99999999-8888-7777-6666-555555555555\n"; }
+crypt_backing_device() { return 1; }
+TARGET_ROOT="'"$sandbox"'/target"
+ROOT_CANONICAL=/dev/test-root
+TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+verify_tuxedo_uki_root_binding
+printf "VERIFY:OK\n"
+')"
+grep -Fqx 'VERIFY:OK' <<<"$verify_reuse" \
+    || { echo 'FAIL: the binding verification did not reuse the hoisted root UUID' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
+grep -Fq 'PASS: TUXEDO UKI root/LUKS/subvolume binding verified.' <<<"$verify_reuse" \
+    || { echo 'FAIL: the binding verification did not report success' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
+
+if verify_mismatch="$(run_harness '
+need() { :; }
+objcopy_dump_section() {
+    local dest="${1#*=}"
+    printf "root=UUID=99999999-8888-7777-6666-555555555555\n" > "$dest"
+    return 0
+}
+crypt_backing_device() { return 1; }
+TARGET_ROOT="'"$sandbox"'/target"
+ROOT_CANONICAL=/dev/test-root
+TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+verify_tuxedo_uki_root_binding
+' 2>&1)"; then
+    echo 'FAIL: the binding verification accepted a cmdline that references a different root UUID' >&2
+    printf '%s\n' "$verify_mismatch" >&2
+    exit 1
+fi
+grep -Fq 'Rebuilt TUXEDO UKI does not reference the promoted root filesystem UUID 11111111-2222-3333-4444-555555555555.' <<<"$verify_mismatch" \
+    || { echo 'FAIL: the binding refusal did not name the hoisted root UUID' >&2; printf '%s\n' "$verify_mismatch" >&2; exit 1; }
 
 # 11f: host-path join.  With TARGET_ROOT="/" the real mount entry must resolve
 # /boot (not //boot), record the pre-existing systemd mount and never mount

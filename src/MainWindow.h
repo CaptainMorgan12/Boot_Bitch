@@ -895,6 +895,11 @@ private:
     void updateFullRepairSummary();
     void updateFullRepairPlanHeight();
     void updateRepairScopeControls();
+    // The Settings Full Repair plan checkboxes in plan order paired with the
+    // capability key each stage gates: the single list shared by the Settings
+    // page connections, the settings load/save pass and the scope-dependent
+    // availability presentation pass.
+    QList<QPair<QCheckBox *, QString>> fullRepairStageCheckboxes() const;
     void updateRepairToolDetails();
     void setLogWrapEnabled(bool enabled);
     void refreshLogView();
@@ -1164,6 +1169,13 @@ private:
     QCheckBox *m_fullRepairEfi = nullptr;
     QCheckBox *m_fullRepairGrub = nullptr;
     QCheckBox *m_fullRepairExtlinux = nullptr;
+
+    // Persisted per-stage user preference for the Settings Full Repair plan.
+    // The checkbox widgets only show the current scope's usable state: an
+    // unavailable stage is displayed disabled and unchecked, so its saved
+    // preference lives here instead of in the widget's checked state and
+    // survives scope switches and window restarts.
+    QHash<QString, bool> m_fullRepairStagePreferences;
 
     QList<DeviceNode> m_lastDevices;
     QMap<QString, DeviceNode> m_deviceIndex;
