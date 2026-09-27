@@ -76,6 +76,25 @@ bool legacySmokeSettingsIsolation()
     return g_smokeSettingsIsolation;
 }
 
+// Cycle 16: an initial log directory applied BEFORE the window is
+// constructed. The constructor appends its first readiness lines before
+// main() can call setLogDirectory(), and a root run whose HOME is preserved
+// (sudo env) would otherwise drop those lines into the invoking user's
+// ~/.boot-repair-legacy/logs tree as root-owned files the user cannot
+// delete. main() publishes the parsed --log-dir here first, mirroring the
+// pre-construction smoke settings isolation.
+static QString g_initialLogDirectory = QString::null;
+
+void legacySetInitialLogDirectory(const QString &dir)
+{
+    g_initialLogDirectory = dir;
+}
+
+QString legacyInitialLogDirectory()
+{
+    return g_initialLogDirectory;
+}
+
 namespace {
 
 // Layout floors applied by the widget guards and re-checked by the 1024x768
@@ -106,6 +125,16 @@ const int kConfigEditMaximumBytes = 1048576;
 // The global header icon is kept compact so the eight tabs still fit at the
 // 1024x768 layout contract size.
 const int kHeaderIconSize = 32;
+
+// The global busy indicator (modern parity) sits in a reserved row below the
+// guarded-repair badge and animates by cycling 0..3 trailing dots with a
+// plain QTimer while a helper command runs (no threads; Qt 3.3.7 has no
+// animated-widget or style-dependent busy rendering to lean on).
+const int kBusyAnimationIntervalMs = 400;
+// The busy indicator's right edge must be flush with the badge's right edge
+// (both are right-aligned in zero-margin rows); layout rounding keeps this
+// small tolerance from failing the smoke geometry gate.
+const int kBusyBadgeEdgeTolerance = 3;
 
 // The individual repair tools, in the modern Repair page order. `stage` is the
 // legacy helper stage; an empty stage marks a display-only row (the helper
@@ -1093,6 +1122,8 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_headerSubtitle(0),
       m_headerBadge(0),
       m_busyLabel(0),
+      m_busyTimer(0),
+      m_busyFrame(0),
       m_systemsHeading(0),
       m_targetsHeading(0),
       m_repairHeading(0),
@@ -1190,6 +1221,7 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_updatingSelection(false),
       m_running(false),
       m_pendingDiagnostic(false),
+      m_pendingQuiet(false),
       m_pendingUnlock(false),
       m_pendingConfig(false),
       m_pendingShell(false),
@@ -1277,21 +1309,32 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
         "Ordinary repairs require an explicitly selected non-host target. The "
         "protected running host has a separate deliberate maintenance mode with "
         "the same guarded repair stages and requires privilege authorization."));
-    // Header busy indicator (modern parity): a reserved slot right of the
-    // title and left of the badge that shows "Working..." only while a helper
-    // command runs. The fixed width keeps every other header widget exactly
-    // where it is when the text appears or clears; the badge stays flush
-    // against the window's right edge either way.
+    headerLayout->addWidget(m_headerBadge, 0, Qt::AlignTop);
+
+    // Global busy indicator (modern parity): a reserved row BELOW the header
+    // that shows the modern working text right-aligned under the guarded-
+    // repair badge only while a helper command runs. The row keeps a fixed
+    // height (the label never changes height), so showing or clearing the
+    // text never moves the header widgets or the tab pages; the right-aligned
+    // label grows toward the left when the text appears. A plain QTimer
+    // cycles 0..3 trailing dots behind the text (no threads; Qt 3.3.7 needs
+    // no animated-widget support for this).
+    QHBoxLayout *busyRow = new QHBoxLayout();
+    busyRow->setSpacing(0);
+    busyRow->addStretch(1);
     m_busyLabel = new QLabel(QString::null, central);
     QFont busyFont = m_busyLabel->font();
     busyFont.setBold(true);
     m_busyLabel->setFont(busyFont);
-    m_busyLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
-    m_busyLabel->setFixedWidth(
-        QFontMetrics(m_busyLabel->font()).width(QString::fromLatin1("Working...")) + 12);
-    headerLayout->addWidget(m_busyLabel, 0, Qt::AlignTop);
+    m_busyLabel->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    m_busyLabel->setFixedHeight(
+        QFontMetrics(m_busyLabel->font()).height() + 4);
+    busyRow->addWidget(m_busyLabel, 0, Qt::AlignRight);
+    mainLayout->addLayout(busyRow);
 
-    headerLayout->addWidget(m_headerBadge, 0, Qt::AlignTop);
+    m_busyTimer = new QTimer(this);
+    m_busyFrame = 0;
+    connect(m_busyTimer, SIGNAL(timeout()), this, SLOT(advanceBusyAnimation()));
 
     m_tabs = new QTabWidget(central);
     mainLayout->addWidget(m_tabs, 1);
@@ -1317,7 +1360,13 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
     connect(m_runner, SIGNAL(finished(bool, int)),
             this, SLOT(helperFinished(bool, int)));
 
-    m_logDirectory = QDir::homeDirPath() + QString::fromLatin1("/.boot-repair-legacy/logs");
+    // Cycle 16: honor the pre-construction --log-dir so the constructor's own
+    // readiness lines (written below) never land in the default $HOME tree.
+    if (legacyInitialLogDirectory().isEmpty()) {
+        m_logDirectory = QDir::homeDirPath() + QString::fromLatin1("/.boot-repair-legacy/logs");
+    } else {
+        m_logDirectory = legacyInitialLogDirectory();
+    }
     scanDevices();
     autoDetectHostTarget();
     updateElevationLabel();
@@ -1374,10 +1423,14 @@ void LegacyMainWindow::setNoElevate(bool noElevate)
 
 void LegacyMainWindow::setLogDirectory(const QString &path)
 {
-    m_logDirectory = path;
-    // The constructor already opened a session file under the default
-    // directory; move to the requested one before the first helper output.
-    m_logPath = QString::null;
+    // Cycle 16: when a pre-construction --log-dir already routed the
+    // constructor's readiness lines into `path`, the session file is already
+    // open there; only a genuinely different directory reopens it (otherwise
+    // one session would split into two files).
+    if (path != m_logDirectory) {
+        m_logDirectory = path;
+        m_logPath = QString::null;
+    }
     if (m_settingsLogDirLabel) {
         m_settingsLogDirLabel->setText(path);
     }
@@ -5718,6 +5771,10 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     }
     m_transcript = QString::null;
     m_pendingDiagnostic = diagnostic;
+    m_pendingQuiet = quiet;
+    // The single-key diagnostic key (empty for the combined `all` run) drives
+    // the busy indicator's modern "Running diagnostic: <title>" text.
+    m_pendingDiagnosticKey = diagnostic ? logSection : QString::null;
     m_pendingUnlock = unlock;
     m_pendingConfig = config;
     m_pendingShell = shell;
@@ -5941,6 +5998,8 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     const QString unlockDisk = m_unlockDisk;
     m_running = false;
     m_pendingDiagnostic = false;
+    m_pendingQuiet = false;
+    m_pendingDiagnosticKey = QString::null;
     m_pendingUnlock = false;
     m_pendingConfig = false;
     m_pendingConfigWrite = false;
@@ -6422,19 +6481,16 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("guarded-repair version badge missing"));
         ok = false;
     }
-    // Header busy indicator (modern parity): a reserved fixed-width slot that
-    // shows "Working..." only while a helper command runs; the smoke runs
-    // between commands, so it must be empty now and must keep its width.
+    // Global busy indicator (modern parity): a reserved row below the
+    // guarded-repair badge that shows the modern working text only while a
+    // helper command runs; the smoke runs between commands, so the label
+    // must be empty now and the row must keep its reserved height.
     if (!m_busyLabel) {
-        problems->append(QString::fromLatin1("header busy indicator missing"));
+        problems->append(QString::fromLatin1("busy indicator missing"));
         ok = false;
     } else {
-        const QFontMetrics busyMetrics(m_busyLabel->font());
-        const int needed = busyMetrics.width(QString::fromLatin1("Working...")) + 12;
-        if (m_busyLabel->width() < needed) {
-            problems->append(QString::fromLatin1(
-                "busy indicator slot is too narrow (%1px, needs %2px)")
-                .arg(m_busyLabel->width()).arg(needed));
+        if (!m_busyTimer) {
+            problems->append(QString::fromLatin1("busy animation timer missing"));
             ok = false;
         }
         if (!m_busyLabel->text().isEmpty()) {
@@ -6443,15 +6499,49 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 .arg(m_busyLabel->text()));
             ok = false;
         }
-        m_busyLabel->setText(QString::fromLatin1("Working..."));
+        // Modern parity: the indicator sits BELOW the guarded-repair badge
+        // and its right edge is flush with the badge's right edge.
+        if (m_headerBadge) {
+            const QRect badgeRect(m_headerBadge->mapTo(this, QPoint(0, 0)),
+                                  m_headerBadge->size());
+            const QRect busyRect(m_busyLabel->mapTo(this, QPoint(0, 0)),
+                                 m_busyLabel->size());
+            if (busyRect.top() < badgeRect.bottom()) {
+                problems->append(QString::fromLatin1(
+                    "busy indicator is not below the guarded-repair badge"));
+                ok = false;
+            }
+            if (QABS(busyRect.right() - badgeRect.right())
+                > kBusyBadgeEdgeTolerance) {
+                problems->append(QString::fromLatin1(
+                    "busy indicator is not right-aligned with the guarded-repair badge"));
+                ok = false;
+            }
+        }
+        // Show the widest animated frame; the reserved height must not
+        // change and the slot must stay inside the window.
+        const int reservedHeight = m_busyLabel->height();
+        m_busyLabel->setText(QString::fromLatin1("Running all diagnostics..."));
         qApp->processEvents();
-        if (m_busyLabel->width() < needed) {
+        if (m_busyLabel->height() != reservedHeight) {
             problems->append(QString::fromLatin1(
-                "busy indicator slot lost its reserved width when shown"));
+                "busy indicator row lost its reserved height when shown"));
+            ok = false;
+        }
+        const QRect shownRect(m_busyLabel->mapTo(this, QPoint(0, 0)),
+                              m_busyLabel->size());
+        if (!rect().contains(shownRect)) {
+            problems->append(QString::fromLatin1(
+                "busy indicator is clipped by the window when shown"));
             ok = false;
         }
         m_busyLabel->setText(QString::null);
         qApp->processEvents();
+        if (m_busyLabel->height() != reservedHeight) {
+            problems->append(QString::fromLatin1(
+                "busy indicator row lost its reserved height when cleared"));
+            ok = false;
+        }
     }
     // Section titles: the page headings plus the sectionTitle label inside
     // every titleless group frame (Qt3 clips QGroupBox titles).
@@ -8756,25 +8846,48 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
             ok = false;
         }
     }
-    // The reserved busy-indicator slot must stay inside the window at the
-    // 1024x768 contract size (with its "Working..." text) and must not have
-    // moved or clipped any header widget.
+    // The reserved busy-indicator slot must sit below the guarded-repair
+    // badge (modern parity), flush with the badge's right edge, inside the
+    // window at the 1024x768 contract size, and its widest animated frame
+    // must fit the window width. The geometry is verified with the widest
+    // frame shown (Qt 3.3.7's QRect::contains() rejects a null rect, so an
+    // empty idle label can never be checked directly).
     if (m_busyLabel && m_busyLabel->isVisibleTo(this)) {
         ++checkedCount;
+        const QString savedText = m_busyLabel->text();
+        m_busyLabel->setText(QString::fromLatin1("Running all diagnostics..."));
+        qApp->processEvents();
         const QRect mapped(m_busyLabel->mapTo(this, QPoint(0, 0)),
                            m_busyLabel->size());
         if (!rect().contains(mapped)) {
             problems->append(QString::fromLatin1(
-                "header busy indicator is clipped by the window"));
+                "busy indicator is clipped by the window"));
             ok = false;
+        }
+        if (m_headerBadge && m_headerBadge->isVisibleTo(this)) {
+            const QRect badgeRect(m_headerBadge->mapTo(this, QPoint(0, 0)),
+                                  m_headerBadge->size());
+            if (mapped.top() < badgeRect.bottom()) {
+                problems->append(QString::fromLatin1(
+                    "busy indicator is not below the guarded-repair badge"));
+                ok = false;
+            }
+            if (QABS(mapped.right() - badgeRect.right())
+                > kBusyBadgeEdgeTolerance) {
+                problems->append(QString::fromLatin1(
+                    "busy indicator is not right-aligned with the guarded-repair badge"));
+                ok = false;
+            }
         }
         QFontMetrics metrics(m_busyLabel->font());
-        if (m_busyLabel->width()
-            < metrics.width(QString::fromLatin1("Working...")) + 12) {
+        if (metrics.width(QString::fromLatin1("Running all diagnostics...")) + 12
+            > width()) {
             problems->append(QString::fromLatin1(
-                "header busy indicator slot cannot fit its text"));
+                "busy indicator's widest frame cannot fit the window width"));
             ok = false;
         }
+        m_busyLabel->setText(savedText);
+        qApp->processEvents();
     }
     if (checked) {
         *checked = checkedCount;
@@ -10430,11 +10543,66 @@ void LegacyMainWindow::updateBusyIndicator()
     if (!m_busyLabel) {
         return;
     }
-    // The reserved header slot keeps its fixed width either way; only the
-    // text toggles, so showing/hiding never moves the badge or the title.
-    m_busyLabel->setText(m_running
-                             ? QString::fromLatin1("Working...")
-                             : QString::null);
+    // Modern parity: the reserved row below the guarded-repair badge shows
+    // the same working text the modern Qt6 GUI's global busy label uses for
+    // the equivalent operation. While a helper command runs a plain QTimer
+    // cycles 0..3 trailing dots behind the base text; the row keeps its
+    // fixed height either way, so showing/clearing never moves the header or
+    // the tab pages.
+    if (!m_running) {
+        if (m_busyTimer) {
+            m_busyTimer->stop();
+        }
+        m_busyFrame = 0;
+        m_busyBaseText = QString::null;
+        m_busyLabel->setText(QString::null);
+        return;
+    }
+    m_busyBaseText = busyIndicatorText();
+    m_busyFrame = 0;
+    m_busyLabel->setText(m_busyBaseText);
+    if (m_busyTimer) {
+        m_busyTimer->start(kBusyAnimationIntervalMs);
+    }
+}
+
+void LegacyMainWindow::advanceBusyAnimation()
+{
+    if (!m_busyLabel) {
+        return;
+    }
+    // The lightweight ellipsis cycle: the base working text plus (frame % 4)
+    // dots. Plain ASCII dots only — Etch's fonts garble non-ASCII glyphs and
+    // Qt 3.3.7 has no animated-widget busy rendering.
+    QString text = m_busyBaseText;
+    for (int i = 0; i < (m_busyFrame % 4); ++i) {
+        text += QString::fromLatin1(".");
+    }
+    m_busyLabel->setText(text);
+    ++m_busyFrame;
+}
+
+QString LegacyMainWindow::busyIndicatorText() const
+{
+    // The exact strings the modern Qt6 GUI's busy status label shows for the
+    // equivalent operation, so the two frontends read identically while they
+    // work.
+    if (m_pendingDiagnostic) {
+        if (m_pendingQuiet) {
+            return QString::fromLatin1("Regenerating diagnostics automatically");
+        }
+        if (!m_pendingDiagnosticKey.isEmpty()) {
+            return QString::fromLatin1("Running diagnostic: %1")
+                .arg(diagnosticTitle(m_pendingDiagnosticKey));
+        }
+        return QString::fromLatin1("Running all diagnostics");
+    }
+    if (m_pendingUnlock) {
+        return QString::fromLatin1("Unlocking %1").arg(m_unlockDevice);
+    }
+    // Repair tools, Full Repair, Make Default and File Copy already carry the
+    // modern tool/operation titles as their pending label.
+    return m_pendingLabel;
 }
 
 void LegacyMainWindow::updateStatus()
@@ -10677,8 +10845,13 @@ void LegacyMainWindow::refreshSessionLogList()
 
 void LegacyMainWindow::saveLog()
 {
-    // If a writable system share mount exists at /host, use it as the Save
-    // As... starting directory; otherwise the log directory is the fallback.
+    // The Save As... dialog starts in /host when a writable system share
+    // mount exists there (the etch-share vfat disk), so saved logs land on
+    // the share consistently; otherwise the log directory is the fallback.
+    // The host fetches the files offline: save to /host, shut the rig down
+    // (both Etch domains - the peer rule), then mirror the share host-side;
+    // the file appears under the host's shared dir. The dialog itself keeps
+    // the ability to choose any directory the user can write.
     QString startDir = m_logDirectory;
     const QFileInfo hostShare(QString::fromLatin1("/host"));
     if (hostShare.exists() && hostShare.isDir() && hostShare.isWritable()) {

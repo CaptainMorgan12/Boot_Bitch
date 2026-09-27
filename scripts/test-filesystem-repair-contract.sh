@@ -124,6 +124,31 @@ for mount_block in "$data_partitions_block" "$subvolumes_block"; do
     grep -Fq 'mount_options="$requested_mode${filtered_options:+,$filtered_options},nosuid,nodev"' <<<"$mount_block" \
         || { echo 'FAIL: a data mount path does not append the recovery nosuid,nodev hardening' >&2; exit 1; }
 done
+# A4-09: the repair preflight derives an unmounted ESP discovered by GPT type
+# on the selected disk through the same guarded boot-entry path (same-disk
+# gate, FAT proof, destination containment, recorded mount) and only when
+# exactly one ESP partition exists.
+grep -q '^target_esp_partition_by_type()' "$HELPER" \
+    || { echo 'FAIL: target_esp_partition_by_type is missing' >&2; exit 1; }
+grep -q '^target_esp_derivable()' "$HELPER" \
+    || { echo 'FAIL: target_esp_derivable is missing' >&2; exit 1; }
+grep -q '^mount_target_esp_by_type()' "$HELPER" \
+    || { echo 'FAIL: mount_target_esp_by_type is missing' >&2; exit 1; }
+esp_by_type_block="$(sed -n '/^mount_target_esp_by_type()/,/^}/p' "$HELPER")"
+for guard_fragment in 'validate_target_mount_dest "$dest"' 'same_single_top_disk "$TARGET_DISK" "$source"' 'mount_recorded "$source" "$dest"'; do
+    grep -Fq "$guard_fragment" <<<"$esp_by_type_block" \
+        || { echo "FAIL: mount_target_esp_by_type drops the sweep guard: $guard_fragment" >&2; exit 1; }
+done
+esp_partition_probe_block="$(sed -n '/^target_esp_partition_by_type()/,/^}/p' "$HELPER")"
+grep -Fq 'C12A7328-F81F-11D2-BA4B-00A0C93EC93B' <<<"$esp_partition_probe_block" \
+    || { echo 'FAIL: the by-type ESP probe does not match the GPT ESP partition type' >&2; exit 1; }
+grep -Fq 'toupper($2)' <<<"$esp_partition_probe_block" \
+    || { echo 'FAIL: the by-type ESP probe does not normalize the PARTTYPE case (lsblk prints lowercase)' >&2; exit 1; }
+grep -Eq 'count == 1' <<<"$esp_partition_probe_block" \
+    || { echo 'FAIL: the by-type ESP probe does not require exactly one ESP partition' >&2; exit 1; }
+run_repair_block="$(sed -n '/^run_repair()/,/^}/p' "$HELPER")"
+grep -Fq 'mount_target_esp_by_type ro || true' <<<"$run_repair_block" \
+    || { echo 'FAIL: the repair mandatory preflight does not derive an ESP discovered by GPT type' >&2; exit 1; }
 # A2-05: the offline repair release path never lazy-detaches; the read-only
 # inspection path keeps its existing best-effort release.
 release_for_device_block="$(sed -n '/^filesystem_release_mounts_for_device()/,/^}/p' "$HELPER")"
@@ -287,7 +312,7 @@ done
 printf 'test-disk - disk - - - -\n' > "$sandbox/devices.db"
 printf 'test-root ext4 part 11111111-2222-3333-4444-555555555555 test-disk 1 test-disk\n' >> "$sandbox/devices.db"
 printf 'test-boot ext4 part 66666666-7777-8888-9999-aaaaaaaaaaaa test-disk 1 test-disk\n' >> "$sandbox/devices.db"
-printf 'test-efi vfat part ABCD-1234 test-disk 1 test-disk\n' >> "$sandbox/devices.db"
+printf 'test-efi vfat part ABCD-1234 test-disk 1 test-disk C12A7328-F81F-11D2-BA4B-00A0C93EC93B\n' >> "$sandbox/devices.db"
 printf 'test-home xfs part BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF test-disk 1 test-disk\n' >> "$sandbox/devices.db"
 printf 'test-data reiserfs part 9999 test-disk 1 test-disk\n' >> "$sandbox/devices.db"
 printf 'test-outside ext4 part OUTSIDE-UUID other-disk 1 other-disk\n' >> "$sandbox/devices.db"
@@ -307,6 +332,15 @@ field() { awk -v n="$name" -v c="$1" '$1 == n {print $c; exit}' "$FAKE_LSBLK_DB"
 [[ "$(field 5)" != "-" ]] && parent="$(field 5)" || parent=""
 [[ "$(field 6)" != "-" ]] && partition="$(field 6)" || partition=""
 [[ "$(field 7)" != "-" ]] && pkname="$(field 7)" || pkname=""
+# Partition listing (lsblk -rno NAME,PARTTYPE <disk>): every device whose
+# parent is the selected disk, plus the disk itself, with the GPT type when
+# the database records one (column 8).
+if [[ " $* " == *" NAME,PARTTYPE "* || " $* " == *" PARTTYPE,NAME "* ]]; then
+    awk -v d="$name" '
+        ($1 == d || $5 == d) && $8 != "" && $8 != "-" { print $1, $8 }
+    ' "$FAKE_LSBLK_DB"
+    exit 0
+fi
 for arg in "$@"; do
     case "$arg" in
         *PKNAME*) [[ -n "$pkname" ]] && printf '%s\n' "$pkname" ;;
@@ -2824,6 +2858,188 @@ if grep -Fq 'COPY COMPLETE' "$sha_a_root/preview.out"; then
     cat "$sha_a_root/preview.out" >&2
     exit 1
 fi
+
+
+# ---------------------------------------------------------------------------
+# Part: ESP derivation fixture.  A UEFI target whose root and ESP are separate
+# partitions on the selected disk, referenced by UUID in fstab (the Debian
+# trixie generic-cloud layout), must derive the ESP through the guarded
+# fstab-driven mount and pass the conventional EFI preflight.  When no ESP is
+# derivable at all, the efi capability reports unavailable with the precise
+# reason instead of staying available behind a preflight that can never pass.
+# ---------------------------------------------------------------------------
+cat > "$sandbox/target/etc/fstab" <<'FSTAB'
+UUID=11111111-2222-3333-4444-555555555555  /          ext4  defaults  0 1
+UUID=ABCD-1234                              /boot/efi  vfat  defaults  0 2
+FSTAB
+mkdir -p "$sandbox/target/usr/sbin"
+for esp_tool in grub-install grub-mkconfig; do
+    : > "$sandbox/target/usr/sbin/$esp_tool"; chmod +x "$sandbox/target/usr/sbin/$esp_tool"
+done
+
+esp_preflight="$(FAKE_MOUNT_ADD_POINT="$sandbox/target/boot/efi" \
+    FAKE_MOUNT_ADD_ROW="$sandbox/target/boot/efi /dev/test-efi vfat rw 0" \
+    run_harness '
+SESSION_LOG="'"$sandbox"'/esp-preflight.log"; : > "$SESSION_LOG"
+: > "$FAKE_FINDMNT_DB"; : > "$FAKE_MOUNTPOINT_DB"; : > "$FAKE_MOUNT_LOG"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_OS_ID=debian
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=debian
+eval "$real_mount_target_boot_entry"
+mount_target_boot_entry /boot/efi ro
+profile_target_backends
+[[ "$TARGET_ESP_MOUNT" == /boot/efi ]]
+validate_selected_esp
+printf "DERIVED\t%s\t%s\t%s\n" "$TARGET_ESP_MOUNT" "$EFI_ESP_SOURCE" "$EFI_ESP_FSTYPE"
+')"
+grep -Fqx $'DERIVED\t/boot/efi\t/dev/test-efi\tvfat' <<<"$esp_preflight" \
+    || { echo "FAIL: the fstab-by-UUID ESP was not derived through the guarded boot-entry mount" >&2; printf '%s\n' "$esp_preflight" >&2; exit 1; }
+grep -Fq 'Mounting target /boot/efi from /dev/test-efi' <<<"$esp_preflight" \
+    || { echo 'FAIL: the fstab-driven ESP mount did not run through the guarded mount path' >&2; exit 1; }
+
+# The same layout keeps the efi capability available ...
+# (Bare /boot/efi: only the fstab entry can make the ESP derivable.)
+rm -rf "$sandbox/target/boot/efi/EFI"
+mkdir -p "$sandbox/target/boot/efi"
+esp_cap_available="$(run_harness '
+SESSION_LOG="'"$sandbox"'/esp-cap.log"; : > "$SESSION_LOG"
+: > "$FAKE_FINDMNT_DB"; : > "$FAKE_MOUNTPOINT_DB"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_OS_ID=debian
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=debian
+if reason="$(efi_unavailable_reason)"; then
+    printf "AVAILABLE\n"
+else
+    printf "UNEXPECTED\t%s\n" "$reason"
+fi
+')"
+grep -Fqx 'AVAILABLE' <<<"$esp_cap_available" \
+    || { echo "FAIL: a derivable fstab-by-UUID ESP made the efi capability unavailable" >&2; printf '%s\n' "$esp_cap_available" >&2; exit 1; }
+
+# ... and with no ESP entry and no ESP partition it reports unavailable with
+# the precise reason, so a Full Repair plan never schedules the EFI stage.
+printf 'UUID=11111111-2222-3333-4444-555555555555  /  ext4  defaults  0 1\n' > "$sandbox/target/etc/fstab"
+# Earlier fixtures left loader directories under the mountpoint; the
+# unavailable case must run with a bare /boot/efi directory so no dir
+# heuristic can invent an ESP.
+rm -rf "$sandbox/target/boot/efi/EFI"
+mkdir -p "$sandbox/target/boot/efi"
+esp_cap_unavailable="$(run_harness '
+SESSION_LOG="'"$sandbox"'/esp-cap.log"; : > "$SESSION_LOG"
+: > "$FAKE_FINDMNT_DB"; : > "$FAKE_MOUNTPOINT_DB"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_OS_ID=debian
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=debian
+if reason="$(efi_unavailable_reason)"; then
+    printf "UNEXPECTED-AVAILABLE\n"
+else
+    printf "UNAVAILABLE\t%s\n" "$reason"
+fi
+')"
+grep -Fqx 'UNAVAILABLE	no EFI System Partition is present or derivable on the selected disk (no mounted ESP, no resolvable fstab ESP entry and no ESP partition)' <<<"$esp_cap_unavailable" \
+    || { echo "FAIL: a target with no derivable ESP kept the efi capability available" >&2; printf '%s\n' "$esp_cap_unavailable" >&2; exit 1; }
+
+# By-type discovery: with no fstab ESP entry the preflight derives the ESP
+# partition from its GPT type, and the read-write promotion remounts the
+# helper-recorded preflight mount instead of leaving it read-only.  (Part 7
+# rewrote the device database without the GPT type; restore it for this
+# fixture.)
+sed -i 's#^test-efi .*#test-efi vfat part ABCD-1234 test-disk 1 test-disk C12A7328-F81F-11D2-BA4B-00A0C93EC93B#' "$FAKE_LSBLK_DB"
+bytype_preflight="$(FAKE_MOUNT_ADD_POINT="$sandbox/target/boot/efi" \
+    FAKE_MOUNT_ADD_ROW="$sandbox/target/boot/efi /dev/test-efi vfat rw 0" \
+    run_harness '
+SESSION_LOG="'"$sandbox"'/bytype.log"; : > "$SESSION_LOG"
+: > "$FAKE_FINDMNT_DB"; : > "$FAKE_MOUNTPOINT_DB"; : > "$FAKE_MOUNT_LOG"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_ROOT="'"$sandbox"'/target"
+TARGET_OS_ID=debian
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=debian
+mount_target_esp_by_type ro
+eval "$real_mount_target_boot_entry"
+mount_target_boot_entry /boot/efi rw
+profile_target_backends
+[[ "$TARGET_ESP_MOUNT" == /boot/efi ]]
+validate_selected_esp
+printf "BYTYPE\t%s\t%s\n" "$EFI_ESP_SOURCE" "$EFI_ESP_FSTYPE"
+')"
+grep -Fqx $'BYTYPE\t/dev/test-efi\tvfat' <<<"$bytype_preflight" \
+    || { echo "FAIL: the GPT-type ESP was not derived and validated through the guarded by-type mount" >&2; printf '%s\n' "$bytype_preflight" >&2; exit 1; }
+grep -Fq 'Mounted target ESP discovered by GPT type: /dev/test-efi at /boot/efi (ro)' <<<"$bytype_preflight" \
+    || { echo 'FAIL: the by-type ESP mount did not log its guarded mount evidence' >&2; exit 1; }
+grep -Fq 'Remounting target /boot/efi read-write' <<<"$bytype_preflight" \
+    || { echo 'FAIL: the read-write promotion did not remount the helper-recorded by-type ESP' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part: guarded target configuration on a backend without a GRUB configuration
+# path (Alpine extlinux).  The read degrades to an informative skip instead of
+# ERROR-level noise, a present configuration still reads, and the write still
+# refuses to create a missing path.
+# ---------------------------------------------------------------------------
+rm -rf "$sandbox/target/usr/sbin"
+: > "$sandbox/target/boot/extlinux.conf"
+mkdir -p "$sandbox/target/etc/default"
+printf 'GRUB_TIMEOUT=5\n' > "$sandbox/target/etc/default/grub"
+config_read_ok="$(run_harness '
+SESSION_LOG="'"$sandbox"'/config-read.log"; : > "$SESSION_LOG"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_OS_ID=alpine
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=alpine
+run_target_config read grub-defaults
+')"
+grep -Fq 'GRUB_TIMEOUT=5' <<<"$config_read_ok" \
+    || { echo 'FAIL: an existing target configuration no longer reads' >&2; printf '%s\n' "$config_read_ok" >&2; exit 1; }
+
+rm -rf "$sandbox/target/etc/default"
+config_read_skip="$(run_harness '
+SESSION_LOG="'"$sandbox"'/config-read.log"; : > "$SESSION_LOG"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_OS_ID=alpine
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=alpine
+run_target_config read grub-defaults
+')"
+grep -Fqx 'Target configuration: /etc/default/grub' <<<"$config_read_skip" \
+    || { echo 'FAIL: the skipped configuration read did not name the configuration' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }
+grep -Fq 'Configuration read skipped: /etc/default/grub' <<<"$config_read_skip" \
+    || { echo 'FAIL: the missing GRUB configuration parent did not degrade to an informative skip' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }
+grep -Fq 'Not present in this target (bootloader backend: syslinux/extlinux); no configuration path exists.' <<<"$config_read_skip" \
+    || { echo 'FAIL: the skipped configuration read did not name the extlinux backend' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }
+if grep -Fq 'ERROR' <<<"$config_read_skip"; then
+    echo 'FAIL: a missing GRUB configuration path still emits ERROR-level noise' >&2
+    printf '%s\n' "$config_read_skip" >&2
+    exit 1
+fi
+
+if config_write_refused="$(run_harness '
+SESSION_LOG="'"$sandbox"'/config-write.log"; : > "$SESSION_LOG"
+TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root
+TARGET_OS_ID=alpine
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=alpine
+run_target_config write grub-defaults "GRUB_TIMEOUT=1"
+' 2>&1)"; then
+    echo 'FAIL: config-write created a GRUB configuration path the target does not have' >&2
+    exit 1
+fi
+grep -Fq 'Target configuration does not exist; refusing to create: /etc/default/grub' <<<"$config_write_refused" \
+    || { echo 'FAIL: the missing-configuration write refusal lost its explicit reason' >&2; printf '%s\n' "$config_write_refused" >&2; exit 1; }
+[[ ! -e "$sandbox/target/etc/default/grub" ]] \
+    || { echo 'FAIL: config-write created a missing GRUB configuration path' >&2; exit 1; }
 
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."
