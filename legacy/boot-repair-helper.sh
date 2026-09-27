@@ -1418,6 +1418,11 @@ TARGET_ROOT=""
 TARGET_DISK=""
 ROOT_DEVICE=""
 ROOT_CANONICAL=""
+# Target root filesystem UUID hoisted by the TUXEDO UKI rebuild path.  It is
+# exported to the vendor builder as HOST_ROOT_UUID and reused by the post-build
+# root binding verification, so the value the vendor script consumes and the
+# value the verification checks can never diverge.
+TUXEDO_UKI_ROOT_UUID=""
 TEMP_MAPPER_ALIASES=()
 SESSION_OWNED_MAPPERS=()
 TARGET_OS_ID=""
@@ -19359,7 +19364,7 @@ run_tuxedo_uki_builder()
 {
     local label="$1"; shift
     local session_tag="${SESSION_DIR##*/}" guard_parent guard_dir wrapper real_efibootmgr="" rc
-    local target_real parent_real
+    local target_real parent_real root_uuid
 
     # The vendor script is the first writer, so re-prove the selected target
     # is not the running host immediately before it runs.
@@ -19369,6 +19374,21 @@ run_tuxedo_uki_builder()
     # so re-probe the effective mount and refuse before any write if a
     # read-only or foreign layer appeared since the earlier preflight.
     esp_writable_preflight check
+
+    # The vendor builder resolves the root UUID with findmnt inside the chroot,
+    # whose /proc is the bound host /proc: mount-based resolution is therefore
+    # host-tainted (it names the HOST root mapper), and the security sweep's
+    # filtered private /dev no longer contains that host mapper node, so the
+    # vendor's blkid fallback fails closed.  Pass the known target root UUID
+    # explicitly so the vendor script's HOST_ROOT_UUID override keeps the build
+    # deterministic.  The value is shared with verify_tuxedo_uki_root_binding
+    # through TUXEDO_UKI_ROOT_UUID so the pre-build export and the post-build
+    # check can never diverge.
+    root_uuid="${TUXEDO_UKI_ROOT_UUID:-}"
+    if [[ -z "$root_uuid" ]]; then
+        root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"
+        TUXEDO_UKI_ROOT_UUID="$root_uuid"
+    fi
     [[ "$session_tag" =~ ^session\.[[:alnum:]_-]+$ ]] \
         || fail "Unable to derive a safe request identifier for the temporary EFI guard."
     guard_parent="$TARGET_ROOT/usr/local/libexec"
@@ -19425,6 +19445,7 @@ EOF
             PATH="/usr/local/libexec/boot-repair-efi-guard.$session_tag:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin" \
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
+            HOST_ROOT_UUID="$root_uuid" \
             "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
     else
         run_selected_chroot /usr/bin/env \
@@ -19432,6 +19453,7 @@ EOF
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
+            HOST_ROOT_UUID="$root_uuid" \
             "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
     fi
     rc=${PIPESTATUS[0]}
@@ -19448,6 +19470,7 @@ rebuild_tuxedo_uki()
 {
     local kver new_uki="" uki tmp embedded old_uki_sha="" new_uki_sha=""
     local nvram_pre="" nvram_post="" nvram_map=""
+    local root_uuid
 
     validate_tuxedo_uki_target
     # Re-run the writability preflight immediately before the write path; the
@@ -19468,6 +19491,13 @@ rebuild_tuxedo_uki()
     else
         log "Writable UEFI variables/efibootmgr are unavailable; UKI file rebuild will proceed without BootOrder restoration." | tee -a "$SESSION_LOG"
     fi
+
+    # Hoist the target root UUID before the vendor builder runs: the builder
+    # exports it as HOST_ROOT_UUID (see run_tuxedo_uki_builder) and the
+    # post-build binding verification reuses the same value, so the
+    # promoted-root check can never disagree with what the vendor consumed.
+    root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"
+    TUXEDO_UKI_ROOT_UUID="$root_uuid"
 
     run_tuxedo_uki_builder "Rebuild TUXEDO UKI for $kver" /usr/sbin/create_boot_uki_base.sh "$kver"
 
@@ -19552,7 +19582,13 @@ verify_tuxedo_uki_root_binding()
     cmdline="$(tr '\0' ' ' < "$tmp")"
     log "TUXEDO UKI cmdline: $cmdline" | tee -a "$SESSION_LOG"
 
-    root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"
+    # The value exported to the vendor builder as HOST_ROOT_UUID is reused
+    # here so the pre-build export and this post-build check cannot diverge;
+    # the direct blkid probe remains as a standalone fallback.
+    root_uuid="${TUXEDO_UKI_ROOT_UUID:-}"
+    if [[ -z "$root_uuid" ]]; then
+        root_uuid="$(blkid -s UUID -o value "$ROOT_CANONICAL" 2>/dev/null || true)"
+    fi
     if [[ -n "$root_uuid" && "$cmdline" != *"root=UUID=$root_uuid"* ]]; then
         fail "Rebuilt TUXEDO UKI does not reference the promoted root filesystem UUID $root_uuid."
     fi
