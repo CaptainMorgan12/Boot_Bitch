@@ -240,83 +240,54 @@ rigs. Highlights:
 See the [0.2.26 release notes](docs/release-notes-0.2.26.md).
 ## 0.2.25 refinements
 
-Adds native RPM and APK release artifacts and the Alpine, Arch and Fedora
-repair backends; see the [0.2.25 release notes](docs/release-notes-0.2.25.md).
+0.2.25 ships the native RPM and APK release artifacts, the Alpine, Arch and
+Fedora repair backends, running-host Btrfs snapshot rollback and the
+read-only-first file system repair engine. Highlights:
 
-- Add native RPM and APK release artifacts: `scripts/package-rpm.sh` builds
-  the CPack RPM with family-specific dependency names and the POSIX `/bin/sh`
-  `scripts/rpm-postinst.sh` scriptlet, and `scripts/package-alpine.sh` builds
-  the signed `boot-bitch-<version>-r0.apk` with abuild and runs the project
-  tests in its `check()` phase; `scripts/test-rpm.sh` and
-  `scripts/test-apk.sh` validate both artifacts without installing them.
-- Add a Fedora/RPM-family repair backend from read-only probe evidence:
-  guarded dnf5 package transactions (`rpm -Va` + `dnf reinstall` fix-broken,
-  one simulated `dnf upgrade`), dracut initramfs rebuilds with `lsinitrd`
-  verification, GRUB2 configuration regeneration, a guarded GRUB2 boot-code
-  reinstall, boot-stack reconciliation over dracut + GRUB2, and the GDM
-  display path; every Fedora label and gate derives from probe evidence, never
-  from the distribution ID.
-- Add an Alpine/apk repair backend alongside the other package backends:
-  simulation-first `apk fix` and `apk upgrade` transactions and targeted
-  missing-package-file repair driven by `apk audit --system` plus
-  `apk info --who-owns`. An `extlinux` capability key gates the extlinux
-  stage; `mkinitfs` initramfs rebuilds, config-only `update-extlinux`
-  regeneration with rollback, and OpenRC display-manager runlevel restore
-  complete it, and EFI/UKI stages remain Debian/Arch-only.
-- Add transaction-specific Arch repair preflights and guarded apply paths for
-  pacman package transactions, mkinitcpio, GRUB and EFI, plus Arch
-  host-maintenance package repair and upgrade stages; APT/dpkg stages remain
-  unavailable on Arch. The read-only distribution/boot backend profiler
-  detects Debian/APT and Arch/pacman families, and every repair tool and Full
-  Repair stage is gated on read-only capability evidence while helper
-  preflights stay mandatory.
-- Add running-host Btrfs snapshot rollback: the Snapshots tab lists Snapper
-  root snapshots and Boot Bitch undo points, stages the name-preserving
-  transaction (preserve the running `@`, promote a writable copy, restore on
-  failure), persists a **Reboot required** reminder, and never reboots
-  automatically. The File system repair tool resolves the root, `/boot`, ESP
-  and `/home` filesystems and offers per-device repair only after its check
-  reports issues.
-- Add a fresh per-launch session log with scope markers, retention,
-  prior-session viewing and `@section` search, a global busy indicator, one
-  authorization request per scope and deterministic responsive layouts.
-  Fixes: PackageKit no longer blocks host package repairs; apt metadata
-  changes warn and retry once; GRUB EFI same-label warnings no longer pollute
-  the firmware ID; dependency setup and installation are package-manager
-  aware with Arch, RPM and TGZ workflows.
+- Native RPM and APK release artifacts: `scripts/package-rpm.sh` builds the
+  CPack RPM with family-specific dependencies and the POSIX `/bin/sh`
+  scriptlet, `scripts/package-alpine.sh` builds the signed APK with abuild,
+  and `scripts/test-rpm.sh`/`test-apk.sh` validate both without installing
+  them.
+- Alpine, Arch and Fedora repair backends: guarded apk, pacman and dnf5
+  package transactions with mkinitfs, mkinitcpio, dracut, GRUB/extlinux and
+  display-manager stages join the Debian/APT backends; Arch host-maintenance
+  package repair and upgrade stages are included, while standalone APT/dpkg
+  stages remain unavailable on Arch.
+- Running-host Btrfs snapshot rollback: the Snapshots tab lists Snapper root
+  snapshots and Boot Bitch undo points and stages the name-preserving
+  rollback (promote a writable copy, reconcile initramfs/UKI/GRUB, restore on
+  failure), with a **Reboot required** reminder and never an automatic
+  reboot.
+- Read-only-first file system repair: diagnostics resolve the root, `/boot`,
+  ESP and `/home` filesystems, run the matching read-only check and offer
+  per-device repair only after issues are reported, with an extra warning for
+  dangerous modes.
+- Logging, UI and fixes: a fresh per-launch session log with retention and
+  `@section` search, one authorization request per scope, a guarded Host
+  Shell and responsive layouts; plus fixes from user testing (PackageKit, apt
+  metadata retry, GRUB EFI firmware-ID handling) and package-manager-aware
+  dependency setup.
 
 ## 0.2.24 refinements
 
-Adds the semantic icon atlas, the read-only-first file system repair engine
-and the distribution/boot backend profiler; see the [0.2.24 release notes](docs/release-notes-0.2.24.md).
+0.2.24 adds the semantic icon atlas, the read-only-first file system repair
+engine and the distribution/boot backend profiler. Highlights:
 
-- Bundle the semantic icon atlas as the deterministic UI source across desktop
-  themes and add the Qt SVG runtime dependency required on Arch and other
-  minimal installations.
-- Add the read-only-first File system repair tool and Full Repair stage
-  (ordered first): resolve the root, `/boot`, ESP and `/home` filesystems with
-  their UUIDs, run the matching read-only check, and offer per-device repair
-  modes only after issues are found and the user confirms; offline tools
-  refuse mounted filesystems while btrfs/zpool scrub stay online.
-- Add the read-only distribution/boot backend profiler, backend-profile
-  contract test and kernel/initramfs pairing diagnostics; gate every repair
-  tool and Full Repair stage on the scope's read-only diagnostics (DKMS, APT
-  metadata and missing prerequisites disable with a reason
-  while helper preflights remain).
-- UI/UX polish: busy indicator; one authorization request per scope;
-  section-scoped diagnostics refresh with coalesced incremental rendering;
-  narrow-window Logs/File Copy; guarded Host Shell with the host-maintenance
-  crash fix; Polkit prompt on Host Maintenance entry; `@section` log search
-  and filters; responsive Repair/Systems layouts; scroll edge shadows;
-  one-fifth splitter minimums; compact snapshot rows; and software-center
-  metadata with six screenshots, the installed size and package association.
-- Fixes: duplicate-label GRUB EFI entries no longer pollute the firmware ID;
-  an idle PackageKit daemon no longer blocks host package repairs; apt
-  release-metadata changes warn and retry once; no-op pacman transactions
-  report unchanged; Run All no longer duplicates log sections; stale
-  `/usr/local` source installs are removed on uninstall; file-system check
-  tools are declared package dependencies; the protected-host shield returns
-  as a green status icon.
+- Semantic icon atlas: the bundled icon set becomes the deterministic UI
+  source across desktop themes, with the Qt SVG runtime dependency added for
+  Arch and other minimal installations.
+- Read-only-first File system repair: the new tool and Full Repair stage
+  (ordered first) resolve the root, `/boot`, ESP and `/home` filesystems, run
+  the matching read-only check, and offer per-device repair only after issues
+  are found and the user confirms.
+- Distribution/boot backend profiler: read-only diagnostics pair kernels with
+  initramfs images and gate every repair tool and Full Repair stage on the
+  scope's read-only evidence, so unavailable actions disable with a reason.
+- UI polish and fixes: a busy indicator, one authorization request per scope,
+  section-scoped diagnostics refresh, a guarded Host Shell, `@section` log
+  search and responsive layouts; plus fixes from user testing (GRUB EFI
+  firmware-ID handling, PackageKit, apt metadata retry, uninstall cleanup).
 
 ## 0.2.23 refinements
 
