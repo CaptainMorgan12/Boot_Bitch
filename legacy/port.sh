@@ -304,6 +304,89 @@ transform_syntax()
         || return 1
 }
 
+# 1c. A12-05: bash 3.1.17 corrupts its /dev/fd fifo bookkeeping
+# (subst.c add_fifo_list: "malloc: ../bash/subst.c:4135: assertion botched",
+# SIGABRT/rc 134 - reproduced on the Etch rig) when process substitution runs
+# repeatedly inside a loop.  The legacy mount sweep calls these sites once
+# per swept /dev entry (530+ on the Etch rig, ~4 process substitutions per
+# entry across this site, top_disks_for, _top_disks_for_sysfs and the lsblk
+# shim), which crashed every rw repair right after the target data mounts
+# were promoted.  Each site switches its feed from `< <(producer)` to the
+# here-string `<<<"$(producer)"` (here-strings use a temp file, never a
+# fifo; verified crash-free over thousands of iterations on bash 3.1.17).
+# The legacy_readarray empty-record skip (compat.sh A12-01) keeps an empty
+# producer from adding a spurious "" element through the here-string's
+# trailing newline.
+transform_legacy_mount_sweep()
+{
+    local file="$1" count=0
+
+    sweep_replacement()
+    {
+        local old="$1" new="$2"
+        replace_block "$file" "$old" "$new" || return 1
+        count=$((count + 1))
+    }
+
+    # populate_writable_dev_filtered: the per-entry top-disk walk (the
+    # hottest site: once per swept /dev entry).
+    sweep_replacement \
+        '                legacy_readarray -t entry_tops < <(top_disks_for "$entry" 2>/dev/null | sort -u || true)' \
+        '                legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null | sort -u || true)"'
+
+    # top_disks_for: the per-call lsblk inverse walk.
+    sweep_replacement \
+        '    legacy_readarray -t disks < <(
+        lsblk -srnpo NAME,TYPE "$dev" 2>/dev/null |
+            awk '"'"'$2 == "disk" {print $1}'"'"' |
+            while IFS= read -r disk; do
+                canonical_block "$disk" 2>/dev/null || true
+            done |
+            awk '"'"'NF'"'"' |
+            sort -u
+    )' \
+        '    legacy_readarray -t disks <<<"$(
+        lsblk -srnpo NAME,TYPE "$dev" 2>/dev/null |
+            awk '"'"'$2 == "disk" {print $1}'"'"' |
+            while IFS= read -r disk; do
+                canonical_block "$disk" 2>/dev/null || true
+            done |
+            awk '"'"'NF'"'"' |
+            sort -u
+    )"'
+
+    # _top_disks_for_sysfs: PKNAME parents.
+    sweep_replacement \
+        '        while IFS= read -r parent; do
+            [[ -n "$parent" ]] && parents+=("/dev/$parent")
+        done < <(lsblk -ndo PKNAME "$current" 2>/dev/null | awk '"'"'NF'"'"' | sort -u)' \
+        '        while IFS= read -r parent; do
+            [[ -n "$parent" ]] && parents+=("/dev/$parent")
+        done <<<"$(lsblk -ndo PKNAME "$current" 2>/dev/null | awk '"'"'NF'"'"' | sort -u)"'
+
+    # _top_disks_for_sysfs: sysfs slave links.
+    sweep_replacement \
+        '            while IFS= read -r parent; do
+                [[ -n "$parent" ]] && parents+=("/dev/$parent")
+            done < <(find "/sys/class/block/$kname/slaves" -mindepth 1 -maxdepth 1 -printf '"'"'%f\n'"'"' 2>/dev/null | sort -u)' \
+        '            while IFS= read -r parent; do
+                [[ -n "$parent" ]] && parents+=("/dev/$parent")
+            done <<<"$(find "/sys/class/block/$kname/slaves" -mindepth 1 -maxdepth 1 -printf '"'"'%f\n'"'"' 2>/dev/null | sort -u)"'
+
+    # _top_disks_for_sysfs: the multi-parent re-sort.
+    sweep_replacement \
+        '        legacy_readarray -t parents < <(printf '"'"'%s\n'"'"' "${parents[@]:-}" | sort -u)' \
+        '        legacy_readarray -t parents <<<"$(printf '"'"'%s\n'"'"' "${parents[@]:-}" | sort -u)"'
+
+    # populate_writable_dev_filtered: the allowed-top-disk capture (once per
+    # prepare, but the sweep's own hot path calls the same top_disks_for).
+    sweep_replacement \
+        '        legacy_readarray -t allowed_tops < <(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)' \
+        '        legacy_readarray -t allowed_tops <<<"$(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)"'
+
+    note "mount-sweep process substitutions rewritten" "$count"
+}
+
 # 1b. bash 3.1 rejects an unquoted `(` or `|` in the `[[ =~ ]]` operand
 # (bash 3.2+ accepts it).  Hoist those regex literals into a variable, which is
 # the portable idiom on 3.1 and on modern bash alike.  A block that matches
@@ -766,6 +849,7 @@ generate()
     work="$(mktemp "${TMPDIR:-/tmp}/port-body.XXXXXX")" || return 1
     if ! cp -- "$MODERN" "$work" \
         || ! transform_syntax "$work" \
+        || ! transform_legacy_mount_sweep "$work" \
         || ! verify_transform_counts "$work" \
         || ! transform_regex_compat "$work" \
         || ! transform_legacy_behaviour "$work" \

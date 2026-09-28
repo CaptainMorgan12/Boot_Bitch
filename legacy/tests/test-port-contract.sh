@@ -113,6 +113,7 @@ for rule in \
     'os-release gates +1' \
     'dpkg db:Status sites +4' \
     'wrapped/replaced modern functions +42' \
+    'mount-sweep process substitutions rewritten +6' \
     'post-rewrite residual: mapfile +0' \
     'post-rewrite residual: sed -i -E +0' \
     'post-rewrite residual: sed -nE +0' \
@@ -307,7 +308,7 @@ grep -q 'for feature in file-copy shell host-shell host-maintenance snapshots ho
 grep -q 'Legacy feature %s:' "$HELPER" || fail "generated helper has no legacy feature report format"
 grep -q 'the legacy SysV display-manager repair is a host-scope stage' "$HELPER" \
     || fail "generated helper has no host-scope display reason"
-grep -q 'cryptsetup --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
+grep -q '"$CRYPTSETUP_BIN" --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
     || fail "generated helper lost the keyfile-based cryptsetup 1.0 luksOpen invocation"
 grep -q 'legacy_unlock_keyfile_from_stdin' "$HELPER" \
     || fail "generated helper lost the newline-tolerant unlock keyfile handling"
@@ -366,6 +367,72 @@ grep -q 'Remounting target data filesystem ' "$HELPER" \
     || fail "generated helper lost the data-mount promotion line"
 grep -q '^remount_target_data_rw()' "$HELPER" \
     || fail "generated helper lost the unwrapped fail-closed data promotion"
+# A12-05: the mount-sweep hot paths must never feed an array from a process
+# substitution - bash 3.1.17 corrupts its /dev/fd fifo bookkeeping when
+# process substitution repeats inside the block sweep (reproduced on the Etch
+# rig: rc 134/SIGABRT after the target data mounts were promoted).
+helper_code2="$(mktemp "${TMPDIR:-/tmp}/legacy-sweep.XXXXXX")"
+grep -vE '^[[:space:]]*#' "$HELPER" > "$helper_code2"
+for sweep_fn in populate_writable_dev_filtered top_disks_for _top_disks_for_sysfs; do
+    body="$(awk -v fn="$sweep_fn" '$0 ~ "^" fn "\\(\\)$" {f=1} f {print} f && /^}$/ {exit}' "$helper_code2")"
+    [[ -n "$body" ]] || fail "generated helper lost $sweep_fn"
+    # Only the populate sweep's single outer find feed may stay (one process
+    # substitution for the whole loop, never one per swept entry).
+    case "$sweep_fn" in
+        populate_writable_dev_filtered)
+            ps_feed="$(printf '%s\n' "$body" | grep -c '< <(')"
+            [[ "$ps_feed" -le 1 ]] \
+                || fail "$sweep_fn still feeds arrays from process substitutions"
+            if printf '%s\n' "$body" | grep -q '< <(' \
+                && ! printf '%s\n' "$body" | grep -q '< <(find "\$source"'; then
+                fail "$sweep_fn kept a non-find process substitution feed"
+            fi
+            ;;
+        *)
+            if printf '%s\n' "$body" | grep -q '< <('; then
+                fail "$sweep_fn still feeds an array from a process substitution"
+            fi
+            ;;
+    esac
+done
+rm -f -- "$helper_code2"
+grep -q 'legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null | sort -u || true)"' "$HELPER" \
+    || fail "generated helper lost the A12-05 here-string entry_tops sweep feed"
+grep -q 'legacy_readarray -t disks <<<"$(' "$HELPER" \
+    || fail "generated helper lost the A12-05 here-string top_disks_for feed"
+# A12-03: the legacy findmnt --target branch resolves the most specific
+# covering mount instead of the first (host-root) match.
+grep -q 'legacy_findmnt_path_match' "$HELPER" \
+    || fail "generated helper lost the covering-mount match"
+grep -q 'MOST SPECIFIC covering mount' "$HELPER" \
+    || fail "generated helper lost the A12-03 most-specific --target comment"
+# A12-02: the standard-location tool probe and the sbin PATH normalization.
+grep -q '^legacy_standard_tool_path()' "$HELPER" \
+    || fail "generated helper lost the standard-location tool probe"
+grep -q 'BOOT_REPAIR_LEGACY_TOOL_DIRS' "$HELPER" \
+    || fail "generated helper lost the probe directory override"
+grep -q 'PATH="/sbin:$PATH"' "$HELPER" \
+    || fail "generated helper lost the /sbin PATH normalization"
+grep -q 'PATH="/usr/sbin:$PATH"' "$HELPER" \
+    || fail "generated helper lost the /usr/sbin PATH normalization"
+grep -q 'CRYPTSETUP_BIN="$(legacy_standard_tool_path cryptsetup)"' "$HELPER" \
+    || fail "generated helper unlock gate does not use the standard-location probe"
+grep -q 'Required host command not found: cryptsetup (checked /sbin/cryptsetup, /usr/sbin/cryptsetup and PATH)' "$HELPER" \
+    || fail "generated helper lost the fail-closed cryptsetup probe wording"
+# A12-04: the single-user variant capture/restore/verification and the
+# derived-variant guard relaxation.
+for grub_symbol in legacy_grub_single_variant_capture legacy_grub_restore_single_variants \
+    legacy_grub_variants_verified legacy_grub_relax_derived_variants \
+    legacy_grub_kernel_strip_managed legacy_grub_kernel_without_single \
+    legacy_grub_entry_blocks legacy_grub_block_kernel; do
+    grep -q "^${grub_symbol}()" "$HELPER" || fail "generated helper is missing $grub_symbol"
+done
+grep -q 'derived single-user variant' "$HELPER" \
+    || fail "generated helper lost the derived single-user variant wording"
+grep -q 'derived-single-variant-missing' "$HELPER" \
+    || fail "generated helper lost the variant verification failure marker"
+grep -q 'single-user variant(s) captured for post-regeneration restoration' "$HELPER" \
+    || fail "generated helper lost the variant capture preflight note"
 # The shared evidence-based apt-intent translation covers the guarded shell
 # paths; the legacy plain-chroot paths keep the unconditional Etch translation.
 grep -q '^apt_intent_translate()' "$HELPER" \
@@ -427,6 +494,12 @@ grep -Fq "sed 's/[]\\.[*^\$+?|(){}]/\\\\&/g'" "$HELPER" \
     || fail "generated helper lost the A9-06 ERE escape class (backslash and pipe)"
 grep -q 'cmp -s -- "$destination" /etc/resolv.conf' "$HELPER" \
     || fail "generated helper lost the A9-09 polluted-resolver refusal"
+grep -q 'LEGACY_RESOLVER_MARKER="$STATE_ROOT/resolver-copy-marker"' "$HELPER" \
+    || fail "generated helper lost the A12-07 persistent resolver copy marker"
+grep -q 'delete $LEGACY_RESOLVER_MARKER when the two systems share the identical resolver file' "$HELPER" \
+    || fail "generated helper lost the A12-07 identical-content marker remedy"
+grep -q 'record the resolver copy marker' "$HELPER" \
+    || fail "generated helper lost the A12-07 marker write path"
 grep -q 'interrupted session' "$HELPER" \
     || fail "generated helper lost the interrupted-session resolver wording"
 grep -q 'cmp -s -- "$LEGACY_RESOLVER_DESTINATION" /etc/resolv.conf' "$HELPER" \
@@ -558,12 +631,16 @@ shim_checks()
     [[ "$(legacy_ucfirst hello)" == Hello ]] || fail "legacy_ucfirst"
 
     local -a arr=()
+    # A12-01: legacy_readarray skips empty records (a here-string feed adds
+    # one trailing newline, which an empty producer turns into a spurious ""
+    # element that would break the top_disks_for sysfs-fallback semantics).
     legacy_readarray -t arr <<< $'one two\nthree\\four\n\nlast'
-    [[ "${#arr[@]}" -eq 4 ]] || fail "legacy_readarray element count: ${#arr[@]}"
+    [[ "${#arr[@]}" -eq 3 ]] || fail "legacy_readarray element count: ${#arr[@]}"
     [[ "${arr[0]}" == 'one two' ]] || fail "legacy_readarray space handling"
     [[ "${arr[1]}" == 'three\four' ]] || fail "legacy_readarray backslash handling"
-    [[ -z "${arr[2]}" ]] || fail "legacy_readarray empty line handling"
-    [[ "${arr[3]}" == last ]] || fail "legacy_readarray last line handling"
+    [[ "${arr[2]}" == last ]] || fail "legacy_readarray last line handling"
+    legacy_readarray -t arr <<< ''
+    [[ "${#arr[@]}" -eq 0 ]] || fail "legacy_readarray empty feed must yield zero elements"
 
     # A11-03: the shim only honours -t/--.  -n/-d/-O/-s and every other unknown
     # option must be refused with a stderr reason, not silently consumed.
@@ -704,6 +781,71 @@ MOUNTS
     set -e
     [[ "$rc" -eq 124 ]] || fail "legacy_timeout watchdog did not return 124 (got $rc)"
     [[ "$(timeout 5 echo ok)" == ok ]] || fail "legacy_timeout watchdog command result"
+
+    # --- A12-03: findmnt --target resolves the MOST SPECIFIC covering mount.
+    # The old first-match loop returned the host root "/" for any path below a
+    # session mount, corrupting the target mount evidence (the selected
+    # repair root reported the running host's source and options).  The
+    # fixture table mirrors the Etch rig: "/" first, then the private session
+    # mount, then /boot.
+    local mountinfo_fixture
+    mountinfo_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-mountinfo.XXXXXX")"
+    # Rows in the legacy_mountinfo_table output format:
+    # ID<TAB>TARGET<TAB>SOURCE<TAB>FSTYPE<TAB>OPTIONS, in mount order.
+    cat > "$mountinfo_fixture" <<'MOUNTINFO'
+1	/	/dev/mapper/debian1-root	ext3	rw,data=ordered
+2	/var/run/boot-repair/session.OU5116/mount	/dev/mapper/debian-root	ext3	ro,data=ordered
+3	/var/run/boot-repair/session.OU5116/mount/boot	/dev/hdb1	ext3	ro,data=ordered
+MOUNTINFO
+    legacy_mountinfo_table() { cat "$mountinfo_fixture"; }
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount)"
+    [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian-root" ]] \
+        || fail "legacy_findmnt --target resolved the host root instead of the session mount: $out"
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount/boot)"
+    [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/hdb1" ]] \
+        || fail "legacy_findmnt --target did not resolve the nested /boot mount: $out"
+    out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount/usr)"
+    [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian-root" ]] \
+        || fail "legacy_findmnt --target did not fall back to the covering session mount: $out"
+    # An unmounted path under / resolves to the / entry itself.
+    out="$(legacy_findmnt -rn -o SOURCE --target /no/such/mount)"
+    [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian1-root" ]] \
+        || fail "legacy_findmnt --target did not fall back to the / entry: $out"
+    # Stacked entries on the exact mountpoint are all emitted (mount order).
+    out="$(legacy_findmnt -rn -o SOURCE --target /)"
+    [[ "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 1 ]] \
+        || fail "legacy_findmnt --target / lost its exact-match row: $out"
+    rm -f -- "$mountinfo_fixture"
+
+    # --- A12-02: the standard-location tool probe (sbin dirs, then PATH) and
+    # its fail-closed behaviour.
+    local tool_fixture tool_dirs
+    tool_fixture="$(mktemp -d "${TMPDIR:-/tmp}/legacy-tools.XXXXXX")"
+    mkdir -p "$tool_fixture/sbin" "$tool_fixture/usr-sbin"
+    : > "$tool_fixture/sbin/cryptsetup"
+    chmod +x "$tool_fixture/sbin/cryptsetup"
+    BOOT_REPAIR_LEGACY_TOOL_DIRS="$tool_fixture/sbin $tool_fixture/usr-sbin"
+    [[ "$(legacy_standard_tool_path cryptsetup)" == "$tool_fixture/sbin/cryptsetup" ]] \
+        || fail "legacy_standard_tool_path did not probe /sbin first"
+    rm -f -- "$tool_fixture/sbin/cryptsetup"
+    : > "$tool_fixture/usr-sbin/cryptsetup"
+    chmod +x "$tool_fixture/usr-sbin/cryptsetup"
+    [[ "$(legacy_standard_tool_path cryptsetup)" == "$tool_fixture/usr-sbin/cryptsetup" ]] \
+        || fail "legacy_standard_tool_path did not probe /usr/sbin second"
+    rm -f -- "$tool_fixture/usr-sbin/cryptsetup"
+    # Neither standard location nor PATH: fail closed with an empty path.
+    if [[ -z "$(legacy_real_tool_path definitely-no-such-tool-xyz)" ]]; then
+        [[ -z "$(legacy_standard_tool_path definitely-no-such-tool-xyz)" ]] \
+            || fail "legacy_standard_tool_path returned a path for a missing tool"
+    fi
+    # A slash in the name is refused outright (path injection, fail closed).
+    [[ -z "$(legacy_standard_tool_path /sbin/cryptsetup)" ]] \
+        || fail "legacy_standard_tool_path accepted a path instead of a bare name"
+    BOOT_REPAIR_LEGACY_TOOL_DIRS=""
+    rm -rf -- "$tool_fixture"
+    # PATH-only fallback still works (the host PATH resolves sh itself).
+    [[ -n "$(legacy_standard_tool_path sh)" ]] \
+        || fail "legacy_standard_tool_path lost its PATH fallback"
     return 0
 }
 ( shim_checks ) || fail "compat shim behaviour"

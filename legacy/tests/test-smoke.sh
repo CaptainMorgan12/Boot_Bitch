@@ -289,6 +289,128 @@ legacy_grub_guard_entries_preserved "$FIXTURE/decl.defopts.before" \
 LEGACY_GRUB_MANAGED=""
 pass "GRUB legacy defoptions/kopt expansion (guard accepts the expansion, refuses a drop)"
 
+# --- A12-04: single-user variants are derived boot entries ------------------
+# The rig menu.lst keeps a manually added single-user entry whose kernel line
+# carries the defoptions-managed serial-console arguments; stock Etch
+# update-grub regenerates altoptions single entries WITHOUT defoptions (they
+# apply "to the default boot option, but not with the alternatives"), so the
+# variant's serial arguments would be stripped.  The capture/restore pipeline
+# must keep the variant verbatim next to its parent, and the guard must treat
+# a missing variant whose parent survives as a derived entry, never as a
+# removed one.
+cat > "$FIXTURE/menu.lst.single.before" <<'EOF'
+# defoptions=console=ttyS0,115200 console=tty0 consoleblank=0
+# kopt=root=/dev/mapper/debian1-root ro
+# altoptions=(single-user mode) single
+
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64
+root		(hd0,0)
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro console=ttyS0,115200 console=tty0 consoleblank=0
+initrd		/initrd.img-2.6.18-6-amd64
+savedefault
+
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64 (single-user mode)
+root		(hd0,0)
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro single console=ttyS0,115200 console=tty0 consoleblank=0
+initrd		/initrd.img-2.6.18-6-amd64
+savedefault
+EOF
+LEGACY_GRUB_MANAGED="$(legacy_grub_managed_options "$FIXTURE/menu.lst.single.before")"
+variant_dir="$FIXTURE/variant-cap"
+mkdir -p "$variant_dir"
+legacy_grub_single_variant_capture "$FIXTURE/menu.lst.single.before" "$variant_dir"
+manifest="$variant_dir/grub-single-variants.list"
+[[ -s "$manifest" ]] || fail "single-user variant was not captured"
+[[ "$(grep -c . "$manifest")" -eq 1 ]] || fail "single-user variant count: $(cat "$manifest")"
+parent_line="$(cut -f1 "$manifest")"
+[[ "$parent_line" == "/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro console=ttyS0,115200 console=tty0 consoleblank=0" ]] \
+    || fail "captured parent kernel line: $parent_line"
+variant_file="$(cut -f2 "$manifest")"
+[[ -s "$variant_file" ]] || fail "captured variant block file is empty"
+grep -q 'ro single console=ttyS0,115200 console=tty0 consoleblank=0' "$variant_file" \
+    || fail "captured variant block lost its serial-console arguments"
+
+# Simulated update-grub output: the main entry regenerated with defoptions
+# and the altoptions alternative WITHOUT them (exactly the Etch behaviour).
+cat > "$FIXTURE/menu.lst.single.after" <<'EOF'
+# defoptions=console=ttyS0,115200 console=tty0 consoleblank=0
+# kopt=root=/dev/mapper/debian1-root ro
+# altoptions=(single-user mode) single
+
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64
+root		(hd0,0)
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro console=ttyS0,115200 console=tty0 consoleblank=0
+initrd		/initrd.img-2.6.18-6-amd64
+savedefault
+
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64 (single-user mode)
+root		(hd0,0)
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro single
+initrd		/initrd.img-2.6.18-6-amd64
+savedefault
+EOF
+cp -a "$FIXTURE/menu.lst.single.after" "$FIXTURE/menu.lst.single.restored"
+legacy_grub_restore_single_variants "$FIXTURE/menu.lst.single.restored" "$manifest"
+grep -q 'root=/dev/mapper/debian1-root ro single console=ttyS0,115200 console=tty0 consoleblank=0' \
+    "$FIXTURE/menu.lst.single.restored" \
+    || fail "restore did not re-insert the variant with its serial-console arguments"
+[[ "$(grep -cE '^[[:space:]]*kernel[[:space:]]' "$FIXTURE/menu.lst.single.restored")" -eq 2 ]] \
+    || fail "restore left a duplicate or lost a kernel entry"
+legacy_grub_entry_declarations "$FIXTURE/menu.lst.single.before" "$LEGACY_GRUB_MANAGED" \
+    > "$FIXTURE/decl.single.before"
+legacy_grub_entry_declarations "$FIXTURE/menu.lst.single.restored" "$LEGACY_GRUB_MANAGED" \
+    > "$FIXTURE/decl.single.after"
+LEGACY_GRUB_VARIANT_MANIFEST="$manifest"
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.single.before" \
+    "$FIXTURE/menu.lst.single.restored" \
+    || fail "guard rejected the restored single-user variant regeneration"
+legacy_grub_variants_verified "$manifest" "$FIXTURE/decl.single.after" \
+    || fail "variant verification failed after a successful restoration"
+
+# Guard relaxation: a missing variant whose parent survives is derived, not a
+# removed entry; the same removal without a captured manifest stays fatal.
+cat > "$FIXTURE/menu.lst.single.novariant" <<'EOF'
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro console=ttyS0,115200 console=tty0 consoleblank=0
+initrd		/initrd.img-2.6.18-6-amd64
+EOF
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.single.before" \
+    "$FIXTURE/menu.lst.single.novariant" \
+    || fail "guard must relax a missing derived single-user variant whose parent survived"
+LEGACY_GRUB_VARIANT_MANIFEST=""
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.single.before" \
+    "$FIXTURE/menu.lst.single.novariant" \
+    && fail "guard without a variant manifest accepted the removal"
+# The variant's parent disappearing as well must refuse even with a manifest.
+LEGACY_GRUB_VARIANT_MANIFEST="$manifest"
+cat > "$FIXTURE/menu.lst.single.parentgone" <<'EOF'
+title		Some other kernel
+kernel		/boot/vmlinuz-2.6.18-6-486 root=/dev/sda1 ro
+initrd		/boot/initrd.img-2.6.18-6-486
+EOF
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.single.before" \
+    "$FIXTURE/menu.lst.single.parentgone" \
+    && fail "guard must refuse when the variant's parent entry is gone too"
+# A genuinely distinct entry stays protected even with a manifest present.
+cat > "$FIXTURE/menu.lst.single.custom-before" <<'EOF'
+title		custom rescue entry
+kernel		/boot/vmlinuz-rescue root=/dev/mapper/debian1-root ro custom-arg
+initrd		/boot/initrd.img-rescue
+EOF
+legacy_grub_entry_declarations "$FIXTURE/menu.lst.single.custom-before" "$LEGACY_GRUB_MANAGED" \
+    > "$FIXTURE/decl.custom.before"
+cat > "$FIXTURE/menu.lst.single.custom-after" <<'EOF'
+title		Debian GNU/Linux, kernel 2.6.18-6-amd64
+kernel		/vmlinuz-2.6.18-6-amd64 root=/dev/mapper/debian1-root ro console=ttyS0,115200 console=tty0 consoleblank=0
+initrd		/initrd.img-2.6.18-6-amd64
+EOF
+legacy_grub_guard_entries_preserved "$FIXTURE/decl.custom.before" \
+    "$FIXTURE/menu.lst.single.custom-after" \
+    && fail "guard accepted the removal of a genuinely distinct custom entry"
+LEGACY_GRUB_VARIANT_MANIFEST=""
+LEGACY_GRUB_MANAGED=""
+pass "single-user variants (capture, verbatim restore, derived-variant guard relaxation, distinct-entry protection)"
+
 # --- A9-06: backslash and pipe are escaped for both BRE and ERE ---------------
 escaped="$(legacy_grub_sed_escape 'a\b|c')"
 [[ "$escaped" == 'a\\b\|c' ]] \
@@ -378,6 +500,82 @@ mount_recorded() { return 1; }
 grep -q 'could not be mounted' "$FIXTURE/mounts-rw.log" \
     || fail "rw split-LV mount failure left no fail-closed evidence"
 pass "split-LV data mounts (ro tolerant, rw fail-closed, pseudo entries skipped)"
+
+# --- A12-03/A12-06: etch2 split-LV mount fixture ----------------------------
+# The reference split-LV fstab names /, /usr, /var, /tmp and /home on
+# separate LVM mapper LVs, /boot on the bare host-relative /dev/hda1 (written
+# from the installed system's own perspective) and the vfat share at /host.
+# Repairing that disk from another host must mount the four data LVs
+# read-only with nosuid,nodev, remap the bare /boot source onto the selected
+# target disk and skip the swap/proc/vfat pseudo entries.
+cat > "$FIXTURE/etc/fstab" <<'EOF'
+proc			/proc		proc	defaults	0	0
+/dev/mapper/debian-root /		ext3	defaults,errors=remount-ro 0	1
+/dev/hda1		/boot		ext3	defaults	0	2
+/dev/mapper/debian-home	/home		ext3	defaults	0	2
+/dev/mapper/debian-tmp	/tmp		ext3	defaults	0	2
+/dev/mapper/debian-usr	/usr		ext3	defaults	0	2
+/dev/mapper/debian-var	/var		ext3	defaults	0	2
+/dev/mapper/debian-swap_1 none		swap	sw		0	0
+/dev/hdc		/host		vfat	defaults,uid=1000,gid=1000	0	0
+EOF
+TARGET_ROOT="$FIXTURE"
+TARGET_DISK=/dev/hdb
+ROOT_DEVICE=/dev/mapper/debian-root
+ROOT_CANONICAL=/dev/mapper/debian-root
+MOUNTS=()
+TARGET_DATA_MOUNTS=()
+: > "$FIXTURE/mounts.log"
+resolve_fstab_source() { legacy_remap_target_device_path "$1"; }
+canonical_block() { printf '%s\n' "$1"; }
+is_block_device() {
+    [[ "$1" == /dev/mapper/debian-root || "$1" == /dev/mapper/debian-usr \
+        || "$1" == /dev/mapper/debian-var || "$1" == /dev/mapper/debian-tmp \
+        || "$1" == /dev/mapper/debian-home || "$1" == /dev/hdb1 ]]
+}
+same_single_top_disk() {
+    [[ "$1" == /dev/hdb && "$2" == /dev/hdb1 ]] \
+        || [[ "$1" == /dev/hdb && "$2" == /dev/mapper/debian-* ]]
+}
+mountpoint() { return 1; }
+mount_recorded() {
+    printf 'MOUNT %s\n' "$*" >> "$FIXTURE/mounts.log"
+    MOUNTS+=("$2")
+    return 0
+}
+mount_target_data_partitions ro
+[[ "$(grep -c '^MOUNT ' "$FIXTURE/mounts.log")" -eq 4 ]] \
+    || fail "etch2 split-LV ro mount did not mount exactly the four data LVs"
+grep -q "MOUNT /dev/mapper/debian-var $FIXTURE/var -o ro,nosuid,nodev" "$FIXTURE/mounts.log" \
+    || fail "etch2 /var was not mounted ro,nosuid,nodev from its mapper LV"
+grep -q "MOUNT /dev/mapper/debian-usr $FIXTURE/usr -o ro,nosuid,nodev" "$FIXTURE/mounts.log" \
+    || fail "etch2 /usr was not mounted ro,nosuid,nodev from its mapper LV"
+grep -q "MOUNT /dev/mapper/debian-tmp $FIXTURE/tmp -o ro,nosuid,nodev" "$FIXTURE/mounts.log" \
+    || fail "etch2 /tmp was not mounted ro,nosuid,nodev from its mapper LV"
+grep -q "MOUNT /dev/mapper/debian-home $FIXTURE/home -o ro,nosuid,nodev" "$FIXTURE/mounts.log" \
+    || fail "etch2 /home was not mounted ro,nosuid,nodev from its mapper LV"
+grep -q 'swap' "$FIXTURE/mounts.log" && fail "etch2 swap was mounted as a data entry"
+grep -q 'hdc\|/host' "$FIXTURE/mounts.log" && fail "etch2 /host vfat share was mounted as a data entry"
+[[ "${#TARGET_DATA_MOUNTS[@]}" -eq 4 ]] \
+    || fail "etch2 data mount records do not match the four data mounts"
+# /boot: the bare /dev/hda1 source must remap onto the selected target disk
+# and mount with the ext3 noload form the A9-05 retry later relaxes.
+: > "$FIXTURE/mounts.log"
+MOUNTS=()
+if [[ -b /dev/hdb1 ]]; then
+    mount_target_boot_entry /boot ro
+    grep -q "MOUNT /dev/hdb1 $FIXTURE/boot -o ro,noload" "$FIXTURE/mounts.log" \
+        || fail "etch2 /boot was not remapped onto the target disk and mounted ro,noload"
+else
+    # No hdb1 on this host: the remap must pass the source through (fail
+    # closed) instead of inventing a device; the rig drill proves the remap.
+    [[ "$(legacy_remap_target_device_path /dev/hda1)" == /dev/hda1 ]] \
+        || fail "etch2 bare /boot source was not passed through when the remapped node is absent"
+    [[ "$(legacy_remap_target_device_path /dev/mapper/debian-root)" == /dev/mapper/debian-root ]] \
+        || fail "etch2 mapper sources must pass through the remap unchanged"
+fi
+# The vfat /host entry is never a data or boot mount candidate.
+pass "etch2 split-LV fstab fixture (four data LVs ro,nosuid,nodev; /boot remap; pseudo entries skipped)"
 
 # --- read-only validate / diagnose against the fixture root ------------------
 prepare_target() { :; }
@@ -659,7 +857,21 @@ pass "unlock keyfile length caps (1024-char first line, 65536-byte stat cap, fil
 # A9-01/A9-02 through unlock_target itself: the accepted path creates the
 # 0700 session under STATE_ROOT and never deletes the caller file; refused
 # paths fail before any session state is created.
+# A12-02: unlock_target resolves cryptsetup through the standard-location
+# probe (legacy_standard_tool_path), so the tests stub the probe seam with a
+# fixture binary instead of a PATH function.
 mkdir -p "$FIXTURE/unlock-run1" "$FIXTURE/unlock-run2" "$FIXTURE/unlock-run3"
+cat > "$FIXTURE/cryptsetup-stub" <<'EOF'
+#!/bin/sh
+case "$1" in
+    isLuks) exit 0 ;;
+    luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
+    luksOpen) exit 0 ;;
+    luksClose) exit 0 ;;
+    *) exit 1 ;;
+esac
+EOF
+chmod +x "$FIXTURE/cryptsetup-stub"
 set +e
 # Accepted (SUDO_UID matches): runs through to the stubbed open and then
 # fails at the mapper-appeared check - after the session directory exists.
@@ -669,15 +881,7 @@ set +e
     assert_target_not_host() { return 0; }
     same_single_top_disk() { return 0; }
     lsblk() { return 0; }
-    cryptsetup() {
-        case "$1" in
-            isLuks) return 0 ;;
-            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
-            luksOpen) return 0 ;;
-            luksClose) return 0 ;;
-            *) return 1 ;;
-        esac
-    }
+    legacy_standard_tool_path() { printf '%s\n' "$FIXTURE/cryptsetup-stub"; }
     find_crypt_mapper_for_device() { return 1; }
     SESSION_DIR=""
     STATE_ROOT="$FIXTURE/unlock-run1"
@@ -704,15 +908,7 @@ session_dirs=("$FIXTURE/unlock-run1"/session.*)
     assert_target_not_host() { return 0; }
     same_single_top_disk() { return 0; }
     lsblk() { return 0; }
-    cryptsetup() {
-        case "$1" in
-            isLuks) return 0 ;;
-            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
-            luksOpen) return 0 ;;
-            luksClose) return 0 ;;
-            *) return 1 ;;
-        esac
-    }
+    legacy_standard_tool_path() { printf '%s\n' "$FIXTURE/cryptsetup-stub"; }
     find_crypt_mapper_for_device() { return 1; }
     SESSION_DIR=""
     STATE_ROOT="$FIXTURE/unlock-run2"
@@ -737,15 +933,7 @@ grep -q 'cannot be proven' "$FIXTURE/unlock-refusal.txt" \
     assert_target_not_host() { return 0; }
     same_single_top_disk() { return 0; }
     lsblk() { return 0; }
-    cryptsetup() {
-        case "$1" in
-            isLuks) return 0 ;;
-            luksUUID) printf '11111111-2222-3333-4444-555555555555\n' ;;
-            luksOpen) return 0 ;;
-            luksClose) return 0 ;;
-            *) return 1 ;;
-        esac
-    }
+    legacy_standard_tool_path() { printf '%s\n' "$FIXTURE/cryptsetup-stub"; }
     find_crypt_mapper_for_device() { return 1; }
     SESSION_DIR=""
     STATE_ROOT="$FIXTURE/unlock-run3"
@@ -1189,7 +1377,8 @@ rc=$?
 [[ $rc -eq 0 ]] || fail "resolver copy round-trip failed"
 pass "legacy resolver copy with teardown restore (idempotent, never remounted)"
 
-# --- A9-09: polluted-destination refusal and skip-restore-when-changed -------
+# --- A9-09/A12-07: resolver copy marker, interrupted-session refusal and
+#     skip-restore-when-changed ----------------------------------------------
 set +e
 mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
 (
@@ -1202,18 +1391,34 @@ mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
     : > "$LOG_FILE"
     LEGACY_RESOLVER_DESTINATION=""
     LEGACY_RESOLVER_BACKUP=""
+    LEGACY_RESOLVER_MARKER="$FIXTURE/resolver2/resolver-copy-marker"
     realpath_existing() { printf '%s\n' "$1"; }
     path_within() { return 0; }
     log() { printf '%s\n' "$*" >> "$LOG_FILE"; }
     cleanup_modern() { :; }
-    # A clean destination is copied over (backup first).
+    # A clean destination is copied over (backup first, marker recorded).
     printf 'nameserver original-target\n' > "$FIXTURE/resolver2/etc/resolv.conf"
     mount_target_resolver >/dev/null 2>&1 \
         || fail "resolver copy failed on a clean destination"
     [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
         || fail "resolver backup was not created on the clean destination"
-    # Interrupted-session refusal: simulate a fresh session whose destination
-    # still holds the recovery-host copy; the polluted file must never be
+    [[ -s "$LEGACY_RESOLVER_MARKER" ]] \
+        || fail "resolver copy marker was not recorded"
+    [[ "$(head -n1 "$LEGACY_RESOLVER_MARKER")" == "$FIXTURE/resolver2/etc/resolv.conf" ]] \
+        || fail "resolver copy marker does not carry the destination"
+    # A12-07: content equality ALONE is not evidence of an interrupted copy —
+    # a target whose own resolver file is identical to the host's must keep
+    # repairing (recovery rigs behind the same user-mode-network DNS).
+    LEGACY_RESOLVER_DESTINATION=""
+    LEGACY_RESOLVER_BACKUP=""
+    rm -f "$LEGACY_RESOLVER_MARKER" "$SESSION_DIR/resolv.conf.target.before"
+    cp -- /etc/resolv.conf "$FIXTURE/resolver2/etc/resolv.conf"
+    mount_target_resolver >/dev/null 2>&1 \
+        || fail "resolver copy refused an identical-content original without a marker"
+    [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
+        || fail "resolver did not back up the identical-content original"
+    # Interrupted-session refusal: the same equal content WITH the persistent
+    # marker proves the leftover copy; the polluted file must never be
     # re-backed-up and the refusal names the scenario.
     LEGACY_RESOLVER_DESTINATION=""
     LEGACY_RESOLVER_BACKUP=""
@@ -1227,8 +1432,8 @@ mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
     [[ -e "$SESSION_DIR/resolv.conf.target.before" ]] \
         && fail "resolver re-backed-up the polluted destination"
     # Skip-restore-when-changed: a user edit after the copy is never
-    # overwritten and the skip is logged.
-    rm -f "$LOG_FILE" "$SESSION_DIR/resolv.conf.target.before"
+    # overwritten and the skip is logged; the marker goes with the copy.
+    rm -f "$LOG_FILE" "$SESSION_DIR/resolv.conf.target.before" "$LEGACY_RESOLVER_MARKER"
     LEGACY_RESOLVER_DESTINATION=""
     LEGACY_RESOLVER_BACKUP=""
     printf 'nameserver original-target\n' > "$FIXTURE/resolver2/etc/resolv.conf"
@@ -1242,11 +1447,13 @@ mkdir -p "$FIXTURE/resolver2/etc" "$FIXTURE/resolver2/session"
         || fail "resolver cleanup left no skip evidence"
     [[ -f "$SESSION_DIR/resolv.conf.target.before" ]] \
         || fail "resolver cleanup removed the backup evidence"
+    [[ ! -e "$LEGACY_RESOLVER_MARKER" ]] \
+        || fail "resolver cleanup kept a stale copy marker"
     exit 0
 )
 rc=$?
-[[ $rc -eq 0 ]] || fail "resolver A9-09 hardening checks failed"
-pass "legacy resolver A9-09 (polluted-destination refusal, skip-restore-when-changed)"
+[[ $rc -eq 0 ]] || fail "resolver A9-09/A12-07 hardening checks failed"
+pass "legacy resolver A9-09/A12-07 (identical-content copy proceeds, marker-proven refusal, skip-restore-when-changed)"
 
 # --- A9-09 follow-up: a failed helper run must keep its exit status through
 # the EXIT-trap cleanup chain.  Regression: the resolver wrapper reset $?
@@ -1305,15 +1512,62 @@ pass "shared data mount promotion (rw remount, fail-closed)"
 # --- cycle 12 loop 2: cryptsetup 1.0 status parsing --------------------------
 # Etch prints `device:  /dev/.static/dev/hdb5`; the parser must strip the
 # colon-bearing field and the /dev/.static prefix.
-cryptsetup() { printf 'device:  /dev/.static/dev/hdb5\n'; }
+# A12-02: the parser resolves the binary through the standard-location probe,
+# so the test stubs the probe seam with a fixture binary (capture/restore the
+# real definition around the stub).
+LEGACY_STD_TOOL_DEF="$(declare -f legacy_standard_tool_path)"
+cat > "$FIXTURE/cryptsetup-status-stub" <<'EOF'
+#!/bin/sh
+printf 'device:  /dev/.static/dev/hdb5\n'
+EOF
+chmod +x "$FIXTURE/cryptsetup-status-stub"
+legacy_standard_tool_path() { printf '%s\n' "$FIXTURE/cryptsetup-status-stub"; }
 status_device="$(legacy_crypt_status_device smoke-mapper)" \
     || fail "cryptsetup 1.0 status was not parsed"
 [[ "$status_device" == "/dev/hdb5" ]] \
     || fail "cryptsetup 1.0 device path was not normalized: $status_device"
-cryptsetup() { printf 'cipher:  aes\n'; }
+cat > "$FIXTURE/cryptsetup-status-stub" <<'EOF'
+#!/bin/sh
+printf 'cipher:  aes\n'
+EOF
+chmod +x "$FIXTURE/cryptsetup-status-stub"
 legacy_crypt_status_device smoke-mapper \
     && fail "a status without a device field must not yield a device"
+eval "$LEGACY_STD_TOOL_DEF"
 pass "legacy cryptsetup 1.0 status parsing (device: field, /dev/.static strip)"
+
+# --- A12-02: cryptsetup probe matrix and sbin PATH normalization ------------
+# The helper reports cryptsetup as missing when it launches with a desktop
+# PATH (no /sbin) even though Etch keeps the binary at /sbin/cryptsetup.
+# Both fixes are pinned: the standard-location probe (/sbin, then /usr/sbin,
+# then PATH) and the startup PATH normalization prepending the sbin dirs.
+mkdir -p "$FIXTURE/probe-sbin" "$FIXTURE/probe-usr-sbin"
+BOOT_REPAIR_LEGACY_TOOL_DIRS="$FIXTURE/probe-sbin $FIXTURE/probe-usr-sbin"
+# A tool present nowhere (not even PATH) fails closed with an empty path.
+[[ -z "$(legacy_standard_tool_path definitely-no-such-tool-xyz)" ]] \
+    || fail "the probe returned a path for a tool that exists nowhere"
+: > "$FIXTURE/probe-sbin/cryptsetup"
+chmod +x "$FIXTURE/probe-sbin/cryptsetup"
+[[ "$(legacy_standard_tool_path cryptsetup)" == "$FIXTURE/probe-sbin/cryptsetup" ]] \
+    || fail "the probe did not resolve /sbin/cryptsetup first"
+rm -f -- "$FIXTURE/probe-sbin/cryptsetup"
+: > "$FIXTURE/probe-usr-sbin/cryptsetup"
+chmod +x "$FIXTURE/probe-usr-sbin/cryptsetup"
+[[ "$(legacy_standard_tool_path cryptsetup)" == "$FIXTURE/probe-usr-sbin/cryptsetup" ]] \
+    || fail "the probe did not resolve /usr/sbin/cryptsetup second"
+BOOT_REPAIR_LEGACY_TOOL_DIRS=""
+rm -rf -- "$FIXTURE/probe-sbin" "$FIXTURE/probe-usr-sbin"
+# The startup normalization guarantees /sbin and /usr/sbin are in PATH (the
+# overlay top-level code ran while the helper was sourced).
+case ":$PATH:" in
+    *:/sbin:*) ;;
+    *) fail "helper startup did not prepend /sbin to PATH" ;;
+esac
+case ":$PATH:" in
+    *:/usr/sbin:*) ;;
+    *) fail "helper startup did not prepend /usr/sbin to PATH" ;;
+esac
+pass "cryptsetup standard-location probe matrix and sbin PATH normalization"
 
 # --- legacy Make Default (B7-7 host-default) ---------------------------------
 mkdir -p "$FIXTURE/etc" "$FIXTURE/etc/init.d"

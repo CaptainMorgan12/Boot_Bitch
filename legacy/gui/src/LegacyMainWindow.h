@@ -274,6 +274,10 @@ private:
     void updateScopeLabel();
     void updateElevationLabel();
     void updatePlanView();
+    // Modern availability semantics for the Settings plan checkboxes: shown
+    // rows only; available = checkable with the saved preference, unavailable
+    // = disabled and unchecked with the exact reason (never hidden).
+    void updatePlanChecks();
     void updateToolDetails();
     int selectedToolIndex() const;
     bool toolRunReady(int toolIndex, QString *reason) const;
@@ -481,6 +485,15 @@ private:
     QTextEdit *m_resultView;
     QLabel *m_chrootCommandHeading;
     std::vector<QCheckBox *> m_planChecks;
+    // The saved per-stage plan preference, kept separately from the checkbox
+    // state so the availability pass can force unavailable rows off (shown,
+    // disabled, unchecked) without clobbering the user's choice, exactly like
+    // MainWindow::m_fullRepairStagePreferences.
+    std::vector<bool> m_planPreferences;
+    // Last tooltip text applied per plan checkbox, so the availability pass
+    // re-registers a tooltip only when the text changes (Qt3's QTipManager
+    // reallocates the per-widget Tip record on every add).
+    std::vector<QString> m_planCheckTips;
     std::vector<QPushButton *> m_buttons;
     std::vector<QGroupBox *> m_groupBoxes;
     std::vector<QLabel *> m_sectionTitles;

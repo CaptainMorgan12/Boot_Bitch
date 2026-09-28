@@ -18334,6 +18334,37 @@ rebuild_tuxedo_uki()
     fi
 }
 
+# Return 0 when the decoded cmdline explicitly selects the promoted Btrfs @
+# root subvolume.  The vendor builder's FINAL_SUBVOL strips the leading slash,
+# so a rebuilt image carries `subvol=@` (optionally doubled as
+# `rootflags=subvol=@`), while a hand-assembled cmdline may keep the slashed
+# form `subvol=/@`.  Both spellings are valid Btrfs syntax, in both the
+# rootflags= option and the bare subvol= parameter.  rootflags= values are
+# split on commas so a joined value (for example `rootflags=rw,subvol=@`)
+# matches too, and every token is compared exactly so a longer subvolume name
+# such as `subvol=@home` never satisfies the promoted-@ check.
+tuxedo_uki_selects_promoted_root()
+{
+    local cmdline="$1" token options option
+    for token in $cmdline; do
+        case "$token" in
+            subvol=@|subvol=/@)
+                return 0
+                ;;
+            rootflags=*)
+                options="${token#rootflags=}"
+                options="${options//,/ }"
+                for option in $options; do
+                    case "$option" in
+                        subvol=@|subvol=/@) return 0 ;;
+                    esac
+                done
+                ;;
+        esac
+    done
+    return 1
+}
+
 # Decode the rebuilt UKI command line and fail unless it references the
 # promoted root UUID, the Btrfs @ subvolume and the target LUKS UUID.
 verify_tuxedo_uki_root_binding()
@@ -18360,7 +18391,10 @@ verify_tuxedo_uki_root_binding()
 
     fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
     if [[ "$fstype" == "btrfs" && "$TARGET_SUBVOL" == "@" ]]; then
-        if [[ "$cmdline" != *"rootflags=subvol=/@"* && "$cmdline" != *"subvol=/@"* ]]; then
+        # The vendor builder emits `subvol=@` (FINAL_SUBVOL strips the leading
+        # slash); both `subvol=@` and `subvol=/@` are valid Btrfs syntax, in
+        # both the rootflags= and bare-subvol positions.
+        if ! tuxedo_uki_selects_promoted_root "$cmdline"; then
             fail "Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root."
         fi
     fi

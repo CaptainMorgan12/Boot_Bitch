@@ -1914,6 +1914,64 @@ fi
 grep -Fq 'Rebuilt TUXEDO UKI does not reference the promoted root filesystem UUID 11111111-2222-3333-4444-555555555555.' <<<"$verify_mismatch" \
     || { echo 'FAIL: the binding refusal did not name the hoisted root UUID' >&2; printf '%s\n' "$verify_mismatch" >&2; exit 1; }
 
+# 11m2: the promoted Btrfs subvolume match accepts both valid Btrfs spellings.
+# The vendor builder's FINAL_SUBVOL strips the leading slash, so the rebuilt
+# image carries `subvol=@`; a hand-assembled cmdline may keep the slashed form
+# `subvol=/@`.  Both must pass in the rootflags= and bare-subvol positions
+# (including a comma-joined rootflags= value), and a cmdline that selects no
+# subvolume at all must still be refused with the promoted-root message.
+verify_subvol_case()
+{
+    local label="$1" cmdline="$2" expect="$3" out="" rc=0
+    # The negative case makes the harness exit 1, so the exit code is captured
+    # under an if guard (errexit does not fire inside if conditions).
+    if out="$(run_harness '
+need() { :; }
+objcopy_dump_section() {
+    local dest="${1#*=}"
+    printf "%s\n" "'"$cmdline"'" > "$dest"
+    return 0
+}
+blkid() { printf "99999999-8888-7777-6666-555555555555\n"; }
+lsblk() { printf "btrfs\n"; }
+crypt_backing_device() { return 1; }
+TARGET_ROOT="'"$sandbox"'/target"
+ROOT_CANONICAL=/dev/test-root
+TARGET_SUBVOL=@
+TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
+SESSION_LOG="'"$sandbox"'/session.log"
+: > "$SESSION_LOG"
+verify_tuxedo_uki_root_binding
+printf "VERIFY:OK\n"
+' 2>&1)"; then
+        rc=0
+    else
+        rc=$?
+    fi
+    if [[ "$expect" == pass ]]; then
+        [[ $rc -eq 0 ]] \
+            || { echo "FAIL: the promoted-subvolume check refused the valid $label form (exit $rc)" >&2; printf '%s\n' "$out" >&2; exit 1; }
+        grep -Fqx 'VERIFY:OK' <<<"$out" \
+            || { echo "FAIL: the promoted-subvolume check did not complete for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
+        grep -Fq 'PASS: TUXEDO UKI root/LUKS/subvolume binding verified.' <<<"$out" \
+            || { echo "FAIL: the promoted-subvolume check did not report success for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
+    else
+        if [[ $rc -eq 0 ]] || grep -Fqx 'VERIFY:OK' <<<"$out"; then
+            echo "FAIL: the promoted-subvolume check accepted the $label" >&2
+            printf '%s\n' "$out" >&2
+            exit 1
+        fi
+        grep -Fq 'Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root.' <<<"$out" \
+            || { echo "FAIL: the promoted-subvolume refusal did not name the promoted root for the $label" >&2; printf '%s\n' "$out" >&2; exit 1; }
+    fi
+}
+
+verify_subvol_case 'vendor no-slash form' 'root=UUID=11111111-2222-3333-4444-555555555555 subvol=@ rootflags=subvol=@' pass
+verify_subvol_case 'slashed form' 'root=UUID=11111111-2222-3333-4444-555555555555 subvol=/@ rootflags=subvol=/@' pass
+verify_subvol_case 'joined rootflags no-slash form' 'root=UUID=11111111-2222-3333-4444-555555555555 rootflags=rw,subvol=@' pass
+verify_subvol_case 'joined rootflags slashed form' 'root=UUID=11111111-2222-3333-4444-555555555555 rootflags=rw,subvol=/@' pass
+verify_subvol_case 'cmdline without any subvol selection' 'root=UUID=11111111-2222-3333-4444-555555555555 rw quiet' refuse
+
 # 11f: host-path join.  With TARGET_ROOT="/" the real mount entry must resolve
 # /boot (not //boot), record the pre-existing systemd mount and never mount
 # over it.  /boot is used instead of /boot/efi because every rig (including the

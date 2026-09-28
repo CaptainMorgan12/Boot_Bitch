@@ -63,8 +63,15 @@ legacy_readarray()
     done
     [[ -n "$__name" ]] || return 1
     eval "$__name=()"
+    # A12-01: a here-string feed (`<<<"$(producer)"`, the form the mount
+    # sweep and the block walkers now use instead of process substitution)
+    # always appends one trailing newline, which an empty producer turns into
+    # a single empty record; the skip keeps empty input from adding a
+    # spurious "" element.  No caller ever relied on preserving an
+    # intentional empty line (every consumer filters empty entries).
     while IFS= read -r __line || [[ -n "$__line" ]]; do
-        eval "$__name+=(\"\$__line\")"
+        [[ -n "$__line" ]] || continue
+        eval "$__name+=(\"$__line\")"
     done
     return 0
 }
@@ -234,6 +241,32 @@ legacy_real_tool_path()
     type -P "$1" 2>/dev/null
 }
 
+# A12-02: probe an external tool through the standard Etch system directories
+# first (/sbin, /usr/sbin) and then PATH.  cryptsetup 1.0 is at
+# /sbin/cryptsetup while the desktop user PATH has no /sbin, so the plain
+# `command -v` lookups reported it missing on launch paths without the sbin
+# directories; this probe is the fail-closed lookup every legacy cryptsetup
+# gate uses.  BOOT_REPAIR_LEGACY_TOOL_DIRS overrides the probed directory
+# list (test/development only, same convention as BOOT_REPAIR_LEGACY_SHIMS;
+# the installed helper never sets it).
+legacy_standard_tool_path()
+{
+    local name="$1" candidate="" dirs=""
+    [[ -n "$name" && "$name" != */* ]] || return 1
+    if [[ -n "${BOOT_REPAIR_LEGACY_TOOL_DIRS:-}" ]]; then
+        dirs="$BOOT_REPAIR_LEGACY_TOOL_DIRS"
+    else
+        dirs="/sbin /usr/sbin"
+    fi
+    for candidate in $dirs; do
+        if [[ -x "$candidate/$name" ]]; then
+            printf '%s\n' "$candidate/$name"
+            return 0
+        fi
+    done
+    legacy_real_tool_path "$name"
+}
+
 legacy_force_shims()
 {
     [[ "${BOOT_REPAIR_LEGACY_SHIMS:-auto}" == force ]]
@@ -313,13 +346,17 @@ legacy_block_kname()
     min="$(stat -c '%T' "$dev" 2>/dev/null || true)"
     [[ -n "$maj" && -n "$min" ]] || return 1
     want="$((16#$maj)):$((16#$min))"
+    # A12-05: here-string feed instead of process substitution - bash 3.1.17
+    # corrupts its /dev/fd fifo bookkeeping (subst.c add_fifo_list) when
+    # process substitution runs repeatedly inside the block-device sweep
+    # loops, and this lookup runs once per lsblk call (per swept device).
     while IFS= read -r d; do
         [[ -n "$d" ]] || continue
         if [[ "$(cat "$d/dev" 2>/dev/null || true)" == "$want" ]]; then
             basename -- "$d"
             return 0
         fi
-    done < <(legacy_sys_block_all_dirs)
+    done <<<"$(legacy_sys_block_all_dirs)"
     return 1
 }
 
@@ -560,7 +597,8 @@ legacy_mountinfo_mountpoints()
             | awk -v dev="$devid" '$3 == dev { print $5 }'
         return 0
     fi
-    legacy_mountpoints_from_table "/dev/$k" < <(legacy_mountinfo_table)
+    # A12-05: here-string feed (see legacy_block_kname).
+    legacy_mountpoints_from_table "/dev/$k" <<<"$(legacy_mountinfo_table)"
 }
 
 legacy_lsblk_dm_name()
@@ -751,13 +789,18 @@ legacy_lsblk()
     if [[ "$toponly" == yes ]]; then
         devs=("$kname")
     elif [[ "$inverse" == yes ]]; then
+        # A12-05: here-string feed (see legacy_block_kname); this walk runs
+        # once per lsblk invocation, and the block sweep invokes lsblk once
+        # per swept device entry.
         while IFS= read -r k; do
+            [[ -n "$k" ]] || continue
             devs+=("$k")
-        done < <(legacy_lsblk_walk_inverse "$kname")
+        done <<<"$(legacy_lsblk_walk_inverse "$kname")"
     else
         while IFS= read -r k; do
+            [[ -n "$k" ]] || continue
             devs+=("$k")
-        done < <(legacy_lsblk_walk "$kname")
+        done <<<"$(legacy_lsblk_walk "$kname")"
     fi
     for k in "${devs[@]:-}"; do
         [[ -n "$k" ]] || continue
@@ -861,6 +904,8 @@ legacy_mountinfo_table()
     fi
 }
 
+# True when mountpoint MP covers PATH: either the exact mountpoint or a
+# proper ancestor ("/" covers every absolute path as the implicit root).
 legacy_findmnt_path_match()
 {
     local mp="$1" path="$2"
@@ -895,7 +940,7 @@ legacy_findmnt_emit_row()
 legacy_findmnt()
 {
     local cols_csv="" target="" prefix="" noheader=no
-    local opt="" arg="" path=""
+    local opt="" arg="" path="" exact=0 best="" best_mp=""
     local -a args=("$@")
     local i=0
     while (( i < ${#args[@]} )); do
@@ -952,10 +997,13 @@ legacy_findmnt()
         if [[ "$noheader" != yes ]]; then
             legacy_lsblk_header "$cols_csv"
         fi
+        # A12-05: here-string feed (see legacy_block_kname); the recursive
+        # listing stays a covering filter and never resolves a single mount.
         while IFS=$'\t' read -r _id mp _source _fstype _options; do
+            [[ -n "$_id" || -n "$mp" ]] || continue
             [[ "$mp" == "$path" || "$mp" == "$path"/* ]] || continue
             legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-        done < <(legacy_mountinfo_table)
+        done <<<"$(legacy_mountinfo_table)"
         return 0
     fi
     if [[ -n "$target" ]]; then
@@ -963,18 +1011,41 @@ legacy_findmnt()
         if [[ "$noheader" != yes ]]; then
             legacy_lsblk_header "$cols_csv"
         fi
+        # A12-03: findmnt --target resolves the MOST SPECIFIC covering mount:
+        # every entry stacked on the exact mountpoint, otherwise the single
+        # deepest ancestor ("/" only when nothing else covers the path).  The
+        # old first-match loop returned the host root "/" for any path below
+        # a session mount, so the selected repair root's mount evidence
+        # (source and options) reported the RUNNING HOST's root instead of
+        # the target's session mount.  A tie keeps the later row (mount
+        # order: the topmost entry wins).
+        exact=0
+        best=""
+        best_mp=""
         while IFS=$'\t' read -r _id mp _source _fstype _options; do
+            [[ -n "$_id" || -n "$mp" ]] || continue
+            if [[ "$mp" == "$path" ]]; then
+                legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
+                exact=1
+                continue
+            fi
             legacy_findmnt_path_match "$mp" "$path" || continue
-            legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-        done < <(legacy_mountinfo_table)
+            [[ -z "$best_mp" || ${#mp} -ge ${#best_mp} ]] || continue
+            best_mp="$mp"
+            best="$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options"
+        done <<<"$(legacy_mountinfo_table)"
+        if (( exact == 0 )) && [[ -n "$best" ]]; then
+            legacy_findmnt_emit_row "$best" "$cols_csv" || return 1
+        fi
         return 0
     fi
     if [[ "$noheader" != yes ]]; then
         legacy_lsblk_header "$cols_csv"
     fi
     while IFS=$'\t' read -r _id mp _source _fstype _options; do
+        [[ -n "$_id" || -n "$mp" ]] || continue
         legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-    done < <(legacy_mountinfo_table)
+    done <<<"$(legacy_mountinfo_table)"
     return 0
 }
 
