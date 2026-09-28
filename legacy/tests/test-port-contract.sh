@@ -695,63 +695,111 @@ shim_checks()
     [[ "$(legacy_realpath -m /no/such/path)" == /no/such/path ]] || fail "legacy_realpath -m"
     [[ "$(legacy_realpath -e /etc/hosts)" == /etc/hosts ]] || fail "legacy_realpath -e"
 
+    # The mountpoint/findmnt fallbacks resolve the mount table through
+    # legacy_mountinfo_table(); pin that resolver to a fixture (the
+    # documented in-test seam the shim honours in every environment) so
+    # these checks never depend on the running host's mount table or its
+    # device naming.  Rows use the legacy_mountinfo_table output format:
+    # ID<TAB>TARGET<TAB>SOURCE<TAB>FSTYPE<TAB>OPTIONS, in mount order.  The
+    # table mirrors the Etch rig: "/" first, then the private session
+    # mount, then /boot; the A12-03 block below reuses the same table.
+    local mountinfo_fixture
+    mountinfo_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-mountinfo.XXXXXX")"
+    cat > "$mountinfo_fixture" <<'MOUNTINFO'
+1	/	/dev/mapper/debian1-root	ext3	rw,data=ordered
+2	/var/run/boot-repair/session.OU5116/mount	/dev/mapper/debian-root	ext3	ro,data=ordered
+3	/var/run/boot-repair/session.OU5116/mount/boot	/dev/hdb1	ext3	ro,data=ordered
+MOUNTINFO
+    legacy_mountinfo_table() { cat "$mountinfo_fixture"; }
+
     legacy_mountpoint -q / || fail "legacy_mountpoint /"
+    legacy_mountpoint -q /var/run/boot-repair/session.OU5116/mount/boot \
+        || fail "legacy_mountpoint nested mount"
     legacy_mountpoint -q /no/such/mountpoint && fail "legacy_mountpoint accepted a non-mountpoint"
 
-    out="$(legacy_findmnt -rn -o SOURCE --target / | head -n1)"
-    [[ -n "$out" ]] || fail "legacy_findmnt --target / returned no source"
+    out="$(legacy_findmnt -rn -o SOURCE --target /)"
+    [[ "$out" == "/dev/mapper/debian1-root" ]] \
+        || fail "legacy_findmnt --target / resolved the wrong source: $out"
     out="$(legacy_findmnt -rn -o SOURCE,TARGET)"
-    printf '%s\n' "$out" | grep -q ' /$' || fail "legacy_findmnt full listing"
-    legacy_findmnt --definitely-unknown-option >/dev/null 2>&1 && fail "legacy_findmnt accepted an unknown option"
+    [[ "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 3 ]] \
+        || fail "legacy_findmnt full listing lost rows: $out"
+    printf '%s\n' "$out" | grep -q ' /$' || fail "legacy_findmnt full listing lost the / row"
+    legacy_findmnt --definitely-unknown-option >/dev/null 2>&1 \
+        && fail "legacy_findmnt accepted an unknown option"
 
     legacy_mount_rslave_supported && fail "legacy_mount_rslave_supported must fail under force"
     legacy_mount_special bogus a b && fail "legacy_mount_special accepted an unknown kind"
 
-    local dev=""
-    dev="$(awk '$2 == "/" && $1 ~ /^\/dev\// {print $1; exit}' /proc/mounts)"
-    if [[ -n "$dev" && -b "$dev" ]]; then
-        local kname expected
-        kname="$(legacy_lsblk -ndo KNAME "$dev")"
-        expected="$(basename -- "$(readlink -f -- "$dev")")"
-        [[ "$kname" == "$expected" ]] || fail "legacy_lsblk KNAME: $kname != $expected"
-        [[ -n "$(legacy_lsblk -ndo TYPE "$dev")" ]] || fail "legacy_lsblk TYPE empty"
-        legacy_lsblk -srnpo NAME,TYPE "$dev" | awk '$2 == "disk" { found = 1 } END { exit(found ? 0 : 1) }' \
-            || fail "legacy_lsblk inverse walk found no disk"
-        legacy_lsblk -P -b -p -o NAME,FSTYPE,SIZE,TYPE "$dev" | grep -q 'NAME="' \
-            || fail "legacy_lsblk -P output missing NAME"
-        # The /proc/mounts fallback matches the canonicalized source path.
-        out="$(printf '1\t/\t%s\text3\trw\n' "$dev" | legacy_mountpoints_from_table "$dev")"
-        [[ "$out" == "/" ]] || fail "legacy_mountpoints_from_table: $out"
-    else
-        printf 'skip - no / block device available for the lsblk fallback check\n'
-    fi
+    # The lsblk fallback resolves device identity through the sysfs block
+    # tree; pin that tree to a fixture (the same in-test seam style as the
+    # mountinfo table above) so these checks never depend on the running
+    # host's devices, its /proc/mounts spelling or its device naming.  The
+    # queried root is spelled as the CI-runner-style alias node ("root",
+    # like /dev/root) with no sysfs directory of its own: the CI failure
+    # this pins came from the oracle comparing that queried spelling's
+    # basename against the KNAME the shim correctly resolved through the
+    # major:minor scan (nvme0n1p1 on the runner).  A fixture file stats
+    # 0:0, so the fake kernel partition carries dev "0:0" and the shim
+    # must name the alias nvme0n1p1 through the pinned tree.
+    local sysfs_fixture dev_fixture kname one many
+    sysfs_fixture="$(mktemp -d "${TMPDIR:-/tmp}/legacy-sysfs.XXXXXX")"
+    dev_fixture="$sysfs_fixture/dev"
+    mkdir -p "$dev_fixture" "$sysfs_fixture/nvme0n1/nvme0n1p1"
+    # Kernel 2.6.18 has no /sys/class/block; its partitions are directories
+    # below their disk.  The fixture keeps that Etch layout plus the flat
+    # alias symlink the class/block resolver branch would return.
+    ln -s "$sysfs_fixture/nvme0n1/nvme0n1p1" "$sysfs_fixture/nvme0n1p1"
+    printf '%s\n' '0:0' > "$sysfs_fixture/nvme0n1/nvme0n1p1/dev"
+    printf '1\n' > "$sysfs_fixture/nvme0n1/nvme0n1p1/partition"
+    printf '2048\n' > "$sysfs_fixture/nvme0n1/nvme0n1p1/size"
+    : > "$dev_fixture/root"
+    # legacy_block_kname's first two identity probes (sysfs basename,
+    # readlink -f) miss for the alias by design - "root" exists in no real
+    # sysfs tree - and the stat probe reads the regular file's 0:0, the
+    # identity the fake partition carries.
+    legacy_sys_block_dir() { printf '%s\n' "$sysfs_fixture/$1"; }
+    legacy_sys_block_all_dirs() {
+        printf '%s\n' "$sysfs_fixture/nvme0n1" "$sysfs_fixture/nvme0n1/nvme0n1p1"
+    }
+
+    kname="$(legacy_lsblk -ndo KNAME "$dev_fixture/root")"
+    [[ "$kname" == nvme0n1p1 ]] || fail "legacy_lsblk KNAME: $kname != nvme0n1p1"
+    out="$(legacy_lsblk -ndo TYPE "$dev_fixture/root")"
+    [[ "$out" == part ]] || fail "legacy_lsblk TYPE: $out"
+    out="$(legacy_lsblk -srnpo NAME,TYPE "$dev_fixture/root")"
+    [[ "$out" == $'/dev/nvme0n1p1 part\n/dev/nvme0n1 disk' ]] \
+        || fail "legacy_lsblk inverse walk: $out"
+    # FSTYPE/MOUNTPOINTS are deliberately absent from the pinned columns:
+    # those shim branches consult the real blkid and /proc/self/mountinfo,
+    # so asserting them here would reintroduce host dependence.
+    out="$(legacy_lsblk -P -b -p -o NAME,SIZE,TYPE "$dev_fixture/root")"
+    [[ "$out" == 'NAME="/dev/nvme0n1p1" SIZE="1048576" TYPE="part"' ]] \
+        || fail "legacy_lsblk -P output: $out"
+    # The mount-table fallback matches the major:minor identity: both the
+    # queried alias file and the fixture row's source stat 0:0, so the
+    # pinned row must resolve to "/" exactly.
+    out="$(printf '1\t/\t%s\text3\trw\n' "$dev_fixture/root" | legacy_mountpoints_from_table "$dev_fixture/root")"
+    [[ "$out" == "/" ]] || fail "legacy_mountpoints_from_table: $out"
 
     # Unknown options and unsupported flag letters must fail closed.
     legacy_lsblk -ndo NAME --definitely-unknown >/dev/null 2>&1 \
         && fail "legacy_lsblk accepted an unknown long option"
-    legacy_lsblk -ndqo NAME "$dev" >/dev/null 2>&1 \
+    legacy_lsblk -ndqo NAME "$dev_fixture/root" >/dev/null 2>&1 \
         && fail "legacy_lsblk accepted an unknown short flag"
 
-    # -d (no children) must suppress child rows when the kernel has them.
-    local disk disk_with_children=""
-    for disk in /sys/class/block/*; do
-        [[ -d "$disk" && ! -e "$disk/partition" ]] || continue
-        if ls "$disk"/*/partition >/dev/null 2>&1; then
-            disk_with_children="/dev/${disk##*/}"
-            break
-        fi
-    done
-    if [[ -n "$disk_with_children" ]]; then
-        local one many
-        one="$(legacy_lsblk -dno NAME "$disk_with_children")"
-        many="$(legacy_lsblk -no NAME "$disk_with_children")"
-        [[ "$(printf '%s\n' "$one" | wc -l | tr -d '[:space:]')" -eq 1 ]] \
-            || fail "legacy_lsblk -d did not suppress child rows: $one"
-        [[ "$(printf '%s\n' "$many" | wc -l | tr -d '[:space:]')" -gt 1 ]] \
-            || fail "legacy_lsblk without -d lost child rows: $many"
-    else
-        printf 'skip - no partitioned disk for the lsblk -d check\n'
-    fi
+    # -d (no children) must suppress child rows when the kernel has them:
+    # give the disk the same 0:0 identity (the scan resolves the first
+    # match in the pinned order, the disk) and query it through a second
+    # alias shape.
+    printf '%s\n' '0:0' > "$sysfs_fixture/nvme0n1/dev"
+    : > "$dev_fixture/rootdisk"
+    one="$(legacy_lsblk -dno NAME "$dev_fixture/rootdisk")"
+    many="$(legacy_lsblk -no NAME "$dev_fixture/rootdisk")"
+    [[ "$one" == nvme0n1 ]] || fail "legacy_lsblk -d did not suppress child rows: $one"
+    [[ "$many" == $'nvme0n1\nnvme0n1p1' ]] \
+        || fail "legacy_lsblk without -d lost child rows: $many"
+    rm -rf -- "$sysfs_fixture"
+    unset -f legacy_sys_block_dir legacy_sys_block_all_dirs
 
     # /proc/mounts fallback (Etch 2.6.18 has no /proc/self/mountinfo): the
     # effective mount is the last entry for a target and the first-seen row
@@ -786,18 +834,8 @@ MOUNTS
     # The old first-match loop returned the host root "/" for any path below a
     # session mount, corrupting the target mount evidence (the selected
     # repair root reported the running host's source and options).  The
-    # fixture table mirrors the Etch rig: "/" first, then the private session
-    # mount, then /boot.
-    local mountinfo_fixture
-    mountinfo_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-mountinfo.XXXXXX")"
-    # Rows in the legacy_mountinfo_table output format:
-    # ID<TAB>TARGET<TAB>SOURCE<TAB>FSTYPE<TAB>OPTIONS, in mount order.
-    cat > "$mountinfo_fixture" <<'MOUNTINFO'
-1	/	/dev/mapper/debian1-root	ext3	rw,data=ordered
-2	/var/run/boot-repair/session.OU5116/mount	/dev/mapper/debian-root	ext3	ro,data=ordered
-3	/var/run/boot-repair/session.OU5116/mount/boot	/dev/hdb1	ext3	ro,data=ordered
-MOUNTINFO
-    legacy_mountinfo_table() { cat "$mountinfo_fixture"; }
+    # The pinned mount table above doubles as the fixture: "/" first, then
+    # the private session mount, then /boot.
     out="$(legacy_findmnt -rn -o SOURCE --target /var/run/boot-repair/session.OU5116/mount)"
     [[ "$(printf '%s\n' "$out" | tail -n1)" == "/dev/mapper/debian-root" ]] \
         || fail "legacy_findmnt --target resolved the host root instead of the session mount: $out"
@@ -816,6 +854,7 @@ MOUNTINFO
     [[ "$(printf '%s\n' "$out" | wc -l | tr -d '[:space:]')" -eq 1 ]] \
         || fail "legacy_findmnt --target / lost its exact-match row: $out"
     rm -f -- "$mountinfo_fixture"
+    unset -f legacy_mountinfo_table
 
     # --- A12-02: the standard-location tool probe (sbin dirs, then PATH) and
     # its fail-closed behaviour.
