@@ -22,6 +22,30 @@
 
 ## 0.2.26 — 2026-09-26
 
+- Stabilization fixes from user testing across every rig: the TUXEDO UKI
+  rebuild now passes its post-build verification for both valid Btrfs
+  subvolume spellings (subvol=@ and subvol=/@), the Full Repair stage rows
+  show the helper's stage-specific failure reason instead of an unrelated
+  earlier error line, unavailable plan stages are shown disabled and
+  unchecked (the user's saved preferences are restored when a tool becomes
+  available again), the dnf5 upgrade apply step announces its approximate
+  download size so a large transaction no longer looks like a hang, and the
+  Fedora/dracut initramfs stage builds each kernel once into a verified
+  temporary image before installing it (roughly halving the stage time
+  while keeping the build-before-install safety net). The efi tool is only
+  offered when an EFI System Partition is actually present or derivable on
+  the selected disk (by GPT partition type or fstab), and the interactive
+  shell answer flow, the filtered private /dev, and the TUXEDO UKI vendor
+  integration were validated end-to-end on Arch, Alpine (BIOS and EFI),
+  Fedora, Debian trixie and the Debian Etch legacy edition. The Debian
+  Etch edition additionally fixed its repair-summary parsing, its
+  Settings plan now lists the same capability keys as the modern app,
+  cryptsetup is resolved from /sbin and /usr/sbin, multi-LV targets mount
+  cleanly, and menu.lst regeneration preserves the single-user variant
+  entries with their serial-console arguments. A quick per-change
+  development gate keeps iteration fast while the full gate still runs at
+  checkpoints and release.
+
 - Security sweep: a comprehensive security review of the modern helper, both GUIs,
   the legacy port generator and the packaging tooling produced a large
   hardening pass. Mount containment: target-controlled fstab mountpoints

@@ -1,34 +1,8 @@
-# Boot Bitch 0.2.26
+## 0.2.26 refinements
 
-Boot Bitch 0.2.26 delivers the fully functional Debian Etch edition — a Qt 3 frontend over the same privileged helper, proven end-to-end on real Etch systems with LUKS/LVM — closes the findings of a comprehensive security review across the privileged helper, both GUIs, the legacy port generator and the packaging tooling, and ships the interactive shell-prompt answering and the remaining parity work accumulated since 0.2.25.
+0.2.26 delivers the fully functional Debian Etch (Qt 3 / KDE 3.5) edition and the security-hardening release: every surface of the privileged backend, both GUIs, the legacy port generator and the packaging tooling was audited and hardened, and the interactive shell-prompt answering plus the accumulated legacy parity work ship with it. See the [0.2.26 release notes](docs/release-notes-0.2.26.md).
 
-Released 2026-09-26.
-
-- Stabilization fixes from user testing across every rig: the TUXEDO UKI
-  rebuild now passes its post-build verification for both valid Btrfs
-  subvolume spellings (subvol=@ and subvol=/@), the Full Repair stage rows
-  show the helper's stage-specific failure reason instead of an unrelated
-  earlier error line, unavailable plan stages are shown disabled and
-  unchecked (the user's saved preferences are restored when a tool becomes
-  available again), the dnf5 upgrade apply step announces its approximate
-  download size so a large transaction no longer looks like a hang, and the
-  Fedora/dracut initramfs stage builds each kernel once into a verified
-  temporary image before installing it (roughly halving the stage time
-  while keeping the build-before-install safety net). The efi tool is only
-  offered when an EFI System Partition is actually present or derivable on
-  the selected disk (by GPT partition type or fstab), and the interactive
-  shell answer flow, the filtered private /dev, and the TUXEDO UKI vendor
-  integration were validated end-to-end on Arch, Alpine (BIOS and EFI),
-  Fedora, Debian trixie and the Debian Etch legacy edition. The Debian
-  Etch edition additionally fixed its repair-summary parsing, its
-  Settings plan now lists the same capability keys as the modern app,
-  cryptsetup is resolved from /sbin and /usr/sbin, multi-LV targets mount
-  cleanly, and menu.lst regeneration preserves the single-user variant
-  entries with their serial-console arguments. A quick per-change
-  development gate keeps iteration fast while the full gate still runs at
-  checkpoints and release.
-
-- Security sweep: a comprehensive security review of the modern helper, both GUIs,
+- Security sweep: a full multi-agent review of the modern helper, both GUIs,
   the legacy port generator and the packaging tooling produced a large
   hardening pass. Mount containment: target-controlled fstab mountpoints
   (btrfs subvolumes and data partitions) are lexically, realpath- and
@@ -682,10 +656,3 @@ Released 2026-09-26.
   and the helper-staging messages; `verify-release.sh` re-checks the bundled
   icon engine, platform theme and helper in the capture.
 
-The Debian package, AppImage, Arch package, RPM and APK are built from the
-complete source tree and validated in their target environments. Verify
-downloaded artifacts against the SHA256SUMS attached to this release. The
-AppImage update metadata (boot-repair_0.2.26_x86_64.AppImage.zsync) is attached
-alongside the AppImage so Gear Lever/AppImageUpdate detect the release.
-
-[Full source diff: v0.2.25...v0.2.26](https://github.com/CaptainMorgan12/Boot_Bitch/compare/v0.2.25...v0.2.26).
