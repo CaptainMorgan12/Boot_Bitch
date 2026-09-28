@@ -1,4 +1,5 @@
 # legacy/overlay.sh — legacy-only helper behaviour.
+# shellcheck shell=bash
 #
 # shellcheck disable=SC2034
 # The globals assigned here (STATE_ROOT, TARGET_OS_LEGACY, CHROOT_TRY_RC, ...)
@@ -1078,7 +1079,7 @@ run_package_stage()
 adaptive_initramfs_repair()
 {
     legacy_cancel_stage_check
-    adaptive_initramfs_repair_modern "$@"
+    adaptive_initramfs_repair_modern
 }
 
 adaptive_grub_stage()
@@ -2428,7 +2429,7 @@ browse_target_directory()
 # subcommand, quoting games) runs unchanged through the same guards.
 legacy_apt_intent_translate()
 {
-    local command="${1:-}" first="" rest="" sub="" args=""
+    local command="${1:-}" first="" rest="" sub="" rest_args=""
     case "$command" in
         *\ *) first="${command%% *}"; rest="${command#* }" ;;
         *) first="$command"; rest="" ;;
@@ -2439,10 +2440,10 @@ legacy_apt_intent_translate()
         update|upgrade|full-upgrade|dist-upgrade|install|remove|purge|autoremove|clean|autoclean) ;;
         *) { printf '%s\n' "$command"; return 0; } ;;
     esac
-    args="${rest#* }"
+    rest_args="${rest#* }"
     [[ "$sub" == "full-upgrade" ]] && sub="dist-upgrade"
-    if [[ -n "$args" && "$args" != "$rest" ]]; then
-        printf 'apt-get %s %s\n' "$sub" "$args"
+    if [[ -n "$rest_args" && "$rest_args" != "$rest" ]]; then
+        printf 'apt-get %s %s\n' "$sub" "$rest_args"
     else
         printf 'apt-get %s\n' "$sub"
     fi

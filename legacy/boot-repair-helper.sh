@@ -13,6 +13,7 @@ export PATH
 # Legacy compatibility prelude — generated from legacy/compat.sh by legacy/port.sh.
 # ===========================================================================
 # legacy/compat.sh — bash 3.1 / Debian Etch compatibility shims.
+# shellcheck shell=bash
 #
 # This file is embedded verbatim into the generated legacy helper
 # (legacy/boot-repair-helper.sh) by legacy/port.sh and is also sourced directly
@@ -1805,7 +1806,7 @@ active_children_file()
 
 register_active_child()
 {
-    local file pid="${1:-$$}" ppid
+    local file pid="$$" ppid
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     [[ "$pid" =~ ^[0-9]+$ ]] || return 0
     ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
@@ -1821,7 +1822,7 @@ register_active_child()
 unregister_active_child()
 {
     [[ -n "${STATE_ROOT:-}" ]] || return 0
-    active_children_remove_pid "${1:-$$}"
+    active_children_remove_pid "$$"
 }
 
 # Remove one pid's registry line (atomic temp + mv).  The registry is tiny, so
@@ -1958,7 +1959,7 @@ terminate_helper_tree()
 # session) is reaped so request-owned mounts/commands can never be left behind.
 kill_registered_children()
 {
-    local file pid owner self="${1:-$$}"
+    local file pid owner self="$$"
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     file="$(active_children_file)"
     [[ -f "$file" ]] || return 0
@@ -22138,6 +22139,7 @@ main()
 # Legacy-only behaviour — generated from legacy/overlay.sh by legacy/port.sh.
 # ===========================================================================
 # legacy/overlay.sh — legacy-only helper behaviour.
+# shellcheck shell=bash
 #
 # shellcheck disable=SC2034
 # The globals assigned here (STATE_ROOT, TARGET_OS_LEGACY, CHROOT_TRY_RC, ...)
@@ -23217,7 +23219,7 @@ run_package_stage()
 adaptive_initramfs_repair()
 {
     legacy_cancel_stage_check
-    adaptive_initramfs_repair_modern "$@"
+    adaptive_initramfs_repair_modern
 }
 
 adaptive_grub_stage()
@@ -24567,7 +24569,7 @@ browse_target_directory()
 # subcommand, quoting games) runs unchanged through the same guards.
 legacy_apt_intent_translate()
 {
-    local command="${1:-}" first="" rest="" sub="" args=""
+    local command="${1:-}" first="" rest="" sub="" rest_args=""
     case "$command" in
         *\ *) first="${command%% *}"; rest="${command#* }" ;;
         *) first="$command"; rest="" ;;
@@ -24578,10 +24580,10 @@ legacy_apt_intent_translate()
         update|upgrade|full-upgrade|dist-upgrade|install|remove|purge|autoremove|clean|autoclean) ;;
         *) { printf '%s\n' "$command"; return 0; } ;;
     esac
-    args="${rest#* }"
+    rest_args="${rest#* }"
     [[ "$sub" == "full-upgrade" ]] && sub="dist-upgrade"
-    if [[ -n "$args" && "$args" != "$rest" ]]; then
-        printf 'apt-get %s %s\n' "$sub" "$args"
+    if [[ -n "$rest_args" && "$rest_args" != "$rest" ]]; then
+        printf 'apt-get %s %s\n' "$sub" "$rest_args"
     else
         printf 'apt-get %s\n' "$sub"
     fi
