@@ -1801,8 +1801,8 @@ leader_block="$(sed -n '/^is_process_group_leader()/,/^}/p' "$HELPER")"
 grep -Fq 'ps -o pgid=' <<<"$leader_block" \
     || { echo 'FAIL: the process-group-leader proof is not read from ps' >&2; exit 1; }
 cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
-cleanup_kill_line="$(grep -n '^[[:space:]]*kill_registered_children$' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
-cleanup_unregister_line="$(grep -n '^[[:space:]]*unregister_active_child$' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+cleanup_kill_line="$(grep -n '^[[:space:]]*kill_registered_children' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
+cleanup_unregister_line="$(grep -n '^[[:space:]]*unregister_active_child' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
 cleanup_append_line="$(grep -n 'TARGET_WRITE_INTENT == 1' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
 cleanup_unmount_line="$(grep -n 'for (( idx=${#MOUNTS\[@\]}-1' <<<"$cleanup_block" | head -n1 | cut -d: -f1 || true)"
 [[ -n "$cleanup_kill_line" && -n "$cleanup_unregister_line" && -n "$cleanup_append_line" && -n "$cleanup_unmount_line" ]] \
