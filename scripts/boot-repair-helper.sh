@@ -337,7 +337,7 @@ active_children_file()
 
 register_active_child()
 {
-    local file pid="${1:-$$}" ppid
+    local file pid="$$" ppid
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     [[ "$pid" =~ ^[0-9]+$ ]] || return 0
     ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
@@ -353,7 +353,7 @@ register_active_child()
 unregister_active_child()
 {
     [[ -n "${STATE_ROOT:-}" ]] || return 0
-    active_children_remove_pid "${1:-$$}"
+    active_children_remove_pid "$$"
 }
 
 # Remove one pid's registry line (atomic temp + mv).  The registry is tiny, so
@@ -490,7 +490,7 @@ terminate_helper_tree()
 # session) is reaped so request-owned mounts/commands can never be left behind.
 kill_registered_children()
 {
-    local file pid owner self="${1:-$$}"
+    local file pid owner self="$$"
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     file="$(active_children_file)"
     [[ -f "$file" ]] || return 0

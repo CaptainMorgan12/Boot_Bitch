@@ -227,6 +227,7 @@ up=${v^^}
 first=${v^}
 BASH4FIXTURE
 set +e
+# shellcheck source=/dev/null  # temp-extracted checker, resolved at runtime
 checker_out="$( ( source "$checker_src"; verify_no_bash4 "$bash4_fixture" ) 2>&1 )"
 checker_rc=$?
 set -e
@@ -250,6 +251,7 @@ local -a names=()
 arr=("${arr[@]:-}")
 low="$(legacy_lc "$x")"
 BASH4CLEAN
+# shellcheck source=/dev/null  # temp-extracted checker, resolved at runtime
 ( source "$checker_src"; verify_no_bash4 "$bash4_fixture" ) \
     || fail "verify_no_bash4 rejected a clean fixture"
 rm -f -- "$checker_src" "$bash4_fixture"
@@ -858,12 +860,14 @@ MOUNTS
 
     # --- A12-02: the standard-location tool probe (sbin dirs, then PATH) and
     # its fail-closed behaviour.
-    local tool_fixture tool_dirs
+    local tool_fixture
     tool_fixture="$(mktemp -d "${TMPDIR:-/tmp}/legacy-tools.XXXXXX")"
     mkdir -p "$tool_fixture/sbin" "$tool_fixture/usr-sbin"
     : > "$tool_fixture/sbin/cryptsetup"
     chmod +x "$tool_fixture/sbin/cryptsetup"
-    BOOT_REPAIR_LEGACY_TOOL_DIRS="$tool_fixture/sbin $tool_fixture/usr-sbin"
+    # Exported like the other test seams: the reader lives inside the sourced
+    # compat shims, which ShellCheck cannot follow from this file.
+    export BOOT_REPAIR_LEGACY_TOOL_DIRS="$tool_fixture/sbin $tool_fixture/usr-sbin"
     [[ "$(legacy_standard_tool_path cryptsetup)" == "$tool_fixture/sbin/cryptsetup" ]] \
         || fail "legacy_standard_tool_path did not probe /sbin first"
     rm -f -- "$tool_fixture/sbin/cryptsetup"
@@ -986,7 +990,9 @@ gating_checks()
     printf 'id:3:initdefault:\n' > "$target_fixture/etc/inittab"
     printf 'loop\n' > "$target_fixture/etc/modules"
     TARGET_ROOT="$target_fixture"
+    export TARGET_ROOT
     RUNNING_HOST_MODE=0
+    export RUNNING_HOST_MODE
     out="$(legacy_config_file_report)"
     [[ "$(printf '%s\n' "$out" | grep -c '^Legacy config ')" -eq 8 ]] \
         || fail "config report must list 8 keys: $out"

@@ -179,7 +179,7 @@ for marker in 'm_hostCard' 'm_hostSystemLabel' 'm_hostStorageLabel' \
     'updateHostCard()' 'driveDetailsRows' 'Critical mounts:' \
     '"PROTECTED"' '"Details"' 'Re-run Diagnostic' 'Host maintenance:\\n' \
     'headerLayout->addSpacing(8)' 'm_rawView->setMinimumWidth(200)' \
-    '~/.qt/' 'setResizeMode(checks, QSplitter::KeepSize)'; do
+    '~'"/.qt/" 'setResizeMode(checks, QSplitter::KeepSize)'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-9 marker missing: $marker"
 done
 # The unlock passphrase dialog must reuse the width-constrained wrapped
@@ -656,10 +656,8 @@ grep -q 'updateCapabilityView' "$WINDOW" \
 # A12-02 (GUI side): the capability probe must search the standard system
 # directories in addition to PATH, so cryptsetup at /sbin/cryptsetup (Etch)
 # is reported Available even when the desktop PATH lacks /sbin.
-for dir in '/usr/local/sbin' '/usr/local/bin' '/usr/sbin' '/usr/bin' '/sbin' '/bin'; do
-    grep -qF "standardDirs[] = {" "$WINDOW" \
-        || fail "capability probe lost its standardDirs fallback list"
-done
+grep -qF "standardDirs[] = {" "$WINDOW" \
+    || fail "capability probe lost its standardDirs fallback list"
 grep -qF '"/sbin"' "$WINDOW" || fail "capability probe lost the /sbin fallback"
 grep -qF '"/usr/sbin"' "$WINDOW" || fail "capability probe lost the /usr/sbin fallback"
 grep -q '"LUKS support", "cryptsetup"' "$WINDOW" \
@@ -676,7 +674,7 @@ for file in devicesrc logsrc diagnosticsrc repairrc; do
     grep -q "$file" "$WINDOW" \
         || fail "settings do not document the per-group $file location"
 done
-grep -q '~/.qt/boot-bitchrc' "$WINDOW" \
+grep -q '~'"/.qt/boot-bitchrc" "$WINDOW" \
     && fail "settings still claim a single boot-bitchrc file"
 grep -q 'boot-bitch.local"),' "$WINDOW" \
     && fail "scattered per-subkey settings path still present"

@@ -1,4 +1,5 @@
 # legacy/compat.sh — bash 3.1 / Debian Etch compatibility shims.
+# shellcheck shell=bash
 #
 # This file is embedded verbatim into the generated legacy helper
 # (legacy/boot-repair-helper.sh) by legacy/port.sh and is also sourced directly
