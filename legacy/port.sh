@@ -540,11 +540,11 @@ transform_legacy_behaviour()
     # A10-05: optional leading cancel-token options, accepted before the
     # command verb (the Qt3 GUI passes --cancel-file <path>).
     replace_block "$file" \
-        '    register_active_child
+        '    register_active_child "$$"
 
     (($# >= 1)) || { usage; exit 2; }
     local command="$1"; shift' \
-        '    register_active_child
+        '    register_active_child "$$"
 
     # A10-05: optional leading cancel-token options, accepted before the
     # command verb (the Qt3 GUI passes --cancel-file <path>; the documented

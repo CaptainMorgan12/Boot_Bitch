@@ -1806,7 +1806,7 @@ active_children_file()
 
 register_active_child()
 {
-    local file pid="$$" ppid
+    local file pid="${1:-$$}" ppid
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     [[ "$pid" =~ ^[0-9]+$ ]] || return 0
     ppid="$(awk '{print $4}' "/proc/$pid/stat" 2>/dev/null || true)"
@@ -1822,7 +1822,7 @@ register_active_child()
 unregister_active_child()
 {
     [[ -n "${STATE_ROOT:-}" ]] || return 0
-    active_children_remove_pid "$$"
+    active_children_remove_pid "${1:-$$}"
 }
 
 # Remove one pid's registry line (atomic temp + mv).  The registry is tiny, so
@@ -1959,7 +1959,7 @@ terminate_helper_tree()
 # session) is reaped so request-owned mounts/commands can never be left behind.
 kill_registered_children()
 {
-    local file pid owner self="$$"
+    local file pid owner self="${1:-$$}"
     [[ -n "${STATE_ROOT:-}" ]] || return 0
     file="$(active_children_file)"
     [[ -f "$file" ]] || return 0
@@ -2205,8 +2205,8 @@ cleanup_modern()
     # registry entry for this run is removed right after the reap so a
     # concurrently finishing helper never terminates a run that is already in
     # its teardown.
-    kill_registered_children
-    unregister_active_child
+    kill_registered_children "$$"
+    unregister_active_child "$$"
 
     # Read-only diagnostics, validation and rollback preflight must remain
     # genuinely read-only.  Append the helper log into the repaired system only
@@ -21980,7 +21980,7 @@ main()
     # A5-02 (a): every helper run joins the root-owned active-children
     # registry so a killed parent/broker's children are reaped by the
     # survivors; cleanup() removes the entry again.
-    register_active_child
+    register_active_child "$$"
 
     # A10-05: optional leading cancel-token options, accepted before the
     # command verb (the Qt3 GUI passes --cancel-file <path>; the documented
