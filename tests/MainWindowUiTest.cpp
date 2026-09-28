@@ -1725,7 +1725,8 @@ done
 QProcess *startChangeStatusFakePrivilegedSession(MainWindow &window, const QString &capturePath,
                                                  const QStringList &plan, int exitCode = 0,
                                                  const QString &failedStage = QString(),
-                                                 const QString &failureDetail = QString())
+                                                 const QString &failureDetail = QString(),
+                                                 const QString &earlyError = QString())
 {
     auto *session = new QProcess(&window);
     QString script = QStringLiteral(R"SCRIPT(
@@ -1733,6 +1734,7 @@ capture="@CAPTURE@"
 plan="@PLAN@"
 failed_stage="@FAILED_STAGE@"
 failure_detail="@FAILURE_DETAIL@"
+early_error="@EARLY_ERROR@"
 while IFS= read -r line; do
   tag="${line%%$'\t'*}"
   [ "$tag" = "BEGIN" ] || continue
@@ -1753,6 +1755,9 @@ while IFS= read -r line; do
   IFS= read -r endline
   printf '%s\n' "$endline" >> "$capture"
   printf 'OUT\t%s\tREPAIR_OUTPUT captured\n' "$id"
+  if [ -n "$early_error" ]; then
+    printf 'OUT\t%s\t%s\n' "$id" "$early_error"
+  fi
   while IFS= read -r entry; do
     [ -n "$entry" ] || continue
     stage="${entry%%=*}"
@@ -1786,6 +1791,7 @@ done
     script.replace(QStringLiteral("@EXIT@"), QString::number(exitCode));
     script.replace(QStringLiteral("@FAILED_STAGE@"), failedStage);
     script.replace(QStringLiteral("@FAILURE_DETAIL@"), failureDetail);
+    script.replace(QStringLiteral("@EARLY_ERROR@"), earlyError);
     session->start(QStringLiteral("/bin/bash"),
                    {QStringLiteral("-c"), script, QStringLiteral("fake-change-status-session")});
     if (!session->waitForStarted(5000)) {
@@ -2413,6 +2419,7 @@ private slots:
     void manualFilesystemCheckIsDistinguishableFromPlanPreStage();
     void fullRepairPlanSkipsRegenerationWhenAllStagesUnchanged();
     void fullRepairPlanFailureAttributesOnlyFailingStage();
+    void fullRepairPlanFailurePrefersStageSpecificReason();
     void repairTargetSelectionRegeneratesCompleteSet();
     void hostMaintenanceRequestsPrivilegedSessionOnce();
     void concurrentAuthorizationRequestsCoalesce();
@@ -11812,6 +11819,75 @@ void MainWindowUiTest::fullRepairPlanFailureAttributesOnlyFailingStage()
              "a stage the plan never reached must never inherit the failure");
     QVERIFY2(!log.contains(QStringLiteral("  ✗ fixbroken")),
              "a completed stage must never be relabeled as failed");
+}
+
+// An ERROR line unrelated to the failing stage (for example a refused
+// package-manager mode the plan continued past) must never become the failing
+// stage row's displayed reason: the stage summary prefers the helper's own
+// "stage '<name>' failed: <reason>" line for the stage it named.
+void MainWindowUiTest::fullRepairPlanFailurePrefersStageSpecificReason()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    cacheRepairEvidence(window, capabilityEvidenceWithDisplay(false, true));
+    // Apply the scope's availability first so the explicit setChecked calls
+    // below change widget state, emit toggled and record the preferences.
+    window.updateFullRepairSummary();
+
+    for (QCheckBox *toggle : {window.m_fullRepairFilesystem, window.m_fullRepairDpkg,
+                              window.m_fullRepairBrokenPackages, window.m_fullRepairAptUpdate,
+                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                              window.m_fullRepairEfi, window.m_fullRepairGrub}) {
+        QVERIFY(toggle);
+        toggle->setChecked(false);
+    }
+    for (QCheckBox *toggle : {window.m_fullRepairUpgrade, window.m_fullRepairEfi,
+                              window.m_fullRepairGrub}) {
+        toggle->setChecked(true);
+    }
+    window.updateFullRepairSummary();
+    QCOMPARE(window.selectedRepairStages(),
+             QStringList({QStringLiteral("apt-upgrade"), QStringLiteral("efi"),
+                          QStringLiteral("grub")}));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("plan-stage-reason-requests.log"));
+    QVERIFY2(startChangeStatusFakePrivilegedSession(
+                 window, capturePath,
+                 {QStringLiteral("apt-upgrade=changed")},
+                 /*exitCode=*/1, QStringLiteral("efi"),
+                 QStringLiteral("Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root."),
+                 QStringLiteral("ERROR: 'apt-get upgrade' is disabled on TUXEDO OS!")),
+             "the scripted privileged session must start");
+    closeRepairProgressDialogWhenDone(&window);
+    acceptConfirmationThenFailure(&window);
+
+    window.runFullRepair();
+
+    QVERIFY2(!window.m_fullRepairPlanInProgress,
+             "the plan guard must be released after the failure");
+    const QString log = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(log.contains(QStringLiteral(
+                 "  ✗ efi — EFI boot path repair failed — "
+                 "Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root.")),
+             "the failing stage must show the helper's stage-specific reason");
+    QVERIFY2(!log.contains(QStringLiteral(
+                 "  ✗ efi — EFI boot path repair failed — 'apt-get upgrade'")),
+             "an unrelated ERROR line must never become the failing stage's reason");
+    QVERIFY2(log.contains(QStringLiteral(
+                 "  ✓ upgrade — packages upgraded — changes were applied")),
+             "a stage that completed before the failure keeps its changed result");
+    QVERIFY2(log.contains(QStringLiteral("  ▪ grub — GRUB regeneration did not run")),
+             "a stage the plan never reached must be reported as not run");
 }
 
 // Selecting a repair drive is a scope change: the complete diagnostic set is

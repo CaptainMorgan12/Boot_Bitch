@@ -11771,6 +11771,40 @@ QString MainWindow::repairFailureStageKey(const QString &output)
     return repairToolKeyForStage(stage);
 }
 
+QString MainWindow::repairStageFailureReason(const QString &output, const QString &toolKey)
+{
+    if (!toolKey.isEmpty()) {
+        // The helper logs its stage failures with a timestamp prefix
+        // ("[HH:MM:SS] ERROR: stage '<name>' failed: <reason>"), so the match
+        // is deliberately unanchored.
+        static const QRegularExpression stageRe(
+            QStringLiteral("ERROR: stage '([^']+)' failed: (.*)$"),
+            QRegularExpression::CaseInsensitiveOption);
+        const QStringList lines = output.split(QLatin1Char('\n'));
+        QString reason;
+        for (const QString &rawLine : lines) {
+            const QRegularExpressionMatch match = stageRe.match(rawLine.trimmed());
+            if (!match.hasMatch()) {
+                continue;
+            }
+            QString stage = match.captured(1).trimmed();
+            const int decoration = stage.indexOf(QStringLiteral(" ("));
+            if (decoration > 0) {
+                stage = stage.left(decoration);
+            }
+            if (repairToolKeyForStage(stage) == toolKey) {
+                // Keep the last line naming this stage: the helper may retry
+                // internally and only the final failure describes the stop.
+                reason = match.captured(2).trimmed();
+            }
+        }
+        if (!reason.isEmpty()) {
+            return reason;
+        }
+    }
+    return shortRepairFailureReason(output);
+}
+
 namespace {
 
 // One per-tool repair-result vocabulary. Every phrase is action-accurate: a
@@ -17345,9 +17379,6 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
     if (kind == LogEntryKind::Repair && !repairSection.isEmpty()) {
         if (m_fullRepairPlanInProgress && repairKey == QStringLiteral("full-repair")) {
             const QMap<QString, QString> statuses = parseRepairChangeStatuses(helperOutput);
-            const QString failureReason = processSucceeded
-                ? QString()
-                : shortRepairFailureReason(helperOutput);
             // The helper names the stage it stopped in. Stages that completed
             // before it keep their own change status; only the named stage is
             // failed; requested stages after it never ran at all.
@@ -17383,9 +17414,12 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
                            && (failedStageKey.isEmpty() || toolKey == failedStageKey)) {
                     // The named failing stage (or, when the helper failed
                     // before naming one, the first uncompleted stage) owns the
-                    // failure reason.
+                    // failure reason: the helper's stage-specific failure line,
+                    // so an unrelated ERROR line earlier in the transcript
+                    // (for example a refused package-manager mode the plan
+                    // continued past) can never be misattributed to this stage.
                     stage.category = RepairResultCategory::Failed;
-                    stage.reason = failureReason;
+                    stage.reason = repairStageFailureReason(helperOutput, toolKey);
                     failureAttributed = true;
                 } else if (!processSucceeded) {
                     // A requested stage without a completed status after the
@@ -17408,7 +17442,7 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
                 RepairStageResult stage;
                 stage.toolKey = failedStageKey;
                 stage.category = RepairResultCategory::Failed;
-                stage.reason = failureReason;
+                stage.reason = repairStageFailureReason(helperOutput, failedStageKey);
                 stageResults.append(stage);
                 coveredKeys.append(failedStageKey);
                 failureAttributed = true;

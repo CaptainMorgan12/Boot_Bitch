@@ -788,6 +788,13 @@ private:
     // stage (for example a preflight failure). A decorated stage label such as
     // "grub (EFI follow-up)" resolves to its base tool key.
     static QString repairFailureStageKey(const QString &output);
+    // Failure reason for one Full Repair stage row: the helper's own
+    // "ERROR: stage '<name>' failed: <reason>" line for that stage (decorated
+    // labels resolve to their base tool key), so an unrelated ERROR line
+    // elsewhere in the transcript can never become the stage's displayed
+    // reason. Falls back to shortRepairFailureReason() when the helper failed
+    // without naming the stage.
+    static QString repairStageFailureReason(const QString &output, const QString &toolKey);
     // "Full Repair results: ✓ n successful · ✗ n failed · ▪ n no repair
     // needed [· ▪ n not checked — see the <tool> stage line] [· ▪ n not run
     // — see the <tool> stage line]" plus one auditable result line per stage.

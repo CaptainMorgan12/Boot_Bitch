@@ -227,6 +227,29 @@ done
 # tool keys before matching the change-status lines.
 grep -q 'repairToolKeyForStage(toStd(stage))' "$WINDOW" \
     || fail "repair summary does not map plan-stage keys to tool keys"
+# Host-repair summary parsing fix: a stage's result comes from its own
+# `Repair change status` line (unchanged = no repair needed, changed =
+# successful) and only the stage named by the helper's final
+# `ERROR: stage 'X' failed:` line owns the failure; stages after it are
+# reported as not run and the named failure still fails the headline.
+grep -q 'repairFailureStageKey' "$WINDOW" \
+    || fail "summary parser lost the failed-stage attribution helper"
+grep -q 'shortRepairFailureReason' "$WINDOW" \
+    || fail "summary parser lost the short failure reason helper"
+grep -q 'repairStageFailureReason' "$WINDOW" \
+    || fail "summary parser lost the stage-specific failure reason helper"
+grep -q "ERROR: stage '" "$WINDOW" \
+    || fail "summary parser does not consume the ERROR: stage '<stage>' failed: line"
+grep -q "' failed:" "$WINDOW" \
+    || fail "summary parser lost the stage-failure suffix"
+grep -q '\[-\] %1 - not run' "$WINDOW" \
+    || fail "summary does not report stages after the failure as not run"
+grep -q 'the plan stopped before any stage completed' "$WINDOW" \
+    || fail "summary lost the stopped-plan tail"
+grep -q '\[FAIL\] %1 - not reported' "$WINDOW" \
+    || fail "summary lost the fail-closed not-reported stage line"
+grep -q 'review the helper output in Logs.' "$WINDOW" \
+    || fail "summary headline no longer names the failing-stage remedy"
 # Cycle 13 markers: sortable capability table, per-drive Select Target, the
 # Details-pane behavior, the modern chroot notices, the help buttons and the
 # Application log heading.
@@ -284,8 +307,12 @@ grep -q '"%09"' "$WINDOW" \
 # with the helper's display capability line; offline stays disabled).
 grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
     || fail "display tool is not wired to the display-manager stage"
+# Plan-list parity fix: the display tool's Full Repair column now mirrors the
+# Settings plan row (the plan carries the display-manager stage), instead of
+# the removed "not part of the Full Repair plan" placeholder.
+grep -qF '"display-manager", "", true, true, true,' <<<"$ACTION_BLOCK" \
+    || fail "display tool's plan stage is not wired to the Settings plan row"
 for marker in 'Restore Graphical Login' 'hostOnly' \
-    'Host-scope stage - not part of the Full Repair plan' \
     'enter Host Maintenance to run it'; do
     grep -q "$marker" "$WINDOW" || fail "display stage marker missing: $marker"
 done
@@ -299,10 +326,38 @@ PLAN_BLOCK="$(sed -n '/^const PlanSpec planSpecs\[\] = {/,/^};/p' "$WINDOW")"
 for stage in dpkg-configure fix-broken apt-update apt-upgrade initramfs grub; do
     grep -q "\"$stage\"" <<<"$PLAN_BLOCK" || fail "plan stage missing from the GUI: $stage"
 done
+# Plan-list key-set parity fix: the Settings plan row set is the modern plan's
+# capability key set (filesystem, dpkg, fixbroken, aptupdate, upgrade, dkms,
+# display, initramfs, efi, grub, extlinux); no row is ever hidden. The
+# filesystem row carries no helper stage (the documented read-only-check
+# frontend gap) and the new dkms/display-manager/efi/extlinux rows map to the
+# helper stages the legacy helper validates.
+for key in filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux; do
+    grep -q "\"$key\"" <<<"$PLAN_BLOCK" || fail "plan capability key missing from the GUI: $key"
+done
+for stage in dkms display-manager efi extlinux; do
+    grep -q "{ \"$stage\"" <<<"$PLAN_BLOCK" || fail "plan stage missing from the GUI: $stage"
+done
+grep -qF '{ "", "filesystem",' <<<"$PLAN_BLOCK" \
+    || fail "the filesystem plan row must stay stage-less (frontend gap)"
+grep -q '"display-manager", "display"' "$WINDOW" \
+    || fail "plan row does not map the display capability to display-manager"
 grep -q 'repair/dpkgConfigure' "$WINDOW" || fail "plan settings key missing: repair/dpkgConfigure"
 grep -q 'repair/refreshMetadata' "$WINDOW" || fail "plan settings key missing: repair/refreshMetadata"
 grep -q 'repair/upgradePackages' "$WINDOW" || fail "plan settings key missing: repair/upgradePackages"
-pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub) + 6-stage plan"
+for key in repair/filesystem repair/dkms repair/displayManager repair/efiBootloader repair/extlinux; do
+    grep -q "$key" "$WINDOW" || fail "plan settings key missing: $key"
+done
+# Modern availability semantics: available = checkable with the saved/default
+# preference, unavailable = shown, disabled and unchecked, and the preference
+# survives the forced-off presentation pass.
+for marker in 'updatePlanChecks' 'm_planPreferences' 'planIndexForCapability' \
+    'Unavailable: %1' 'never checkable' \
+    'per-device repair is not wired on this frontend'; do
+    grep -q "$marker" "$WINDOW" || fail "plan availability-semantics marker missing: $marker"
+done
+grep -q 'planCheckboxChanged' "$WINDOW" || fail "plan checkbox handler missing"
+pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub) + 11-key modern plan list"
 
 # --- modern-GUI parity controls ---------------------------------------------
 grep -q '"unlock"' "$WINDOW" || fail "GUI lost the dedicated unlock command"
@@ -352,7 +407,7 @@ for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
     'setWordWrap(m_logWrapEnabled' \
     'Choose Full Repair stages in Settings' \
     'Always preflight' 'Manual recovery tool' \
-    'Read-only check - not part of the Full Repair plan' \
+    'Full Repair plan: unavailable on this frontend - read-only check only' \
     'Enabled in Settings' 'Disabled in Settings - enable it to include this stage' \
     'Privileged operation completed successfully'; do
     grep -q "$marker" "$WINDOW" || fail "Repair parity marker missing: $marker"
@@ -598,6 +653,17 @@ for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck
 done
 grep -q 'updateCapabilityView' "$WINDOW" \
     && fail "compact capability label grid still present"
+# A12-02 (GUI side): the capability probe must search the standard system
+# directories in addition to PATH, so cryptsetup at /sbin/cryptsetup (Etch)
+# is reported Available even when the desktop PATH lacks /sbin.
+for dir in '/usr/local/sbin' '/usr/local/bin' '/usr/sbin' '/usr/bin' '/sbin' '/bin'; do
+    grep -qF "standardDirs[] = {" "$WINDOW" \
+        || fail "capability probe lost its standardDirs fallback list"
+done
+grep -qF '"/sbin"' "$WINDOW" || fail "capability probe lost the /sbin fallback"
+grep -qF '"/usr/sbin"' "$WINDOW" || fail "capability probe lost the /usr/sbin fallback"
+grep -q '"LUKS support", "cryptsetup"' "$WINDOW" \
+    || fail "capability table lost the LUKS support/cryptsetup row"
 # Cycle 6/9: every toggle handler persists immediately and the window close
 # flushes again. Qt 3.3.7 stores each settings group in its own per-user file
 # under ~/.qt/ named after the group (devicesrc, logsrc, diagnosticsrc,

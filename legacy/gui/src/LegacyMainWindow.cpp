@@ -173,7 +173,7 @@ const ToolSpec toolSpecs[] = {
       "/boot filesystems and report each device's check tool and result "
       "without changing anything. This legacy frontend exposes the read-only "
       "check only; device repair is not wired.",
-      "", "Read-only check - not part of the Full Repair plan", false, false, false, 0 },
+      "", "Full Repair plan: unavailable on this frontend - read-only check only", false, false, false, 0 },
     { "dpkg", "dpkg-configure",
       "Complete package configuration", "Complete Configuration",
       "Complete interrupted dpkg package configuration in the selected repair "
@@ -215,7 +215,7 @@ const ToolSpec toolSpecs[] = {
       "host: the /etc/X11/default-display-manager entry and the missing "
       "runlevel S-symlink, with a backup and rollback, never starting the "
       "GUI. This is a host-scope stage on this legacy frontend.",
-      "", "Host-scope stage - not part of the Full Repair plan", true, true, true,
+      "display-manager", "", true, true, true,
       "Restore the graphical login configuration for the running host? The helper backs up /etc/X11/default-display-manager and the runlevel symlink state, restores the configured entry and the missing S-symlink, rolls back on any failure, and never starts the display manager." },
     { "initramfs", "initramfs",
       "Initramfs", "Rebuild Initramfs",
@@ -291,6 +291,15 @@ QString repairStageDisplayTitle(const QString &key)
 // The Full Repair plan stages supported by the legacy helper, in the order the
 // plan runs them (the helper's stage_rank order). The Settings checkboxes and
 // the persisted state use the modern-compatible labels and QSettings keys.
+// Plan-list parity fix: the row set is the modern Settings plan's capability
+// key set (filesystem, dpkg, fixbroken, aptupdate, upgrade, dkms, display,
+// initramfs, efi, grub, extlinux); a row is never hidden. Availability follows
+// the modern semantics: available = checkable with the saved/default
+// preference, unavailable = shown, disabled and unchecked (the reason names
+// the exact capability/feature probe outcome). The filesystem row is the
+// documented frontend gap: this legacy frontend exposes the read-only
+// fs-inspect check only, so the row carries no helper stage and is never
+// checkable (fail closed), with the exact reason in its tooltip.
 struct PlanSpec {
     const char *stage;
     const char *capability;
@@ -299,32 +308,58 @@ struct PlanSpec {
     const char *settingsKey;
     bool defaultChecked;
     bool hostMaintenance;
+    // Non-empty when the frontend exposes no plan action for the capability:
+    // the row is shown disabled+unchecked with this exact reason even when
+    // the helper reports the capability as available (fail closed).
+    const char *frontendGap;
 };
 const PlanSpec planSpecs[] = {
+    { "", "filesystem",
+      "Repair file system errors (read-only check first)",
+      "Repair file system errors (read-only check first)",
+      "repair/filesystem", true, false,
+      "the legacy frontend exposes the read-only file system check only; "
+      "per-device repair is not wired on this frontend (fail closed)" },
     { "dpkg-configure", "dpkg",
       "Complete interrupted package configuration",
       "Complete interrupted package configuration",
-      "repair/dpkgConfigure", true, false },
+      "repair/dpkgConfigure", true, false, "" },
     { "fix-broken", "fixbroken",
       "Repair broken package dependencies",
       "Repair broken package dependencies",
-      "repair/fixBroken", true, false },
+      "repair/fixBroken", true, false, "" },
     { "apt-update", "aptupdate",
       "Refresh package metadata",
       "Refresh package metadata",
-      "repair/refreshMetadata", true, false },
+      "repair/refreshMetadata", true, false, "" },
     { "apt-upgrade", "upgrade",
       "Upgrade installed packages",
       "Upgrade installed packages (adaptive APT simulation)",
-      "repair/upgradePackages", false, false },
+      "repair/upgradePackages", false, false, "" },
+    { "dkms", "dkms",
+      "Rebuild DKMS modules",
+      "Rebuild DKMS modules",
+      "repair/dkms", true, true, "" },
+    { "display-manager", "display",
+      "Restore graphical login manager",
+      "Restore graphical login manager",
+      "repair/displayManager", false, true, "" },
     { "initramfs", "initramfs",
       "Rebuild initramfs after mapper/crypttab validation",
       "Rebuild initramfs after mapper/crypttab validation",
-      "repair/initramfs", true, true },
+      "repair/initramfs", true, true, "" },
+    { "efi", "efi",
+      "Repair EFI / UKI boot path",
+      "Repair EFI / UKI boot path",
+      "repair/efiBootloader", false, true, "" },
     { "grub", "grub",
       "Update GRUB configuration",
       "Update GRUB configuration",
-      "repair/grub", true, true }
+      "repair/grub", true, true, "" },
+    { "extlinux", "extlinux",
+      "Update extlinux configuration",
+      "Update extlinux configuration",
+      "repair/extlinux", true, true, "" }
 };
 const int planSpecCount = sizeof(planSpecs) / sizeof(planSpecs[0]);
 
@@ -336,6 +371,22 @@ int planIndexForStage(const char *stage)
     }
     for (int i = 0; i < planSpecCount; ++i) {
         if (std::strcmp(planSpecs[i].stage, stage) == 0) {
+            return i;
+        }
+    }
+    return -1;
+}
+
+// Index of a plan capability key in planSpecs, or -1 (the row set must stay
+// 1:1 with the modern plan key set; the smoke test and the contract use this
+// to pin the parity).
+int planIndexForCapability(const char *capability)
+{
+    if (!capability || !*capability) {
+        return -1;
+    }
+    for (int i = 0; i < planSpecCount; ++i) {
+        if (std::strcmp(planSpecs[i].capability, capability) == 0) {
             return i;
         }
     }
@@ -4706,7 +4757,14 @@ void LegacyMainWindow::loadLegacySettings()
     if (m_viewMenu && m_wrapLogsMenuValid) {
         m_viewMenu->setItemChecked(m_wrapLogsMenuId, m_logWrapEnabled);
     }
-    // Full Repair plan checkboxes (modern-compatible key names).
+    // Full Repair plan checkboxes (modern-compatible key names). The saved
+    // preference is kept separately from the widget state so the availability
+    // pass (updatePlanChecks) can force unavailable rows off without losing
+    // the user's choice.
+    m_planPreferences.assign(planSpecCount, false);
+    for (int i = 0; i < planSpecCount; ++i) {
+        m_planPreferences[i] = planSpecs[i].defaultChecked;
+    }
     for (int i = 0; i < planSpecCount
                     && i < static_cast<int>(m_planChecks.size()); ++i) {
         if (!m_planChecks[i]) {
@@ -4715,6 +4773,7 @@ void LegacyMainWindow::loadLegacySettings()
         const bool checked = settings.readBoolEntry(
             QString::fromLatin1(planSpecs[i].settingsKey),
             planSpecs[i].defaultChecked);
+        m_planPreferences[i] = checked;
         m_planChecks[i]->blockSignals(true);
         m_planChecks[i]->setChecked(checked);
         m_planChecks[i]->blockSignals(false);
@@ -4748,12 +4807,18 @@ void LegacyMainWindow::saveLegacySettings()
     settings.writeEntry(QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
     settings.writeEntry(QString::fromLatin1("/diagnostics/autoRefreshStale"),
                         m_autoRefreshEnabled);
-    for (int i = 0; i < planSpecCount
-                    && i < static_cast<int>(m_planChecks.size()); ++i) {
-        if (m_planChecks[i]) {
-            settings.writeEntry(QString::fromLatin1(planSpecs[i].settingsKey),
-                                m_planChecks[i]->isChecked());
+    // The persisted plan preference is written from the preference register
+    // (never from the widget state, which the availability pass may have
+    // forced off for unavailable rows).
+    if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+        m_planPreferences.assign(planSpecCount, false);
+        for (int i = 0; i < planSpecCount; ++i) {
+            m_planPreferences[i] = planSpecs[i].defaultChecked;
         }
+    }
+    for (int i = 0; i < planSpecCount; ++i) {
+        settings.writeEntry(QString::fromLatin1(planSpecs[i].settingsKey),
+                            m_planPreferences[i]);
     }
     // The four per-group files Qt 3.3.7 wrote under ~/.qt carry the GUI's
     // persisted state; keep them private (0600) like the session logs. A
@@ -4795,6 +4860,10 @@ void LegacyMainWindow::applyLegacySettingsDefaults()
     }
     if (m_viewMenu && m_wrapLogsMenuValid) {
         m_viewMenu->setItemChecked(m_wrapLogsMenuId, m_logWrapEnabled);
+    }
+    m_planPreferences.assign(planSpecCount, false);
+    for (int i = 0; i < planSpecCount; ++i) {
+        m_planPreferences[i] = planSpecs[i].defaultChecked;
     }
     for (int i = 0; i < planSpecCount
                     && i < static_cast<int>(m_planChecks.size()); ++i) {
@@ -5191,8 +5260,70 @@ void LegacyMainWindow::configurePlan()
 
 void LegacyMainWindow::planCheckboxChanged()
 {
+    // Modern preference semantics: only the checkboxes the current scope
+    // actually offers (enabled) carry the user's preference; rows forced off
+    // by the availability pass must never clobber the saved preference.
+    for (int i = 0; i < planSpecCount
+                    && i < static_cast<int>(m_planChecks.size()); ++i) {
+        if (m_planChecks[i] && m_planChecks[i]->isEnabled()) {
+            if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+                m_planPreferences.assign(planSpecCount, false);
+                for (int j = 0; j < planSpecCount; ++j) {
+                    m_planPreferences[j] = planSpecs[j].defaultChecked;
+                }
+            }
+            m_planPreferences[i] = m_planChecks[i]->isChecked();
+        }
+    }
     saveLegacySettings();
     updateActionStates();
+}
+
+// Modern availability semantics for the Settings plan checkboxes
+// (MainWindow::updateRepairScopeControls() parity): every row is shown; an
+// available stage is checkable with its saved preference (or the per-key
+// default), an unavailable stage is disabled AND unchecked with the exact
+// reason as its tooltip. The pass blocks signals so the presentation never
+// re-records the preference; it runs from updateActionStates() whenever the
+// scope or the cached diagnostics change.
+void LegacyMainWindow::updatePlanChecks()
+{
+    if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+        m_planPreferences.assign(planSpecCount, false);
+        for (int i = 0; i < planSpecCount; ++i) {
+            m_planPreferences[i] = planSpecs[i].defaultChecked;
+        }
+    }
+    for (int i = 0; i < planSpecCount
+                    && i < static_cast<int>(m_planChecks.size()); ++i) {
+        if (!m_planChecks[i]) {
+            continue;
+        }
+        QString reason;
+        const bool available = planStageAvailable(i, &reason);
+        m_planChecks[i]->blockSignals(true);
+        if (available) {
+            m_planChecks[i]->setEnabled(true);
+            m_planChecks[i]->setChecked(m_planPreferences[i]);
+        } else {
+            m_planChecks[i]->setChecked(false);
+            m_planChecks[i]->setEnabled(false);
+        }
+        m_planChecks[i]->blockSignals(false);
+        const QString tip = available
+            ? QString::fromLatin1(
+                  "Include the %1 stage in the Full Repair plan. The stage runs "
+                  "in the plan order shown on the Repair tab.")
+                  .arg(QString::fromLatin1(planSpecs[i].title))
+            : QString::fromLatin1("Unavailable: %1").arg(reason);
+        if (i >= static_cast<int>(m_planCheckTips.size())) {
+            m_planCheckTips.resize(i + 1);
+        }
+        if (m_planCheckTips[i] != tip) {
+            QToolTip::add(m_planChecks[i], tip);
+            m_planCheckTips[i] = tip;
+        }
+    }
 }
 
 bool LegacyMainWindow::planStageSelected(int planIndex) const
@@ -5216,6 +5347,15 @@ bool LegacyMainWindow::planStageAvailable(int planIndex, QString *reason) const
         return false;
     }
     const PlanSpec &spec = planSpecs[planIndex];
+    // Frontend gap (fail closed): the capability may be available in the
+    // helper, but this legacy frontend exposes no plan action for it, so the
+    // row stays shown, disabled and unchecked with the exact reason.
+    if (spec.frontendGap && *spec.frontendGap) {
+        if (reason) {
+            *reason = QString::fromLatin1(spec.frontendGap);
+        }
+        return false;
+    }
     std::string capabilityReason;
     if (!m_model.isAvailable(spec.capability, toStd(identity()), &capabilityReason)) {
         if (reason) {
@@ -6197,6 +6337,117 @@ void LegacyMainWindow::reportChangeStatuses(const ParsedTranscript &parsed)
     }
 }
 
+namespace {
+
+// The helper's own failure lines carry a [HH:MM:SS] log prefix; strip it when
+// present and return the message of an ERROR line ("" for any other line).
+QString errorMessageOfLine(const QString &line)
+{
+    QString text = line.stripWhiteSpace();
+    // The legacy helper prefixes log() lines with [HH:MM:SS] (ten characters
+    // plus the separating space).
+    if (text.length() > 11 && text[0] == QChar('[') && text[9] == QChar(']')
+        && text[10] == QChar(' ')) {
+        text = text.mid(11).stripWhiteSpace();
+    }
+    if (text.startsWith(QString::fromLatin1("ERROR:"))) {
+        return text.mid(6).stripWhiteSpace();
+    }
+    return QString::null;
+}
+
+// The repair stage the helper names in its final `ERROR: stage 'X' failed:`
+// line, mapped to its tool key ("" when the transcript names none). Decorated
+// labels ("grub (EFI follow-up)") belong to their base stage, exactly like
+// MainWindow::repairFailureStageKey().
+QString repairFailureStageKey(const QString &transcript)
+{
+    const QStringList lines = QStringList::split(QChar('\n'), transcript, false);
+    QString stage;
+    const QString prefix = QString::fromLatin1("stage '");
+    const QString suffix = QString::fromLatin1("' failed:");
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString message = errorMessageOfLine(*it);
+        if (message.isEmpty()) {
+            continue;
+        }
+        const int begin = message.find(prefix);
+        if (begin < 0) {
+            continue;
+        }
+        const int end = message.find(suffix, begin + prefix.length());
+        if (end < 0) {
+            continue;
+        }
+        stage = message.mid(begin + prefix.length(),
+                            end - begin - prefix.length()).stripWhiteSpace();
+    }
+    if (stage.isEmpty()) {
+        return QString::null;
+    }
+    const int decoration = stage.find(QString::fromLatin1(" ("));
+    if (decoration > 0) {
+        stage = stage.left(decoration);
+    }
+    return fromStd(repairToolKeyForStage(toStd(stage)));
+}
+
+// The last ERROR message of the transcript (the helper may retry internally
+// and only the final failure line describes where the plan stopped), like
+// MainWindow::shortRepairFailureReason().
+QString shortRepairFailureReason(const QString &transcript)
+{
+    const QStringList lines = QStringList::split(QChar('\n'), transcript, false);
+    QString last;
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString message = errorMessageOfLine(*it);
+        if (!message.isEmpty()) {
+            last = message;
+        }
+    }
+    return last;
+}
+
+// The failure reason the helper reported for one named stage (the last
+// `ERROR: stage '<tool-key stage>' failed: <reason>` line for that stage,
+// reason only), so an unrelated ERROR line elsewhere in the transcript can
+// never be misattributed to this stage — exactly like
+// MainWindow::repairStageFailureReason(). Empty when the transcript names no
+// failure for the stage.
+QString repairStageFailureReason(const QString &transcript, const QString &toolKey)
+{
+    const QStringList lines = QStringList::split(QChar('\n'), transcript, false);
+    const QString prefix = QString::fromLatin1("stage '");
+    const QString suffix = QString::fromLatin1("' failed:");
+    QString reason;
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString message = errorMessageOfLine(*it);
+        if (message.isEmpty()) {
+            continue;
+        }
+        const int begin = message.find(prefix);
+        if (begin < 0) {
+            continue;
+        }
+        const int end = message.find(suffix, begin + prefix.length());
+        if (end < 0) {
+            continue;
+        }
+        QString stage = message.mid(begin + prefix.length(),
+                                    end - begin - prefix.length()).stripWhiteSpace();
+        const int decoration = stage.find(QString::fromLatin1(" ("));
+        if (decoration > 0) {
+            stage = stage.left(decoration);
+        }
+        if (fromStd(repairToolKeyForStage(toStd(stage))) == toolKey) {
+            reason = message.mid(end + suffix.length()).stripWhiteSpace();
+        }
+    }
+    return reason;
+}
+
+} // namespace
+
 // B7-4: the structured repair summary block, appended after every repair
 // command (individual tool or Full Repair) and built exclusively from the
 // parsed `Repair change status` lines.  A requested stage with no parsed
@@ -6229,9 +6480,25 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     const bool cleanFsInspect = m_transcript.find(QString::fromLatin1("File system check summary:")) >= 0
         && m_transcript.find(QString::fromLatin1("issues=0")) >= 0;
 
+    // Host-repair summary fix: a stage's result comes from its own
+    // `Repair change status` line, never from the overall command exit code.
+    // `unchanged|<reason>` is a proven no-op, `changed` is a stage that
+    // completed (the helper only reports it after the stage succeeded), and
+    // only the stage the helper names in its final `ERROR: stage 'X' failed:`
+    // line owns the failure; requested stages after it never ran. This
+    // mirrors MainWindow's Full Repair stage categorization.
+    const QString failedStageKey = repairFailureStageKey(m_transcript);
+    QString failureReason = shortRepairFailureReason(m_transcript);
+    if (failureReason.isEmpty()) {
+        failureReason = QString::fromLatin1("the privileged helper reported a failure");
+    }
+
     int successful = 0;
     int failed = 0;
     int unchanged = 0;
+    int notRun = 0;
+    bool failureAttributed = false;
+    QStringList handledKeys;
     QStringList lines;
     for (int i = 0; i < static_cast<int>(expected.size()); ++i) {
         const QString stage = expected[i];
@@ -6242,6 +6509,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
         // render their real outcomes instead of "not reported".
         const QString toolKey = fromStd(repairToolKeyForStage(toStd(stage)));
         const QString title = repairStageDisplayTitle(toolKey);
+        handledKeys.append(toolKey);
         const QMap<QString, QString>::const_iterator found =
             outcomes.find(toolKey);
         QString detail;
@@ -6255,17 +6523,42 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
                 // modern check/cross/bullet glyphs in the Qt3 log view.
                 detail = QString::fromLatin1("[-] %1 - %2")
                              .arg(title).arg(reason);
-            } else if (commandOk) {
+            } else {
+                // A reported change is a completed stage even when a later
+                // stage (or the command's final bookkeeping) failed.
                 ++successful;
                 detail = QString::fromLatin1("[OK] %1 - changed")
                              .arg(title);
-            } else {
-                ++failed;
-                detail = QString::fromLatin1("[FAIL] %1 - %2")
-                             .arg(title).arg(state);
+                const int separator = state.find(QChar('|'));
+                if (separator > 0) {
+                    detail += QString::fromLatin1(" - %1")
+                                  .arg(state.mid(separator + 1).stripWhiteSpace());
+                }
             }
-        } else if (commandOk && (stage == QString::fromLatin1("filesystem")
-                   || stage == QString::fromLatin1("fs-inspect"))
+        } else if (!commandOk && !failureAttributed
+                   && (failedStageKey.isEmpty() || toolKey == failedStageKey)) {
+            // The named failing stage (or, when the helper failed before
+            // naming one, the first stage without a completed status) owns
+            // the failure reason; it fails the overall summary. The
+            // stage-specific reason line wins so an unrelated ERROR line
+            // earlier in the transcript can never be misattributed.
+            ++failed;
+            failureAttributed = true;
+            QString stageReason = repairStageFailureReason(m_transcript, toolKey);
+            if (stageReason.isEmpty()) {
+                stageReason = failureReason;
+            }
+            detail = QString::fromLatin1("[FAIL] %1 - %2")
+                         .arg(title).arg(stageReason);
+        } else if (!commandOk) {
+            // A requested stage after the failure never ran; it is not a
+            // failure of its own.
+            ++notRun;
+            detail = QString::fromLatin1(
+                "[-] %1 - not run (the plan stopped before reaching this stage)")
+                .arg(title);
+        } else if ((stage == QString::fromLatin1("filesystem")
+                    || stage == QString::fromLatin1("fs-inspect"))
                    && cleanFsInspect) {
             ++unchanged;
             detail = QString::fromLatin1(
@@ -6278,11 +6571,28 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
         }
         lines.append(QString::fromLatin1("  ") + detail);
     }
+    // A failure can belong to a stage the plan did not request (for example
+    // the GRUB follow-up of an EFI repair); keep it visible in the summary.
+    if (!commandOk && !failureAttributed && !failedStageKey.isEmpty()
+        && !handledKeys.contains(failedStageKey)) {
+        ++failed;
+        failureAttributed = true;
+        QString stageReason = repairStageFailureReason(m_transcript, failedStageKey);
+        if (stageReason.isEmpty()) {
+            stageReason = failureReason;
+        }
+        lines.append(QString::fromLatin1("  [FAIL] %1 - %2")
+                         .arg(repairStageDisplayTitle(failedStageKey))
+                         .arg(stageReason));
+    }
 
     QString tail;
     if (failed > 0) {
         tail = QString::fromLatin1(
             "%1 stage(s) failed; review the helper output in Logs.").arg(failed);
+    } else if (notRun > 0 && successful == 0) {
+        tail = QString::fromLatin1(
+            "the plan stopped before any stage completed.");
     } else if (successful == 0) {
         tail = QString::fromLatin1(
             "no repair was needed; cached diagnostics remain valid.");
@@ -6291,13 +6601,16 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
             "repair completed; cached diagnostics were invalidated and must be "
             "regenerated.");
     }
-    const QString headline = QString::fromLatin1(
+    QString headline = QString::fromLatin1(
         "%1 results: [OK] %2 successful | [FAIL] %3 failed "
         "| [-] %4 no repair needed - %5")
         .arg(m_pendingLabel == QString::fromLatin1("Full Repair")
                  ? QString::fromLatin1("Full Repair")
                  : m_pendingLabel)
         .arg(successful).arg(failed).arg(unchanged).arg(tail);
+    if (notRun > 0) {
+        headline += QString::fromLatin1(" | [-] %1 not run").arg(notRun);
+    }
 
     // The block is Repair-tagged so the Repairs log filter shows it.
     const int savedKind = m_logEntryKind;
@@ -7112,13 +7425,60 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             .arg(static_cast<int>(m_planChecks.size())));
         ok = false;
     } else {
+        // Modern availability semantics: an available stage is checkable
+        // (with its saved/default preference), an unavailable stage stays
+        // SHOWN but disabled AND unchecked (the row set is never hidden).
         for (int i = 0; i < planSpecCount; ++i) {
-            if (!m_planChecks[i] || !m_planChecks[i]->isEnabled()) {
+            if (!m_planChecks[i]) {
                 problems->append(QString::fromLatin1(
-                    "Full Repair plan checkbox missing or disabled: %1")
+                    "Full Repair plan checkbox missing: %1")
+                    .arg(QString::fromLatin1(planSpecs[i].checkLabel)));
+                ok = false;
+                continue;
+            }
+            QString reason;
+            const bool available = planStageAvailable(i, &reason);
+            if (m_planChecks[i]->isEnabled() != available) {
+                problems->append(QString::fromLatin1(
+                    "Full Repair plan checkbox enablement does not match its "
+                    "availability: %1 (enabled=%2 available=%3)")
+                    .arg(QString::fromLatin1(planSpecs[i].checkLabel))
+                    .arg(m_planChecks[i]->isEnabled()
+                             ? QString::fromLatin1("yes")
+                             : QString::fromLatin1("no"))
+                    .arg(available ? QString::fromLatin1("yes")
+                                   : QString::fromLatin1("no")));
+                ok = false;
+            }
+            if (!available && m_planChecks[i]->isChecked()) {
+                problems->append(QString::fromLatin1(
+                    "unavailable Full Repair plan checkbox stays checked: %1")
                     .arg(QString::fromLatin1(planSpecs[i].checkLabel)));
                 ok = false;
             }
+        }
+        // Host-scope smoke parity: the legacy SysV display-manager capability
+        // is available on this Etch host, so its plan row must be present,
+        // checkable and off by default (the modern per-key default).
+        const int displayPlan = planIndexForCapability("display");
+        if (displayPlan < 0 || !m_planChecks[displayPlan]
+            || !m_planChecks[displayPlan]->isEnabled()
+            || m_planChecks[displayPlan]->isChecked()) {
+            problems->append(QString::fromLatin1(
+                "display-manager plan row is not a checkable off-by-default "
+                "row on the host scope"));
+            ok = false;
+        }
+        // The file system repair row is the documented frontend gap: it is
+        // shown but never checkable, even though the capability is available.
+        const int filesystemPlan = planIndexForCapability("filesystem");
+        if (filesystemPlan < 0 || !m_planChecks[filesystemPlan]
+            || m_planChecks[filesystemPlan]->isEnabled()
+            || m_planChecks[filesystemPlan]->isChecked()) {
+            problems->append(QString::fromLatin1(
+                "file system repair plan row is not the disabled frontend-gap "
+                "row (shown, never checkable)"));
+            ok = false;
         }
     }
     // Plan/tools behavior: selecting a legacy-runnable tool fills the Selected
@@ -8557,6 +8917,64 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         }
         m_activeRepairStages = savedStages;
         m_pendingLabel = savedPendingLabel;
+    }
+
+    // Host-repair summary fix: a failed plan attributes the failure to the
+    // stage the helper names (`ERROR: stage 'grub' failed:`) and keeps every
+    // completed stage's own result (unchanged = no repair needed, changed =
+    // successful) even though the overall command failed.
+    {
+        const QString failedTranscript = QString::fromLatin1(
+            "Repair change status dpkg: unchanged|dpkg reported no packages pending configuration\n"
+            "Repair change status fixbroken: unchanged|simulated fix-broken transaction proposed no package changes\n"
+            "Repair change status aptupdate: changed\n"
+            "Repair change status upgrade: unchanged|simulated upgrade transaction proposed no package changes\n"
+            "Repair change status initramfs: changed\n"
+            "[00:34:51] ERROR: stage 'grub' failed: GRUB legacy regeneration was rolled back because it removed an existing boot entry.\n");
+        const ParsedTranscript failedParsed = parseTranscript(
+            toStd(failedTranscript));
+        const QStringList savedStages = m_activeRepairStages;
+        const QString savedPendingLabel = m_pendingLabel;
+        const QString savedTranscript = m_transcript;
+        const std::size_t savedEntries = m_logEntries.size();
+        m_activeRepairStages = QStringList::split(QString::fromLatin1(" "),
+            QString::fromLatin1("dpkg-configure fix-broken apt-update apt-upgrade initramfs grub"),
+            false);
+        m_pendingLabel = QString::fromLatin1("Full Repair");
+        m_transcript = failedTranscript;
+        appendRepairSummaryBlock(failedParsed, false);
+        QString failedBlockText;
+        for (std::size_t e = savedEntries; e < m_logEntries.size(); ++e) {
+            failedBlockText += m_logEntries[e].text;
+            failedBlockText += QString::fromLatin1("\n");
+        }
+        const char *const failedExpectedLines[] = {
+            "[OK] 2 successful | [FAIL] 1 failed | [-] 3 no repair needed",
+            "[-] Complete interrupted package configuration - dpkg reported no packages pending configuration",
+            "[-] Repair broken package dependencies - simulated fix-broken transaction proposed no package changes",
+            "[OK] Refresh package metadata - changed",
+            "[-] Upgrade installed packages - simulated upgrade transaction proposed no package changes",
+            "[OK] Initramfs - changed",
+            "[FAIL] GRUB configuration - GRUB legacy regeneration was rolled back because it removed an existing boot entry."
+        };
+        for (std::size_t e = 0;
+             e < sizeof(failedExpectedLines) / sizeof(failedExpectedLines[0]); ++e) {
+            if (failedBlockText.find(QString::fromLatin1(failedExpectedLines[e])) < 0) {
+                problems->append(QString::fromLatin1(
+                    "failed Full Repair summary lost the expected outcome: %1")
+                    .arg(QString::fromLatin1(failedExpectedLines[e])));
+                ok = false;
+            }
+        }
+        if (failedBlockText.find(QString::fromLatin1("not reported")) >= 0) {
+            problems->append(QString::fromLatin1(
+                "failed Full Repair summary rendered 'not reported' for a "
+                "stage whose status was reported"));
+            ok = false;
+        }
+        m_activeRepairStages = savedStages;
+        m_pendingLabel = savedPendingLabel;
+        m_transcript = savedTranscript;
     }
 
     // Session list: the live session must be listed and selectable.
@@ -10269,9 +10687,11 @@ void LegacyMainWindow::updateActionStates()
 
     // The individual tools list and the Full Repair plan follow the same
     // fail-closed capability/feature probes; updateToolDetails() and
-    // updatePlanView() recompute their buttons and reasons.
+    // updatePlanView() recompute their buttons and reasons, and the Settings
+    // plan checkboxes re-apply the modern availability semantics.
     updateToolDetails();
     updatePlanView();
+    updatePlanChecks();
 
     const bool diagnosticsEnabled = complete && idle && ready;
     if (m_diagnosticsButton) {

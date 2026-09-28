@@ -77,8 +77,15 @@ legacy_readarray()
     done
     [[ -n "$__name" ]] || return 1
     eval "$__name=()"
+    # A12-01: a here-string feed (`<<<"$(producer)"`, the form the mount
+    # sweep and the block walkers now use instead of process substitution)
+    # always appends one trailing newline, which an empty producer turns into
+    # a single empty record; the skip keeps empty input from adding a
+    # spurious "" element.  No caller ever relied on preserving an
+    # intentional empty line (every consumer filters empty entries).
     while IFS= read -r __line || [[ -n "$__line" ]]; do
-        eval "$__name+=(\"\$__line\")"
+        [[ -n "$__line" ]] || continue
+        eval "$__name+=(\"$__line\")"
     done
     return 0
 }
@@ -248,6 +255,32 @@ legacy_real_tool_path()
     type -P "$1" 2>/dev/null
 }
 
+# A12-02: probe an external tool through the standard Etch system directories
+# first (/sbin, /usr/sbin) and then PATH.  cryptsetup 1.0 is at
+# /sbin/cryptsetup while the desktop user PATH has no /sbin, so the plain
+# `command -v` lookups reported it missing on launch paths without the sbin
+# directories; this probe is the fail-closed lookup every legacy cryptsetup
+# gate uses.  BOOT_REPAIR_LEGACY_TOOL_DIRS overrides the probed directory
+# list (test/development only, same convention as BOOT_REPAIR_LEGACY_SHIMS;
+# the installed helper never sets it).
+legacy_standard_tool_path()
+{
+    local name="$1" candidate="" dirs=""
+    [[ -n "$name" && "$name" != */* ]] || return 1
+    if [[ -n "${BOOT_REPAIR_LEGACY_TOOL_DIRS:-}" ]]; then
+        dirs="$BOOT_REPAIR_LEGACY_TOOL_DIRS"
+    else
+        dirs="/sbin /usr/sbin"
+    fi
+    for candidate in $dirs; do
+        if [[ -x "$candidate/$name" ]]; then
+            printf '%s\n' "$candidate/$name"
+            return 0
+        fi
+    done
+    legacy_real_tool_path "$name"
+}
+
 legacy_force_shims()
 {
     [[ "${BOOT_REPAIR_LEGACY_SHIMS:-auto}" == force ]]
@@ -327,13 +360,17 @@ legacy_block_kname()
     min="$(stat -c '%T' "$dev" 2>/dev/null || true)"
     [[ -n "$maj" && -n "$min" ]] || return 1
     want="$((16#$maj)):$((16#$min))"
+    # A12-05: here-string feed instead of process substitution - bash 3.1.17
+    # corrupts its /dev/fd fifo bookkeeping (subst.c add_fifo_list) when
+    # process substitution runs repeatedly inside the block-device sweep
+    # loops, and this lookup runs once per lsblk call (per swept device).
     while IFS= read -r d; do
         [[ -n "$d" ]] || continue
         if [[ "$(cat "$d/dev" 2>/dev/null || true)" == "$want" ]]; then
             basename -- "$d"
             return 0
         fi
-    done < <(legacy_sys_block_all_dirs)
+    done <<<"$(legacy_sys_block_all_dirs)"
     return 1
 }
 
@@ -574,7 +611,8 @@ legacy_mountinfo_mountpoints()
             | awk -v dev="$devid" '$3 == dev { print $5 }'
         return 0
     fi
-    legacy_mountpoints_from_table "/dev/$k" < <(legacy_mountinfo_table)
+    # A12-05: here-string feed (see legacy_block_kname).
+    legacy_mountpoints_from_table "/dev/$k" <<<"$(legacy_mountinfo_table)"
 }
 
 legacy_lsblk_dm_name()
@@ -765,13 +803,18 @@ legacy_lsblk()
     if [[ "$toponly" == yes ]]; then
         devs=("$kname")
     elif [[ "$inverse" == yes ]]; then
+        # A12-05: here-string feed (see legacy_block_kname); this walk runs
+        # once per lsblk invocation, and the block sweep invokes lsblk once
+        # per swept device entry.
         while IFS= read -r k; do
+            [[ -n "$k" ]] || continue
             devs+=("$k")
-        done < <(legacy_lsblk_walk_inverse "$kname")
+        done <<<"$(legacy_lsblk_walk_inverse "$kname")"
     else
         while IFS= read -r k; do
+            [[ -n "$k" ]] || continue
             devs+=("$k")
-        done < <(legacy_lsblk_walk "$kname")
+        done <<<"$(legacy_lsblk_walk "$kname")"
     fi
     for k in "${devs[@]:-}"; do
         [[ -n "$k" ]] || continue
@@ -875,6 +918,8 @@ legacy_mountinfo_table()
     fi
 }
 
+# True when mountpoint MP covers PATH: either the exact mountpoint or a
+# proper ancestor ("/" covers every absolute path as the implicit root).
 legacy_findmnt_path_match()
 {
     local mp="$1" path="$2"
@@ -909,7 +954,7 @@ legacy_findmnt_emit_row()
 legacy_findmnt()
 {
     local cols_csv="" target="" prefix="" noheader=no
-    local opt="" arg="" path=""
+    local opt="" arg="" path="" exact=0 best="" best_mp=""
     local -a args=("$@")
     local i=0
     while (( i < ${#args[@]} )); do
@@ -966,10 +1011,13 @@ legacy_findmnt()
         if [[ "$noheader" != yes ]]; then
             legacy_lsblk_header "$cols_csv"
         fi
+        # A12-05: here-string feed (see legacy_block_kname); the recursive
+        # listing stays a covering filter and never resolves a single mount.
         while IFS=$'\t' read -r _id mp _source _fstype _options; do
+            [[ -n "$_id" || -n "$mp" ]] || continue
             [[ "$mp" == "$path" || "$mp" == "$path"/* ]] || continue
             legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-        done < <(legacy_mountinfo_table)
+        done <<<"$(legacy_mountinfo_table)"
         return 0
     fi
     if [[ -n "$target" ]]; then
@@ -977,18 +1025,41 @@ legacy_findmnt()
         if [[ "$noheader" != yes ]]; then
             legacy_lsblk_header "$cols_csv"
         fi
+        # A12-03: findmnt --target resolves the MOST SPECIFIC covering mount:
+        # every entry stacked on the exact mountpoint, otherwise the single
+        # deepest ancestor ("/" only when nothing else covers the path).  The
+        # old first-match loop returned the host root "/" for any path below
+        # a session mount, so the selected repair root's mount evidence
+        # (source and options) reported the RUNNING HOST's root instead of
+        # the target's session mount.  A tie keeps the later row (mount
+        # order: the topmost entry wins).
+        exact=0
+        best=""
+        best_mp=""
         while IFS=$'\t' read -r _id mp _source _fstype _options; do
+            [[ -n "$_id" || -n "$mp" ]] || continue
+            if [[ "$mp" == "$path" ]]; then
+                legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
+                exact=1
+                continue
+            fi
             legacy_findmnt_path_match "$mp" "$path" || continue
-            legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-        done < <(legacy_mountinfo_table)
+            [[ -z "$best_mp" || ${#mp} -ge ${#best_mp} ]] || continue
+            best_mp="$mp"
+            best="$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options"
+        done <<<"$(legacy_mountinfo_table)"
+        if (( exact == 0 )) && [[ -n "$best" ]]; then
+            legacy_findmnt_emit_row "$best" "$cols_csv" || return 1
+        fi
         return 0
     fi
     if [[ "$noheader" != yes ]]; then
         legacy_lsblk_header "$cols_csv"
     fi
     while IFS=$'\t' read -r _id mp _source _fstype _options; do
+        [[ -n "$_id" || -n "$mp" ]] || continue
         legacy_findmnt_emit_row "$_id"$'\t'"$mp"$'\t'"$_source"$'\t'"$_fstype"$'\t'"$_options" "$cols_csv" || return 1
-    done < <(legacy_mountinfo_table)
+    done <<<"$(legacy_mountinfo_table)"
     return 0
 }
 
@@ -2707,7 +2778,7 @@ top_disks_for()
     local -a disks=()
     dev="$(canonical_block "$1")" || return 1
 
-    legacy_readarray -t disks < <(
+    legacy_readarray -t disks <<<"$(
         lsblk -srnpo NAME,TYPE "$dev" 2>/dev/null |
             awk '$2 == "disk" {print $1}' |
             while IFS= read -r disk; do
@@ -2715,7 +2786,7 @@ top_disks_for()
             done |
             awk 'NF' |
             sort -u
-    )
+    )"
 
     if ((${#disks[@]} > 0)); then
         printf '%s\n' "${disks[@]:-}"
@@ -2745,13 +2816,13 @@ _top_disks_for_sysfs()
 
         while IFS= read -r parent; do
             [[ -n "$parent" ]] && parents+=("/dev/$parent")
-        done < <(lsblk -ndo PKNAME "$current" 2>/dev/null | awk 'NF' | sort -u)
+        done <<<"$(lsblk -ndo PKNAME "$current" 2>/dev/null | awk 'NF' | sort -u)"
 
         kname="$(lsblk -ndo KNAME "$current" 2>/dev/null | head -n1 || true)"
         if [[ -n "$kname" && -d "/sys/class/block/$kname/slaves" ]]; then
             while IFS= read -r parent; do
                 [[ -n "$parent" ]] && parents+=("/dev/$parent")
-            done < <(find "/sys/class/block/$kname/slaves" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort -u)
+            done <<<"$(find "/sys/class/block/$kname/slaves" -mindepth 1 -maxdepth 1 -printf '%f\n' 2>/dev/null | sort -u)"
         fi
 
         # Partition fallback: /sys/class/block/<part> resolves below the parent
@@ -2768,7 +2839,7 @@ _top_disks_for_sysfs()
             return 0
         fi
 
-        legacy_readarray -t parents < <(printf '%s\n' "${parents[@]:-}" | sort -u)
+        legacy_readarray -t parents <<<"$(printf '%s\n' "${parents[@]:-}" | sort -u)"
         if ((${#parents[@]} > 1)); then
             for parent in "${parents[@]:-}"; do
                 _top_disks_for_sysfs "$parent"
@@ -2972,7 +3043,7 @@ populate_writable_dev_filtered()
     # Every block-device/mapper copy must resolve through the same top-disk
     # walk the write-safety gates use to the selected target disk.
     if [[ -n "$TARGET_DISK" ]]; then
-        legacy_readarray -t allowed_tops < <(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)
+        legacy_readarray -t allowed_tops <<<"$(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)"
     fi
     if ((${#allowed_tops[@]} == 0)); then
         log "WARNING: private /dev filter: the selected target disk identity is unavailable; no block device or mapper will be exposed to the target chroot." | tee -a "$SESSION_LOG"
@@ -3013,7 +3084,7 @@ populate_writable_dev_filtered()
                 ;;
             'block special file'|'block device')
                 allowed=""
-                legacy_readarray -t entry_tops < <(top_disks_for "$entry" 2>/dev/null | sort -u || true)
+                legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null | sort -u || true)"
                 for top in "${entry_tops[@]:-}"; do
                     for allowed_top in "${allowed_tops[@]:-}"; do
                         if [[ "$top" == "$allowed_top" ]]; then
@@ -19753,6 +19824,37 @@ rebuild_tuxedo_uki()
     fi
 }
 
+# Return 0 when the decoded cmdline explicitly selects the promoted Btrfs @
+# root subvolume.  The vendor builder's FINAL_SUBVOL strips the leading slash,
+# so a rebuilt image carries `subvol=@` (optionally doubled as
+# `rootflags=subvol=@`), while a hand-assembled cmdline may keep the slashed
+# form `subvol=/@`.  Both spellings are valid Btrfs syntax, in both the
+# rootflags= option and the bare subvol= parameter.  rootflags= values are
+# split on commas so a joined value (for example `rootflags=rw,subvol=@`)
+# matches too, and every token is compared exactly so a longer subvolume name
+# such as `subvol=@home` never satisfies the promoted-@ check.
+tuxedo_uki_selects_promoted_root()
+{
+    local cmdline="$1" token options option
+    for token in $cmdline; do
+        case "$token" in
+            subvol=@|subvol=/@)
+                return 0
+                ;;
+            rootflags=*)
+                options="${token#rootflags=}"
+                options="${options//,/ }"
+                for option in $options; do
+                    case "$option" in
+                        subvol=@|subvol=/@) return 0 ;;
+                    esac
+                done
+                ;;
+        esac
+    done
+    return 1
+}
+
 # Decode the rebuilt UKI command line and fail unless it references the
 # promoted root UUID, the Btrfs @ subvolume and the target LUKS UUID.
 verify_tuxedo_uki_root_binding()
@@ -19779,7 +19881,10 @@ verify_tuxedo_uki_root_binding()
 
     fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
     if [[ "$fstype" == "btrfs" && "$TARGET_SUBVOL" == "@" ]]; then
-        if [[ "$cmdline" != *"rootflags=subvol=/@"* && "$cmdline" != *"subvol=/@"* ]]; then
+        # The vendor builder emits `subvol=@` (FINAL_SUBVOL strips the leading
+        # slash); both `subvol=@` and `subvol=/@` are valid Btrfs syntax, in
+        # both the rootflags= and bare-subvol positions.
+        if ! tuxedo_uki_selects_promoted_root "$cmdline"; then
             fail "Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root."
         fi
     fi
@@ -22072,6 +22177,29 @@ CANCEL_TOKEN="${CANCEL_TOKEN:-}"
 # evidence instead of /etc/os-release.  Evidence wording only; never a gate.
 TARGET_OS_LEGACY=0
 
+# A12-02: the helper runs with whatever PATH its launcher inherited.  sudo's
+# secure_path normally carries the sbin directories, but a root-launched GUI
+# (`sudo env ...`), `--no-elevate` or the BOOT_REPAIR_LEGACY_ELEVATE escape
+# hatch can start the helper with a desktop PATH that lacks them, and on Etch
+# cryptsetup (plus tune2fs, dmsetup, update-grub and the LVM tooling) lives
+# in /sbin and /usr/sbin.  The standard system directories are prepended when
+# missing (the helper is the root-only backend, so this only ever widens the
+# lookup to the fixed system locations) and PATH is exported so every
+# inherited `command -v`/`need`/`type -P` probe in the ported body resolves
+# the same tools on every launch path.
+case ":$PATH:" in
+    *:/sbin:*) ;;
+    *) PATH="/sbin:$PATH" ;;
+esac
+case ":$PATH:" in
+    *:/usr/sbin:*) ;;
+    *) PATH="/usr/sbin:$PATH" ;;
+esac
+export PATH
+# The explicit cryptsetup gates additionally probe the standard locations
+# through legacy_standard_tool_path (compat.sh, A12-02), so they never depend
+# on the normalized PATH alone.
+
 # ---------------------------------------------------------------------------
 # Legacy root confirmation (/etc/os-release-less roots)
 # ---------------------------------------------------------------------------
@@ -22241,6 +22369,7 @@ target_package_installed()
 LEGACY_GRUB_BACKUP=""
 LEGACY_GRUB_DECLARATIONS=""
 LEGACY_GRUB_MANAGED=""
+LEGACY_GRUB_VARIANT_MANIFEST=""
 
 legacy_grub_legacy_target()
 {
@@ -22350,7 +22479,285 @@ legacy_grub_preflight()
     if [[ -n "$LEGACY_GRUB_MANAGED" ]]; then
         log "SIMULATE/PREFLIGHT: GRUB legacy defoptions/kopt-managed arguments captured: $LEGACY_GRUB_MANAGED" | tee -a "$SESSION_LOG"
     fi
+    # A12-04: capture every derived single-user variant (an entry block whose
+    # kernel line differs from a main entry only by the standalone `single`
+    # token plus defoptions-managed arguments) so the regeneration can restore
+    # it; stock Etch update-grub does not apply defoptions to altoptions
+    # alternatives, so the variant's own serial-console arguments would be
+    # stripped or the whole entry dropped.
+    LEGACY_GRUB_VARIANT_MANIFEST="$SESSION_DIR/grub-single-variants.list"
+    legacy_grub_single_variant_capture "$TARGET_ROOT/boot/grub/menu.lst" "$SESSION_DIR"
+    if [[ -s "$LEGACY_GRUB_VARIANT_MANIFEST" ]]; then
+        log "SIMULATE/PREFLIGHT: GRUB legacy single-user variant(s) captured for post-regeneration restoration ($(grep -c . "$LEGACY_GRUB_VARIANT_MANIFEST") variant(s))." | tee -a "$SESSION_LOG"
+    fi
     log "SIMULATE/PREFLIGHT: GRUB legacy menu.lst backed up to $LEGACY_GRUB_BACKUP and entry declarations captured." | tee -a "$SESSION_LOG"
+}
+
+# A12-04: emit the entry blocks of a GRUB legacy config (paragraph mode),
+# separated by the ASCII file-separator character so bash `read -d` can
+# iterate them without splitting on the blocks' embedded newlines.
+legacy_grub_entry_blocks()
+{
+    local config="$1"
+    [[ -s "$config" ]] || return 0
+    awk '
+        BEGIN { RS = ""; ORS = "\n\034" }
+        { print }
+    ' "$config"
+}
+
+# A12-04: the first kernel line of one entry block, whitespace-normalized
+# (kernel path + arguments, one space separator, no leading/trailing space).
+legacy_grub_block_kernel()
+{
+    local block="$1"
+    printf '%s\n' "$block" | awk '
+        /^[ \t]*kernel[ \t]/ {
+            line = $0
+            sub(/^[ \t]*kernel[ \t]+/, "", line)
+            gsub(/[ \t]+/, " ", line)
+            gsub(/^ | $/, "", line)
+            print line
+            exit
+        }'
+}
+
+# A12-04: the same normalized kernel line with every standalone `single`
+# token removed (the parent form of a single-user variant).
+legacy_grub_kernel_without_single()
+{
+    local line="$1"
+    line=" $line "
+    while [[ "$line" == *" single "* ]]; do
+        line="${line/ single / }"
+    done
+    line="${line# }"
+    printf '%s\n' "${line% }"
+}
+
+# A12-04: strip the defoptions/kopt-managed tokens from ONE normalized kernel
+# line (the same per-line expansion legacy_grub_entry_declarations applies).
+legacy_grub_kernel_strip_managed()
+{
+    local line="$1" managed="${2:-}" token="" escaped=""
+    [[ -n "$managed" ]] || { printf '%s\n' "$line"; return 0; }
+    # A9-12: noglob around the managed-token split; restored on every exit.
+    set -f
+    for token in $managed; do
+        escaped="$(legacy_grub_sed_escape "$token")"
+        line="$(printf '%s' "$line" \
+            | sed "s| $escaped | |g; s| $escaped\$||; s|^$escaped ||")"
+    done
+    set +f
+    printf '%s\n' "$line"
+}
+
+# A12-04: capture every derived single-user variant of the current menu.lst.
+# A variant is an entry block whose kernel line carries the standalone
+# `single` token and whose parent (the same line minus `single`) exists as a
+# kernel line of another block.  Each variant block is stored verbatim under
+# $outdir/grub-single-variant.<n> and recorded in the manifest
+# (parent-kernel-line<TAB>variant-file per line) for the post-regeneration
+# restoration; blocks without a parent (or with an unproven parent) are left
+# for the guard, which refuses when update-grub drops them.
+legacy_grub_single_variant_capture()
+{
+    local config="$1" outdir="$2" manifest="" parents_file="" block="" kline="" parent="" i=0
+    manifest="$outdir/grub-single-variants.list"
+    [[ -s "$config" && -d "$outdir" ]] || return 0
+    : > "$manifest" || return 1
+    parents_file="$outdir/grub-kernels.parents"
+    # Pass 1: the non-single kernel lines are the candidate parents.
+    while IFS= read -r -d $'\034' block; do
+        kline="$(legacy_grub_block_kernel "$block")"
+        [[ -n "$kline" ]] || continue
+        case " $kline " in
+            *" single "*) ;;
+            *) printf '%s\n' "$kline" ;;
+        esac
+    done < <(legacy_grub_entry_blocks "$config") > "$parents_file"
+    # Pass 2: record every single-variant block whose parent exists.
+    i=0
+    while IFS= read -r -d $'\034' block; do
+        kline="$(legacy_grub_block_kernel "$block")"
+        [[ -n "$kline" ]] || continue
+        case " $kline " in
+            *" single "*) ;;
+            *) continue ;;
+        esac
+        parent="$(legacy_grub_kernel_without_single "$kline")"
+        [[ -n "$parent" ]] || continue
+        grep -Fqx -- "$parent" "$parents_file" || continue
+        i=$((i + 1))
+        printf '%s' "$block" > "$outdir/grub-single-variant.$i"
+        printf '%s\t%s\n' "$parent" "$outdir/grub-single-variant.$i" >> "$manifest"
+    done < <(legacy_grub_entry_blocks "$config")
+    rm -f -- "$parents_file"
+    return 0
+}
+
+# A12-04: restore the captured single-user variants into a freshly
+# regenerated menu.lst.  For every captured variant whose parent kernel line
+# still exists in the regenerated file, the update-grub-generated alternative
+# that immediately follows the parent block is replaced with the captured
+# block (or the block is inserted right after the parent when update-grub
+# generated no alternative).  A variant whose parent disappeared is left out;
+# the repair verification and the entry-preservation guard then refuse the
+# regeneration.  POSIX awk only (mawk 1.3.3): no gensub, no POSIX classes.
+legacy_grub_restore_single_variants()
+{
+    local config="$1" manifest="$2" tmp=""
+    [[ -s "$config" ]] || return 1
+    [[ -s "$manifest" ]] || return 0
+    tmp="$(mktemp "${TMPDIR:-/tmp}/grub-restore.XXXXXX")" || return 1
+    LEGACY_GRUB_VARIANT_MANIFEST="$manifest" awk '
+        function emit_all_pending(    k, vtext, vline) {
+            for (k = 1; k <= npending; k++) {
+                vtext = ""
+                while ((getline vline < vfiles[plist[k]]) > 0) {
+                    vtext = vtext vline "\n"
+                }
+                close(vfiles[plist[k]])
+                if (vtext != "") {
+                    printf "%s", vtext
+                    printf "\n"
+                }
+            }
+            npending = 0
+        }
+        BEGIN {
+            RS = ""
+            ORS = "\n\n"
+            manifest = ENVIRON["LEGACY_GRUB_VARIANT_MANIFEST"]
+            np = 0
+            if (manifest != "") {
+                while ((getline chunk < manifest) > 0) {
+                    n = split(chunk, entries, "\n")
+                    for (e = 1; e <= n; e++) {
+                        if (entries[e] == "") continue
+                        f = split(entries[e], parts, "\t")
+                        if (f >= 2) {
+                            np++
+                            parents[np] = parts[1]
+                            vfiles[np] = parts[2]
+                        }
+                    }
+                }
+                close(manifest)
+            }
+            npending = 0
+        }
+        {
+            block = $0
+            kline = ""
+            n = split(block, lines, "\n")
+            for (i = 1; i <= n; i++) {
+                if (lines[i] ~ /^[ \t]*kernel[ \t]/) {
+                    s = lines[i]
+                    sub(/^[ \t]*kernel[ \t]+/, "", s)
+                    gsub(/[ \t]+/, " ", s)
+                    gsub(/^ | $/, "", s)
+                    kline = s
+                    break
+                }
+            }
+            is_single = (kline ~ /(^| )single( |$)/)
+            if (npending > 0) {
+                if (is_single) {
+                    # update-grub generated alternative: replace it with the
+                    # first pending captured variant.
+                    emit_all_pending()
+                    next
+                }
+                # The block after the parent is not an alternative: emit the
+                # remaining captured variants right after the parent block,
+                # then fall through to the current block.
+                emit_all_pending()
+            }
+            print block
+            for (j = 1; j <= np; j++) {
+                if (kline != "" && kline == parents[j]) {
+                    npending++
+                    plist[npending] = j
+                }
+            }
+        }
+        END {
+            if (npending > 0) { emit_all_pending() }
+        }
+    ' "$config" > "$tmp" || { rm -f -- "$tmp"; return 1; }
+    if ! mv -- "$tmp" "$config"; then
+        rm -f -- "$tmp"
+        return 1
+    fi
+    return 0
+}
+
+# A12-04: hard verification that every captured single-user variant is
+# present (declaration-by-declaration, managed tokens stripped) in the
+# regenerated declarations.  A variant whose parent survived regeneration
+# must have been restored by legacy_grub_restore_single_variants; a missing
+# declaration here fails the repair (rollback), so a variant can never be
+# silently dropped while its parent survives.
+legacy_grub_variants_verified()
+{
+    local manifest="$1" after_declarations="$2" parent="" variant_file="" line=""
+    local missing_file="$SESSION_DIR/grub-variants.missing"
+    [[ -s "$manifest" ]] || return 0
+    : > "$missing_file" || return 1
+    while IFS=$'\t' read -r parent variant_file; do
+        [[ -n "$parent" && -s "$variant_file" ]] || continue
+        legacy_grub_entry_declarations "$variant_file" "$LEGACY_GRUB_MANAGED" \
+            | while IFS= read -r line; do
+                grep -Fqx -- "$line" "$after_declarations" \
+                    || printf '%s\n' "$line" >> "$missing_file"
+            done
+    done < "$manifest"
+    if [[ -s "$missing_file" ]]; then
+        log "ERROR: the legacy repair could not restore a derived single-user variant whose parent entry survived regeneration; the target configuration was rolled back." | tee -a "$SESSION_LOG"
+        sed 's/^/  derived-single-variant-missing: /' "$missing_file" | tee -a "$SESSION_LOG"
+        return 1
+    fi
+    return 0
+}
+
+# A12-04: split a missing-declarations list into a fatal remainder (printed
+# to $fatal) and derived single-user variants (logged): a missing declaration
+# line that belongs to a captured variant whose parent kernel line (managed
+# tokens stripped) survives in the regenerated declarations is a derived
+# variant of a preserved boot entry, not a removed entry.  Every other
+# missing declaration stays fatal, so genuinely distinct entries keep the
+# fail-closed protection.
+legacy_grub_relax_derived_variants()
+{
+    local missing="$1" after_keys="$2" manifest="${3:-}" fatal="$4"
+    local line="" parent="" variant_file="" relaxed=0
+    : > "$fatal" || return 1
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        relaxed=0
+        if [[ -s "$manifest" ]]; then
+            while IFS=$'\t' read -r parent variant_file; do
+                [[ -n "$parent" && -s "$variant_file" ]] || continue
+                # The manifest stores the parent as its kernel ARGUMENTS line;
+                # after_keys holds full declarations, so compare with the
+                # `kernel ` prefix and the managed tokens stripped.
+                grep -Fqx -- "kernel $(legacy_grub_kernel_strip_managed "$parent" "$LEGACY_GRUB_MANAGED")" "$after_keys" \
+                    || continue
+                if legacy_grub_entry_declarations "$variant_file" "$LEGACY_GRUB_MANAGED" \
+                    | grep -Fqx -- "$line"; then
+                    relaxed=1
+                    break
+                fi
+            done < "$manifest"
+        fi
+        if (( relaxed == 1 )); then
+            log "GRUB legacy derived single-user variant declaration (parent entry preserved): $line" | tee -a "$SESSION_LOG"
+        else
+            printf '%s\n' "$line" >> "$fatal"
+        fi
+    done < "$missing"
+    return 0
 }
 
 legacy_grub_guard_entries_preserved()
@@ -22365,9 +22772,17 @@ legacy_grub_guard_entries_preserved()
     legacy_grub_entry_declarations "$after" "$LEGACY_GRUB_MANAGED" > "$after_keys"
     comm -23 "$before" "$after_keys" > "$missing" || true
     if [[ -s "$missing" ]]; then
-        log "ERROR: GRUB legacy regeneration would remove existing menu declarations; the target configuration was rolled back." | tee -a "$SESSION_LOG"
-        sed 's/^/  preserved-declaration-required: /' "$missing" | tee -a "$SESSION_LOG"
-        return 1
+        # A12-04: a missing declaration that belongs to a derived single-user
+        # variant whose parent entry survived regeneration is a derived
+        # variant, not a removed boot entry (the legacy repair restores it);
+        # every other missing declaration stays fatal.
+        legacy_grub_relax_derived_variants "$missing" "$after_keys" \
+            "$LEGACY_GRUB_VARIANT_MANIFEST" "$missing.fatal"
+        if [[ -s "$missing.fatal" ]]; then
+            log "ERROR: GRUB legacy regeneration would remove existing menu declarations; the target configuration was rolled back." | tee -a "$SESSION_LOG"
+            sed 's/^/  preserved-declaration-required: /' "$missing.fatal" | tee -a "$SESSION_LOG"
+            return 1
+        fi
     fi
     # Positive check: the regenerated kernel lines must carry every
     # defoptions/kopt-managed argument (update-grub expands them).
@@ -22406,6 +22821,25 @@ legacy_grub_repair()
     if [[ ! -s "$TARGET_ROOT/boot/grub/menu.lst" ]]; then
         cp -a -- "$LEGACY_GRUB_BACKUP" "$TARGET_ROOT/boot/grub/menu.lst"
         fail "update-grub completed but /boot/grub/menu.lst is missing or empty; the backup was restored."
+    fi
+    # A12-04: restore the captured single-user variants.  Stock Etch
+    # update-grub regenerates altoptions single entries WITHOUT the
+    # defoptions-managed arguments (defoptions apply "to the default boot
+    # option, but not with the alternatives"), so a manually maintained
+    # single-user entry carrying the serial-console arguments would otherwise
+    # be stripped or dropped.  The captured blocks are re-inserted verbatim
+    # next to their parent entries (replacing the regenerated alternative); a
+    # variant whose parent did not survive is left out and the verification
+    # below refuses the regeneration.
+    legacy_grub_restore_single_variants "$TARGET_ROOT/boot/grub/menu.lst" "$LEGACY_GRUB_VARIANT_MANIFEST" \
+        || { cp -a -- "$LEGACY_GRUB_BACKUP" "$TARGET_ROOT/boot/grub/menu.lst"
+             fail "GRUB legacy single-user variant restoration failed; /boot/grub/menu.lst was restored."; }
+    legacy_grub_entry_declarations "$TARGET_ROOT/boot/grub/menu.lst" "$LEGACY_GRUB_MANAGED" \
+        > "$SESSION_DIR/grub-menu-declarations.after.restored"
+    if ! legacy_grub_variants_verified "$LEGACY_GRUB_VARIANT_MANIFEST" \
+        "$SESSION_DIR/grub-menu-declarations.after.restored"; then
+        cp -a -- "$LEGACY_GRUB_BACKUP" "$TARGET_ROOT/boot/grub/menu.lst"
+        fail "GRUB legacy regeneration was rolled back because a derived single-user variant could not be restored."
     fi
     if ! legacy_grub_guard_entries_preserved "$LEGACY_GRUB_DECLARATIONS" "$TARGET_ROOT/boot/grub/menu.lst"; then
         cp -a -- "$LEGACY_GRUB_BACKUP" "$TARGET_ROOT/boot/grub/menu.lst"
@@ -23597,10 +24031,13 @@ filesystem_mountpoint_for_device()
 # field match and the /dev/.static prefix defeats readlink -f, so an
 # already-open mapper was never recognized (spurious "Mapper name
 # collision"). Strip both before the caller's canonical comparison.
+# A12-02: the binary resolves through the standard-location probe so a
+# launch path without /sbin in PATH still parses the status.
 legacy_crypt_status_device()
 {
-    local name="$1" value=""
-    value="$(cryptsetup status "$name" 2>/dev/null \
+    local name="$1" value="" cryptsetup_bin=""
+    cryptsetup_bin="$(legacy_standard_tool_path cryptsetup)" || return 1
+    value="$("$cryptsetup_bin" status "$name" 2>/dev/null \
         | awk -F: '$1 ~ /^[ \t]*device$/ {gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2; exit}')"
     [[ -n "$value" ]] || return 1
     # /dev/.static/dev/hdb5 -> /dev/hdb5 (the .static tree mirrors /dev, so
@@ -23615,7 +24052,10 @@ find_crypt_mapper_for_device()
 {
     local device="$1" canonical alias name existing_device
     canonical="$(canonical_block "$device")" || return 1
-    command -v cryptsetup >/dev/null 2>&1 || return 1
+    # A12-02: probe the standard Etch locations instead of a bare PATH
+    # lookup, so an already-open mapper is recognized on every launch path
+    # (legacy_crypt_status_device re-resolves the same binary per status).
+    legacy_standard_tool_path cryptsetup >/dev/null 2>&1 || return 1
     for alias in /dev/mapper/*; do
         [[ -e "$alias" || -L "$alias" ]] || continue
         name="$(basename -- "$alias")"
@@ -23639,6 +24079,13 @@ find_crypt_mapper_for_device()
 # copy is reused, so promote_target_data_rw cannot re-trigger it.
 LEGACY_RESOLVER_DESTINATION=""
 LEGACY_RESOLVER_BACKUP=""
+# A12-07: the persistent marker proves that THIS helper made the resolver
+# copy (it survives an interrupted session whose in-memory state died with
+# it).  The A9-09 leftover guard consults it instead of the content alone:
+# two systems that share the identical resolver file (for example two
+# recovery rigs behind the same user-mode-network DNS) are not an
+# interrupted copy and must not be refused.
+LEGACY_RESOLVER_MARKER="$STATE_ROOT/resolver-copy-marker"
 mount_target_resolver()
 {
     local target_link="$TARGET_ROOT/etc/resolv.conf" link destination root_real
@@ -23673,9 +24120,17 @@ mount_target_resolver()
         # is the leftover copy of an interrupted session whose backup was
         # lost.  Backing it up again would preserve a polluted file as the
         # target's "original"; refuse and name the scenario instead.
-        if cmp -s -- "$destination" /etc/resolv.conf 2>/dev/null; then
-            fail "The target resolver already holds the recovery-host copy from an interrupted session; refusing to re-backup a polluted file. Restore the target's original $destination manually and retry."
+        # A12-07: the refusal requires the persistent marker (the copy this
+        # helper made earlier) at the same destination — content equality
+        # alone is not evidence, because a target whose own resolver file is
+        # byte-identical to the recovery host's (shared DNS behind user-mode
+        # networking, as on the reference Etch rigs) must keep repairing.
+        if cmp -s -- "$destination" /etc/resolv.conf 2>/dev/null \
+            && [[ -s "$LEGACY_RESOLVER_MARKER" ]] \
+            && [[ "$(head -n1 "$LEGACY_RESOLVER_MARKER" 2>/dev/null || true)" == "$destination" ]]; then
+            fail "The target resolver already holds the recovery-host copy from an interrupted session; refusing to re-backup a polluted file. Restore the target's original $destination manually (delete $LEGACY_RESOLVER_MARKER when the two systems share the identical resolver file) and retry."
         fi
+        rm -f -- "$LEGACY_RESOLVER_MARKER" 2>/dev/null || true
         LEGACY_RESOLVER_BACKUP="$SESSION_DIR/resolv.conf.target.before"
         cp -a -- "$destination" "$LEGACY_RESOLVER_BACKUP" \
             || fail "Unable to back up the target resolver before the temporary copy."
@@ -23683,6 +24138,12 @@ mount_target_resolver()
     cp -- /etc/resolv.conf "$destination" \
         || fail "Unable to copy the recovery-host resolver into the target."
     LEGACY_RESOLVER_DESTINATION="$destination"
+    # A12-07: record the copy persistently so the next session can tell a
+    # genuine leftover from an identical-content original.  A marker write
+    # failure aborts the copy path (fail closed): an untracked copy must
+    # never become an unprovable "original" later.
+    printf '%s\n' "$destination" > "$LEGACY_RESOLVER_MARKER" \
+        || fail "Unable to record the resolver copy marker; the target resolver copy was not established."
     log "Copied recovery-host resolver into the target chroot (temporary; restored on exit)" | tee -a "$SESSION_LOG"
 }
 
@@ -23709,6 +24170,10 @@ cleanup()
         else
             log "ERROR: the resolver destination no longer equals the recovery-host resolver (changed by the user or another tool); the target's original file was NOT overwritten and the pre-copy backup was kept at $LEGACY_RESOLVER_BACKUP." | tee -a "$SESSION_LOG"
         fi
+        # A12-07: this session's copy is resolved (restored, or proven no
+        # longer present), so the persistent marker goes with it — a stale
+        # marker must never refuse a later, legitimate session.
+        rm -f -- "$LEGACY_RESOLVER_MARKER" 2>/dev/null || true
         LEGACY_RESOLVER_DESTINATION=""
         LEGACY_RESOLVER_BACKUP=""
     fi
@@ -23795,6 +24260,7 @@ unlock_target()
 {
     local fstype uuid mapper_name mapper_path existing_mapper crypt_rc
     local keyfile_arg="" key_owner_arg=""
+    local CRYPTSETUP_BIN=""
     while (($# > 0)); do
         case "$1" in
             --key-file)
@@ -23815,8 +24281,13 @@ unlock_target()
 
     need lsblk
     need findmnt
-    need cryptsetup
     need readlink
+    # A12-02: probe the standard Etch locations (/sbin/cryptsetup,
+    # /usr/sbin/cryptsetup) plus PATH instead of the bare `command -v` the
+    # modern `need` performs, so the unlock preflight passes on launch paths
+    # whose PATH lacks the sbin directories.
+    CRYPTSETUP_BIN="$(legacy_standard_tool_path cryptsetup)" \
+        || fail "Required host command not found: cryptsetup (checked /sbin/cryptsetup, /usr/sbin/cryptsetup and PATH)"
 
     TARGET_DISK="$(canonical_block "$TARGET_DISK")" || fail "Target disk is not a block device."
     ROOT_DEVICE="$(canonical_block "$ROOT_DEVICE")" || fail "LUKS component is not a block device."
@@ -23826,11 +24297,11 @@ unlock_target()
         || fail "Selected encrypted component does not belong exclusively to the target disk."
 
     fstype="$(lsblk -ndo FSTYPE "$ROOT_DEVICE" 2>/dev/null | head -n1)"
-    if [[ "$fstype" != "crypto_LUKS" ]] && ! cryptsetup isLuks "$ROOT_DEVICE" >/dev/null 2>&1; then
+    if [[ "$fstype" != "crypto_LUKS" ]] && ! "$CRYPTSETUP_BIN" isLuks "$ROOT_DEVICE" >/dev/null 2>&1; then
         fail "Selected component is not a LUKS container: $ROOT_DEVICE"
     fi
 
-    uuid="$(cryptsetup luksUUID "$ROOT_DEVICE" 2>/dev/null || true)"
+    uuid="$("$CRYPTSETUP_BIN" luksUUID "$ROOT_DEVICE" 2>/dev/null || true)"
     [[ -n "$uuid" ]] || fail "Unable to determine the LUKS UUID."
 
     # Debian/TUXEDO crypttab convention uses luks-<UUID>; opening with the
@@ -23888,7 +24359,7 @@ unlock_target()
     # which includes an incorrect LUKS passphrase. Emit the machine-readable
     # marker so the GUI can offer a passphrase retry without re-authorizing.
     set +e
-    cryptsetup --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"
+    "$CRYPTSETUP_BIN" --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"
     crypt_rc=$?
     set -e
     rm -f -- "$keyfile"
@@ -23901,7 +24372,7 @@ unlock_target()
     fi
 
     [[ -b "$mapper_path" ]] || {
-        cryptsetup luksClose "$mapper_path" >/dev/null 2>&1 || true
+        "$CRYPTSETUP_BIN" luksClose "$mapper_path" >/dev/null 2>&1 || true
         fail "cryptsetup reported success but the mapper device did not appear."
     }
 
