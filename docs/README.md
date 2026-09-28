@@ -2,6 +2,7 @@
 
 Public documentation for Boot Bitch:
 
+- [Release notes 0.2.26](release-notes-0.2.26.md)
 - [Release notes 0.2.25](release-notes-0.2.25.md)
 - [Release notes 0.2.24](release-notes-0.2.24.md)
 - [Release notes 0.2.23](release-notes-0.2.23.md)
