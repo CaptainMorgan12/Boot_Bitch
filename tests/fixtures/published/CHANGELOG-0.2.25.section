@@ -1,44 +1,27 @@
 ## 0.2.25 — 2026-09-19
 
-- Add native RPM and APK release artifacts: `scripts/package-rpm.sh` builds
-  the CPack RPM with family-specific dependency names and the POSIX `/bin/sh`
-  `scripts/rpm-postinst.sh` scriptlet, and `scripts/package-alpine.sh` builds
-  the signed `boot-bitch-<version>-r0.apk` with abuild and runs the project
-  tests in its `check()` phase; `scripts/test-rpm.sh` and
-  `scripts/test-apk.sh` validate both artifacts without installing them.
-- Add a Fedora/RPM-family repair backend from read-only probe evidence:
-  guarded dnf5 package transactions (`rpm -Va` + `dnf reinstall` fix-broken,
-  one simulated `dnf upgrade`), dracut initramfs rebuilds with `lsinitrd`
-  verification, GRUB2 configuration regeneration, a guarded GRUB2 boot-code
-  reinstall, boot-stack reconciliation over dracut + GRUB2, and the GDM
-  display path; every Fedora label and gate derives from probe evidence, never
-  from the distribution ID.
-- Add an Alpine/apk repair backend alongside the other package backends:
-  simulation-first `apk fix` and `apk upgrade` transactions and targeted
-  missing-package-file repair driven by `apk audit --system` plus
-  `apk info --who-owns`. An `extlinux` capability key gates the extlinux
-  stage; `mkinitfs` initramfs rebuilds, config-only `update-extlinux`
-  regeneration with rollback, and OpenRC display-manager runlevel restore
-  complete it, and EFI/UKI stages remain Debian/Arch-only.
-- Add transaction-specific Arch repair preflights and guarded apply paths for
-  pacman package transactions, mkinitcpio, GRUB and EFI, plus Arch
-  host-maintenance package repair and upgrade stages; APT/dpkg stages remain
-  unavailable on Arch. The read-only distribution/boot backend profiler
-  detects Debian/APT and Arch/pacman families, and every repair tool and Full
-  Repair stage is gated on read-only capability evidence while helper
-  preflights stay mandatory.
-- Add running-host Btrfs snapshot rollback: the Snapshots tab lists Snapper
-  root snapshots and Boot Bitch undo points, stages the name-preserving
-  transaction (preserve the running `@`, promote a writable copy, restore on
-  failure), persists a **Reboot required** reminder, and never reboots
-  automatically. The File system repair tool resolves the root, `/boot`, ESP
-  and `/home` filesystems and offers per-device repair only after its check
-  reports issues.
-- Add a fresh per-launch session log with scope markers, retention,
-  prior-session viewing and `@section` search, a global busy indicator, one
-  authorization request per scope and deterministic responsive layouts.
-  Fixes: PackageKit no longer blocks host package repairs; apt metadata
-  changes warn and retry once; GRUB EFI same-label warnings no longer pollute
-  the firmware ID; dependency setup and installation are package-manager
-  aware with Arch, RPM and TGZ workflows.
+- Native RPM and APK release artifacts: `scripts/package-rpm.sh` builds the
+  CPack RPM with family-specific dependencies and the POSIX `/bin/sh`
+  scriptlet, `scripts/package-alpine.sh` builds the signed APK with abuild,
+  and `scripts/test-rpm.sh`/`test-apk.sh` validate both without installing
+  them.
+- Alpine, Arch and Fedora repair backends: guarded apk, pacman and dnf5
+  package transactions with mkinitfs, mkinitcpio, dracut, GRUB/extlinux and
+  display-manager stages join the Debian/APT backends; Arch host-maintenance
+  package repair and upgrade stages are included, while standalone APT/dpkg
+  stages remain unavailable on Arch.
+- Running-host Btrfs snapshot rollback: the Snapshots tab lists Snapper root
+  snapshots and Boot Bitch undo points and stages the name-preserving
+  rollback (promote a writable copy, reconcile initramfs/UKI/GRUB, restore on
+  failure), with a **Reboot required** reminder and never an automatic
+  reboot.
+- Read-only-first file system repair: diagnostics resolve the root, `/boot`,
+  ESP and `/home` filesystems, run the matching read-only check and offer
+  per-device repair only after issues are reported, with an extra warning for
+  dangerous modes.
+- Logging, UI and fixes: a fresh per-launch session log with retention and
+  `@section` search, one authorization request per scope, a guarded Host
+  Shell and responsive layouts; plus fixes from user testing (PackageKit, apt
+  metadata retry, GRUB EFI firmware-ID handling) and package-manager-aware
+  dependency setup.
 
