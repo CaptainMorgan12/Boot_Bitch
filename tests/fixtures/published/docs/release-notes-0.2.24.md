@@ -1,8 +1,7 @@
 # Boot Bitch 0.2.24
 
-Adds the semantic icon atlas, the read-only-first file system repair engine,
-Arch host-maintenance package repair and the distribution/boot backend
-profiler.
+Adds the semantic icon atlas, the read-only-first file system repair engine
+and the distribution/boot backend profiler.
 
 Released 2026-09-16.
 
@@ -14,36 +13,25 @@ Released 2026-09-16.
   their UUIDs, run the matching read-only check, and offer per-device repair
   modes only after issues are found and the user confirms; offline tools
   refuse mounted filesystems while btrfs/zpool scrub stay online.
-- Add Arch host-maintenance package repair and upgrade stages through
-  transaction-specific preflights and guarded full pacman transactions;
-  standalone APT/dpkg stages remain unavailable on Arch.
 - Add the read-only distribution/boot backend profiler, backend-profile
   contract test and kernel/initramfs pairing diagnostics; gate every repair
   tool and Full Repair stage on the scope's read-only diagnostics (DKMS, APT
-  metadata and Arch prerequisites disable with a reason while helper
-  preflights remain).
-- UI/UX polish: busy indicator; one authorization request per scope; journal
-  evidence filtered to boot components; section-scoped diagnostics refresh
-  with coalesced incremental rendering; narrow-window Logs/File Copy; guarded
-  Host Shell with the host-maintenance crash fix; single Polkit prompt on Host
-  Maintenance entry; `@section` log search and section filters; responsive
-  Repair/Systems layouts; scroll edge shadows; one-fifth splitter minimums;
-  Systems page and Host Maintenance details fit; compact snapshot rows; and
-  software-center metadata with six screenshots, the installed size, package
-  association and icon-cache refreshes.
-- Fixes: same-labelled GRUB EFI entries no longer pollute the captured
-  firmware ID and a failed plan attributes each stage correctly; an idle
-  PackageKit daemon no longer blocks host package repairs; the initramfs
-  generator is detected from installed packages; apt release-metadata changes
-  warn and retry once; no-op pacman transactions report unchanged; repair
-  summaries are action-accurate with durable ✓/✗/▪ glyphs; diagnostics
-  regeneration is evidence-driven and Run All no longer duplicates log
-  sections; stale `/usr/local` source installs are removed on uninstall; the
-  Debian/TUXEDO GRUB preflight inspects an isolated `grub-mkconfig` output;
-  the protected-host shield/check returns as a bundled green status icon;
-  file-system check tools are declared package dependencies (common tools
-  hard, the rest recommended/optional); code-review cleanups with no behavior
-  change.
+  metadata and missing prerequisites disable with a reason
+  while helper preflights remain).
+- UI/UX polish: busy indicator; one authorization request per scope;
+  section-scoped diagnostics refresh with coalesced incremental rendering;
+  narrow-window Logs/File Copy; guarded Host Shell with the host-maintenance
+  crash fix; Polkit prompt on Host Maintenance entry; `@section` log search
+  and filters; responsive Repair/Systems layouts; scroll edge shadows;
+  one-fifth splitter minimums; compact snapshot rows; and software-center
+  metadata with six screenshots, the installed size and package association.
+- Fixes: duplicate-label GRUB EFI entries no longer pollute the firmware ID;
+  an idle PackageKit daemon no longer blocks host package repairs; apt
+  release-metadata changes warn and retry once; no-op pacman transactions
+  report unchanged; Run All no longer duplicates log sections; stale
+  `/usr/local` source installs are removed on uninstall; file-system check
+  tools are declared package dependencies; the protected-host shield returns
+  as a green status icon.
 
 The Debian package and AppImage are built locally from the complete source tree.
 
