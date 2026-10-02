@@ -50,6 +50,10 @@
 #     Development/release-0.2.26 capture (SHA256SUMS + release notes): frozen
 #     when preparing the 0.2.26 release.
 #
+#   - 0.2.27 README/CHANGELOG sections, docs/release-notes-0.2.27.md and the
+#     Development/release-0.2.27 capture (SHA256SUMS + release notes): frozen
+#     after publishing the 0.2.27 release.
+#
 # 0.2.24/0.2.25 correction rebaseline 2026-09-28: the maintainer approved a
 # one-time correction (0.2.24 wrongly claimed Arch host-maintenance package
 # repair; the claim moved into 0.2.25) plus a concision pass on the
@@ -66,6 +70,8 @@ dabf3b6e3924f5f27735f8d190233e5ab53a545b850e7dbcfa383de014957c92  captures/relea
 2cbb425cc4468a551fe95495517506b1049eead6889a2f0d18f7f96941fc282a  captures/release-0.2.25/SHA256SUMS
 5a329f0e64c8ddacf5ee174379914eae88038293ba26f3f562f486183d6581be  captures/release-0.2.26/release-notes-0.2.26.md
 ba0b0c04ce5d1f14a795060a6ce8afa9bcd86c16f6830631569059f75b063ae8  captures/release-0.2.26/SHA256SUMS
+d58e37867a678665444df6907793881a20887f6b2cdab50889bdc1fa55443031  captures/release-0.2.27/release-notes-0.2.27.md
+0dfe3624c60553644233e84e1792964df96c85430d50f969fb16a4476f3f04fd  captures/release-0.2.27/SHA256SUMS
 a3aa94e54433fa80643f43159b864f99bcd03d3f53f40e8d63e23b6c55328e79  CHANGELOG-0.2.15.section
 f7d47ea1ab8da2e7ef9f02ea38fe416cd950dc144793f048ca91f6405e6e430e  CHANGELOG-0.2.16.section
 6d2b83d4fd9bd1a70644bd3a3d08fe2cb4da0f339f15c17cc7cdbd4a13ab4146  CHANGELOG-0.2.17.section
@@ -78,6 +84,7 @@ da56c77c22ea2755964832c447484cf9bce8122fe75c6b33f9237de086f92c85  CHANGELOG-0.2.
 a74d5125d88c3ca0e9392797b2a05ebe67b32555018f670694dcba0c380c37ae  CHANGELOG-0.2.24.section
 0c9fd1f26737631665e79237e9d1745e3b79d2d41be39fe7f291f45cbb04528d  CHANGELOG-0.2.25.section
 bb19c69f99ea07cbcca437782ff202e4fb4fc392459c979f9d1efbb269874382  CHANGELOG-0.2.26.section
+782d950177258e62c04bb6dab64efec04b8420084f1433d2fbb171944b3fcaa7  CHANGELOG-0.2.27.section
 4c5349793140662ff0d6ecdf9f33dc00a59d84c49278601004434ffb937b36c6  docs/release-notes-0.2.20.md
 388ebedb586fcdd0f17106f92dd15aa4be10e738a40b527a65e8c64c280ae87b  docs/release-notes-0.2.21.md
 58b95987679839b537ed5ce6834f0f8327ed6951139de5bcc89d61b8cbd4aeaf  docs/release-notes-0.2.22.md
@@ -85,6 +92,7 @@ bb19c69f99ea07cbcca437782ff202e4fb4fc392459c979f9d1efbb269874382  CHANGELOG-0.2.
 8459f4a206e920e05d915fe8af500963d3d7b808bfed8773969b1d7429d7dab9  docs/release-notes-0.2.24.md
 01a59ea6a105167797a83cc6a4822ad06524e3999f379338aff5ff877db4b199  docs/release-notes-0.2.25.md
 5a329f0e64c8ddacf5ee174379914eae88038293ba26f3f562f486183d6581be  docs/release-notes-0.2.26.md
+d58e37867a678665444df6907793881a20887f6b2cdab50889bdc1fa55443031  docs/release-notes-0.2.27.md
 fbf1a689730399628422936c6cd3c4fa19b0829170bf34ccda803988901b112b  README-0.2.15.section
 faed4dfb46100e036ba5b93b02b150f1c2c3fb82408224c3524fa41063e46c5c  README-0.2.16.section
 94f3c7309f1c05617ee9aeb33b394106cecfcf50c43b2145668081c09c4a353c  README-0.2.17.section
@@ -97,3 +105,4 @@ d0dc076f1ec0a2900ce23fb9a854efb96f61eb4c74945775458abbda7b6d4a00  README-0.2.19.
 c7c7b108239d52d725f99d438a0ccfa25fca053ea5afe3110e4b61eeea8d236d  README-0.2.24.section
 768e9ece07ff710479bb7e1189b306981714511c3bbef2c538e2dc0eadb73506  README-0.2.25.section
 b06a0f026416abd949da9888fbcaf4fc1b6c2fff737cc7a89823145dc12030b5  README-0.2.26.section
+79481cb25c8817ceca9dbce86c3369bc189e15081cc14158cc6fe08e74d31cb2  README-0.2.27.section
