@@ -91,6 +91,7 @@ jobs:
           sudo apt-get install --no-install-recommends -y \
             build-essential cmake ninja-build pkg-config qt6-base-dev \
             qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck
+          sudo rm -rf /var/cache/apt/archives/partial || true
 
       - name: Configure
         if: steps.classify.outputs.lane == 'shell'
@@ -162,6 +163,7 @@ jobs:
             build-essential cmake ninja-build pkg-config qt6-base-dev \
             qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck \
             ccache
+          sudo rm -rf /var/cache/apt/archives/partial || true
 
       - name: Configure
         env:
