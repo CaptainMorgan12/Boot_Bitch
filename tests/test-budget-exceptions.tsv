@@ -1,0 +1,11 @@
+# Boot Bitch test budget exceptions (approvals).
+# Rows are appended only by `tests/test-manifest.sh approve <test> '<note>'`.
+# An exception row excludes the test's declared cost_s from its tier's budget
+# sum (and from the quick budget when quick=y), covering a deliberate overage.
+#
+# Row format: test<TAB>tier<TAB>date<TAB>note
+#   test   full ctest test name (must exist in test-manifest.tsv)
+#   tier   the test's tier (must match test-manifest.tsv)
+#   date   approval date, YYYY-MM-DD
+#   note   why the overage is accepted (single line, no tabs)
+#

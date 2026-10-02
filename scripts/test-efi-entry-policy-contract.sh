@@ -7,9 +7,13 @@
 #     on the selected system ESP, and at most one shim entry per drive;
 #   * an existing entry is relabeled/reordered, never recreated (no duplicate
 #     `efibootmgr --create` calls);
-#   * firmware-generated device-path records are preserved exactly and never
-#     displace the managed BOOTX64.EFI fallback;
-#   * foreign-drive entries are preserved untouched;
+#   * redundant OEM device-path records are pruned on every drive (to zero
+#     when a managed BOOTX64.EFI fallback exists, to one when none exists) and
+#     never displace the managed BOOTX64.EFI fallback;
+#   * foreign-drive MANAGED destinations (UKI/fallback/WFAI/shim) and
+#     active/next entries are never pruned; redundant firmware device-path
+#     records are pruned on every drive, and only the active/next entry is
+#     protected;
 #   * BootOrder ranks each drive's primary destinations first (UKI, then the
 #     managed fallback and the firmware-owned fallback-device-path record),
 #     then the WebFAI recovery entries drive-major in the same host-first
@@ -202,11 +206,22 @@ host_role_count()
         done | grep -c . || true
 }
 
+foreign_role_count()
+{
+    local wanted="$1"
+    grep -E "^Boot[0-9A-Fa-f]{4}\*?[[:space:]]" "$EFI_TEST_STATE" \
+        | while IFS= read -r line; do
+            [[ "$(efi_entry_partuuid_line "$line")" == "$FOREIGN_PARTUUID" ]] || continue
+            [[ "$(efi_entry_policy_role "$line")" == "$wanted" ]] && printf 'x\n'
+        done | grep -c . || true
+}
+
 # ---------------------------------------------------------------------------
 # P1: the TUXEDO log state.  A managed fallback and a firmware device-path
 # fallback coexist on the host ESP: annotate relabels the managed entry, prune
-# must keep it (the observed regression removed it) and preserve the
-# device-path record, and grouping ranks each drive's primary pair first, the
+# must keep it (the observed regression removed it).  The device-path record
+# (Boot0002) is BootCurrent, so it is never removed even though a managed
+# fallback exists; grouping ranks each drive's primary pair first, the
 # WebFAI entries after them, and the removable USB record last.
 # ---------------------------------------------------------------------------
 reset_fixture
@@ -323,8 +338,11 @@ efi_prune_selected_duplicate_destinations > "$WORK_ROOT/p3a.out" 2>&1 || {
 if grep -q 'shimx64.efi' "$EFI_TEST_STATE"; then
     fail_test 'P3a kept the redundant legacy TUXEDO shim under Secure Boot disabled'
 fi
-grep -q '^BootOrder: 0005,0007,0002$' "$EFI_TEST_STATE" \
+grep -q '^BootOrder: 0005,0007$' "$EFI_TEST_STATE" \
     || fail_test "P3a BootOrder is wrong: $(grep '^BootOrder:' "$EFI_TEST_STATE")"
+# The non-active redundant device-path record is pruned alongside the shim.
+grep -q '^Boot0002' "$EFI_TEST_STATE" \
+    && fail_test 'P3a kept the redundant device-path record next to a managed fallback'
 
 # (b) Secure Boot enabled -> the shim chain is needed and retained.
 reset_fixture
@@ -401,8 +419,9 @@ efi_prune_selected_duplicate_destinations > "$WORK_ROOT/p3g.out" 2>&1 || {
     || fail_test 'P3g pruned a non-legacy vendor shim entry'
 
 # ---------------------------------------------------------------------------
-# P4: foreign-drive duplicates are preserved untouched; only the selected
-# system ESP is maintained.
+# P4: foreign-drive MANAGED duplicates (UKI/fallback/WFAI) are preserved
+# untouched; only the selected system ESP's managed destinations are maintained
+# and only firmware device-path records are pruned cross-drive.
 # ---------------------------------------------------------------------------
 reset_fixture
 cat > "$EFI_TEST_STATE" <<EOF
@@ -428,6 +447,186 @@ if grep -Eq -- '-b 000[1-4]' "$EFI_TEST_CALLS"; then
 fi
 cmp -s <(grep -E '^Boot000[1-4]' "$EFI_TEST_STATE") <(grep -E '^Boot000[1-4]' "$WORK_ROOT/p4-before.txt") \
     || fail_test 'P4 modified a foreign-drive entry'
+
+# ---------------------------------------------------------------------------
+# DP: redundant OEM device-path records, now pruned on EVERY drive.
+#   DP1  managed fallback on the host ESP -> host device-path records pruned to
+#        zero; the foreign drive has no managed fallback -> exactly one foreign
+#        device-path record is retained (the redundant extra is removed).
+#   DP2  no managed fallback -> exactly one host device-path record retained,
+#        and a lone foreign device-path record stays.
+#   DP3  active (BootCurrent) device-path record is never removed, even with a
+#        managed fallback present.
+#   DP4  next (BootNext) device-path record is never removed, even with a
+#        managed fallback present.
+#   DP5  foreign managed fallback present -> ALL foreign device-path records are
+#        pruned to zero while the foreign managed destinations stay untouched.
+#   DP6  a foreign active (BootCurrent) device-path record is never removed even
+#        when the foreign drive has a managed fallback; its redundant sibling is
+#        still pruned.
+#   DP7  a foreign next (BootNext) device-path record is never removed even when
+#        the foreign drive has a managed fallback.
+# ---------------------------------------------------------------------------
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0000,0001,0002,0003,0004,0005
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+Boot0004* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0005* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+EOF
+cp -- "$EFI_TEST_STATE" "$WORK_ROOT/dp1-before.txt"
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp1.out" 2>&1 || {
+    cat "$WORK_ROOT/dp1.out" >&2
+    fail_test 'DP1 prune failed'
+}
+[[ "$(host_role_count fallback-device-path)" -eq 0 ]] \
+    || fail_test 'DP1 kept a redundant host device-path record next to a managed fallback'
+[[ "$(host_role_count fallback)" -eq 1 ]] \
+    || fail_test 'DP1 removed the managed fallback entry'
+# The foreign drive has no managed fallback, so exactly one device-path record
+# survives and the redundant duplicate is pruned.
+[[ "$(foreign_role_count fallback-device-path)" -eq 1 ]] \
+    || fail_test 'DP1 did not keep exactly one foreign device-path record with no managed fallback'
+grep -q '^Boot0004' "$EFI_TEST_STATE" || fail_test 'DP1 removed the first foreign device-path entry'
+grep -q '^Boot0005' "$EFI_TEST_STATE" && fail_test 'DP1 kept the redundant foreign device-path entry Boot0005'
+if grep -Eq -- '-b 0005' "$EFI_TEST_CALLS"; then :; else
+    fail_test 'DP1 did not issue a delete for the redundant foreign device-path entry'
+fi
+
+# DP2: no managed fallback -> keep exactly one device-path record.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0000,0002,0003,0004
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0002* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+Boot0004* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp2.out" 2>&1 || {
+    cat "$WORK_ROOT/dp2.out" >&2
+    fail_test 'DP2 prune failed'
+}
+[[ "$(host_role_count fallback-device-path)" -eq 1 ]] \
+    || fail_test 'DP2 did not keep exactly one host device-path record with no managed fallback'
+grep -q '^Boot0004' "$EFI_TEST_STATE" || fail_test 'DP2 removed a foreign device-path entry'
+if grep -Eq -- '-b 0004' "$EFI_TEST_CALLS"; then
+    fail_test 'DP2 issued a delete for a foreign device-path entry'
+fi
+
+# DP3: the active (BootCurrent) device-path record is never removed.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0002
+BootOrder: 0000,0001,0002
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp3.out" 2>&1 || {
+    cat "$WORK_ROOT/dp3.out" >&2
+    fail_test 'DP3 prune failed'
+}
+grep -q '^Boot0002' "$EFI_TEST_STATE" || fail_test 'DP3 removed the active device-path record'
+
+# DP4: the next (BootNext) device-path record is never removed.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootNext: 0002
+BootOrder: 0000,0001,0002
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Host Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)0000424f
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp4.out" 2>&1 || {
+    cat "$WORK_ROOT/dp4.out" >&2
+    fail_test 'DP4 prune failed'
+}
+grep -q '^Boot0002' "$EFI_TEST_STATE" || fail_test 'DP4 removed the next device-path record'
+
+# DP5: a managed fallback on the FOREIGN drive makes every foreign
+# device-path record redundant: they are all pruned while the foreign managed
+# destinations (fallback, UKI, WebFAI) stay untouched.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootOrder: 0000,0001,0002,0003,0004,0005,0006
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0004* UEFI OS Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0005* TUXEDO UKI Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0006* WFAI Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\FAI\\iPXE.efi
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp5.out" 2>&1 || {
+    cat "$WORK_ROOT/dp5.out" >&2
+    fail_test 'DP5 prune failed'
+}
+[[ "$(foreign_role_count fallback-device-path)" -eq 0 ]] \
+    || fail_test 'DP5 kept a redundant foreign device-path record next to a foreign managed fallback'
+[[ "$(foreign_role_count fallback)" -eq 1 ]] \
+    || fail_test 'DP5 removed the foreign managed fallback entry'
+[[ "$(foreign_role_count uki)" -eq 1 ]] \
+    || fail_test 'DP5 removed the foreign managed UKI entry'
+[[ "$(foreign_role_count wfai)" -eq 1 ]] \
+    || fail_test 'DP5 removed the foreign managed WebFAI entry'
+grep -q '^Boot0002' "$EFI_TEST_STATE" && fail_test 'DP5 kept foreign device-path entry Boot0002'
+grep -q '^Boot0003' "$EFI_TEST_STATE" && fail_test 'DP5 kept foreign device-path entry Boot0003'
+grep -q '^Boot0004' "$EFI_TEST_STATE" || fail_test 'DP5 removed the foreign managed fallback Boot0004'
+grep -q '^Boot0005' "$EFI_TEST_STATE" || fail_test 'DP5 removed the foreign managed UKI Boot0005'
+grep -q '^Boot0006' "$EFI_TEST_STATE" || fail_test 'DP5 removed the foreign managed WebFAI Boot0006'
+
+# DP6: a foreign active (BootCurrent) device-path record is never removed even
+# when the foreign drive has a managed fallback; its redundant sibling is still
+# pruned.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0002
+BootOrder: 0000,0001,0002,0003,0004
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0004* UEFI OS Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp6.out" 2>&1 || {
+    cat "$WORK_ROOT/dp6.out" >&2
+    fail_test 'DP6 prune failed'
+}
+grep -q '^Boot0002' "$EFI_TEST_STATE" || fail_test 'DP6 removed the active foreign device-path record'
+grep -q '^Boot0003' "$EFI_TEST_STATE" && fail_test 'DP6 kept the redundant foreign device-path sibling Boot0003'
+[[ "$(foreign_role_count fallback-device-path)" -eq 1 ]] \
+    || fail_test 'DP6 did not keep exactly the active foreign device-path record'
+[[ "$(foreign_role_count fallback)" -eq 1 ]] \
+    || fail_test 'DP6 removed the foreign managed fallback entry'
+
+# DP7: a foreign next (BootNext) device-path record is never removed even when
+# the foreign drive has a managed fallback.
+reset_fixture
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0000
+BootNext: 0002
+BootOrder: 0000,0001,0002,0003,0004
+Boot0000* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0001* UEFI OS TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+Boot0002* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0003* UEFI: Foreign Disk, Partition 1 PciRoot(0x0)/HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)0000424f
+Boot0004* UEFI OS Foreign Disk HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\BOOTX64.EFI
+EOF
+efi_prune_selected_duplicate_destinations > "$WORK_ROOT/dp7.out" 2>&1 || {
+    cat "$WORK_ROOT/dp7.out" >&2
+    fail_test 'DP7 prune failed'
+}
+grep -q '^Boot0002' "$EFI_TEST_STATE" || fail_test 'DP7 removed the next foreign device-path record'
+grep -q '^Boot0003' "$EFI_TEST_STATE" && fail_test 'DP7 kept the redundant foreign device-path sibling Boot0003'
+[[ "$(foreign_role_count fallback-device-path)" -eq 1 ]] \
+    || fail_test 'DP7 did not keep exactly the next foreign device-path record'
 
 # ---------------------------------------------------------------------------
 # P5: the exact reported host state (two NVMe drives each with a TUXEDO UKI,

@@ -112,8 +112,10 @@ def main() -> int:
     parser.add_argument("--label", required=True)
     parser.add_argument("--backup", required=True)
     args = parser.parse_args()
-    if not args.bootnum.isdigit() or len(args.bootnum) != 4:
-        fail("Boot number must be exactly four decimal digits")
+    # Boot#### numbers are hexadecimal (efibootmgr reports Boot000A/Boot000B
+    # once more than ten entries exist), so the four digits may contain A-F.
+    if len(args.bootnum) != 4 or not all(c in "0123456789abcdefABCDEF" for c in args.bootnum):
+        fail("Boot number must be exactly four hexadecimal digits")
     try:
         partuuid = str(uuid.UUID(args.partuuid))
     except ValueError:

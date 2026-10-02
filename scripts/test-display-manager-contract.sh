@@ -29,10 +29,10 @@ grep -q 'display-manager.service does not resolve to \$DISPLAY_MANAGER_LABEL' "$
 grep -q 'Installed display managers and units' "$HELPER"
 grep -q 'Recent .*display-manager boot evidence' "$HELPER"
 grep -q 'sddm|gdm|lightdm|greetd' "$HELPER"
-grep -q 'will NOT be started inside the repair chroot' "$HELPER"
+grep -q 'msg_log dm-enable-offline' "$HELPER"
 grep -q '^trial_display_manager_headless()' "$HELPER"
 grep -q 'systemd-analyze --root=' "$HELPER"
-grep -q 'headless systemd verification' "$HELPER"
+grep -q 'msg_log dm-systemd-verify-pass' "$HELPER"
 
 # Fedora/RPM display path: the same offline systemd flow with GDM (Fedora
 # naming), rpm-aware installed-state queries and /etc/gdm/custom.conf.
@@ -42,6 +42,28 @@ grep -q 'gdm3.service|gdm3) printf' "$HELPER"
 grep -q 'known_services=(sddm.service gdm.service gdm3.service' "$HELPER"
 grep -q '/etc/gdm/custom.conf' "$HELPER"
 grep -q 'No supported package query backend is available' "$HELPER"
+
+# The helper's stdout is a machine-readable contract consumed by the GUI and the
+# contract tests, so it must pin a deterministic C locale before its first
+# external command: every spawned tool (systemctl, dpkg, apt-get, grub-probe,
+# ...) has to emit stable English regardless of the user's locale, otherwise the
+# display-manager is-enabled grep and the grub-probe error greps would stop
+# matching on a non-English system.  Assert the export sits in the top section
+# of the helper (before the first function definition), and that the regenerated
+# legacy helper carries the same pin near its top.
+helper_top="$(sed -n '1,/^[A-Za-z_][A-Za-z0-9_]*()[[:space:]]*$/p' "$HELPER")"
+grep -Fxq 'export LC_ALL=C' <<<"$helper_top" \
+    || { echo 'FAIL: helper does not export LC_ALL=C before its first external command' >&2; exit 1; }
+grep -Fxq 'export LANG=C' <<<"$helper_top" \
+    || { echo 'FAIL: helper does not export LANG=C before its first external command' >&2; exit 1; }
+
+LEGACY_HELPER="$ROOT_DIR/legacy/boot-repair-helper.sh"
+[[ -f "$LEGACY_HELPER" ]] || { echo 'FAIL: legacy helper is missing' >&2; exit 1; }
+legacy_top="$(sed -n '1,/^# =/p' "$LEGACY_HELPER")"
+grep -Fxq 'export LC_ALL=C' <<<"$legacy_top" \
+    || { echo 'FAIL: legacy helper does not export LC_ALL=C near its top' >&2; exit 1; }
+grep -Fxq 'export LANG=C' <<<"$legacy_top" \
+    || { echo 'FAIL: legacy helper does not export LANG=C near its top' >&2; exit 1; }
 
 # GDM is discovered from the installed unit when display-manager.service is
 # missing (the Fedora default layout), labelled GDM, and its rpm package name
@@ -144,8 +166,8 @@ grep -q '^target_apk_package_installed()' "$HELPER"
 grep -q 'Multiple OpenRC services provide display-manager' "$HELPER"
 grep -q 'sh -n' "$HELPER"
 grep -q 'rc-service -e' "$HELPER"
-grep -q 'OpenRC default-runlevel link' "$HELPER"
-grep -q 'OpenRC default runlevel already enabled' "$HELPER"
+grep -q 'msg_log dm-openrc-restore-link' "$HELPER"
+grep -q 'reason openrc-runlevel-enabled' "$HELPER"
 
 # adaptive_display_manager_repair dispatches to the OpenRC branch before the
 # systemd preflight/restore functions.
@@ -186,7 +208,7 @@ grep -q 'ln -sfn "/etc/init.d/\$DISPLAY_MANAGER_SERVICE"' <<<"$openrc_repair_bod
     run_chroot_try() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT=''; }
     ln -sfn /etc/init.d/lightdm "$dm_root/etc/runlevels/default/lightdm"
     dm_out="$(adaptive_alpine_display_manager_repair)"
-    grep -Fqx 'Repair change status display: unchanged|OpenRC default runlevel already enabled lightdm' <<<"$dm_out" \
+    grep -Fqx 'Repair change status display: unchanged|reason:openrc-runlevel-enabled|param:lightdm' <<<"$dm_out" \
         || { echo 'FAIL: OpenRC unchanged status is wrong' >&2; printf '%s\n' "$dm_out" >&2; exit 1; }
     rm -f "$dm_root/etc/runlevels/default/lightdm"
     dm_out="$(adaptive_alpine_display_manager_repair)"
@@ -203,5 +225,12 @@ grep -q 'ln -sfn "/etc/init.d/\$DISPLAY_MANAGER_SERVICE"' <<<"$openrc_repair_bod
     grep -Fq 'Multiple OpenRC services provide display-manager' <<<"$dm_out" \
         || { echo 'FAIL: ambiguous OpenRC reason is missing' >&2; exit 1; }
 )
+
+# Static regression guard: Ubuntu gdm3.service has `[Install] Alias=display-manager.service`
+# (no WantedBy), so `systemctl is-enabled gdm3` returns "alias", not "enabled".
+# The systemd restore/already-correct checks must accept every valid enabled
+# state (enabled, enabled-runtime, alias, indirect), not just "enabled".
+grep -Eq "grep -Exq 'enabled\|enabled-runtime\|alias\|indirect'" "$HELPER" \
+    || { echo 'FAIL: systemd display-manager is-enabled check no longer accepts the alias/indirect enabled states' >&2; exit 1; }
 
 echo "PASS: graphical login manager detection, diagnostics, and repair contract is wired."

@@ -230,6 +230,8 @@ private:
     QString selectedRoot() const;
     QString autoResolvedRoot(const QString &disk) const;
     QString autoResolvedLuks(const QString &disk) const;
+    QString resolvedUnlockedRoot(const QString &disk,
+                                 const QString &reportedRoot) const;
     QString unlockCandidateFor(const QString &disk) const;
     QString owningDiskFor(const DeviceRow &row) const;
     bool selectionComplete() const;
@@ -283,6 +285,15 @@ private:
     bool toolRunReady(int toolIndex, QString *reason) const;
     bool planStageSelected(int planIndex) const;
     bool planStageAvailable(int planIndex, QString *reason) const;
+    // Three-way presentation state for the Settings -> Full Repair checkboxes
+    // (mirrors MainWindow::CapabilityState). The fail-closed gate
+    // planStageAvailable() is planStageState() == PlanStageAvailable.
+    enum PlanStageState {
+        PlanStageUnavailable = 0,
+        PlanStageAvailable = 1,
+        PlanStageNoEvidence = 2
+    };
+    PlanStageState planStageState(int planIndex, QString *reason) const;
     QStringList selectedPlanStages() const;
     QStringList selectedPlanTitles() const;
     bool planRunReady(QString *reason) const;
@@ -490,6 +501,12 @@ private:
     // disabled, unchecked) without clobbering the user's choice, exactly like
     // MainWindow::m_fullRepairStagePreferences.
     std::vector<bool> m_planPreferences;
+    // Whether the per-stage preference above was actually read from QSettings
+    // (not the in-code default). A NoEvidence row keeps a persisted selection
+    // checkable (modern "absent evidence never greys out a saved selection"),
+    // while a first-run row with no persisted choice stays disabled until
+    // evidence arrives.
+    std::vector<bool> m_planPreferencesPersisted;
     // Last tooltip text applied per plan checkbox, so the availability pass
     // re-registers a tooltip only when the text changes (Qt3's QTipManager
     // reallocates the per-widget Tip record on every add).

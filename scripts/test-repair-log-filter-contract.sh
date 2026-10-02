@@ -23,7 +23,8 @@ fail_test() { echo "FAIL: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Static contract: the filter exists and every repair transcript pipeline
-# runs through it (run_chroot, run_chroot_try and both UKI builder paths).
+# runs through it (run_chroot, run_chroot_try and both UKI builder paths;
+# run_chroot_try_display delegates to run_chroot_try).
 # ---------------------------------------------------------------------------
 grep -q '^repair_log_filter()' "$HELPER" || fail_test 'missing repair_log_filter helper'
 filtered_pipelines="$(grep -c 'repair_log_filter | tee -a "\$SESSION_LOG"' "$HELPER" || true)"
@@ -172,5 +173,48 @@ grep -Fq 'update-initramfs: failed for /boot/initrd.img-6.1.0-test with 1.' "$WO
     || fail_test 'run_chroot hid the command failure'
 grep -Fq 'TPM2/LUKS verbose output filtered' "$SESSION_LOG" \
     || fail_test 'run_chroot session log was not filtered'
+
+# ---------------------------------------------------------------------------
+# Locale contract: display-only apply transcripts (run_chroot_try_display)
+# re-inherit the caller's locale captured before the helper pins LC_ALL=C,
+# while parsed transcripts (run_chroot_try and every simulation/probe) keep the
+# C pin.  Run in a fresh subshell so the helper's `export LC_ALL=C` at source
+# time cannot leak into the rest of this test.  The locale string is only
+# propagated, never validated, so an uninstalled test locale is harmless.
+# ---------------------------------------------------------------------------
+locale_out="$(LC_ALL=de_DE.UTF-8 LANG=de_DE.UTF-8 bash -c '
+    set -Eeuo pipefail
+    source <(sed "/^main \"\$@\"\$/d" "$1")
+    SESSION_LOG=/dev/null
+    capture_file="$(mktemp)"
+    run_selected_chroot() {
+        local a
+        for a in "$@"; do
+            case "$a" in
+                LC_ALL=*) printf "%s\n" "${a#LC_ALL=}" > "$capture_file" ;;
+            esac
+        done
+        printf "tool transcript\n"
+    }
+    run_chroot_try_display "display-only apply" /bin/true >/dev/null 2>&1
+    printf "display=%s\n" "$(cat "$capture_file")"
+    : > "$capture_file"
+    run_chroot_try "parsed transcript" /bin/true >/dev/null 2>&1
+    printf "parsed=%s\n" "$(cat "$capture_file")"
+    rm -f -- "$capture_file"
+    printf "caller=%s\n" "${BOOT_REPAIR_CALLER_LC_ALL}"
+' _ "$HELPER")"
+
+grep -Fqx 'display=de_DE.UTF-8' <<<"$locale_out" \
+    || fail_test 'run_chroot_try_display did not propagate the caller locale'
+grep -Fqx 'parsed=' <<<"$locale_out" \
+    || fail_test 'run_chroot_try must not propagate the caller locale (LC_ALL=C pin)'
+grep -Fqx 'caller=de_DE.UTF-8' <<<"$locale_out" \
+    || fail_test 'caller locale was not captured before the helper export LC_ALL=C'
+
+# The dnf5 simulation (a parsed safety transcript) must keep its explicit
+# LC_ALL=C pin so its "Removing:"/"nothing provides" greps stay deterministic.
+sed -n '/^rpm_transaction_try()$/,/^}/p' "$HELPER" | grep -Fq 'LC_ALL=C' \
+    || fail_test 'dnf5 simulation lost its LC_ALL=C pin'
 
 echo "PASS: repair-log TPM2/LUKS verbose noise is filtered with errors preserved."

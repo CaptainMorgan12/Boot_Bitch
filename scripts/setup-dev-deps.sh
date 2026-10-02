@@ -101,7 +101,7 @@ optional_packages=()
 case "$family" in
 debian)
     base_packages=(
-        build-essential cmake ninja-build pkg-config qt6-base-dev qt6-svg-dev
+        build-essential cmake ninja-build ccache pkg-config qt6-base-dev qt6-svg-dev
         qt6-base-dev-tools extra-cmake-modules dpkg-dev desktop-file-utils
         lintian appstream pkexec util-linux mount rsync cryptsetup
         e2fsprogs dosfstools btrfs-progs xfsprogs systemd efibootmgr binutils
@@ -133,7 +133,7 @@ arch)
     # Never run -Sy alone. A full upgrade keeps the package database and
     # installed libraries in sync on Arch-family systems.
     base_packages=(
-        base-devel cmake ninja pkgconf qt6-base qt6-svg qt6-tools extra-cmake-modules
+        base-devel cmake ninja ccache pkgconf qt6-base qt6-svg qt6-tools extra-cmake-modules
         desktop-file-utils appstream polkit util-linux rsync cryptsetup
         e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils python
         hicolor-icon-theme lvm2 mdadm
@@ -148,7 +148,7 @@ arch)
 alpine)
     base_packages=(
         alpine-sdk doas bash coreutils findutils python3 gzip tar
-        cmake samurai gcc g++ pkgconf
+        cmake samurai ccache gcc g++ pkgconf
         qt6-qtbase-dev qt6-qtsvg-dev
         desktop-file-utils util-linux rsync cryptsetup
         e2fsprogs dosfstools btrfs-progs xfsprogs efibootmgr binutils
@@ -169,7 +169,7 @@ alpine)
     ;;
 rpm)
     base_packages=(
-        gcc-c++ cmake ninja-build pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
+        gcc-c++ cmake ninja-build ccache pkgconf-pkg-config qt6-qtbase-devel qt6-qtsvg-devel
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
         rsync cryptsetup e2fsprogs dosfstools btrfs-progs xfsprogs systemd
         efibootmgr binutils python3 hicolor-icon-theme lvm2 mdadm rpm-build
@@ -179,7 +179,7 @@ rpm)
     ;;
 suse)
     base_packages=(
-        gcc-c++ cmake ninja pkg-config libqt6-qtbase-devel libqt6svg6-dev
+        gcc-c++ cmake ninja ccache pkg-config libqt6-qtbase-devel libqt6svg6-dev
         extra-cmake-modules desktop-file-utils appstream polkit util-linux
         rsync cryptsetup e2fsprogs dosfstools btrfsprogs xfsprogs systemd
         efibootmgr binutils python3 hicolor-icon-theme lvm2 mdadm rpm-build

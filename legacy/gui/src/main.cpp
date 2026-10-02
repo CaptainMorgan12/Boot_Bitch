@@ -14,6 +14,8 @@
 #include <qobject.h>
 #include <qstring.h>
 #include <qstringlist.h>
+#include <qtextcodec.h>
+#include <qtranslator.h>
 
 #include <cstdio>
 #include <cstdlib>
@@ -109,6 +111,74 @@ QString discoverHelper(const QString &override, const QString &argv0)
         }
     }
     return QString::fromLatin1("/usr/sbin/boot-repair-legacy-helper");
+}
+
+// The Boot Bitch legacy UI translator. It must outlive the QApplication (the
+// window can still resolve tr() while tearing down), so it lives in
+// function-local static storage rather than on main()'s stack.
+QTranslator &legacyUiTranslator()
+{
+    static QTranslator translator;
+    return translator;
+}
+
+// Best two-letter UI language for the desktop locale, mirroring the modern
+// QLocale-based detection with Qt3's QTextCodec::locale() (Qt 3.3.7 has no
+// QLocale), falling back to LC_ALL then LANG and taking the left(2) code.
+QString legacyUiLanguage()
+{
+    const char *codecLocale = QTextCodec::locale();
+    if (codecLocale && *codecLocale) {
+        const QString locale = QString::fromLatin1(codecLocale).left(2).lower();
+        if (!locale.isEmpty()) {
+            return locale;
+        }
+    }
+    const char *lcAll = ::getenv("LC_ALL");
+    if (lcAll && *lcAll) {
+        const QString locale = QString::fromLatin1(lcAll).left(2).lower();
+        if (!locale.isEmpty()) {
+            return locale;
+        }
+    }
+    const char *lang = ::getenv("LANG");
+    if (lang && *lang) {
+        const QString locale = QString::fromLatin1(lang).left(2).lower();
+        if (!locale.isEmpty()) {
+            return locale;
+        }
+    }
+    return QString::null;
+}
+
+// Installs the best-matching Boot Bitch legacy UI translation for the current
+// desktop locale, falling back to English (no translator) when none is found.
+// Mirrors src/main.cpp installUiTranslator(): installed packages ship catalogs
+// under <prefix>/share/boot-repair-legacy/translations, source-tree runs
+// resolve them from a translations/ directory beside the executable. The
+// helper and the application log stay English (the backend's LC_ALL=C
+// machine-readable contract); this only translates the Qt3 GUI chrome.
+bool installLegacyUiTranslator(QApplication *application)
+{
+    QStringList dirs;
+    dirs.append(application->applicationDirPath()
+        + QString::fromLatin1("/../share/boot-repair-legacy/translations"));
+    dirs.append(application->applicationDirPath()
+        + QString::fromLatin1("/translations"));
+    const QString language = legacyUiLanguage();
+    if (language.isEmpty()) {
+        return false;
+    }
+    QTranslator &translator = legacyUiTranslator();
+    const QString fileName =
+        QString::fromLatin1("boot-repair-legacy_%1.qm").arg(language);
+    for (QStringList::ConstIterator it = dirs.begin(); it != dirs.end(); ++it) {
+        if (translator.load(fileName, *it)) {
+            application->installTranslator(&translator);
+            return true;
+        }
+    }
+    return false;
 }
 
 class SmokeReporter : public QObject
@@ -284,6 +354,13 @@ int main(int argc, char **argv)
 
     QApplication application(argc, argv);
     application.setName(QString::fromLatin1("boot-repair-legacy-gui"));
+    // Install the Boot Bitch legacy UI translation before any widget is
+    // constructed, so every tr() call in LegacyMainWindow resolves against the
+    // installed catalog. The smoke test asserts English control strings, so it
+    // bypasses the translator (the source English renders verbatim).
+    if (!smokeTest) {
+        installLegacyUiTranslator(&application);
+    }
     // Cycle 9 loop 3: the smoke settings isolation must be active BEFORE the
     // window is constructed (loadLegacySettings runs in the constructor), or
     // a persisted ~/.qt/repairrc etc. would be read and flip a smoke

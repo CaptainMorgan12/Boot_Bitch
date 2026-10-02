@@ -43,3 +43,27 @@ SOURCES = \
 
 # C++98 baseline (g++ 4.1 on Etch).
 QMAKE_CXXFLAGS += -std=c++98
+
+# Qt3 i18n: the shipped translation catalogs (sources). The .qm binaries are
+# compiled in-guest by Qt3 lrelease during packaging (scripts/package-legacy.sh),
+# because Qt3 and Qt6 .qm formats are incompatible. Deferred: zh ja ko ar (CJK
+# fonts / bidi not font-safe on Etch).
+TRANSLATIONS = \
+    translations/boot-repair-legacy_de.ts \
+    translations/boot-repair-legacy_fr.ts \
+    translations/boot-repair-legacy_es.ts \
+    translations/boot-repair-legacy_it.ts \
+    translations/boot-repair-legacy_pt.ts \
+    translations/boot-repair-legacy_nl.ts \
+    translations/boot-repair-legacy_sv.ts \
+    translations/boot-repair-legacy_da.ts \
+    translations/boot-repair-legacy_fi.ts \
+    translations/boot-repair-legacy_no.ts \
+    translations/boot-repair-legacy_pl.ts \
+    translations/boot-repair-legacy_cs.ts \
+    translations/boot-repair-legacy_hu.ts \
+    translations/boot-repair-legacy_ro.ts \
+    translations/boot-repair-legacy_tr.ts \
+    translations/boot-repair-legacy_el.ts \
+    translations/boot-repair-legacy_ru.ts \
+    translations/boot-repair-legacy_uk.ts

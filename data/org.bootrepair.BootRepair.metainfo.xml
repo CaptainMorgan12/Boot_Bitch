@@ -6,6 +6,28 @@
     <name>CaptainMorgan12</name>
   </developer>
   <summary>Inspect Linux systems and repair boot configuration</summary>
+  <summary xml:lang="de">Linux-Systeme untersuchen und die Boot-Konfiguration reparieren</summary>
+  <summary xml:lang="fr">Inspecter les systèmes Linux et réparer la configuration de démarrage</summary>
+  <summary xml:lang="es">Inspeccionar sistemas Linux y reparar la configuración de arranque</summary>
+  <summary xml:lang="it">Ispeziona i sistemi Linux e ripara la configurazione di avvio</summary>
+  <summary xml:lang="pt">Inspecione sistemas Linux e repare a configuração de inicialização</summary>
+  <summary xml:lang="nl">Inspecteer Linux-systemen en repareer de opstartconfiguratie</summary>
+  <summary xml:lang="pl">Sprawdź systemy Linux i napraw konfigurację rozruchu</summary>
+  <summary xml:lang="ru">Проверяйте системы Linux и исправляйте конфигурацию загрузки</summary>
+  <summary xml:lang="zh">检查 Linux 系统并修复启动配置</summary>
+  <summary xml:lang="ja">Linux システムを検査し、ブート構成を修復します</summary>
+  <summary xml:lang="ko">Linux 시스템 검사 및 부팅 구성 복구</summary>
+  <summary xml:lang="sv">Inspektera Linux-system och reparera startkonfigurationen</summary>
+  <summary xml:lang="da">Inspicér Linux-systemer og reparér opstartskonfigurationen</summary>
+  <summary xml:lang="fi">Tarkista Linux-järjestelmät ja korjaa käynnistyskokoonpano</summary>
+  <summary xml:lang="no">Inspiser Linux-systemer og reparer oppstartskonfigurasjonen</summary>
+  <summary xml:lang="cs">Zkontrolujte systémy Linux a opravte konfiguraci spouštění</summary>
+  <summary xml:lang="hu">Linux-rendszerek vizsgálata és a rendszerindítási konfiguráció javítása</summary>
+  <summary xml:lang="ro">Inspectați sistemele Linux și reparați configurația de pornire</summary>
+  <summary xml:lang="tr">Linux sistemlerini inceleyin ve önyükleme yapılandırmasını onarın</summary>
+  <summary xml:lang="el">Επιθεώρηση συστημάτων Linux και επισκευή των ρυθμίσεων εκκίνησης</summary>
+  <summary xml:lang="ar">فحص أنظمة Linux وإصلاح إعدادات الإقلاع</summary>
+  <summary xml:lang="uk">Перевіряйте системи Linux і виправляйте конфігурацію завантаження</summary>
   <url type="homepage">https://github.com/CaptainMorgan12/Boot_Bitch</url>
   <url type="bugtracker">https://github.com/CaptainMorgan12/Boot_Bitch/issues</url>
   <description>
@@ -19,6 +41,243 @@
     <p>
       Changes require confirmation and are recorded. Read-only diagnostics are
       available for both scopes before repair actions are run.
+    </p>
+    <p xml:lang="de">
+      Boot Bitch diagnostiziert Linux-Boot-Umgebungen und führt eine abgesicherte
+      Wartung des ausdrücklich ausgewählten laufenden Hosts oder
+      Wiederherstellungsoperationen an einem ausgewählten Reparatursystem durch.
+      Unterstützt werden verschlüsselte LUKS-Volumes, Btrfs-Subvolumes, GRUB,
+      initramfs, EFI/UKI-Bootpfade und die grafische Anmeldekonfiguration.
+    </p>
+    <p xml:lang="de">
+      Änderungen erfordern eine Bestätigung und werden protokolliert. Vor dem
+      Ausführen von Reparaturaktionen stehen für beide Bereiche schreibgeschützte
+      Diagnosen zur Verfügung.
+    </p>
+    <p xml:lang="fr">
+      Boot Bitch diagnostique les environnements de démarrage Linux et effectue une
+      maintenance contrôlée de l'hôte en cours d'exécution explicitement sélectionné
+      ou des opérations de récupération sur un système de réparation choisi. Il prend
+      en charge les volumes chiffrés LUKS, les sous-volumes Btrfs, GRUB, initramfs,
+      les chemins de démarrage EFI/UKI et la configuration de la connexion graphique.
+    </p>
+    <p xml:lang="fr">
+      Les modifications nécessitent une confirmation et sont consignées. Des
+      diagnostics en lecture seule sont disponibles pour les deux périmètres avant
+      l'exécution des actions de réparation.
+    </p>
+    <p xml:lang="es">
+      Boot Bitch diagnostica entornos de arranque de Linux y realiza un mantenimiento
+      controlado del host en ejecución seleccionado explícitamente o de operaciones de
+      recuperación en un sistema de reparación elegido. Admite volúmenes LUKS cifrados,
+      subvolúmenes Btrfs, GRUB, initramfs, rutas de arranque EFI/UKI y la configuración
+      del inicio de sesión gráfico.
+    </p>
+    <p xml:lang="es">
+      Los cambios requieren confirmación y quedan registrados. Los diagnósticos de solo
+      lectura están disponibles para ambos ámbitos antes de ejecutar las acciones de
+      reparación.
+    </p>
+    <p xml:lang="it">
+      Boot Bitch diagnostica gli ambienti di avvio Linux ed esegue la manutenzione
+      protetta dell'host in esecuzione selezionato esplicitamente o le operazioni
+      di ripristino su un sistema di riparazione selezionato. Supporta volumi LUKS
+      crittografati, sottovolumi Btrfs, GRUB, initramfs, percorsi di avvio EFI/UKI
+      e la configurazione dell'accesso grafico.
+    </p>
+    <p xml:lang="it">
+      Le modifiche richiedono conferma e vengono registrate. La diagnostica in
+      sola lettura è disponibile per entrambi gli ambiti prima dell'esecuzione
+      delle azioni di riparazione.
+    </p>
+    <p xml:lang="pt">
+      O Boot Bitch diagnostica ambientes de inicialização Linux e realiza a
+      manutenção protegida do host em execução selecionado explicitamente ou
+      operações de recuperação em um sistema de reparo selecionado. Ele oferece
+      suporte a volumes LUKS criptografados, subvolumes Btrfs, GRUB, initramfs,
+      caminhos de inicialização EFI/UKI e configuração gráfica de login.
+    </p>
+    <p xml:lang="pt">
+      As alterações exigem confirmação e são registradas. Diagnósticos somente
+      leitura estão disponíveis para ambos os escopos antes da execução das ações
+      de reparo.
+    </p>
+    <p xml:lang="nl">
+      Boot Bitch diagnosticeert Linux-opstartomgevingen en voert bewaakt onderhoud
+      uit aan de expliciet geselecteerde draaiende host of herstelbewerkingen op
+      een geselecteerd reparatiesysteem. Het ondersteunt versleutelde
+      LUKS-volumes, Btrfs-subvolumes, GRUB, initramfs, EFI/UKI-opstartpaden en
+      grafische aanmeldconfiguratie.
+    </p>
+    <p xml:lang="nl">
+      Wijzigingen vereisen bevestiging en worden vastgelegd. Alleen-lezen
+      diagnostiek is voor beide scopes beschikbaar voordat reparatieacties worden
+      uitgevoerd.
+    </p>
+    <p xml:lang="pl">
+      Boot Bitch diagnozuje środowiska rozruchu systemu Linux i wykonuje chronioną
+      konserwację jawnie wybranego działającego hosta lub operacje odzyskiwania w
+      wybranym systemie naprawczym. Obsługuje zaszyfrowane woluminy LUKS,
+      podwoluminy Btrfs, GRUB, initramfs, ścieżki rozruchu EFI/UKI oraz
+      konfigurację graficznego logowania.
+    </p>
+    <p xml:lang="pl">
+      Zmiany wymagają potwierdzenia i są rejestrowane. Diagnostyka tylko do
+      odczytu jest dostępna dla obu zakresów przed wykonaniem działań naprawczych.
+    </p>
+    <p xml:lang="ru">
+      Boot Bitch диагностирует среды загрузки Linux и выполняет защищённое
+      обслуживание явно выбранного работающего хоста или операции восстановления в
+      выбранной ремонтной системе. Поддерживаются зашифрованные тома LUKS, подтома
+      Btrfs, GRUB, initramfs, пути загрузки EFI/UKI и настройка графического
+      входа.
+    </p>
+    <p xml:lang="ru">
+      Изменения требуют подтверждения и фиксируются. Диагностика только для чтения
+      доступна для обоих областей до запуска действий по восстановлению.
+    </p>
+    <p xml:lang="zh">
+      Boot Bitch 诊断 Linux 启动环境，并对显式选择的运行中的主机执行受保护的维护，或对选定的修复系统执行恢复操作。它支持加密的 LUKS 卷、Btrfs 子卷、GRUB、initramfs、EFI/UKI 启动路径以及图形登录配置。
+    </p>
+    <p xml:lang="zh">
+      更改需要确认并会被记录。在执行修复操作之前，两个范围均提供只读诊断。
+    </p>
+    <p xml:lang="ja">
+      Boot Bitch は Linux のブート環境を診断し、明示的に選択された実行中のホストの保護された保守、または選択された修復システムでの復旧操作を実行します。暗号化された LUKS ボリューム、Btrfs サブボリューム、GRUB、initramfs、EFI/UKI ブートパス、グラフィカルログイン設定に対応しています。
+    </p>
+    <p xml:lang="ja">
+      変更には確認が必要で、記録されます。修復操作を実行する前に、両方のスコープで読み取り専用の診断を利用できます。
+    </p>
+    <p xml:lang="ko">
+      Boot Bitch는 Linux 부팅 환경을 진단하고, 명시적으로 선택된 실행 중인 호스트의 보호된 유지보수 또는 선택된 복구 시스템에서의 복구 작업을 수행합니다. 암호화된 LUKS 볼륨, Btrfs 하위 볼륨, GRUB, initramfs, EFI/UKI 부팅 경로 및 그래픽 로그인 구성을 지원합니다.
+    </p>
+    <p xml:lang="ko">
+      변경 사항은 확인이 필요하며 기록됩니다. 복구 작업을 실행하기 전에 두 범위 모두에서 읽기 전용 진단을 사용할 수 있습니다.
+    </p>
+    <p xml:lang="sv">
+      Boot Bitch diagnostiserar Linux-startmiljöer och utför bevakat underhåll av
+      den uttryckligen valda körande värden eller återställningsåtgärder på ett
+      valt reparationssystem. Det stöder krypterade LUKS-volymer,
+      Btrfs-undervolymer, GRUB, initramfs, EFI/UKI-startsökvägar och grafisk
+      inloggningskonfiguration.
+    </p>
+    <p xml:lang="sv">
+      Ändringar kräver bekräftelse och registreras. Skrivskyddad diagnostik är
+      tillgänglig för båda omfattningarna innan reparationsåtgärder körs.
+    </p>
+    <p xml:lang="da">
+      Boot Bitch diagnosticerer Linux-opstartsmiljøer og udfører bevogtet
+      vedligeholdelse af den eksplicit valgte kørende vært eller
+      genoprettelseshandlinger på et valgt reparationssystem. Det understøtter
+      krypterede LUKS-volumener, Btrfs-undervolumener, GRUB, initramfs,
+      EFI/UKI-opstartsstier og grafisk login-konfiguration.
+    </p>
+    <p xml:lang="da">
+      Ændringer kræver bekræftelse og registreres. Skrivebeskyttet diagnostik er
+      tilgængelig for begge omfang, før reparationshandlinger køres.
+    </p>
+    <p xml:lang="fi">
+      Boot Bitch diagnosoi Linux-käynnistysympäristöt ja suorittaa valvottua
+      ylläpitoa nimenomaisesti valitulle käynnissä olevalle isännälle tai
+      palautustoimintoja valitulle korjausjärjestelmälle. Se tukee salattuja
+      LUKS-taltioita, Btrfs-alitaltioita, GRUBia, initramfsia,
+      EFI/UKI-käynnistyspolkuja ja graafista kirjautumiskokoonpanoa.
+    </p>
+    <p xml:lang="fi">
+      Muutokset vaativat vahvistuksen ja ne kirjataan. Vain luku -diagnostiikka on
+      saatavilla molemmille laajuuksille ennen korjaustoimien suorittamista.
+    </p>
+    <p xml:lang="no">
+      Boot Bitch diagnostiserer Linux-oppstartsmiljøer og utfører bevoktet
+      vedlikehold av den eksplisitt valgte kjørende verten eller
+      gjenopprettingsoperasjoner på et valgt reparasjonssystem. Det støtter
+      krypterte LUKS-volumer, Btrfs-undervolumer, GRUB, initramfs,
+      EFI/UKI-oppstartsstier og grafisk påloggingskonfigurasjon.
+    </p>
+    <p xml:lang="no">
+      Endringer krever bekreftelse og registreres. Skrivebeskyttet diagnostikk er
+      tilgjengelig for begge omfangene før reparasjonshandlinger kjøres.
+    </p>
+    <p xml:lang="cs">
+      Boot Bitch diagnostikuje spouštěcí prostředí systému Linux a provádí
+      chráněnou údržbu explicitně vybraného běžícího hostitele nebo operace obnovy
+      na vybraném opravném systému. Podporuje šifrované svazky LUKS, podsvazky
+      Btrfs, GRUB, initramfs, spouštěcí cesty EFI/UKI a konfiguraci grafického
+      přihlášení.
+    </p>
+    <p xml:lang="cs">
+      Změny vyžadují potvrzení a zaznamenávají se. Diagnostika pouze pro čtení je
+      k dispozici pro oba rozsahy před spuštěním opravných akcí.
+    </p>
+    <p xml:lang="hu">
+      A Boot Bitch diagnosztizálja a Linux rendszerindítási környezeteket, és
+      őrzött karbantartást végez az explicit módon kiválasztott futó gazdagépen,
+      vagy helyreállítási műveleteket hajt végre egy kiválasztott
+      javítórendszeren. Támogatja a titkosított LUKS-köteteket, a
+      Btrfs-alköteteket, a GRUB-ot, az initramfs-t, az EFI/UKI rendszerindítási
+      útvonalakat és a grafikus bejelentkezési konfigurációt.
+    </p>
+    <p xml:lang="hu">
+      A módosítások megerősítést igényelnek, és naplózásra kerülnek. Mindkét kör
+      esetében csak olvasható diagnosztika érhető el a javítási műveletek
+      futtatása előtt.
+    </p>
+    <p xml:lang="ro">
+      Boot Bitch diagnostichează mediile de pornire Linux și efectuează
+      întreținerea protejată a gazdei în execuție selectate explicit sau
+      operațiuni de recuperare pe un sistem de reparare selectat. Suportă volume
+      LUKS criptate, subvolume Btrfs, GRUB, initramfs, căi de pornire EFI/UKI și
+      configurarea grafică a autentificării.
+    </p>
+    <p xml:lang="ro">
+      Modificările necesită confirmare și sunt înregistrate. Diagnosticarea doar
+      în citire este disponibilă pentru ambele domenii înainte de rularea
+      acțiunilor de reparare.
+    </p>
+    <p xml:lang="tr">
+      Boot Bitch, Linux önyükleme ortamlarını teşhis eder ve açıkça seçilen
+      çalışan ana bilgisayarda korumalı bakım veya seçilen bir onarım sisteminde
+      kurtarma işlemleri gerçekleştirir. Şifreli LUKS birimlerini, Btrfs alt
+      birimlerini, GRUB'u, initramfs'ı, EFI/UKI önyükleme yollarını ve grafiksel
+      oturum açma yapılandırmasını destekler.
+    </p>
+    <p xml:lang="tr">
+      Değişiklikler onay gerektirir ve kaydedilir. Onarım işlemleri
+      çalıştırılmadan önce her iki kapsam için de salt okunur tanılama
+      kullanılabilir.
+    </p>
+    <p xml:lang="el">
+      Το Boot Bitch διαγιγνώσκει περιβάλλοντα εκκίνησης Linux και εκτελεί
+      προστατευμένη συντήρηση του ρητά επιλεγμένου τρέχοντος κεντρικού υπολογιστή
+      ή λειτουργίες ανάκτησης σε ένα επιλεγμένο σύστημα επισκευής. Υποστηρίζει
+      κρυπτογραφημένους τόμους LUKS, υποτόμους Btrfs, GRUB, initramfs, διαδρομές
+      εκκίνησης EFI/UKI και ρυθμίσεις γραφικής σύνδεσης.
+    </p>
+    <p xml:lang="el">
+      Οι αλλαγές απαιτούν επιβεβαίωση και καταγράφονται. Διαγνωστικά μόνο για
+      ανάγνωση είναι διαθέσιμα και για τα δύο πεδία πριν από την εκτέλεση των
+      ενεργειών επισκευής.
+    </p>
+    <p xml:lang="ar">
+      يقوم Boot Bitch بتشخيص بيئات الإقلاع في Linux وينفّذ صيانة محمية للمضيف قيد
+      التشغيل المحدد صراحةً أو عمليات الاسترداد على نظام إصلاح محدد. وهو يدعم
+      وحدات تخزين LUKS المشفّرة، ووحدات Btrfs الفرعية، وGRUB، وinitramfs، ومسارات
+      الإقلاع EFI/UKI، وإعدادات تسجيل الدخول الرسومي.
+    </p>
+    <p xml:lang="ar">
+      تتطلب التغييرات تأكيدًا ويتم تسجيلها. تتوفر التشخيصات للقراءة فقط لكلا
+      النطاقين قبل تنفيذ إجراءات الإصلاح.
+    </p>
+    <p xml:lang="uk">
+      Boot Bitch діагностує середовища завантаження Linux і виконує захищене
+      обслуговування явно вибраного запущеного хоста або операції відновлення у
+      вибраній системі ремонту. Він підтримує зашифровані томи LUKS, підтоми
+      Btrfs, GRUB, initramfs, шляхи завантаження EFI/UKI та налаштування
+      графічного входу.
+    </p>
+    <p xml:lang="uk">
+      Зміни вимагають підтвердження та записуються. Діагностика лише для читання
+      доступна для обох областей перед виконанням дій з ремонту.
     </p>
   </description>
   <launchable type="desktop-id">org.bootrepair.BootRepair.desktop</launchable>
@@ -57,6 +316,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.27" date="2026-09-28">
+      <description>
+        <p>A development-speed release: faster CI, parallel and cache-aware gates, an incremental hygiene scan, guarded build caching and a test-budget contract, plus Qt 3 legacy GUI parity fixes.</p>
+      </description>
+    </release>
     <release version="0.2.26" date="2026-09-26">
       <description>
         <p>Comprehensive security hardening of the helper, both GUIs, the legacy port generator and the packaging tooling:</p>

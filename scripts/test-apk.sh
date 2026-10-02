@@ -166,6 +166,18 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
     }
 done
 
+# Committed Qt UI translation catalogs must ship in every package format so
+# the GUI localizes instead of falling back to English-only.
+translations_dir="$TMP/root/usr/share/boot-repair/translations"
+[[ -d "$translations_dir" ]] || {
+    echo "FAIL: translation catalog directory is missing from the package: usr/share/boot-repair/translations" >&2
+    exit 1
+}
+find "$translations_dir" -name '*.qm' -print | grep -q . || {
+    echo "FAIL: the translation catalog directory carries no compiled .qm catalogs." >&2
+    exit 1
+}
+
 grep -q '<id>org.bootrepair.BootRepair</id>' \
     "$TMP/root/usr/share/metainfo/org.bootrepair.BootRepair.metainfo.xml" || {
     echo "FAIL: AppStream metadata has the wrong component ID." >&2

@@ -1,5 +1,6 @@
 #include "CapabilityChecker.h"
 
+#include <QCoreApplication>
 #include <QFile>
 #include <QMap>
 #include <QRegularExpression>
@@ -244,29 +245,29 @@ QList<Capability> CapabilityChecker::scanHost()
     };
 
     static const Requirement requirements[] = {
-        {"Device discovery", "lsblk", "Host", "Required for block-device inventory", false},
-        {"Filesystem identification", "blkid", "Host", "Used to identify filesystem metadata", false},
-        {"Mount inspection", "findmnt", "Host", "Used to understand active mounts", false},
-        {"LUKS support", "cryptsetup", "Host", "Required to unlock encrypted targets", true},
-        {"Btrfs support", "btrfs", "Host", "Required for Btrfs inspection and snapshot rollback", true},
-        {"Bidirectional file copy", "rsync", "Host/Repair", "Required for verified Host-to-Repair and Repair-to-Host transfer", true},
-        {"Chroot repair", "chroot", "Host", "Required for target-side repair commands", true},
-        {"Offline systemd repair", "systemctl", "Host/Repair", "Used to restore graphical.target and the configured display manager without starting the target GUI", true},
-        {"UEFI NVRAM inspection", "efibootmgr", "Host", "Used to preserve target EFI BootOrder during TUXEDO UKI rebuilds when efivars are available", true},
-        {"UKI verification", "objcopy", "Host", "Used to verify the kernel embedded in a rebuilt unified kernel image", true},
-        {"GRUB EFI repair", "grub-install", "Target/Host", "Required only for conventional GRUB-based EFI systems", true},
-        {"GRUB configuration", "update-grub", "Target", "Debian-family GRUB helper", true},
-        {"GRUB configuration", "grub-mkconfig", "Target", "Portable GRUB configuration generator used by Arch and other non-Debian systems", true},
-        {"Initramfs rebuild", "update-initramfs", "Target", "Debian-family initramfs helper", true},
-        {"Initramfs rebuild", "mkinitcpio", "Target", "Arch-family initramfs generator", true},
-        {"Initramfs rebuild", "dracut", "Target", "Alternative initramfs generator used by Arch and other distributions", true},
-        {"Initramfs verification", "lsinitcpio", "Target", "Read-only verification for mkinitcpio images", true},
-        {"Initramfs verification", "lsinitrd", "Target", "Read-only verification for dracut images", true},
-        {"systemd-boot inspection", "bootctl", "Host/Target", "Read-only inspection of systemd-boot and generic UKI layouts", true},
-        {"Arch package manager", "pacman", "Host/Target", "Arch-family package database and transaction tool", true},
-        {"DKMS rebuild", "dkms", "Target", "Required only when target uses DKMS modules", true},
-        {"LVM inspection", "lvs", "Host", "Optional LVM storage-stack support", true},
-        {"Software RAID", "mdadm", "Host", "Optional Linux MD RAID support", true}
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Device discovery"), "lsblk", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required for block-device inventory"), false},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Filesystem identification"), "blkid", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Used to identify filesystem metadata"), false},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Mount inspection"), "findmnt", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Used to understand active mounts"), false},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "LUKS support"), "cryptsetup", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required to unlock encrypted targets"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Btrfs support"), "btrfs", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required for Btrfs inspection and snapshot rollback"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Bidirectional file copy"), "rsync", QT_TRANSLATE_NOOP("CapabilityChecker", "Host/Repair"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required for verified Host-to-Repair and Repair-to-Host transfer"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Chroot repair"), "chroot", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required for target-side repair commands"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Offline systemd repair"), "systemctl", QT_TRANSLATE_NOOP("CapabilityChecker", "Host/Repair"), QT_TRANSLATE_NOOP("CapabilityChecker", "Used to restore graphical.target and the configured display manager without starting the target GUI"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "UEFI NVRAM inspection"), "efibootmgr", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Used to preserve target EFI BootOrder during TUXEDO UKI rebuilds when efivars are available"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "UKI verification"), "objcopy", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Used to verify the kernel embedded in a rebuilt unified kernel image"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "GRUB EFI repair"), "grub-install", QT_TRANSLATE_NOOP("CapabilityChecker", "Target/Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required only for conventional GRUB-based EFI systems"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "GRUB configuration"), "update-grub", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Debian-family GRUB helper"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "GRUB configuration"), "grub-mkconfig", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Portable GRUB configuration generator used by Arch and other non-Debian systems"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Initramfs rebuild"), "update-initramfs", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Debian-family initramfs helper"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Initramfs rebuild"), "mkinitcpio", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Arch-family initramfs generator"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Initramfs rebuild"), "dracut", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Alternative initramfs generator used by Arch and other distributions"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Initramfs verification"), "lsinitcpio", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Read-only verification for mkinitcpio images"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Initramfs verification"), "lsinitrd", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Read-only verification for dracut images"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "systemd-boot inspection"), "bootctl", QT_TRANSLATE_NOOP("CapabilityChecker", "Host/Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Read-only inspection of systemd-boot and generic UKI layouts"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Arch package manager"), "pacman", QT_TRANSLATE_NOOP("CapabilityChecker", "Host/Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Arch-family package database and transaction tool"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "DKMS rebuild"), "dkms", QT_TRANSLATE_NOOP("CapabilityChecker", "Target"), QT_TRANSLATE_NOOP("CapabilityChecker", "Required only when target uses DKMS modules"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "LVM inspection"), "lvs", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Optional LVM storage-stack support"), true},
+        {QT_TRANSLATE_NOOP("CapabilityChecker", "Software RAID"), "mdadm", QT_TRANSLATE_NOOP("CapabilityChecker", "Host"), QT_TRANSLATE_NOOP("CapabilityChecker", "Optional Linux MD RAID support"), true}
     };
 
     const QString distro = distributionId();
@@ -274,10 +275,10 @@ QList<Capability> CapabilityChecker::scanHost()
 
     for (const Requirement &requirement : requirements) {
         Capability capability;
-        capability.feature = QString::fromLatin1(requirement.feature);
+        capability.feature = QCoreApplication::translate("CapabilityChecker", requirement.feature);
         capability.command = QString::fromLatin1(requirement.command);
-        capability.scope = QString::fromLatin1(requirement.scope);
-        capability.note = QString::fromLatin1(requirement.note);
+        capability.scope = QCoreApplication::translate("CapabilityChecker", requirement.scope);
+        capability.note = QCoreApplication::translate("CapabilityChecker", requirement.note);
         capability.optional = requirement.optional;
         capability.executablePath = resolveExecutablePortable(capability.command);
         capability.available = !capability.executablePath.isEmpty();

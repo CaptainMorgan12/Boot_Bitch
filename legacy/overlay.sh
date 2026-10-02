@@ -768,7 +768,7 @@ legacy_target_efi_evidence()
 efi_unavailable_reason()
 {
     if ! legacy_target_efi_evidence; then
-        printf 'legacy BIOS target; no EFI boot path is available'
+        reason legacy-bios-no-efi
         return 1
     fi
     efi_unavailable_reason_modern
@@ -1044,20 +1044,27 @@ legacy_cancel_stage_check()
 
 # Shell-command tick watcher: polls the cancel surface every 0.2 s while
 # `child` (the backgrounded command pipeline) runs.  On a cancel request - or
-# when the helper itself died (kill -0 $PPID) - the child is terminated with
-# the modern bounded TERM -> KILL escalation.
+# when the helper itself died (kill -0 $PPID) - the watcher reaps the WHOLE
+# command tree: it snapshots the full descendant set and TERMs it (group-kill
+# for a proven leader, /proc descendant sweep for the rest) before the modern
+# bounded TERM -> KILL escalation of terminate_helper_tree, so deep
+# grandchildren are reached before the reparenting race can orphan them.
 legacy_cancel_watcher()
 {
-    local child="${1:-}"
+    local child="${1:-}" desc=""
     [[ -n "$child" ]] || return 0
     while kill -0 "$child" 2>/dev/null; do
         if ! kill -0 "$PPID" 2>/dev/null; then
             log "Helper parent died; reaping the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            desc="$(legacy_timeout_descendants "$child" 2>/dev/null || true)"
+            legacy_timeout_terminate "$child" 0 TERM "$desc"
             terminate_helper_tree "$child" || true
             return 0
         fi
         if legacy_cancel_requested; then
             log "Cancel token observed; terminating the running shell command (bounded TERM then KILL)." | tee -a "$SESSION_LOG" >&2 || true
+            desc="$(legacy_timeout_descendants "$child" 2>/dev/null || true)"
+            legacy_timeout_terminate "$child" 0 TERM "$desc"
             terminate_helper_tree "$child" || true
             return 0
         fi
@@ -1730,6 +1737,39 @@ mount_recorded()
     rc=0
     mount_recorded_modern "$source" "$destination" "${retry_args[@]:-}" || rc=$?
     return "$rc"
+}
+
+# Cycle 14: on the 2.6.18 kernel `mount -o remount,rw <path>` of the helper's
+# own read-only /boot mount hangs inside the ext3 remount path (reproduced on
+# the Etch rig: Full Repair stopped at "Remounting target /boot read-write";
+# the boot entry is mounted `ro,noload` and its rw promotion deadlocks in the
+# remount path instead of taking the normal mount-time journal path).  The
+# legacy promotion detaches the recorded read-only mount and mounts the same
+# source fresh read-write inside the session tree — a plain mount, never a
+# remount.  The MOUNTS record is pruned (detached entries only, via the
+# shared mount_records_prune) and re-recorded through mount_recorded, so the
+# session cleanup still owns exactly one entry for the mountpoint.  Fail
+# closed: a promotion that cannot resolve, detach or remount aborts the stage
+# instead of leaving the later write stages on a read-only filesystem.
+legacy_remount_rw()
+{
+    local dest="$1" source="$2" row=""
+    [[ -n "$dest" ]] || fail "Internal legacy remount destination error."
+    if [[ -z "$source" ]]; then
+        # No fstab entry (an ESP-by-GPT-type helper record): read the
+        # effective mount's source back from the mount table before detaching.
+        row="$(target_mount_top "$dest" 2>/dev/null || true)"
+        source="$(awk '{print $2}' <<<"$row")"
+    fi
+    [[ -n "$source" ]] \
+        || fail "Unable to determine the source of the recorded target mount $dest; refusing to promote it read-write."
+    umount "$dest" \
+        || fail "Unable to detach the read-only target mount $dest for the read-write promotion."
+    # Never forget a still-mounted record: prune only detached entries.
+    mount_records_prune
+    mount_recorded "$source" "$dest" -o rw \
+        || fail "Unable to mount the target filesystem $source read-write at $dest."
+    log "Legacy promotion: $dest remounted read-write (unmount + fresh rw mount, 2.6.18-safe)" | tee -a "$SESSION_LOG"
 }
 
 # Etch-era fstab/crypttab entries name devices with bare host-relative paths
@@ -2533,9 +2573,12 @@ run_host_shell()
 # `timeout --foreground 300 --kill-after=10` - the compat.sh timeout shim
 # prefers a real coreutils timeout that supports --foreground and falls back
 # to the pure-bash watchdog on Etch (whose timeout binary predates
-# --foreground/--kill-after).  Etch deviation (documented): the watchdog can
-# only kill the direct child, so grandchildren of a killed shell may outlive
-# the bound.  EFI hosts keep the modern isolation+refusal path
+# --foreground/--kill-after).  The watchdog now spawns the command under
+# setsid (when available) and group-kills the whole tree, with a /proc
+# descendant-sweep fallback for hosts without setsid.  Etch deviation
+# (documented): only the setsid-less fallback can still miss a grandchild, so
+# grandchildren of a killed shell may outlive the bound there.  EFI hosts keep
+# the modern isolation+refusal path
 # (run_host_shell_modern): no firmware variables exist to isolate on this
 # BIOS-only host, so the legacy path is used here.
 legacy_host_shell()
@@ -2809,4 +2852,159 @@ mount_special()
             mount_special_modern "$@"
             ;;
     esac
+}
+
+# ---------------------------------------------------------------------------
+# Private /dev population (bounded, Etch 2.6.18)
+# ---------------------------------------------------------------------------
+
+# Cycle 15: the shared populate_writable_dev_filtered (renamed to
+# populate_writable_dev_filtered_modern) walks the WHOLE static /dev tree with
+# `find "$source" -mindepth 1` and stats/classifies every entry, then runs the
+# top-disk lsblk walk for every block device it meets.  On the 2.6.18 kernel
+# /dev is a static node tree (no devtmpfs) with thousands of entries (including
+# the /dev/.static MAKEDEV mirror), which made the private-/dev population take
+# 10-20 minutes during a Full Repair (reproduced on the Etch rig: the grub
+# stage sat in `find /dev`).  This legacy override makes the population
+# BOUNDED: the real block devices are enumerated from the sysfs block tree (a
+# handful of nodes — Etch /sys/block/<disk>[/<partition>], modern
+# /sys/class/block/*), only the selected target disk's block nodes/mappers are
+# copied, the essential character nodes and the device-mapper control node are
+# created directly, and only the disk/by-* and mapper/* alias directories are
+# scanned for link recreation.  Nothing else in the static /dev tree is ever
+# enumerated.  The private-/dev isolation semantics are unchanged: every write
+# stays on the private tmpfs and no device outside the selected target disk is
+# exposed.
+populate_writable_dev_filtered()
+{
+    local destination="$1" source="${2:-/dev}"
+    local kname entry rel link_text resolved target_kname top allowed
+    local copied_nodes=0 name type mode major minor
+    local -a allowed_tops=() entry_tops=() dev_knames=()
+    local -a allowed_nodes=() allowed_nodes_keys=()
+    local -a essential_nodes=(
+        'null c 1 3 666'
+        'zero c 1 5 666'
+        'full c 1 7 666'
+        'random c 1 8 666'
+        'urandom c 1 9 666'
+        'tty c 5 0 666'
+        'console c 5 1 600'
+    )
+
+    mkdir -p -- "$destination"
+
+    # Every block-device/mapper copy must resolve through the same top-disk
+    # walk the write-safety gates use to the selected target disk.
+    if [[ -n "$TARGET_DISK" ]]; then
+        legacy_readarray -t allowed_tops <<<"$(top_disks_for "$TARGET_DISK" 2>/dev/null | sort -u || true)"
+    fi
+    if ((${#allowed_tops[@]} == 0)); then
+        log "WARNING: private /dev filter: the selected target disk identity is unavailable; no block device or mapper will be exposed to the target chroot." | tee -a "$SESSION_LOG"
+    fi
+
+    # BOUNDED block enumeration: read the real block devices from the sysfs
+    # block tree, never a recursive find over the static /dev tree.
+    legacy_readarray -t dev_knames <<<"$(legacy_sys_block_all_dirs | awk -F/ '{print $NF}' | sort -u)"
+    for kname in "${dev_knames[@]:-}"; do
+        [[ -n "$kname" ]] || continue
+        entry="/dev/$kname"
+        [[ -b "$entry" ]] || continue
+        allowed=""
+        legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null | sort -u || true)"
+        for top in "${entry_tops[@]:-}"; do
+            for allowed_top in "${allowed_tops[@]:-}"; do
+                if [[ "$top" == "$allowed_top" ]]; then
+                    allowed=yes
+                    break 2
+                fi
+            done
+        done
+        [[ "$allowed" == yes ]] || continue
+        # Copy the REAL node (resolving Etch's /dev/.static alias) so the
+        # private /dev holds a genuine node at the canonical kname path.
+        resolved="$(readlink -f -- "$entry" 2>/dev/null || true)"
+        [[ -n "$resolved" && -b "$resolved" ]] || continue
+        cp -a -- "$resolved" "$destination/$kname" 2>/dev/null || true
+        legacy_assoc_set allowed_nodes "$kname" 1
+        copied_nodes=$((copied_nodes + 1))
+    done
+
+    # BOUNDED /dev/mapper enumeration: on Etch the mapper names are REAL block
+    # nodes (e.g. /dev/mapper/debian-root at 254:N), not the ../dm-N symlinks a
+    # modern udev creates, and grub-probe canonicalizes the chroot-visible root
+    # mount source through them.  Copy each on-target mapper node directly
+    # (control is the character device, handled later).
+    shopt -s nullglob
+    for entry in "$source"/mapper/*; do
+        [[ -b "$entry" ]] || continue
+        name="$(basename -- "$entry")"
+        [[ "$name" == control ]] && continue
+        allowed=""
+        legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null | sort -u || true)"
+        for top in "${entry_tops[@]:-}"; do
+            for allowed_top in "${allowed_tops[@]:-}"; do
+                if [[ "$top" == "$allowed_top" ]]; then
+                    allowed=yes
+                    break 2
+                fi
+            done
+        done
+        [[ "$allowed" == yes ]] || continue
+        cp -a -- "$entry" "$destination/mapper/$name" 2>/dev/null || true
+        copied_nodes=$((copied_nodes + 1))
+    done
+
+    # BOUNDED /dev/disk/by-* alias links: recreate only the symlinks that point
+    # at a block device actually copied for the selected target.  The original
+    # (relative) link text is kept so the link resolves INSIDE the private /dev
+    # against the copied node, never against the recovery host's /dev.
+    for entry in "$source"/disk/by-*/*; do
+        [[ -L "$entry" ]] || continue
+        resolved="$(readlink -f -- "$entry" 2>/dev/null || true)"
+        [[ -n "$resolved" ]] || continue
+        target_kname="$(basename -- "$resolved")"
+        legacy_assoc_has allowed_nodes "$target_kname" || continue
+        rel="${entry#"$source"/}"
+        link_text="$(readlink -- "$entry" 2>/dev/null || true)"
+        [[ -n "$link_text" ]] || continue
+        mkdir -p -- "$(dirname -- "$destination/$rel")"
+        ln -s -- "$link_text" "$destination/$rel" 2>/dev/null || true
+    done
+    shopt -u nullglob
+
+    # Essential character nodes, the device-mapper control node, the proc
+    # descriptor links and the mountpoint directories: all bounded and created
+    # directly, never read from a walked /dev tree.
+    for entry in "${essential_nodes[@]:-}"; do
+        name="${entry%% *}"
+        [[ -e "$destination/$name" ]] && continue
+        read -r name type major minor mode <<<"$entry"
+        mknod -m "$mode" "$destination/$name" "$type" "$major" "$minor" 2>/dev/null || true
+    done
+    # Device-mapper control node (char; 10:236 on modern kernels, 10:63 on
+    # Etch's 2.6.18): copied verbatim so dmsetup/cryptsetup can talk to the
+    # kernel's device-mapper if a target stage needs to.
+    if [[ -c "$source/mapper/control" && ! -e "$destination/mapper/control" ]]; then
+        mkdir -p -- "$destination/mapper"
+        cp -a -- "$source/mapper/control" "$destination/mapper/control" 2>/dev/null || true
+    fi
+    for name in fd stdin stdout stderr; do
+        [[ -e "$destination/$name" || -L "$destination/$name" ]] && continue
+        case "$name" in
+            fd) ln -s /proc/self/fd "$destination/fd" 2>/dev/null || true ;;
+            stdin) ln -s /proc/self/fd/0 "$destination/stdin" 2>/dev/null || true ;;
+            stdout) ln -s /proc/self/fd/1 "$destination/stdout" 2>/dev/null || true ;;
+            stderr) ln -s /proc/self/fd/2 "$destination/stderr" 2>/dev/null || true ;;
+        esac
+    done
+    mkdir -p -- "$destination/pts" "$destination/shm"
+    chmod 0755 -- "$destination/pts" 2>/dev/null || true
+    chmod 1777 -- "$destination/shm" 2>/dev/null || true
+    for name in mqueue hugepages; do
+        [[ -d "$source/$name" ]] || continue
+        mkdir -p -- "$destination/$name"
+        chmod --reference="$source/$name" "$destination/$name" 2>/dev/null || true
+    done
+    log "Private /dev filter: $copied_nodes block devices/mappers copied for the selected target disk (bounded sysfs enumeration; the static /dev tree was not walked)." | tee -a "$SESSION_LOG"
 }

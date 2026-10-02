@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.26 — maintenance release
+# Boot Bitch 0.2.27 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.26 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.27 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -8,14 +8,15 @@ This project was written with LLM assistance under human guidance, requirements 
 
 ## Supported systems
 
-Boot Bitch must be launched from a **different booted Linux environment for ordinary repair-target work**: a Linux live USB, recovery stick, or another Linux installation on a different physical drive. The running host can also be selected explicitly as a guarded Host Maintenance target. The GUI needs a Qt 6.4+ desktop. Repair backends are selected from read-only probe evidence, never from the distribution name:
+Boot Bitch must be launched from a **different booted Linux environment for ordinary repair-target work**: a Linux live USB, recovery stick, or another Linux installation on a different physical drive. The running host can also be selected explicitly as a guarded Host Maintenance target. The GUI needs a Qt 6.4+ desktop (the Debian Etch legacy edition runs on Etch's Qt 3 desktop). Repair backends are selected from read-only probe evidence, never from the distribution name:
 
 - **Debian / Ubuntu / TUXEDO and derivatives** — APT/dpkg package repair, initramfs-tools, DKMS, GRUB, TUXEDO UKI and EFI/UKI recovery.
 - **Arch-family** — sandboxed pacman transactions, mkinitcpio, conventional GRUB/EFI and systemd-boot/UKI layouts.
 - **Fedora / RHEL and openSUSE / SUSE** (0.2.25) — guarded DNF5/RPM package transactions, dracut initramfs with `lsinitrd` verification, GRUB2 configuration and boot-code repair, and the systemd GDM display path.
 - **Alpine** (0.2.25) — `apk fix`/`apk upgrade` transactions, mkinitfs initramfs, config-only extlinux regeneration, OpenRC display-manager restore and guarded UEFI GRUB repair.
+- **Debian Etch (legacy)** (0.2.26) — the Qt 3 / KDE 3.5 edition with the same privileged helper: LUKS unlock, split-LVM targets, guarded menu.lst regeneration, file copy, host maintenance and Make Default.
 
-Host Maintenance runs the supported stages natively on the active Debian/Ubuntu, Arch or Alpine system. EFI/UKI stages remain Debian/Arch-only, and unknown boot layouts are refused instead of guessed.
+Host Maintenance runs the supported stages natively on the active Debian/Ubuntu, Arch, Alpine or Debian Etch (legacy) system. EFI/UKI stages remain Debian/Arch-only, and unknown boot layouts are refused instead of guessed.
 
 ## Install
 
@@ -23,12 +24,13 @@ Download the artifact for your system from the GitHub release page and verify it
 
 | System | Artifact | Install |
 | --- | --- | --- |
-| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.25_amd64.deb` | `sudo apt install ./boot-repair_0.2.25_amd64.deb` |
-| Arch | `boot-bitch-0.2.25-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.25-x86_64.pkg.tar.zst` |
-| Fedora/RHEL | `boot-bitch-0.2.25.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.25.x86_64.rpm` |
-| openSUSE/SUSE | `boot-bitch-0.2.25.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.25.x86_64.rpm` |
-| Alpine | `boot-bitch-0.2.25.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.25.apk` |
-| Any Linux desktop | `boot-repair_0.2.25_x86_64.AppImage` | `chmod +x boot-repair_0.2.25_x86_64.AppImage && ./boot-repair_0.2.25_x86_64.AppImage` |
+| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.27_amd64.deb` | `sudo apt install ./boot-repair_0.2.27_amd64.deb` |
+| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.27-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.27-etch1_amd64.deb` |
+| Arch | `boot-bitch-0.2.27-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.27-x86_64.pkg.tar.zst` |
+| Fedora/RHEL | `boot-bitch-0.2.27.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.27.x86_64.rpm` |
+| openSUSE/SUSE | `boot-bitch-0.2.27.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.27.x86_64.rpm` |
+| Alpine | `boot-bitch-0.2.27.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.27.apk` |
+| Any Linux desktop | `boot-repair_0.2.27_x86_64.AppImage` | `chmod +x boot-repair_0.2.27_x86_64.AppImage && ./boot-repair_0.2.27_x86_64.AppImage` |
 
 The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-repair/boot-repair-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
 
@@ -98,6 +100,7 @@ Each packaging script stages a Release build and creates the artifact without in
 
 ```bash
 ./scripts/package-deb.sh       # Debian package
+./scripts/package-legacy.sh    # Debian Etch (Qt 3) legacy .deb (builds the -etch1 deb)
 ./scripts/package-arch.sh      # native Arch package (makepkg)
 ./scripts/package-rpm.sh       # RPM (CPack/rpmbuild)
 ./scripts/package-alpine.sh    # signed APK (abuild, Alpine build user)
@@ -165,7 +168,7 @@ The tests cover the MainWindow workflow plus the chroot-shell, display-manager, 
 - Btrfs rollback keeps the source snapshot unchanged, preserves the previous root as `@rollback-before-*`, and restores it automatically when critical post-switch validation fails.
 - Missing optional runtime tools disable only the related feature; host tools are never installed silently.
 
-Still intentionally constrained in 0.2.26:
+Still intentionally constrained in 0.2.27:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin, no separate `/boot` and no other nested `@` child subvolumes, and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed;
@@ -216,6 +219,35 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 ### Settings
 
 ![Settings for Full Repair stages, diagnostics refresh and safety controls](docs/screenshots/08-settings.png)
+
+## 0.2.27 refinements
+
+0.2.27 headlines full localization — a 22-language GUI with a language-independent backend — plus the startup-crash fix, process-leak repairs, helper hardening, the Debian Etch apt fix and a development-speed overhaul. Highlights:
+
+- Localization: the full GUI is translated into 22 languages via offline
+  machine translation, with a language-independent backend — the privileged
+  helper emits stable machine-readable `reason:`/`msg:` keys that the GUI
+  renders in the active locale, while the machine-parsed session log stays
+  English (`LC_ALL=C`) and only display-only transcripts follow the locale.
+- Reliability and UI polish: the startup crash is fixed (the
+  privileged-session readiness poll no longer nests an event loop); the Logs
+  tab drops the redundant Clear button and fixes the German Clear/Delete
+  collision; long titles elide and the Repair splitter is rebalanced.
+- Helper hardening: the parsed output is pinned English, ZFS and
+  display-manager detection are normalized, TUXEDO UKI `subvol=` and EFI
+  boot-number hex handling are corrected, and the Arch GRUB fallback loader is
+  reinstalled with an ESP backup/rollback.
+- Process-leak fixes: a timed-out or cancelled command reaps its whole process
+  tree (group kill plus a descendant cleanup) in the modern helper, the
+  Etch port and the test harness, so apt/dpkg/pacman grandchildren can no
+  longer outlive a run.
+- Debian Etch: `apt <action>` shell commands translate to `apt-get` on targets
+  without the modern apt binary, and the legacy GUI gains busy-indicator, Save
+  As… share-default and parsed `--log-dir` parity.
+- Development speed and test pipeline: a fast CI lane, parallel and
+  cache-aware gates, an incremental hygiene scan, checksum-gated builds and a
+  test-manifest budget contract; the UI suite is split into six translation
+  units for parallel compiles.
 
 ## 0.2.26 refinements
 

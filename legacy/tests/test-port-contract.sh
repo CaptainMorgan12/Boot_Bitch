@@ -99,11 +99,11 @@ for rule in \
     'assoc accesses: seen +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
-    'case conversion ,, +64' \
+    'case conversion ,, +66' \
     'case conversion \^\^ +15' \
     'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +299' \
-    'mapfile call sites +60' \
+    'array \[@\] expansions \(all forms\) +318' \
+    'mapfile call sites +61' \
     'sed -i -E +1' \
     'sed -nE +64' \
     'sed -E +16' \
@@ -112,8 +112,9 @@ for rule in \
     '=~ regex literal hoists +11' \
     'os-release gates +1' \
     'dpkg db:Status sites +4' \
-    'wrapped/replaced modern functions +42' \
+    'wrapped/replaced modern functions +43' \
     'mount-sweep process substitutions rewritten +6' \
+    'legacy boot-remount promotion sites +2' \
     'post-rewrite residual: mapfile +0' \
     'post-rewrite residual: sed -i -E +0' \
     'post-rewrite residual: sed -nE +0' \
@@ -122,11 +123,12 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +60' \
+    'shim calls: legacy_readarray +61' \
+    'shim calls: legacy_remount_rw +2' \
     'shim calls: legacy_sed_ext +81' \
     'shim calls: legacy_sort_versions +12' \
     'shim calls: legacy_date_iso +4' \
-    'shim calls: legacy_lc +64' \
+    'shim calls: legacy_lc +66' \
     'shim calls: legacy_uc +15' \
     'shim calls: legacy_ucfirst +23' \
     'shim calls: legacy_assoc_get +26' \
@@ -365,10 +367,22 @@ grep -q 'local rc="${LEGACY_CLEANUP_RC:-$?}"' "$HELPER" \
     || fail "generated helper cleanup_modern no longer preserves the handed-over rc (A9-09 follow-up)"
 grep -q 'Copied recovery-host resolver into the target chroot' "$HELPER" \
     || fail "generated helper lost the resolver copy path"
-grep -q 'Remounting target data filesystem ' "$HELPER" \
+grep -q 'msg_log remount-data-rw' "$HELPER" \
     || fail "generated helper lost the data-mount promotion line"
 grep -q '^remount_target_data_rw()' "$HELPER" \
     || fail "generated helper lost the unwrapped fail-closed data promotion"
+# Cycle 14: the boot-entry rw promotion must go through the legacy unmount +
+# fresh-rw-mount shim on both call sites; the in-place remount,rw form hangs
+# on the 2.6.18 kernel (Etch rig reproduction).
+grep -q 'legacy_remount_rw "$dest" ""' "$HELPER" \
+    || fail "generated helper lost the no-fstab-entry boot promotion"
+grep -q 'legacy_remount_rw "$dest" "$resolved"' "$HELPER" \
+    || fail "generated helper lost the fstab-entry boot promotion"
+grep -q '^legacy_remount_rw()' "$HELPER" \
+    || fail "generated helper lost the legacy_remount_rw promotion shim"
+if grep -q 'mount -o remount,rw "$dest"' "$HELPER"; then
+    fail "generated helper still promotes the boot entry with an in-place remount,rw (2.6.18 hang)"
+fi
 # A12-05: the mount-sweep hot paths must never feed an array from a process
 # substitution - bash 3.1.17 corrupts its /dev/fd fifo bookkeeping when
 # process substitution repeats inside the block sweep (reproduced on the Etch
@@ -378,17 +392,20 @@ grep -vE '^[[:space:]]*#' "$HELPER" > "$helper_code2"
 for sweep_fn in populate_writable_dev_filtered top_disks_for _top_disks_for_sysfs; do
     body="$(awk -v fn="$sweep_fn" '$0 ~ "^" fn "\\(\\)$" {f=1} f {print} f && /^}$/ {exit}' "$helper_code2")"
     [[ -n "$body" ]] || fail "generated helper lost $sweep_fn"
-    # Only the populate sweep's single outer find feed may stay (one process
-    # substitution for the whole loop, never one per swept entry).
     case "$sweep_fn" in
         populate_writable_dev_filtered)
-            ps_feed="$(printf '%s\n' "$body" | grep -c '< <(')"
-            [[ "$ps_feed" -le 1 ]] \
-                || fail "$sweep_fn still feeds arrays from process substitutions"
-            if printf '%s\n' "$body" | grep -q '< <(' \
-                && ! printf '%s\n' "$body" | grep -q '< <(find "\$source"'; then
-                fail "$sweep_fn kept a non-find process substitution feed"
+            # Cycle 15: the legacy override is BOUNDED - it enumerates block
+            # devices from the sysfs block tree and never runs a recursive
+            # find over the static /dev tree (the 10-20 min 2.6.18 hang).  No
+            # process-substitution feed may remain in the function.
+            if printf '%s\n' "$body" | grep -q '< <('; then
+                fail "$sweep_fn still feeds an array from a process substitution"
             fi
+            if printf '%s\n' "$body" | grep -q 'find "\$source"'; then
+                fail "$sweep_fn still walks the static /dev tree with find"
+            fi
+            printf '%s\n' "$body" | grep -q 'legacy_sys_block_all_dirs' \
+                || fail "$sweep_fn no longer enumerates block devices from the sysfs block tree"
             ;;
         *)
             if printf '%s\n' "$body" | grep -q '< <('; then
@@ -402,6 +419,33 @@ grep -q 'legacy_readarray -t entry_tops <<<"$(top_disks_for "$entry" 2>/dev/null
     || fail "generated helper lost the A12-05 here-string entry_tops sweep feed"
 grep -q 'legacy_readarray -t disks <<<"$(' "$HELPER" \
     || fail "generated helper lost the A12-05 here-string top_disks_for feed"
+# Cycle 15: the bounded private-/dev population surface.  The modern function
+# is renamed and the overlay override enumerates block devices from the sysfs
+# block tree, copies only the selected target disk's nodes plus the /dev/mapper
+# REAL nodes (Etch's mappers are not symlinks), mknod's the essential character
+# nodes and the device-mapper control node, and recreates the disk/by-* alias
+# links — with no recursive find over the static /dev tree and no exposure of a
+# foreign disk's devices.
+grep -q '^populate_writable_dev_filtered_modern()' "$HELPER" \
+    || fail "generated helper lost the renamed modern private-/dev populate"
+grep -q 'legacy_readarray -t dev_knames <<<"$(legacy_sys_block_all_dirs' "$HELPER" \
+    || fail "generated helper does not enumerate block devices from the sysfs block tree"
+grep -q 'cp -a -- "\$resolved" "\$destination/\$kname"' "$HELPER" \
+    || fail "generated helper does not copy the resolved real block node"
+grep -q 'legacy_assoc_set allowed_nodes "\$kname" 1' "$HELPER" \
+    || fail "generated helper does not record the copied kname for alias recreation"
+grep -q 'for entry in "\$source"/mapper/\*; do' "$HELPER" \
+    || fail "generated helper does not enumerate the /dev/mapper real nodes"
+grep -q 'cp -a -- "\$entry" "\$destination/mapper/\$name"' "$HELPER" \
+    || fail "generated helper does not copy the on-target /dev/mapper block nodes"
+grep -q 'for entry in "\$source"/disk/by-\*/\*; do' "$HELPER" \
+    || fail "generated helper does not scan the disk/by-* alias directories"
+grep -q 'legacy_assoc_has allowed_nodes "\$target_kname"' "$HELPER" \
+    || fail "generated helper does not gate alias recreation on the copied kname set"
+grep -q 'mknod -m "\$mode" "\$destination/\$name" "\$type" "\$major" "\$minor"' "$HELPER" \
+    || fail "generated helper does not mknod the essential character nodes"
+grep -q 'the static /dev tree was not walked' "$HELPER" \
+    || fail "generated helper lost the bounded-enumeration evidence log line"
 # A12-03: the legacy findmnt --target branch resolves the most specific
 # covering mount instead of the first (host-root) match.
 grep -q 'legacy_findmnt_path_match' "$HELPER" \

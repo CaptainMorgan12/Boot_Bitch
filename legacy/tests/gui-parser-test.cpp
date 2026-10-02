@@ -201,6 +201,86 @@ void testCapabilityModel(const std::string &fixture)
           "missing capability lines keep actions disabled");
 }
 
+// The three-way classification behind the Settings -> Full Repair presentation
+// (mirrors MainWindow::capabilityState). Available = exact cached `available`
+// line; Unavailable = explicit unavailable|reason (or stale/unknown key);
+// NoEvidence = no cached line yet (identity mismatch or no completed
+// diagnostics). The fail-closed gate (isAvailable) stays binary: only
+// Available unlocks an action.
+void testCapabilityState(const std::string &fixture)
+{
+    const std::string identity = "host|/dev/hda";
+    legacy::CapabilityModel model;
+    std::string reason;
+
+    // Before any diagnostics: every known key is NoEvidence, never Unavailable.
+    check(model.capabilityState("grub", identity, &reason)
+              == legacy::CapabilityModel::CapabilityNoEvidence,
+          "no diagnostics -> three-way state is NoEvidence");
+    check(contains(reason, "Run diagnostics"),
+          "no-evidence reason names the missing diagnostics");
+    check(!model.isAvailable("grub", identity, &reason),
+          "no diagnostics keeps the fail-closed gate disabled");
+
+    // Unknown keys fail closed as Unavailable, never NoEvidence.
+    check(model.capabilityState("mystery", identity, &reason)
+              == legacy::CapabilityModel::CapabilityUnavailable,
+          "unknown key is Unavailable (fail closed)");
+
+    model.applyDiagnosticTranscript(identity, fixture, true);
+
+    check(model.capabilityState("grub", identity, &reason)
+              == legacy::CapabilityModel::CapabilityAvailable,
+          "available capability line -> Available");
+    check(model.capabilityState("dkms", identity, &reason)
+              == legacy::CapabilityModel::CapabilityUnavailable,
+          "unavailable capability line -> Unavailable");
+    check(reason == "DKMS is not installed in the target",
+          "three-way unavailable reason is the helper's probe reason");
+
+    // Evidence belongs to another scope: NoEvidence, so a persisted Settings
+    // selection can stay visible instead of being greyed out as "unavailable".
+    check(model.capabilityState("grub", "target|/dev/hdb", &reason)
+              == legacy::CapabilityModel::CapabilityNoEvidence,
+          "diagnostics for another identity -> NoEvidence");
+    check(!model.isAvailable("grub", "target|/dev/hdb", &reason),
+          "identity mismatch keeps the fail-closed gate disabled");
+
+    // A diagnostic run that simply did not emit this key's line is NoEvidence,
+    // not a hard unavailable, so the plan checkbox can await a later run.
+    legacy::CapabilityModel partial;
+    partial.applyDiagnosticTranscript(identity, "Repair tool validate: available\n", true);
+    check(partial.capabilityState("validate", identity, &reason)
+              == legacy::CapabilityModel::CapabilityAvailable,
+          "partial run still reports the emitted key available");
+    check(partial.capabilityState("grub", identity, &reason)
+              == legacy::CapabilityModel::CapabilityNoEvidence,
+          "missing key line -> NoEvidence");
+    check(contains(reason, "No 'Repair tool grub:' line was cached"),
+          "missing-key NoEvidence reason names the exact line");
+    check(!partial.isAvailable("grub", identity, &reason),
+          "missing key line keeps the fail-closed gate disabled");
+
+    // A stale cache is a hard Unavailable (never NoEvidence): the repair was
+    // not proven unchanged, so the saved selection must not stay checkable.
+    model.applyCommandTranscript("Repair change status fixbroken: changed\n");
+    check(model.capabilityState("grub", identity, &reason)
+              == legacy::CapabilityModel::CapabilityUnavailable,
+          "stale diagnostics -> Unavailable");
+    check(contains(reason, "stale"),
+          "stale three-way reason is explicit");
+    check(!model.isAvailable("grub", identity, &reason),
+          "stale diagnostics keep the fail-closed gate disabled");
+
+    // A failed diagnostic run carries no evidence (NoEvidence), never a hard
+    // unavailable, matching the cleared-capabilities fail-closed state.
+    legacy::CapabilityModel failed;
+    failed.applyDiagnosticTranscript(identity, fixture, false);
+    check(failed.capabilityState("grub", identity, &reason)
+              == legacy::CapabilityModel::CapabilityNoEvidence,
+          "failed diagnostic run -> NoEvidence");
+}
+
 // The Etch target configuration probe: `Legacy config <key>:` lines from a
 // target diagnostic run decide which files the GUI may offer for editing.
 void testConfigFileProbe()
@@ -471,6 +551,146 @@ void testDeviceParsers()
     }
 }
 
+// The dm-name-collision / VG-mismatch regression (Etch legacy user test):
+// the running host's LVs (host VG `vghost`) and the unlocked peer's
+// LVs (VG `vgtarget`) are active at the same time, and the helper's
+// UNLOCKED_ROOT probe (LVM2 2.02.07 lacks `lv_path`) can mis-attribute the
+// running host's `vghost-root` LV as the unlocked root. The GUI re-resolves
+// from the freshly-rescanned inventory, so the inventory's dm parent-chain
+// must attribute each LV to its own disk: vghost-root -> hda5 (hda) and
+// vgtarget-root -> hdb5 (hdb). This fixture reproduces the real Etch topology
+// (major:minor 254:N == dm-N, slaves captured from /sys/block/dm-N/slaves).
+void testUnlockedRootDiskAttribution()
+{
+    const std::string partitions =
+        "major minor  #blocks  name\n"
+        "\n"
+        "   3     0    8388608 hda\n"
+        "   3     1     104391 hda1\n"
+        "   3     2          1 hda2\n"
+        "   3     5    8135863 hda5\n"
+        "   3    64    8388608 hdb\n"
+        "   3    65     104391 hdb1\n"
+        "   3    66          1 hdb2\n"
+        "   3    69    8135863 hdb5\n"
+        "  22     0      65536 hdc\n"
+        " 254     0    8135863 dm-0\n"
+        " 254     1    2379776 dm-1\n"
+        " 254     2     323584 dm-2\n"
+        " 254     3    5431296 dm-3\n"
+        " 254     4    8135863 dm-4\n"
+        " 254     5     282624 dm-5\n"
+        " 254     6    2891776 dm-6\n"
+        " 254     7    1384448 dm-7\n"
+        " 254     8     483328 dm-8\n"
+        " 254     9     253952 dm-9\n"
+        " 254    10    2838528 dm-10\n";
+    const std::vector<legacy::PartitionRecord> records =
+        legacy::parseProcPartitions(partitions);
+
+    std::vector<std::string> diskNames;
+    diskNames.push_back("hda");
+    diskNames.push_back("hdb");
+    diskNames.push_back("hdc");
+
+    std::map<std::string, std::string> attributes;
+    attributes["hda/size"] = "16777216\n";
+    attributes["hdb/size"] = "16777216\n";
+    attributes["hdc/size"] = "131072\n";
+    // dm-N/slaves as observed on the Etch 2.6.18 kernel after unlocking hdb5:
+    // the host stack sits on hda5_crypt (dm-0) -> hda5, the peer stack sits
+    // on luks-<uuid> (dm-4) -> hdb5.
+    attributes["dm-0/slave"] = "hda5\n";
+    attributes["dm-1/slave"] = "dm-0\n";
+    attributes["dm-2/slave"] = "dm-0\n";
+    attributes["dm-3/slave"] = "dm-0\n";
+    attributes["dm-4/slave"] = "hdb5\n";
+    attributes["dm-5/slave"] = "dm-4\n";
+    attributes["dm-6/slave"] = "dm-4\n";
+    attributes["dm-7/slave"] = "dm-4\n";
+    attributes["dm-8/slave"] = "dm-4\n";
+    attributes["dm-9/slave"] = "dm-4\n";
+    attributes["dm-10/slave"] = "dm-4\n";
+    attributes["dm-0/size"] = "8135863\n";
+    attributes["dm-1/size"] = "2379776\n";
+    attributes["dm-2/size"] = "323584\n";
+    attributes["dm-3/size"] = "5431296\n";
+    attributes["dm-4/size"] = "8135863\n";
+    attributes["dm-5/size"] = "282624\n";
+    attributes["dm-6/size"] = "2891776\n";
+    attributes["dm-7/size"] = "1384448\n";
+    attributes["dm-8/size"] = "483328\n";
+    attributes["dm-9/size"] = "253952\n";
+    attributes["dm-10/size"] = "2838528\n";
+
+    std::map<std::string, std::string> mapperLinks;
+    mapperLinks["/dev/mapper/hda5_crypt"] = "dm-0";
+    mapperLinks["/dev/mapper/vghost-root"] = "dm-1";
+    mapperLinks["/dev/mapper/vghost-swap_1"] = "dm-2";
+    mapperLinks["/dev/mapper/vghost-home"] = "dm-3";
+    mapperLinks["/dev/mapper/luks-11111111-2222-3333-4444-555555555555"] = "dm-4";
+    mapperLinks["/dev/mapper/vgtarget-root"] = "dm-5";
+    mapperLinks["/dev/mapper/vgtarget-usr"] = "dm-6";
+    mapperLinks["/dev/mapper/vgtarget-var"] = "dm-7";
+    mapperLinks["/dev/mapper/vgtarget-swap_1"] = "dm-8";
+    mapperLinks["/dev/mapper/vgtarget-tmp"] = "dm-9";
+    mapperLinks["/dev/mapper/vgtarget-home"] = "dm-10";
+
+    std::map<std::string, legacy::MountRecord> mounts;
+    legacy::MountRecord rootMount;
+    rootMount.source = "/dev/mapper/vghost-root";
+    rootMount.target = "/";
+    rootMount.fstype = "ext3";
+    mounts["/dev/mapper/vghost-root"] = rootMount;
+    legacy::MountRecord homeMount;
+    homeMount.source = "/dev/mapper/vghost-home";
+    homeMount.target = "/home";
+    homeMount.fstype = "ext3";
+    mounts["/dev/mapper/vghost-home"] = homeMount;
+
+    std::map<std::string, std::string> swaps;
+    swaps["/dev/mapper/vghost-swap_1"] = "partition";
+
+    std::map<std::string, std::string> probedFsByPath;
+    probedFsByPath["/dev/hda5"] = "crypto_LUKS";
+    probedFsByPath["/dev/hdb5"] = "crypto_LUKS";
+    probedFsByPath["/dev/hda1"] = "ext3";
+    probedFsByPath["/dev/hdb1"] = "ext3";
+
+    const std::vector<legacy::DeviceRow> rows = legacy::buildDeviceRows(
+        records, mounts, swaps, diskNames, attributes, mapperLinks,
+        std::map<std::string, std::string>(),
+        std::map<std::string, std::string>(), probedFsByPath);
+
+    std::map<std::string, legacy::DeviceRow> byPath;
+    for (std::size_t i = 0; i < rows.size(); ++i) {
+        byPath[rows[i].path] = rows[i];
+    }
+    const std::map<std::string, legacy::DeviceRow>::const_iterator hroot =
+        byPath.find("/dev/mapper/vghost-root");
+    const std::map<std::string, legacy::DeviceRow>::const_iterator proot =
+        byPath.find("/dev/mapper/vgtarget-root");
+    check(hroot != byPath.end(), "vghost-root row present");
+    check(proot != byPath.end(), "vgtarget-root row present");
+    check(hroot != byPath.end() && hroot->second.parent == "hda5",
+          "vghost-root resolves through hda5_crypt to its own hda5 partition");
+    check(proot != byPath.end() && proot->second.parent == "hdb5",
+          "vgtarget-root resolves through luks-<uuid> to the peer hdb5 partition");
+
+    // The GUI's rootBelongsToDisk / resolvedUnlockedRoot decisions key on the
+    // resolved parent chain: the mis-attributed running-host root must NOT
+    // belong to hdb, and the real unlocked root must. Re-check the exact
+    // predicate the GUI uses so the attribution cannot silently cross disks.
+    const std::map<std::string, legacy::DeviceRow>::const_iterator hdb5 =
+        byPath.find("/dev/hdb5");
+    const std::map<std::string, legacy::DeviceRow>::const_iterator hda5 =
+        byPath.find("/dev/hda5");
+    check(hdb5 != byPath.end() && !hdb5->second.disk && hdb5->second.parent == "hdb",
+          "hdb5 is a partition of hdb");
+    check(hda5 != byPath.end() && !hda5->second.disk && hda5->second.parent == "hda",
+          "hda5 is a partition of hda");
+}
+
 // The world-readable udev metadata probe: Etch's /dev/.udev/db records and
 // the modern /run/udev/data format share the "E:<KEY>=<value>" lines. The
 // filesystem-name helpers mirror the modern Linux-capable list and the
@@ -520,12 +740,12 @@ void testUnlockHelpers()
     const std::string okTranscript =
         "Unlocking LUKS target /dev/hda5\n"
         "UNLOCKED=/dev/mapper/luks-etchroot\n"
-        "UNLOCKED_ROOT=/dev/mapper/debian-root\n"
+        "UNLOCKED_ROOT=/dev/mapper/vgtarget-root\n"
         "UNLOCKED_ROOT_FSTYPE=ext3\n"
         "UNLOCKED_ROOT_UUID=smoke-uuid-value\n";
     check(legacy::unlockMapper(okTranscript) == "/dev/mapper/luks-etchroot",
           "unlock mapper path extracted");
-    check(legacy::unlockRoot(okTranscript) == "/dev/mapper/debian-root",
+    check(legacy::unlockRoot(okTranscript) == "/dev/mapper/vgtarget-root",
           "unlocked root component extracted");
     check(legacy::unlockRootFstype(okTranscript) == "ext3",
           "unlocked root fstype extracted");
@@ -591,8 +811,10 @@ int main(int argc, char **argv)
     const std::string fixture = readFile(argv[1]);
     testTranscriptParsing(fixture);
     testCapabilityModel(fixture);
+    testCapabilityState(fixture);
     testConfigFileProbe();
     testDeviceParsers();
+    testUnlockedRootDiskAttribution();
     testUdevMetadata();
     testUnlockHelpers();
     testStageMapping();

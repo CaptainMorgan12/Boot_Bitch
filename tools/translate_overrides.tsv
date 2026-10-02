@@ -1,0 +1,223 @@
+# Boot Bitch i18n machine-translation overrides.
+#
+# Format: source<TAB>de<TAB>fr<TAB>es
+#   - Blank lines and lines starting with '#' are ignored.
+#   - A cell may be empty to mean "no confident override for this language";
+#     that string then falls through to machine translation (or stays English).
+#   - The source column matches the UNESCAPED <source> text (e.g. "&File",
+#     not "&amp;File").  Use literal UTF-8 for ellipsis (…), bullet (•),
+#     arrows (→) and check/cross marks (✓/✗).
+#   - Overrides are applied LAST and always win over machine translation.
+Repair	Reparieren	Réparer	Reparar
+Unlock	Entsperren	Déverrouiller	Desbloquear
+Run All	Alle ausführen	Tout exécuter	Ejecutar todo
+Run Selected Repairs	Ausgewählte Reparaturen ausführen	Exécuter les réparations sélectionnées	Ejecutar reparaciones seleccionadas
+Run Full Repair	Vollständige Reparatur ausführen	Exécuter la réparation complète	Ejecutar la reparación completa
+Full Repair	Vollständige Reparatur	Réparation complète	Reparación completa
+Full Repair plan	Plan für die vollständige Reparatur	Plan de réparation complète	Plan de reparación completa
+Authorize	Autorisieren	Autoriser	Autorizar
+Select Target	Ziel auswählen	Sélectionner la cible	Seleccionar destino
+Select a repair target	Reparaturziel auswählen	Sélectionner une cible de réparation	Seleccionar un destino de reparación
+Select a repair target first	Zuerst ein Reparaturziel auswählen	Sélectionnez d'abord une cible de réparation	Primero seleccione un destino de reparación
+No repair target selected	Kein Reparaturziel ausgewählt	Aucune cible de réparation sélectionnée	Ningún destino de reparación seleccionado
+Repair targets	Reparaturziele	Cibles de réparation	Destinos de reparación
+Available repair targets	Verfügbare Reparaturziele	Cibles de réparation disponibles	Destinos de reparación disponibles
+Select a repair tool	Reparaturwerkzeug auswählen	Sélectionner un outil de réparation	Seleccionar una herramienta de reparación
+Individual repair tools	Einzelne Reparaturwerkzeuge	Outils de réparation individuels	Herramientas de reparación individuales
+Repair file system errors	Dateisystemfehler reparieren	Réparer les erreurs du système de fichiers	Reparar errores del sistema de archivos
+File system repair in progress	Dateisystemreparatur läuft	Réparation du système de fichiers en cours	Reparación del sistema de archivos en curso
+File system repair unavailable	Dateisystemreparatur nicht verfügbar	Réparation du système de fichiers indisponible	Reparación del sistema de archivos no disponible
+File system repair failed	Dateisystemreparatur fehlgeschlagen	Échec de la réparation du système de fichiers	Falló la reparación del sistema de archivos
+file system repaired — changes were applied	Dateisystem repariert — Änderungen wurden angewendet	système de fichiers réparé — modifications appliquées	sistema de archivos reparado — cambios aplicados
+Systems	Systeme	Systèmes	Sistemas
+Snapshots	Schnappschüsse	Instantanés	Instantáneas
+Diagnostics	Diagnose	Diagnostics	Diagnóstico
+Logs	Protokolle	Journaux	Registros
+Settings	Einstellungen	Paramètres	Ajustes
+File Copy	Dateikopie	Copie de fichiers	Copia de archivos
+File copy	Dateikopie	Copie de fichiers	Copia de archivos
+Chroot Shell	Chroot-Shell	Shell chroot	Shell chroot
+Chroot shell	Chroot-Shell	Shell chroot	Shell chroot
+Host Shell	Host-Shell	Shell de l'hôte	Shell del host
+Host shell	Host-Shell	Shell de l'hôte	Shell del host
+Host Maintenance	Host-Wartung	Maintenance de l'hôte	Mantenimiento del host
+Host Maintenance required	Host-Wartung erforderlich	Maintenance de l'hôte requise	Se requiere mantenimiento del host
+Exit Host Maintenance	Host-Wartung beenden	Quitter la maintenance de l'hôte	Salir del mantenimiento del host
+Boot diagnostics	Startdiagnose	Diagnostics de démarrage	Diagnóstico de arranque
+Boot errors	Startfehler	Erreurs de démarrage	Errores de arranque
+Environment validation	Umgebungsprüfung	Validation de l'environnement	Validación del entorno
+Btrfs snapshots	Btrfs-Schnappschüsse	Instantanés Btrfs	Instantáneas Btrfs
+File systems	Dateisysteme	Systèmes de fichiers	Sistemas de archivos
+File system	Dateisystem	Système de fichiers	Sistema de archivos
+Kernel / initramfs	Kernel / initramfs	Noyau / initramfs	Kernel / initramfs
+GRUB configuration	GRUB-Konfiguration	Configuration GRUB	Configuración de GRUB
+Disk usage	Speicherplatznutzung	Utilisation du disque	Uso del disco
+Device discovery	Geräteerkennung	Découverte des périphériques	Detección de dispositivos
+Issue summary	Problemübersicht	Résumé du problème	Resumen del problema
+Manual recovery tool	Manuelles Wiederherstellungswerkzeug	Outil de récupération manuel	Herramienta de recuperación manual
+Current running Linux system	Aktuell laufendes Linux-System	Système Linux actuellement en cours d'exécution	Sistema Linux en ejecución actual
+Protected system	Geschütztes System	Système protégé	Sistema protegido
+PROTECTED	GESCHÜTZT	PROTÉGÉ	PROTEGIDO
+Mounts:	Einhängepunkte:	Points de montage :	Puntos de montaje:
+Running Host: %1	Laufender Host: %1	Hôte en cours d'exécution : %1	Host en ejecución: %1
+Critical mounts: %1	Kritische Mounts: %1	Points de montage critiques : %1	Montajes críticos: %1
+Unlock status	Entsperrstatus	État du déverrouillage	Estado de desbloqueo
+Ready	Bereit	Prêt	Listo
+Ready — guarded repair mode	Bereit — geschützter Reparaturmodus	Prêt — mode de réparation protégée	Listo — modo de reparación protegida
+GUARDED REPAIR  •  %1	GESCHÜTZTE REPARATUR  •  %1	RÉPARATION PROTÉGÉE  •  %1	REPARACIÓN PROTEGIDA  •  %1
+✓ SELECTED TARGET  •  %1	✓ AUSGEWÄHLTES ZIEL  •  %1	✓ CIBLE SÉLECTIONNÉE  •  %1	✓ DESTINO SELECCIONADO  •  %1
+Chroot shell unavailable	Chroot-Shell nicht verfügbar	Shell chroot indisponible	Shell chroot no disponible
+Host shell unavailable	Host-Shell nicht verfügbar	Shell de l'hôte indisponible	Shell del host no disponible
+File Copy unavailable	Dateikopie nicht verfügbar	Copie de fichiers indisponible	Copia de archivos no disponible
+Repair unavailable	Reparatur nicht verfügbar	Réparation indisponible	Reparación no disponible
+Repair tool unavailable	Reparaturwerkzeug nicht verfügbar	Outil de réparation indisponible	Herramienta de reparación no disponible
+&File	&Datei	&Fichier	&Archivo
+&View	&Ansicht	&Affichage	&Ver
+&Help	&Hilfe	&Aide	&Ayuda
+Quit	Beenden	Quitter	Salir
+Clear	Leeren	Effacer	Borrar
+Remove	Entfernen	Supprimer	Quitar
+Delete	Löschen	Supprimer	Eliminar
+Refresh	Aktualisieren	Actualiser	Actualizar
+Run Command	Befehl ausführen	Exécuter la commande	Ejecutar comando
+Run Tool	Werkzeug ausführen	Exécuter l'outil	Ejecutar herramienta
+Run on Host	Auf Host ausführen	Exécuter sur l'hôte	Ejecutar en host
+Send Answer	Antwort senden	Envoyer la réponse	Enviar respuesta
+Reboot Now	Jetzt neu starten	Redémarrer maintenant	Reiniciar ahora
+Lock Administrator Session	Administratorsitzung sperren	Verrouiller la session administrateur	Bloquear sesión de administrador
+Make Default	Als Standard festlegen	Définir par défaut	Establecer como predeterminado
+Open Selected	Auswahl öffnen	Ouvrir la sélection	Abrir la selección
+Inspect Selected	Auswahl prüfen	Inspecter la sélection	Inspeccionar la selección
+Save Results…	Ergebnisse speichern…	Enregistrer les résultats…	Guardar resultados…
+Copy Results	Ergebnisse kopieren	Copier les résultats	Copiar resultados
+Clear Output	Ausgabe löschen	Effacer la sortie	Borrar salida
+Clear session log	Sitzungsprotokoll löschen	Effacer le journal de session	Borrar registro de sesión
+Save application log	Anwendungsprotokoll speichern	Enregistrer le journal d'application	Guardar registro de aplicación
+Session logs	Sitzungsprotokolle	Journaux de session	Registros de sesión
+Confirm File Copy	Dateikopie bestätigen	Confirmer la copie de fichiers	Confirmar copia de archivos
+Copy and Verify	Kopieren und prüfen	Copier et vérifier	Copiar y verificar
+Choose This Folder	Diesen Ordner auswählen	Choisir ce dossier	Elegir esta carpeta
+Load Snapshots	Schnappschüsse laden	Charger les instantanés	Cargar instantáneas
+Host → Repair	Host → Reparatur	Hôte → Réparation	Host → Reparación
+Repair → Host	Reparatur → Host	Réparation → Hôte	Reparación → Host
+About Boot Bitch	Über Boot Bitch	À propos de Boot Bitch	Acerca de Boot Bitch
+Running…	Läuft…	En cours…	Ejecutando…
+Scanning block devices…	Blockgeräte werden gescannt…	Analyse des périphériques bloc…	Escaneando dispositivos de bloque…
+Absolute path inside repaired system (for example /home/user/Recovered)		Chemin absolu à l'intérieur du système réparé (par exemple /home/user/Recovered)	
+Validate	Validieren	Valider	Validar
+Complete Configuration	Konfiguration abschließen	Terminer la configuration	Completar la configuración
+Repair Dependencies	Abhängigkeiten reparieren	Réparer les dépendances	Reparar dependencias
+Refresh Metadata	Metadaten aktualisieren	Actualiser les métadonnées	Actualizar metadatos
+Simulate and Upgrade	Simulieren und aktualisieren	Simuler et mettre à niveau	Simular y actualizar
+Rebuild DKMS	DKMS neu aufbauen	Reconstruire DKMS	Reconstruir DKMS
+Restore Graphical Login	Grafischen Login wiederherstellen	Restaurer la connexion graphique	Restaurar el acceso gráfico
+Rebuild Initramfs	initramfs neu aufbauen	Reconstruire les initramfs	Reconstruir initramfs
+Repair EFI / UKI	EFI / UKI reparieren	Réparer EFI / UKI	Reparar EFI / UKI
+Regenerate GRUB2	GRUB2 regenerieren	Régénérer GRUB2	Regenerar GRUB2
+Regenerate GRUB	GRUB regenerieren	Régénérer GRUB	Regenerar GRUB
+Regenerate extlinux	extlinux regenerieren	Régénérer extlinux	Regenerar extlinux
+Check File Systems	Dateisysteme prüfen	Vérifier les systèmes de fichiers	Verificar sistemas de archivos
+Reconcile Boot Stack	Boot-Stack abgleichen	Réconcilier la pile de démarrage	Reconciliar la pila de arranque
+Validate environment	Umgebung validieren	Valider l'environnement	Validar el entorno
+File system repair	Dateisystemreparatur	Réparation du système de fichiers	Reparación del sistema de archivos
+Complete package configuration	Paketkonfiguration abschließen	Terminer la configuration des paquets	Completar la configuración de paquetes
+Repair broken dependencies	Defekte Abhängigkeiten reparieren	Réparer les dépendances défectueuses	Reparar dependencias rotas
+Refresh package metadata	Paketmetadaten aktualisieren	Actualiser les métadonnées des paquets	Actualizar metadatos de paquetes
+Upgrade installed packages	Installierte Pakete aktualisieren	Mettre à niveau les paquets installés	Actualizar paquetes instalados
+Graphical login / display manager	Grafischer Login / Display-Manager	Connexion graphique / gestionnaire d'affichage	Acceso gráfico / gestor de pantalla
+EFI / UKI bootloader	EFI-/UKI-Bootloader	Chargeur de démarrage EFI / UKI	Gestor de arranque EFI / UKI
+extlinux configuration	extlinux-Konfiguration	Configuration extlinux	Configuración extlinux
+Boot stack reconciliation	Boot-Stack-Abgleich	Réconciliation de la pile de démarrage	Reconciliación de la pila de arranque
+Repair file system errors (read-only check first)	Dateisystemfehler reparieren (zuerst schreibgeschützte Prüfung)	Réparer les erreurs du système de fichiers (vérification en lecture seule d'abord)	Reparar errores del sistema de archivos (primero verificación de solo lectura)
+Complete interrupted package configuration	Unterbrochene Paketkonfiguration abschließen	Terminer la configuration de paquets interrompue	Completar la configuración de paquetes interrumpida
+Repair broken package dependencies	Defekte Paketabhängigkeiten reparieren	Réparer les dépendances de paquets cassées	Reparar dependencias de paquetes rotas
+Upgrade installed packages (adaptive APT simulation)	Installierte Pakete aktualisieren (adaptive APT-Simulation)	Mettre à niveau les paquets installés (simulation APT adaptative)	Actualizar paquetes instalados (simulación APT adaptativa)
+Rebuild DKMS modules	DKMS-Module neu aufbauen	Reconstruire les modules DKMS	Reconstruir los módulos DKMS
+Restore detected graphical login manager and graphical.target	Erkannten grafischen Login-Manager und graphical.target wiederherstellen	Restaurer le gestionnaire de connexion graphique détecté et graphical.target	Restaurar el gestor de acceso gráfico detectado y graphical.target
+Rebuild initramfs after mapper/crypttab validation	initramfs nach Mapper-/Crypttab-Prüfung neu aufbauen	Reconstruire initramfs après validation mapper/crypttab	Reconstruir initramfs tras la validación de mapper/crypttab
+Repair EFI / UKI boot path (explicit target ESP repair)	EFI-/UKI-Bootpfad reparieren (explizite Ziel-ESP-Reparatur)	Réparer le chemin de démarrage EFI / UKI (réparation explicite de l'ESP cible)	Reparar la ruta de arranque EFI / UKI (reparación explícita de la ESP de destino)
+Update GRUB configuration	GRUB-Konfiguration aktualisieren	Mettre à jour la configuration GRUB	Actualizar la configuración de GRUB
+Update extlinux configuration	extlinux-Konfiguration aktualisieren	Mettre à jour la configuration extlinux	Actualizar la configuración extlinux
+Rebuild initramfs	initramfs neu aufbauen	Reconstruire initramfs	Reconstruir initramfs
+Rebuild initramfs (dracut)	initramfs (dracut) neu aufbauen	Reconstruire initramfs (dracut)	Reconstruir initramfs (dracut)
+Rebuild initramfs (mkinitfs)	initramfs (mkinitfs) neu aufbauen	Reconstruire initramfs (mkinitfs)	Reconstruir initramfs (mkinitfs)
+Rebuild initramfs (mkinitcpio)	initramfs (mkinitcpio) neu aufbauen	Reconstruire initramfs (mkinitcpio)	Reconstruir initramfs (mkinitcpio)
+Repair EFI / UKI bootloader	EFI-/UKI-Bootloader reparieren	Réparer le chargeur de démarrage EFI / UKI	Reparar el gestor de arranque EFI / UKI
+Regenerate GRUB configuration	GRUB-Konfiguration regenerieren	Régénérer la configuration GRUB	Regenerar la configuración de GRUB
+Restore detected graphical login manager	Erkannten grafischen Login-Manager wiederherstellen	Restaurer le gestionnaire de connexion graphique détecté	Restaurar el gestor de acceso gráfico detectado
+Regenerate extlinux configuration	extlinux-Konfiguration regenerieren	Régénérer la configuration extlinux	Regenerar la configuración extlinux
+Reconcile boot stack	Boot-Stack abgleichen	Réconcilier la pile de démarrage	Reconciliar la pila de arranque
+Update GRUB2 configuration	GRUB2-Konfiguration aktualisieren	Mettre à jour la configuration GRUB2	Actualizar la configuración de GRUB2
+Reinstall GRUB2 bootloader	GRUB2-Bootloader neu installieren	Réinstaller le chargeur de démarrage GRUB2	Reinstalar el gestor de arranque GRUB2
+GRUB2 configuration	GRUB2-Konfiguration	Configuration GRUB2	Configuración GRUB2
+Repair Alpine packages (apk fix)	Alpine-Pakete reparieren (apk fix)	Réparer les paquets Alpine (apk fix)	Reparar paquetes de Alpine (apk fix)
+Upgrade Alpine packages (apk upgrade)	Alpine-Pakete aktualisieren (apk upgrade)	Mettre à niveau les paquets Alpine (apk upgrade)	Actualizar paquetes de Alpine (apk upgrade)
+Reinstall Alpine GRUB EFI loader	Alpine-GRUB-EFI-Loader neu installieren	Réinstaller le chargeur GRUB EFI d'Alpine	Reinstalar el cargador GRUB EFI de Alpine
+Regenerate Alpine GRUB configuration	Alpine-GRUB-Konfiguration regenerieren	Régénérer la configuration GRUB d'Alpine	Regenerar la configuración GRUB de Alpine
+Repair Arch package dependencies (full pacman transaction)	Arch-Paketabhängigkeiten reparieren (vollständige pacman-Transaktion)	Réparer les dépendances de paquets Arch (transaction pacman complète)	Reparar dependencias de paquetes de Arch (transacción pacman completa)
+Upgrade Arch packages (full pacman transaction)	Arch-Pakete aktualisieren (vollständige pacman-Transaktion)	Mettre à niveau les paquets Arch (transaction pacman complète)	Actualizar paquetes de Arch (transacción pacman completa)
+Upgrade Fedora packages (dnf upgrade)	Fedora-Pakete aktualisieren (dnf upgrade)	Mettre à niveau les paquets Fedora (dnf upgrade)	Actualizar paquetes de Fedora (dnf upgrade)
+Refresh package metadata (dnf makecache)	Paketmetadaten aktualisieren (dnf makecache)	Actualiser les métadonnées des paquets (dnf makecache)	Actualizar metadatos de paquetes (dnf makecache)
+Repair broken package dependencies (all detected package managers)	Defekte Paketabhängigkeiten reparieren (alle erkannten Paketmanager)	Réparer les dépendances de paquets cassées (tous les gestionnaires de paquets détectés)	Reparar dependencias de paquetes rotas (todos los gestores de paquetes detectados)
+Upgrade installed packages (all detected package managers)	Installierte Pakete aktualisieren (alle erkannten Paketmanager)	Mettre à niveau les paquets installés (tous les gestionnaires de paquets détectés)	Actualizar paquetes instalados (todos los gestores de paquetes detectados)
+Restore detected graphical login manager (OpenRC runlevel)	Erkannten grafischen Login-Manager wiederherstellen (OpenRC-Runlevel)	Restaurer le gestionnaire de connexion graphique détecté (runlevel OpenRC)	Restaurar el gestor de acceso gráfico detectado (runlevel de OpenRC)
+Restore detected graphical login manager (%1)	Erkannten grafischen Login-Manager wiederherstellen (%1)	Restaurer le gestionnaire de connexion graphique détecté (%1)	Restaurar el gestor de acceso gráfico detectado (%1)
+Run Repair	Reparatur ausführen	Exécuter la réparation	Ejecutar la reparación
+Preview File Copy	Dateikopie-Vorschau	Aperçu de la copie de fichiers	Vista previa de la copia de archivos
+Clear Register	Register leeren	Effacer le registre	Borrar el registro
+Browse…	Durchsuchen…	Parcourir…	Examinar…
+Edit Target File…	Zieldatei bearbeiten…	Modifier le fichier cible…	Editar archivo de destino…
+Roll Back to Selected	Zur Auswahl zurückrollen	Revenir à la sélection	Volver a la selección
+Re-run Diagnostic	Diagnose erneut ausführen	Réexécuter le diagnostic	Volver a ejecutar el diagnóstico
+Save As…	Speichern unter…	Enregistrer sous…	Guardar como…
+Refresh Devices	Geräte aktualisieren	Actualiser les périphériques	Actualizar dispositivos
+Run Diagnostic	Diagnose ausführen		Ejecutar diagnóstico
+Preview Changes	Vorschau der Änderungen		Vista previa de cambios
+Add Folder…	Ordner hinzufügen…		Añadir carpeta…
+Add File Path…	Dateipfad hinzufügen…	Ajouter un chemin de fichier…	Añadir ruta de archivo…
+Add Folder Path…	Ordnerpfad hinzufügen…	Ajouter un chemin de dossier…	Añadir ruta de carpeta…
+Choose Path…	Pfad wählen…	Choisir le chemin…	Elegir ruta…
+Show previous tab	Vorherige Registerkarte anzeigen		
+Show next tab	Nächste Registerkarte anzeigen		
+Detecting protected storage…	Geschützten Speicher erkennen…		
+Make Default unavailable	Als Standard festlegen nicht verfügbar	Définir par défaut indisponible	Establecer como predeterminado no disponible
+Administrator authorization required	Administratorautorisierung erforderlich	Autorisation de l'administrateur requise	Se requiere autorización de administrador
+Administrator authorization failed	Administratorautorisierung fehlgeschlagen	Échec de l'autorisation de l'administrateur	Falló la autorización de administrador
+Administrator authorization expired	Administratorautorisierung abgelaufen	Autorisation de l'administrateur expirée	La autorización de administrador expiró
+Administrator authorization	Administratorautorisierung	Autorisation de l'administrateur	Autorización de administrador
+Host Maintenance unavailable	Host-Wartung nicht verfügbar	Maintenance de l'hôte indisponible	Mantenimiento del host no disponible
+Diagnostics scope required	Diagnosebereich erforderlich	Portée de diagnostic requise	Se requiere ámbito de diagnóstico
+Diagnostics scope unresolved	Diagnosebereich nicht aufgelöst	Portée de diagnostic non résolue	Ámbito de diagnóstico sin resolver
+Diagnostic check required	Diagnoseprüfung erforderlich	Vérification de diagnostic requise	Se requiere verificación de diagnóstico
+Unlock not available	Entsperren nicht verfügbar	Déverrouillage indisponible	Desbloqueo no disponible
+Passphrase required	Passphrase erforderlich	Phrase secrète requise	Se requiere frase de contraseña
+Passphrase not accepted	Passphrase nicht akzeptiert	Phrase secrète non acceptée	Frase de contraseña no aceptada
+Already Unlocked	Bereits entsperrt	Déjà déverrouillé	Ya desbloqueado
+Unlock required before selection	Vor der Auswahl muss entsperrt werden	Déverrouillage requis avant la sélection	Se requiere desbloquear antes de seleccionar
+Committed target: none	Festgelegtes Ziel: keines	Cible validée : aucune	Destino confirmado: ninguno
+Selected drive details	Details des ausgewählten Laufwerks	Détails du lecteur sélectionné	Detalles del disco seleccionado
+Selected diagnostic	Ausgewählte Diagnose	Diagnostic sélectionné	Diagnóstico seleccionado
+Selected tool	Ausgewähltes Werkzeug	Outil sélectionné	Herramienta seleccionada
+Diagnostic checks	Diagnoseprüfungen	Vérifications de diagnostic	Verificaciones de diagnóstico
+Target configuration:	Zielkonfiguration:	Configuration de la cible :	Configuración del destino:
+Detecting running system...	Laufendes System wird erkannt...	Détection du système en cours d'exécution...	Detectando sistema en ejecución...
+Most likely first	Wahrscheinlichste zuerst	Le plus probable en premier	El más probable primero
+Pending inspection	Prüfung ausstehend	Inspection en attente	Inspección pendiente
+Read-only inventory only; run diagnostics to confirm.	Nur schreibgeschütztes Inventar; zur Bestätigung Diagnose ausführen.	Inventaire en lecture seule uniquement ; exécutez les diagnostics pour confirmer.	Solo inventario de solo lectura; ejecute el diagnóstico para confirmar.
+Helper-confirmed by the last read-only diagnostics.	Vom Helfer durch die letzte schreibgeschützte Diagnose bestätigt.	Confirmé par le helper lors des derniers diagnostics en lecture seule.	Confirmado por el helper mediante el último diagnóstico de solo lectura.
+No repair tool is selected.	Kein Reparaturwerkzeug ausgewählt.	Aucun outil de réparation sélectionné.	Ninguna herramienta de reparación seleccionada.
+Unknown Full Repair stage.	Unbekannte Phase der vollständigen Reparatur.	Étape de réparation complète inconnue.	Etapa de reparación completa desconocida.
+Protection:	Schutz:	Protection :	Protección:
+Connection:	Verbindung:	Connexion :	Conexión:
+Drive:	Laufwerk:	Lecteur :	Disco:
+Detected target:	Erkanntes Ziel:	Cible détectée :	Destino detectado:
+Model / label:	Modell / Bezeichnung:	Modèle / étiquette :	Modelo / etiqueta:
+Filesystem:	Dateisystem:	Système de fichiers :	Sistema de archivos:
+UUID:	UUID:	UUID :	UUID:
+Size:	Größe:	Taille :	Tamaño:
+Status:	Status:	État :	Estado:
+Field	Feld	Champ	Campo
+Value	Wert	Valeur	Valor
+Refreshing devices...	Geräte werden aktualisiert...	Actualisation des périphériques...	Actualizando dispositivos...
+No stages selected	Keine Phasen ausgewählt	Aucune étape sélectionnée	Ninguna etapa seleccionada
+GUARDED REPAIR	GESCHÜTZTE REPARATUR	RÉPARATION PROTÉGÉE	REPARACIÓN PROTEGIDA

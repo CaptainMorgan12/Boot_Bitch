@@ -12,6 +12,7 @@
 #include <QList>
 #include <QMainWindow>
 #include <QMap>
+#include <QPointer>
 #include <QSet>
 #include <QStringList>
 #include <QStyledItemDelegate>
@@ -45,6 +46,36 @@ class QTreeView;
 class QTreeWidget;
 class QTreeWidgetItem;
 class QToolButton;
+
+// Progress/output dialog for one privileged request. The Close button stays
+// disabled (and closeEvent/reject are refused) until the owner enables it, so
+// the dialog cannot be dismissed while the request is still running. A Full
+// Repair plan shares one plan-owned instance across every request of the plan:
+// the dialog appears the moment the plan starts and each stage's output
+// streams into the same pane; Close becomes usable only when the plan ends.
+class RepairProgressDialog final : public QDialog
+{
+public:
+    explicit RepairProgressDialog(const QString &title, QWidget *parent = nullptr);
+
+    void setCloseAllowed(bool allowed);
+
+    QLabel *statusLabel() const { return m_status; }
+    QPlainTextEdit *outputPane() const { return m_output; }
+    QPushButton *closeButton() const { return m_closeButton; }
+    void setStatusText(const QString &text);
+
+    void reject() override;
+
+protected:
+    void closeEvent(QCloseEvent *event) override;
+
+private:
+    QLabel *m_status = nullptr;
+    QPlainTextEdit *m_output = nullptr;
+    QPushButton *m_closeButton = nullptr;
+    bool m_closeAllowed = false;
+};
 
 // Numeric-aware sort support shared by every sortable table and tree in the
 // window. Formatted text stays in Qt::DisplayRole; a dedicated role carries the
@@ -370,6 +401,12 @@ private:
     void appendShellOutput(const QString &text);
     bool shellOutputAtBottom() const;
     bool shellCommandReady(QString *reason = nullptr) const;
+    // Shared gate for the Chroot/Host Shell Run Command button and its
+    // tooltip. While a diagnostics generation/refresh is in flight
+    // (m_evidenceRefreshInProgress or m_diagnosticsRunInProgress) the button
+    // is disabled with a clear reason so no command can run against a
+    // half-refreshed evidence state; it re-enables when the refresh completes.
+    void updateShellRunButtonState();
     void updateChrootShellMode();
     // APT release-info-change handling for user-run Chroot/Host shell commands.
     // The metadata-refresh repair stage names the affected repositories and
@@ -406,6 +443,12 @@ private:
     // status text contains, so two identities can never share an entry text
     // (which would make text-based replacement ambiguous).
     QString diagnosticRequestTitle(bool hostScope, const QString &key) const;
+    // Stable English machine-readable identity for a diagnostic request's
+    // status-log entry. It deliberately mirrors the pre-localization titles
+    // (the four exact "Run … diagnostics" / "Read-only … diagnostic" strings)
+    // so the status replacement key is locale-independent; the displayed
+    // message uses diagnosticRequestTitle() instead.
+    QString diagnosticRequestIdentity(bool hostScope, const QString &key) const;
     QString diagnosticStartStatusIdentity(bool hostScope, const QString &key) const;
     QString diagnosticCompletionStatusIdentity(bool hostScope, const QString &key) const;
     QString diagnosticRequestStatusIdentity(bool hostScope, const QString &key) const;
@@ -471,7 +514,6 @@ private:
     void refreshSessionLogList();
     void displaySessionLog(const QString &path);
     void startNewSessionLog();
-    void clearCurrentSessionLog();
     void addSessionNote();
     void deleteSelectedSessionLog();
     void pruneSessionLogs();
@@ -581,13 +623,24 @@ private:
                                  QByteArray secret = QByteArray(), bool *succeeded = nullptr,
                                  bool showProgressDialog = true,
                                  LogEntryKind kind = LogEntryKind::Application,
-                                 const QString &statusIdentity = QString());
+                                 const QString &statusIdentity = QString(),
+                                 RepairProgressDialog *sharedProgressDialog = nullptr);
     void closePrivilegedSession();
 
     // ---- Repair tools and result reporting -----------------------------------
 
     void runSelectedRepairTool();
     void runFullRepair();
+    // Creates and shows the plan-owned progress dialog right after the plan
+    // confirmation so the user sees it immediately (before the read-only file
+    // system check pre-stage completes); a stale dialog from an earlier plan
+    // is closed first. Every privileged request the plan runs streams into
+    // this one dialog instead of opening its own.
+    void beginFullRepairProgressDialog();
+    // Ends the plan-owned progress dialog: final status, Close enabled. The
+    // dialog stays open until the user closes it so the streamed output can
+    // be reviewed (WA_DeleteOnClose).
+    void finalizeFullRepairProgressDialog(bool planFailed);
     // Refuses a new repair entry point while runFilesystemRepairFlow() owns the
     // read-only check and the sequential per-device repairs. Returns true when
     // the request was refused: a clear modal message was shown and the refusal
@@ -710,6 +763,23 @@ private:
     bool currentDefaultUsesEfiFirmware() const;
     bool hostDefaultUsesEfiFirmware() const;
     bool repairToolAvailable(const QString &key, QString *reason = nullptr) const;
+    // Three-way capability classification for the Settings → Full Repair
+    // presentation pass. repairToolAvailable() fails closed and stays the
+    // single gate for the repair tools, the plan list and the Run actions;
+    // this accessor additionally distinguishes "no evidence at all" from
+    // "fresh evidence explicitly reports unavailable|<reason>" so the
+    // checkboxes can keep showing persisted user selections while evidence is
+    // still pending (see updateRepairScopeControls()).
+    enum class CapabilityState {
+        Available,     // `Repair tool <key>: available` in the cached scope evidence
+        Unavailable,   // explicit `unavailable|<reason>` line (fail closed)
+        NoEvidence     // no capability line for the key in the current scope
+    };
+    CapabilityState capabilityState(const QString &key, QString *reason = nullptr) const;
+    // True when a previous session persisted this stage's Settings key
+    // (QSettings contains it). saveSettings() writes every stage key, so this
+    // is false only on the very first run of a fresh install.
+    bool fullRepairStagePreferencePersisted(const QString &key) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
     // Single explicit mapping from a repair tool/stage key to the diagnostic
     // sections whose cached evidence that repair invalidates. "all" is the
@@ -838,7 +908,8 @@ private:
     bool confirmRepairAction(const QString &title, const QStringList &operations);
     void runRepairHelper(const QString &title, const QStringList &arguments,
                          LogEntryKind kind = LogEntryKind::Repair,
-                         const QString &sectionKey = QString());
+                         const QString &sectionKey = QString(),
+                         RepairProgressDialog *sharedProgressDialog = nullptr);
 
     // ---- Presentation and responsive layout ----------------------------------
 
@@ -1038,7 +1109,7 @@ private:
     QLabel *m_fileCopyTargetLabel = nullptr;
     QLabel *m_chrootShellTargetLabel = nullptr;
     QLabel *m_chrootShellHeading = nullptr;
-    QLabel *m_chrootShellNotice = nullptr;
+    QToolButton *m_chrootShellHelpButton = nullptr;
     QLabel *m_chrootShellWarning = nullptr;
     QLineEdit *m_chrootShellCommandEdit = nullptr;
     QPlainTextEdit *m_chrootShellOutput = nullptr;
@@ -1133,7 +1204,6 @@ private:
     QListWidget *m_sessionLogList = nullptr;
     QLabel *m_priorLogBanner = nullptr;
     QPushButton *m_newSessionLogButton = nullptr;
-    QPushButton *m_clearSessionLogButton = nullptr;
     QPushButton *m_addNoteButton = nullptr;
     QPushButton *m_deleteSessionLogButton = nullptr;
     QPushButton *m_refreshSessionLogsButton = nullptr;
@@ -1238,6 +1308,12 @@ private:
     // regeneration; finishFullRepairPlan() invalidates and regenerates once
     // after the last stage, including aborted and failed plans.
     bool m_fullRepairPlanInProgress = false;
+    // Plan-owned progress dialog, shown the moment a Full Repair plan starts
+    // and shared by every privileged request the plan runs (the file system
+    // pre-stage inspect/repairs and the remaining helper stages). Its Close
+    // button stays disabled until finishFullRepairPlan(); it is deleted when
+    // the user closes it after the plan ends.
+    QPointer<RepairProgressDialog> m_fullRepairProgressDialog;
     // True from the read-only file system check through the last selected
     // device's repair. Repair entry points refuse a second request with a
     // clear message while it is set, and the global busy indicator stays

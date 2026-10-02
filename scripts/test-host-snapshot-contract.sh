@@ -311,17 +311,17 @@ done
 # Capability reasons are probe-based too: a non-Btrfs root and an active
 # package-manager lock each name their own missing prerequisite.
 non_btrfs_reason="$(run_harness 'FAKE_HOST_FSTYPE=ext4; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
-grep -Fq 'not Btrfs' <<<"$non_btrfs_reason" \
+grep -Fq 'reason:not-btrfs-root' <<<"$non_btrfs_reason" \
     || { echo 'FAIL: non-Btrfs capability reason is missing' >&2; printf '%s\n' "$non_btrfs_reason" >&2; exit 1; }
 lock_reason="$(run_harness 'FAKE_PKG_GATE_RC=1; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
-grep -Fq 'package manager or package-manager lock is active' <<<"$lock_reason" \
+grep -Fq 'reason:package-lock-active' <<<"$lock_reason" \
     || { echo 'FAIL: package-lock capability reason is missing' >&2; printf '%s\n' "$lock_reason" >&2; exit 1; }
 
 # A foreign (home) configuration alone is not a root configuration: the
 # capability probe reports the missing root configuration.
 build_nested_fixture
 home_only="$(run_harness 'FAKE_SNAPPER_CONFIG_RC=1; host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
-grep -Fq 'no Snapper root configuration' <<<"$home_only" \
+grep -Fq 'reason:no-snapper-root-config' <<<"$home_only" \
     || { echo 'FAIL: missing root configuration reason is missing' >&2; printf '%s\n' "$home_only" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
@@ -432,5 +432,335 @@ fi
 # re-proves the selected disk backs / before scheduling anything.
 grep -q 'prepare_running_host "\$raw_disk" "\$raw_root" no' <<<"$reboot_body" \
     || { echo 'FAIL: host-reboot does not re-prove the running-host identity' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 8. ZFS-on-root running-host detection and ZFS-aware boot-chain capability.
+#    A ZFS-on-root host resolves `/` via findmnt to a dataset (rpool/ROOT/...)
+#    rather than a block device.  The running-host root assertion must map the
+#    dataset to its pool vdev so the read-only and package host stages proceed.
+#    The boot-chain stages are now ZFS-aware instead of fail-closed: initramfs
+#    requires update-initramfs + the zfs-initramfs hook, grub requires the GRUB
+#    ZFS module + a resolvable root pool, efi keeps the standard ESP preflight
+#    and boot-stack follows its constituents.  A missing prerequisite still
+#    fails closed with a probe-based reason (never a distribution, never a
+#    blanket "not ZFS-aware" refusal).
+# ---------------------------------------------------------------------------
+# Static wiring: the resolver and the per-stage ZFS probes must be present.
+for fn in zfs_pool_backing_devices zfs_dataset_backing_block \
+    running_host_root_is_zfs_dataset running_host_zfs_root_pool \
+    running_host_zfs_root_resolvable target_zfs_initramfs_hook_present \
+    target_grub_zfs_module_present; do
+    grep -q "^${fn}()" "$HELPER" \
+        || { echo "FAIL: missing helper function: $fn" >&2; exit 1; }
+done
+assert_body="$(sed -n '/^assert_target_is_running_host()/,/^}/p' "$HELPER")"
+grep -Fq 'zfs_dataset_backing_block "$root_source" "$root_device"' <<<"$assert_body" \
+    || { echo 'FAIL: the running-host root assertion does not map a ZFS dataset to its vdev' >&2; exit 1; }
+initramfs_body="$(sed -n '/^initramfs_unavailable_reason()/,/^}/p' "$HELPER")"
+grep -Fq 'running_host_root_is_zfs_dataset' <<<"$initramfs_body" \
+    || { echo 'FAIL: initramfs availability is not ZFS-aware' >&2; exit 1; }
+grep -Fq 'target_zfs_initramfs_hook_present' <<<"$initramfs_body" \
+    || { echo 'FAIL: initramfs does not require the zfs-initramfs hook on ZFS root' >&2; exit 1; }
+grub_body="$(sed -n '/^grub_unavailable_reason()/,/^}/p' "$HELPER")"
+grep -Fq 'target_grub_zfs_module_present' <<<"$grub_body" \
+    || { echo 'FAIL: grub does not require the GRUB ZFS module on ZFS root' >&2; exit 1; }
+grep -Fq 'running_host_zfs_root_resolvable' <<<"$grub_body" \
+    || { echo 'FAIL: grub does not require a resolvable ZFS root pool' >&2; exit 1; }
+# The blanket "not ZFS-aware" refusal must be gone.
+if grep -q 'is not ZFS-aware' "$HELPER"; then
+    echo 'FAIL: the blanket "not ZFS-aware" ZFS-on-root refusal is still present' >&2
+    exit 1
+fi
+
+mkdir -p "$sandbox/state"
+cat > "$sandbox/zfs-harness.sh" <<'ZFSHARNESS'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source <(sed '/^main "\$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+
+# ZFS-on-root topology fixture (no real device is touched).  /dev/vda is the
+# selected host disk (rpool vdev on /dev/vda4, bpool on /dev/vda2, ESP on
+# /dev/vda1); /dev/vdb is a foreign disk used to prove the same-disk rule.
+is_block_device() {
+    case "$1" in
+        /dev/vda|/dev/vda1|/dev/vda2|/dev/vda3|/dev/vda4|/dev/vdb|/dev/vdb1|/dev/vdb2) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+canonical_block() { is_block_device "$1" && printf '%s\n' "$1"; }
+top_disks_for() {
+    case "$1" in
+        /dev/vda|/dev/vda1|/dev/vda2|/dev/vda3|/dev/vda4) printf '%s\n' /dev/vda ;;
+        /dev/vdb|/dev/vdb1|/dev/vdb2) printf '%s\n' /dev/vdb ;;
+        *) return 1 ;;
+    esac
+}
+same_single_top_disk() {
+    local -a a=() b=()
+    mapfile -t a < <(top_disks_for "$1" 2>/dev/null | sort -u || true)
+    mapfile -t b < <(top_disks_for "$2" 2>/dev/null | sort -u || true)
+    [[ ${#a[@]} -eq 1 && ${#b[@]} -eq 1 && "${a[0]}" == "${b[0]}" ]]
+}
+need() { :; }
+mountpoint() { return 1; }
+mapper_aliases_for_device() { return 0; }
+read_target_os() { TARGET_OS_ID=ubuntu; TARGET_OS_LIKE=debian; TARGET_PRETTY='Ubuntu Contract Test'; }
+detect_mounted_esp() { EFI_ESP_SOURCE=/dev/vda1; EFI_ESP_FSTYPE=vfat; TARGET_ESP_MOUNT=/boot/efi; }
+current_btrfs_subvol() { return 1; }
+
+findmnt() {
+    local target="" columns=""
+    while (($#)); do
+        case "$1" in
+            --target) target="$2"; shift 2 ;;
+            -o) columns="$2"; shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    case "$target:$columns" in
+        "/:SOURCE") printf '%s\n' "${FAKE_ROOT_SOURCE:-rpool/ROOT/ubuntu_qev764}" ;;
+        "/:SOURCE,FSTYPE") printf '%s %s\n' "${FAKE_ROOT_SOURCE:-rpool/ROOT/ubuntu_qev764}" "${FAKE_ROOT_FSTYPE:-zfs}" ;;
+        "/boot:SOURCE") printf 'bpool/BOOT/ubuntu_qev764\n' ;;
+        "/boot:SOURCE,FSTYPE") printf 'bpool/BOOT/ubuntu_qev764 zfs\n' ;;
+        "/boot/efi:SOURCE") printf '/dev/vda1\n' ;;
+        "/boot/efi:SOURCE,FSTYPE") printf '/dev/vda1 vfat\n' ;;
+    esac
+    return 0
+}
+
+lsblk() {
+    local args="$*"
+    case "$args" in
+        *'-ndo FSTYPE'*)
+            case "$args" in
+                *vda4*) printf 'zfs_member\n' ;;
+                *vda2*) printf 'zfs_member\n' ;;
+                *vda1*) printf 'vfat\n' ;;
+                *) printf '\n' ;;
+            esac
+            ;;
+        *'-prno NAME,TYPE,FSTYPE'*)
+            printf '/dev/vda1 part vfat\n'
+            printf '/dev/vda2 part zfs_member\n'
+            printf '/dev/vda3 part swap\n'
+            printf '/dev/vda4 part zfs_member\n'
+            printf '/dev/vda disk \n'
+            ;;
+    esac
+    return 0
+}
+
+zpool() {
+    case "$*" in
+        "status -P rpool"*)
+            printf '  pool: rpool\n state: ONLINE\nconfig:\n\n\tNAME        STATE     READ WRITE CKSUM\n\trpool       ONLINE       0     0     0\n\t  /dev/vda4  ONLINE       0     0     0\n'
+            ;;
+        "list -v -H -P -o name rpool"*)
+            printf 'rpool\n  /dev/vda4\n'
+            ;;
+        "list -H -o name"*) printf 'rpool\nbpool\n' ;;
+        "list -H -o guid"*) printf '1234567890\n' ;;
+    esac
+    return 0
+}
+
+# Host-scope tail capability lines are a separate feature and are pinned so the
+# ZFS-on-root capability assertions stay machine-independent.
+host_snapshot_rollback_evidence() { printf 'snapper not detected; running root unknown; snapshot store not mounted'; }
+host_snapshot_rollback_unavailable_reason() { printf 'the running host root filesystem is zfs_member, not Btrfs'; return 1; }
+host_reboot_unavailable_reason() { printf 'no supported reboot mechanism in the contract fixture'; return 1; }
+host_default_unavailable_reason() { printf 'no default-selection probe in the contract fixture'; return 1; }
+host_default_diagnostic_evidence() { return 0; }
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+ZFSHARNESS
+chmod +x "$sandbox/zfs-harness.sh"
+
+run_zfs_harness() {
+    HELPER="$HELPER" BOOT_REPAIR_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
+        bash --noprofile --norc "$sandbox/zfs-harness.sh"
+}
+
+# 8a. The running-host identity check accepts the ZFS dataset root by mapping it
+#     to /dev/vda4 (the pool vdev the caller supplied) and resolving it to the
+#     single physical disk /dev/vda.
+za_out="$(run_zfs_harness '
+    prepare_running_host /dev/vda /dev/vda4 no
+    printf "ROOT_CANONICAL=%s ROOT_DEVICE=%s\n" "$ROOT_CANONICAL" "$ROOT_DEVICE"
+' 2>&1)"
+grep -Fq 'msg:running-host-identity-pass' <<<"$za_out" \
+    || { echo 'FAIL: ZFS-on-root running host was not accepted by the identity check' >&2; printf '%s\n' "$za_out" >&2; exit 1; }
+grep -Fq 'ROOT_CANONICAL=/dev/vda4 ROOT_DEVICE=/dev/vda4' <<<"$za_out" \
+    || { echo 'FAIL: the ZFS dataset root did not resolve to its pool vdev' >&2; printf '%s\n' "$za_out" >&2; exit 1; }
+
+# 8a-whole. ZFS-on-root accepts the whole disk as the root component: the
+#     unprivileged caller cannot tell the rpool vdev (/dev/vda4) from the bpool
+#     partition (/dev/vda2) via lsblk (both zfs_member), so it may name the
+#     whole disk /dev/vda.  prepare_running_host must re-resolve it to the pool
+#     vdev before the fstype check, so the host stages run against zfs_member
+#     (/dev/vda4) instead of failing on the FSTYPE-less disk.
+za_whole="$(run_zfs_harness '
+    prepare_running_host /dev/vda /dev/vda no
+    printf "ROOT_CANONICAL=%s ROOT_DEVICE=%s\n" "$ROOT_CANONICAL" "$ROOT_DEVICE"
+' 2>&1)"
+grep -Fq 'msg:running-host-identity-pass' <<<"$za_whole" \
+    || { echo 'FAIL: ZFS-on-root whole-disk host was not accepted' >&2; printf '%s\n' "$za_whole" >&2; exit 1; }
+grep -Fq 'ROOT_CANONICAL=/dev/vda4 ROOT_DEVICE=/dev/vda4' <<<"$za_whole" \
+    || { echo 'FAIL: the whole-disk root component was not re-resolved to its pool vdev' >&2; printf '%s\n' "$za_whole" >&2; exit 1; }
+if grep -Fq 'not an unlocked filesystem' <<<"$za_whole"; then
+    echo 'FAIL: the whole-disk root component failed the fstype check' >&2; printf '%s\n' "$za_whole" >&2; exit 1
+fi
+
+# 8b. A root component on a DIFFERENT disk still fails closed: /dev/vdb resolves
+#     to a different top-level disk than the verified /dev/vda, even though the
+#     ZFS-on-root relaxation no longer demands the exact pool vdev match.
+zb_reject="$(run_zfs_harness '
+    assert_target_is_running_host /dev/vda /dev/vdb
+' 2>&1 || true)"
+grep -Fq 'Supplied root component does not belong to the selected host disk.' <<<"$zb_reject" \
+    || { echo 'FAIL: a root component on a different disk was accepted for a ZFS dataset root' >&2; printf '%s\n' "$zb_reject" >&2; exit 1; }
+
+# 8b-ext4. A non-ZFS (ext4) root keeps the exact-match requirement: the relaxed
+#     ZFS-on-root rule must never weaken the identity check for conventional
+#     block-device roots.  The exact root component is accepted, the whole disk
+#     is not.
+z_ext4_accept="$(run_zfs_harness '
+    FAKE_ROOT_SOURCE=/dev/vda2
+    FAKE_ROOT_FSTYPE=ext4
+    assert_target_is_running_host /dev/vda /dev/vda2
+    printf "EXT4_EXACT_ACCEPTED\n"
+' 2>&1)"
+grep -Fq 'EXT4_EXACT_ACCEPTED' <<<"$z_ext4_accept" \
+    || { echo 'FAIL: an ext4 host rejected its exact root component' >&2; printf '%s\n' "$z_ext4_accept" >&2; exit 1; }
+z_ext4_reject="$(run_zfs_harness '
+    FAKE_ROOT_SOURCE=/dev/vda2
+    FAKE_ROOT_FSTYPE=ext4
+    assert_target_is_running_host /dev/vda /dev/vda
+' 2>&1 || true)"
+grep -Fq 'Supplied root component does not match the currently running root filesystem.' <<<"$z_ext4_reject" \
+    || { echo 'FAIL: an ext4 host accepted a non-exact root component' >&2; printf '%s\n' "$z_ext4_reject" >&2; exit 1; }
+
+# 8b-ext4-prep. The ZFS re-resolution in prepare_running_host is a no-op for a
+#     conventional ext4 root: running_host_root_is_zfs_dataset is false for a
+#     block-device source, so ROOT_CANONICAL stays exactly as supplied and the
+#     fstype check still passes on the caller's own component.
+z_ext4_prep="$(run_zfs_harness '
+    FAKE_ROOT_SOURCE=/dev/vda2
+    FAKE_ROOT_FSTYPE=ext4
+    lsblk() { [[ "$*" == *"-ndo FSTYPE"* ]] && printf "ext4\n"; }
+    prepare_running_host /dev/vda /dev/vda2 no
+    printf "ROOT_CANONICAL=%s ROOT_DEVICE=%s\n" "$ROOT_CANONICAL" "$ROOT_DEVICE"
+' 2>&1)"
+grep -Fq 'msg:running-host-identity-pass' <<<"$z_ext4_prep" \
+    || { echo 'FAIL: an ext4 host was not accepted by prepare_running_host' >&2; printf '%s\n' "$z_ext4_prep" >&2; exit 1; }
+grep -Fq 'ROOT_CANONICAL=/dev/vda2 ROOT_DEVICE=/dev/vda2' <<<"$z_ext4_prep" \
+    || { echo 'FAIL: the ext4 root component was altered by the ZFS re-resolution' >&2; printf '%s\n' "$z_ext4_prep" >&2; exit 1; }
+
+# 8c. The lsblk fallback (no zpool present) still resolves the root through the
+#     caller's zfs_member vdev partition.
+zfallback_out="$(run_zfs_harness '
+    zpool() { return 1; }
+    prepare_running_host /dev/vda /dev/vda4 no
+    printf "FALLBACK_OK ROOT_CANONICAL=%s\n" "$ROOT_CANONICAL"
+' 2>&1)"
+grep -Fq 'FALLBACK_OK ROOT_CANONICAL=/dev/vda4' <<<"$zfallback_out" \
+    || { echo 'FAIL: the zfs_member lsblk fallback did not resolve the ZFS dataset root' >&2; printf '%s\n' "$zfallback_out" >&2; exit 1; }
+
+# 8d. Capability lines: the ZFS root is accepted for read-only + package
+#     stages, the ZFS-aware boot-chain stages (initramfs, grub, efi, bootstack)
+#     are available when their ZFS prerequisites are present, and the
+#     filesystem (zpool check/scrub) capability is available.
+mkdir -p "$sandbox/zfs-root"/usr/bin "$sandbox/zfs-root"/usr/sbin \
+    "$sandbox/zfs-root"/usr/lib/systemd/system "$sandbox/zfs-root"/var/lib/dpkg \
+    "$sandbox/zfs-root"/etc/apt "$sandbox/zfs-root"/boot/grub \
+    "$sandbox/zfs-root"/usr/share/initramfs-tools/hooks \
+    "$sandbox/zfs-root"/usr/lib/grub/x86_64-efi
+printf 'ID=ubuntu\nID_LIKE=debian\nPRETTY_NAME="Ubuntu Contract Test"\n' > "$sandbox/zfs-root/etc/os-release"
+for tool in dpkg apt-get dkms; do : > "$sandbox/zfs-root/usr/bin/$tool"; chmod +x "$sandbox/zfs-root/usr/bin/$tool"; done
+: > "$sandbox/zfs-root/usr/sbin/update-initramfs"; chmod +x "$sandbox/zfs-root/usr/sbin/update-initramfs"
+: > "$sandbox/zfs-root/usr/sbin/mkinitramfs"; chmod +x "$sandbox/zfs-root/usr/sbin/mkinitramfs"
+: > "$sandbox/zfs-root/usr/bin/grub-mkconfig"; chmod +x "$sandbox/zfs-root/usr/bin/grub-mkconfig"
+: > "$sandbox/zfs-root/usr/sbin/grub-install"; chmod +x "$sandbox/zfs-root/usr/sbin/grub-install"
+: > "$sandbox/zfs-root/usr/share/initramfs-tools/hooks/zfs"
+: > "$sandbox/zfs-root/usr/lib/grub/x86_64-efi/zfs.mod"
+printf 'Package: base-files\nStatus: install ok installed\nVersion: 1\n\n' > "$sandbox/zfs-root/var/lib/dpkg/status"
+printf 'deb http://deb.example.invalid/ stable main\n' > "$sandbox/zfs-root/etc/apt/sources.list"
+: > "$sandbox/zfs-root/usr/lib/systemd/system/graphical.target"
+: > "$sandbox/zfs-root/boot/grub/grub.cfg"
+
+run_zfs_capabilities() {
+    ZFS_FIXTURE_ROOT="$sandbox/zfs-root" run_zfs_harness '
+        RUNNING_HOST_MODE=1
+        TARGET_ROOT="$ZFS_FIXTURE_ROOT"
+        TARGET_DISK=/dev/vda
+        ROOT_DEVICE=/dev/vda4
+        ROOT_CANONICAL=/dev/vda4
+        TARGET_OS_ID=ubuntu
+        TARGET_OS_LIKE=debian
+        SESSION_LOG=/dev/null
+        diagnostic_repair_capabilities
+    ' 2>&1
+}
+
+zc_out="$(run_zfs_capabilities)"
+for line in \
+    'Repair tool validate: available' \
+    'Repair tool dpkg: available' \
+    'Repair tool fixbroken: available' \
+    'Repair tool aptupdate: available' \
+    'Repair tool upgrade: available' \
+    'Repair tool initramfs: available' \
+    'Repair tool grub: available' \
+    'Repair tool efi: available' \
+    'Repair tool bootstack: available' \
+    'Repair tool filesystem: available'; do
+    grep -Fqx "$line" <<<"$zc_out" \
+        || { echo "FAIL: ZFS-on-root capability line missing: $line" >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
+done
+# extlinux is not the ZFS-on-root bootloader: it fails closed with its normal
+# probe-based reason (no update-extlinux tooling), never a ZFS blanket refusal.
+grep -Fqx 'Repair tool extlinux: unavailable|reason:missing-update-extlinux' <<<"$zc_out" \
+    || { echo 'FAIL: ZFS-on-root extlinux reason is not the probe-based tooling reason' >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
+# The reasons are probe-based and must never name a distribution or the old
+# blanket "not ZFS-aware" wording.
+if grep -E '^Repair tool [a-z]+: unavailable\|' <<<"$zc_out" | grep -Eqi 'ubuntu|debian|alpine|arch|fedora|tuxedo|not ZFS-aware'; then
+    echo 'FAIL: a ZFS-on-root unavailable reason names a distribution or the retired blanket refusal' >&2
+    printf '%s\n' "$zc_out" >&2
+    exit 1
+fi
+[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 13 ]] \
+    || { echo 'FAIL: the ZFS-on-root capability preamble lost a key line' >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
+
+# 8e. Missing ZFS prerequisites fail closed with the exact prerequisite named.
+#     Removing the zfs-initramfs hook disables the initramfs stage.
+rm -f "$sandbox/zfs-root/usr/share/initramfs-tools/hooks/zfs"
+zc_no_hook="$(run_zfs_capabilities)"
+grep -Fqx 'Repair tool initramfs: unavailable|reason:missing-zfs-initramfs-hook' <<<"$zc_no_hook" \
+    || { echo 'FAIL: missing zfs-initramfs hook did not fail closed with the exact reason' >&2; grep '^Repair tool initramfs' <<<"$zc_no_hook" >&2; exit 1; }
+: > "$sandbox/zfs-root/usr/share/initramfs-tools/hooks/zfs"
+
+#     Removing the GRUB ZFS module disables the grub stage.
+rm -f "$sandbox/zfs-root/usr/lib/grub/x86_64-efi/zfs.mod"
+zc_no_module="$(run_zfs_capabilities)"
+grep -Fqx 'Repair tool grub: unavailable|reason:missing-grub-zfs-module' <<<"$zc_no_module" \
+    || { echo 'FAIL: missing GRUB ZFS module did not fail closed with the exact reason' >&2; grep '^Repair tool grub' <<<"$zc_no_module" >&2; exit 1; }
+: > "$sandbox/zfs-root/usr/lib/grub/x86_64-efi/zfs.mod"
+
+#     An unimported/unresolvable root pool disables the grub stage.
+zc_no_pool="$(ZFS_FIXTURE_ROOT="$sandbox/zfs-root" run_zfs_harness '
+    zpool() { return 1; }
+    RUNNING_HOST_MODE=1
+    TARGET_ROOT="$ZFS_FIXTURE_ROOT"
+    TARGET_DISK=/dev/vda
+    ROOT_DEVICE=/dev/vda4
+    ROOT_CANONICAL=/dev/vda4
+    TARGET_OS_ID=ubuntu
+    TARGET_OS_LIKE=debian
+    SESSION_LOG=/dev/null
+    diagnostic_repair_capabilities
+' 2>&1)"
+grep -Fqx 'Repair tool grub: unavailable|reason:unresolvable-zfs-root' <<<"$zc_no_pool" \
+    || { echo 'FAIL: an unresolvable ZFS root pool did not fail closed with the exact reason' >&2; grep '^Repair tool grub' <<<"$zc_no_pool" >&2; exit 1; }
 
 echo "PASS: host snapshot rollback helper contract is wired, fail-closed and transactional."

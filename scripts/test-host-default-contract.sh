@@ -36,6 +36,8 @@ for fn in host_secure_boot_state host_uki_signature_verified host_uki_file_path 
     extlinux_default_entry_unavailable_reason extlinux_default_verdict \
     extlinux_default_restore_backup extlinux_conf_with_default \
     extlinux_replace_conf extlinux_default_entry_ensure \
+    conventional_efi_backup_state conventional_efi_restore_backup \
+    grub_boot_is_esp_mount \
     diagnostic_uki_registration_state objcopy_dump_section; do
     grep -q "^${fn}()" "$HELPER" || fail_test "missing helper function: $fn"
 done
@@ -110,6 +112,24 @@ grep -Fq 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$promote_body" \
 if grep -Fq 'Boot([0-9A-Fa-f]{4})\\*?' <<<"$promote_body"; then
     fail_test 'efi_promote_entry_first still carries the double-backslash sed regex'
 fi
+
+# The conventional EFI reinstall must refresh the firmware fallback loader
+# (--removable) and guard the write with an ESP backup/rollback: a no-NVRAM/
+# fallback-boot target boots \EFI\BOOT\BOOTX64.EFI, so a plain grub-install
+# (which only rewrites EFI/<id>/grubx64.efi) would leave the live path stale.
+reinstall_body="$(sed -n '/^reinstall_efi_bootloader()/,/^}/p' "$HELPER")"
+grep -Fq -- '--removable' <<<"$reinstall_body" \
+    || fail_test 'reinstall_efi_bootloader does not issue the --removable fallback rewrite'
+grep -Fq 'conventional_efi_backup_state' <<<"$reinstall_body" \
+    || fail_test 'reinstall_efi_bootloader does not take the ESP file backup'
+grep -Fq 'conventional_efi_restore_backup' <<<"$reinstall_body" \
+    || fail_test 'reinstall_efi_bootloader does not restore the ESP backup on failure'
+# The GRUB regeneration must refuse when the target boots its ESP at /boot but
+# /boot is not a mounted FAT filesystem (otherwise grub.cfg lands on a shadowed
+# ext4-root /boot and the fallback loader's next boot drops to grub rescue>).
+preflight_grub_body="$(sed -n '/^preflight_grub()/,/^}/p' "$HELPER")"
+grep -Fq 'grub_boot_is_esp_mount' <<<"$preflight_grub_body" \
+    || fail_test 'preflight_grub does not guard the ESP-at-/boot mount before grub-mkconfig'
 
 # The transaction must reconcile the inventory, promote, preserve foreign IDs
 # and compare the pre-capture for the change status.
@@ -551,7 +571,7 @@ grep -Fq 'Host default: fallback=Boot0002' "$WORK_ROOT/t1.out" \
     || fail_test 'T1 did not report the retained fallback'
 grep -Fq 'Host default: BootOrder before=0001,0002,0003 after=' "$WORK_ROOT/t1.out" \
     || fail_test 'T1 did not report before/after BootOrder'
-grep -Fq 'PASS: running host default EFI entry is Boot0009 on /dev/fakehostesp.' "$WORK_ROOT/t1.out" \
+grep -Fq 'msg:host-default-efi-pass|param:0009|param:/dev/fakehostesp' "$WORK_ROOT/t1.out" \
     || fail_test 'T1 PASS line is missing'
 grep -Eq "^Boot0009\* TUXEDO UKI TestModel .*HD\(1,GPT,$HOST_PARTUUID" "$EFI_TEST_STATE" \
     || fail_test 'T1 did not create the host UKI entry with the host PARTUUID'
@@ -610,9 +630,9 @@ if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/t3.out" 2>&1; 
     cat "$WORK_ROOT/t3.out" >&2
     fail_test 'T3 accepted an unverified TUX.EFI'
 fi
-grep -Fq 'TUX.EFI is present but could not be verified' "$WORK_ROOT/t3.out" \
+grep -Fq 'Host default selection is not available: reason:uki-kernel-not-installed' "$WORK_ROOT/t3.out" \
     || fail_test 'T3 did not name the verification failure'
-grep -Fq 'embedded kernel 9.9.9-not-installed is not installed under /boot' "$WORK_ROOT/t3.out" \
+grep -Fq 'reason:uki-kernel-not-installed|param:9.9.9-not-installed' "$WORK_ROOT/t3.out" \
     || fail_test 'T3 did not name the embedded-kernel mismatch'
 assert_no_mutation_calls 'T3'
 grep -q '^BootOrder: 0001' "$EFI_TEST_STATE" \
@@ -634,7 +654,9 @@ if ! ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/t4a.out" 2>&
     cat "$WORK_ROOT/t4a.out" >&2
     fail_test 'T4a run_host_default failed'
 fi
-grep -Fq 'keeping active entry Boot0005' "$WORK_ROOT/t4a.out" \
+grep -Fq 'msg:host-entries-pruning|param:' "$WORK_ROOT/t4a.out" \
+    || fail_test 'T4a did not keep the active UKI entry'
+grep -Fq '|param:0005' "$WORK_ROOT/t4a.out" \
     || fail_test 'T4a did not keep the active UKI entry'
 [[ "$(grep -c '/\\EFI\\BOOT\\TUX.EFI' "$EFI_TEST_STATE" || true)" -eq 1 ]] \
     || fail_test 'T4a did not prune the duplicate UKI entry'
@@ -670,7 +692,7 @@ EOF
 if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/t5.out" 2>&1; then
     fail_test 'T5 changed a read-only NVRAM'
 fi
-grep -Fq 'UEFI variables are not writable' "$WORK_ROOT/t5.out" \
+grep -Fq 'reason:uefi-nvram-readonly' "$WORK_ROOT/t5.out" \
     || fail_test 'T5 did not name the read-only NVRAM'
 assert_no_mutation_calls 'T5'
 [[ "$(grep -c '^Repair change status ' "$WORK_ROOT/t5.out" || true)" -eq 0 ]] \
@@ -695,7 +717,7 @@ if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/t6.out" 2>&1; 
     cat "$WORK_ROOT/t6.out" >&2
     fail_test 'T6 accepted an unverified created entry'
 fi
-grep -Fq 'ROLLBACK: restored BootOrder=0001,0002' "$WORK_ROOT/t6.out" \
+grep -Eq 'msg:host-rollback-(restored-bootorder|bootorder-differs)\|param:0001,0002' "$WORK_ROOT/t6.out" \
     || fail_test 'T6 did not report the rollback'
 grep -Fq 'could not be verified by PARTUUID' "$WORK_ROOT/t6.out" \
     || fail_test 'T6 did not name the failed verification'
@@ -720,7 +742,7 @@ case "$layout_state" in
     absent\|*) ;;
     *) fail_test "T7 uname mismatch was not rejected: $layout_state" ;;
 esac
-grep -Fq 'embedded kernel 9.9.9-not-installed is not installed under /boot' <<<"$layout_state" \
+grep -Fq 'reason:uki-kernel-not-installed|param:9.9.9-not-installed' <<<"$layout_state" \
     || fail_test 'T7 uname mismatch reason is missing'
 candidate="$(host_uki_default_candidate)"
 grep -Fq 'none|' <<<"$candidate" || fail_test 'T7 uname mismatch did not yield none'
@@ -729,15 +751,32 @@ assert_no_mutation_calls 'T7-uname'
 reset_fixture
 EFI_TEST_UKI_CMDLINE="root=UUID=deadbeef-dead-dead-dead-deaddeadbeef rd.luks.uuid=$LUKS_UUID subvol=/@"
 layout_state="$(host_uki_layout_state)"
-grep -Fq 'does not reference the live root UUID' <<<"$layout_state" \
+grep -Fq 'reason:cmdline-root-mismatch' <<<"$layout_state" \
     || fail_test 'T7 root mismatch reason is missing'
 assert_no_mutation_calls 'T7-root'
 
 reset_fixture
 EFI_TEST_UKI_CMDLINE="root=UUID=$ROOT_UUID rd.luks.uuid=$LUKS_UUID subvol=/@.snapshots/1/snapshot"
 layout_state="$(host_uki_layout_state)"
-grep -Fq 'does not select the live Btrfs subvolume /@' <<<"$layout_state" \
+grep -Fq 'reason:cmdline-subvol-mismatch' <<<"$layout_state" \
     || fail_test 'T7 subvolume mismatch reason is missing'
+
+# The vendor builder's FINAL_SUBVOL strips the leading slash, so a rebuilt
+# image carries `subvol=@` (optionally doubled as `rootflags=subvol=@`) while
+# the live root is mounted `subvol=/@`.  Both spellings bind the same promoted
+# subvolume and must verify so the TUXEDO UKI host reports `subvol=@` (never
+# `subvol=none`) and Make Default stays available.
+reset_fixture
+EFI_TEST_UKI_CMDLINE="root=UUID=$ROOT_UUID rd.luks.uuid=$LUKS_UUID subvol=@ rootflags=subvol=@"
+layout_state="$(host_uki_layout_state)"
+[[ "$layout_state" == present\|*\|@ ]] \
+    || fail_test "T7 vendor no-slash subvol=@ was rejected: $layout_state"
+
+reset_fixture
+EFI_TEST_UKI_CMDLINE="root=UUID=$ROOT_UUID rd.luks.uuid=$LUKS_UUID rootflags=rw,subvol=@"
+layout_state="$(host_uki_layout_state)"
+[[ "$layout_state" == present\|*\|@ ]] \
+    || fail_test "T7 joined rootflags subvol=@ was rejected: $layout_state"
 
 # A verified UKI is detected from files even when the OS ID is not tuxedo.
 reset_fixture
@@ -782,7 +821,7 @@ fi
 
 rm -f -- "$EFI_TEST_ESP_MOUNT/EFI/tuxedo/shimx64.efi"
 candidate="$(host_uki_default_candidate)"
-grep -Fq 'none|secure-boot requires a signed loader' <<<"$candidate" \
+grep -Fq 'none|reason:secure-boot-needs-signed-loader' <<<"$candidate" \
     || fail_test "T8 did not fail closed without a shim: $candidate"
 reset_fixture
 EFI_TEST_SECURE_BOOT=enabled
@@ -790,7 +829,7 @@ EFI_TEST_SECURE_BOOT=enabled
 if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/t8.out" 2>&1; then
     fail_test 'T8 promoted an unsigned UKI without a shim'
 fi
-grep -Fq 'secure-boot requires a signed loader' "$WORK_ROOT/t8.out" \
+grep -Fq 'reason:secure-boot-needs-signed-loader' "$WORK_ROOT/t8.out" \
     || fail_test 'T8 fail-closed reason is missing'
 assert_no_mutation_calls 'T8'
 
@@ -827,7 +866,7 @@ EFI_TEST_GRUB_INSTALL_AVAILABLE=0
 if ( efi_unavailable_reason ) > "$WORK_ROOT/t10b.out" 2>&1; then
     fail_test 'T10 host without a verified UKI lost the GRUB prerequisite gate'
 fi
-grep -Fq 'requires GRUB configuration tooling' "$WORK_ROOT/t10b.out" \
+grep -Fq 'reason:missing-grub-config-tooling' "$WORK_ROOT/t10b.out" \
     || fail_test 'T10 did not name the missing GRUB prerequisite'
 
 # ---------------------------------------------------------------------------
@@ -951,7 +990,9 @@ if ! ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/g2a.out" 2>&
     cat "$WORK_ROOT/g2a.out" >&2
     fail_test 'G2a run_host_default failed'
 fi
-grep -Fq 'keeping active entry Boot0006' "$WORK_ROOT/g2a.out" \
+grep -Fq 'msg:host-entries-pruning|param:' "$WORK_ROOT/g2a.out" \
+    || fail_test 'G2a did not keep the active canonical entry'
+grep -Fq '|param:0006' "$WORK_ROOT/g2a.out" \
     || fail_test 'G2a did not keep the active canonical entry'
 [[ "$(grep -c '/\\EFI\\arch\\grubx64.efi' "$EFI_TEST_STATE" || true)" -eq 1 ]] \
     || fail_test 'G2a did not prune the duplicate canonical entry'
@@ -989,7 +1030,7 @@ EOF
 if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/g3.out" 2>&1; then
     fail_test 'G3 promoted the fallback without a canonical loader'
 fi
-grep -Fq 'no canonical EFI vendor loader was found on the running host ESP and grub-install is not available' "$WORK_ROOT/g3.out" \
+grep -Fq 'reason:no-canonical-loader' "$WORK_ROOT/g3.out" \
     || fail_test 'G3 did not name the missing canonical loader'
 assert_no_mutation_calls 'G3'
 
@@ -1012,7 +1053,7 @@ if ! ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/g4.out" 2>&1
 fi
 [[ "$(grep -c '^reinstall$' "$EFI_TEST_GRUB_INSTALL_CALLS" || true)" -eq 1 ]] \
     || fail_test 'G4 did not run exactly one guarded grub-install'
-grep -Fq 'Backed up running-host EFI loader files' "$WORK_ROOT/g4.out" \
+grep -Fq 'msg:host-efi-backup|param:' "$WORK_ROOT/g4.out" \
     || fail_test 'G4 did not take the ESP loader backup'
 grep -Fq "Host default: entry=Boot0009 label='arch TestModel' loader=\\EFI\\arch\\grubx64.efi action=created" "$WORK_ROOT/g4.out" \
     || fail_test 'G4 did not create the canonical entry after the reinstall'
@@ -1041,7 +1082,7 @@ if ( run_host_default /dev/fakenvme /dev/fakeroot ) > "$WORK_ROOT/g5.out" 2>&1; 
 fi
 grep -Fq 'guarded canonical EFI loader reinstall failed' "$WORK_ROOT/g5.out" \
     || fail_test 'G5 did not name the failed guarded reinstall'
-grep -Fq 'Restored the running-host EFI loader files' "$WORK_ROOT/g5.out" \
+grep -Fq 'msg:host-efi-restore|param:' "$WORK_ROOT/g5.out" \
     || fail_test 'G5 did not restore the ESP loader backup'
 cmp -s "$WORK_ROOT/g5-fallback.txt" "$EFI_TEST_ESP_MOUNT/EFI/BOOT/BOOTX64.EFI" \
     || fail_test 'G5 did not restore the fallback loader byte-identically'
@@ -1084,11 +1125,11 @@ if ! (
     # files change, every other setting survives and no boot-sector write runs.
     reset_extlinux_fixture
     ensure_out="$(extlinux_default_entry_ensure 2>&1)" || ext_fail 'E1 extlinux default ensure failed'
-    grep -Fq 'Extlinux default entry: label=lts kernel=6.18.52-0-lts action=set' <<<"$ensure_out" \
+    grep -Fq 'msg:extlinux-default-set|param:lts|param:6.18.52-0-lts' <<<"$ensure_out" \
         || ext_fail 'E1 did not report the selected label'
     grep -Fq "Host default: entry=lts label='lts' loader=vmlinuz-lts action=set" <<<"$ensure_out" \
         || ext_fail 'E1 did not emit the verified default evidence'
-    grep -Fq 'Repair change status host-default: changed|extlinux default label set to lts' <<<"$ensure_out" \
+    grep -Fq 'Repair change status host-default: changed|reason:extlinux-default-set|param:lts' <<<"$ensure_out" \
         || ext_fail 'E1 change status is wrong'
     grep -q '^default=lts$' "$TARGET_ROOT/etc/update-extlinux.conf" \
         || ext_fail 'E1 did not persist default=lts'
@@ -1131,9 +1172,9 @@ if ! (
     cp -a -- "$TARGET_ROOT/boot/extlinux.conf" "$WORK_ROOT/e2-cfg-before"
     : > "$EFI_TEST_EXT_CALLS"
     ensure_out="$(extlinux_default_entry_ensure 2>&1)" || ext_fail 'E2 second extlinux default ensure failed'
-    grep -Fq 'action=unchanged' <<<"$ensure_out" \
+    grep -Fq 'msg:extlinux-default-unchanged|param:' <<<"$ensure_out" \
         || ext_fail 'E2 did not report unchanged'
-    grep -Fq 'Repair change status host-default: unchanged|extlinux default label lts is already selected' <<<"$ensure_out" \
+    grep -Fq 'Repair change status host-default: unchanged|reason:extlinux-default-already-selected|param:lts' <<<"$ensure_out" \
         || ext_fail 'E2 change status is wrong'
     [[ ! -s "$EFI_TEST_EXT_CALLS" ]] || ext_fail 'E2 re-ran update-extlinux for an already-correct default'
     cmp -s "$WORK_ROOT/e2-conf-before" "$TARGET_ROOT/etc/update-extlinux.conf" \
@@ -1148,7 +1189,7 @@ if ! (
     cp -a -- "$TARGET_ROOT/etc/update-extlinux.conf" "$WORK_ROOT/e3-conf-before"
     cp -a -- "$TARGET_ROOT/boot/extlinux.conf" "$WORK_ROOT/e3-cfg-before"
     reason_out="$(extlinux_default_entry_unavailable_reason || true)"
-    grep -Fq 'the running kernel 6.18.52-0-lts has no entry in /boot/extlinux.conf' <<<"$reason_out" \
+    grep -Fq 'reason:running-kernel-no-extlinux-entry|param:6.18.52-0-lts|param:/boot/extlinux.conf' <<<"$reason_out" \
         || ext_fail "E3 did not name the missing running-kernel entry: $reason_out"
     if ( host_default_unavailable_reason ) > "$WORK_ROOT/e3.out" 2>&1; then
         ext_fail 'E3 host default availability accepted a missing running-kernel entry'
@@ -1165,7 +1206,7 @@ if ! (
     reset_extlinux_fixture
     printf '6.18.52-0-lts\n' > "$TARGET_ROOT/usr/share/kernel/virt/kernel.release"
     reason_out="$(extlinux_default_entry_unavailable_reason || true)"
-    grep -Fq 'multiple extlinux entries reference the running kernel 6.18.52-0-lts (lts,virt)' <<<"$reason_out" \
+    grep -Fq 'reason:multiple-extlinux-kernel-entries|param:6.18.52-0-lts|param:lts,virt' <<<"$reason_out" \
         || ext_fail "E4 did not name the ambiguous labels: $reason_out"
 
     # E5: the update-extlinux trial fails -> both files restored byte-identical.
@@ -1241,7 +1282,7 @@ if ! (
         filesystem_scope_tools() { :; }
         diagnostic_repair_capabilities
     )"
-    grep -Fq 'Host default: unavailable|the running kernel 6.18.52-0-lts has no entry in /boot/extlinux.conf' <<<"$caps" \
+    grep -Fq 'Host default: unavailable|reason:running-kernel-no-extlinux-entry|param:6.18.52-0-lts|param:/boot/extlinux.conf' <<<"$caps" \
         || ext_fail 'E8 diagnostics did not fail closed for the missing running-kernel entry'
 
     # E9: read-only verdict for a configured default that names no entry or
@@ -1264,7 +1305,7 @@ if ! (
     mkdir -p "$TARGET_ROOT/boot/syslinux"
     mv -- "$TARGET_ROOT/boot/extlinux.conf" "$TARGET_ROOT/boot/syslinux/syslinux.cfg"
     reason_out="$(extlinux_default_entry_unavailable_reason || true)"
-    grep -Fq 'is not /boot/extlinux.conf; refusing to select a default label' <<<"$reason_out" \
+    grep -Fq 'reason:extlinux-config-not-default' <<<"$reason_out" \
         || ext_fail "E10 accepted a non-/boot/extlinux.conf configuration: $reason_out"
 
     # E11: the update-extlinux configuration mode is preserved (a
@@ -1322,11 +1363,11 @@ if ! ( fedora_default_entry_ensure ) > "$WORK_ROOT/f1.out" 2>&1; then
     cat "$WORK_ROOT/f1.out" >&2
     fail_test 'F1 fedora_default_entry_ensure failed'
 fi
-grep -Fq "Fedora default entry: saved_entry=stale-entry resolves=no target=machine-6.8.0-300.fc44.x86_64 action=set" "$WORK_ROOT/f1.out" \
+grep -Fq "msg:fedora-default-set|param:stale-entry|param:no|param:machine-6.8.0-300.fc44.x86_64" "$WORK_ROOT/f1.out" \
     || fail_test 'F1 did not report the stale-to-target transition'
-grep -Fq 'Fedora default entry: saved_entry=machine-6.8.0-300.fc44.x86_64 resolves=yes target=machine-6.8.0-300.fc44.x86_64 action=set' "$WORK_ROOT/f1.out" \
+grep -Fq 'msg:fedora-default-set-current|param:machine-6.8.0-300.fc44.x86_64|param:machine-6.8.0-300.fc44.x86_64' "$WORK_ROOT/f1.out" \
     || fail_test 'F1 did not verify the written saved_entry'
-grep -Fq 'Repair change status host-default: changed|grubenv saved_entry set to machine-6.8.0-300.fc44.x86_64' "$WORK_ROOT/f1.out" \
+grep -Fq 'Repair change status host-default: changed|reason:fedora-saved-entry-set|param:machine-6.8.0-300.fc44.x86_64' "$WORK_ROOT/f1.out" \
     || fail_test 'F1 change status is missing'
 grep -q '^saved_entry=machine-6.8.0-300.fc44.x86_64$' "$TARGET_ROOT/boot/grub2/grubenv" \
     || fail_test 'F1 grubenv saved_entry was not written'
@@ -1343,7 +1384,7 @@ if ! ( fedora_default_entry_ensure ) > "$WORK_ROOT/f2.out" 2>&1; then
     cat "$WORK_ROOT/f2.out" >&2
     fail_test 'F2 second fedora_default_entry_ensure failed'
 fi
-grep -Fq 'action=unchanged' "$WORK_ROOT/f2.out" \
+grep -Fq 'msg:fedora-default-unchanged|param:' "$WORK_ROOT/f2.out" \
     || fail_test 'F2 did not report unchanged'
 grep -Fq 'Repair change status host-default: unchanged' "$WORK_ROOT/f2.out" \
     || fail_test 'F2 change status is not unchanged'
@@ -1356,7 +1397,7 @@ rm -f -- "$TARGET_ROOT/boot/loader/entries/machine-6.8.0-300.fc44.x86_64.conf" \
 if ( fedora_default_entry_ensure ) > "$WORK_ROOT/f3.out" 2>&1; then
     fail_test 'F3 accepted a rescue-only BLS layout'
 fi
-grep -Fq 'the running kernel 6.8.0-300.fc44.x86_64 has no installed BLS entry' "$WORK_ROOT/f3.out" \
+grep -Fq 'reason:running-kernel-no-bls-entry|param:6.8.0-300.fc44.x86_64' "$WORK_ROOT/f3.out" \
     || fail_test 'F3 did not name the missing running-kernel BLS entry'
 
 # F4: invalid grubenv -> fail closed before any write.
@@ -1365,7 +1406,7 @@ truncate -s 100 "$TARGET_ROOT/boot/grub2/grubenv"
 if ( fedora_default_entry_ensure ) > "$WORK_ROOT/f4.out" 2>&1; then
     fail_test 'F4 accepted an invalid grubenv'
 fi
-grep -Fq 'grubenv is missing or not a valid GRUB environment block' "$WORK_ROOT/f4.out" \
+grep -Fq 'reason:invalid-grubenv' "$WORK_ROOT/f4.out" \
     || fail_test 'F4 did not name the invalid grubenv'
 [[ ! -s "$EFI_TEST_EDITENV_CALLS" ]] \
     || fail_test 'F4 wrote through an invalid grubenv'
@@ -1714,7 +1755,7 @@ if ! ( fedora_default_entry_ensure ) > "$WORK_ROOT/f9.out" 2>&1; then
     cat "$WORK_ROOT/f9.out" >&2
     fail_test 'F9 fedora_default_entry_ensure failed'
 fi
-grep -Fq 'saved_entry=machine-0-rescue resolves=no target=machine-6.8.0-300.fc44.x86_64 action=set' "$WORK_ROOT/f9.out" \
+grep -Fq 'msg:fedora-default-set|param:machine-0-rescue|param:no|param:machine-6.8.0-300.fc44.x86_64' "$WORK_ROOT/f9.out" \
     || fail_test 'F9 did not treat the rescue entry as a stale default'
 grep -q '^saved_entry=machine-6.8.0-300.fc44.x86_64$' "$TARGET_ROOT/boot/grub2/grubenv" \
     || fail_test 'F9 did not set the running-kernel saved_entry'

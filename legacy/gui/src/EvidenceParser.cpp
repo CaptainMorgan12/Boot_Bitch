@@ -598,6 +598,70 @@ bool CapabilityModel::isAvailable(const std::string &key,
     return capabilityIsAvailable(it->second, reason);
 }
 
+CapabilityModel::CapabilityState CapabilityModel::capabilityState(
+    const std::string &key, const std::string &identity, std::string *reason) const
+{
+    const std::vector<std::string> keys = capabilityKeys();
+    bool known = false;
+    for (std::size_t i = 0; i < keys.size(); ++i) {
+        if (keys[i] == key) {
+            known = true;
+            break;
+        }
+    }
+    if (!known) {
+        if (reason) {
+            *reason = "Unknown repair tool key '" + key + "'; fail closed.";
+        }
+        return CapabilityUnavailable;
+    }
+    if (!m_ran || m_identity != identity) {
+        if (reason) {
+            *reason = "Run diagnostics for the selected scope first.";
+        }
+        return CapabilityNoEvidence;
+    }
+    if (m_stale) {
+        if (reason) {
+            std::string names;
+            for (std::size_t i = 0; i < m_invalidatingKeys.size(); ++i) {
+                if (!names.empty()) {
+                    names += ", ";
+                }
+                names += m_invalidatingKeys[i];
+            }
+            *reason = "Diagnostics are stale after a repair that was not proven "
+                      "unchanged";
+            if (!names.empty()) {
+                *reason += " (" + names + ")";
+            }
+            *reason += "; run diagnostics again.";
+        }
+        return CapabilityUnavailable;
+    }
+    const std::map<std::string, std::string>::const_iterator it =
+        m_capabilities.find(key);
+    if (it == m_capabilities.end()) {
+        if (reason) {
+            *reason = "No 'Repair tool " + key + ":' line was cached; run "
+                      "diagnostics for the selected scope.";
+        }
+        return CapabilityNoEvidence;
+    }
+    std::string stateReason;
+    if (capabilityIsAvailable(it->second, &stateReason)) {
+        if (reason) {
+            *reason = "Repair tool " + key
+                + " is available in the selected scope's cached diagnostics.";
+        }
+        return CapabilityAvailable;
+    }
+    if (reason) {
+        *reason = stateReason;
+    }
+    return CapabilityUnavailable;
+}
+
 bool CapabilityModel::legacyFeatureAvailable(const std::string &feature,
                                              const std::string &identity,
                                              std::string *reason) const

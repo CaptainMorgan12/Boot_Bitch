@@ -48,6 +48,10 @@ grep -qE '^[[:space:]]*(CONFIG|QT|LIBS)[^#]*kdelibs' "$GUI_PRO" \
     && fail "GUI project must not require kdelibs"
 grep -qE '^[[:space:]]*QT[[:space:]]*\+=' "$GUI_PRO" \
     && fail "GUI project must stay Qt3 core-widgets only"
+# Qt3 i18n: the project must declare its TRANSLATIONS catalogs (the .ts
+# sources shipped under legacy/gui/translations; the .qm are built in-guest).
+grep -q '^TRANSLATIONS' "$GUI_PRO" \
+    || fail "GUI project does not declare TRANSLATIONS for the Qt3 catalogs"
 
 # --- Syntax and bash 3.1 floor ---------------------------------------------
 bash -n "$PKG" || fail "scripts/package-legacy.sh failed bash -n"
@@ -109,6 +113,15 @@ done
     || fail "staged GUI binary is empty"
 cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
     || fail "staged helper does not match its source"
+
+# Qt3 i18n: the staging tree must carry the compiled translation catalogs. A
+# host --dry-run without Qt3 lrelease stages a placeholder .qm; a real Etch
+# build stages the lrelease-compiled .qm for every .ts source.
+[[ -d "$STAGE/usr/share/boot-repair-legacy/translations" ]] \
+    || fail "staged tree is missing the boot-repair-legacy translations directory"
+if ! find "$STAGE/usr/share/boot-repair-legacy/translations" -name '*.qm' -print | grep -q .; then
+    fail "staged translations directory carries no .qm catalog"
+fi
 
 # User access: the system-wide desktop entry and the GUI binary must be
 # readable/executable by every user (the guest's unprivileged user launches

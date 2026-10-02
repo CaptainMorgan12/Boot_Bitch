@@ -46,6 +46,20 @@ for hint in 'dnf update -y' 'apt-get -y upgrade' 'pacman --noconfirm -Syu'; do
 done
 grep -Fq 'Chroot shell command failed (exit code $rc).' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the chroot shell does not report the failed command' >&2; exit 1; }
+# A5-14: an exit status of 127 (command not found) must teach the user which
+# package tools the TARGET exposes: the hint names the detected package
+# manager backend(s) from the backend profile instead of leaving the user
+# guessing why the recovery host's tool is absent in the chroot.
+grep -q '^shell_command_not_found_hint()' "$HELPER" \
+    || { echo 'FAIL: the command-not-found hint helper is missing' >&2; exit 1; }
+grep -Fq 'if (( rc == 127 )); then' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not branch on exit status 127' >&2; exit 1; }
+grep -Fq 'shell_command_not_found_hint "in the target"' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not explain a command-not-found with the target backend' >&2; exit 1; }
+grep -Fq 'NOTE: command not found $in_scope; $scope_possessive package manager backend is' "$HELPER" \
+    || { echo 'FAIL: the command-not-found hint does not name the package backend' >&2; exit 1; }
+grep -Fq 'package manager backends are: $(join_comma' "$HELPER" \
+    || { echo 'FAIL: the command-not-found hint does not cover multiple detected backends' >&2; exit 1; }
 
 # Host Maintenance mode uses a separate guarded host-shell path.  It must
 # validate the running host identity and activate the host command guard, and
@@ -67,6 +81,10 @@ if grep -Fq 'CHROOT_SHELL_PROMPT_REGEX' <<<"$host_shell_body"; then
     echo 'FAIL: host-shell must not use the chroot-shell prompt handling' >&2
     exit 1
 fi
+# A5-14: the running-host shell names the live host's detected package
+# backends on exit 127 as well, with host-scoped wording.
+grep -Fq 'shell_command_not_found_hint "on the running host"' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not explain a command-not-found with the host backend' >&2; exit 1; }
 grep -q '^mount_target_resolver()' "$HELPER"
 grep -q 'mount_target_resolver' "$HELPER"
 # A2-03: the resolver's realpath/path_within containment validation must run
@@ -93,7 +111,7 @@ grep -Fq 'path_within "$session_logdir_real" "$session_root_real"' <<<"$cleanup_
     || { echo 'FAIL: cleanup does not contain the resolved /var/log under the target root' >&2; exit 1; }
 grep -Fq '[[ ! -L "$session_target_log" ]]' <<<"$cleanup_block" \
     || { echo 'FAIL: cleanup does not refuse an existing symlinked session log file' >&2; exit 1; }
-grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' <<<"$cleanup_block" \
+grep -Fq 'msg_log session-log-not-appended' <<<"$cleanup_block" \
     || { echo 'FAIL: cleanup refusal evidence line is missing' >&2; exit 1; }
 # A2-07: prepare_target's rw branch is the single deliberate write-boundary
 # crossing point (chroot shell + config-write), so TARGET_WRITE_INTENT must be
@@ -150,7 +168,7 @@ grep -q 'apt_shell_full_upgrade_command' <<<"$chroot_shell_body"
 grep -q 'apt_shell_upgrade_policy_refused' <<<"$chroot_shell_body"
 grep -q 'apt_shell_full_upgrade_command' <<<"$host_shell_body"
 grep -q 'apt_shell_upgrade_policy_refused' <<<"$host_shell_body"
-grep -Fq "apt upgrade is disabled by this distribution; running '\$retry_command' instead" "$HELPER" \
+grep -Fq 'msg_log apt-upgrade-disabled' "$HELPER" \
     || { echo 'FAIL: the apt-upgrade policy mapping is not logged with the actual retry command' >&2; exit 1; }
 # Repairs begin with a read-only preflight and only then promote the target to
 # read-write.  Network-dependent stages must install the temporary host
@@ -171,7 +189,7 @@ grep -q 'Refresh package metadata did not complete' "$HELPER"
 # readable and appears in both the request output and the session log.
 grep -q '^apt_intent_translate()' "$HELPER"
 grep -Fq 'apt "$sub" --help >/dev/null 2>&1' "$HELPER"
-grep -Fq "apt intent translated: " "$HELPER"
+grep -Fq "msg_log apt-intent-translated " "$HELPER"
 grep -q 'apt_intent_translate' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the chroot shell does not apply the apt-intent translation' >&2; exit 1; }
 grep -q 'apt_intent_translate' <<<"$host_shell_body" \
@@ -213,7 +231,7 @@ grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$HE
     || { echo 'FAIL: the empty-answer cancel message is missing' >&2; exit 1; }
 grep -Fq 'Chroot shell command was cancelled at an interactive prompt.' "$HELPER" \
     || { echo 'FAIL: the cancelled chroot shell is not reported' >&2; exit 1; }
-grep -Fq 'Running-host shell command was cancelled at an interactive prompt.' "$HELPER" \
+grep -Fq 'msg_log host-shell-cancelled' "$HELPER" \
     || { echo 'FAIL: the cancelled running-host shell is not reported' >&2; exit 1; }
 grep -Fq 'command -v script' "$HELPER" \
     || { echo 'FAIL: the PTY tool probe is missing' >&2; exit 1; }
@@ -319,11 +337,11 @@ grep -Fq 'mount -o remount,bind,ro "$target_file"' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard bind is not read-only' >&2; exit 1; }
 grep -Fq 'MOUNTS+=("$target_file")' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard bind is not recorded for cleanup' >&2; exit 1; }
-grep -Fq 'Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)' <<<"$guard_block" \
+grep -Fq 'msg_log snapper-guard-active' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard lost its evidence-named session log line' >&2; exit 1; }
 # A2-08: a failed guard bind must warn (session log evidence) and continue;
 # it must never abort the reviewed command.
-grep -Fq 'WARNING: could not bind the read-only snapper guard over $target_file; the chroot shell continues without the snapshot kill-switch.' <<<"$guard_block" \
+grep -Fq 'msg_log snapper-guard-bind-failed' <<<"$guard_block" \
     || { echo 'FAIL: the snapper guard does not log a WARNING when its bind fails' >&2; exit 1; }
 grep -Fq 'chroot_shell_guard_snapper' <<<"$chroot_shell_body" \
     || { echo 'FAIL: the chroot shell does not apply the snapper guard' >&2; exit 1; }
@@ -463,7 +481,7 @@ dev_filter_root="$(mktemp -d)"
 mkdir -p "$dev_filter_root/src/disk/by-uuid" "$dev_filter_root/src/disk/by-id" \
     "$dev_filter_root/src/mapper" "$dev_filter_root/src/input" \
     "$dev_filter_root/src/pts" "$dev_filter_root/src/shm"
-for filter_node in null zero full random urandom tty console sda sda1 sdb sdb1 kvm plain-file sock; do
+for filter_node in null zero full random urandom tty console sda sda1 sdb sdb1 dm-1 kvm plain-file sock; do
     : > "$dev_filter_root/src/$filter_node"
 done
 : > "$dev_filter_root/src/mapper/control"
@@ -475,6 +493,13 @@ ln -s ../../sda1 "$dev_filter_root/src/disk/by-uuid/target-uuid"
 ln -s ../../sdb1 "$dev_filter_root/src/disk/by-uuid/foreign-uuid"
 ln -s ../../sda "$dev_filter_root/src/disk/by-id/ata-target"
 ln -s ../../sdb "$dev_filter_root/src/disk/by-id/ata-foreign"
+# A1-02/A5-13: mirror the real recovery-host mapper geometry (for example
+# /dev/mapper/luks-* -> ../dm-N): a mapper symlink to an allowed dm node must
+# be recreated with its original link text so grub-probe's
+# canonicalize_file_name resolves it inside the private /dev; a mapper
+# symlink to a foreign device must never be recreated.
+ln -s ../dm-1 "$dev_filter_root/src/mapper/luks-root"
+ln -s ../sdb "$dev_filter_root/src/mapper/luks-foreign"
 ln -s /proc/kcore "$dev_filter_root/src/core"
 
 run_dev_filter_case()
@@ -504,12 +529,12 @@ run_dev_filter_case()
                 control) major=a; minor=ec ;;
                 kvm) major=a; minor=e8 ;;
                 event0) major=d; minor=40 ;;
-                sda|sda1|sdb|sdb1|crypt-target|vg-foreign) major=8; minor=0 ;;
+                sda|sda1|sdb|sdb1|dm-1|crypt-target|vg-foreign) major=8; minor=0 ;;
             esac
             case "$name" in
                 null|zero|full|random|urandom|tty|console|control|kvm|event0)
                     [[ "$style" == busybox ]] && ftype='character device' || ftype='character special file' ;;
-                sda|sda1|sdb|sdb1|crypt-target|vg-foreign)
+                sda|sda1|sdb|sdb1|crypt-target|vg-foreign|dm-1)
                     [[ "$style" == busybox ]] && ftype='block device' || ftype='block special file' ;;
                 *) ftype='regular file' ;;
             esac
@@ -519,7 +544,7 @@ run_dev_filter_case()
         {
             case "$1" in
                 */sdb|*/sdb1|*/vg-foreign) printf '%s\n' /dev/sdb ;;
-                */sda|*/sda1|*/crypt-target) printf '%s\n' /dev/sda ;;
+                */sda|*/sda1|*/crypt-target|*/dm-1) printf '%s\n' /dev/sda ;;
                 *) return 1 ;;
             esac
         }
@@ -561,6 +586,18 @@ for filter_style in gnu busybox; do
         || { echo "FAIL: a by-uuid link to a foreign device was recreated ($filter_style)" >&2; exit 1; }
     [[ ! -L "$filter_dst/disk/by-id/ata-foreign" && ! -e "$filter_dst/disk/by-id/ata-foreign" ]] \
         || { echo "FAIL: a by-id link to a foreign device was recreated ($filter_style)" >&2; exit 1; }
+    # A1-02/A5-13: the mapper alias link to an allowed dm node is recreated
+    # with its ORIGINAL link text (../dm-1) and resolves inside the private
+    # /dev to the copied node -- exactly what grub-probe's canonicalize step
+    # needs -- while a mapper link to a foreign device stays refused.
+    [[ -e "$filter_dst/dm-1" ]] \
+        || { echo "FAIL: the selected-disk dm node is missing from the filtered /dev ($filter_style)" >&2; exit 1; }
+    [[ -L "$filter_dst/mapper/luks-root" && "$(readlink "$filter_dst/mapper/luks-root")" == ../dm-1 ]] \
+        || { echo "FAIL: the allowed mapper symlink was not recreated with its original link text ($filter_style)" >&2; exit 1; }
+    [[ "$(readlink -f "$filter_dst/mapper/luks-root" 2>/dev/null || true)" == "$dev_filter_root/dst-$filter_style/dm-1" ]] \
+        || { echo "FAIL: the recreated mapper symlink does not resolve to the copied dm node inside the private /dev ($filter_style)" >&2; exit 1; }
+    [[ ! -L "$filter_dst/mapper/luks-foreign" && ! -e "$filter_dst/mapper/luks-foreign" ]] \
+        || { echo "FAIL: a mapper link to a foreign device was recreated ($filter_style)" >&2; exit 1; }
     [[ ! -e "$filter_dst/kvm" && ! -e "$filter_dst/input/event0" ]] \
         || { echo "FAIL: a non-essential character device reached the filtered /dev ($filter_style)" >&2; exit 1; }
     [[ ! -e "$filter_dst/plain-file" && ! -e "$filter_dst/sock" && ! -e "$filter_dst/fifo" && ! -e "$filter_dst/core" && ! -L "$filter_dst/core" ]] \
@@ -628,6 +665,43 @@ grep -Fq 'Chroot shell command failed (exit code 1)' "$shell_stub_root/output" \
 grep -Fq 'Chroot shell command failed (exit code 1)' "$shell_stub_root/session.log" \
     || { echo 'FAIL: the failed chroot shell command is not reported in the session log' >&2; exit 1; }
 
+# A5-14: a command that does not exist in the target (exit 127) is explained
+# with the target's detected package manager backend instead of leaving the
+# user guessing which tool exists inside the chroot.
+mkdir -p "$shell_stub_root/not-found"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$shell_stub_root/not-found"
+    SESSION_LOG="$shell_stub_root/not-found/session.log"
+    TARGET_ROOT="$shell_stub_root/not-found/target"
+    mkdir -p "$TARGET_ROOT"
+    prepare_target() { :; }
+    profile_target_backends() { TARGET_PACKAGE_MANAGERS=(pacman); }
+    log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    timeout()
+    {
+        while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+            if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+        done
+        "$@"
+    }
+    chroot()
+    {
+        printf "/bin/sh: line 1: apk: command not found\n" >&2
+        return 127
+    }
+    ( run_chroot_shell 'apk update' ) > "$shell_stub_root/not-found/output" 2>&1 || true
+)
+grep -Fq "NOTE: command not found in the target; the target's package manager backend is pacman." \
+    "$shell_stub_root/not-found/output" \
+    || { echo 'FAIL: the chroot shell does not name the target package backend on exit 127' >&2; exit 1; }
+grep -Fq "NOTE: command not found in the target; the target's package manager backend is pacman." \
+    "$shell_stub_root/not-found/session.log" \
+    || { echo 'FAIL: the chroot-shell backend hint is missing from the session log' >&2; exit 1; }
+grep -Fq 'Chroot shell command failed (exit code 127)' "$shell_stub_root/not-found/output" \
+    || { echo 'FAIL: the exit-127 chroot shell failure is not reported' >&2; exit 1; }
+
 # Behavioural apt-upgrade retry for the chroot shell: a plain apt/apt-get
 # upgrade that fails with the distribution policy message is retried once with
 # full-upgrade (the caller's options are preserved) and the mapping line is
@@ -674,7 +748,7 @@ if grep -Fq 'full-upgrade' "$apt_retry_root/args-1"; then
 fi
 grep -Fq '/bin/sh -c apt-get -y dist-upgrade' "$apt_retry_root/args-2" \
     || { echo 'FAIL: the chroot shell retry did not map apt-get upgrade to dist-upgrade with the original options' >&2; exit 1; }
-grep -Fq "apt upgrade is disabled by this distribution; running 'apt-get -y dist-upgrade' instead" "$apt_retry_root/output" \
+grep -Fq "msg:apt-upgrade-disabled|param:apt-get -y dist-upgrade" "$apt_retry_root/output" \
     || { echo 'FAIL: the chroot shell retry mapping is not reported to the caller with the actual retry command' >&2; exit 1; }
 grep -Fq 'disabled on TUXEDO OS' "$apt_retry_root/output" \
     || { echo 'FAIL: the chroot shell transcript lost the original policy failure' >&2; exit 1; }
@@ -711,7 +785,7 @@ for untouched_command in 'dnf update' 'apt-get upgrade extra'; do
     )
     [[ "$(wc -l < "$untouched_root/calls")" == 1 ]] \
         || { echo "FAIL: '$untouched_command' was retried but is not a plain apt upgrade" >&2; exit 1; }
-    if grep -Fq 'apt upgrade is disabled by this distribution' "$untouched_root/output"; then
+    if grep -Fq 'msg:apt-upgrade-disabled' "$untouched_root/output"; then
         echo "FAIL: '$untouched_command' received the apt-upgrade mapping" >&2
         exit 1
     fi
@@ -728,6 +802,18 @@ run_apt_intent_case()
 {
     local case_root="$1" command="$2"
     mkdir -p "$case_root/target"
+    # Model the TARGET's own apt (an offline target is probed through its
+    # chroot's apt, never the host's).  APT_INTENT_NO_TARGET_APT=1 skips the
+    # fake apt so a target with no /usr/bin/apt (Debian etch) is exercised.
+    if [[ -z "${APT_INTENT_NO_TARGET_APT:-}" ]]; then
+        mkdir -p "$case_root/target/usr/bin"
+        : > "$case_root/target/usr/bin/apt"
+        chmod +x "$case_root/target/usr/bin/apt"
+    else
+        # The no-apt case reuses a shared case root, so drop any fake apt a
+        # previous case created; a target with no /usr/bin/apt is the point.
+        rm -f "$case_root/target/usr/bin/apt"
+    fi
     (
         source <(sed '/^main "\$@"/d' "$HELPER")
         trap - EXIT INT TERM HUP
@@ -739,19 +825,6 @@ run_apt_intent_case()
         fi
         prepare_target() { :; }
         log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
-        apt()
-        {
-            # The helper only ever probes `apt <action> --help` (read-only
-            # evidence); everything else never reaches this stub.
-            local action="${1:-}"
-            if [[ "${2:-}" == "--help" ]]; then
-                if grep -Fxq "$action" "$case_root/reject" 2>/dev/null; then
-                    return 1
-                fi
-                return 0
-            fi
-            return 0
-        }
         timeout()
         {
             while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
@@ -761,7 +834,17 @@ run_apt_intent_case()
         }
         chroot()
         {
+            # Record every chroot invocation (the real command and the probe)
+            # so the `/bin/sh -c ...` greps below observe the exact command.
             printf '%s\n' "$*" >> "$case_root/calls"
+            # Emulate the read-only probe `chroot <root> apt <action> --help`
+            # from the reject list; let the real command invocation through.
+            if [[ "${2:-}" == "apt" && "${4:-}" == "--help" ]]; then
+                if grep -Fxq "${3:-}" "$case_root/reject" 2>/dev/null; then
+                    return 1
+                fi
+                return 0
+            fi
             return 0
         }
         ( run_chroot_shell "$command" ) > "$case_root/output" 2>&1 || true
@@ -772,16 +855,16 @@ printf 'full-upgrade\n' > "$apt_intent_root/reject"
 run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
 grep -Fq '/bin/sh -c apt-get dist-upgrade' "$apt_intent_root/calls" \
     || { echo 'FAIL: a rejecting apt did not translate full-upgrade to apt-get dist-upgrade' >&2; exit 1; }
-grep -Fq 'apt intent translated: apt-get dist-upgrade' "$apt_intent_root/output" \
+grep -Fq 'msg:apt-intent-translated|param:apt-get dist-upgrade' "$apt_intent_root/output" \
     || { echo 'FAIL: the apt-intent mapping line is missing from the request output' >&2; exit 1; }
-grep -Fq 'apt intent translated: apt-get dist-upgrade' "$apt_intent_root/session.log" \
+grep -Fq 'msg:apt-intent-translated|param:apt-get dist-upgrade' "$apt_intent_root/session.log" \
     || { echo 'FAIL: the apt-intent mapping line is missing from the session log' >&2; exit 1; }
 
 printf 'update\n' > "$apt_intent_root/reject"
 run_apt_intent_case "$apt_intent_root" 'apt update'
 grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
     || { echo 'FAIL: a rejecting apt did not translate apt update to apt-get update' >&2; exit 1; }
-grep -Fq 'apt intent translated: apt-get update' "$apt_intent_root/output" \
+grep -Fq 'msg:apt-intent-translated|param:apt-get update' "$apt_intent_root/output" \
     || { echo 'FAIL: the apt update mapping line is missing' >&2; exit 1; }
 
 # An apt that supports the action runs the reviewed command verbatim.
@@ -790,7 +873,7 @@ grep -Fq 'apt intent translated: apt-get update' "$apt_intent_root/output" \
 run_apt_intent_case "$apt_intent_root" 'apt full-upgrade'
 grep -Fq '/bin/sh -c apt full-upgrade' "$apt_intent_root/calls" \
     || { echo 'FAIL: a supporting apt command was rewritten' >&2; exit 1; }
-if grep -Fq 'apt intent translated' "$apt_intent_root/output"; then
+if grep -Fq 'msg:apt-intent-translated' "$apt_intent_root/output"; then
     echo 'FAIL: a supporting apt command emitted a translation line' >&2
     exit 1
 fi
@@ -802,6 +885,15 @@ printf 'update\n' > "$apt_intent_root/reject"
 APT_INTENT_BACKEND=dnf run_apt_intent_case "$apt_intent_root" 'apt update'
 grep -Fq '/bin/sh -c apt update' "$apt_intent_root/calls" \
     || { echo 'FAIL: a non-Debian backend rewrote an apt command' >&2; exit 1; }
+
+# An offline target with no /usr/bin/apt (e.g. Debian etch) must still
+# translate `apt <action>` to apt-get: the host apt probe is host-mode-only,
+# so the absent target apt can never fall through to the host's modern apt.
+: > "$apt_intent_root/reject"
+: > "$apt_intent_root/calls"
+APT_INTENT_NO_TARGET_APT=1 run_apt_intent_case "$apt_intent_root" 'apt update'
+grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
+    || { echo 'FAIL: a target without /usr/bin/apt did not translate apt update to apt-get update' >&2; exit 1; }
 
 # Behavioural apt-upgrade retry for the running-host shell: the same policy
 # refusal is retried once with full-upgrade on the live host, and a successful
@@ -845,12 +937,37 @@ if grep -Fq 'full-upgrade' "$host_retry_root/args-1"; then
 fi
 grep -Fq '/bin/bash -lc apt full-upgrade' "$host_retry_root/args-2" \
     || { echo 'FAIL: the host shell retry did not map upgrade to full-upgrade' >&2; exit 1; }
-grep -Fq "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" "$host_retry_root/output" \
+grep -Fq "msg:apt-upgrade-disabled|param:apt full-upgrade" "$host_retry_root/output" \
     || { echo 'FAIL: the host shell retry mapping is not reported to the caller' >&2; exit 1; }
 grep -Fq 'mock host full-upgrade completed' "$host_retry_root/output" \
     || { echo 'FAIL: the host shell retry result is missing from the output' >&2; exit 1; }
-grep -Fq 'PASS: Running-host shell command' "$host_retry_root/output" \
+grep -Fq 'msg:host-shell-pass' "$host_retry_root/output" \
     || { echo 'FAIL: a successful host shell retry was not reported as a pass' >&2; exit 1; }
+
+# A5-14: the running-host shell names the live host's detected package
+# backends on exit 127, in host-scoped wording (plural form when several
+# backends are detected).
+mkdir -p "$shell_stub_root/host-not-found"
+(
+    source <(sed '/^main "\$@"/d' "$HELPER")
+    trap - EXIT INT TERM HUP
+    SESSION_DIR="$shell_stub_root/host-not-found"
+    SESSION_LOG="$shell_stub_root/host-not-found/session.log"
+    CURRENT_STAGE=""
+    prepare_running_host() { :; }
+    prepare_host_command_guard() { :; }
+    profile_target_backends() { TARGET_PACKAGE_MANAGERS=(apt apk); }
+    log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+    apt() { return 0; }
+    run_host_command_isolated() { return 127; }
+    ( run_host_shell /dev/test-disk /dev/test-root 'apk update' ) \
+        > "$shell_stub_root/host-not-found/output" 2>&1 || true
+)
+grep -Fq "NOTE: command not found on the running host; the running host's package manager backends are: apt, apk." \
+    "$shell_stub_root/host-not-found/output" \
+    || { echo 'FAIL: the running-host shell does not name the host package backends on exit 127' >&2; exit 1; }
+grep -Fq 'msg:host-shell-fail|param:127' "$shell_stub_root/host-not-found/output" \
+    || { echo 'FAIL: the exit-127 host shell failure is not reported' >&2; exit 1; }
 
 # Bash cannot store NUL bytes in variables; the old pattern rejected every
 # command. NUL validation belongs to the GUI protocol boundary instead.
@@ -867,6 +984,13 @@ fi
 # ---------------------------------------------------------------------------
 interactive_root="$shell_stub_root/interactive"
 mkdir -p "$interactive_root"
+
+# Make the helper's bounded tree-teardown available to this harness shell: the
+# per-case subshells source the full helper, but the parent shell's EXIT trap
+# (re-armed by start_interactive_case below) must be able to reap a runner whose
+# case was aborted.  Only these three self-contained functions are sourced, so
+# the harness shell never inherits the helper's globals (LC_ALL/PATH/etc.).
+source <(sed -n '/^is_process_group_leader()/,/^}/p; /^pid_is_zombie()/,/^}/p; /^terminate_helper_tree()/,/^}/p' "$HELPER")
 
 start_interactive_case()
 {
@@ -904,13 +1028,25 @@ start_interactive_case()
             done
             /bin/sh -c "$cmd"
         }
+        # The setsid stub stays so `command -v setsid` still resolves to a
+        # function (keeping the script stub in the same spawn chain).  Job
+        # control (set -m) gives the background runner its own process group,
+        # which restores the helper's terminate_helper_tree group-kill path for
+        # a continuously-printing command (deadline-124 and friends).
         setsid() { "$@"; }
+        set -m
         set +e
         shell_run_interactive "$root/transcript" "$deadline" "$command"
         printf '%s\n' "$?" > "$root/rc"
         exit 0
     ) <"$root/answers" >"$root/output" 2>&1 &
-    printf '%s\n' "$!" > "$root/pid"
+    runner_pid="$!"
+    printf '%s\n' "$runner_pid" > "$root/pid"
+    # Defense-in-depth: if this harness shell is torn down before
+    # finish_interactive_case awaits the runner (a later FAIL, a signal, or a
+    # set -e abort), reap the runner's whole tree.  finish_interactive_case
+    # restores the fixture-cleanup trap once the runner has exited.
+    trap 'terminate_helper_tree "$runner_pid" 2>/dev/null || true; cleanup_dev_contract' EXIT
     # Open the writer end; this unblocks the runner's stdin open.
     exec 14>"$root/answers"
 }
@@ -935,6 +1071,9 @@ finish_interactive_case()
     pid="$(cat "$root/pid")"
     wait "$pid" 2>/dev/null || true
     exec 14>&-
+    # The runner has been awaited: drop the runner-reap arm and restore the
+    # plain fixture-cleanup trap so a later case never reaps a stale runner.
+    trap cleanup_dev_contract EXIT
 }
 
 # Case 1: one answered prompt.  The prompt is a partial line with no newline;
@@ -1260,6 +1399,7 @@ mkfifo "$drain_root/answers"
         /bin/sh -c "$cmd"
     }
     setsid() { "$@"; }
+    set -m
     set +e
     shell_run_interactive "$drain_root/transcript" 30 "printf 'final bytes\n'; sleep 1"
     printf '%s\n' "$?" > "$drain_root/rc"
@@ -1441,6 +1581,10 @@ run_prop_case()
             done
             "$@"
         }
+        # Job control so the interactive runner spawned by run_chroot_shell gets
+        # its own process group (the helper's terminate_helper_tree group-kill
+        # then reaches a continuously-printing command under the 124 path).
+        set -m
         set +e
         if ( run_chroot_shell "$command" ) > "$case_root/output" 2>&1; then
             printf '0\n' > "$case_root/rc"
@@ -1635,7 +1779,7 @@ grep -Fq 'DISABLE=yes' "$snapper_case_root/seen-value" \
     && { echo 'FAIL: the guarded hook still invoked snapper' >&2; cat "$snapper_case_root/snapper-invocations" >&2; exit 1; }
 cmp -s "$snapper_case_root/expected-default" "$snapper_case_root/target/etc/default/snapper" \
     || { echo 'FAIL: the target /etc/default/snapper content changed' >&2; cat -A "$snapper_case_root/target/etc/default/snapper" >&2; exit 1; }
-grep -Fq 'Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)' "$snapper_case_root/output" \
+grep -Fq 'msg:snapper-guard-active' "$snapper_case_root/output" \
     || { echo 'FAIL: the guarded session did not log the guard line' >&2; cat "$snapper_case_root/output" >&2; exit 1; }
 
 # Negative case: the apt config carries no snapper reference, so the guard
@@ -1742,7 +1886,7 @@ printf 'symlog session evidence\n' > "$cleanup_append_root/symlog/session.log"
     target_path_is_mounted_rw() { return 0; }
     (cleanup) > "$cleanup_append_root/symlog/output" 2>&1 || true
 )
-grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' "$cleanup_append_root/symlog/output" \
+grep -Fq 'msg:session-log-not-appended' "$cleanup_append_root/symlog/output" \
     || { echo 'FAIL: the symlinked /var/log refusal evidence line is missing' >&2; cat "$cleanup_append_root/symlog/output" >&2; exit 1; }
 [[ ! -e "$cleanup_append_root/symlog/host-var-log/boot-repair-session.log" ]] \
     || { echo 'FAIL: the session log was written through the symlinked target /var/log' >&2; exit 1; }
@@ -1764,7 +1908,7 @@ printf 'symfile session evidence\n' > "$cleanup_append_root/symfile/session.log"
     target_path_is_mounted_rw() { return 0; }
     (cleanup) > "$cleanup_append_root/symfile/output" 2>&1 || true
 )
-grep -Fq 'Session log was NOT appended into the target: unsafe target log path.' "$cleanup_append_root/symfile/output" \
+grep -Fq 'msg:session-log-not-appended' "$cleanup_append_root/symfile/output" \
     || { echo 'FAIL: the symlinked log file refusal evidence line is missing' >&2; cat "$cleanup_append_root/symfile/output" >&2; exit 1; }
 [[ "$(cat "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log")" == 'host original content' ]] \
     || { echo 'FAIL: the session log append followed the target symlink to a host file' >&2; exit 1; }

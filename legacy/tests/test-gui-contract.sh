@@ -272,7 +272,7 @@ for marker in 'setSorting(true)' 'alreadyCommitted' 'm_inspectingHostDetails' \
     'QFontMetrics(m_headerBadge->font()).width'; do
     grep -q "$marker" "$WINDOW" || fail "cycle-13 marker missing: $marker"
 done
-grep -q 'QString::fromLatin1("Application log"), page)' "$WINDOW" \
+grep -q 'tr("Application log"), page)' "$WINDOW" \
     || fail "Logs page heading is not Application log"
 grep -q 'setMinimumHeight(80)' "$WINDOW" \
     || fail "vertical-shrink floors missing"
@@ -357,6 +357,27 @@ for marker in 'updatePlanChecks' 'm_planPreferences' 'planIndexForCapability' \
     grep -q "$marker" "$WINDOW" || fail "plan availability-semantics marker missing: $marker"
 done
 grep -q 'planCheckboxChanged' "$WINDOW" || fail "plan checkbox handler missing"
+
+# Diagnostics-complete population regression: the Settings plan checkboxes must
+# reflect capability availability right after a diagnostics-complete signal,
+# without a later manual toggle. The GUI now keys the cached evidence by the
+# physical drive only (the root-component spelling legitimately drifts after an
+# unlock/topology refresh, e.g. /dev/mapper/name vs /dev/dm-N, and must not
+# discard valid evidence), and the presentation uses the three-way capability
+# state so a persisted selection survives the no-evidence window.
+IDENTITY_BLOCK="$(sed -n '/^QString LegacyMainWindow::identity() const$/,/^}/p' "$WINDOW")"
+[[ -n "$IDENTITY_BLOCK" ]] || fail "identity() definition not found"
+grep -q 'selectedDisk' <<<"$IDENTITY_BLOCK" \
+    || fail "identity() no longer scopes the cache by the physical drive"
+grep -q 'selectedRoot' <<<"$IDENTITY_BLOCK" \
+    && fail "identity() still keys the cache by the transient root component"
+for marker in 'planStageState' 'PlanStageAvailable' 'PlanStageNoEvidence' \
+    'm_planPreferencesPersisted' 'capabilityState'; do
+    grep -q "$marker" "$WINDOW" || fail "three-way plan-presentation marker missing: $marker"
+done
+grep -q 'CapabilityNoEvidence' "$PARSER" \
+    || fail "parser lost the three-way NoEvidence classification"
+grep -q 'readBoolEntry' "$WINDOW" || fail "plan preference persistence probe missing"
 pass "legacy command set only (validate/diagnose/fs-inspect/repairs/grub) + 11-key modern plan list"
 
 # --- modern-GUI parity controls ---------------------------------------------
@@ -455,7 +476,7 @@ for marker in 'busyRow->addStretch(1)' \
     'kBusyAnimationIntervalMs' 'kBusyBadgeEdgeTolerance' \
     'is not below the guarded-repair badge' \
     'is not right-aligned with the guarded-repair badge' \
-    'QString::fromLatin1("Unlocking %1")' \
+    'tr("Unlocking %1")' \
     'm_pendingQuiet' 'm_pendingDiagnosticKey'; do
     grep -q "$marker" "$WINDOW" || fail "busy-indicator parity marker missing: $marker"
 done
@@ -660,7 +681,7 @@ grep -qF "standardDirs[] = {" "$WINDOW" \
     || fail "capability probe lost its standardDirs fallback list"
 grep -qF '"/sbin"' "$WINDOW" || fail "capability probe lost the /sbin fallback"
 grep -qF '"/usr/sbin"' "$WINDOW" || fail "capability probe lost the /usr/sbin fallback"
-grep -q '"LUKS support", "cryptsetup"' "$WINDOW" \
+grep -q 'QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS support"), "cryptsetup"' "$WINDOW" \
     || fail "capability table lost the LUKS support/cryptsetup row"
 # Cycle 6/9: every toggle handler persists immediately and the window close
 # flushes again. Qt 3.3.7 stores each settings group in its own per-user file

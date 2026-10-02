@@ -9,6 +9,13 @@ set -euo pipefail
 # the release asset is normalized to boot-bitch-<version>.apk. The artifact
 # links the build environment's Qt/musl versions, so build it per Alpine
 # release (and per architecture) instead of reusing it across releases.
+#
+# The release APK always runs the APKBUILD check() phase. ABUILD_CHECK=0 is an
+# iteration shortcut only: it skips check() for fast iteration builds, and it
+# is honored here as an input but never set by this script (the maintainer
+# orchestrator injects it into the guest build shell when explicitly allowed).
+# A check-skipped build must be re-verified with check enabled before it can
+# become a release artifact.
 
 # The package modes must not depend on the builder's umask; a restrictive agent
 # umask (for example 077) would otherwise package 0700 directories.
@@ -63,13 +70,15 @@ mkdir -p -- "$BUILD_DIR"
 # are intentionally excluded from the source archive. List source directories
 # explicitly so a file such as scripts/build.sh is never mistaken for a
 # build-output path. The legacy (Debian Etch / bash 3.1) tree is public source
-# registered in the test suite, so it must be present for the check phase.
+# registered in the test suite, so it must be present for the check phase. The
+# committed Qt UI translation catalogs (translations/*.qm) must be present or
+# cmake --install has nothing to install and the package ships English-only.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
-    src scripts tests data resources docs .github legacy
+    src scripts tests translations data resources docs .github legacy
 SOURCE_SHA512="$(sha512sum "$SOURCE_ARCHIVE" | awk '{print $1}')"
 
 # Alpine package names for the runtime and optional dependencies. Alpine ships
@@ -116,6 +125,7 @@ build() {
 }
 
 check() {
+    if [ "${ABUILD_CHECK:-1}" = "0" ]; then echo "check() skipped: ABUILD_CHECK=0 (iteration build; release builds must never set this)" >&2; return 0; fi
     # Run the project test suite in the build tree from build() so abuild
     # reports a checked package instead of its "does not run any tests"
     # warning. The packaging-profile contract is excluded because it audits
@@ -123,8 +133,12 @@ check() {
     # canonical checkout (including the Development/ release captures), which
     # the stripped source archive abuild unpacks does not provide; the built
     # package itself is validated afterwards by scripts/test-apk.sh. The
-    # remaining tests exercise the built tree and are self-contained.
-    QT_QPA_PLATFORM=offscreen ctest --test-dir "$builddir/build" --output-on-failure \
+    # remaining tests exercise the built tree and are self-contained. The
+    # suite runs serially (-j1) because the 2 vCPU Alpine rigs produce
+    # load-induced flakes under parallel test execution (observed:
+    # filesystem-repair-contract failed with lost output while backend-profile
+    # ran alongside, 2026-09-29).
+    QT_QPA_PLATFORM=offscreen ctest -j1 --test-dir "$builddir/build" --output-on-failure \
         -E boot-repair-packaging-profile-contract
 }
 
