@@ -10,153 +10,68 @@ HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
 [[ -x "$HELPER" ]] || { echo "FAIL: helper is not executable" >&2; exit 1; }
 bash -n "$HELPER"
 
+# Every probe/backend function the contract asserts must exist in the helper.
+# One extraction pass replaces 148 single-pattern greps over the 956 KB
+# helper; the membership assertions stay identical and the failure message now
+# names the missing function(s).
+required_helper_functions=(
+    is_debian_family is_arch_family is_alpine_family profile_target_backends target_dpkg_detected target_apt_detected
+    target_apk_detected target_pacman_detected target_rpm_detected target_systemd_present openrc_present target_display_manager_backend
+    target_logging_backend target_initramfs_backend_detected package_stage_backends run_package_stage validate_repair_stages_against_backends package_feedback_reset
+    package_feedback_report package_feedback_publish apt_package_feedback_report rpm_package_feedback_report pacman_package_feedback_report apk_package_feedback_report
+    alpine_openrc_present alpine_display_manager_present alpine_kernel_images alpine_initramfs_images target_apk_package_installed alpine_kernel_pairs
+    alpine_apk_preflight alpine_apk_audit_missing_paths alpine_apk_missing_file_packages alpine_apk_missing_files_fingerprint alpine_apk_transaction_try alpine_apk_simulation_is_safe
+    alpine_apk_transaction_reported_no_changes adaptive_alpine_apk_apply adaptive_alpine_apk_fix_broken adaptive_alpine_apk_upgrade preflight_alpine_initramfs adaptive_alpine_initramfs_repair
+    preflight_extlinux adaptive_extlinux_repair guard_extlinux_candidate_preserves_entries detect_alpine_display_manager preflight_alpine_display_manager adaptive_alpine_display_manager_repair
+    preflight_arch_pacman_transaction arch_pacman_transaction_reported_no_changes adaptive_arch_pacman_repair preflight_arch_initramfs adaptive_arch_initramfs_repair realpath_existing
+    target_path validate_selected_esp efi_selected_generic_loader efi_ensure_selected_generic_entry alpine_efi_firmware_available alpine_efi_backend
+    alpine_grub_install_present alpine_grub_module_dir_present alpine_grub_config_tool_present alpine_efi_esp_kernel_images alpine_efi_esp_initramfs_images alpine_efi_stub_entry_ids_for_partuuid
+    alpine_efi_backup_state alpine_efi_restore_backup alpine_efi_refresh_fallback_loader alpine_efi_stub_preflight alpine_efi_stub_reconcile alpine_grub_efi_apply
+    alpine_grub_efi_repair adaptive_alpine_efi_repair target_rpm_ready target_dnf5_ready rpm_database_present rpm_repositories_present
+    rpm_dnf_tool rpm_lock_probe_available rpm_lock_held rpm_database_fingerprint rpm_preflight rpm_transaction_try
+    rpm_simulation_is_safe rpm_transaction_reported_no_changes rpm_verify_missing_paths rpm_missing_file_packages adaptive_rpm_apply rpm_simulation_download_size
+    adaptive_rpm_stage adaptive_rpm_fix_broken adaptive_rpm_metadata_refresh adaptive_rpm_upgrade rpm_kernel_pairs rpm_kernel_pairs_readonly
+    dracut_initramfs_verify dracut_initramfs_verify_rc preflight_dracut_initramfs adaptive_dracut_initramfs_repair grub_generator_tool grub_config_path
+    grub_script_check_tool grub_install_tool grub_editenv_tool grub_env_path grub_env_block_valid grub2_layout_detected
+    grub_artifact_fingerprint fedora_bls_entry_keys guard_fedora_bls_entries_preserved preflight_fedora_grub adaptive_fedora_grub_repair adaptive_grub_stage
+    fedora_bios_grub_partition fedora_grub_boot_code_broken partition_table_fingerprint fedora_grub_boot_fingerprint preflight_fedora_grub_reinstall fedora_grub_reinstall_boot_code
+    fedora_grub_backup_boot_state fedora_grub_restore_boot_backup fedora_bootstack_pairing_check diagnostic_package_manager_logs package_log_filter target_journal_evidence_present
+    apt_lists_fingerprint rpm_metadata_cache_fingerprint grub_entry_is_foreign diagnostic_repair_capabilities apt_update_allow_release_info_retry apt_update_release_info_change_only
+    apt_update_release_info_change_repos apt_update_release_info_change_details run_apt_update parse_repair_arguments repair_change_status repair_file_fingerprint
+    initramfs_image_fingerprint efi_boot_artifact_fingerprint apt_transaction_reported_no_changes dpkg_configuration_pending dpkg_configure_stage efi_repair_emit_change_status
+    display_manager_already_correct apt_simulation_has_pending_packages apt_simulation_requests_full_upgrade run_host_default
+)
+helper_function_names="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*\(\)' "$HELPER")"
+missing_helper_functions="$(grep -Fvxf \
+    <(printf '%s\n' "$helper_function_names") \
+    <(printf '%s()\n' "${required_helper_functions[@]}") || true)"
+if [[ -n "$missing_helper_functions" ]]; then
+    echo "FAIL: helper is missing required function(s): ${missing_helper_functions//$'\n'/ }" >&2
+    exit 1
+fi
+
 # Keep the probe layer visible so backend availability can only be decided by
 # read-only target evidence, never by a distribution-family prefilter.
-grep -q '^is_debian_family()' "$HELPER"
-grep -q '^is_arch_family()' "$HELPER"
-grep -q '^is_alpine_family()' "$HELPER"
-grep -q '^profile_target_backends()' "$HELPER"
-grep -q '^target_dpkg_detected()' "$HELPER"
-grep -q '^target_apt_detected()' "$HELPER"
-grep -q '^target_apk_detected()' "$HELPER"
-grep -q '^target_pacman_detected()' "$HELPER"
-grep -q '^target_rpm_detected()' "$HELPER"
-grep -q '^target_systemd_present()' "$HELPER"
-grep -q '^openrc_present()' "$HELPER"
-grep -q '^target_display_manager_backend()' "$HELPER"
-grep -q '^target_logging_backend()' "$HELPER"
-grep -q '^target_initramfs_backend_detected()' "$HELPER"
-grep -q '^package_stage_backends()' "$HELPER"
-grep -q '^run_package_stage()' "$HELPER"
-grep -q '^validate_repair_stages_against_backends()' "$HELPER"
 # Package-manager feedback (held-back/skipped/ignored/masked/pinned packages)
 # is parsed per backend and published as stable evidence lines plus a summary
 # that the change-status reason and the GUI result summary consume.
-grep -q '^package_feedback_reset()' "$HELPER"
-grep -q '^package_feedback_report()' "$HELPER"
-grep -q '^package_feedback_publish()' "$HELPER"
-grep -q '^apt_package_feedback_report()' "$HELPER"
-grep -q '^rpm_package_feedback_report()' "$HELPER"
-grep -q '^pacman_package_feedback_report()' "$HELPER"
-grep -q '^apk_package_feedback_report()' "$HELPER"
 grep -q 'TARGET_PACKAGE_MANAGERS=()' "$HELPER"
 grep -q 'TARGET_INITRAMFS_BACKENDS=()' "$HELPER"
 grep -q 'TARGET_SERVICE_MANAGERS=()' "$HELPER"
 grep -q 'TARGET_BOOTLOADER_BACKEND="systemd-boot' "$HELPER"
-grep -q '^alpine_openrc_present()' "$HELPER"
-grep -q '^alpine_display_manager_present()' "$HELPER"
-grep -q '^alpine_kernel_images()' "$HELPER"
-grep -q '^alpine_initramfs_images()' "$HELPER"
 grep -q '/lib/apk/db/lock' "$HELPER"
-grep -q '^target_apk_package_installed()' "$HELPER"
-grep -q '^alpine_kernel_pairs()' "$HELPER"
-grep -q '^alpine_apk_preflight()' "$HELPER"
-grep -q '^alpine_apk_audit_missing_paths()' "$HELPER"
-grep -q '^alpine_apk_missing_file_packages()' "$HELPER"
-grep -q '^alpine_apk_missing_files_fingerprint()' "$HELPER"
-grep -q '^alpine_apk_transaction_try()' "$HELPER"
-grep -q '^alpine_apk_simulation_is_safe()' "$HELPER"
-grep -q '^alpine_apk_transaction_reported_no_changes()' "$HELPER"
-grep -q '^adaptive_alpine_apk_apply()' "$HELPER"
-grep -q '^adaptive_alpine_apk_fix_broken()' "$HELPER"
-grep -q '^adaptive_alpine_apk_upgrade()' "$HELPER"
-grep -q '^preflight_alpine_initramfs()' "$HELPER"
-grep -q '^adaptive_alpine_initramfs_repair()' "$HELPER"
-grep -q '^preflight_extlinux()' "$HELPER"
-grep -q '^adaptive_extlinux_repair()' "$HELPER"
-grep -q '^guard_extlinux_candidate_preserves_entries()' "$HELPER"
-grep -q '^detect_alpine_display_manager()' "$HELPER"
-grep -q '^preflight_alpine_display_manager()' "$HELPER"
-grep -q '^adaptive_alpine_display_manager_repair()' "$HELPER"
 grep -q 'Arch profile — guarded pacman/mkinitcpio/GRUB/EFI repairs' "$HELPER"
 grep -q 'diagnostic_backend_profile()' "$HELPER"
 grep -q 'mount_target_boot_entry "/efi" ro' "$HELPER"
-grep -q '^preflight_arch_pacman_transaction()' "$HELPER"
-grep -q '^arch_pacman_transaction_reported_no_changes()' "$HELPER"
-grep -q '^adaptive_arch_pacman_repair()' "$HELPER"
-grep -q '^preflight_arch_initramfs()' "$HELPER"
-grep -q '^adaptive_arch_initramfs_repair()' "$HELPER"
-grep -q 'grub-mkconfig with an isolated output path' "$HELPER"
-grep -q '^realpath_existing()' "$HELPER"
-grep -q '^target_path()' "$HELPER"
-grep -q '^validate_selected_esp()' "$HELPER"
-grep -q '^efi_selected_generic_loader()' "$HELPER"
-grep -q '^efi_ensure_selected_generic_entry()' "$HELPER"
+grep -q 'msg_log grub-mkconfig-isolated' "$HELPER"
 grep -q 'efi_ensure_selected_generic_entry' "$HELPER"
-grep -q '^alpine_efi_firmware_available()' "$HELPER"
-grep -q '^alpine_efi_backend()' "$HELPER"
-grep -q '^alpine_grub_install_present()' "$HELPER"
-grep -q '^alpine_grub_module_dir_present()' "$HELPER"
-grep -q '^alpine_grub_config_tool_present()' "$HELPER"
-grep -q '^alpine_efi_esp_kernel_images()' "$HELPER"
-grep -q '^alpine_efi_esp_initramfs_images()' "$HELPER"
-grep -q '^alpine_efi_stub_entry_ids_for_partuuid()' "$HELPER"
-grep -q '^alpine_efi_backup_state()' "$HELPER"
-grep -q '^alpine_efi_restore_backup()' "$HELPER"
-grep -q '^alpine_efi_refresh_fallback_loader()' "$HELPER"
-grep -q '^alpine_efi_stub_preflight()' "$HELPER"
-grep -q '^alpine_efi_stub_reconcile()' "$HELPER"
-grep -q '^alpine_grub_efi_apply()' "$HELPER"
-grep -q '^alpine_grub_efi_repair()' "$HELPER"
-grep -q '^adaptive_alpine_efi_repair()' "$HELPER"
 grep -q -- '--boot-directory=/boot' "$HELPER"
 grep -q -- '--no-nvram' "$HELPER"
-grep -q '^target_rpm_ready()' "$HELPER"
-grep -q '^target_dnf5_ready()' "$HELPER"
-grep -q '^rpm_database_present()' "$HELPER"
-grep -q '^rpm_repositories_present()' "$HELPER"
-grep -q '^rpm_dnf_tool()' "$HELPER"
-grep -q '^rpm_lock_probe_available()' "$HELPER"
-grep -q '^rpm_lock_held()' "$HELPER"
-grep -q '^rpm_database_fingerprint()' "$HELPER"
-grep -q '^rpm_preflight()' "$HELPER"
-grep -q '^rpm_transaction_try()' "$HELPER"
-grep -q '^rpm_simulation_is_safe()' "$HELPER"
-grep -q '^rpm_transaction_reported_no_changes()' "$HELPER"
-grep -q '^rpm_verify_missing_paths()' "$HELPER"
-grep -q '^rpm_missing_file_packages()' "$HELPER"
-grep -q '^adaptive_rpm_apply()' "$HELPER"
-grep -q '^rpm_simulation_download_size()' "$HELPER"
-grep -q '^adaptive_rpm_stage()' "$HELPER"
-grep -q '^adaptive_rpm_fix_broken()' "$HELPER"
-grep -q '^adaptive_rpm_metadata_refresh()' "$HELPER"
-grep -q '^adaptive_rpm_upgrade()' "$HELPER"
-grep -q '^rpm_kernel_pairs()' "$HELPER"
-grep -q '^rpm_kernel_pairs_readonly()' "$HELPER"
-grep -q '^dracut_initramfs_verify()' "$HELPER"
-grep -q '^dracut_initramfs_verify_rc()' "$HELPER"
-grep -q '^preflight_dracut_initramfs()' "$HELPER"
-grep -q '^adaptive_dracut_initramfs_repair()' "$HELPER"
 grep -q 'Fedora profile — guarded rpm/dnf5/dracut repairs' "$HELPER"
 grep -q 'Fedora policy: guarded rpm/dnf5 package transactions and dracut initramfs rebuilds' "$HELPER"
-grep -q '^grub_generator_tool()' "$HELPER"
-grep -q '^grub_config_path()' "$HELPER"
-grep -q '^grub_script_check_tool()' "$HELPER"
-grep -q '^grub_install_tool()' "$HELPER"
-grep -q '^grub_editenv_tool()' "$HELPER"
-grep -q '^grub_env_path()' "$HELPER"
-grep -q '^grub_env_block_valid()' "$HELPER"
-grep -q '^grub2_layout_detected()' "$HELPER"
-grep -q '^grub_artifact_fingerprint()' "$HELPER"
-grep -q '^fedora_bls_entry_keys()' "$HELPER"
-grep -q '^guard_fedora_bls_entries_preserved()' "$HELPER"
-grep -q '^preflight_fedora_grub()' "$HELPER"
-grep -q '^adaptive_fedora_grub_repair()' "$HELPER"
-grep -q '^adaptive_grub_stage()' "$HELPER"
-grep -q '^fedora_bios_grub_partition()' "$HELPER"
-grep -q '^fedora_grub_boot_code_broken()' "$HELPER"
-grep -q '^partition_table_fingerprint()' "$HELPER"
-grep -q '^fedora_grub_boot_fingerprint()' "$HELPER"
-grep -q '^preflight_fedora_grub_reinstall()' "$HELPER"
-grep -q '^fedora_grub_reinstall_boot_code()' "$HELPER"
-grep -q '^fedora_grub_backup_boot_state()' "$HELPER"
-grep -q '^fedora_grub_restore_boot_backup()' "$HELPER"
-grep -q '^fedora_bootstack_pairing_check()' "$HELPER"
 grep -q -- '--no-grubenv-update' "$HELPER"
 grep -q -- '--target=i386-pc --boot-directory=/boot --recheck' "$HELPER"
-grep -q '^diagnostic_package_manager_logs()' "$HELPER"
 grep -q 'dnf5 package-manager log errors' "$HELPER"
-grep -q '^package_log_filter()' "$HELPER"
 # Debian 13's mawk 1.3.4 mishandles awk interval expressions without an upper
 # bound: it masks short hex runs (`Failed` -> `<hash>iled`) and corrupts real
 # error text.  The helper's log masking must use explicit repetition instead.
@@ -164,12 +79,8 @@ if grep -nE '\{[0-9]+,\}' "$HELPER"; then
     echo 'FAIL: helper uses an unbounded awk interval expression (mawk 1.3.4 corrupts it)' >&2
     exit 1
 fi
-grep -q '^target_journal_evidence_present()' "$HELPER"
-grep -q '^apt_lists_fingerprint()' "$HELPER"
-grep -q '^rpm_metadata_cache_fingerprint()' "$HELPER"
-grep -q '^grub_entry_is_foreign()' "$HELPER"
 grep -q '/etc/gdm/custom.conf' "$HELPER"
-grep -q 'legacy BIOS target; no EFI boot path is available' "$HELPER"
+grep -q 'reason legacy-bios-no-efi' "$HELPER"
 
 # The guarded Fedora GRUB2 reinstall must never pass a policy-relaxing
 # grub2-install flag, never call efibootmgr and never touch a partition path.
@@ -205,6 +116,36 @@ touch "$fake_root/usr/bin/pacman" "$fake_root/usr/bin/mkinitcpio" "$fake_root/us
     "$fake_root/boot/vmlinuz-linux" "$fake_root/boot/initramfs-linux.img"
 chmod +x "$fake_root/usr/bin"/*
 source <(sed '/^main "\$@"/d' "$HELPER")
+# The helper is re-sourced in every subshell block below only to reset its
+# globals and restore the handful of functions earlier sections stub at top
+# level.  Re-parsing the 956 KB helper 36 times dominates the runtime, so the
+# pristine state is captured once right after this first source and restored
+# in-process instead.  reset_helper_state restores exactly what a fresh source
+# would: every variable the helper set at source time plus the pristine bodies
+# of the functions the contract shadows (run_selected_chroot and the boot-stack
+# stubs).  Traps are intentionally not re-armed: subshells do not inherit the
+# helper's EXIT/INT/TERM/HUP traps and every block disarms them right away.
+HELPER_GLOBALS_RESTORE="$(
+    declare -p \
+        | grep -v '^declare -f ' \
+        | grep -vE '^declare -[a-zA-Z]*r[a-zA-Z]* ' \
+        | grep -vE '^declare -[a-zA-Z]* (BASH[A-Z_]*|PPID|_|EPOCH[A-Z_]*|SRANDOM|RANDOM|SECONDS|LINENO|FUNCNAME|PIPESTATUS|GROUPS|DIRSTACK|SHLVL|UID|EUID|BASHPID|OPTIND|OPTERR|IFS|PS[0-9]|HIST[A-Z_]*|COMP_[A-Z_]*|SHELLOPTS|OSTYPE|HOSTTYPE|MACHTYPE|PWD|OLDPWD|HOME|TERM|DISPLAY|SHELL|BASH_ARGV0|BASH_ENV|TMPDIR|MAIL|MAILCHECK|MAILPATH|LANG|LC_[A-Z_]*)[=(]' \
+        | sed 's/^declare /declare -g /' || true
+)"
+HELPER_FN_RESTORE="$(for _fn in run_selected_chroot validate_mapper_crypttab \
+    adaptive_initramfs_repair preflight_tuxedo_uki rebuild_tuxedo_uki \
+    verify_tuxedo_uki_root_binding reinstall_efi_bootloader adaptive_grub_repair \
+    is_tuxedo_uki_layout; do
+    declare -f "$_fn" || { echo "FAIL: helper function $_fn is missing" >&2; exit 1; }
+done)"
+unset -v _fn
+
+reset_helper_state()
+{
+    eval "$HELPER_GLOBALS_RESTORE"
+    eval "$HELPER_FN_RESTORE"
+}
+
 trap 'rm -rf -- "$fake_root"' EXIT
 TARGET_ROOT="$fake_root"
 TARGET_OS_ID="arch"
@@ -339,14 +280,14 @@ fi
 mirror_log=$'error: failed retrieving file \'extra.db\' from fastly.mirror.pkgbuild.com : OpenSSL EOF'
 arch_pacman_transaction_is_safe "$mirror_log" 0 || { echo 'FAIL: recoverable mirror failure rejected' >&2; exit 1; }
 arch_pacman_transaction_is_safe "$mirror_log" 1 && { echo 'FAIL: nonzero pacman rc accepted' >&2; exit 1; }
-grep -Fq 'WARN: pacman encountered 1 recoverable mirror retrieval failure(s).' "$SESSION_LOG"
+grep -Fq 'msg:pacman-mirror-failures|param:1' "$SESSION_LOG"
 grep -Fq 'WARN: failing mirror: fastly.mirror.pkgbuild.com' "$SESSION_LOG"
 for fatal in 'error: failed to synchronize all databases' 'error: invalid or corrupted package' 'error: invalid or corrupted database' 'error: required key missing from keyring' 'error: invalid signature' 'error: unknown trust' 'error: conflicting files' 'error: could not satisfy dependencies' 'error: failed to init transaction' 'error: failed to prepare transaction' 'error: failed to commit transaction' 'error: unexpected failure'; do
     arch_pacman_transaction_is_safe "$fatal" 0 && { echo "FAIL: fatal pacman error accepted: $fatal" >&2; exit 1; }
 done
 multiple_mirrors=$'error: failed retrieving file \'extra.db\' from fastly.mirror.pkgbuild.com : EOF\nerror: failed retrieving file \'core.db\' from another.mirror.example : EOF'
 arch_pacman_transaction_is_safe "$multiple_mirrors" 0 || { echo 'FAIL: multiple recoverable mirror failures rejected' >&2; exit 1; }
-grep -Fq 'WARN: pacman encountered 2 recoverable mirror retrieval failure(s).' "$SESSION_LOG"
+grep -Fq 'msg:pacman-mirror-failures|param:2' "$SESSION_LOG"
 grep -Fq 'WARN: failing mirror: another.mirror.example' "$SESSION_LOG"
 combined=$'error: failed retrieving file \'extra.db\' from fastly.mirror.pkgbuild.com : EOF\nerror: failed to synchronize all databases'
 arch_pacman_transaction_is_safe "$combined" 0 && { echo 'FAIL: mirror plus fatal sync error accepted' >&2; exit 1; }
@@ -414,7 +355,6 @@ grep -Fq 'Refusing the Arch pacman sandbox: the target /tmp is a symlink.' <<<"$
 [[ ! -e "$pacman_tmp_link_root/host-tmp/boot-repair-pacman-session" ]] \
     || { echo 'FAIL: the refused pacman sandbox wrote through the target /tmp symlink' >&2; exit 1; }
 
-grep -q '^diagnostic_repair_capabilities()' "$HELPER"
 grep -q 'diagnostic_repair_capabilities$' "$HELPER"
 grep -Fq "printf 'Repair tool %s: available\\n' \"\$key\"" "$HELPER"
 grep -Fq "printf 'Repair tool %s: unavailable|%s\\n' \"\$key\"" "$HELPER"
@@ -446,7 +386,7 @@ cap_assert_lines()
     local idx
     for idx in "${!keys[@]}"; do
         sed -n "$((idx + 2))p" <<<"$output" | grep -Fqx "Repair tool ${keys[$idx]}: available" \
-            || sed -n "$((idx + 2))p" <<<"$output" | grep -Eq "^Repair tool ${keys[$idx]}: unavailable\|[^|]+\$"
+            || sed -n "$((idx + 2))p" <<<"$output" | grep -Eq "^Repair tool ${keys[$idx]}: unavailable\|reason:[a-z0-9-]+(\|param:.*)?\$"
     done
 }
 
@@ -468,17 +408,17 @@ cap_expect \
         TARGET_INITRAMFS_BACKEND=mkinitcpio TARGET_BOOTLOADER_BACKEND=grub \
         diagnostic_repair_capabilities)" \
     'validate: available' \
-    'dpkg: unavailable|dpkg configuration is not available on Arch; use the Arch package transaction stages instead' \
-    'fixbroken: unavailable|No guarded package-manager backend was detected (detected: none)' \
-    'aptupdate: unavailable|Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction' \
-    'upgrade: unavailable|No guarded package-manager backend was detected (detected: none)' \
-    'dkms: unavailable|DKMS is not installed in the Arch target system' \
-    'display: unavailable|No supported service manager (systemd or OpenRC) was detected in the target' \
-    'initramfs: unavailable|No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected' \
-    'efi: unavailable|requires GRUB configuration tooling' \
-    'grub: unavailable|Neither grub-mkconfig nor update-grub is installed in the target system' \
-    'extlinux: unavailable|update-extlinux is not installed in the target' \
-    'bootstack: unavailable|Requires available initramfs and GRUB repair prerequisites'
+    'dpkg: unavailable|reason:dpkg-not-on-arch' \
+    'fixbroken: unavailable|reason:no-package-manager|param:none' \
+    'aptupdate: unavailable|reason:aptupdate-not-on-arch' \
+    'upgrade: unavailable|reason:no-package-manager|param:none' \
+    'dkms: unavailable|reason:missing-dkms-arch' \
+    'display: unavailable|reason:no-service-manager' \
+    'initramfs: unavailable|reason:no-initramfs-backend' \
+    'efi: unavailable|reason:missing-grub-config-tooling' \
+    'grub: unavailable|reason:missing-grub-generator' \
+    'extlinux: unavailable|reason:missing-update-extlinux' \
+    'bootstack: unavailable|reason:bootstack-needs-initramfs-grub'
 
 mkdir -p "$cap_root"/usr/bin "$cap_root"/usr/lib/modules/6.12.1-arch1-1/build \
     "$cap_root"/usr/lib/systemd/system "$cap_root"/boot/grub "$cap_root"/etc \
@@ -519,7 +459,7 @@ cap_expect \
         diagnostic_repair_capabilities)" \
     'fixbroken: available' \
     'upgrade: available' \
-    'dpkg: unavailable|dpkg configuration is not available on Arch; use the Arch package transaction stages instead'
+    'dpkg: unavailable|reason:dpkg-not-on-arch'
 
 # A single diagnostic stays self-contained: exactly one capability preamble
 # with every key line present.
@@ -621,11 +561,11 @@ cap_arch_probe()
         diagnostic_repair_capabilities
 }
 cap_expect "$(cap_arch_probe)" \
-    'fixbroken: unavailable|The target pacman database directory is missing' \
-    'upgrade: unavailable|The target pacman database directory is missing' \
-    'display: unavailable|No supported service manager (systemd or OpenRC) was detected in the target' \
-    'initramfs: unavailable|No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected' \
-    'efi: unavailable|requires GRUB configuration tooling'
+    'fixbroken: unavailable|reason:missing-pacman-db' \
+    'upgrade: unavailable|reason:missing-pacman-db' \
+    'display: unavailable|reason:no-service-manager' \
+    'initramfs: unavailable|reason:no-initramfs-backend' \
+    'efi: unavailable|reason:missing-grub-config-tooling'
 
 mkdir -p "$cap_arch_min"/var/lib/pacman/local
 cap_expect "$(cap_arch_probe)" 'fixbroken: available' 'upgrade: available'
@@ -642,8 +582,8 @@ for cap_tool in grub-mkconfig grub-install; do
 done
 cap_expect "$(cap_arch_probe)" \
     'grub: available' \
-    'efi: unavailable|No EFI System Partition was identified for the selected Arch target' \
-    'bootstack: unavailable|Arch boot-stack reconciliation requires available initramfs, GRUB and EFI repair prerequisites'
+    'efi: unavailable|reason:no-arch-esp' \
+    'bootstack: unavailable|reason:arch-bootstack-needs-efi'
 
 mkdir -p "$cap_arch_min"/boot/efi/EFI
 cap_expect "$(cap_arch_probe)" 'efi: available' 'bootstack: available'
@@ -662,16 +602,16 @@ cap_expect \
         TARGET_INITRAMFS_BACKEND=initramfs-tools diagnostic_repair_capabilities)" \
     'validate: available' \
     'aptupdate: available' \
-    'dpkg: unavailable|dpkg is not installed in the target' \
-    'fixbroken: unavailable|dpkg is not installed in the target' \
-    'upgrade: unavailable|dpkg is not installed in the target' \
-    'dkms: unavailable|DKMS is not installed in the target' \
+    'dpkg: unavailable|reason:missing-dpkg' \
+    'fixbroken: unavailable|reason:missing-dpkg' \
+    'upgrade: unavailable|reason:missing-dpkg' \
+    'dkms: unavailable|reason:missing-dkms' \
     'display: available' \
-    'initramfs: unavailable|update-initramfs/mkinitramfs are not installed in the target' \
-    'grub: unavailable|Neither grub-mkconfig nor update-grub is installed in the target system' \
-    'efi: unavailable|TUXEDO UKI builder create_boot_uki_base.sh is not installed in the target' \
-    'extlinux: unavailable|update-extlinux is not installed in the target' \
-    'bootstack: unavailable|Requires available initramfs and GRUB repair prerequisites'
+    'initramfs: unavailable|reason:missing-initramfs-tools' \
+    'grub: unavailable|reason:missing-grub-generator' \
+    'efi: unavailable|reason:missing-tuxedo-uki-builder' \
+    'extlinux: unavailable|reason:missing-update-extlinux' \
+    'bootstack: unavailable|reason:bootstack-needs-initramfs-grub'
 
 mkdir -p "$cap_root"/usr/bin "$cap_root"/usr/lib/systemd/system "$cap_root"/usr/sbin "$cap_root"/boot/grub \
     "$cap_root"/var/lib/dpkg
@@ -691,7 +631,7 @@ cap_expect "$cap_tuxedo_no_builder" \
     'validate: available' 'dpkg: available' 'fixbroken: available' 'aptupdate: available' \
     'upgrade: available' 'dkms: available' 'display: available' 'initramfs: available' \
     'grub: available' \
-    'efi: unavailable|TUXEDO UKI builder create_boot_uki_base.sh is not installed in the target' \
+    'efi: unavailable|reason:missing-tuxedo-uki-builder' \
     'bootstack: available'
 grep -Fqx 'Repair capability evidence initramfs: initramfs backend: initramfs-tools; update-initramfs and mkinitramfs present' <<<"$cap_tuxedo_no_builder"
 grep -Fqx 'Repair capability evidence efi: TUXEDO UKI builder create_boot_uki_base.sh missing' <<<"$cap_tuxedo_no_builder"
@@ -714,22 +654,22 @@ mkdir -p "$cap_root/usr/bin" "$cap_root/usr/lib/dracut"
 cap_dracut="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian \
     TARGET_INITRAMFS_BACKEND=dracut diagnostic_repair_capabilities)"
 cap_expect "$cap_dracut" \
-    'initramfs: unavailable|lsinitrd is not installed in the target system; dracut image verification is unavailable' \
-    'bootstack: unavailable|Requires available initramfs and GRUB repair prerequisites'
+    'initramfs: unavailable|reason:missing-lsinitrd' \
+    'bootstack: unavailable|reason:bootstack-needs-initramfs-grub'
 grep -Fqx 'Repair capability evidence initramfs: initramfs backend: dracut; dracut executable and /usr/lib/dracut present; lsinitrd missing' <<<"$cap_dracut"
 
 rm -rf -- "$cap_root/usr/lib/dracut"
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian \
         TARGET_INITRAMFS_BACKEND=dracut diagnostic_repair_capabilities)" \
-    'initramfs: unavailable|the dracut generator directory is missing from the target'
+    'initramfs: unavailable|reason:missing-dracut-dir'
 
 rm -f "$cap_root/usr/bin/dracut"
 mkdir -p "$cap_root/usr/lib/dracut"
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian \
         TARGET_INITRAMFS_BACKEND=dracut diagnostic_repair_capabilities)" \
-    'initramfs: unavailable|dracut is not installed in the target system'
+    'initramfs: unavailable|reason:missing-dracut'
 
 # A complete dracut installation without an installed kernel pair fails closed
 # on the empty kernel inventory; adding the module/vmlinuz pair makes the
@@ -739,7 +679,7 @@ cap_expect \
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian \
         TARGET_INITRAMFS_BACKEND=dracut diagnostic_repair_capabilities)" \
-    'initramfs: unavailable|No installed dracut kernels were found under target /boot'
+    'initramfs: unavailable|reason:no-dracut-kernels'
 mkdir -p "$cap_root/lib/modules/6.1-test"
 : > "$cap_root/boot/vmlinuz-6.1-test"
 : > "$cap_root/boot/initramfs-6.1-test.img"
@@ -760,17 +700,17 @@ while read -r cap_key cap_reason; do
     grep -Fqx "Repair tool $cap_key: unavailable|$cap_reason" "$fake_root/cap-unsupported.log" \
         || { echo "FAIL: unsupported-family $cap_key reason changed" >&2; exit 1; }
 done <<'UNSUPPORTED'
-dpkg Fedora uses rpm/dnf; dpkg configuration is not available
-fixbroken No guarded package-manager backend was detected (detected: none)
-aptupdate dnf5 is not installed in the target
-upgrade No guarded package-manager backend was detected (detected: none)
-dkms DKMS is not installed in the target
-display No supported service manager (systemd or OpenRC) was detected in the target
-initramfs No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected
-efi requires GRUB configuration tooling
-grub Neither grub-mkconfig nor update-grub is installed in the target system
-extlinux update-extlinux is not installed in the target
-bootstack Requires available initramfs and GRUB repair prerequisites
+dpkg reason:dpkg-not-on-fedora
+fixbroken reason:no-package-manager|param:none
+aptupdate reason:missing-dnf5
+upgrade reason:no-package-manager|param:none
+dkms reason:missing-dkms
+display reason:no-service-manager
+initramfs reason:no-initramfs-backend
+efi reason:missing-grub-config-tooling
+grub reason:missing-grub-generator
+extlinux reason:missing-update-extlinux
+bootstack reason:bootstack-needs-initramfs-grub
 UNSUPPORTED
 
 # ---------------------------------------------------------------------------
@@ -953,17 +893,17 @@ cap_alpine_output="$(cap_alpine_probe)"
 cap_expect "$cap_alpine_output" \
     'validate: available' \
     'filesystem: available' \
-    'dpkg: unavailable|Alpine uses apk; dpkg configuration is not available on Alpine' \
+    'dpkg: unavailable|reason:dpkg-not-on-alpine' \
     'fixbroken: available' \
-    'aptupdate: unavailable|Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction' \
+    'aptupdate: unavailable|reason:aptupdate-not-on-alpine' \
     'upgrade: available' \
-    'dkms: unavailable|DKMS is not installed in the Alpine target system' \
+    'dkms: unavailable|reason:missing-dkms-alpine' \
     'display: available' \
     'initramfs: available' \
     'extlinux: available' \
-    'efi: unavailable|syslinux/extlinux (BIOS) boot detected; no EFI boot path is available' \
-    'grub: unavailable|The detected bootloader is syslinux/extlinux; GRUB is not the selected bootloader' \
-    'bootstack: unavailable|Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately)'
+    'efi: unavailable|reason:syslinux-bios-no-efi' \
+    'grub: unavailable|reason:not-grub-bootloader|param:syslinux/extlinux' \
+    'bootstack: unavailable|reason:alpine-bootstack-extlinux-disabled'
 if grep -q 'Modifying repairs require a supported Debian/Ubuntu' <<<"$cap_alpine_output"; then
     echo 'FAIL: Alpine capability reasons fell back to the unsupported-family message' >&2
     exit 1
@@ -986,41 +926,41 @@ grep -Fqx 'Repair capability evidence bootstack: Alpine uses OpenRC, mkinitfs an
 # Missing apk prerequisites must fail closed with Alpine-specific reasons.
 mv "$cap_alpine/etc/apk/repositories" "$cap_alpine/etc/apk/repositories.disabled"
 cap_expect "$(cap_alpine_probe)" \
-    'fixbroken: unavailable|The target has no configured apk repositories' \
-    'upgrade: unavailable|The target has no configured apk repositories'
+    'fixbroken: unavailable|reason:no-apk-repositories' \
+    'upgrade: unavailable|reason:no-apk-repositories'
 mv "$cap_alpine/etc/apk/repositories.disabled" "$cap_alpine/etc/apk/repositories"
 mv "$cap_alpine/etc/apk/world" "$cap_alpine/etc/apk/world.disabled"
 cap_expect "$(cap_alpine_probe)" \
-    'fixbroken: unavailable|The target apk world file is missing' \
-    'upgrade: unavailable|The target apk world file is missing'
+    'fixbroken: unavailable|reason:missing-apk-world' \
+    'upgrade: unavailable|reason:missing-apk-world'
 mv "$cap_alpine/etc/apk/world.disabled" "$cap_alpine/etc/apk/world"
 mv "$cap_alpine/lib/apk/db/installed" "$cap_alpine/lib/apk/db/installed.disabled"
 cap_expect "$(cap_alpine_probe)" \
-    'fixbroken: unavailable|The target apk installed database is missing' \
-    'upgrade: unavailable|The target apk installed database is missing'
+    'fixbroken: unavailable|reason:missing-apk-installed-db' \
+    'upgrade: unavailable|reason:missing-apk-installed-db'
 mv "$cap_alpine/lib/apk/db/installed.disabled" "$cap_alpine/lib/apk/db/installed"
 
 # Missing mkinitfs prerequisites and update-extlinux fail closed too.
 mv "$cap_alpine/sbin/mkinitfs" "$cap_alpine/sbin/mkinitfs.disabled"
-cap_expect "$(cap_alpine_probe)" 'initramfs: unavailable|mkinitfs is not installed in the target system'
+cap_expect "$(cap_alpine_probe)" 'initramfs: unavailable|reason:missing-mkinitfs'
 mv "$cap_alpine/sbin/mkinitfs.disabled" "$cap_alpine/sbin/mkinitfs"
 mv "$cap_alpine/sbin/update-extlinux" "$cap_alpine/sbin/update-extlinux.disabled"
-cap_expect "$(cap_alpine_probe)" 'extlinux: unavailable|update-extlinux is not installed in the target'
+cap_expect "$(cap_alpine_probe)" 'extlinux: unavailable|reason:missing-update-extlinux'
 mv "$cap_alpine/sbin/update-extlinux.disabled" "$cap_alpine/sbin/update-extlinux"
 mv "$cap_alpine/boot/extlinux.conf" "$cap_alpine/boot/extlinux.conf.disabled"
 mv "$cap_alpine/etc/update-extlinux.conf" "$cap_alpine/etc/update-extlinux.conf.disabled"
-cap_expect "$(cap_alpine_probe)" 'extlinux: unavailable|No extlinux/syslinux configuration was detected in the target'
+cap_expect "$(cap_alpine_probe)" 'extlinux: unavailable|reason:no-extlinux-config'
 mv "$cap_alpine/boot/extlinux.conf.disabled" "$cap_alpine/boot/extlinux.conf"
 mv "$cap_alpine/etc/update-extlinux.conf.disabled" "$cap_alpine/etc/update-extlinux.conf"
 mv "$cap_alpine/lib/modules/6.18.52-0-lts/kernel-suffix" "$cap_alpine/lib/modules/6.18.52-0-lts/kernel-suffix.disabled"
-cap_expect "$(cap_alpine_probe)" 'initramfs: unavailable|No installed Alpine kernels were found under target /boot'
+cap_expect "$(cap_alpine_probe)" 'initramfs: unavailable|reason:no-alpine-kernels'
 mv "$cap_alpine/lib/modules/6.18.52-0-lts/kernel-suffix.disabled" "$cap_alpine/lib/modules/6.18.52-0-lts/kernel-suffix"
 
 # DKMS on Alpine is available when dkms is installed and the headers/build
 # tree exists for every installed kernel, exactly like the Arch preflight.
 : > "$cap_alpine/usr/bin/dkms"; chmod +x "$cap_alpine/usr/bin/dkms"
 cap_expect "$(cap_alpine_probe)" \
-    'dkms: unavailable|Alpine DKMS preflight found no build tree for installed kernel 6.18.52-0-lts; install the matching headers and retry'
+    'dkms: unavailable|reason:alpine-dkms-no-build-tree|param:6.18.52-0-lts'
 mkdir -p "$cap_alpine/lib/modules/6.18.52-0-lts/build"
 cap_expect "$(cap_alpine_probe)" 'dkms: available'
 rm -rf "$cap_alpine/lib/modules/6.18.52-0-lts/build" "$cap_alpine/usr/bin/dkms"
@@ -1112,7 +1052,7 @@ alpine_apk_simulation_is_safe $'OK: 1 package' 1 \
 apk_cap_fixture="$(for i in $(seq 1 1001); do printf '(1/1) Installing pkg%s (1.0-r0)\n' "$i"; done)"
 alpine_apk_simulation_is_safe "$apk_cap_fixture" 0 \
     && { echo 'FAIL: apk package-count cap overflow accepted' >&2; exit 1; }
-grep -Fq 'safety limit: 1000' "$apk_policy_log" \
+grep -Fq 'msg:apk-refused-changes|param:' "$apk_policy_log" \
     || { echo 'FAIL: apk cap refusal was not logged' >&2; exit 1; }
 
 # apk has no "nothing to do" summary: no action line is the no-change proof.
@@ -1133,7 +1073,7 @@ grep -Fq 'adaptive_alpine_apk_stage "Upgrade installed Alpine packages (apk upgr
     || { echo 'FAIL: apk upgrade stage is not wired' >&2; exit 1; }
 grep -Fq 'alpine_apk_transaction_try "Alpine apk ${apk_command[*]} simulation" "${apk_command[@]}" --simulate' "$HELPER" \
     || { echo 'FAIL: apk simulation is not wired' >&2; exit 1; }
-grep -Fq 'run_chroot_try "$label" apk "${apk_command[@]}"' "$HELPER" \
+grep -Fq 'run_chroot_try_display "$label" apk "${apk_command[@]}"' "$HELPER" \
     || { echo 'FAIL: apk apply is not wired' >&2; exit 1; }
 grep -Fq 'flock -n "$lock" true' "$HELPER" \
     || { echo 'FAIL: apk database lock probe is not wired' >&2; exit 1; }
@@ -1153,14 +1093,14 @@ fi
 # Change status: a no-op simulation plus identical fingerprints is unchanged;
 # a simulated package change is always changed.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$fake_root/change-status.log"
     SESSION_DIR="$fake_root/change-status-session"
     mkdir -p "$SESSION_DIR"
     : > "$SESSION_LOG"
     TARGET_DISTRO_FAMILY=alpine
-    # Sourcing the helper resets TARGET_ROOT; keep the world-pin feedback probe
+    # reset_helper_state resets TARGET_ROOT; keep the world-pin feedback probe
     # on the isolated fixture instead of the build host's /etc/apk/world.
     TARGET_ROOT="$fake_root"
     alpine_apk_preflight() { :; }
@@ -1168,7 +1108,7 @@ fi
     alpine_apk_transaction_try() { APK_SIM_RC=0; APK_SIM_OUTPUT=$'OK: 1734.0 MiB in 658 packages'; }
     run_chroot_try() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT=''; }
     apk_status_out="$(adaptive_alpine_apk_fix_broken)"
-    grep -Fqx 'Repair change status fixbroken: unchanged|apk simulated no package changes and the package state is byte-identical' <<<"$apk_status_out" \
+    grep -Fqx 'Repair change status fixbroken: unchanged|reason:apk-no-changes' <<<"$apk_status_out" \
         || { echo 'FAIL: apk no-op change status is wrong' >&2; printf '%s\n' "$apk_status_out" >&2; exit 1; }
     alpine_apk_transaction_try() { APK_SIM_RC=0; APK_SIM_OUTPUT=$'(1/1) Upgrading foo (1.0-r0 -> 2.0-r0)'; }
     apk_status_out="$(adaptive_alpine_apk_upgrade)"
@@ -1184,7 +1124,7 @@ fi
 apk_missing_log="$fake_root/apk-missing.log"
 apk_missing_commands="$fake_root/apk-missing-commands.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_DISTRO_FAMILY=alpine
     TARGET_ROOT="$fake_root"
@@ -1240,7 +1180,7 @@ apk_missing_commands="$fake_root/apk-missing-commands.log"
         APK_SIM_OUTPUT='OK: 1734.0 MiB in 658 packages'
     }
     fixbroken_noop_out="$(adaptive_alpine_apk_fix_broken)"
-    grep -Fqx 'Repair change status fixbroken: unchanged|apk simulated no package changes and the package state is byte-identical' <<<"$fixbroken_noop_out" \
+    grep -Fqx 'Repair change status fixbroken: unchanged|reason:apk-no-changes' <<<"$fixbroken_noop_out" \
         || { echo 'FAIL: empty missing-file list changed the no-op status' >&2; printf '%s\n' "$fixbroken_noop_out" >&2; exit 1; }
 ) || exit 1
 grep -Fq 'apk info --who-owns /boot/vmlinuz-lts /usr/bin/lightdm' "$apk_missing_commands" \
@@ -1262,7 +1202,7 @@ apply_line="$(grep -n 'CHROOT Repair Alpine package dependencies and missing fil
 # owner mapping, an unowned file is refused, and an audit error is refused.
 apk_missing_cap_err="$fake_root/apk-missing-cap.err"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_DISTRO_FAMILY=alpine
     TARGET_ROOT="$fake_root"
@@ -1331,7 +1271,7 @@ mkdir -p "$apk_fingerprint_root/etc/apk" "$apk_fingerprint_root/lib/apk/db"
 printf 'alpine-base\n' > "$apk_fingerprint_root/etc/apk/world"
 printf 'P:lightdm\nV:1.32.0-r12\n\n' > "$apk_fingerprint_root/lib/apk/db/installed"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$apk_fingerprint_root"
     SESSION_LOG="$fake_root/apk-fingerprint.log"
@@ -1394,7 +1334,7 @@ grep -Fq 'mkinitfs -l "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs -l verification fallback is not wired' >&2; exit 1; }
 grep -Fq "zcat '\$image' | cpio -t" "$HELPER" \
     || { echo 'FAIL: zcat/cpio initramfs verification is not wired' >&2; exit 1; }
-grep -Fq 'run_chroot_try "Rebuild Alpine initramfs for $kver with mkinitfs" mkinitfs "$kver"' "$HELPER" \
+grep -Fq 'run_chroot_try_display "Rebuild Alpine initramfs for $kver with mkinitfs" mkinitfs "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs per-kernel apply is not wired' >&2; exit 1; }
 if grep -Fq 'mkinitcpio -P' <<<"$(sed -n '/^adaptive_alpine_initramfs_repair()/,/^}/p' "$HELPER")"; then
     echo 'FAIL: Alpine initramfs repair must not use mkinitcpio -P' >&2
@@ -1445,7 +1385,7 @@ fi
 # candidate is installed and reported changed, a byte-identical trial reports
 # unchanged, and an entry-losing candidate is rolled back.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     extlinux_root="$(mktemp -d)"
     trap 'rm -rf -- "$extlinux_root"' EXIT
@@ -1482,7 +1422,7 @@ EXTLINUX
         || { echo 'FAIL: extlinux candidate was left behind' >&2; exit 1; }
     run_chroot_try() { CHROOT_TRY_RC=0; }
     extlinux_out="$(adaptive_extlinux_repair)"
-    grep -Fqx 'Repair change status extlinux: unchanged|update-extlinux generated a byte-identical configuration' <<<"$extlinux_out" \
+    grep -Fqx 'Repair change status extlinux: unchanged|reason:extlinux-regenerated-identical' <<<"$extlinux_out" \
         || { echo 'FAIL: extlinux no-op change status is wrong' >&2; printf '%s\n' "$extlinux_out" >&2; exit 1; }
     run_chroot_try() {
         CHROOT_TRY_RC=0
@@ -1687,7 +1627,7 @@ grep -Fq 'Suppressed: 50 transient mirror-retry line(s)' <<<"$dnf_log_out" \
 # it even with no journal files, and journalctl then answers "No journal files
 # were found."  The probe must fall through to the no-evidence message.
 no_log_root="$(mktemp -d)"
-trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root" "$mixed_root" "$extlinux_debian_root" "$alpine_efi_root" "$rpm_root" "$no_log_root"' EXIT
+trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root" "$no_log_root"' EXIT
 mkdir -p "$no_log_root/etc" "$no_log_root/var/log/journal"
 if TARGET_ROOT="$no_log_root" RUNNING_HOST_MODE=0 target_journal_evidence_present; then
     echo 'FAIL: an empty /var/log/journal directory was accepted as journal evidence' >&2
@@ -1718,7 +1658,7 @@ mkdir -p "$cap_root"/usr/bin "$cap_root"/usr/lib/modules/6.12.1-arch1-1 "$cap_ro
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=arch \
         TARGET_INITRAMFS_BACKEND=mkinitcpio diagnostic_repair_capabilities)" \
-    'dkms: unavailable|Arch DKMS preflight found no build tree for installed kernel 6.12.1-arch1-1; install the matching headers and retry' \
+    'dkms: unavailable|reason:arch-dkms-no-build-tree|param:6.12.1-arch1-1' \
     'upgrade: available'
 
 gate_bin="$fake_root/gate-bin"
@@ -1737,7 +1677,7 @@ chmod +x "$gate_bin/pgrep" "$gate_bin/fuser"
 SESSION_LOG="$fake_root/gate.log"
 FAKE_PKG_GATE_PROC=packagekitd PATH="$gate_bin:$PATH" host_package_manager_gate \
     || { echo 'FAIL: idle PackageKit daemon rejected' >&2; exit 1; }
-grep -Fq 'PackageKit daemon is running' "$fake_root/gate.log"
+grep -Fq 'msg:packagekit-running' "$fake_root/gate.log"
 if (FAKE_PKG_GATE_PROC=dpkg PATH="$gate_bin:$PATH" host_package_manager_gate); then
     echo 'FAIL: active dpkg process accepted' >&2
     exit 1
@@ -1781,8 +1721,18 @@ apk_lock="$cap_alpine/lib/apk/db/lock"
 : > "$apk_lock"
 flock "$apk_lock" -c 'sleep 60' &
 apk_lock_holder=$!
+# Reap the holder on every exit path from here until the explicit teardown
+# below: a mid-test FAIL does exit 1 and would otherwise orphan the holder,
+# keeping the fixture lock held for up to 60 s and poisoning the next run.
+apk_lock_holder_cleanup()
+{
+    [[ -n "${apk_lock_holder:-}" ]] && kill "$apk_lock_holder" 2>/dev/null || true
+    [[ -n "${apk_lock_holder:-}" ]] && wait "$apk_lock_holder" 2>/dev/null || true
+}
+trap 'apk_lock_holder_cleanup; rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root" "$no_log_root"' EXIT
 apk_lock_held=false
-for _ in 1 2 3 4 5; do
+hold_deadline=$(( $(date +%s) + 15 ))
+while (( $(date +%s) < hold_deadline )); do
     if ! flock -n "$apk_lock" true 2>/dev/null; then
         apk_lock_held=true
         break
@@ -1820,6 +1770,10 @@ grep -Fq "Package manager process 'apk' is already running; refusing a concurren
 
 kill "$apk_lock_holder" 2>/dev/null || true
 wait "$apk_lock_holder" 2>/dev/null || true
+apk_lock_holder=""
+# The holder is reaped: restore the plain fixture-cleanup trap so the holder
+# is not double-reaped on a later exit path.
+trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root" "$no_log_root"' EXIT
 rm -f "$apk_lock"
 
 # Near-identical journal runs collapse to one line plus an occurrence count,
@@ -1924,45 +1878,41 @@ if grep -Eq 'LoRA layer key|user-session nautilus failure|user-manager failure l
     exit 1
 fi
 
-# Both diagnostic_errors journal sections must run the filter on journalctl
-# JSON before the actionability and collapsing stages.
+# Both diagnostic_errors journal sections must run the filter on the cached
+# journal streams (error-priority and failure-related) before the actionability
+# and collapsing stages.
 awk '
     /^diagnostic_errors\(\)/ { in_errors = 1; next }
-    in_errors && /^}/ { exit(seen == 2 && filtered == 2 ? 0 : 1) }
-    in_errors && /journalctl --root=.*-o json/ { seen++; expect = 1; next }
+    in_errors && /^}/ { exit(streams == 2 && filtered == 2 ? 0 : 1) }
+    in_errors && /journal_cached_/ { streams++; expect = 1; next }
     in_errors && expect && /journal_boot_relevant_filter/ { filtered++; expect = 0 }
 ' "$HELPER" \
-    || { echo 'FAIL: journal_boot_relevant_filter is not wired into both diagnostic_errors sections' >&2; exit 1; }
+    || { echo 'FAIL: journal_boot_relevant_filter is not wired into both diagnostic_errors cached streams' >&2; exit 1; }
 
-# Every full-journal query in diagnostic_boot_evidence and diagnostic_display
-# must request JSON, run through the boot-relevant filter, and collapse
-# near-identical lines.  The OpenRC syslog fallback stages add their own
-# collapse stages, so each query needs at least one collapse stage.  Unit
-# scoped (-u) queries and --list-boots are exempt.
+# Every cached full-journal window in diagnostic_boot_evidence and
+# diagnostic_display must run through the boot-relevant filter and collapse
+# near-identical lines.  The boot-ID inventory (journal_cached_boot_ids) is
+# exempt from the filter, exactly as the pre-cache --list-boots query was.
 awk '
     /^diagnostic_boot_evidence\(\)/ { target = "diagnostic_boot_evidence"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
     /^diagnostic_display\(\)/ { target = "diagnostic_display"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
     target == "" { next }
     /^}/ {
         if (queries == 0 || filtered != queries || collapsed < queries) {
-            printf "FAIL: %s has %d full-journal queries, %d boot-relevant filters, %d collapse stages\n", target, queries, filtered, collapsed
+            printf "FAIL: %s has %d cached-journal window queries, %d boot-relevant filters, %d collapse stages\n", target, queries, filtered, collapsed
             failed = 1
         }
         target = ""; next
     }
     expect_filter {
         if (/journal_boot_relevant_filter/) { filtered++; expect_filter = 0; next }
-        printf "FAIL: %s full-journal query is not piped through journal_boot_relevant_filter\n", target
+        printf "FAIL: %s cached-journal window query is not piped through journal_boot_relevant_filter\n", target
         failed = 1
         expect_filter = 0
         next
     }
-    /journalctl --root=.*-b 0/ && !/ -u / {
+    /journal_cached_window_lines/ {
         queries++
-        if (!/-o json/) {
-            printf "FAIL: %s full-journal query does not request -o json\n", target
-            failed = 1
-        }
         expect_filter = 1
         next
     }
@@ -1975,7 +1925,162 @@ awk '
         exit failed ? 1 : 0
     }
 ' "$HELPER" \
-    || { echo 'FAIL: journal_boot_relevant_filter/collapse_similar_journal_lines are not wired into all diagnostic_boot_evidence and diagnostic_display queries' >&2; exit 1; }
+    || { echo 'FAIL: journal_boot_relevant_filter/collapse_similar_journal_lines are not wired into all diagnostic_boot_evidence and diagnostic_display cached-journal windows' >&2; exit 1; }
+
+# The three journal cache dumps are the only full-journal journalctl
+# invocations left: the 1600-entry window, the error-priority stream and the
+# boot-ID inventory must each be captured exactly once inside
+# journal_cache_fetch, and no per-section -n 1200/-n 500 window spawn may
+# remain (the -u unit-scoped detection probe is exempt).
+[[ "$(grep -c 'journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600' "$HELPER")" -eq 1 ]] \
+    || { echo 'FAIL: the 1600-entry journal window is not captured exactly once in the session cache' >&2; exit 1; }
+[[ "$(grep -c 'journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager' "$HELPER")" -eq 1 ]] \
+    || { echo 'FAIL: the error-priority journal stream is not captured exactly once in the session cache' >&2; exit 1; }
+[[ "$(grep -c 'journalctl --root="$TARGET_ROOT" --list-boots --no-pager' "$HELPER")" -eq 1 ]] \
+    || { echo 'FAIL: the boot-ID inventory is not captured exactly once in the session cache' >&2; exit 1; }
+if grep -qE 'journalctl --root=.*-b 0 .*-n (1200|500)' "$HELPER"; then
+    echo 'FAIL: per-section journalctl -n 1200/-n 500 window spawns still remain' >&2
+    exit 1
+fi
+
+# --- Session-scoped journal cache equivalence --------------------------------
+# The cache must reproduce the exact filtered lines the pre-cache per-section
+# journalctl spawns produced.  Stub journalctl with a deterministic synthetic
+# journal and drive diagnostic_errors twice: once through the real session
+# cache and once with the cache read functions replaced by direct per-section
+# journalctl spawns (the pre-cache behaviour).  Both runs share the section's
+# filter pipeline, so a byte diff proves the cached data acquisition is
+# equivalent.  Data-level window-suffix and boot-ID checks then cover the
+# 1200/1600 windows that diagnostic_errors does not exercise.
+(
+    journal_root="$(mktemp -d)"
+    journal_bin="$(mktemp -d)"
+    trap 'rm -rf -- "$journal_root" "$journal_bin"' EXIT
+    mkdir -p "$journal_root/var/log/journal/machine-id" "$journal_root/session"
+    : > "$journal_root/var/log/journal/machine-id/system.journal"
+
+    journal_fixture="$journal_root/fixture.json"
+    : > "$journal_fixture"
+    for ((jfi = 1; jfi <= 1800; jfi++)); do
+        if (( jfi % 5 == 0 )); then jprio=3; else jprio=6; fi
+        printf '{"__REALTIME_TIMESTAMP":"%d","_HOSTNAME":"host","_TRANSPORT":"stdout","SYSLOG_IDENTIFIER":"systemd","MESSAGE":"boot failure journal-entry-%04d","PRIORITY":"%d"}\n' \
+            "$((1726579000000000 + jfi * 1000000))" "$jfi" "$jprio"
+    done > "$journal_fixture"
+
+    cat > "$journal_bin/journalctl" <<'JCTL'
+#!/usr/bin/env bash
+fixture="${JOURNAL_FIXTURE_JSON:-}"
+printf '%s\n' "$*" >> "${JOURNAL_INVOCATION_LOG:-/dev/null}"
+want_n=""
+want_err=0
+want_list=0
+args=( "$@" )
+for ((i = 0; i < ${#args[@]}; i++)); do
+    case "${args[i]}" in
+        -n) [[ $((i + 1)) -lt ${#args[@]} ]] && want_n="${args[i+1]}" ;;
+        -p) [[ $((i + 1)) -lt ${#args[@]} && "${args[i+1]}" == err ]] && want_err=1 ;;
+        --list-boots) want_list=1 ;;
+    esac
+done
+if (( want_list == 1 )); then
+    printf ' 0 fixture-boot-0 Thu 2026-09-20 10:00:00 UTC—2026-09-20 11:00:00 UTC\n'
+    printf ' -1 fixture-boot-1 Thu 2026-09-19 10:00:00 UTC—2026-09-19 11:00:00 UTC\n'
+    exit 0
+fi
+if (( want_err == 1 )); then
+    grep -F '"PRIORITY":"3"' "$fixture" | tail -n "${want_n:-200}"
+    exit 0
+fi
+tail -n "${want_n:-1600}" "$fixture"
+exit 0
+JCTL
+    chmod +x "$journal_bin/journalctl"
+
+    export JOURNAL_FIXTURE_JSON="$journal_fixture"
+    export JOURNAL_INVOCATION_LOG="$journal_root/invocations.log"
+    : > "$journal_root/invocations.log"
+
+    TARGET_ROOT="$journal_root"
+    RUNNING_HOST_MODE=0
+    TARGET_DISTRO_FAMILY=debian
+    TARGET_OS_ID=debian
+    TARGET_OS_LIKE=""
+    SESSION_DIR="$journal_root/session"
+    PATH="$journal_bin:$PATH"
+
+    cached_window_fn="$(declare -f journal_cached_window_lines)"
+    cached_error_fn="$(declare -f journal_cached_error_lines)"
+
+    journal_uncached_window_lines()
+    {
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n "$1"
+    }
+    journal_uncached_error_lines()
+    {
+        journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager
+    }
+
+    # Cached run: fresh session cache, real cache read functions.
+    JOURNAL_CACHE_FETCHED=0
+    JOURNAL_CACHE_DIR=""
+    rm -rf -- "$SESSION_DIR/journal-cache"
+    cached_out="$(diagnostic_errors || true)"
+
+    # Uncached run: the section body reuses these overridden read functions,
+    # which spawn journalctl per section exactly as the pre-cache code did.
+    journal_cached_window_lines() { journal_uncached_window_lines "$@"; }
+    journal_cached_error_lines() { journal_uncached_error_lines; }
+    uncached_out="$(diagnostic_errors || true)"
+
+    if [[ "$cached_out" != "$uncached_out" ]]; then
+        printf 'FAIL: cached and uncached diagnostic_errors output differ\n' >&2
+        printf '%s\n' '--- cached ---' >&2
+        printf '%s\n' "$cached_out" >&2
+        printf '%s\n' '--- uncached ---' >&2
+        printf '%s\n' "$uncached_out" >&2
+        exit 1
+    fi
+
+    # Restore the real cache read functions for the data-level checks below.
+    eval "$cached_window_fn"
+    eval "$cached_error_fn"
+
+    # Data-level window equivalence: the cached 1200/1600 windows and the
+    # boot-ID inventory are byte-identical to fresh per-section spawns.
+    journal_cached_window_lines 1200 > "$journal_root/cached-1200.txt"
+    journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1200 > "$journal_root/ref-1200.txt"
+    journal_cached_window_lines 1600 > "$journal_root/cached-1600.txt"
+    journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600 > "$journal_root/ref-1600.txt"
+    journal_cached_boot_ids > "$journal_root/cached-boots.txt"
+    journalctl --root="$TARGET_ROOT" --list-boots --no-pager > "$journal_root/ref-boots.txt"
+    for window in 1200 1600; do
+        cmp -s "$journal_root/ref-$window.txt" "$journal_root/cached-$window.txt" \
+            || { echo "FAIL: cached $window-entry window is not a byte-identical suffix of the full dump" >&2; exit 1; }
+    done
+    cmp -s "$journal_root/ref-boots.txt" "$journal_root/cached-boots.txt" \
+        || { echo 'FAIL: cached boot-ID inventory differs from a fresh --list-boots spawn' >&2; exit 1; }
+
+    # The cache is populated once (three dumps) on first use and then reused:
+    # warm cache reads spawn no further journalctl invocations.
+    JOURNAL_CACHE_FETCHED=0
+    JOURNAL_CACHE_DIR=""
+    rm -rf -- "$SESSION_DIR/journal-cache"
+    : > "$journal_root/invocations.log"
+    journal_cached_window_lines 1600 >/dev/null
+    first_use="$(wc -l < "$journal_root/invocations.log")"
+    : > "$journal_root/invocations.log"
+    journal_cached_window_lines 1200 >/dev/null
+    journal_cached_window_lines 500 >/dev/null
+    journal_cached_error_lines >/dev/null
+    journal_cached_boot_ids >/dev/null
+    warm_use="$(wc -l < "$journal_root/invocations.log")"
+    [[ "$first_use" -eq 3 ]] \
+        || { echo "FAIL: first cache use spawned $first_use journalctl calls, expected 3" >&2; exit 1; }
+    [[ "$warm_use" -eq 0 ]] \
+        || { echo "FAIL: warm cache reads spawned $warm_use journalctl calls, expected 0" >&2; exit 1; }
+
+    echo "PASS: journal cache reproduces the per-section spawn output byte-for-byte."
+)
 
 # Running-host shell contract: Host Maintenance mode uses a dedicated
 # host-shell command that validates the running host identity, activates the
@@ -2020,11 +2125,6 @@ fi
 # retry with Acquire::AllowReleaseInfoChange=true, confined to the metadata
 # refresh.  Every other apt failure must keep failing without the retry, and
 # package install/upgrade transactions must never receive the option.
-grep -q '^apt_update_allow_release_info_retry()' "$HELPER"
-grep -q '^apt_update_release_info_change_only()' "$HELPER"
-grep -q '^apt_update_release_info_change_repos()' "$HELPER"
-grep -q '^apt_update_release_info_change_details()' "$HELPER"
-grep -q '^run_apt_update()' "$HELPER"
 run_apt_update_body="$(sed -n '/^run_apt_update()/,/^}/p' "$HELPER")"
 grep -q 'apt_update_allow_release_info_retry' <<<"$run_apt_update_body" \
     || { echo 'FAIL: run_apt_update does not use the release-info retry path' >&2; exit 1; }
@@ -2108,9 +2208,9 @@ sed -n '1p' "$apt_retry_calls" | grep -Eq 'apt-get update$' \
     || { echo 'FAIL: initial apt-get update unexpectedly carried the release-info option' >&2; exit 1; }
 sed -n '2p' "$apt_retry_calls" | grep -Fq 'apt-get update -o Acquire::AllowReleaseInfoChange=true' \
     || { echo 'FAIL: retry did not use Acquire::AllowReleaseInfoChange=true' >&2; exit 1; }
-grep -Fq "WARNING: apt-get update refused a repository release metadata change for: https://txos.tuxedocomputers.com/debian-cache testing InRelease, https://txos.tuxedocomputers.com/debian-security testing InRelease" "$SESSION_LOG" \
+grep -Fq "msg:apt-update-refused-release-change|param:https://txos.tuxedocomputers.com/debian-cache testing InRelease, https://txos.tuxedocomputers.com/debian-security testing InRelease" "$SESSION_LOG" \
     || { echo 'FAIL: warning does not name the changed repositories' >&2; exit 1; }
-grep -Fq "WARN: accepted release metadata change for https://txos.tuxedocomputers.com/debian-cache testing InRelease, https://txos.tuxedocomputers.com/debian-security testing InRelease; metadata refreshed." "$SESSION_LOG" \
+grep -Fq "msg:apt-update-accepted-release-change|param:https://txos.tuxedocomputers.com/debian-cache testing InRelease, https://txos.tuxedocomputers.com/debian-security testing InRelease" "$SESSION_LOG" \
     || { echo 'FAIL: accepted release metadata change was not reported with the repository names' >&2; exit 1; }
 
 # A release-info change mixed with any other apt error must fail without a
@@ -2160,7 +2260,7 @@ printf 'Packages\n' > "$apt_lists_root/var/lib/apt/lists/archive.example_Package
     run_selected_chroot() { printf 'Hit:1 http://archive.example stable InRelease\nReading package lists...\n'; }
     apt_update_allow_release_info_retry
 ) > "$apt_lists_root/unchanged.out" 2>&1
-grep -Fqx 'Repair change status aptupdate: unchanged|APT package lists are byte-identical and no repository index was fetched' "$apt_lists_root/unchanged.out" \
+grep -Fqx 'Repair change status aptupdate: unchanged|reason:apt-lists-identical' "$apt_lists_root/unchanged.out" \
     || { echo 'FAIL: byte-identical apt lists were not reported unchanged' >&2; cat "$apt_lists_root/unchanged.out" >&2; exit 1; }
 (
     TARGET_ROOT="$apt_lists_root"
@@ -2174,7 +2274,7 @@ grep -Fqx 'Repair change status aptupdate: unchanged|APT package lists are byte-
 ) > "$apt_lists_root/changed.out" 2>&1
 grep -Fqx 'Repair change status aptupdate: changed' "$apt_lists_root/changed.out" \
     || { echo 'FAIL: a rewritten apt list did not report changed' >&2; cat "$apt_lists_root/changed.out" >&2; exit 1; }
-grep -Fq 'APT package lists changed or a repository index was fetched' "$apt_lists_root/changed.out" \
+grep -Fq 'msg:apt-lists-changed' "$apt_lists_root/changed.out" \
     || { echo 'FAIL: apt changed evidence wording is missing' >&2; cat "$apt_lists_root/changed.out" >&2; exit 1; }
 rm -rf -- "$apt_lists_root"
 
@@ -2186,12 +2286,11 @@ rm -rf -- "$apt_lists_root"
 # reconciliation still run. Without the hint the complete reconciliation runs;
 # the helper never infers reuse from the stage list.
 # ---------------------------------------------------------------------------
-grep -q '^parse_repair_arguments()' "$HELPER"
 grep -Fq -- '--post-efi' "$HELPER"
 grep -Fq 'REPAIR_POST_EFI' "$HELPER"
 grep -Fq 'BOOT_STACK_POST_EFI' "$HELPER"
-grep -Fq 'SKIP: boot-stack EFI/UKI rebuild skipped because the EFI / UKI bootloader stage already rebuilt and verified this layout in the same run (--post-efi).' "$HELPER"
-grep -Fq 'SKIP: boot-stack GRUB regeneration skipped because the EFI / UKI bootloader stage already regenerated the GRUB configuration in the same run (--post-efi).' "$HELPER"
+grep -Fq 'msg_log bootstack-skip-efi-uk' "$HELPER"
+grep -Fq 'msg_log bootstack-skip-grub' "$HELPER"
 
 parse_repair_arguments efi boot-stack --post-efi
 [[ "${REPAIR_STAGES[*]}" == 'efi boot-stack' ]] \
@@ -2243,9 +2342,9 @@ grep -Fq 'mapper' "$bootstack_calls" \
     || { echo 'FAIL: --post-efi skipped mapper/crypttab validation' >&2; exit 1; }
 grep -Fq 'initramfs' "$bootstack_calls" \
     || { echo 'FAIL: --post-efi skipped initramfs reconciliation' >&2; exit 1; }
-grep -Fq 'SKIP: boot-stack EFI/UKI rebuild skipped' "$bootstack_stage_log" \
+grep -Fq 'msg:bootstack-skip-efi-uk' "$bootstack_stage_log" \
     || { echo 'FAIL: the skipped UKI rebuild was not logged' >&2; exit 1; }
-grep -Fq 'SKIP: boot-stack GRUB regeneration skipped' "$bootstack_stage_log" \
+grep -Fq 'msg:bootstack-skip-grub' "$bootstack_stage_log" \
     || { echo 'FAIL: the skipped GRUB regeneration was not logged' >&2; exit 1; }
 
 # The UI is the only source of the hint, and its label states the reuse.
@@ -2259,16 +2358,7 @@ grep -Fq 'second UKI rebuild and duplicate GRUB regeneration are skipped' "$ROOT
 # proven no-op reports unchanged while real work reports changed. The GUI
 # consumes these lines to skip cached-diagnostics regeneration.
 # ---------------------------------------------------------------------------
-grep -q '^repair_change_status()' "$HELPER"
 grep -Fq "printf 'Repair change status %s: %s\\n' \"\$key\" \"\$state\"" "$HELPER"
-grep -q '^repair_file_fingerprint()' "$HELPER"
-grep -q '^initramfs_image_fingerprint()' "$HELPER"
-grep -q '^efi_boot_artifact_fingerprint()' "$HELPER"
-grep -q '^apt_transaction_reported_no_changes()' "$HELPER"
-grep -q '^dpkg_configuration_pending()' "$HELPER"
-grep -q '^dpkg_configure_stage()' "$HELPER"
-grep -q '^efi_repair_emit_change_status()' "$HELPER"
-grep -q '^display_manager_already_correct()' "$HELPER"
 
 # Every modifying stage owns a function that emits the status line at its end.
 while read -r change_fn change_token; do
@@ -2304,13 +2394,12 @@ grep -Fq 'adaptive_arch_pacman_repair "Repair Arch package dependencies" fixbrok
 grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade' "$HELPER"
 # The APT upgrade stage simulates the least invasive mode first and promotes
 # to full-upgrade/dist-upgrade only from the simulation evidence.
-grep -q '^apt_simulation_has_pending_packages()' "$HELPER"
-grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 
-# The live harness runs in a subshell that re-sources the helper so the stub
-# overrides installed by the earlier boot-stack section cannot leak in.
+# The live harness runs in a subshell that restores the pristine helper state
+# (reset_helper_state) so the stub overrides installed by the earlier
+# boot-stack section cannot leak in.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
 
     SESSION_LOG="$fake_root/change-status.log"
@@ -2342,7 +2431,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     run_chroot() { :; }
     run_selected_chroot() { printf 'ii \nii \n'; }
     change_out="$(dpkg_configure_stage)"
-    assert_single_change_status "$change_out" dpkg 'unchanged|dpkg reported no packages pending configuration'
+    assert_single_change_status "$change_out" dpkg 'unchanged|reason:dpkg-nothing-pending'
     run_selected_chroot() { printf 'iU \nii \n'; }
     change_out="$(dpkg_configure_stage)"
     assert_single_change_status "$change_out" dpkg 'changed'
@@ -2351,7 +2440,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     # transaction -> changed.
     run_selected_chroot() { printf 'Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'; }
     change_out="$(adaptive_fix_broken)"
-    assert_single_change_status "$change_out" fixbroken 'unchanged|simulated fix-broken transaction proposed no package changes'
+    assert_single_change_status "$change_out" fixbroken 'unchanged|reason:fixbroken-simulated-no-changes'
     run_selected_chroot() { printf 'Inst broken-package [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n'; }
     change_out="$(adaptive_fix_broken)"
     assert_single_change_status "$change_out" fixbroken 'changed'
@@ -2369,7 +2458,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
         CHROOT_TRY_OUTPUT=$':: Synchronizing package databases...\n core is up to date\n:: Starting full system upgrade...\n there is nothing to do\n'
     }
     change_out="$(adaptive_arch_pacman_repair 'Upgrade installed Arch packages' upgrade)"
-    assert_single_change_status "$change_out" upgrade 'unchanged|pacman transaction reported no packages to install, upgrade or remove'
+    assert_single_change_status "$change_out" upgrade 'unchanged|reason:pacman-no-changes'
     run_chroot_try() {
         CHROOT_TRY_RC=0
         CHROOT_TRY_OUTPUT=$'Packages (1) example-1.0-1 -> 2.0-1\n(1/1) upgrading example\n'
@@ -2396,7 +2485,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     guard_grub_candidate_preserves_entries() { return 0; }
     run_chroot_try() { CHROOT_TRY_RC=0; }
     change_out="$(adaptive_grub_repair)"
-    assert_single_change_status "$change_out" grub 'unchanged|grub.cfg is byte-identical'
+    assert_single_change_status "$change_out" grub 'unchanged|reason:grub-cfg-identical'
     run_chroot_try() { CHROOT_TRY_RC=0; printf 'menuentry new\n' > "$TARGET_ROOT/boot/grub/grub.cfg"; }
     change_out="$(adaptive_grub_repair)"
     assert_single_change_status "$change_out" grub 'changed'
@@ -2410,7 +2499,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     preflight_initramfs() { :; }
     run_chroot_try() { CHROOT_TRY_RC=0; }
     change_out="$(adaptive_initramfs_repair)"
-    assert_single_change_status "$change_out" initramfs 'unchanged|rebuilt initramfs images are byte-identical'
+    assert_single_change_status "$change_out" initramfs 'unchanged|reason:initramfs-identical'
     run_chroot_try() { CHROOT_TRY_RC=0; printf 'initrd-new\n' > "$TARGET_ROOT/boot/initrd.img-6.1-test"; }
     change_out="$(adaptive_initramfs_repair)"
     assert_single_change_status "$change_out" initramfs 'changed'
@@ -2431,7 +2520,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     }
     restore_display_manager() { :; }
     change_out="$(adaptive_display_manager_repair)"
-    assert_single_change_status "$change_out" display 'unchanged|default.target and display-manager.service were already correct'
+    assert_single_change_status "$change_out" display 'unchanged|reason:display-already-correct'
     rm -f "$fake_root/etc/systemd/system/display-manager.service"
     restore_display_manager() { ln -sfn /usr/lib/systemd/system/sddm.service "$TARGET_ROOT/etc/systemd/system/display-manager.service"; }
     change_out="$(adaptive_display_manager_repair)"
@@ -2446,7 +2535,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     rebuild_tuxedo_uki() { :; }
     verify_tuxedo_uki_root_binding() { :; }
     change_out="$(reinstall_efi_bootloader)"
-    assert_single_change_status "$change_out" efi 'unchanged|EFI boot artifacts and firmware entries are byte-identical'
+    assert_single_change_status "$change_out" efi 'unchanged|reason:efi-artifacts-identical'
     rebuild_tuxedo_uki() { printf 'loader-new\n' > "$TARGET_ROOT/boot/efi/EFI/testos/grubx64.efi"; }
     change_out="$(reinstall_efi_bootloader)"
     assert_single_change_status "$change_out" efi 'changed'
@@ -2458,7 +2547,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     adaptive_grub_repair() { repair_change_status grub unchanged; }
     validate_mapper_crypttab() { :; }
     change_out="$(repair_boot_stack)"
-    assert_change_status "$change_out" bootstack 'unchanged|initramfs, EFI/UKI and GRUB artifacts are byte-identical'
+    assert_change_status "$change_out" bootstack 'unchanged|reason:bootstack-efi-identical'
     rebuild_tuxedo_uki() { printf 'loader-newer\n' > "$TARGET_ROOT/boot/efi/EFI/testos/grubx64.efi"; }
     change_out="$(repair_boot_stack)"
     assert_change_status "$change_out" bootstack 'changed'
@@ -2471,7 +2560,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 # apply blocks stay in the repair log.
 # ---------------------------------------------------------------------------
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_DISTRO_FAMILY=debian
     TARGET_ROOT="$fake_root"
@@ -2492,7 +2581,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
         || { echo 'FAIL: apt kept-back evidence line is missing' >&2; printf '%s\n' "$apt_feedback_out" >&2; exit 1; }
     grep -Fqx 'Package manager feedback: apt/dpkg: 1 package kept back: firmware-mediatek' <<<"$apt_feedback_out" \
         || { echo 'FAIL: apt kept-back summary is missing' >&2; printf '%s\n' "$apt_feedback_out" >&2; exit 1; }
-    grep -Fqx 'Repair change status upgrade: unchanged|simulated upgrade transaction proposed no package changes; 1 package kept back: firmware-mediatek' <<<"$apt_feedback_out" \
+    grep -Fqx 'Repair change status upgrade: unchanged|reason:upgrade-simulated-no-changes|param:1 package kept back: firmware-mediatek' <<<"$apt_feedback_out" \
         || { echo 'FAIL: apt kept-back unchanged status is wrong' >&2; printf '%s\n' "$apt_feedback_out" >&2; exit 1; }
     grep -Fq 'The following packages have been kept back:' "$SESSION_LOG" \
         || { echo 'FAIL: the raw apt kept-back block was not logged' >&2; exit 1; }
@@ -2521,7 +2610,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 # executed transaction is the one that passed the safety checks.
 # ---------------------------------------------------------------------------
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     apt_mode_root="$(mktemp -d)"
     mkdir -p "$apt_mode_root/usr/bin" "$apt_mode_root/session"
@@ -2592,7 +2681,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     apt_mode_assert_apply full-upgrade "$apt_mode_out"
     grep -Fqx 'Repair change status upgrade: changed' <<<"$apt_mode_out" \
         || { echo 'FAIL: pending-package promotion status is not changed' >&2; printf '%s\n' "$apt_mode_out" >&2; exit 1; }
-    grep -Fq "APT upgrade decision: 'full-upgrade' selected" "$SESSION_LOG" \
+    grep -Fq "msg:apt-upgrade-decision|param:full-upgrade" "$SESSION_LOG" \
         || { echo 'FAIL: the full-upgrade decision was not logged' >&2; exit 1; }
 
     # Standard upgrade without pending packages stays the least invasive
@@ -2604,7 +2693,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     apt_mode_out="$(adaptive_apt_upgrade)"
     apt_mode_assert_calls 'upgrade '
     apt_mode_assert_apply upgrade "$apt_mode_out"
-    grep -Fqx 'Repair change status upgrade: unchanged|simulated upgrade transaction proposed no package changes' <<<"$apt_mode_out" \
+    grep -Fqx 'Repair change status upgrade: unchanged|reason:upgrade-simulated-no-changes' <<<"$apt_mode_out" \
         || { echo 'FAIL: no-op standard upgrade status is not unchanged' >&2; printf '%s\n' "$apt_mode_out" >&2; exit 1; }
 
     # A distribution policy that refuses plain `apt upgrade` maps to
@@ -2639,14 +2728,14 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
     apt_mode_out="$(adaptive_apt_upgrade)"
     apt_mode_assert_calls 'upgrade full-upgrade '
     apt_mode_assert_apply upgrade "$apt_mode_out"
-    grep -Fq 'using the successful standard upgrade transaction' "$SESSION_LOG" \
+    grep -Fq 'msg:apt-full-upgrade-unavailable' "$SESSION_LOG" \
         || { echo 'FAIL: the unsafe-promotion fallback was not logged' >&2; exit 1; }
 )
 
 # dnf5: a skipped package is non-fatal and surfaced; the changed stage keeps
 # its package feedback in the status reason.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$fake_root"
     SESSION_LOG="$fake_root/rpm-feedback.log"
@@ -2679,7 +2768,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 # when the transcript carries no size line.  run_chroot_try is stubbed to
 # capture that the note precedes the apply and the transaction flags stay put.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$fake_root"
     SESSION_LOG="$fake_root/rpm-size.log"
@@ -2701,25 +2790,25 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
         printf 'apply:%s\n' "$*" >> "$SESSION_LOG"
     }
     rpm_size_out="$(adaptive_rpm_upgrade)"
-    grep -Fq 'This transaction downloads approximately 245 MiB; the apply step reports its progress only when it finishes.' <<<"$rpm_size_out" \
+    grep -Fq 'msg:dnf5-download-size|param:245 MiB' <<<"$rpm_size_out" \
         || { echo 'FAIL: the dnf5 download-size heads-up is missing from the live output' >&2; printf '%s\n' "$rpm_size_out" >&2; exit 1; }
-    grep -Fq 'This transaction downloads approximately 245 MiB; the apply step reports its progress only when it finishes.' "$SESSION_LOG" \
+    grep -Fq 'msg:dnf5-download-size|param:245 MiB' "$SESSION_LOG" \
         || { echo 'FAIL: the dnf5 download-size heads-up is missing from the session log' >&2; exit 1; }
     grep -Fq -- '-y' <(grep '^apply:' "$SESSION_LOG" | tail -n1) \
         || { echo 'FAIL: the dnf5 apply transaction no longer carries -y' >&2; exit 1; }
-    grep -Fq -- '--assumeno' "$SESSION_LOG" \
-        || { echo 'FAIL: the dnf5 simulation no longer carries --assumeno' >&2; exit 1; }
+    grep -Fq 'msg:simulate-dnf5|param:upgrade' "$SESSION_LOG" \
+        || { echo 'FAIL: the dnf5 simulation was not logged (--assumeno is asserted at the helper source below)' >&2; exit 1; }
 
     # "Need to download <N>" variant (dnf5 without the inbound-size phrasing).
     rpm_size_sim=$'Upgrading:\n foo.x86_64 1.0 -> 2.0\nNeed to download 1.2 GiB.\nOperation aborted by the user.'
     rpm_size_out="$(adaptive_rpm_upgrade)"
-    grep -Fq 'This transaction downloads approximately 1.2 GiB; the apply step reports its progress only when it finishes.' <<<"$rpm_size_out" \
+    grep -Fq 'msg:dnf5-download-size|param:1.2 GiB' <<<"$rpm_size_out" \
         || { echo 'FAIL: the Need-to-download size variant was not announced' >&2; printf '%s\n' "$rpm_size_out" >&2; exit 1; }
 
     # No size line in the transcript -> no note.
     rpm_size_sim=$'Upgrading:\n foo.x86_64 1.0 -> 2.0\nOperation aborted by the user.'
     rpm_size_out="$(adaptive_rpm_upgrade)"
-    if grep -Fq 'This transaction downloads approximately' <<<"$rpm_size_out"; then
+    if grep -Fq 'msg:dnf5-download-size' <<<"$rpm_size_out"; then
         echo 'FAIL: a download-size note was emitted for a transcript without a size line' >&2
         printf '%s\n' "$rpm_size_out" >&2
         exit 1
@@ -2729,7 +2818,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 # pacman: an ignored package upgrade is non-fatal and surfaced in the
 # unchanged status reason.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$fake_root"
     SESSION_LOG="$fake_root/pacman-feedback.log"
@@ -2748,7 +2837,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
         || { echo 'FAIL: pacman ignored evidence line is missing' >&2; printf '%s\n' "$pacman_feedback_out" >&2; exit 1; }
     grep -Fqx 'Package manager feedback: pacman: 1 package ignored: linux' <<<"$pacman_feedback_out" \
         || { echo 'FAIL: pacman ignored summary is missing' >&2; printf '%s\n' "$pacman_feedback_out" >&2; exit 1; }
-    grep -Fqx 'Repair change status upgrade: unchanged|pacman transaction reported no packages to install, upgrade or remove; 1 package ignored: linux' <<<"$pacman_feedback_out" \
+    grep -Fqx 'Repair change status upgrade: unchanged|reason:pacman-no-changes|param:1 package ignored: linux' <<<"$pacman_feedback_out" \
         || { echo 'FAIL: pacman ignored unchanged status is wrong' >&2; printf '%s\n' "$pacman_feedback_out" >&2; exit 1; }
 )
 
@@ -2756,7 +2845,7 @@ grep -q '^apt_simulation_requests_full_upgrade()' "$HELPER"
 # surfaced in the changed status reason.
 apk_feedback_root="$(mktemp -d)"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$apk_feedback_root"
     SESSION_LOG="$apk_feedback_root/session.log"
@@ -2786,7 +2875,7 @@ rm -rf -- "$apk_feedback_root"
 # The multi-backend dispatcher names each backend's feedback in the combined
 # status while keeping exactly one status line for the stage.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$fake_root/multi-feedback.log"
     SESSION_DIR="$fake_root/multi-feedback-session"
@@ -2803,18 +2892,17 @@ rm -rf -- "$apk_feedback_root"
     adaptive_alpine_apk_fix_broken() { repair_change_status fixbroken "unchanged|apk no-op"; }
     run_package_stage fix-broken fixbroken
 ) > "$fake_root/multi-feedback.out" 2>&1
-grep -Fqx 'Repair change status fixbroken: changed|backends: apt/dpkg changed (1 package kept back: firmware-mediatek); apk unchanged' "$fake_root/multi-feedback.out" \
+grep -Fqx 'Repair change status fixbroken: changed|reason:backends-changed|param:apt/dpkg changed (1 package kept back: firmware-mediatek); apk unchanged' "$fake_root/multi-feedback.out" \
     || { echo 'FAIL: combined multi-backend status does not name the package feedback' >&2; cat "$fake_root/multi-feedback.out" >&2; exit 1; }
 
 # host-default compares the pre-change NVRAM capture with the final state.
 grep -Fq 'cmp -s "$pre" <(efibootmgr -v 2>/dev/null || true)' "$HELPER"
-grep -q '^run_host_default()' "$HELPER"
 
 # validate is read-only and always reports unchanged.
 validate_target_body="$(sed -n '/^validate_target()/,/^}/p' "$HELPER")"
 validate_host_body="$(sed -n '/^validate_running_host()/,/^}/p' "$HELPER")"
-grep -Fq 'repair_change_status validate "unchanged|validation is read-only"' <<<"$validate_target_body"
-grep -Fq 'repair_change_status validate "unchanged|validation is read-only"' <<<"$validate_host_body"
+grep -Fq 'repair_change_status validate "unchanged|$(reason validation-read-only)"' <<<"$validate_target_body"
+grep -Fq 'repair_change_status validate "unchanged|$(reason validation-read-only)"' <<<"$validate_host_body"
 
 # A restored firmware entry's ID is captured from the function's stdout, so the
 # efibootmgr warning about another ESP carrying the same label must stay on
@@ -2910,7 +2998,7 @@ cap_expect "$mixed_caps" \
 grep -Fqx 'Repair capability evidence fixbroken: apt/dpkg: /usr/bin/dpkg and /usr/bin/apt-get present; apk: apk executable present; /etc/apk/repositories present; /lib/apk/db/installed present; /etc/apk/world present' <<<"$mixed_caps" \
     || { echo 'FAIL: mixed-manager fixbroken evidence does not name both backends' >&2; exit 1; }
 mixed_backends="$(
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$mixed_root" TARGET_OS_ID=tuxedo TARGET_OS_LIKE=debian TARGET_DISTRO_FAMILY=debian profile_target_backends
     package_stage_backends fix-broken
@@ -2929,7 +3017,7 @@ grep -Fqx 'Backend note: Debian-family system with apk detected — package stag
 # backend changed; unchanged only when every backend proved unchanged.
 mixed_calls="$mixed_root/calls.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$mixed_root/session.log"
     SESSION_DIR="$mixed_root/session"
@@ -2947,11 +3035,11 @@ mixed_calls="$mixed_root/calls.log"
     || { echo 'FAIL: mixed backends did not run in native-first order' >&2; exit 1; }
 [[ "$(grep -c '^Repair change status fixbroken: ' "$mixed_root/mixed-changed.out")" -eq 1 ]] \
     || { echo 'FAIL: mixed stage emitted more than one change status line' >&2; exit 1; }
-grep -Fqx 'Repair change status fixbroken: changed|backends: apt/dpkg unchanged; apk changed' "$mixed_root/mixed-changed.out" \
+grep -Fqx 'Repair change status fixbroken: changed|reason:backends-changed|param:apt/dpkg unchanged; apk changed' "$mixed_root/mixed-changed.out" \
     || { echo 'FAIL: mixed changed status is not combined' >&2; cat "$mixed_root/mixed-changed.out" >&2; exit 1; }
 
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$mixed_root/session.log"
     SESSION_DIR="$mixed_root/session"
@@ -2962,12 +3050,12 @@ grep -Fqx 'Repair change status fixbroken: changed|backends: apt/dpkg unchanged;
     adaptive_alpine_apk_fix_broken() { repair_change_status fixbroken "unchanged|apk no-op"; }
     run_package_stage fix-broken fixbroken
 ) > "$mixed_root/mixed-unchanged.out"
-grep -Fqx 'Repair change status fixbroken: unchanged|backends: apt/dpkg unchanged; apk unchanged' "$mixed_root/mixed-unchanged.out" \
+grep -Fqx 'Repair change status fixbroken: unchanged|reason:backends-unchanged|param:apt/dpkg unchanged; apk unchanged' "$mixed_root/mixed-unchanged.out" \
     || { echo 'FAIL: mixed unchanged status is not combined' >&2; cat "$mixed_root/mixed-unchanged.out" >&2; exit 1; }
 
 # (c) A failing backend aborts the stage and is named in the stage context.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$mixed_root/session.log"
     SESSION_DIR="$mixed_root/session"
@@ -3048,16 +3136,16 @@ rpm_probe()
 rpm_caps="$(rpm_probe)"
 cap_expect "$rpm_caps" \
     'validate: available' \
-    'dpkg: unavailable|Fedora uses rpm/dnf; dpkg configuration is not available' \
+    'dpkg: unavailable|reason:dpkg-not-on-fedora' \
     'fixbroken: available' \
     'aptupdate: available' \
     'upgrade: available' \
-    'dkms: unavailable|DKMS is not installed in the target' \
+    'dkms: unavailable|reason:missing-dkms' \
     'display: available' \
     'initramfs: available' \
-    'efi: unavailable|legacy BIOS target; no EFI boot path is available' \
+    'efi: unavailable|reason:legacy-bios-no-efi' \
     'grub: available' \
-    'extlinux: unavailable|update-extlinux is not installed in the target' \
+    'extlinux: unavailable|reason:missing-update-extlinux' \
     'bootstack: available'
 grep -Fqx 'Repair capability evidence dpkg: /usr/bin/dpkg missing' <<<"$rpm_caps" \
     || { echo 'FAIL: Fedora dpkg evidence changed' >&2; exit 1; }
@@ -3162,11 +3250,11 @@ grep -Fq 'GRUB environment: ' <<<"$fedora_grub_diag" \
 cp -a "$rpm_root/boot/grub2/grubenv" "$rpm_root/boot/grub2/grubenv.valid"
 truncate -s 100 "$rpm_root/boot/grub2/grubenv"
 cap_expect "$(rpm_probe)" \
-    'grub: unavailable|grubenv is missing or not a valid GRUB environment block' \
-    'bootstack: unavailable|Requires available initramfs and GRUB repair prerequisites'
+    'grub: unavailable|reason:invalid-grubenv' \
+    'bootstack: unavailable|reason:bootstack-needs-initramfs-grub'
 mv "$rpm_root/boot/grub2/grubenv.valid" "$rpm_root/boot/grub2/grubenv"
 rm -f "$rpm_root/boot/grub2/grub.cfg"
-cap_expect "$(rpm_probe)" 'grub: unavailable|/boot/grub2/grub.cfg is missing'
+cap_expect "$(rpm_probe)" 'grub: unavailable|reason:missing-grub-config|param:/boot/grub2/grub.cfg'
 printf 'insmod blscfg\nblscfg\n' > "$rpm_root/boot/grub2/grub.cfg"
 
 # The rpm probe and the native-first ordering are evidence-based.
@@ -3175,7 +3263,7 @@ printf 'insmod blscfg\nblscfg\n' > "$rpm_root/boot/grub2/grub.cfg"
 ( TARGET_ROOT="$rpm_root" TARGET_OS_ID=fedora TARGET_DISTRO_FAMILY=fedora target_dnf5_ready ) \
     || { echo 'FAIL: complete Fedora fixture was not dnf5-ready' >&2; exit 1; }
 rpm_stage_backends="$(
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$rpm_root" TARGET_OS_ID=fedora TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=fedora profile_target_backends
     package_stage_backends fix-broken
@@ -3212,42 +3300,42 @@ fi
 # Missing rpm/dnf5 prerequisites fail closed with probe-specific reasons.
 mv "$rpm_root/usr/lib/sysimage/rpm/rpmdb.sqlite" "$rpm_root/usr/lib/sysimage/rpm/rpmdb.sqlite.disabled"
 cap_expect "$(rpm_probe)" \
-    'fixbroken: unavailable|the target RPM database is missing' \
-    'upgrade: unavailable|the target RPM database is missing'
+    'fixbroken: unavailable|reason:missing-rpm-database' \
+    'upgrade: unavailable|reason:missing-rpm-database'
 mv "$rpm_root/usr/lib/sysimage/rpm/rpmdb.sqlite.disabled" "$rpm_root/usr/lib/sysimage/rpm/rpmdb.sqlite"
 
 mv "$rpm_root/etc/yum.repos.d/fedora.repo" "$rpm_root/etc/yum.repos.d/fedora.repo.disabled"
 printf '[disabled]\nenabled=0\n' > "$rpm_root/etc/yum.repos.d/disabled.repo"
 cap_expect "$(rpm_probe)" \
-    'fixbroken: unavailable|The target has no enabled dnf repositories' \
-    'aptupdate: unavailable|The target has no enabled dnf repositories to refresh' \
-    'upgrade: unavailable|The target has no enabled dnf repositories'
+    'fixbroken: unavailable|reason:no-dnf-repositories' \
+    'aptupdate: unavailable|reason:no-dnf-repositories-to-refresh' \
+    'upgrade: unavailable|reason:no-dnf-repositories'
 rm -f "$rpm_root/etc/yum.repos.d/disabled.repo"
 mv "$rpm_root/etc/yum.repos.d/fedora.repo.disabled" "$rpm_root/etc/yum.repos.d/fedora.repo"
 
 mv "$rpm_root/usr/bin/dnf5" "$rpm_root/usr/bin/dnf5.disabled"
 : > "$rpm_root/usr/bin/dnf4"; chmod +x "$rpm_root/usr/bin/dnf4"
 cap_expect "$(rpm_probe)" \
-    'fixbroken: unavailable|dnf4 is not supported by the guarded rpm backend' \
-    'upgrade: unavailable|dnf4 is not supported by the guarded rpm backend'
+    'fixbroken: unavailable|reason:dnf4-unsupported' \
+    'upgrade: unavailable|reason:dnf4-unsupported'
 grep -Fqx 'Repair capability evidence fixbroken: rpm executable present; dnf5 missing (dnf4 is not supported)' <<<"$(rpm_probe)" \
     || { echo 'FAIL: dnf4 evidence is missing' >&2; exit 1; }
 rm -f "$rpm_root/usr/bin/dnf4"
 cap_expect "$(rpm_probe)" \
-    'fixbroken: unavailable|dnf5 is not installed in the target system' \
-    'upgrade: unavailable|dnf5 is not installed in the target system'
+    'fixbroken: unavailable|reason:missing-dnf5' \
+    'upgrade: unavailable|reason:missing-dnf5'
 mv "$rpm_root/usr/bin/dnf5.disabled" "$rpm_root/usr/bin/dnf5"
 
 # Missing dracut prerequisites fail closed with the exact probe reason.
 mv "$rpm_root/usr/bin/lsinitrd" "$rpm_root/usr/bin/lsinitrd.disabled"
 cap_expect "$(rpm_probe)" \
-    'initramfs: unavailable|lsinitrd is not installed in the target system; dracut image verification is unavailable'
+    'initramfs: unavailable|reason:missing-lsinitrd'
 mv "$rpm_root/usr/bin/lsinitrd.disabled" "$rpm_root/usr/bin/lsinitrd"
 mv "$rpm_root/usr/lib/dracut" "$rpm_root/usr/lib/dracut.disabled"
-cap_expect "$(rpm_probe)" 'initramfs: unavailable|the dracut generator directory is missing from the target'
+cap_expect "$(rpm_probe)" 'initramfs: unavailable|reason:missing-dracut-dir'
 mv "$rpm_root/usr/lib/dracut.disabled" "$rpm_root/usr/lib/dracut"
 mv "$rpm_root/boot/vmlinuz-6.19.10-300.fc44.x86_64" "$rpm_root/boot/vmlinuz.disabled"
-cap_expect "$(rpm_probe)" 'initramfs: unavailable|No installed dracut kernels were found under target /boot'
+cap_expect "$(rpm_probe)" 'initramfs: unavailable|reason:no-dracut-kernels'
 mv "$rpm_root/boot/vmlinuz.disabled" "$rpm_root/boot/vmlinuz-6.19.10-300.fc44.x86_64"
 
 # ---------------------------------------------------------------------------
@@ -3279,6 +3367,27 @@ rpm_simulation_is_safe $'Transaction Summary:\n Reinstalling: 1 package\n   repl
 rpm_simulation_is_safe $'Upgrading:\n systemd                                               x86_64 0:258-1.fc44                         updates                           12.0 MiB\n   replacing systemd                                   x86_64 0:257-1.fc44                         19278be6a81040f5b6cbc7bacea5148e  12.0 MiB\n glibc                                                 x86_64 0:2.43-9.fc44                        updates                            6.9 MiB\n   replacing glibc                                     x86_64 0:2.43-8.fc44                        19278be6a81040f5b6cbc7bacea5148e   6.9 MiB\n dnf5                                                  x86_64 0:5.4.5.0-1.fc44                      updates                            3.4 MiB\n   replacing dnf5                                      x86_64 0:5.4.1.0-1.fc44                      19278be6a81040f5b6cbc7bacea5148e   3.1 MiB\n grub2-tools                                           x86_64 1:2.12-30.fc44                       updates                            2.0 MiB\n   replacing grub2-tools                               x86_64 1:2.12-29.fc44                       19278be6a81040f5b6cbc7bacea5148e   2.0 MiB\n btrfs-progs                                           x86_64 0:7.1-1.fc44                          updates                            6.5 MiB\n   replacing btrfs-progs                               x86_64 0:6.19.1-1.fc44                       19278be6a81040f5b6cbc7bacea5148e   6.4 MiB\nInstalling dependencies:\n libheif-ffmpeg                                        x86_64 0:1.23.4-6.fc44                       updates                           32.0 KiB\n   replacing libheif                                   x86_64 0:1.21.2-1.fc44                       19278be6a81040f5b6cbc7bacea5148e   1.8 MiB\nTransaction Summary:\n Installing:         1 package\n Upgrading:          5 packages\n Replacing:          6 packages\nOperation aborted by the user.' 1 \
     || { echo 'FAIL: same-name critical dnf5 upgrades were rejected' >&2; exit 1; }
 
+# Defect regression: a routine in-place kernel replacement lists the old
+# kernel family under `Removing:` while the new kernel of the same family is
+# `Installing:`.  The strict any-removal refusal must accept this — every
+# removed package is a kernel package (`kernel`/`kernel-*`) — while still
+# refusing a non-kernel removal, a mixed kernel/non-kernel removal and the
+# dependency-pruning sections (`Removing unused dependencies:`).
+rpm_kernel_replace=$'Installing:\n kernel                       x86_64 0:7.2.8-200.fc44   updates   40.0 MiB\n kernel-core                  x86_64 0:7.2.8-200.fc44   updates   30.0 MiB\n kernel-modules               x86_64 0:7.2.8-200.fc44   updates   20.0 MiB\n kernel-modules-core          x86_64 0:7.2.8-200.fc44   updates   15.0 MiB\n kernel-modules-extra         x86_64 0:7.2.8-200.fc44   updates   10.0 MiB\nRemoving:\n kernel                       x86_64 0:6.19.10-300.fc44\n kernel-core                  x86_64 0:6.19.10-300.fc44\n kernel-modules               x86_64 0:6.19.10-300.fc44\n kernel-modules-core          x86_64 0:6.19.10-300.fc44\n kernel-modules-extra         x86_64 0:6.19.10-300.fc44\nTransaction Summary:\n Installing:         5 packages\n Removing:           5 packages\nOperation aborted by the user.'
+rpm_simulation_is_safe "$rpm_kernel_replace" 1 \
+    || { echo 'FAIL: dnf5 kernel-only removal (in-place kernel replacement) rejected' >&2; exit 1; }
+grep -Fq 'msg:dnf5-kernel-replacement' "$rpm_policy_log" \
+    || { echo 'FAIL: kernel-only removal acceptance was not logged' >&2; exit 1; }
+for rpm_kernel_unsafe in \
+    $'Removing:\n firefox\nOperation aborted by the user.' \
+    $'Removing:\n kernel\n firefox\nOperation aborted by the user.' \
+    $'Removing unused dependencies:\n firefox\nOperation aborted by the user.'; do
+    if rpm_simulation_is_safe "$rpm_kernel_unsafe" 1; then
+        echo "FAIL: unsafe dnf5 removal accepted: $rpm_kernel_unsafe" >&2
+        exit 1
+    fi
+done
+
 # The observed normal Fedora update set (21 install + 774 upgrade + 776
 # replacing) stays under the cap: Replacing counts the old versions superseded
 # by the incoming rows and must not be added to the transaction total.
@@ -3288,7 +3397,7 @@ rpm_simulation_is_safe "$rpm_cap_observed" 0 \
 rpm_replacing_cap="$(for i in $(seq 1 1001); do printf ' Replacing: 1 package\n'; done)"
 rpm_simulation_is_safe "$rpm_replacing_cap" 0 \
     && { echo 'FAIL: dnf5 replacing-count cap overflow accepted' >&2; exit 1; }
-grep -Fq 'would replace 1001 packages (safety limit: 1000)' "$rpm_policy_log" \
+grep -Fq 'msg:dnf5-refused-replace-count|param:1001|param:1000' "$rpm_policy_log" \
     || { echo 'FAIL: dnf5 replacing cap refusal was not logged' >&2; exit 1; }
 
 # Skipped packages are non-fatal: the transaction continues for every other
@@ -3337,7 +3446,7 @@ rpm_simulation_is_safe $'Transaction Summary:\n Reinstalling: 1 package\n   repl
 rpm_cap_fixture="$(for i in $(seq 1 1001); do printf ' Installing: 1 package\n'; done)"
 rpm_simulation_is_safe "$rpm_cap_fixture" 0 \
     && { echo 'FAIL: dnf5 package-count cap overflow accepted' >&2; exit 1; }
-grep -Fq 'safety limit: 1000' "$rpm_policy_log" \
+grep -Fq 'msg:dnf5-refused-total|param:' "$rpm_policy_log" \
     || { echo 'FAIL: dnf5 cap refusal was not logged' >&2; exit 1; }
 
 # A cold target's first rpmdb access creates/truncates the sqlite -shm/-wal
@@ -3396,7 +3505,7 @@ fi
     run_chroot_try() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT='Metadata cache created.'; }
     adaptive_rpm_metadata_refresh
 ) > "$rpm_cache_root/unchanged.out" 2>&1
-grep -Fqx 'Repair change status aptupdate: unchanged|dnf5 repository metadata cache is byte-identical' "$rpm_cache_root/unchanged.out" \
+grep -Fqx 'Repair change status aptupdate: unchanged|reason:dnf5-metadata-identical' "$rpm_cache_root/unchanged.out" \
     || { echo 'FAIL: byte-identical dnf metadata cache was not reported unchanged' >&2; cat "$rpm_cache_root/unchanged.out" >&2; exit 1; }
 (
     TARGET_ROOT="$rpm_cache_root"
@@ -3412,7 +3521,7 @@ grep -Fqx 'Repair change status aptupdate: unchanged|dnf5 repository metadata ca
 ) > "$rpm_cache_root/changed.out" 2>&1
 grep -Fqx 'Repair change status aptupdate: changed' "$rpm_cache_root/changed.out" \
     || { echo 'FAIL: a rewritten dnf metadata cache did not report changed' >&2; cat "$rpm_cache_root/changed.out" >&2; exit 1; }
-grep -Fq 'dnf5 repository metadata cache rewritten (cache fingerprint changed)' "$rpm_cache_root/changed.out" \
+grep -Fq 'msg:dnf5-metadata-changed' "$rpm_cache_root/changed.out" \
     || { echo 'FAIL: dnf changed evidence wording is missing' >&2; cat "$rpm_cache_root/changed.out" >&2; exit 1; }
 (
     TARGET_ROOT="$rpm_cache_root"
@@ -3595,7 +3704,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
     || { echo 'FAIL: dracut image fingerprint did not report a missing image' >&2; exit 1; }
 
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$dracut_pair_root"
     TARGET_INITRAMFS_BACKEND=dracut
@@ -3696,7 +3805,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
     dracut_status="$(adaptive_initramfs_repair)"
     [[ "$(dracut_builds)" == 1 ]] \
         || { echo 'FAIL: dracut image was not built exactly once (identical case)' >&2; exit 1; }
-    grep -Fqx 'Repair change status initramfs: unchanged|rebuilt initramfs images are byte-identical' <<<"$dracut_status" \
+    grep -Fqx 'Repair change status initramfs: unchanged|reason:initramfs-identical' <<<"$dracut_status" \
         || { echo 'FAIL: byte-identical dracut rebuild was not unchanged' >&2; printf '%s\n' "$dracut_status" >&2; exit 1; }
     [[ ! -e "$dracut_build_image" ]] \
         || { echo 'FAIL: byte-identical dracut temporary build was not deleted' >&2; exit 1; }
@@ -3797,7 +3906,7 @@ grep -Fq 'mv -- "$TARGET_ROOT$build_path" "$TARGET_ROOT$image"' <<<"$dracut_appl
     || { echo 'FAIL: dracut verified-image install (mv) is not wired' >&2; exit 1; }
 grep -Fq 'initramfs-before-$kver.img' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut session backup convention is missing' >&2; exit 1; }
-grep -Fq 'rebuilt byte-identical; temporary build discarded' <<<"$dracut_apply_body" \
+grep -Fq 'msg_log fedora-initramfs-identical' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut identical-image discard is not wired' >&2; exit 1; }
 if grep -Eq -- '--regenerate-all|--no-hostonly|--uefi|--noimageifnotneeded|--no-kernel|restorecon|setenforce|fixfiles' <<<"$dracut_apply_body"; then
     echo 'FAIL: dracut apply passes a forbidden override or relabels SELinux' >&2
@@ -3878,7 +3987,7 @@ fedora_grub_stub_env()
     cp -a "$fedora_grub_root/grub.cfg.orig" "$TARGET_ROOT/boot/grub2/grub.cfg"
     cp -a "$fedora_grub_root/grubenv.orig" "$TARGET_ROOT/boot/grub2/grubenv"
     grub_status="$(adaptive_fedora_grub_repair config-only)"
-    grep -Fqx 'Repair change status grub: unchanged|grub.cfg and grubenv are byte-identical' <<<"$grub_status" \
+    grep -Fqx 'Repair change status grub: unchanged|reason:grub-cfg-grubenv-identical' <<<"$grub_status" \
         || { echo 'FAIL: an idempotent Fedora GRUB2 regeneration was not unchanged' >&2; printf '%s\n' "$grub_status" >&2; exit 1; }
 
     # Foreign-OS entries added or dropped by os-prober are reported as
@@ -3898,14 +4007,14 @@ fedora_grub_stub_env()
     } > "$foreign_candidate"
     guard_grub_candidate_preserves_entries "$foreign_existing" "$foreign_candidate" \
         || { echo 'FAIL: a foreign-entry addition blocked the GRUB guard' >&2; exit 1; }
-    grep -Fq 'foreign-entry-added:' "$SESSION_LOG" \
+    grep -Fq 'msg:grub-foreign-added|param:' "$SESSION_LOG" \
         || { echo 'FAIL: the added foreign entry was not reported as evidence' >&2; cat "$SESSION_LOG" >&2; exit 1; }
     grep -Fq 'Ubuntu 26.04 (on /dev/vdb1)' "$SESSION_LOG" \
         || { echo 'FAIL: the added foreign entry was not named' >&2; cat "$SESSION_LOG" >&2; exit 1; }
     : > "$SESSION_LOG"
     guard_grub_candidate_preserves_entries "$foreign_candidate" "$foreign_existing" \
         || { echo 'FAIL: a foreign-entry removal blocked the GRUB guard' >&2; exit 1; }
-    grep -Fq 'foreign-entry-removed:' "$SESSION_LOG" \
+    grep -Fq 'msg:grub-foreign-removed|param:' "$SESSION_LOG" \
         || { echo 'FAIL: the removed foreign entry was not reported as evidence' >&2; cat "$SESSION_LOG" >&2; exit 1; }
     : > "$SESSION_LOG"
     printf 'menuentry "other" { linux /vmlinuz; }\n' > "$foreign_candidate"
@@ -4114,7 +4223,7 @@ mv "$rpm_root/boot/initramfs.disabled" "$rpm_root/boot/initramfs-6.19.10-300.fc4
 # ---------------------------------------------------------------------------
 rpm_mixed_calls="$rpm_root/rpm-mixed-calls.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$rpm_root/session.log"
     SESSION_DIR="$rpm_root/session"
@@ -4131,10 +4240,10 @@ rpm_mixed_calls="$rpm_root/rpm-mixed-calls.log"
 ) > "$rpm_root/rpm-mixed.out"
 [[ "$(cat "$rpm_mixed_calls")" == $'rpm\napk' ]] \
     || { echo 'FAIL: mixed rpm/apk backends did not run in native-first order' >&2; exit 1; }
-grep -Fqx 'Repair change status fixbroken: changed|backends: rpm unchanged; apk changed' "$rpm_root/rpm-mixed.out" \
+grep -Fqx 'Repair change status fixbroken: changed|reason:backends-changed|param:rpm unchanged; apk changed' "$rpm_root/rpm-mixed.out" \
     || { echo 'FAIL: mixed rpm/apk changed status is not combined' >&2; cat "$rpm_root/rpm-mixed.out" >&2; exit 1; }
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$rpm_root/session.log"
     SESSION_DIR="$rpm_root/session"
@@ -4153,7 +4262,7 @@ grep -Fq "stage 'fix-broken (rpm)' failed: simulated rpm backend failure" "$rpm_
 # can complete: a Debian-family tree that merely ships the rpm package runs
 # the apt backend and names the skipped rpm backend in the combined status.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_LOG="$mixed_root/session.log"
     SESSION_DIR="$mixed_root/session"
@@ -4166,7 +4275,7 @@ grep -Fq "stage 'fix-broken (rpm)' failed: simulated rpm backend failure" "$rpm_
     package_backend_unavailable_reason()
     {
         case "$2" in
-            rpm) printf 'dnf5 is not installed in the target system'; return 1 ;;
+            rpm) printf 'reason:missing-dnf5'; return 1 ;;
             *) return 0 ;;
         esac
     }
@@ -4174,9 +4283,9 @@ grep -Fq "stage 'fix-broken (rpm)' failed: simulated rpm backend failure" "$rpm_
 ) > "$mixed_root/mixed-skip.out"
 [[ "$(cat "$mixed_calls")" == 'apt' ]] \
     || { echo 'FAIL: a not-runnable rpm backend still ran' >&2; cat "$mixed_calls" >&2; exit 1; }
-grep -Fqx 'Repair change status fixbroken: unchanged|backends: apt/dpkg unchanged; rpm skipped (dnf5 is not installed in the target system)' "$mixed_root/mixed-skip.out" \
+grep -Fqx 'Repair change status fixbroken: unchanged|reason:backends-unchanged|param:apt/dpkg unchanged; rpm skipped (reason:missing-dnf5)' "$mixed_root/mixed-skip.out" \
     || { echo 'FAIL: skipped backend is not named in the combined status' >&2; cat "$mixed_root/mixed-skip.out" >&2; exit 1; }
-grep -Fq 'SKIP: package backend rpm is not runnable for stage' "$mixed_root/session.log" \
+grep -Fq 'msg:package-backend-skipped|param:rpm' "$mixed_root/session.log" \
     || { echo 'FAIL: skipped backend was not logged' >&2; exit 1; }
 
 # (b) A Debian tree that boots extlinux: systemd vs OpenRC variants must be
@@ -4197,7 +4306,7 @@ printf '%s\n' '-lts' > "$extlinux_debian_root/lib/modules/6.1.0-test/kernel-suff
 extlinux_debian_probe()
 {
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         run_selected_chroot()
         {
@@ -4219,7 +4328,7 @@ mkdir -p "$extlinux_debian_root"/usr/lib/systemd/system
 extlinux_debian_systemd="$(extlinux_debian_probe)"
 cap_expect "$extlinux_debian_systemd" 'display: available' 'extlinux: available'
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     run_selected_chroot() { [[ "$*" == *dpkg-query* && "$*" == *syslinux* ]] && printf 'installed'; return 0; }
     TARGET_ROOT="$extlinux_debian_root" TARGET_OS_ID=debian TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=debian \
@@ -4239,7 +4348,7 @@ chmod +x "$extlinux_debian_root/etc/init.d/lightdm"
 extlinux_debian_openrc="$(extlinux_debian_probe)"
 cap_expect "$extlinux_debian_openrc" 'display: available' 'extlinux: available'
 extlinux_debian_display="$(
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$extlinux_debian_root" TARGET_OS_ID=debian TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=debian \
         RUNNING_HOST_MODE=0 diagnostic_display 2>&1
@@ -4251,7 +4360,7 @@ if grep -Fq 'Systemd default target:' <<<"$extlinux_debian_display"; then
     exit 1
 fi
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$extlinux_debian_root" TARGET_OS_ID=debian TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=debian \
         profile_target_backends
@@ -4285,7 +4394,7 @@ printf 'fallback\n' > "$alpine_efi_root/boot/efi/EFI/boot/bootx64.efi"
 alpine_efi_caps()
 {
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         alpine_efi_firmware_available() { return "${CONTRACT_EFI_FIRMWARE:-0}"; }
         filesystem_scope_resolve() { :; }
@@ -4311,7 +4420,7 @@ grep -Fqx 'Repair capability evidence grub: grub-mkconfig present; /boot/grub/gr
 grep -Fq 'mountpoint -q "$esp_path"' "$HELPER" \
     || { echo 'FAIL: the Alpine EFI evidence does not gate the ESP device on a real mountpoint' >&2; exit 1; }
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_firmware_available() { return 0; }
     filesystem_scope_resolve() { :; }
@@ -4333,7 +4442,7 @@ grep -Fq 'mountpoint -q "$esp_path"' "$HELPER" \
 # The runtime stage gate accepts efi/grub on the UEFI fixture and refuses the
 # legacy-BIOS GRUB backend with the same probe reason as the capability line.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_firmware_available() { return 0; }
     TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine
@@ -4341,10 +4450,10 @@ grep -Fq 'mountpoint -q "$esp_path"' "$HELPER" \
 )
 alpine_efi_bios_caps="$(CONTRACT_EFI_FIRMWARE=1 alpine_efi_caps)"
 cap_expect "$alpine_efi_bios_caps" \
-    'efi: unavailable|GRUB detected on legacy BIOS; no EFI boot path is available' \
+    'efi: unavailable|reason:grub-bios-no-efi' \
     'grub: available'
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_firmware_available() { return 1; }
     TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine
@@ -4352,7 +4461,7 @@ cap_expect "$alpine_efi_bios_caps" \
         echo 'FAIL: the runtime efi stage gate accepted a legacy-BIOS Alpine target' >&2
         exit 1
     fi
-    grep -Fq 'GRUB detected on legacy BIOS; no EFI boot path is available' "$alpine_efi_root/bios-gate.out" \
+    grep -Fq 'reason:grub-bios-no-efi' "$alpine_efi_root/bios-gate.out" \
         || { echo 'FAIL: legacy-BIOS efi gate reason changed' >&2; cat "$alpine_efi_root/bios-gate.out" >&2; exit 1; }
     validate_repair_stages_against_backends grub
 )
@@ -4362,27 +4471,27 @@ cap_expect "$alpine_efi_bios_caps" \
 # and grub configuration tooling missing.
 mv "$alpine_efi_root/boot/efi" "$alpine_efi_root/boot/efi.disabled"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|no EFI System Partition candidate on the selected disk'
+    'efi: unavailable|reason:no-esp-candidate'
 mv "$alpine_efi_root/boot/efi.disabled" "$alpine_efi_root/boot/efi"
 
 mv "$alpine_efi_root/usr/sbin/grub-install" "$alpine_efi_root/usr/sbin/grub-install.disabled"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|grub-install is not installed in the Alpine target'
+    'efi: unavailable|reason:missing-grub-install-alpine'
 mv "$alpine_efi_root/usr/sbin/grub-install.disabled" "$alpine_efi_root/usr/sbin/grub-install"
 
 mv "$alpine_efi_root/usr/lib/grub/x86_64-efi" "$alpine_efi_root/usr/lib/grub/x86_64-efi.disabled"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|the x86_64-efi GRUB module directory is missing from the Alpine target'
+    'efi: unavailable|reason:missing-grub-efi-modules'
 mv "$alpine_efi_root/usr/lib/grub/x86_64-efi.disabled" "$alpine_efi_root/usr/lib/grub/x86_64-efi"
 
 printf 'P:grub\nV:2.14-r0\n\n' > "$alpine_efi_root/lib/apk/db/installed"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|grub-efi is not installed in the Alpine target'
+    'efi: unavailable|reason:missing-grub-efi-alpine'
 printf 'P:grub\nV:2.14-r0\n\nP:grub-efi\nV:2.14-r0\n\n' > "$alpine_efi_root/lib/apk/db/installed"
 
 mv "$alpine_efi_root/usr/sbin/grub-mkconfig" "$alpine_efi_root/usr/sbin/grub-mkconfig.disabled"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'grub: unavailable|Neither grub-mkconfig nor update-grub is installed in the target system'
+    'grub: unavailable|reason:missing-grub-generator'
 mv "$alpine_efi_root/usr/sbin/grub-mkconfig.disabled" "$alpine_efi_root/usr/sbin/grub-mkconfig"
 
 # EFI-stub: detected from vmlinuz-*/initramfs-* on the ESP root with no GRUB.
@@ -4393,7 +4502,7 @@ mv "$alpine_efi_root/usr/sbin/grub-install" "$alpine_efi_root/usr/sbin/grub-inst
 : > "$alpine_efi_root/boot/efi/vmlinuz-lts"
 : > "$alpine_efi_root/boot/efi/initramfs-lts"
 alpine_efi_stub_caps="$(
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_firmware_available() { return 0; }
     filesystem_scope_resolve() { :; }
@@ -4403,21 +4512,21 @@ alpine_efi_stub_caps="$(
 )"
 cap_expect "$alpine_efi_stub_caps" \
     'efi: available' \
-    'grub: unavailable|The detected bootloader is unknown EFI loader; GRUB is not the selected bootloader'
+    'grub: unavailable|reason:not-grub-bootloader|param:unknown EFI loader'
 grep -Fqx 'Repair capability evidence efi: Alpine EFI-stub backend; ESP candidate: /boot/efi; kernel images: vmlinuz-lts; initramfs images: initramfs-lts; efibootmgr present' <<<"$alpine_efi_stub_caps" \
     || { echo 'FAIL: Alpine EFI-stub evidence does not cite the ESP probes' >&2; exit 1; }
 
 mv "$alpine_efi_root/boot/efi/initramfs-lts" "$alpine_efi_root/initramfs-lts.removed"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|no EFI-stub initramfs image (initramfs-*) is present at the EFI System Partition root'
+    'efi: unavailable|reason:no-efi-stub-initramfs'
 mv "$alpine_efi_root/initramfs-lts.removed" "$alpine_efi_root/boot/efi/initramfs-lts"
 
 cap_expect "$(CONTRACT_EFI_FIRMWARE=1 alpine_efi_caps)" \
-    'efi: unavailable|EFI-stub boot requires UEFI firmware; the recovery host booted in legacy BIOS mode'
+    'efi: unavailable|reason:efi-stub-needs-uefi'
 
 # efibootmgr is required because the stub stage has no files to reinstall.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_firmware_available() { return 0; }
     command() {
@@ -4432,12 +4541,12 @@ cap_expect "$(CONTRACT_EFI_FIRMWARE=1 alpine_efi_caps)" \
         diagnostic_repair_capabilities
 ) > "$alpine_efi_root/stub-no-efibootmgr.out"
 cap_expect "$(cat "$alpine_efi_root/stub-no-efibootmgr.out")" \
-    'efi: unavailable|EFI-stub entry repair requires efibootmgr in the recovery host'
+    'efi: unavailable|reason:efi-stub-needs-efibootmgr'
 
 # Read-only firmware variables fail the EFI-stub preflight closed: there is no
 # file-level fallback that could repair a missing stub entry.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     alpine_efi_backend() { printf 'efi-stub\n'; }
     alpine_efi_firmware_available() { return 0; }
@@ -4455,7 +4564,7 @@ cap_expect "$(cat "$alpine_efi_root/stub-no-efibootmgr.out")" \
 # A stub system without a captured entry definition fails closed: entry
 # synthesis is explicitly out of MVP scope.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     stub_session="$(mktemp -d)"
     trap 'rm -rf -- "$stub_session"' EXIT
@@ -4486,13 +4595,13 @@ cap_expect "$(cat "$alpine_efi_root/stub-no-efibootmgr.out")" \
 mkdir -p "$alpine_efi_root/boot/efi/EFI/syslinux"
 : > "$alpine_efi_root/boot/efi/EFI/syslinux/syslinux.efi"
 cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
-    'efi: unavailable|Alpine syslinux-EFI boot detected (EFI/syslinux/syslinux.efi); guarded repair is not implemented'
+    'efi: unavailable|reason:alpine-syslinux-efi-unsupported'
 
 # A failed Alpine grub-install restores the ESP loader files from the session
 # backup; read-only firmware variables keep the stage file-only with no NVRAM
 # mutation.  Both run against a synthetic ESP tree.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     rollback_root="$(mktemp -d)"
     trap 'rm -rf -- "$rollback_root"' EXIT
@@ -4575,7 +4684,7 @@ cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
         return 0
     }
     (alpine_grub_efi_repair) >"$rollback_root/file-only.out" 2>&1
-    grep -Fq 'update loader files and the fallback copy only' "$rollback_root/file-only.out" \
+    grep -Fq 'msg:alpine-grub-efi-nvram-unavailable' "$rollback_root/file-only.out" \
         || { echo 'FAIL: read-only firmware variables must select the file-only Alpine path' >&2; cat "$rollback_root/file-only.out" >&2; exit 1; }
     grep -Fqx 'Repair change status efi: changed' "$rollback_root/file-only.out" \
         || { echo 'FAIL: the file-only Alpine EFI stage must report changed' >&2; cat "$rollback_root/file-only.out" >&2; exit 1; }
@@ -4626,6 +4735,104 @@ cap_expect "$(CONTRACT_EFI_FIRMWARE=0 alpine_efi_caps)" \
         || { echo 'FAIL: the Alpine EFI fallback loader was not restored after a reconcile failure' >&2; exit 1; }
 )
 
+# The conventional (non-Alpine) EFI reinstall issues a --no-nvram --removable
+# rewrite so the firmware fallback loader (\EFI\BOOT\BOOTX64.EFI) a no-NVRAM/
+# fallback-boot target boots is refreshed, and a failed rewrite restores the
+# ESP loader files (vendor dir + fallback) from the session backup instead of
+# leaving a half-written ESP.
+(
+    reset_helper_state
+    trap - EXIT INT TERM HUP
+    conv_root="$(mktemp -d)"
+    trap 'rm -rf -- "$conv_root"' EXIT
+
+    prepare_conventional_efi_stage()
+    {
+        SESSION_DIR="$conv_root/session"
+        mkdir -p "$SESSION_DIR"
+        SESSION_LOG="$SESSION_DIR/session.log"
+        : > "$SESSION_LOG"
+        TARGET_ROOT="$conv_root"
+        TARGET_ESP_MOUNT=/boot/efi
+        EFI_BOOTLOADER_ID=arch
+        EFI_ESP_SOURCE=/dev/contract-esp
+        EFI_ESP_FSTYPE=vfat
+        mkdir -p "$TARGET_ROOT/boot/efi/EFI/arch" "$TARGET_ROOT/boot/efi/EFI/BOOT"
+        printf 'loader-original\n' > "$TARGET_ROOT/boot/efi/EFI/arch/grubx64.efi"
+        printf 'fallback-original\n' > "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI"
+        reassert_target_write_safety() { :; }
+        is_alpine_family() { return 1; }
+        is_tuxedo_uki_layout() { return 1; }
+        preflight_generic_efi() { :; }
+        validate_efi_bootloader_target()
+        {
+            EFI_GRUB_INSTALL_PATH=/usr/sbin/grub-install
+            EFI_BOOTLOADER_ID=arch
+            EFI_ESP_SOURCE=/dev/contract-esp
+            EFI_ESP_FSTYPE=vfat
+        }
+        uefi_nvram_writable() { return 1; }
+        efi_boot_artifact_fingerprint() { printf ''; }
+        efi_repair_emit_change_status() { repair_change_status efi changed; }
+    }
+
+    # Success path: the conventional reinstall issues the --removable rewrite
+    # and refreshes the firmware fallback loader.
+    prepare_conventional_efi_stage
+    : > "$conv_root/grub-install-calls"
+    run_chroot_try()
+    {
+        local label="$1"; shift
+        printf '%s\n' "$*" >> "$conv_root/grub-install-calls"
+        if [[ " $* " == *' --removable '* ]]; then
+            printf 'fallback-refreshed\n' > "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI"
+        else
+            printf 'loader-reinstalled\n' > "$TARGET_ROOT/boot/efi/EFI/arch/grubx64.efi"
+        fi
+        CHROOT_TRY_RC=0
+        CHROOT_TRY_OUTPUT=""
+        return 0
+    }
+    (reinstall_efi_bootloader) >"$conv_root/success.out" 2>&1
+    grep -Fq -- '--removable' "$conv_root/grub-install-calls" \
+        || { echo 'FAIL: the conventional EFI reinstall did not issue the --removable fallback rewrite' >&2; cat "$conv_root/grub-install-calls" >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI")" == 'fallback-refreshed' ]] \
+        || { echo 'FAIL: the conventional EFI fallback loader was not refreshed' >&2; exit 1; }
+    grep -Fq 'msg:conventional-efi-fallback-verified' "$conv_root/success.out" \
+        || { echo 'FAIL: the conventional EFI fallback verify evidence is missing' >&2; cat "$conv_root/success.out" >&2; exit 1; }
+
+    # Failure path: the --removable rewrite fails -> the ESP backup is restored
+    # byte-identically and the stage fails closed.
+    rm -rf -- "${conv_root:?}/boot"
+    prepare_conventional_efi_stage
+    : > "$conv_root/grub-install-fail-calls"
+    run_chroot_try()
+    {
+        local label="$1"; shift
+        printf '%s\n' "$*" >> "$conv_root/grub-install-fail-calls"
+        if [[ " $* " == *' --removable '* ]]; then
+            printf 'fallback-partial\n' > "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI"
+            CHROOT_TRY_RC=1
+            CHROOT_TRY_OUTPUT="simulated --removable failure"
+        else
+            printf 'loader-partial\n' > "$TARGET_ROOT/boot/efi/EFI/arch/grubx64.efi"
+            CHROOT_TRY_RC=0
+            CHROOT_TRY_OUTPUT=""
+        fi
+        return 0
+    }
+    if (reinstall_efi_bootloader) >"$conv_root/fail.out" 2>&1; then
+        echo 'FAIL: a failing --removable rewrite must fail the conventional EFI stage' >&2
+        exit 1
+    fi
+    grep -Fq 'the ESP loader files were restored from the session backup' "$conv_root/fail.out" \
+        || { echo 'FAIL: the conventional EFI rollback reason is missing' >&2; cat "$conv_root/fail.out" >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/boot/efi/EFI/arch/grubx64.efi")" == 'loader-original' ]] \
+        || { echo 'FAIL: the conventional EFI vendor loader was not restored after rollback' >&2; exit 1; }
+    [[ "$(cat "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI")" == 'fallback-original' ]] \
+        || { echo 'FAIL: the conventional EFI fallback loader was not restored after rollback' >&2; exit 1; }
+)
+
 # ---------------------------------------------------------------------------
 # A3-02: every GRUB configuration generation (preflight trial and apply,
 # update-grub/grub-mkconfig/grub2-mkconfig) runs with
@@ -4661,7 +4868,7 @@ printf 'menuentry "contract" {}\n'
 MOCK
 chmod +x "$osprober_root/usr/sbin/grub-mkconfig"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_ROOT="$osprober_root"
     SESSION_DIR="$osprober_root/session"

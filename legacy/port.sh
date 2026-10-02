@@ -387,6 +387,61 @@ transform_legacy_mount_sweep()
     note "mount-sweep process substitutions rewritten" "$count"
 }
 
+# 1d. Cycle 14: the 2.6.18 kernel hangs in the ext3 remount path when the
+# helper's own read-only /boot mount is promoted with
+# `mount -o remount,rw <path>` (reproduced on the Etch rig: Full Repair
+# stopped at "Remounting target /boot read-write"; the boot entry is mounted
+# `ro,noload` and its rw promotion deadlocks in the remount path).  The
+# legacy promotion (legacy/overlay.sh legacy_remount_rw) detaches the
+# recorded read-only mount and mounts the same source fresh read-write
+# inside the session tree — a plain mount-time journal path, never the
+# remount path.  A block that matches nothing aborts generation (A11-01).
+transform_legacy_remount_promotion()
+{
+    local file="$1" count=0
+
+    remount_replacement()
+    {
+        local old="$1" new="$2"
+        replace_block "$file" "$old" "$new" || return 1
+        count=$((count + 1))
+    }
+
+    # mount_target_boot_entry, no-fstab-entry branch (a helper-recorded ESP
+    # mount discovered by GPT type): the source is recovered from the mount
+    # table inside the shim.
+    remount_replacement \
+        '                if [[ "$recorded_mount" == true ]]; then
+                    msg_log remount-rw "$mp"
+                    mount -o remount,rw "$dest"
+                fi' \
+        '                if [[ "$recorded_mount" == true ]]; then
+                    msg_log remount-rw "$mp"
+                    legacy_remount_rw "$dest" ""
+                fi'
+
+    # mount_target_boot_entry, fstab-entry branch: $resolved is the
+    # already-validated fstab source (same-disk gate above), pass it through.
+    remount_replacement \
+        '        if [[ "$recorded_mount" == true ]]; then
+            if [[ "$requested_mode" == "rw" ]]; then
+                msg_log remount-rw "$mp"
+                mount -o remount,rw "$dest"
+            fi
+            return 0
+        fi' \
+        '        if [[ "$recorded_mount" == true ]]; then
+            if [[ "$requested_mode" == "rw" ]]; then
+                msg_log remount-rw "$mp"
+                legacy_remount_rw "$dest" "$resolved"
+            fi
+            return 0
+        fi'
+
+    (( count >= 0 )) || return 1
+    note "legacy boot-remount promotion sites" "$count"
+}
+
 # 1b. bash 3.1 rejects an unquoted `(` or `|` in the `[[ =~ ]]` operand
 # (bash 3.2+ accepts it).  Hoist those regex literals into a variable, which is
 # the portable idiom on 3.1 and on modern bash alike.  A block that matches
@@ -626,7 +681,7 @@ Shell:' \
 transform_renames()
 {
     local file="$1"
-    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup run_package_stage adaptive_initramfs_repair adaptive_grub_stage"
+    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup run_package_stage adaptive_initramfs_repair adaptive_grub_stage populate_writable_dev_filtered"
     local func count=0
     for func in $funcs; do
         grep -qE "^${func}\(\)$" "$file" || {
@@ -679,11 +734,12 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 60
+    check_count 'legacy_readarray' 'legacy_readarray' 61
+    check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
     check_count 'legacy_sed_ext' 'legacy_sed_ext' 81
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 12
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
-    check_count 'legacy_lc' 'legacy_lc ' 64
+    check_count 'legacy_lc' 'legacy_lc ' 66
     check_count 'legacy_uc' 'legacy_uc ' 15
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 23
     check_count 'legacy_assoc_get' 'legacy_assoc_get ' 26
@@ -850,6 +906,7 @@ generate()
     if ! cp -- "$MODERN" "$work" \
         || ! transform_syntax "$work" \
         || ! transform_legacy_mount_sweep "$work" \
+        || ! transform_legacy_remount_promotion "$work" \
         || ! verify_transform_counts "$work" \
         || ! transform_regex_compat "$work" \
         || ! transform_legacy_behaviour "$work" \

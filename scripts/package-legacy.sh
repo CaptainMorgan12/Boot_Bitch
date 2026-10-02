@@ -79,6 +79,15 @@ GUI_DESKTOP_SRC="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-gui.desktop"
 GUI_ICON_DIR="$ROOT_DIR/legacy/gui/data"
 GUI_ICON_SIZES='16 22 32 48'
 
+# Qt3 i18n: the .ts translation sources ship under legacy/gui/translations and
+# are compiled to .qm by Qt3 lrelease at package time (the host has Qt6 only,
+# and Qt3/Qt6 .qm formats are incompatible). The catalogs are installed under
+# /usr/share/boot-repair-legacy/translations and resolved by main.cpp.
+GUI_TRANSLATIONS_SRC="$ROOT_DIR/legacy/gui/translations"
+TRANSLATIONS_DEST='usr/share/boot-repair-legacy/translations'
+# Pinned absolute Qt3 lrelease path (never a bare name; see the plan Step 0).
+LRELEASE=''
+
 usage()
 {
     cat <<EOF
@@ -243,6 +252,65 @@ stage_gui()
     done
 }
 
+# Resolve the pinned absolute Qt3 lrelease path. Returns nonzero when none is
+# available (a host --dry-run without qt3-dev-tools, where a placeholder .qm is
+# staged instead so the layout contract still validates). Only the Qt3-specific
+# locations are probed: a modern host's bare /usr/bin/lrelease is Qt5/Qt6 and
+# its .qm format is incompatible with Qt3.
+find_lrelease()
+{
+    LRELEASE=''
+    for _cand in /usr/share/qt3/bin/lrelease /usr/bin/lrelease-qt3; do
+        if [ -x "$_cand" ]; then
+            LRELEASE="$_cand"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Compile the Qt3 .ts catalogs with lrelease and stage the .qm binaries under
+# /usr/share/boot-repair-legacy/translations. On a host without Qt3 lrelease
+# (--dry-run) a documented placeholder .qm is staged so the layout contract
+# stays testable; a real Etch build always produces the compiled catalogs.
+stage_translations()
+{
+    _stage="$1"
+    _dest="$_stage/$TRANSLATIONS_DEST"
+    mkdir -p "$_dest"
+    if [ ! -d "$GUI_TRANSLATIONS_SRC" ]; then
+        printf 'NOTE: no legacy GUI translations source (%s); staging no .qm catalogs.\n' \
+            "${GUI_TRANSLATIONS_SRC#"$ROOT_DIR"/}"
+        return 0
+    fi
+    _count=0
+    for _ts in "$GUI_TRANSLATIONS_SRC"/boot-repair-legacy_*.ts; do
+        [ -f "$_ts" ] || continue
+        _count=$((_count + 1))
+    done
+    if [ "$_count" -eq 0 ]; then
+        printf 'NOTE: no legacy GUI .ts catalogs found; staging no .qm.\n'
+        return 0
+    fi
+    find_lrelease || true
+    if [ -n "$LRELEASE" ]; then
+        _build="$GUI_BUILD_DIR/translations"
+        mkdir -p "$_build"
+        for _ts in "$GUI_TRANSLATIONS_SRC"/boot-repair-legacy_*.ts; do
+            [ -f "$_ts" ] || continue
+            _base="$(basename "$_ts" .ts)"
+            cp "$_ts" "$_build/$_base.ts"
+            ( cd -- "$_build" && "$LRELEASE" "$_base.ts" ) \
+                || fail "Qt3 lrelease failed for $_base.ts"
+            install -m 0644 "$_build/$_base.qm" "$_dest/$_base.qm"
+        done
+        printf 'Staged %s Qt3 .qm catalogs into %s.\n' "$_count" "$TRANSLATIONS_DEST"
+    else
+        printf 'NOTE: no Qt3 lrelease found; staging a placeholder .qm (dry run only).\n'
+        : > "$_dest/boot-repair-legacy_de.qm"
+    fi
+}
+
 stage_tree()
 {
     _stage="$1"
@@ -271,6 +339,7 @@ stage_tree()
     gzip -9 -n -c "$CHANGELOG_SRC" > "$_stage/usr/share/doc/$PKG_NAME/changelog.Debian.gz"
 
     stage_gui "$_stage"
+    stage_translations "$_stage"
 
     bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
         || fail 'staged helper failed bash -n.'
@@ -309,6 +378,11 @@ validate_artifact()
             fail "built package is missing $_path"
         fi
     done
+    # Qt3 i18n: a real build must ship the compiled translation catalogs.
+    if ! dpkg-deb --contents "$_deb" \
+        | grep -q -- './usr/share/boot-repair-legacy/translations/.*\.qm$'; then
+        fail 'built package is missing the Qt3 translation catalogs (.qm)'
+    fi
     # The shell-only TUI launcher (and its desktop entry/man page) is
     # development-only and must never ship: the GUI is the entry point.
     for _path in \

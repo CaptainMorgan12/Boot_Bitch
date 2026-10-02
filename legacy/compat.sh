@@ -1169,10 +1169,94 @@ legacy_timeout_real_supports_foreground()
     "$real" --foreground 1 true >/dev/null 2>&1
 }
 
+# Read one whitespace field of /proc/<pid>/stat, counting from the field AFTER
+# the parenthesized comm field (which may itself contain spaces and
+# parentheses).  The remainder of the line begins at the original field 3
+# (state); `which` selects a field of that remainder: 1 -> state (3),
+# 2 -> ppid (4), 3 -> pgrp (5).
+legacy_proc_stat_field()
+{
+    local pid="$1" which="$2" rest="" n=0
+    rest="$(cat "/proc/$pid/stat" 2>/dev/null || true)"
+    [[ -n "$rest" ]] || return 1
+    rest="${rest#*') '}"
+    [[ -n "$rest" ]] || return 1
+    n="$which"
+    while (( n > 1 )); do
+        rest="${rest#* }"
+        n=$((n - 1))
+    done
+    printf '%s\n' "${rest%% *}"
+    return 0
+}
+
+# Print every live descendant pid of <root> (children, grandchildren, ...),
+# one per line, by a breadth-first walk over /proc/<pid>/stat (field 4 =
+# ppid).  The snapshot is taken BEFORE the first signal is delivered, so a
+# child whose parent dies first is reparented to init/subreaper but still
+# enumerated here.
+legacy_timeout_descendants()
+{
+    local root="$1" frontier="$1" seen=" $1 " next="" p="" child="" ppid="" cpid=""
+    [[ "$root" =~ ^[0-9]+$ ]] || return 0
+    while [[ -n "$frontier" ]]; do
+        next=""
+        for p in $frontier; do
+            for child in /proc/[0-9]*; do
+                [[ -e "$child" ]] || continue
+                ppid="$(legacy_proc_stat_field "${child##*/}" 2)" || continue
+                [[ -n "$ppid" && "$ppid" == "$p" ]] || continue
+                cpid="${child##*/}"
+                [[ "$seen" == *" $cpid "* ]] && continue
+                seen="$seen$cpid "
+                next="$next$cpid "
+            done
+        done
+        frontier="$next"
+    done
+    for cpid in $seen; do
+        [[ "$cpid" == "$root" ]] && continue
+        printf '%s\n' "$cpid"
+    done
+    return 0
+}
+
+# Signal one command tree: the snapshotted descendants are signalled first,
+# then the root pid last (with its process group via kill -- -$pid when
+# leader=1).  The root is signalled LAST so the caller's `wait` on it never
+# returns before the descendant sweep has run - signalling the root first
+# would let its death reparent the children to init and strand them.  A
+# descendant that is itself a group leader (proven by reading
+# /proc/<pid>/stat field 5 == pid) is also group-signalled so its own group
+# members stop too.
+legacy_timeout_terminate()
+{
+    local pid="$1" leader="${2:-0}" signal="${3:-TERM}" descendants="${4:-}"
+    local snap_pid="" child_leader=0 pgrp=""
+    for snap_pid in $descendants; do
+        [[ "$snap_pid" =~ ^[0-9]+$ ]] || continue
+        [[ "$snap_pid" == "$pid" ]] && continue
+        child_leader=0
+        pgrp="$(legacy_proc_stat_field "$snap_pid" 3 || true)"
+        if [[ -n "$pgrp" && "$pgrp" == "$snap_pid" ]]; then
+            child_leader=1
+        fi
+        kill -"$signal" "$snap_pid" 2>/dev/null || true
+        if (( child_leader == 1 )); then
+            kill -"$signal" -- -"$snap_pid" 2>/dev/null || true
+        fi
+    done
+    kill -"$signal" "$pid" 2>/dev/null || true
+    if (( leader == 1 )); then
+        kill -"$signal" -- -"$pid" 2>/dev/null || true
+    fi
+    return 0
+}
+
 legacy_timeout_watchdog()
 {
     local signal="TERM" kill_after=0 duration="" arg="" rc=0
-    local tmp="" pid=0 wd=0 seconds=0
+    local tmp="" pid=0 wd=0 seconds=0 leader=0 setsid_bin="" descendants=""
     local -a cmd=()
     while (( $# > 0 )); do
         arg="$1"
@@ -1194,15 +1278,29 @@ legacy_timeout_watchdog()
     rm -f -- "$tmp"
     # Never toggle `set -e` here: shims must not change the caller's shell
     # options, and `cmd || rc=$?` is errexit-safe on its own.
-    "${cmd[@]}" &
+    # Run the command in its own session (setsid) when available so the
+    # watcher can signal the whole group; otherwise fall back to signalling
+    # the direct child plus a /proc descendant sweep of the snapshotted tree.
+    setsid_bin="$(legacy_real_tool_path setsid 2>/dev/null || true)"
+    if [[ -n "$setsid_bin" ]]; then
+        leader=1
+        "$setsid_bin" "${cmd[@]}" &
+    else
+        leader=0
+        "${cmd[@]}" &
+    fi
     pid=$!
     (
         sleep "$seconds" 2>/dev/null
         : > "$tmp" 2>/dev/null
-        kill -"$signal" "$pid" 2>/dev/null || exit 0
+        # Snapshot the full descendant set before the first signal so a child
+        # reparented to init by its parent's death is still enumerated.
+        descendants="$(legacy_timeout_descendants "$pid")"
+        legacy_timeout_terminate "$pid" "$leader" "$signal" "$descendants"
         if (( kill_after > 0 )); then
             sleep "$kill_after" 2>/dev/null
-            kill -KILL "$pid" 2>/dev/null || true
+            # Reuse the SAME snapshot so reparented children are still reached.
+            legacy_timeout_terminate "$pid" "$leader" KILL "$descendants"
         fi
     ) &
     wd=$!

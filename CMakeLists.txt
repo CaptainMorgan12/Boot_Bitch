@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.26
+    VERSION 0.2.27
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -139,6 +139,15 @@ install(FILES data/copyright
     DESTINATION ${CMAKE_INSTALL_DATADIR}/doc/boot-repair
 )
 
+# Committed Qt UI translations. The .qm catalogs are generated from the
+# committed .ts sources with lrelease and installed so the application can load
+# them at runtime from ${CMAKE_INSTALL_DATADIR}/boot-repair/translations.  Every
+# language's .qm under translations/ is installed; the .ts sources are not.
+install(DIRECTORY translations/
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/boot-repair/translations
+    FILES_MATCHING PATTERN "*.qm"
+)
+
 # -----------------------------------------------------------------------------
 # Compressed documentation
 # -----------------------------------------------------------------------------
@@ -264,10 +273,22 @@ include(CPack)
 # -----------------------------------------------------------------------------
 # Read-only GUI regression tests
 # -----------------------------------------------------------------------------
+# MainWindowUiTest.cpp was 895 KB in a single translation unit, so the suite
+# is split into several translation units (MainWindowUiTest.cpp plus the
+# MainWindowUiTest_<feature>.cpp files) that compile in parallel.  They share
+# one QTest class (tests/MainWindowUiTest.h) and one fixture/helper header
+# (tests/UiTestHelpers.h); the single registered test boot-repair-ui-read-only
+# is unchanged.
 enable_testing()
 
 add_executable(boot-repair-ui-tests
     tests/MainWindowUiTest.cpp
+    tests/MainWindowUiTest.h
+    tests/MainWindowUiTest_Logs.cpp
+    tests/MainWindowUiTest_Scope.cpp
+    tests/MainWindowUiTest_Plan.cpp
+    tests/MainWindowUiTest_Shell.cpp
+    tests/UiTestHelpers.h
     src/MainWindow.cpp
     src/MainWindow.h
     src/SystemScanner.cpp
@@ -320,6 +341,10 @@ add_test(NAME boot-repair-host-snapshot-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-snapshot-contract.sh)
 add_test(NAME boot-repair-host-default-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-host-default-contract.sh)
+add_test(NAME boot-repair-reason-key-registry-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-reason-key-registry-contract.sh)
+add_test(NAME boot-repair-msg-key-registry-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-msg-key-registry-contract.sh)
 add_test(NAME boot-repair-efi-entry-policy-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-efi-entry-policy-contract.sh)
 add_test(NAME boot-repair-repair-log-filter-contract
@@ -370,6 +395,10 @@ set_tests_properties(boot-repair-host-snapshot-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-host-default-contract
     PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-reason-key-registry-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-msg-key-registry-contract
+    PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-efi-entry-policy-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-repair-log-filter-contract
@@ -394,3 +423,46 @@ set_tests_properties(boot-repair-ui-read-only
     PROPERTIES LABELS "ui")
 set_tests_properties(boot-repair-packaging-profile-contract
     PROPERTIES LABELS "packaging")
+
+# -----------------------------------------------------------------------------
+# Translation tooling (dev-only, explicitly invoked)
+# -----------------------------------------------------------------------------
+# qt_add_translations is deliberately not used: it needs qttools6-dev, which is
+# absent from the CI image. lupdate/lrelease are located at configure time and
+# invoked directly, and the generated .qm catalogs are committed so a default
+# source build or CI run never depends on the translation tools. The target is
+# not part of ALL, so it runs only when explicitly requested. The Qt6 tool
+# locations are searched first because distro /usr/bin wrappers (qtchooser) can
+# resolve to an absent Qt5 tool on a Qt6-only host.
+find_program(BOOT_REPAIR_LUPDATE_EXECUTABLE lupdate
+    HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
+find_program(BOOT_REPAIR_LRELEASE_EXECUTABLE lrelease
+    HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
+
+if(BOOT_REPAIR_LUPDATE_EXECUTABLE AND BOOT_REPAIR_LRELEASE_EXECUTABLE)
+    # The full shipped language set (bare Qt locale codes; "no" is Norwegian
+    # Bokmål, which Argos packages as "nb"). Keep this in sync with the
+    # translations/ directory and SUPPORTED_TARGETS in tools/translate_ts.py.
+    set(BOOT_REPAIR_TRANSLATION_TS)
+    foreach(lang IN ITEMS de fr es it pt nl pl ru zh ja ko sv da fi no
+                          cs hu ro tr el ar uk)
+        list(APPEND BOOT_REPAIR_TRANSLATION_TS
+            ${CMAKE_CURRENT_SOURCE_DIR}/translations/boot-repair_${lang}.ts)
+    endforeach()
+
+    add_custom_target(update_translations
+        COMMAND ${BOOT_REPAIR_LUPDATE_EXECUTABLE}
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/MainWindow.cpp
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/MainWindow.h
+            ${CMAKE_CURRENT_SOURCE_DIR}/src/main.cpp
+            -ts
+            ${BOOT_REPAIR_TRANSLATION_TS}
+        COMMAND ${BOOT_REPAIR_LRELEASE_EXECUTABLE}
+            ${BOOT_REPAIR_TRANSLATION_TS}
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}/translations
+        COMMENT "Updating Boot Bitch UI translation sources (.ts) and compiling catalogs (.qm)"
+        VERBATIM
+    )
+else()
+    message(STATUS "lupdate/lrelease not found: update_translations target unavailable")
+endif()

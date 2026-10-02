@@ -83,17 +83,31 @@ if grep -Fq 'FS_INSPECT_ARGUMENTS=("$tool" -f -y "$device")' "$HELPER"; then
     echo 'FAIL: the old preen-skipping e2fsck repair invocation is still present' >&2
     exit 1
 fi
-grep -q 'btrfs check --repair is a last-resort' "$HELPER"
-grep -q 'ntfsfix only clears the NTFS dirty state' "$HELPER"
+grep -q 'msg_log btrfs-repair-warning' "$HELPER"
+grep -q 'msg_log ntfsfix-note' "$HELPER"
 grep -q '^filesystem_mode_matrix()' "$HELPER"
 grep -q '^filesystem_zfs_status_result()' "$HELPER"
 grep -q '^filesystem_btrfs_scrub_result()' "$HELPER"
+# ZFS diagnostics: the read-only pool/dataset inventory is wired into the
+# "File systems" diagnostic and emits the four documented read-only commands;
+# the guarded zpool clear follow-up runs only after a clean scrub.
+grep -q '^diagnostic_zfs_status()' "$HELPER"
+grep -Fq 'diagnostic_zfs_status' <<<"$(sed -n '/^diagnostic_filesystem()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the File systems diagnostic does not emit the ZFS pool inventory' >&2; exit 1; }
+for zfs_diag_cmd in 'zpool status' 'zpool list -v' 'zfs list' 'zpool get all'; do
+    grep -Fq "$zfs_diag_cmd" <<<"$(sed -n '/^diagnostic_zfs_status()/,/^}/p' "$HELPER")" \
+        || { echo "FAIL: the ZFS diagnostic does not emit: $zfs_diag_cmd" >&2; exit 1; }
+done
+grep -Fq 'filesystem_run_repair_command "$tool_name" clear "$pool"' "$HELPER" \
+    || { echo 'FAIL: the clean-scrub zpool clear follow-up is missing' >&2; exit 1; }
+grep -Fq '&& "$result" == "clean"' "$HELPER" \
+    || { echo 'FAIL: zpool clear is not gated on a clean scrub result' >&2; exit 1; }
 grep -q 'result=skipped' "$HELPER"
 grep -q '^mount_target_btrfs_subvolumes()' "$HELPER"
 grep -q '^mount_target_data_partitions()' "$HELPER"
 grep -q '^remount_target_data_rw()' "$HELPER"
 grep -q 'mount_target_data_partitions "$mode"' "$HELPER"
-grep -q 'Remounting target data filesystem ' "$HELPER"
+grep -q 'msg_log remount-data-rw ' "$HELPER"
 grep -q 'same_single_top_disk "$TARGET_DISK" "$resolved"' "$HELPER"
 grep -q 'Repair requires the target ' "$HELPER"
 # A2-01/A4-01: the fstab-driven mount paths share one containment validator
@@ -450,6 +464,14 @@ if [[ -n "${FAKE_MOUNT_FAIL:-}" ]]; then
     printf 'mount: %s: mount failed\n' "${!#}" >&2
     exit 1
 fi
+# A remount (`mount -o remount,rw`) promotes the helper-recorded entry instead
+# of creating a second one.  It must not append another row: a duplicate row
+# makes findmnt emit two FAT rows, and the ESP re-derivation's first-row
+# `grep -q` match can then SIGPIPE findmnt under `set -o pipefail` on a loaded
+# rig, intermittently dropping the /boot/efi derivation.
+case " $* " in
+    *remount*) exit 0 ;;
+esac
 # A successful mount becomes visible to mountpoint/findmnt so the helper's
 # post-mount verification exercises the real follow-up probes.
 if [[ -n "${FAKE_MOUNT_ADD_POINT:-}" && -n "${FAKE_MOUNTPOINT_DB:-}" ]]; then
@@ -578,6 +600,9 @@ case "$*" in
     scrub*)
         printf '%s\n' "${FAKE_ZPOOL_SCRUB_OUTPUT:-scrub completed}"
         exit "${FAKE_ZPOOL_SCRUB_RC:-0}" ;;
+    clear*)
+        printf '%s\n' "${FAKE_ZPOOL_CLEAR_OUTPUT:-}"
+        exit 0 ;;
 esac
 exit 0
 MOCK
@@ -722,7 +747,7 @@ TARGET_INITRAMFS_BACKEND=mkinitcpio
 TARGET_BOOTLOADER_BACKEND=grub
 diagnostic_repair_capabilities
 ')"
-grep -Fqx "Repair tool filesystem: unavailable|The selected scope's root, /boot, ESP and /home filesystems could not be resolved" <<<"$cap_unresolved" \
+grep -Fqx "Repair tool filesystem: unavailable|reason:no-resolvable-scope-filesystems" <<<"$cap_unresolved" \
     || { echo "FAIL: missing filesystem unavailable capability line" >&2; printf '%s\n' "$cap_unresolved" >&2; exit 1; }
 grep -Fqx 'Repair capability evidence filesystem: scope filesystems unresolved' <<<"$cap_unresolved" \
     || { echo "FAIL: missing unresolved filesystem evidence" >&2; exit 1; }
@@ -924,7 +949,7 @@ expect_repair_line /dev/test-root repair repaired "$e2fsck_fixed"
 
 e2fsck_reboot="$(FAKE_TOOL_FAIL=e2fsck FAKE_TOOL_FAIL_RC=2 run_harness "$(repair_code /dev/test-root repair)" 2>&1 || true)"
 expect_repair_line /dev/test-root repair repaired "$e2fsck_reboot"
-grep -Fq 'a reboot is recommended before using the filesystem' <<<"$e2fsck_reboot" \
+grep -Fq 'msg:fs-repair-pass2|param:' <<<"$e2fsck_reboot" \
     || { echo 'FAIL: e2fsck rc 2 did not recommend a reboot' >&2; exit 1; }
 
 # Safe preen first; the forced pass runs only after preen left rc 4.
@@ -977,11 +1002,11 @@ if ntfs_remain="$(FAKE_TOOL_FAIL=ntfsfix FAKE_TOOL_FAIL_RC=255 run_harness "$(re
     exit 1
 fi
 expect_repair_line /dev/test-home repair issues "$ntfs_remain"
-grep -Fq 'run Windows chkdsk /f for a real NTFS repair' <<<"$ntfs_remain" \
+grep -Fq 'msg:ntfsfix-fail|param:' <<<"$ntfs_remain" \
     || { echo 'FAIL: ntfsfix failure did not require chkdsk' >&2; exit 1; }
 ntfs_ok="$(run_harness "$(repair_code /dev/test-home repair)" 2>&1 || true)"
 expect_repair_line /dev/test-home repair clean "$ntfs_ok"
-grep -Fq 'Windows chkdsk /f is required for a real NTFS repair' <<<"$ntfs_ok" \
+grep -Fq 'msg:ntfsfix-note' <<<"$ntfs_ok" \
     || { echo 'FAIL: ntfsfix success did not surface the chkdsk requirement' >&2; exit 1; }
 set_home_fstype xfs
 
@@ -1040,7 +1065,7 @@ set_home_fstype xfs
 set_home_fstype btrfs
 : > "$FAKE_TOOL_LOG"
 btrfs_warning="$(run_harness "$(repair_code /dev/test-home repair)" 2>&1 || true)"
-grep -Fq 'btrfs check --repair is a last-resort' <<<"$btrfs_warning" \
+grep -Fq 'msg:btrfs-repair-warning' <<<"$btrfs_warning" \
     || { echo 'FAIL: btrfs check --repair warning missing' >&2; exit 1; }
 grep -Fq 'btrfs check --repair /dev/test-home' "$FAKE_TOOL_LOG" \
     || { echo 'FAIL: btrfs repair invocation missing' >&2; exit 1; }
@@ -1084,7 +1109,7 @@ expect_single_change_status "$clean_repair_status" 'changed'
 
 clean_check_status="$(run_harness "$(repair_code /dev/test-home check)" 2>&1 || true)"
 expect_repair_line /dev/test-home check clean "$clean_check_status"
-expect_single_change_status "$clean_check_status" 'unchanged|read-only check reported no errors'
+expect_single_change_status "$clean_check_status" 'unchanged|reason:filesystem-check-clean'
 
 repaired_status="$(FAKE_TOOL_FAIL=e2fsck FAKE_TOOL_FAIL_RC=1 run_harness "$(repair_code /dev/test-root repair)" 2>&1 || true)"
 expect_repair_line /dev/test-root repair repaired "$repaired_status"
@@ -1196,9 +1221,18 @@ grep -Fq 'zpool scrub -w rpool' "$FAKE_TOOL_LOG" \
     || { echo 'FAIL: zpool scrub must wait for completion' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
 grep -Fq 'zpool status -v rpool' "$FAKE_TOOL_LOG" \
     || { echo 'FAIL: zpool status must be scoped to the pool after the scrub' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
+# A clean scrub clears the pool's error counters (zpool clear), never before a
+# faulted/degraded pool is proven healthy.
+grep -Fq 'zpool clear rpool' "$FAKE_TOOL_LOG" \
+    || { echo 'FAIL: a clean zpool scrub did not clear the pool error counters' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
 
+: > "$FAKE_TOOL_LOG"
 zfs_degraded="$(FAKE_ZPOOL_POOLS=rpool FAKE_ZPOOL_STATUS_P='	/dev/test-zfs	ONLINE' FAKE_ZPOOL_STATUS_V='state: DEGRADED' run_harness "$(repair_code /dev/test-zfs scrub)" 2>&1 || true)"
 expect_repair_line /dev/test-zfs scrub issues "$zfs_degraded"
+# A degraded pool must not have its error counters cleared.
+if grep -Fq 'zpool clear rpool' "$FAKE_TOOL_LOG"; then
+    echo 'FAIL: a degraded zpool scrub cleared the pool error counters' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1
+fi
 
 # A dataset source is mapped to its imported pool for scope and scrub.
 : > "$FAKE_TOOL_LOG"
@@ -1261,7 +1295,7 @@ ROOT_DEVICE=/dev/test-root
 filesystem_repair_tool() { return 1; }
 diagnostic_repair_capabilities
 ')"
-grep -Fqx 'Repair tool filesystem: unavailable|No supported file system check tool is installed in the recovery environment' <<<"$cap_notools" \
+grep -Fqx 'Repair tool filesystem: unavailable|reason:no-filesystem-check-tool' <<<"$cap_notools" \
     || { echo 'FAIL: no-tools filesystem capability did not fail closed' >&2; grep '^Repair tool filesystem' <<<"$cap_notools" >&2; exit 1; }
 
 # A scope with no supported filesystem type fails closed with its own reason.
@@ -1276,7 +1310,7 @@ ROOT_DEVICE=/dev/test-root
 filesystem_mode_field() { return 1; }
 diagnostic_repair_capabilities
 ')"
-grep -Fqx 'Repair tool filesystem: unavailable|The selected scope has no supported file system type for a read-only check' <<<"$cap_unsupported" \
+grep -Fqx 'Repair tool filesystem: unavailable|reason:no-supported-filesystem-type' <<<"$cap_unsupported" \
     || { echo 'FAIL: unsupported filesystem capability did not fail closed' >&2; grep '^Repair tool filesystem' <<<"$cap_unsupported" >&2; exit 1; }
 
 # A device on the selected disk but outside the resolved scope is refused even
@@ -1388,7 +1422,7 @@ grep -q '^component_has_os_release()' "$HELPER"
 grep -q '^resolve_target_root_component()' "$HELPER"
 grep -Fq 'lsblk -P -b -p -o NAME,FSTYPE,SIZE,TYPE,LABEL,PARTLABEL' "$HELPER"
 grep -q 'resolve_target_root_component "\$TARGET_DISK" "\$ROOT_CANONICAL"' "$HELPER"
-grep -Fq 'Root component fallback: selected component' "$HELPER"
+grep -Fq 'msg_log root-component-fallback' "$HELPER"
 grep -Fq 'does not contain /etc/os-release and no other Linux-capable partition' "$HELPER"
 
 # The Linux-capable type set mirrors the GUI's preferredRepairNode() rule and
@@ -1593,7 +1627,7 @@ esp_writable_preflight check
     echo 'FAIL: the check-only ESP preflight accepted a leaked read-only layer' >&2
     exit 1
 fi
-grep -Fq "ESP mount preflight: target=$esp_dir stack=3 top-source=/dev/test-efi top-options=ro top-id=1477 verdict=ro-leaked leaked-ro=1" <<<"$leaked_check" \
+grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:3|param:/dev/test-efi|param:ro|param:1477|param:ro-leaked|param:1" <<<"$leaked_check" \
     || { echo 'FAIL: leaked preflight evidence line missing or wrong' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
 grep -Fq 'leaked read-only layers: 1' <<<"$leaked_check" \
     || { echo 'FAIL: leaked preflight did not report the leaked layer count' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
@@ -1623,7 +1657,7 @@ esp_writable_preflight clear
     echo 'FAIL: the ESP preflight cleared a foreign topmost mount' >&2
     exit 1
 fi
-grep -Fq "top-source=/dev/test-outside top-options=ro top-id=900 verdict=foreign" <<<"$foreign_clear" \
+grep -Fq "param:/dev/test-outside|param:ro|param:900|param:foreign" <<<"$foreign_clear" \
     || { echo 'FAIL: foreign preflight evidence line missing or wrong' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
 grep -Fq 'not the selected EFI System Partition' <<<"$foreign_clear" \
     || { echo 'FAIL: foreign preflight did not refuse' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
@@ -1646,7 +1680,7 @@ run_tuxedo_uki_builder "Contract vendor run" /bin/true
     echo 'FAIL: run_tuxedo_uki_builder accepted a foreign ESP stack' >&2
     exit 1
 fi
-grep -Fq 'verdict=foreign' <<<"$builder_refusal" \
+grep -Fq 'param:foreign' <<<"$builder_refusal" \
     || { echo 'FAIL: the vendor-builder preflight did not report the foreign stack' >&2; printf '%s\n' "$builder_refusal" >&2; exit 1; }
 [[ ! -e "$sandbox/target/usr/local/libexec" ]] \
     || { echo 'FAIL: the vendor builder created target files before the ESP check' >&2; exit 1; }
@@ -1670,7 +1704,7 @@ rebuild_tuxedo_uki
     echo 'FAIL: rebuild_tuxedo_uki accepted a foreign ESP stack' >&2
     exit 1
 fi
-grep -Fq 'verdict=foreign' <<<"$rebuild_refusal" \
+grep -Fq 'param:foreign' <<<"$rebuild_refusal" \
     || { echo 'FAIL: rebuild_tuxedo_uki did not report the foreign stack' >&2; printf '%s\n' "$rebuild_refusal" >&2; exit 1; }
 [[ ! -s "$sandbox/vendor.log" ]] \
     || { echo 'FAIL: rebuild_tuxedo_uki invoked the vendor builder on a foreign stack' >&2; exit 1; }
@@ -1695,7 +1729,7 @@ esp_writable_preflight clear
     echo 'FAIL: the ESP preflight cleared a stack with a foreign layer in between' >&2
     exit 1
 fi
-grep -Fq 'verdict=ro-leaked leaked-ro=1' <<<"$sandwiched_clear" \
+grep -Fq 'param:ro-leaked|param:1' <<<"$sandwiched_clear" \
     || { echo 'FAIL: sandwiched preflight did not report the leaked layer' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
 grep -Fq 'not directly bounded by a writable mount of the selected ESP' <<<"$sandwiched_clear" \
     || { echo 'FAIL: sandwiched preflight did not refuse before unmounting' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
@@ -1722,11 +1756,11 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 esp_writable_preflight clear
 ')"
-grep -Fq "ESP mount preflight: target=$esp_dir stack=5 top-source=/dev/test-efi top-options=ro top-id=1416 verdict=ro-leaked leaked-ro=2" <<<"$safe_clear" \
+grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:5|param:/dev/test-efi|param:ro|param:1416|param:ro-leaked|param:2" <<<"$safe_clear" \
     || { echo 'FAIL: safe-cleanup preflight evidence line missing or wrong' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
-[[ "$(grep -c 'ESP mount cleanup: unmounted leaked ro layer' <<<"$safe_clear")" -eq 2 ]] \
+[[ "$(grep -c 'msg:esp-mount-cleanup|param:' <<<"$safe_clear")" -eq 2 ]] \
     || { echo 'FAIL: expected two leaked-ro cleanup evidence lines' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
-grep -Fq "ESP mount preflight: target=$esp_dir stack=3 top-source=/dev/test-efi top-options=rw top-id=612 verdict=rw leaked-ro=0" <<<"$safe_clear" \
+grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:3|param:/dev/test-efi|param:rw|param:612|param:rw|param:0" <<<"$safe_clear" \
     || { echo 'FAIL: safe cleanup did not report a writable ESP afterwards' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
 [[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
     || { echo 'FAIL: safe cleanup unmounted the wrong number of layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
@@ -1764,9 +1798,9 @@ uefi_nvram_writable() { return 1; }
 run_tuxedo_uki_builder() { printf "new-image\n" > "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"; }
 rebuild_tuxedo_uki
 ')"
-grep -Fq 'ESP mount cleanup: unmounted leaked ro layer' <<<"$rebuild_ok" \
+grep -Fq 'msg:esp-mount-cleanup|param:' <<<"$rebuild_ok" \
     || { echo 'FAIL: rebuild did not clear the leaked ESP layers' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
-grep -Fq 'PASS: vendor UKI command produced a changed TUX.EFI image.' <<<"$rebuild_ok" \
+grep -Fq 'msg:uki-vendor-changed' <<<"$rebuild_ok" \
     || { echo 'FAIL: rebuild did not report the changed TUX.EFI' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
 [[ "$(cat "$esp_dir/EFI/BOOT/TUX.EFI")" == 'new-image' ]] \
     || { echo 'FAIL: the vendor stub did not write TUX.EFI' >&2; exit 1; }
@@ -1818,7 +1852,7 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 run_tuxedo_uki_builder "TUXEDO UKI vendor run (HOST_ROOT_UUID contract)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
 ')"
-grep -Fq 'Vendor command completed successfully: TUXEDO UKI vendor run (HOST_ROOT_UUID contract)' <<<"$builder_ok" \
+grep -Fq 'msg:vendor-command-success|param:TUXEDO UKI vendor run (HOST_ROOT_UUID contract)' <<<"$builder_ok" \
     || { echo 'FAIL: the vendor builder run failed (unguarded env)' >&2; printf '%s\n' "$builder_ok" >&2; exit 1; }
 [[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
     || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (unguarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
@@ -1856,7 +1890,7 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 run_tuxedo_uki_builder "TUXEDO UKI vendor run (guarded env)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
 ')"
-grep -Fq 'Vendor command completed successfully: TUXEDO UKI vendor run (guarded env)' <<<"$builder_guard_ok" \
+grep -Fq 'msg:vendor-command-success|param:TUXEDO UKI vendor run (guarded env)' <<<"$builder_guard_ok" \
     || { echo 'FAIL: the vendor builder run failed (guarded env)' >&2; printf '%s\n' "$builder_guard_ok" >&2; exit 1; }
 [[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
     || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (guarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
@@ -1889,7 +1923,7 @@ printf "VERIFY:OK\n"
 ')"
 grep -Fqx 'VERIFY:OK' <<<"$verify_reuse" \
     || { echo 'FAIL: the binding verification did not reuse the hoisted root UUID' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
-grep -Fq 'PASS: TUXEDO UKI root/LUKS/subvolume binding verified.' <<<"$verify_reuse" \
+grep -Fq 'msg:uki-binding-verified' <<<"$verify_reuse" \
     || { echo 'FAIL: the binding verification did not report success' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
 
 if verify_mismatch="$(run_harness '
@@ -1953,7 +1987,7 @@ printf "VERIFY:OK\n"
             || { echo "FAIL: the promoted-subvolume check refused the valid $label form (exit $rc)" >&2; printf '%s\n' "$out" >&2; exit 1; }
         grep -Fqx 'VERIFY:OK' <<<"$out" \
             || { echo "FAIL: the promoted-subvolume check did not complete for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
-        grep -Fq 'PASS: TUXEDO UKI root/LUKS/subvolume binding verified.' <<<"$out" \
+        grep -Fq 'msg:uki-binding-verified' <<<"$out" \
             || { echo "FAIL: the promoted-subvolume check did not report success for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
     else
         if [[ $rc -eq 0 ]] || grep -Fqx 'VERIFY:OK' <<<"$out"; then
@@ -2026,9 +2060,9 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 esp_writable_preflight clear
 ')"
-grep -Fq "ESP mount: mounted target=$esp_dir source=/dev/test-efi method=mount" <<<"$unmounted_ok" \
+grep -Fq "msg:esp-mounted|param:$esp_dir|param:/dev/test-efi|param:mount" <<<"$unmounted_ok" \
     || { echo 'FAIL: unmounted fstab ESP was not auto-mounted with evidence' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
-grep -Fq "ESP mount preflight: target=$esp_dir stack=1 top-source=/dev/test-efi top-options=rw top-id=900 verdict=rw leaked-ro=0" <<<"$unmounted_ok" \
+grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:1|param:/dev/test-efi|param:rw|param:900|param:rw|param:0" <<<"$unmounted_ok" \
     || { echo 'FAIL: auto-mount did not re-run the writability probe on the new mount' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
 grep -Fq -- "-- $esp_dir" "$FAKE_MOUNT_LOG" \
     || { echo 'FAIL: auto-mount did not use the fstab-backed mount path' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
@@ -2055,9 +2089,9 @@ SESSION_LOG="'"$sandbox"'/session.log"
 fstab_entry_for_mountpoint() { printf "/dev/test-efi\tvfat\tdefaults,x-systemd.automount\n"; }
 esp_writable_preflight clear
 ')"
-grep -Fq 'ESP mount: mounted target=/boot source=/dev/test-efi method=automount' <<<"$automount_ok" \
+grep -Fq 'msg:esp-mounted|param:/boot|param:/dev/test-efi|param:automount' <<<"$automount_ok" \
     || { echo 'FAIL: the systemd automount was not triggered with evidence' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
-grep -Fq 'ESP mount preflight: target=/boot stack=1 top-source=/dev/test-efi top-options=rw top-id=901 verdict=rw leaked-ro=0' <<<"$automount_ok" \
+grep -Fq 'msg:esp-mount-preflight|param:/boot|param:1|param:/dev/test-efi|param:rw|param:901|param:rw|param:0' <<<"$automount_ok" \
     || { echo 'FAIL: the automount trigger did not re-run the writability probe' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
 grep -Fq 'start boot.automount' "$FAKE_SYSTEMCTL_LOG" \
     || { echo 'FAIL: the automount unit was not started' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
@@ -2083,7 +2117,7 @@ esp_writable_preflight clear
     echo 'FAIL: the preflight passed although the ESP auto-mount failed' >&2
     exit 1
 fi
-grep -Fq "ESP mount: auto-mount failed: target=$esp_dir reason=mount $esp_dir failed hint=mount $esp_dir" <<<"$unmounted_fail" \
+grep -Fq "msg:esp-automount-failed|param:$esp_dir|param:mount $esp_dir failed|param:mount $esp_dir" <<<"$unmounted_fail" \
     || { echo 'FAIL: the auto-mount failure evidence line is missing or wrong' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
 grep -Fq "auto-mount did not succeed. Run 'mount $esp_dir'" <<<"$unmounted_fail" \
     || { echo 'FAIL: the preflight refusal does not carry the actionable hint' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
@@ -2107,7 +2141,7 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 esp_writable_preflight check
 ')"
-grep -Fq "ESP mount preflight: target=$esp_dir stack=1 top-source=/dev/test-efi top-options=rw top-id=902 verdict=rw leaked-ro=0" <<<"$mounted_noop" \
+grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:1|param:/dev/test-efi|param:rw|param:902|param:rw|param:0" <<<"$mounted_noop" \
     || { echo 'FAIL: an already-mounted writable ESP did not pass the probe' >&2; printf '%s\n' "$mounted_noop" >&2; exit 1; }
 if grep -Fq 'ESP mount:' <<<"$mounted_noop"; then
     echo 'FAIL: an already-mounted ESP emitted auto-mount evidence' >&2
@@ -2203,9 +2237,9 @@ promotion="$(run_harness "$data_mount_harness"'
 : > "$FAKE_MOUNT_LOG"
 printf "%s\n" "$TARGET_ROOT/var" "$TARGET_ROOT/srv" >> "$FAKE_MOUNTPOINT_DB"
 remount_target_data_rw')"
-grep -Fq 'Remounting target data filesystem /var read-write' <<<"$promotion" \
+grep -Fq 'msg:remount-data-rw|param:/var' <<<"$promotion" \
     || { echo 'FAIL: /var rw promotion line missing' >&2; printf '%s\n' "$promotion" >&2; exit 1; }
-grep -Fq 'Remounting target data filesystem /srv read-write' <<<"$promotion" \
+grep -Fq 'msg:remount-data-rw|param:/srv' <<<"$promotion" \
     || { echo 'FAIL: /srv rw promotion line missing' >&2; printf '%s\n' "$promotion" >&2; exit 1; }
 grep -Fq -- '-o remount,rw ' "$FAKE_MOUNT_LOG" \
     || { echo 'FAIL: the rw promotion did not remount the data mounts' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
@@ -2259,9 +2293,9 @@ SESSION_LOG="'"$sandbox"'/session.log"
 TARGET_DATA_MOUNTS=()
 mount_target_btrfs_subvolumes ro
 printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
-grep -Fq 'WARNING: refusing an unsafe target Btrfs subvolume mount path: '"$sandbox"'/target/../../outside' <<<"$subvol_containment" \
+grep -Fq 'msg:refuse-unsafe-btrfs-path|param:'"$sandbox"'/target/../../outside' <<<"$subvol_containment" \
     || { echo 'FAIL: the ".." Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
-grep -Fq 'WARNING: refusing an unsafe target Btrfs subvolume mount path: '"$sandbox"'/target/home' <<<"$subvol_containment" \
+grep -Fq 'msg:refuse-unsafe-btrfs-path|param:'"$sandbox"'/target/home' <<<"$subvol_containment" \
     || { echo 'FAIL: the symlinked Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
 grep -Fq "$sandbox/target/srv," <<<"$subvol_containment" \
     || { echo 'FAIL: the legitimate Btrfs subvolume was not mounted' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
@@ -2299,7 +2333,7 @@ SESSION_LOG="'"$sandbox"'/session.log"
 TARGET_DATA_MOUNTS=()
 mount_target_data_partitions ro
 printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
-grep -Fq 'WARNING: refusing an unsafe target /usr mount path: '"$sandbox"'/target/usr' <<<"$data_containment" \
+grep -Fq 'msg:refuse-unsafe-mount-path|param:/usr|param:'"$sandbox"'/target/usr' <<<"$data_containment" \
     || { echo 'FAIL: the symlinked data-partition destination was not refused with a warning' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
 grep -Fq "$sandbox/target/var," <<<"$data_containment" \
     || { echo 'FAIL: the legitimate data partition was not mounted' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
@@ -2378,7 +2412,7 @@ SESSION_LOG="'"$sandbox"'/session.log"
 : > "$SESSION_LOG"
 filesystem_scope_resolve
 printf "SCOPE:%s\n" "${FS_SCOPE_DEVICES[*]}"')"
-grep -Fq 'WARNING: fstab /home device /dev/test-outside is not on the selected disk /dev/test-disk; excluded from the file system scope.' <<<"$scope_gate" \
+grep -Fq 'msg:fstab-not-on-disk|param:/home|param:/dev/test-outside|param:/dev/test-disk' <<<"$scope_gate" \
     || { echo 'FAIL: the out-of-disk fstab /home was not skipped with a warning' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
 grep -Fq 'SCOPE:/dev/test-root /dev/test-boot /dev/test-efi' <<<"$scope_gate" \
     || { echo 'FAIL: the same-disk scope devices were not resolved' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
@@ -2458,7 +2492,7 @@ unlock_target
     printf '%s\n' "$luks_ok" >&2
     exit 1
 fi
-grep -Fq 'Mapper name: luks-11111111-2222-3333-4444-555555555555' <<<"$luks_ok" \
+grep -Fq 'msg:luks-mapper-name|param:luks-11111111-2222-3333-4444-555555555555' <<<"$luks_ok" \
     || { echo 'FAIL: the canonical LUKS UUID did not compose the luks-<UUID> mapper name' >&2; printf '%s\n' "$luks_ok" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
@@ -2503,9 +2537,9 @@ grep -Fq 'verify_rsync_item "$source" "$destination" "$chown_value" "$strip_seti
     || { echo 'FAIL: the strip flag is not plumbed into the File Copy verification' >&2; exit 1; }
 grep -Fq 'host_copy_security_scan "$destination/$(basename -- "$source")"' <<<"$file_copy_block" \
     || { echo 'FAIL: the post-copy security scan is not wired into File Copy' >&2; exit 1; }
-grep -Fq 'setuid/setgid bits and file capabilities are removed on repair-to-host copies' <<<"$file_copy_block" \
+grep -Fq 'msg_log security-strip-on-repair-host' <<<"$file_copy_block" \
     || { echo 'FAIL: the File Copy preview/summary text does not state that repair-to-host removes setuid/setgid/capabilities' >&2; exit 1; }
-grep -Fq 'host-to-repair copies keep -aHAX' <<<"$file_copy_block" \
+grep -Fq 'msg_log security-keep-on-host-repair' <<<"$file_copy_block" \
     || { echo 'FAIL: the host-to-repair trusted -aHAX note is missing' >&2; exit 1; }
 
 # Behavioural, non-root: a 4755 source file must arrive as 0755, the masked
@@ -2572,7 +2606,7 @@ grep -Fq 'must not be sticky' "$HELPER" \
     || { echo 'FAIL: the sticky destination refusal is missing' >&2; exit 1; }
 grep -Fq 'must not be world-writable' "$HELPER" \
     || { echo 'FAIL: the world-writable destination refusal is missing' >&2; exit 1; }
-grep -Fq 'group-writable; the copied files may be modified by the owning group' "$HELPER" \
+grep -Fq 'msg_log host-dest-group-writable' "$HELPER" \
     || { echo 'FAIL: the group-writable destination is not a warning' >&2; exit 1; }
 grep -Fq 'and must not be sticky or world-writable' "$HELPER" \
     || { echo 'FAIL: the GUI-visible destination allowlist wording does not name the permission requirement' >&2; exit 1; }
@@ -2692,7 +2726,7 @@ grep -Fq 'if ! verified="$(verify_sha256_item "$source" "$destination")"; then' 
     || { echo 'FAIL: the File Copy loop does not capture the verification status robustly' >&2; exit 1; }
 grep -Fq '[[ "$verified" =~ ^[0-9]+$ ]] || verified=0' <<<"$file_copy_block" \
     || { echo 'FAIL: the File Copy verification count is not regex-guarded' >&2; exit 1; }
-grep -Fq 'SHA-256 verification FAILURES:' <<<"$file_copy_block" \
+grep -Fq 'msg_log copy-sha-failures' <<<"$file_copy_block" \
     || { echo 'FAIL: the File Copy summary does not name verification failures' >&2; exit 1; }
 
 # (b) verify_sha256_item stdout is always a bare integer; nonzero status only
@@ -2867,13 +2901,13 @@ grep -Fq 'operand expected' "$sha_a_root/copy-fail.out" \
     && { echo 'FAIL: the verification failure still triggers an arithmetic error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
 grep -Fq 'syntax error' "$sha_a_root/copy-fail.out" \
     && { echo 'FAIL: the verification failure still triggers an arithmetic syntax error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'COPY COMPLETE — SHA-256 verification FAILED' "$sha_a_root/copy-fail.out" \
+grep -Fq 'msg:copy-complete-sha-failed' "$sha_a_root/copy-fail.out" \
     || { echo 'FAIL: the failed copy did not report the verification failure in its summary' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Eq 'SHA-256 regular files verified: 1$' "$sha_a_root/copy-fail.out" \
+grep -Eq 'msg:copy-sha-verified|param:1' "$sha_a_root/copy-fail.out" \
     || { echo 'FAIL: the failed copy did not count the one healthy verified file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Eq 'SHA-256 verification FAILURES: 1 \(the copy is not verified complete\)$' "$sha_a_root/copy-fail.out" \
+grep -Eq 'msg:copy-sha-failures|param:1' "$sha_a_root/copy-fail.out" \
     || { echo 'FAIL: the failed copy did not count the verification failure' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq '  FAILED verification:' "$sha_a_root/copy-fail.out" \
+grep -Fq 'msg:copy-failed-verification|param:' "$sha_a_root/copy-fail.out" \
     || { echo 'FAIL: the failed copy summary did not name the failed verification' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
 grep -Fq 'vanishes' "$sha_a_root/copy-fail.out" \
     || { echo 'FAIL: the failed copy summary did not name the vanished source file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
@@ -2893,9 +2927,9 @@ sha_a_rc=$?
 set -e
 (( sha_a_rc == 0 )) \
     || { echo "FAIL: a clean copy failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
-grep -Eq 'COPY COMPLETE$' "$sha_a_root/copy-ok.out" \
-    || { echo 'FAIL: the clean copy did not report COPY COMPLETE' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
-grep -Eq 'SHA-256 regular files verified: 2$' "$sha_a_root/copy-ok.out" \
+grep -Eq 'msg:copy-complete' "$sha_a_root/copy-ok.out" \
+    || { echo 'FAIL: the clean copy did not report msg:copy-complete' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
+grep -Eq 'msg:copy-sha-verified|param:2' "$sha_a_root/copy-ok.out" \
     || { echo 'FAIL: the clean copy did not count both verified files' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
 if grep -Fq 'SHA-256 verification FAILURES' "$sha_a_root/copy-ok.out"; then
     echo 'FAIL: the clean copy summary names verification failures' >&2
@@ -2909,9 +2943,9 @@ sha_a_rc=$?
 set -e
 (( sha_a_rc == 0 )) \
     || { echo "FAIL: a copy preview failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
-grep -Fq 'PREVIEW COMPLETE — no files were changed.' "$sha_a_root/preview.out" \
+grep -Fq 'msg:preview-complete' "$sha_a_root/preview.out" \
     || { echo 'FAIL: the preview path changed its completion wording' >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
-if grep -Fq 'COPY COMPLETE' "$sha_a_root/preview.out"; then
+if grep -Fq 'msg:copy-complete' "$sha_a_root/preview.out"; then
     echo 'FAIL: the preview path reports a copy completion' >&2
     cat "$sha_a_root/preview.out" >&2
     exit 1
@@ -2955,7 +2989,7 @@ printf "DERIVED\t%s\t%s\t%s\n" "$TARGET_ESP_MOUNT" "$EFI_ESP_SOURCE" "$EFI_ESP_F
 ')"
 grep -Fqx $'DERIVED\t/boot/efi\t/dev/test-efi\tvfat' <<<"$esp_preflight" \
     || { echo "FAIL: the fstab-by-UUID ESP was not derived through the guarded boot-entry mount" >&2; printf '%s\n' "$esp_preflight" >&2; exit 1; }
-grep -Fq 'Mounting target /boot/efi from /dev/test-efi' <<<"$esp_preflight" \
+grep -Fq 'msg:mounting-target|param:/boot/efi|param:/dev/test-efi' <<<"$esp_preflight" \
     || { echo 'FAIL: the fstab-driven ESP mount did not run through the guarded mount path' >&2; exit 1; }
 
 # The same layout keeps the efi capability available ...
@@ -3003,7 +3037,7 @@ else
     printf "UNAVAILABLE\t%s\n" "$reason"
 fi
 ')"
-grep -Fqx 'UNAVAILABLE	no EFI System Partition is present or derivable on the selected disk (no mounted ESP, no resolvable fstab ESP entry and no ESP partition)' <<<"$esp_cap_unavailable" \
+grep -Fqx 'UNAVAILABLE	reason:no-esp-derivable' <<<"$esp_cap_unavailable" \
     || { echo "FAIL: a target with no derivable ESP kept the efi capability available" >&2; printf '%s\n' "$esp_cap_unavailable" >&2; exit 1; }
 
 # By-type discovery: with no fstab ESP entry the preflight derives the ESP
@@ -3033,9 +3067,9 @@ printf "BYTYPE\t%s\t%s\n" "$EFI_ESP_SOURCE" "$EFI_ESP_FSTYPE"
 ')"
 grep -Fqx $'BYTYPE\t/dev/test-efi\tvfat' <<<"$bytype_preflight" \
     || { echo "FAIL: the GPT-type ESP was not derived and validated through the guarded by-type mount" >&2; printf '%s\n' "$bytype_preflight" >&2; exit 1; }
-grep -Fq 'Mounted target ESP discovered by GPT type: /dev/test-efi at /boot/efi (ro)' <<<"$bytype_preflight" \
+grep -Fq 'msg:mounted-esp-gpt|param:/dev/test-efi|param:ro' <<<"$bytype_preflight" \
     || { echo 'FAIL: the by-type ESP mount did not log its guarded mount evidence' >&2; exit 1; }
-grep -Fq 'Remounting target /boot/efi read-write' <<<"$bytype_preflight" \
+grep -Fq 'msg:remount-rw|param:/boot/efi' <<<"$bytype_preflight" \
     || { echo 'FAIL: the read-write promotion did not remount the helper-recorded by-type ESP' >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
@@ -3072,7 +3106,7 @@ run_target_config read grub-defaults
 ')"
 grep -Fqx 'Target configuration: /etc/default/grub' <<<"$config_read_skip" \
     || { echo 'FAIL: the skipped configuration read did not name the configuration' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }
-grep -Fq 'Configuration read skipped: /etc/default/grub' <<<"$config_read_skip" \
+grep -Fq 'msg:config-read-skipped|param:/etc/default/grub|param:' <<<"$config_read_skip" \
     || { echo 'FAIL: the missing GRUB configuration parent did not degrade to an informative skip' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }
 grep -Fq 'Not present in this target (bootloader backend: syslinux/extlinux); no configuration path exists.' <<<"$config_read_skip" \
     || { echo 'FAIL: the skipped configuration read did not name the extlinux backend' >&2; printf '%s\n' "$config_read_skip" >&2; exit 1; }

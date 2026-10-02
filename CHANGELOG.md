@@ -2,23 +2,34 @@
 
 ## Unreleased
 
-- Legacy GUI parity: the busy indicator moves out of the header row into a
-  reserved row below the GUARDED REPAIR badge (right-aligned under it, like
-  the modern Qt6 window), shows the modern working text for the operation in
-  flight (Running all diagnostics / Running diagnostic: <title> /
-  Regenerating diagnostics automatically / Unlocking <device> or the
-  tool/operation title) instead of the generic Working..., and animates with
-  a lightweight QTimer ellipsis cycle (0..3 trailing dots; no threads) while
-  keeping the header layout stable. The Logs Save As... default is pinned
-  down: with a writable /host share mounted the dialog starts there, the rig
-  is shut down and the share is mirrored host-side, so the saved log lands
-  under the host's shared folder; the dialog still allows any directory. The
-  legacy GUI contract gains static markers for the busy-indicator parity and
-  the save-as /host default. The parsed `--log-dir` is now applied before the
-  window is constructed, so a root-run session started with a preserved HOME
-  can no longer drop its first log lines into the invoking user's log tree
-  (the constructor's readiness preamble previously predated the `--log-dir`
-  move).
+- (no unreleased changes yet)
+
+## 0.2.27 — 2026-10-02
+
+- Localization: the full GUI is translated into 22 languages via offline
+  machine translation, with a language-independent backend — the privileged
+  helper emits stable machine-readable `reason:`/`msg:` keys that the GUI
+  renders in the active locale, while the machine-parsed session log stays
+  English (`LC_ALL=C`) and only display-only transcripts follow the locale.
+- Reliability and UI polish: the startup crash is fixed (the
+  privileged-session readiness poll no longer nests an event loop); the Logs
+  tab drops the redundant Clear button and fixes the German Clear/Delete
+  collision; long titles elide and the Repair splitter is rebalanced.
+- Helper hardening: the parsed output is pinned English, ZFS and
+  display-manager detection are normalized, TUXEDO UKI `subvol=` and EFI
+  boot-number hex handling are corrected, and the Arch GRUB fallback loader is
+  reinstalled with an ESP backup/rollback.
+- Process-leak fixes: a timed-out or cancelled command reaps its whole process
+  tree (group kill plus a descendant cleanup) in the modern helper, the
+  Etch port and the test harness, so apt/dpkg/pacman grandchildren can no
+  longer outlive a run.
+- Debian Etch: `apt <action>` shell commands translate to `apt-get` on targets
+  without the modern apt binary, and the legacy GUI gains busy-indicator, Save
+  As… share-default and parsed `--log-dir` parity.
+- Development speed and test pipeline: a fast CI lane, parallel and
+  cache-aware gates, an incremental hygiene scan, checksum-gated builds and a
+  test-manifest budget contract; the UI suite is split into six translation
+  units for parallel compiles.
 
 ## 0.2.26 — 2026-09-28
 

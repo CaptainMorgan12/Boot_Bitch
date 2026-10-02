@@ -118,11 +118,25 @@ std::string unlockErrorLine(const std::string &text);
 // identity, an exact `available` line and no invalidating change status since.
 class CapabilityModel {
 public:
+    // Three-way classification behind the Settings -> Full Repair plan
+    // presentation, mirroring MainWindow::capabilityState(). It reports
+    // whether a key has a cached capability line at all so the presentation
+    // can keep a persisted user selection visible while evidence is pending
+    // instead of greying out every row that has no cached line yet. The
+    // fail-closed gate (isAvailable) is unchanged and keeps failing closed on
+    // both Unavailable and NoEvidence.
+    enum CapabilityState {
+        CapabilityUnavailable = 0, // explicit unavailable|reason (fail closed)
+        CapabilityAvailable = 1,   // exact "available" line for the identity
+        CapabilityNoEvidence = 2   // no cached line yet (or no diagnostics)
+    };
+
     CapabilityModel();
 
     // Identity string for the currently selected scope, e.g.
-    // "host|/dev/hda|/dev/mapper/root". Diagnostics for another
-    // identity never unlock actions for this one.
+    // "host|/dev/hda" (the physical drive; the root component is deliberately
+    // not part of the key, see LegacyMainWindow::identity()). Diagnostics for
+    // another identity never unlock actions for this one.
     void beginDiagnostics(const std::string &identity);
 
     // Applies a completed diagnostic transcript. When `processOk` is false the
@@ -143,6 +157,15 @@ public:
     // Fail-closed availability. `reason` always receives an explanation.
     bool isAvailable(const std::string &key, const std::string &identity,
                      std::string *reason) const;
+
+    // Three-way availability for the Settings -> Full Repair presentation.
+    // `reason` always receives an explanation: the helper's verbatim probe
+    // reason for Unavailable, the missing-evidence hint for NoEvidence, and an
+    // availability confirmation for Available. The same fail-closed checks as
+    // isAvailable() decide which of the three states is reported.
+    CapabilityState capabilityState(const std::string &key,
+                                    const std::string &identity,
+                                    std::string *reason) const;
 
     // Fail-closed availability for a legacy feature line (`file-copy`,
     // `shell`, `host-shell`, `host-maintenance`, `snapshots`,

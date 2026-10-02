@@ -27,3 +27,7 @@ Testing/
 !docs/
 !docs/screenshots/
 !docs/screenshots/*.png
+
+# Python bytecode caches
+__pycache__/
+*.py[cod]

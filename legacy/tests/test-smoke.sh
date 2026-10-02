@@ -582,9 +582,9 @@ prepare_target() { :; }
 mount_target_boot_entry() { :; }
 read_target_os
 validate_target > "$FIXTURE/validate.txt" 2>&1
-grep -q 'Validation summary' "$FIXTURE/validate.txt" || fail "validate produced no summary"
-grep -q 'OS: Debian (legacy root' "$FIXTURE/validate.txt" || fail "validate did not report the legacy OS"
-grep -q 'Repair change status validate: unchanged|validation is read-only' "$FIXTURE/validate.txt" \
+grep -q 'msg:validation-summary' "$FIXTURE/validate.txt" || fail "validate produced no summary"
+grep -q 'msg:validation-os|param:Debian (legacy root' "$FIXTURE/validate.txt" || fail "validate did not report the legacy OS"
+grep -q 'Repair change status validate: unchanged|reason:validation-read-only' "$FIXTURE/validate.txt" \
     || fail "validate did not emit its change status"
 
 run_target_diagnostic all > "$FIXTURE/diagnose.txt" 2>&1
@@ -593,7 +593,7 @@ run_target_diagnostic all > "$FIXTURE/diagnose.txt" 2>&1
 for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
     grep -q "^Repair tool ${key}: " "$FIXTURE/diagnose.txt" || fail "diagnose is missing Repair tool $key"
 done
-grep -q '^Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available$' \
+grep -q '^Repair tool efi: unavailable|reason:legacy-bios-no-efi$' \
     "$FIXTURE/diagnose.txt" || fail "diagnose did not gate EFI off with the BIOS reason"
 grep -q '^Repair tool bootstack: available$' "$FIXTURE/diagnose.txt" \
     || fail "diagnose did not enable the legacy boot-stack pass for the GRUB-legacy fixture"
@@ -1508,6 +1508,51 @@ set +e
     exit 0
 )
 pass "shared data mount promotion (rw remount, fail-closed)"
+
+# --- cycle 14: boot-entry rw promotion (unmount + fresh rw mount) -----------
+# The 2.6.18 kernel hangs in `mount -o remount,rw <path>` of the helper's own
+# read-only /boot mount (Etch rig reproduction: Full Repair stopped at
+# "Remounting target /boot read-write"), so the legacy promotion detaches the
+# recorded read-only mount and mounts the same source fresh read-write.
+set +e
+(
+    trap - EXIT
+    SESSION_LOG="$FIXTURE/session.log"
+    : > "$FIXTURE/promote.log"
+    umount() { printf 'UM %s\n' "$*" >> "$FIXTURE/promote.log"; return 0; }
+    mount() { printf 'MO %s\n' "$*" >> "$FIXTURE/promote.log"; return 0; }
+    mountpoint() { return 1; }
+    mount_records_prune() { printf 'PRUNE\n' >> "$FIXTURE/promote.log"; }
+    log() { :; }
+    MOUNTS=("$FIXTURE/boot")
+    legacy_remount_rw "$FIXTURE/boot" "/dev/fixture1" || fail "legacy boot promotion failed"
+    grep -q "UM $FIXTURE/boot" "$FIXTURE/promote.log" \
+        || fail "promotion did not detach the read-only mount"
+    grep -q 'PRUNE' "$FIXTURE/promote.log" \
+        || fail "promotion did not prune the detached record"
+    grep -q "MO -o rw -- /dev/fixture1 $FIXTURE/boot" "$FIXTURE/promote.log" \
+        || fail "promotion did not mount the source fresh read-write"
+    # No-fstab-entry form: the source is recovered from the mount table.
+    target_mount_top() { printf 'ignored\t/dev/fixture-esp\tro\t9\n'; }
+    legacy_remount_rw "$FIXTURE/esp" "" || fail "no-source promotion failed"
+    grep -q "MO -o rw -- /dev/fixture-esp $FIXTURE/esp" "$FIXTURE/promote.log" \
+        || fail "no-source promotion did not use the recovered source"
+    # Fail closed on every broken promotion step.
+    umount() { return 1; }
+    ( legacy_remount_rw "$FIXTURE/boot" "/dev/fixture1" ) >/dev/null 2>&1 \
+        && fail "promotion did not fail closed when the detach fails"
+    umount() { printf 'UM %s\n' "$*" >> "$FIXTURE/promote.log"; return 0; }
+    mount() { return 1; }
+    ( legacy_remount_rw "$FIXTURE/boot" "/dev/fixture1" ) >/dev/null 2>&1 \
+        && fail "promotion did not fail closed when the rw mount fails"
+    target_mount_top() { printf 'ignored\t\tro\t9\n'; }
+    ( legacy_remount_rw "$FIXTURE/esp" "" ) >/dev/null 2>&1 \
+        && fail "promotion did not fail closed when no source can be recovered"
+    exit 0
+)
+rc=$?
+[[ $rc -eq 0 ]] || fail "legacy boot promotion checks failed"
+pass "legacy boot promotion (unmount + fresh rw mount, fail-closed)"
 
 # --- cycle 12 loop 2: cryptsetup 1.0 status parsing --------------------------
 # Etch prints `device:  /dev/.static/dev/hdb5`; the parser must strip the

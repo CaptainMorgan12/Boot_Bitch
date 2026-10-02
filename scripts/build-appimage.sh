@@ -521,9 +521,15 @@ EOF
 fi
 rm -rf -- "$BUILD_DIR"
 
-cmake -S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja \
-    -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
-    -DCMAKE_INSTALL_PREFIX=/usr
+# ccache transparently accelerates the repeat compile when it is installed;
+# NO_CCACHE=1 opts out.
+configure_args=(-S "$ROOT_DIR" -B "$BUILD_DIR" -G Ninja)
+configure_args+=("-DCMAKE_BUILD_TYPE=$BUILD_TYPE")
+configure_args+=(-DCMAKE_INSTALL_PREFIX=/usr)
+if command -v ccache >/dev/null 2>&1 && [[ -z "${NO_CCACHE:-}" ]]; then
+    configure_args+=(-DCMAKE_CXX_COMPILER_LAUNCHER=ccache)
+fi
+cmake "${configure_args[@]}"
 cmake --build "$BUILD_DIR" -j"$JOBS"
 
 APPDIR="$BUILD_DIR/Boot-Bitch.AppDir"
@@ -555,6 +561,26 @@ assert_appdir_executables()
 }
 
 assert_appdir_executables
+
+# Bundle the compiled UI translations so the AppImage localizes under Gear
+# Lever and other launchers. The cmake --install above already stages them at
+# usr/share/boot-repair/translations (the layout src/main.cpp resolves through
+# applicationDirPath()/../share/boot-repair/translations), but the copy here is
+# explicit and fails closed: an AppImage must never ship without its catalogs,
+# so a missing translations/*.qm is a hard error instead of a silent English
+# fallback.
+bundle_appdir_translations()
+{
+    local appdir_translations="$APPDIR/usr/share/boot-repair/translations"
+    if ! compgen -G "$ROOT_DIR/translations/*.qm" >/dev/null; then
+        echo "ERROR: no translations/*.qm catalogs found; build them with lrelease before packaging the AppImage." >&2
+        exit 1
+    fi
+    mkdir -p -- "$appdir_translations"
+    cp -- "$ROOT_DIR/translations/"*.qm "$appdir_translations/"
+}
+
+bundle_appdir_translations
 
 # The GUI depends on Qt plugins that are loaded at runtime, so linuxdeploy can
 # only bundle them when it is told to: the SVG icon engine (the whole icon

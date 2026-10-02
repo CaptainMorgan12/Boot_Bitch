@@ -118,6 +118,14 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
         fail "${icon_size}px application icon is missing from the extracted package."
 done
 
+# Committed Qt UI translation catalogs must ship in every package format so
+# the GUI localizes instead of falling back to English-only.
+translations_dir="$TMP/root/usr/share/boot-repair/translations"
+[[ -d "$translations_dir" ]] || \
+    fail "translation catalog directory is missing from the package: usr/share/boot-repair/translations"
+find "$translations_dir" -name '*.qm' -print | grep -q . || \
+    fail "the translation catalog directory carries no compiled .qm catalogs"
+
 grep -q '^Icon=/usr/share/icons/hicolor/512x512/apps/org.bootrepair.BootRepair.png$' \
     "$TMP/root/usr/share/applications/org.bootrepair.BootRepair.desktop" || \
     fail "desktop entry does not reference the installed icon path."

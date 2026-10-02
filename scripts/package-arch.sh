@@ -58,13 +58,15 @@ mkdir -p -- "$BUILD_DIR"
 # are intentionally excluded from the source archive. List source directories
 # explicitly so a file such as scripts/build.sh is never mistaken for a
 # build-output path. The legacy (Debian Etch / bash 3.1) tree is public source
-# registered in the test suite, so keep it in the source archive too.
+# registered in the test suite, so keep it in the source archive too. The
+# committed Qt UI translation catalogs (translations/*.qm) must be present or
+# cmake --install has nothing to install and the package ships English-only.
 SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
     --transform="s,^,boot-bitch-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
-    src scripts tests data resources docs .github legacy
+    src scripts tests translations data resources docs .github legacy
 
 cat > "$BUILD_DIR/PKGBUILD" <<'PKGBUILD'
 pkgname=boot-bitch

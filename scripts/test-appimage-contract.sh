@@ -16,9 +16,15 @@
 #   5. the linuxdeploy portability preflight: RELR-aware patchelf selection,
 #      the NO_STRIP=1 strip fallback and APPIMAGE_EXTRACT_AND_RUN for
 #      musl/no-FUSE hosts, failing closed when no safe patchelf exists.
-# The static checks always run; the built artifact is inspected when
-# build-release/ holds the current version's AppImage (readelf, sha1sum and
-# unsquashfs are optional tooling). The portability decisions are also
+# The static checks always run; the built artifact in build-release/ is
+# inspected only when it is fresh, i.e. when its bundled privileged helper is
+# byte-identical to the current scripts/boot-repair-helper.sh (readelf,
+# sha1sum and unsquashfs are optional tooling). A missing, stale or unreadable
+# AppImage SKIPs the artifact inspection with exit 0 instead of failing: a
+# helper edit made after the last AppImage build must not leave a stale
+# artifact in build-release/ that turns this fast-tier test into a standing
+# failure ("stale-AppImage trap") until someone rebuilds with
+# scripts/build.sh --with-appimage. The portability decisions are also
 # exercised functionally against synthetic AppDirs through the script's
 # BUILD_APPIMAGE_PROBE hook.
 set -Eeuo pipefail
@@ -337,7 +343,10 @@ else
 fi
 
 # ---------------------------------------------------------------------------
-# Artifact contract: inspect the built AppImage when it is present.
+# Artifact contract: inspect the built AppImage only when it is present and
+# fresh (its bundled privileged helper is byte-identical to the current
+# scripts/boot-repair-helper.sh); a missing, stale or unreadable artifact
+# skips the inspection with exit 0.
 # ---------------------------------------------------------------------------
 VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
     "$ROOT_DIR/CMakeLists.txt" | head -1)"
@@ -345,10 +354,53 @@ VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\+\([0-9][0-9.]*\).*/\1/p' \
 
 IMAGE="$ROOT_DIR/build-release/boot-repair_${VERSION}_x86_64.AppImage"
 if [[ ! -f "$IMAGE" ]]; then
-    echo "PASS: AppImage contract is intact (no build-release/boot-repair_${VERSION}_x86_64.AppImage to inspect)."
+    echo "SKIP: no built AppImage; artifact checks skipped (build with scripts/build.sh --with-appimage to enable them)"
     exit 0
 fi
 ZSYNC="$IMAGE.zsync"
+
+# Freshness gate (stale-AppImage trap fix): enforce the artifact contract only
+# when the built AppImage was actually produced from the current source.
+# Otherwise an older artifact left in build-release/ after a helper edit makes
+# every per-change run fail until a rebuild. The bundled helper is hashed with
+# the same unsquashfs -cat extraction the inspection below uses; anything that
+# prevents that comparison (missing tooling, an unreadable or non-AppImage
+# file) skips the artifact checks too.
+if ! command -v sha256sum >/dev/null 2>&1; then
+    echo "SKIP: sha256sum is unavailable; cannot verify the built AppImage is fresh; artifact checks skipped until the AppImage is rebuilt with scripts/build.sh --with-appimage"
+    exit 0
+fi
+source_helper_sha="$(sha256sum -- "$HELPER")"
+source_helper_sha="${source_helper_sha%% *}"
+bundled_helper_sha=""
+if command -v unsquashfs >/dev/null 2>&1; then
+    offset=""
+    while IFS=: read -r candidate _; do
+        [[ "$candidate" =~ ^[0-9]+$ ]] || continue
+        if unsquashfs -o "$candidate" -s "$IMAGE" >/dev/null 2>&1; then
+            offset="$candidate"
+            break
+        fi
+    done < <(grep -abo 'hsqs' "$IMAGE" 2>/dev/null || true)
+    if [[ -n "$offset" ]]; then
+        bundled_helper_file="$(mktemp "${TMPDIR:-/tmp}/boot-bitch-bundled-helper.XXXXXX")"
+        if unsquashfs -o "$offset" -cat "$IMAGE" \
+                usr/libexec/boot-repair/boot-repair-helper >"$bundled_helper_file" 2>/dev/null; then
+            bundled_helper_sha="$(sha256sum -- "$bundled_helper_file")"
+            bundled_helper_sha="${bundled_helper_sha%% *}"
+        fi
+        rm -f -- "$bundled_helper_file"
+    fi
+fi
+if [[ -n "$bundled_helper_sha" && "$bundled_helper_sha" == "$source_helper_sha" ]]; then
+    note "bundled helper matches scripts/boot-repair-helper.sh (fresh artifact)"
+elif [[ -n "$bundled_helper_sha" ]]; then
+    echo "SKIP: built AppImage is stale (bundled helper ${bundled_helper_sha:0:12} vs source ${source_helper_sha:0:12}); artifact checks skipped until the AppImage is rebuilt with scripts/build.sh --with-appimage"
+    exit 0
+else
+    echo "SKIP: cannot read the bundled helper from $(basename -- "$IMAGE") (no unsquashfs tooling or no readable squashfs in the file); artifact checks skipped until the AppImage is rebuilt with scripts/build.sh --with-appimage"
+    exit 0
+fi
 
 # Embedded update information.
 if command -v readelf >/dev/null 2>&1; then

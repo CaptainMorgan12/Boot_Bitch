@@ -93,6 +93,42 @@ with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
     assert backup2.read_bytes() == first_backup
     assert "Second label".encode("utf-16-le") in variable.read_bytes()
 
+# Boot#### numbers are hexadecimal: once more than ten entries exist efibootmgr
+# reports Boot000A/Boot000B and the helper passes those digits through to the
+# updater.  The four-hex-digit validation must accept A-F (case-insensitive)
+# and write the correct variable path.
+with tempfile.TemporaryDirectory(prefix="boot-repair-efi-label-") as temp:
+    efivarfs = Path(temp)
+    for bootnum, variable_name in (
+        ("000A", "Boot000A-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
+        ("000b", "Boot000B-8be4df61-93ca-11d2-aa0d-00e098032b8c"),
+    ):
+        variable = efivarfs / variable_name
+        variable.write_bytes(make_variable("UEFI OS"))
+        backup = efivarfs / "backup" / f"{variable_name}.bin"
+        result = subprocess.run(
+            [
+                "python3",
+                str(ROOT / "scripts/boot-repair-efi-label.py"),
+                "--bootnum",
+                bootnum,
+                "--partuuid",
+                PART,
+                "--loader",
+                r"\EFI\BOOT\BOOTX64.EFI",
+                "--label",
+                f"UEFI OS {bootnum}",
+                "--backup",
+                str(backup),
+            ],
+            capture_output=True,
+            text=True,
+            env={**os.environ, "EFI_LABEL_EFIVARFS": str(efivarfs)},
+        )
+        assert result.returncode == 0, result.stderr
+        assert f"UEFI OS {bootnum}".encode("utf-16-le") in variable.read_bytes()
+        assert backup.read_bytes() == make_variable("UEFI OS")
+
 # Rollback honesty: when the restore write also fails, the tool must say so on
 # stderr and in the failure message instead of swallowing it. A read-only
 # variable simulates the write failure without root; skip when running as

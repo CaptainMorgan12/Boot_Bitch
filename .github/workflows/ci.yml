@@ -3,6 +3,7 @@ name: Build and test
 on:
   push:
   pull_request:
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -12,7 +13,112 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Cheap gate that runs on every event: classifies the changed paths and only
+  # escalates to the full build-and-test job when the change set needs it.
+  fast-gate:
+    # ubuntu-24.04 ships Qt 6.4, the oldest Qt this project supports. Pinning
+    # the image keeps that compatibility gate deterministic instead of letting
+    # a floating ubuntu-latest tag move the Qt baseline under CI.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    outputs:
+      lane: ${{ steps.classify.outputs.lane }}
+      changed_sh: ${{ steps.classify.outputs.changed_sh }}
+      data_changed: ${{ steps.classify.outputs.data_changed }}
+      slow_contracts: ${{ steps.classify.outputs.slow_contracts }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Classify changes
+        id: classify
+        run: bash .github/scripts/classify-changes.sh
+
+      - name: Test manifest budget
+        run: bash tests/test-manifest.sh check
+
+      - name: Public tree hygiene
+        if: steps.classify.outputs.lane != 'full'
+        run: bash .github/scripts/check-public-tree.sh
+
+      - name: Shell syntax
+        if: steps.classify.outputs.lane != 'full'
+        run: |
+          bash -n scripts/*.sh
+          sh -n scripts/postinst scripts/rpm-postinst.sh
+          bash -n .github/scripts/*.sh
+
+      - name: ShellCheck (changed shell scripts only)
+        if: steps.classify.outputs.lane != 'full' && steps.classify.outputs.changed_sh != ''
+        env:
+          CHANGED_SH: ${{ steps.classify.outputs.changed_sh }}
+        run: |
+          mapfile -t changed < <(printf '%s\n' "$CHANGED_SH")
+          shellcheck -S warning "${changed[@]}"
+
+      - name: Validate desktop entry and AppStream metadata
+        if: steps.classify.outputs.lane != 'full' && steps.classify.outputs.data_changed == 'true'
+        run: |
+          desktop-file-validate data/org.bootrepair.BootRepair.desktop
+          appstreamcli validate --no-net data/org.bootrepair.BootRepair.metainfo.xml
+
+      - name: Get current month
+        if: steps.classify.outputs.lane == 'shell'
+        id: get-month
+        run: echo "month=$(date -u '+%Y-%m')" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare apt archives cache
+        if: steps.classify.outputs.lane == 'shell'
+        run: |
+          sudo mkdir -p /var/cache/apt/archives
+          sudo chown -R "$USER" /var/cache/apt/archives
+
+      - name: Cache apt archives
+        if: steps.classify.outputs.lane == 'shell'
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-archives-${{ runner.os }}-ubuntu-24.04-${{ steps.get-month.outputs.month }}
+          restore-keys: |
+            apt-archives-${{ runner.os }}-ubuntu-24.04-
+
+      - name: Install build dependencies
+        if: steps.classify.outputs.lane == 'shell'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --no-install-recommends -y \
+            build-essential cmake ninja-build pkg-config qt6-base-dev \
+            qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck
+
+      - name: Configure
+        if: steps.classify.outputs.lane == 'shell'
+        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Fast contract tests
+        if: steps.classify.outputs.lane == 'shell'
+        env:
+          QT_QPA_PLATFORM: offscreen
+        run: |
+          ctest --test-dir build --output-on-failure -L fast \
+            -E 'boot-repair-(chroot-shell|filesystem-repair|host-default)-contract'
+
+      - name: Changed slow-contract tests
+        if: steps.classify.outputs.lane == 'shell' && steps.classify.outputs.slow_contracts != ''
+        env:
+          QT_QPA_PLATFORM: offscreen
+          SLOW_CONTRACTS: ${{ steps.classify.outputs.slow_contracts }}
+        run: |
+          mapfile -t contracts < <(printf '%s\n' "$SLOW_CONTRACTS")
+          for name in "${contracts[@]}"; do
+            [[ -n "$name" ]] || continue
+            ctest --test-dir build --output-on-failure -R "$name"
+          done
+
   build-and-test:
+    needs: fast-gate
+    if: needs.fast-gate.outputs.lane == 'full'
     # ubuntu-24.04 ships Qt 6.4, the oldest Qt this project supports. Pinning
     # the image keeps that compatibility gate deterministic instead of letting
     # a floating ubuntu-latest tag move the Qt baseline under CI.
@@ -24,18 +130,57 @@ jobs:
       - name: Public tree hygiene
         run: bash .github/scripts/check-public-tree.sh
 
+      - name: Get current month
+        id: get-month
+        run: echo "month=$(date -u '+%Y-%m')" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare apt archives cache
+        run: |
+          sudo mkdir -p /var/cache/apt/archives
+          sudo chown -R "$USER" /var/cache/apt/archives
+
+      - name: Cache apt archives
+        uses: actions/cache@v4
+        with:
+          path: /var/cache/apt/archives
+          key: apt-archives-${{ runner.os }}-ubuntu-24.04-${{ steps.get-month.outputs.month }}
+          restore-keys: |
+            apt-archives-${{ runner.os }}-ubuntu-24.04-
+
+      - name: Cache ccache
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/ccache
+          key: ccache-${{ runner.os }}-ubuntu-24.04-${{ steps.get-month.outputs.month }}
+          restore-keys: |
+            ccache-${{ runner.os }}-ubuntu-24.04-
+
       - name: Install build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install --no-install-recommends -y \
             build-essential cmake ninja-build pkg-config qt6-base-dev \
-            qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck
+            qt6-base-dev-tools appstream desktop-file-utils pkexec shellcheck \
+            ccache
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+        run: |
+          mkdir -p "$CCACHE_DIR"
+          ccache --max-size=2G
+          cmake -S . -B build -G Ninja -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_CXX_COMPILER_LAUNCHER=ccache
 
       - name: Build
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/ccache
         run: cmake --build build --parallel
+
+      - name: ccache stats
+        env:
+          CCACHE_DIR: ${{ runner.temp }}/ccache
+        run: ccache -s
 
       - name: Test
         env:

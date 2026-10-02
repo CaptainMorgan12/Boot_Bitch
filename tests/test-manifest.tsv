@@ -1,0 +1,43 @@
+# Boot Bitch test manifest and budget contract.
+# Maintained with tests/test-manifest.sh:
+#   check [--quick]           validate format, registration and budgets (CI runs it)
+#   update                    regenerate rows from CMakeLists.txt (new rows get cost_s 0)
+#   approve <test> '<note>'   approve a budget overage (appends to test-budget-exceptions.tsv)
+#   quick-exclude             print the -E regex (fast quick=n rows) for the dev-check quick tier
+#   quick-excluded            print those rows' short names joined with '/' (skipped-list text)
+#
+# Budget directives (seconds per tier; the declared cost_s sums must stay under):
+# budget fast 400
+# budget quick 120
+# budget ui 120
+# budget slow 150
+# budget packaging 60
+#
+# Row format: test<TAB>tier<TAB>cost_s<TAB>class<TAB>owner<TAB>quick
+#   test     full ctest test name (add_test NAME in CMakeLists.txt)
+#   tier     ctest tier (set_tests_properties LABELS): fast|ui|slow|packaging
+#   cost_s   declared wall-clock cost in seconds (measured upper bound, integer)
+#   class    cost class matching cost_s: S <= 5 s, M <= 60 s, L > 60 s
+#   owner    free-form owner tag for humans (unused by the gate)
+#   quick    y = runs in the --quick gate (fast tier only), n = never in --quick;
+#            the n rows of tier fast are the dev-check quick-tier exclusions
+#
+boot-repair-ui-read-only	ui	80	L	ui	n
+boot-repair-chroot-shell-contract	fast	120	L	backend	n
+boot-repair-display-manager-contract	fast	2	S	backend	y
+boot-repair-backend-profile-contract	slow	100	L	backend	n
+boot-repair-filesystem-repair-contract	fast	60	M	backend	n
+boot-repair-host-snapshot-contract	fast	10	M	backend	y
+boot-repair-host-default-contract	fast	75	L	backend	n
+boot-repair-reason-key-registry-contract	fast	1	S	backend	y
+boot-repair-msg-key-registry-contract	fast	1	S	backend	y
+boot-repair-efi-entry-policy-contract	fast	15	M	efi	y
+boot-repair-repair-log-filter-contract	fast	2	S	backend	y
+boot-repair-packaging-profile-contract	packaging	30	M	packaging	n
+boot-repair-icon-atlas-contract	fast	1	S	ui	y
+boot-repair-appimage-contract	fast	5	S	packaging	y
+boot-repair-legacy-port-contract	fast	20	M	legacy	y
+boot-repair-legacy-smoke	fast	15	M	legacy	y
+boot-repair-legacy-package-contract	fast	15	M	legacy	y
+boot-repair-legacy-gui-contract	fast	10	M	legacy	y
+boot-repair-efi-label-update	fast	1	S	efi	y
