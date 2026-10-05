@@ -48,6 +48,8 @@ private slots:
     void kernelRepairActionsDeriveFromEvidenceAndProtectRunning();
     void kernelRepairSessionSerializesCachedBaseline();
     void gpuRepairSessionSerializesGpuAndKernelBaselines();
+    void repairToolRefusesRunWhenRequiredDiagnosticMissing();
+    void requiredDiagnosticSectionsMapping();
     void hostMaintenanceSwitchAfterFullRepairDoesNotCrash();
     void hostMaintenanceSwitchAfterResizeDoesNotCrash();
     void hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash();

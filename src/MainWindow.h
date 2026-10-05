@@ -938,6 +938,11 @@ private:
     // is false only on the very first run of a fresh install.
     bool fullRepairStagePreferencePersisted(const QString &key) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
+    // Human-readable titles of the required diagnostic sections missing from
+    // the active scope's cache, in mapping order (deduplicated). Empty when
+    // every required section is cached; drives the pre-repair popup alert and
+    // the gating reason.
+    QStringList missingRequiredDiagnosticTitles(const QString &toolKey) const;
     // Read-only "current kernel state" preview rendered from the cached
     // kernel diagnostic section (Kernel running:/latest:/repository latest:/
     // removable:/missing headers:/orphaned headers:/orphaned kernel:/incomplete:
@@ -956,6 +961,10 @@ private:
     // must go through this function.
     QStringList diagnosticSectionsForRepair(const QString &toolKey) const;
     QString diagnosticSectionTitle(const QString &key) const;
+    // Required diagnostic sections per repair tool: the cached sections whose
+    // evidence that repair consumes (the repair-run gate and the baseline
+    // serialization both use this list). "report" means the combined report.
+    static QStringList requiredDiagnosticSectionsForTool(const QString &toolKey);
     // Evidence-driven invalidation. Every successful modifying helper action
     // ends with one stable "Repair change status <tool-key>: changed" or
     // "Repair change status <tool-key>: unchanged|<reason>" line. The GUI reads
