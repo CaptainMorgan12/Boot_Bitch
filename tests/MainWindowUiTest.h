@@ -32,6 +32,8 @@ private slots:
     void capabilityHostEvidenceParsesFromCache();
     void capabilityTablePopulatesFromCacheWithoutProbe();
     void capabilityScopeSelectorSwitchesCaches();
+    void capabilityGroupBoxTitleIsScopeNeutral();
+    void capabilityRefreshAfterDiagnosticsAndClear();
     void repairDetailPaneShowsMissingToolGuidance();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();

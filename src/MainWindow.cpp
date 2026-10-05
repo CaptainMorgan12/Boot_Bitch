@@ -9205,7 +9205,7 @@ QWidget *MainWindow::buildSettingsPage()
     }
     layout->addWidget(safetyBox);
 
-    auto *capabilityBox = new QGroupBox(tr("Host capabilities and dependencies"));
+    auto *capabilityBox = new QGroupBox(tr("Capabilities and dependencies"));
     auto *capabilityLayout = new QVBoxLayout(capabilityBox);
     auto *identityLayout = new QFormLayout;
     m_distributionLabel = new QLabel;
@@ -9220,26 +9220,29 @@ QWidget *MainWindow::buildSettingsPage()
         value->setWordWrap(true);
         value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     }
-    identityLayout->addRow(tr("Distribution:"), m_distributionLabel);
-    identityLayout->addRow(tr("Package manager family:"), m_packageManagerLabel);
-    identityLayout->addRow(tr("KAuth build support:"), m_authBuildLabel);
-    capabilityLayout->addLayout(identityLayout);
 
     // Scope selector: presents the two cached diagnostic scopes (Repair target
     // and the running host) without creating a new scope model. It follows the
     // active scope (host maintenance → Host; otherwise the committed repair
     // target); switching it only re-reads that scope's cached capability
-    // evidence into the table.
+    // evidence into the table. It shares the Distribution row's line,
+    // right-aligned, so the label and dropdown sit pegged to the right window
+    // edge and move as the window resizes.
     m_capabilityScopeSelector = new QComboBox;
     m_capabilityScopeSelector->addItem(tr("Repair target"), QStringLiteral("target"));
     m_capabilityScopeSelector->addItem(tr("Host"), QStringLiteral("host"));
     m_capabilityScopeSelector->setToolTip(tr(
         "Choose which cached scope's capabilities the table shows."));
-    auto *scopeRow = new QHBoxLayout;
-    scopeRow->addWidget(new QLabel(tr("Show capabilities for:")));
-    scopeRow->addWidget(m_capabilityScopeSelector);
-    scopeRow->addStretch(1);
-    capabilityLayout->addLayout(scopeRow);
+    auto *distributionField = new QHBoxLayout;
+    distributionField->setContentsMargins(0, 0, 0, 0);
+    distributionField->setSpacing(9);
+    distributionField->addWidget(m_distributionLabel, 1);
+    distributionField->addWidget(new QLabel(tr("Show capabilities for:")));
+    distributionField->addWidget(m_capabilityScopeSelector);
+    identityLayout->addRow(tr("Distribution:"), distributionField);
+    identityLayout->addRow(tr("Package manager family:"), m_packageManagerLabel);
+    identityLayout->addRow(tr("KAuth build support:"), m_authBuildLabel);
+    capabilityLayout->addLayout(identityLayout);
     connect(m_capabilityScopeSelector, qOverload<int>(&QComboBox::currentIndexChanged),
             this, [this] { refreshCapabilities(); });
 
@@ -16325,6 +16328,7 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
     scheduleBootEntriesRefresh(QStringLiteral("read-only diagnostics completed"));
     updateDiagnosticDetails();
     updateFullRepairSummary();
+    refreshCapabilities();
     updateShellRunButtonState();
     if (m_runAllDiagnosticsQueued) {
         m_runAllDiagnosticsQueued = false;
@@ -17168,6 +17172,7 @@ void MainWindow::clearActionRegister()
     // both reflect the cleared state instead of stale cached evidence.
     updateFullRepairSummary();
     updateDiagnosticDetails();
+    refreshCapabilities();
     // Clearing is an explicit user action: show the result immediately
     // instead of waiting for the coalescing timer.
     refreshLogView();
