@@ -34,9 +34,15 @@ grep -q "printf 'Boot reached: %s" "$HELPER" \
 grep -q "printf 'Boot failure markers:" "$HELPER" \
     || fail 'diagnostic_errors must emit a Boot failure markers: line'
 # The classifier must reuse the existing session journal cache, never spawn a
-# fresh journalctl.
-grep -q 'journal_cached_window_lines 1600 | journal_boot_relevant_filter' "$HELPER" \
-    || fail 'the classifier must read the shared session journal cache'
+# fresh journalctl.  It reads the boot HEAD slice (the earliest entries), not
+# the newest-entry window, because the boot-complete markers land in the first
+# couple of minutes and fall outside the newest-1600 tail on a long boot.
+grep -q 'journal_cached_boot_head_lines 4000 | journal_boot_relevant_filter' "$HELPER" \
+    || fail 'the classifier must read the shared session journal head cache'
+grep -q '^journal_cached_boot_head_lines()' "$HELPER" \
+    || fail 'helper is missing journal_cached_boot_head_lines()'
+grep -q 'boot-head-4000.json' "$HELPER" \
+    || fail 'the journal cache must capture the earliest boot entries as boot-head-4000.json'
 
 # ---------------------------------------------------------------------------
 # Behavioural harness
@@ -52,7 +58,7 @@ source <(sed '/^main "$@"/d' "$HELPER")
 trap - EXIT INT TERM HUP
 
 JOURNAL_FIXTURE="$sandbox/journal.txt"
-journal_cached_window_lines() { cat "$JOURNAL_FIXTURE" 2>/dev/null || true; }
+journal_cached_boot_head_lines() { head -n "${1:-4000}" "$JOURNAL_FIXTURE" 2>/dev/null || true; }
 journal_boot_relevant_filter() { cat; }
 non_journald_log_fallback_ready() { return 1; }
 non_systemd_raw_log_lines() { :; }
@@ -126,6 +132,34 @@ expect tty-nomodeset \
     $'Oct 04 10:00:00 host systemd: Reached target Multi-User System.\nOct 04 10:00:00 host kernel: Command line: BOOT_IMAGE=/vmlinuz root=/dev/sda1 nomodeset' \
     'tty' 'graphics-save-mode,tty-only'
 
+# ---- head slice: a boot longer than 1600 entries ----------------------------
+# The boot-complete markers live in the earliest entries (first couple of
+# minutes), outside the newest-1600 tail on a long boot.  The classifier must
+# read the boot head slice so the marker is still visible and the boot is
+# classified desktop, not the grub default.
+HEAD_SLICE_FIXTURE="$sandbox/head-slice.txt"
+{
+    printf '%s\n' 'Oct 04 10:00:00 host systemd: Reached target Graphical Interface.'
+    i=0
+    while (( i < 2000 )); do
+        printf '%s\n' "Oct 04 10:00:01 host systemd: filler-$i.service: line $i"
+        (( i += 1 ))
+    done
+} > "$HEAD_SLICE_FIXTURE"
+if grep -q 'Reached target Graphical Interface' <<<"$(tail -n 1600 "$HEAD_SLICE_FIXTURE" 2>/dev/null)"; then
+    fail 'head-slice fixture: boot marker unexpectedly inside the newest-1600 tail'
+fi
+grep -q 'Reached target Graphical Interface' <<<"$(head -n 4000 "$HEAD_SLICE_FIXTURE" 2>/dev/null)" \
+    || fail 'head-slice fixture: boot marker missing from the 4000-entry head slice'
+
+journal_cached_boot_head_lines() { head -n "${1:-4000}" "$HEAD_SLICE_FIXTURE" 2>/dev/null || true; }
+BOOT_FAILURE_CLASSIFIED=0
+boot_failure_classification
+[[ "$BOOT_REACHED" == desktop ]] \
+    || fail "head slice: boot beyond the 1600-entry tail classified '$BOOT_REACHED', want 'desktop'"
+[[ -z "$BOOT_FAILURE_MARKERS" ]] \
+    || fail "head slice: unexpected boot failure markers '$BOOT_FAILURE_MARKERS'"
+
 # ---- diagnostic_errors emits the shared classification ----------------------
 ERRORS_FIXTURE="$sandbox/errors-journal.txt"
 printf '%s\n' \
@@ -135,7 +169,7 @@ printf '%s\n' \
 
 # Re-route the classifier's journal read to the errors fixture and stub the
 # error-priority pipeline pieces diagnostic_errors uses.
-journal_cached_window_lines() { cat "$ERRORS_FIXTURE" 2>/dev/null || true; }
+journal_cached_boot_head_lines() { head -n "${1:-4000}" "$ERRORS_FIXTURE" 2>/dev/null || true; }
 journal_cached_error_lines() { :; }
 journal_current_boot_actionable() { cat; }
 collapse_similar_journal_lines() { cat; }
