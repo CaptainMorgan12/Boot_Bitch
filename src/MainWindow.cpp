@@ -887,6 +887,16 @@ static QString diagnosticKeyForRepairTool(const QString &toolKey)
     return QStringLiteral("report");
 }
 
+// Required diagnostic sections per repair tool: the cached sections whose
+// evidence that repair consumes. Unlike diagnosticKeyForRepairTool() (the
+// single section named in status lines, kept for that presentation), a tool
+// may need several sections — the GPU repair consumes the `gpu` and `kernel`
+// sections together. The repair-run path (popup gate + baseline serialization)
+// uses this list; "report" means the combined report ("all"). Section order is
+// stable and follows the mapping below. Defined as
+// MainWindow::requiredDiagnosticSectionsForTool() (a static member, so the UI
+// suite can assert the mapping) near diagnosticSectionsForRepair().
+
 // Repair topics referenced by the log section filters. Each topic is keyed by
 // the stable repair-tool key and matched against the recorded repair entries
 // through the case-insensitive title fragments below. The entry title always
@@ -10925,7 +10935,8 @@ bool MainWindow::safeHelperArgument(const QStringList &arguments, int index, QSt
                                                  QStringLiteral("--content-file"),
                                                  QStringLiteral("--content-owner"),
                                                  QStringLiteral("--baseline"),
-                                                 QStringLiteral("--gpu-baseline")};
+                                                 QStringLiteral("--gpu-baseline"),
+                                                 QStringLiteral("--evidence")};
         if (!knownFlags.contains(argument)) {
             return refuse(QStringLiteral("Privileged helper option '%1' is not a recognized flag.").arg(argument));
         }
@@ -15223,7 +15234,10 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
         }
     };
 
-    const QString diagnosticKey = diagnosticKeyForRepairTool(toolKey);
+    // Every required diagnostic section must be cached before the tool may run;
+    // a tool that consumes several sections (gpu -> gpu + kernel) needs them all.
+    const QStringList required = requiredDiagnosticSectionsForTool(toolKey);
+    const QStringList missingTitles = missingRequiredDiagnosticTitles(toolKey);
 
     if (m_hostMaintenanceMode) {
         QString hostReason;
@@ -15231,9 +15245,8 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
             setReason(hostReason);
             return false;
         }
-        if (m_hostDiagnosticCache.value(diagnosticKey).trimmed().isEmpty()) {
-            const QString diagnosticName = diagnosticTitleForKey(diagnosticKey);
-            setReason(tr("Run the %1 diagnostic for the protected running host before starting this maintenance action.").arg(diagnosticName));
+        if (!missingTitles.isEmpty()) {
+            setReason(tr("Run the %1 diagnostic for the protected running host before starting this maintenance action.").arg(missingTitles.join(tr(", "))));
             return false;
         }
         setReason(tr("Required read-only running-host diagnostics are cached for this maintenance action."));
@@ -15248,17 +15261,39 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
         setReason(tr("Run the selected target diagnostic before starting this repair."));
         return false;
     }
-    if (m_targetDiagnosticCache.value(diagnosticKey).trimmed().isEmpty()) {
-        const QString diagnosticName = diagnosticTitleForKey(diagnosticKey);
-        const bool invalidated = m_targetDiagnosticsNeedRegeneration
-            || m_targetDiagnosticsStaleSections.contains(diagnosticKey);
+    if (!missingTitles.isEmpty()) {
+        bool invalidated = m_targetDiagnosticsNeedRegeneration;
+        for (const QString &section : required) {
+            if (m_targetDiagnosticsStaleSections.contains(section)) {
+                invalidated = true;
+            }
+        }
         setReason(invalidated
-            ? tr("Target state changed after the last diagnostic or repair action. Run the %1 diagnostic for this target before starting this repair.").arg(diagnosticName)
-            : tr("Run the %1 diagnostic for this target before starting this repair.").arg(diagnosticName));
+            ? tr("Target state changed after the last diagnostic or repair action. Run the %1 diagnostic for this target before starting this repair.").arg(missingTitles.join(tr(", ")))
+            : tr("Run the %1 diagnostic for this target before starting this repair.").arg(missingTitles.join(tr(", "))));
         return false;
     }
     setReason(tr("Required read-only diagnostic evidence is cached for this repair tool."));
     return true;
+}
+
+// Human-readable titles of the required diagnostic sections still missing from
+// the active scope's cache, in mapping order (deduplicated). Empty when every
+// required section is cached.
+QStringList MainWindow::missingRequiredDiagnosticTitles(const QString &toolKey) const
+{
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    QStringList titles;
+    for (const QString &section : requiredDiagnosticSectionsForTool(toolKey)) {
+        if (!cache.value(section).trimmed().isEmpty()) {
+            continue;
+        }
+        const QString title = diagnosticTitleForKey(section);
+        if (!titles.contains(title)) {
+            titles.append(title);
+        }
+    }
+    return titles;
 }
 
 QString MainWindow::diagnosticSectionTitle(const QString &key) const
@@ -15277,6 +15312,29 @@ QStringList MainWindow::diagnosticSectionsForRepair(const QString &toolKey) cons
     // snapshot rollback, unlock, config writes, target/scope changes, the Full
     // Repair plan key and any future tool) invalidate the complete set.
     return {QStringLiteral("all")};
+}
+
+// Required diagnostic sections per repair tool: the cached sections whose
+// evidence that repair consumes (the repair-run gate and the baseline
+// serialization both use this list). "report" means the combined report.
+QStringList MainWindow::requiredDiagnosticSectionsForTool(const QString &toolKey)
+{
+    if (toolKey == QStringLiteral("validate")) return {QStringLiteral("environment")};
+    if (toolKey == QStringLiteral("filesystem")) return {QStringLiteral("filesystem")};
+    if (toolKey == QStringLiteral("dpkg") || toolKey == QStringLiteral("fixbroken")
+        || toolKey == QStringLiteral("aptupdate") || toolKey == QStringLiteral("upgrade")) {
+        return {QStringLiteral("backend")};
+    }
+    if (toolKey == QStringLiteral("dkms")) return {QStringLiteral("kernel")};
+    if (toolKey == QStringLiteral("display")) return {QStringLiteral("display")};
+    if (toolKey == QStringLiteral("initramfs")) return {QStringLiteral("kernel")};
+    if (toolKey == QStringLiteral("efi")) return {QStringLiteral("uki")};
+    if (toolKey == QStringLiteral("grub")) return {QStringLiteral("grub")};
+    if (toolKey == QStringLiteral("extlinux")) return {QStringLiteral("boot")};
+    if (toolKey == QStringLiteral("bootstack")) return {QStringLiteral("report")};
+    if (toolKey == QStringLiteral("kernels")) return {QStringLiteral("kernel")};
+    if (toolKey == QStringLiteral("gpu")) return {QStringLiteral("gpu"), QStringLiteral("kernel")};
+    return {QStringLiteral("report")};
 }
 
 // The helper stage names and the capability/UI keys differ only for the
@@ -20232,16 +20290,18 @@ void MainWindow::runKernelRepairSession()
     // the interactive kernel repair menu: serialize it and hand it to the
     // helper as the --baseline so the inventory is computed once, in the
     // diagnostic, and never re-derived fresh by the menu.  Fail closed when the
-    // cached section is missing (the tool gate above normally guarantees it).
+    // required cached section is missing (the tool gate above normally
+    // guarantees it).
     const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
-    const QString section = cache.value(QStringLiteral("kernel"));
-    if (section.trimmed().isEmpty()) {
-        appendLog(tr("Kernel repair refused: run the kernel diagnostic first (no cached kernel evidence)."),
+    const QStringList missing = missingRequiredDiagnosticTitles(QStringLiteral("kernels"));
+    if (!missing.isEmpty()) {
+        appendLog(tr("Kernel repair refused: run the %1 diagnostic first (no cached kernel evidence).").arg(missing.join(tr(", "))),
                   QStringLiteral("ERROR"), LogEntryKind::Repair);
         QMessageBox::warning(this, tr("Kernel repair unavailable"),
-                             tr("Run the kernel diagnostic before starting kernel repair."));
+                             tr("Run the %1 diagnostic before starting kernel repair.").arg(missing.join(tr(", "))));
         return;
     }
+    const QString section = cache.value(QStringLiteral("kernel"));
     QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath,
                              m_previewTargetComponentPath, QStringLiteral("kernels")};
     arguments << QStringLiteral("--baseline")
@@ -20497,12 +20557,14 @@ void MainWindow::updateRepairToolDetails()
         if (!targetReady) {
             displayedPlanStatus += tr("\nStatus: unavailable — %1").arg(reason);
         } else if (repairToolAvailable(key)) {
-            // The capability evidence is present but the required diagnostic
+            // The capability evidence is present but a required diagnostic
             // section is missing or stale: name it by its human-readable title
             // so the status line stays specific instead of leaking the raw key.
-            const QString diagnosticKey = diagnosticKeyForRepairTool(key);
+            // A tool that consumes several sections names every missing one.
+            const QStringList missing = missingRequiredDiagnosticTitles(key);
             displayedPlanStatus += tr("\nStatus: unavailable — missing diagnostic: %1")
-                .arg(diagnosticTitleForKey(diagnosticKey));
+                .arg(missing.isEmpty() ? diagnosticTitleForKey(diagnosticKeyForRepairTool(key))
+                                       : missing.join(tr(", ")));
         } else {
             // The capability evidence reports the tool unavailable (or the
             // target diagnostic identity is missing/stale). The reason is
@@ -21456,18 +21518,22 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         && (arguments.first() == QStringLiteral("repair")
             || arguments.first() == QStringLiteral("host-repair"))
         && arguments.size() > 3) {
-        bool skipNextValue = false;
+        int skipNextCount = 0;
         for (const QString &argument : arguments.mid(3)) {
-            if (skipNextValue) {
-                skipNextValue = false;
+            if (skipNextCount > 0) {
+                --skipNextCount;
                 continue;
             }
             // --baseline and --gpu-baseline carry the serialized diagnostic
-            // section as their next argument; that payload is not a repair
-            // stage.
+            // section as their next argument; --evidence carries a section key
+            // and a base64 payload.  None of those payloads is a repair stage.
             if (argument == QStringLiteral("--baseline")
                 || argument == QStringLiteral("--gpu-baseline")) {
-                skipNextValue = true;
+                skipNextCount = 1;
+                continue;
+            }
+            if (argument == QStringLiteral("--evidence")) {
+                skipNextCount = 2;
                 continue;
             }
             if (!argument.startsWith(QStringLiteral("--"))) {
@@ -21902,6 +21968,24 @@ void MainWindow::runSelectedRepairTool()
 
     QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath, m_previewTargetComponentPath};
     arguments.append(stages);
+    // Serialize the cached baseline sections the helper consumes so those
+    // repairs reuse the cached diagnostic evidence instead of re-collecting:
+    // dkms/initramfs consume the `kernel` section, the display repair consumes
+    // the `display` section.  The interactive kernels/gpu sessions pass
+    // --baseline/--gpu-baseline in their own run functions; required sections
+    // without a helper-side baseline consumer are gated by the popup check
+    // above only and stay verified fresh by the helper's own preflights.
+    const auto &evidenceCache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    for (const QString &section : requiredDiagnosticSectionsForTool(key)) {
+        if (section != QStringLiteral("kernel") && section != QStringLiteral("display")) {
+            continue;
+        }
+        const QString cached = evidenceCache.value(section);
+        if (!cached.trimmed().isEmpty()) {
+            arguments << QStringLiteral("--evidence") << section
+                      << QString::fromLatin1(cached.toUtf8().toBase64());
+        }
+    }
     runRepairHelper(title, arguments, LogEntryKind::Repair, key);
 }
 
@@ -21918,25 +22002,19 @@ void MainWindow::runGpuRepairSession()
     // kernel-dependent GPU actions (remove-older-kernel / replace-kernel).
     // Serialize both and hand them to the helper as --gpu-baseline and
     // --baseline so the inventory is computed once, in the diagnostic, and never
-    // re-derived fresh by the menu.  Fail closed when either cached section is
-    // missing (the tool gate above normally guarantees them).
+    // re-derived fresh by the menu.  Fail closed when any required cached
+    // section is missing (the tool gate above normally guarantees them).
     const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    const QStringList missing = missingRequiredDiagnosticTitles(QStringLiteral("gpu"));
+    if (!missing.isEmpty()) {
+        appendLog(tr("GPU driver repair refused: run the %1 diagnostic first (no cached GPU evidence).").arg(missing.join(tr(", "))),
+                  QStringLiteral("ERROR"), LogEntryKind::Repair);
+        QMessageBox::warning(this, tr("GPU driver repair unavailable"),
+                             tr("Run the %1 diagnostic before starting the GPU driver repair.").arg(missing.join(tr(", "))));
+        return;
+    }
     const QString gpuSection = cache.value(QStringLiteral("gpu"));
-    if (gpuSection.trimmed().isEmpty()) {
-        appendLog(tr("GPU driver repair refused: run the GPU diagnostic first (no cached GPU evidence)."),
-                  QStringLiteral("ERROR"), LogEntryKind::Repair);
-        QMessageBox::warning(this, tr("GPU driver repair unavailable"),
-                             tr("Run the GPU diagnostic before starting the GPU driver repair."));
-        return;
-    }
     const QString kernelSection = cache.value(QStringLiteral("kernel"));
-    if (kernelSection.trimmed().isEmpty()) {
-        appendLog(tr("GPU driver repair refused: run the kernel diagnostic first (no cached kernel evidence)."),
-                  QStringLiteral("ERROR"), LogEntryKind::Repair);
-        QMessageBox::warning(this, tr("GPU driver repair unavailable"),
-                             tr("Run the kernel diagnostic before starting the GPU driver repair."));
-        return;
-    }
     QStringList arguments = {QStringLiteral("repair"), m_previewTargetPath,
                              m_previewTargetComponentPath, QStringLiteral("gpu")};
     arguments << QStringLiteral("--gpu-baseline")

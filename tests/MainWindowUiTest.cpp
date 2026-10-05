@@ -605,6 +605,87 @@ void MainWindowUiTest::gpuRepairSessionSerializesGpuAndKernelBaselines()
     QCOMPARE(decodedKernel, kernelSection);
 }
 
+// A repair tool must refuse to run — with a warning naming the missing
+// diagnostic section by its human-readable title and without launching the
+// privileged helper — when any required cached section is absent. The DKMS
+// repair requires the `kernel` section, so dropping it must abort.
+void MainWindowUiTest::repairToolRefusesRunWhenRequiredDiagnosticMissing()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+    // DKMS requires the `kernel` section; remove it so the run must refuse.
+    window.m_targetDiagnosticCache.remove(QStringLiteral("kernel"));
+
+    QString reason;
+    QVERIFY2(!window.repairEvidenceReadyForTool(QStringLiteral("dkms"), &reason),
+             "the DKMS repair must refuse when its required kernel section is missing");
+    QVERIFY2(reason.contains(QStringLiteral("Kernel / initramfs")),
+             qPrintable(reason));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("refused-requests.log"));
+    QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath, QStringList()),
+             "the scripted privileged session must start");
+    closeRepairProgressDialogWhenDone(&window);
+    acceptNextMessageBox(&window, QMessageBox::Ok);
+
+    QTreeWidgetItem *item = repairItem(window, QStringLiteral("dkms"));
+    QVERIFY(item);
+    window.m_repairToolTree->setCurrentItem(item);
+    window.runSelectedRepairTool();
+
+    // The refusal must have aborted before the helper was launched: no request
+    // record exists (the fake session only writes once it reads a BEGIN line).
+    QFile file(capturePath);
+    if (file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+        const QString captured = QString::fromUtf8(file.readAll());
+        QVERIFY2(!captured.contains(QStringLiteral("BEGIN")),
+                 "a missing required diagnostic must abort before launching the helper");
+    }
+}
+
+// The required-sections mapping is the single list the repair-run gate and the
+// baseline serialization both consume; every tool maps to its documented set.
+void MainWindowUiTest::requiredDiagnosticSectionsMapping()
+{
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("validate")),
+             QStringList({QStringLiteral("environment")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("filesystem")),
+             QStringList({QStringLiteral("filesystem")}));
+    for (const QString &key : {QStringLiteral("dpkg"), QStringLiteral("fixbroken"),
+                               QStringLiteral("aptupdate"), QStringLiteral("upgrade")}) {
+        QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(key),
+                 QStringList({QStringLiteral("backend")}));
+    }
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("dkms")),
+             QStringList({QStringLiteral("kernel")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("display")),
+             QStringList({QStringLiteral("display")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("initramfs")),
+             QStringList({QStringLiteral("kernel")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("efi")),
+             QStringList({QStringLiteral("uki")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("grub")),
+             QStringList({QStringLiteral("grub")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("extlinux")),
+             QStringList({QStringLiteral("boot")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("bootstack")),
+             QStringList({QStringLiteral("report")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("kernels")),
+             QStringList({QStringLiteral("kernel")}));
+    QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("gpu")),
+             QStringList({QStringLiteral("gpu"), QStringLiteral("kernel")}));
+}
+
 void MainWindowUiTest::reasonKeyTokensMapToLocalizedStringsAndUnknownKeysPassThrough()
 {
     MainWindow window;

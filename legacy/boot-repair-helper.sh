@@ -1674,6 +1674,13 @@ DISPLAY_MANAGER_SERVICE=""
 DISPLAY_MANAGER_PACKAGE=""
 DISPLAY_MANAGER_LABEL=""
 DISPLAY_MANAGER_UNIT_REL=""
+# The resolved display-manager backend (systemd|OpenRC) captured by the cached
+# `display` diagnostic section's decision line and consumed by
+# adaptive_display_manager_repair instead of re-deriving the backend.
+DISPLAY_MANAGER_BACKEND=""
+# Why resolve_display_manager/resolve_alpine_display_manager refused to pick a
+# manager (a read-only reason, surfaced by the diagnostic's decision line).
+DISPLAY_MANAGER_RESOLVE_REASON=""
 # True when the display-manager preflight had to install a package; the offline
 # link state alone cannot prove "unchanged" after a package write.
 DISPLAY_MANAGER_PACKAGE_WORK=false
@@ -9556,6 +9563,46 @@ output_suggests_mapper_path_failure()
 # flavor kernels, mkinitcpio/pacman systems use module directories, and the
 # Debian layout additionally installs missing repository headers through the
 # guarded APT correction path.
+# Baseline-aware kernel version enumeration shared by the DKMS and initramfs
+# preflights.  With a cached kernel baseline (KERNEL_BASELINE_B64, set from
+# --baseline/--evidence kernel) the versions come from the cached `kernel`
+# diagnostic section's inventory (KERNEL_INVENTORY_VERSIONS, which the kernel
+# diagnostic populates from the module-tree directories on every backend) and
+# the running kernel is re-verified fresh; without a baseline the versions are
+# collected fresh through the caller's named probe so a direct CLI invocation
+# stays self-sufficient.  The probe argument keeps the backend selection at the
+# call site (dkms's mkinitfs/dracut/mkinitcpio branches and the Debian
+# initramfs path each name their own fresh probe).  Prints one version per
+# line; the pair probes (alpine/rpm) contribute their first (version) field.
+repair_kernel_versions()
+{
+    local probe="$1" line
+    if [[ -n "${KERNEL_BASELINE_B64:-}" ]]; then
+        repair_kernel_prepare_inventory
+        for line in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+            [[ -n "$line" ]] && printf '%s\n' "$line"
+        done
+        return 0
+    fi
+    case "$probe" in
+        installed) installed_kernel_versions ;;
+        arch)      arch_kernel_versions ;;
+        alpine)
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                printf '%s\n' "${line%% *}"
+            done < <(alpine_kernel_pairs)
+            ;;
+        rpm)
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                printf '%s\n' "${line%% *}"
+            done < <(rpm_kernel_pairs)
+            ;;
+        *) fail "Unknown fresh kernel probe: $probe" ;;
+    esac
+}
+
 preflight_dkms()
 {
     local kver header_pkg alpine_dkms_pair alpine_dkms_kver rpm_dkms_pair rpm_dkms_kver
@@ -9565,7 +9612,7 @@ preflight_dkms()
         [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]] \
             || fail "DKMS is not installed in the target system."
         msg_log dkms-mkinitfs-simulate
-        legacy_readarray -t alpine_dkms_pairs < <(alpine_kernel_pairs)
+        legacy_readarray -t alpine_dkms_pairs < <(repair_kernel_versions alpine)
         ((${#alpine_dkms_pairs[@]} > 0)) \
             || fail "No installed kernel module directories were found for DKMS."
         for alpine_dkms_pair in "${alpine_dkms_pairs[@]:-}"; do
@@ -9588,7 +9635,7 @@ preflight_dkms()
         [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]] \
             || fail "DKMS is not installed in the target system."
         msg_log dkms-dracut-simulate
-        legacy_readarray -t rpm_dkms_pairs < <(rpm_kernel_pairs)
+        legacy_readarray -t rpm_dkms_pairs < <(repair_kernel_versions rpm)
         ((${#rpm_dkms_pairs[@]} > 0)) \
             || fail "No installed kernel module directories were found for DKMS."
         for rpm_dkms_pair in "${rpm_dkms_pairs[@]:-}"; do
@@ -9613,7 +9660,7 @@ preflight_dkms()
                 test -e "/lib/modules/$kver/build" \
                 || fail "DKMS preflight found no /lib/modules/$kver/build tree; install the matching headers and retry."
             msg_log dkms-headers-present-kver "$kver"
-        done < <(arch_kernel_versions)
+        done < <(repair_kernel_versions arch)
         run_chroot_try "$(msg inspect-dkms-state)" dkms status
         return 0
     fi
@@ -9642,7 +9689,7 @@ preflight_dkms()
         else
             msg_log dkms-missing-headers-unavailable "$kver" "$header_pkg"
         fi
-    done < <(installed_kernel_versions)
+    done < <(repair_kernel_versions installed)
 
     if ((${#available_headers[@]} > 0)); then
         safe_apt_install_packages \
@@ -9833,7 +9880,13 @@ last_boot_display_manager_candidates()
 # display-manager.service link, installed units and last-boot journal evidence.
 # Sets DISPLAY_MANAGER_SERVICE/PACKAGE/LABEL/UNIT_REL; fails instead of
 # guessing when the configuration is ambiguous or points at a missing unit.
-detect_display_manager()
+# Resolve the systemd display-manager selection read-only, setting
+# DISPLAY_MANAGER_SERVICE/PACKAGE/LABEL/UNIT_REL on success (return 0) or a
+# DISPLAY_MANAGER_RESOLVE_REASON on failure (return 1) without exiting.  Shared
+# by detect_display_manager() (the repair's fresh, fail-closed resolution) and
+# the display diagnostic, which emits the same decision as a machine-parseable
+# `Display manager decision:` line the repair baseline parses.
+resolve_display_manager()
 {
     local configured_service="" link="" service="" package="" unit=""
     local candidate installed_count=0 installed_service="" journal_count=0 journal_service=""
@@ -9843,6 +9896,7 @@ detect_display_manager()
     DISPLAY_MANAGER_PACKAGE=""
     DISPLAY_MANAGER_LABEL=""
     DISPLAY_MANAGER_UNIT_REL=""
+    DISPLAY_MANAGER_RESOLVE_REASON=""
 
     if [[ -L "$TARGET_ROOT/etc/systemd/system/display-manager.service" ]]; then
         link="$(readlink "$TARGET_ROOT/etc/systemd/system/display-manager.service" 2>/dev/null || true)"
@@ -9854,10 +9908,12 @@ detect_display_manager()
             if [[ -n "$unit" ]]; then
                 service="$configured_service"
             else
-                fail "display-manager.service points to missing target unit $configured_service; refusing to switch to another installed manager."
+                DISPLAY_MANAGER_RESOLVE_REASON="display-manager.service points to missing target unit $configured_service; refusing to switch to another installed manager."
+                return 1
             fi
         else
-            fail "display-manager.service has an invalid target; refusing to switch to another installed manager."
+            DISPLAY_MANAGER_RESOLVE_REASON="display-manager.service has an invalid target; refusing to switch to another installed manager."
+            return 1
         fi
     fi
 
@@ -9886,7 +9942,8 @@ detect_display_manager()
                 unit="$(display_manager_unit_rel "$service")"
                 msg_log dm-selected-multiple "$service"
             else
-                fail "Multiple display managers are installed but display-manager.service is not configured; refusing to guess ($installed_count candidates)."
+                DISPLAY_MANAGER_RESOLVE_REASON="Multiple display managers are installed but display-manager.service is not configured; refusing to guess ($installed_count candidates)."
+                return 1
             fi
         elif ((installed_count == 0)); then
             while IFS= read -r candidate; do
@@ -9903,25 +9960,99 @@ detect_display_manager()
         fi
     fi
 
-    [[ -n "$service" ]] || fail "No configured graphical login manager was found. Install and configure a supported display manager (SDDM, GDM, LightDM, greetd or ly) first."
+    if [[ -z "$service" ]]; then
+        DISPLAY_MANAGER_RESOLVE_REASON="No configured graphical login manager was found. Install and configure a supported display manager (SDDM, GDM, LightDM, greetd or ly) first."
+        return 1
+    fi
     DISPLAY_MANAGER_SERVICE="$service"
     DISPLAY_MANAGER_UNIT_REL="${unit:-$(display_manager_unit_rel "$service" || true)}"
     DISPLAY_MANAGER_PACKAGE="$(display_manager_package_for_service "$service")"
     DISPLAY_MANAGER_LABEL="$(display_manager_label_for_service "$service")"
-    [[ -n "$DISPLAY_MANAGER_UNIT_REL" ]] || fail "Display manager $DISPLAY_MANAGER_SERVICE has no unit file in the target."
+    if [[ -z "$DISPLAY_MANAGER_UNIT_REL" ]]; then
+        DISPLAY_MANAGER_RESOLVE_REASON="Display manager $DISPLAY_MANAGER_SERVICE has no unit file in the target."
+        return 1
+    fi
+    return 0
+}
+
+# Fail-closed resolution for the repair: resolves read-only and fails on any
+# refusal so a direct CLI invocation never guesses.
+detect_display_manager()
+{
+    resolve_display_manager || fail "$DISPLAY_MANAGER_RESOLVE_REASON"
+}
+
+# Reconstruct the display-manager selection globals from the cached `display`
+# diagnostic section (the exact `Display manager decision:` line the diagnostic
+# emits), so the display repair consumes the single cached source of truth for
+# the resolved backend/service/package/label instead of re-deriving it.  Fails
+# closed when the baseline is absent, undecodable, empty, names no backend or
+# resolves no manager.  Read-only: no target probe is run here.
+parse_cached_display_inventory()
+{
+    local line rest
+    local baseline=""
+    local -a fields=()
+
+    if [[ -z "${DISPLAY_BASELINE_B64:-}" ]]; then
+        fail "Run the display diagnostic before starting the display repair (no cached display baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$DISPLAY_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached display baseline could not be decoded; run the display diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached display baseline is empty; run the display diagnostic again."
+
+    DISPLAY_MANAGER_BACKEND=""
+    DISPLAY_MANAGER_SERVICE=""
+    DISPLAY_MANAGER_PACKAGE=""
+    DISPLAY_MANAGER_LABEL=""
+    DISPLAY_MANAGER_UNIT_REL=""
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        [[ "$line" == "Display manager decision:"* ]] || continue
+        rest="${line#Display manager decision: }"
+        IFS=' ' read -r -a fields <<<"$rest"
+        local token
+        for token in "${fields[@]:-}"; do
+            case "$token" in
+                backend=*) DISPLAY_MANAGER_BACKEND="${token#backend=}" ;;
+                service=*) DISPLAY_MANAGER_SERVICE="${token#service=}" ;;
+                package=*) DISPLAY_MANAGER_PACKAGE="${token#package=}" ;;
+                label=*)   DISPLAY_MANAGER_LABEL="${token#label=}" ;;
+                unit=*)    DISPLAY_MANAGER_UNIT_REL="${token#unit=}" ;;
+            esac
+        done
+        break
+    done <<<"$baseline"
+
+    [[ -n "$DISPLAY_MANAGER_BACKEND" ]] \
+        || fail "The cached display baseline names no display-manager backend; run the display diagnostic again."
+    [[ -n "$DISPLAY_MANAGER_SERVICE" && "$DISPLAY_MANAGER_SERVICE" != none ]] \
+        || fail "The cached display baseline resolves no configured display manager; install and configure a supported display manager first."
+    [[ -n "$DISPLAY_MANAGER_PACKAGE" && -n "$DISPLAY_MANAGER_LABEL" && -n "$DISPLAY_MANAGER_UNIT_REL" ]] \
+        || fail "The cached display baseline is incomplete; run the display diagnostic again."
 }
 
 # Validate that the detected display manager is installed with its unit and
 # graphical.target present, correcting known missing packages through the
 # detected APT backend before the offline systemd link repair is allowed to
-# run.  Package-state queries use whichever package manager was detected.
+# run.  Package-state queries use whichever package manager was detected.  With
+# a cached display baseline the selection comes from parse_cached_display_inventory
+# (already resolved); without one it is resolved fresh here.
 preflight_display_manager()
 {
     local desktop_status=""
     need systemctl
 
     msg_log dm-simulate
-    detect_display_manager
+    if [[ -z "${DISPLAY_BASELINE_B64:-}" ]]; then
+        detect_display_manager
+    else
+        [[ -n "$DISPLAY_MANAGER_SERVICE" && "$DISPLAY_MANAGER_SERVICE" != none ]] \
+            || fail "No configured graphical login manager was found. Install and configure a supported display manager (SDDM, GDM, LightDM, greetd or ly) first."
+    fi
     msg_log dm-detected "$DISPLAY_MANAGER_LABEL" "$DISPLAY_MANAGER_SERVICE"
 
     [[ -f "$TARGET_ROOT/usr/lib/systemd/system/graphical.target" || -f "$TARGET_ROOT/lib/systemd/system/graphical.target" ]] \
@@ -9974,25 +10105,40 @@ display_manager_already_correct()
 # ---------------------------------------------------------------------------
 # Alpine/OpenRC display-manager repair (offline runlevel link only)
 # ---------------------------------------------------------------------------
-# Detect the OpenRC service that provides display-manager for offline repair.
-# Sets DISPLAY_MANAGER_SERVICE/PACKAGE/LABEL/UNIT_REL; fails on ambiguity
-# instead of guessing which graphical login to restore.
-detect_alpine_display_manager()
+# Resolve the OpenRC service that provides display-manager read-only, setting
+# DISPLAY_MANAGER_SERVICE/PACKAGE/LABEL/UNIT_REL on success (return 0) or a
+# DISPLAY_MANAGER_RESOLVE_REASON on failure (return 1) without exiting.  Shared
+# by detect_alpine_display_manager() (the repair's fresh, fail-closed
+# resolution) and the OpenRC display diagnostic's decision line.
+resolve_alpine_display_manager()
 {
     local service
     local -a services=()
+    DISPLAY_MANAGER_RESOLVE_REASON=""
     while IFS= read -r service; do
         [[ -n "$service" ]] || continue
         services+=("$service")
     done < <(alpine_display_manager_services)
-    ((${#services[@]} > 0)) \
-        || fail "No OpenRC service provides display-manager in the target; install and configure a display manager first."
-    ((${#services[@]} == 1)) \
-        || fail "Multiple OpenRC services provide display-manager (${services[*]}); refusing to guess which graphical login to restore."
+    if ((${#services[@]} == 0)); then
+        DISPLAY_MANAGER_RESOLVE_REASON="No OpenRC service provides display-manager in the target; install and configure a display manager first."
+        return 1
+    fi
+    if ((${#services[@]} > 1)); then
+        DISPLAY_MANAGER_RESOLVE_REASON="Multiple OpenRC services provide display-manager (${services[*]}); refusing to guess which graphical login to restore."
+        return 1
+    fi
     DISPLAY_MANAGER_SERVICE="${services[0]}"
     DISPLAY_MANAGER_PACKAGE="$(display_manager_package_for_service "$DISPLAY_MANAGER_SERVICE")"
     DISPLAY_MANAGER_LABEL="$(display_manager_label_for_service "$DISPLAY_MANAGER_SERVICE")"
     DISPLAY_MANAGER_UNIT_REL="/etc/init.d/$DISPLAY_MANAGER_SERVICE"
+    return 0
+}
+
+# Fail-closed resolution for the repair: resolves read-only and fails on any
+# refusal so a direct CLI invocation never guesses.
+detect_alpine_display_manager()
+{
+    resolve_alpine_display_manager || fail "$DISPLAY_MANAGER_RESOLVE_REASON"
 }
 
 # Parse the primary command= path from /etc/conf.d/<service> or the init
@@ -10018,7 +10164,12 @@ preflight_alpine_display_manager()
     local command_path=""
     msg_log dm-openrc-simulate
     alpine_openrc_present || fail "OpenRC is not present in the Alpine target."
-    detect_alpine_display_manager
+    if [[ -z "${DISPLAY_BASELINE_B64:-}" ]]; then
+        detect_alpine_display_manager
+    else
+        [[ -n "$DISPLAY_MANAGER_SERVICE" && "$DISPLAY_MANAGER_SERVICE" != none ]] \
+            || fail "No OpenRC service provides display-manager in the target; install and configure a display manager first."
+    fi
     msg_log dm-openrc-detected "$DISPLAY_MANAGER_LABEL" "$DISPLAY_MANAGER_SERVICE"
     [[ -x "$TARGET_ROOT/etc/init.d/$DISPLAY_MANAGER_SERVICE" ]] \
         || fail "$DISPLAY_MANAGER_LABEL init script is missing from the target: /etc/init.d/$DISPLAY_MANAGER_SERVICE"
@@ -10071,7 +10222,14 @@ adaptive_alpine_display_manager_repair()
 adaptive_display_manager_repair_modern()
 {
     local links_before=false links_after=false display_backend
-    display_backend="$(target_display_manager_backend)"
+    if [[ -n "${DISPLAY_BASELINE_B64:-}" ]]; then
+        # Interactive GUI session: the resolved backend comes from the cached
+        # `display` diagnostic section's decision line, not a fresh re-derivation.
+        parse_cached_display_inventory
+        display_backend="$DISPLAY_MANAGER_BACKEND"
+    else
+        display_backend="$(target_display_manager_backend)"
+    fi
     if [[ "$display_backend" == OpenRC ]]; then
         # OpenRC has no systemd units: restore the runlevel symlink for the
         # service that provides display-manager and never run systemctl or
@@ -10114,7 +10272,7 @@ preflight_initramfs()
         || fail "mkinitramfs is not installed in the target system."
 
     validate_mapper_crypttab
-    legacy_readarray -t kernels < <(installed_kernel_versions)
+    legacy_readarray -t kernels < <(repair_kernel_versions installed)
     ((${#kernels[@]} > 0)) || fail "No installed kernels were found under target /boot."
 
     msg_log initramfs-simulate "${#kernels[@]}"
@@ -10541,7 +10699,7 @@ adaptive_initramfs_repair_modern()
         local -a kernels=()
 
         preflight_initramfs
-        legacy_readarray -t kernels < <(installed_kernel_versions)
+        legacy_readarray -t kernels < <(repair_kernel_versions installed)
         for kver in "${kernels[@]:-}"; do
             if [[ -s "$TARGET_ROOT/boot/initrd.img-$kver" ]]; then
                 mode="-u"
@@ -16243,6 +16401,15 @@ diagnostic_display_openrc()
         done <<<"$dm_services"
     fi
 
+    # Machine-parseable decision consumed by the display repair baseline.  The
+    # diagnostic resolves it read-only (same logic as detect_alpine_display_manager)
+    # so the repair never re-derives the selection from the baseline.
+    if resolve_alpine_display_manager; then
+        echo "Display manager decision: backend=OpenRC service=$DISPLAY_MANAGER_SERVICE package=$DISPLAY_MANAGER_PACKAGE label=$DISPLAY_MANAGER_LABEL unit=$DISPLAY_MANAGER_UNIT_REL"
+    else
+        echo "Display manager decision: backend=OpenRC service=none package=none label=none unit=none"
+    fi
+
     echo
     echo "Installed display managers and OpenRC services:"
     for service in lightdm slim gdm sddm lxdm greetd; do
@@ -16352,6 +16519,15 @@ diagnostic_display()
         echo "display-manager.service -> ${display_link:-unresolved}"
     else
         echo "display-manager.service is not enabled."
+    fi
+
+    # Machine-parseable decision consumed by the display repair baseline.  The
+    # diagnostic resolves it read-only (same logic as detect_display_manager) so
+    # the repair never re-derives the selection from the baseline.
+    if resolve_display_manager; then
+        echo "Display manager decision: backend=systemd service=$DISPLAY_MANAGER_SERVICE package=$DISPLAY_MANAGER_PACKAGE label=$DISPLAY_MANAGER_LABEL unit=$DISPLAY_MANAGER_UNIT_REL"
+    else
+        echo "Display manager decision: backend=systemd service=none package=none label=none unit=none"
     fi
 
     echo
@@ -21038,6 +21214,57 @@ KERNEL_BASELINE_B64=""
 # repair menu and the GPU mutation preflight consume instead of re-collecting.
 # Empty means no baseline was supplied (direct CLI invocation).
 GPU_BASELINE_B64=""
+# Base64-serialized cached `display` diagnostic section handed in by the GUI via
+# --evidence display <value>.  It is the single source of truth the display
+# repair consumes for the resolved display-manager selection (backend, service,
+# package, label) instead of re-deriving that selection; the mutation preflight
+# re-verifies the selection fresh.  Empty means no baseline was supplied.
+DISPLAY_BASELINE_B64=""
+# Base64-serialized cached full diagnostic report ("all") handed in by the GUI
+# via --evidence report <value>.  The dispatcher decodes it into
+# REPORT_BASELINE_TEXT for any repair that consumes the combined report.
+REPORT_BASELINE_B64=""
+# Raw decoded text of REPORT_BASELINE_B64, populated by parse_cached_evidence_section.
+REPORT_BASELINE_TEXT=""
+
+# Map an --evidence section key to its baseline storage variable.  Only the
+# diagnostic sections with a helper-side baseline consumer are accepted; any
+# other key (including a valid diagnostic section with no consumer) fails
+# closed so a typo or a not-yet-wired section can never be silently ignored.
+store_evidence_baseline()
+{
+    case "$1" in
+        kernel)  KERNEL_BASELINE_B64="$2" ;;
+        gpu)     GPU_BASELINE_B64="$2" ;;
+        display) DISPLAY_BASELINE_B64="$2" ;;
+        report)  REPORT_BASELINE_B64="$2" ;;
+        *) fail "Unknown --evidence diagnostic section key: $1." ;;
+    esac
+}
+
+# Route one cached evidence section to its parser.  kernel/gpu/display rebuild
+# their inventory globals from the serialized section; report exposes the raw
+# decoded text via REPORT_BASELINE_TEXT; every other key fails closed because
+# no parser exists for it yet.
+parse_cached_evidence_section()
+{
+    case "$1" in
+        kernel)  parse_cached_kernel_inventory ;;
+        gpu)     parse_cached_gpu_inventory ;;
+        display) parse_cached_display_inventory ;;
+        report)
+            if [[ -z "${REPORT_BASELINE_B64:-}" ]]; then
+                fail "No cached full report baseline was supplied."
+            fi
+            if ! REPORT_BASELINE_TEXT="$(printf '%s' "$REPORT_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+                fail "The cached full report baseline could not be decoded; run the diagnostic again."
+            fi
+            [[ -n "$REPORT_BASELINE_TEXT" ]] \
+                || fail "The cached full report baseline is empty; run the diagnostic again."
+            ;;
+        *) fail "No parser for diagnostic section '$1'." ;;
+    esac
+}
 
 parse_repair_arguments()
 {
@@ -21048,6 +21275,9 @@ parse_repair_arguments()
     REPAIR_CLEAN_ORPHANED_HEADERS=false
     KERNEL_BASELINE_B64=""
     GPU_BASELINE_B64=""
+    DISPLAY_BASELINE_B64=""
+    REPORT_BASELINE_B64=""
+    REPORT_BASELINE_TEXT=""
     local argument
     while (($# > 0)); do
         argument="$1"
@@ -21066,6 +21296,11 @@ parse_repair_arguments()
                 (($# > 0)) || fail "The --gpu-baseline GPU repair baseline requires a value."
                 GPU_BASELINE_B64="$1"
                 shift
+                ;;
+            --evidence)
+                (($# >= 2)) || fail "The --evidence flag requires a diagnostic section key and a base64 value."
+                store_evidence_baseline "$1" "$2"
+                shift 2
                 ;;
             -*) fail "Unknown repair stage mode hint: $argument" ;;
             *) REPAIR_STAGES+=("$argument") ;;
