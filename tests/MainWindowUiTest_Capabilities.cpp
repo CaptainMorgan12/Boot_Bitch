@@ -273,7 +273,79 @@ void MainWindowUiTest::capabilityScopeSelectorSwitchesCaches()
     QVERIFY2(rowForCommand(window, QStringLiteral("dkms")) >= 0, "target scope shows the dkms row again");
 }
 
-// (e) When a repair tool is unavailable because a required module-build system
+// (e) The Boot capabilities group box must carry a scope-neutral title: the
+// table now shows both the repair-target and the running-host scopes, so the
+// title no longer names only the host.
+void MainWindowUiTest::capabilityGroupBoxTitleIsScopeNeutral()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    QGroupBox *capabilityBox = nullptr;
+    for (QGroupBox *box : window.findChildren<QGroupBox *>()) {
+        if (box->isAncestorOf(window.m_capabilityTable)) {
+            capabilityBox = box;
+            break;
+        }
+    }
+    QVERIFY2(capabilityBox, "the Boot capabilities table must live in a group box");
+    QCOMPARE(capabilityBox->title(), QStringLiteral("Capabilities and dependencies"));
+    QVERIFY2(!capabilityBox->title().contains(QStringLiteral("Host")),
+             "the group-box title must be scope-neutral (no Host-only wording)");
+}
+
+// (f) refreshCapabilities() must run at the end of a diagnostic run and after
+// Clear Register clears the caches, so the table populates from fresh evidence
+// and reverts to the placeholder (never stale rows) once the cache is gone.
+void MainWindowUiTest::capabilityRefreshAfterDiagnosticsAndClear()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+
+    // refreshCapabilities() records a capability-scan status entry; drop the
+    // constructor's entry so its reappearance proves the post-run call.
+    // statusEntryIdentity("capability-scan") → "status\x1fcapability-scan" (0x1F
+    // unit separator). Build it explicitly so the \x escape cannot swallow the
+    // following hex letter 'c'/'a'.
+    const QString capabilityScanIdentity =
+        QStringLiteral("status") + QChar(0x1f) + QStringLiteral("capability-scan");
+    window.m_statusLogEntries.remove(capabilityScanIdentity);
+
+    // (f1) Completing a diagnostic run must refresh the table.
+    window.runDiagnosticSections({QStringLiteral("grub")});
+    QVERIFY2(window.m_statusLogEntries.contains(capabilityScanIdentity),
+             "refreshCapabilities must run after runDiagnosticSections() completes");
+
+    // (f2) Clear Register fully clears the caches, then refreshes the table so
+    // the placeholder replaces the previously populated rows.
+    window.m_targetDiagnosticCache.insert(
+        QStringLiteral("capabilities"),
+        repairCapabilitiesPreamble(QStringLiteral("available"),
+                                   QStringLiteral("dkms executable present")));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("backend"), backendSection(QStringLiteral("dkms")));
+    window.refreshCapabilities();
+    QVERIFY2(rowForCommand(window, QStringLiteral("dkms")) >= 0,
+             "warm target evidence must show rows before the clear");
+
+    QPushButton *clearRegister = buttonWithText(window, QStringLiteral("Clear Register"));
+    QVERIFY(clearRegister);
+    acceptNextMessageBoxByText(&window, QStringLiteral("Clear"));
+    clearRegister->click();
+
+    QVERIFY2(window.m_statusLogEntries.contains(capabilityScanIdentity),
+             "refreshCapabilities must run after clearActionRegister() clears the caches");
+    QCOMPARE(window.m_capabilityTable->rowCount(), 1);
+    QCOMPARE(cellText(window, 0, 0), QStringLiteral("No capability evidence cached"));
+}
+
+// (g) When a repair tool is unavailable because a required module-build system
 // is missing, the detail pane surfaces a one-liner naming the missing tool, the
 // suggested package and the Boot capabilities table. The Run action stays
 // disabled. The Alpine variant names akms, never dkms.
