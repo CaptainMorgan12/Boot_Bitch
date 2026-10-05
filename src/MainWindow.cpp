@@ -1362,6 +1362,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "fedora-grub-boot-identical", QT_TRANSLATE_NOOP("MainWindow", "MBR, BIOS boot partition and i386-pc modules are byte-identical.") },
     { "fedora-saved-entry-already-correct", QT_TRANSLATE_NOOP("MainWindow", "grubenv saved_entry already names the running kernel BLS entry %1.") },
     { "fedora-saved-entry-set", QT_TRANSLATE_NOOP("MainWindow", "grubenv saved_entry set to %1 (all other keys preserved).") },
+    { "filecopy-no-filesystem-change", QT_TRANSLATE_NOOP("MainWindow", "The File Copy made no diagnostic-relevant filesystem change.") },
     { "filesystem-check-clean", QT_TRANSLATE_NOOP("MainWindow", "The read-only check reported no errors.") },
     { "fixbroken-simulated-no-changes", QT_TRANSLATE_NOOP("MainWindow", "The simulated fix-broken transaction proposed no package changes.") },
     { "grub-bios-no-efi", QT_TRANSLATE_NOOP("MainWindow", "GRUB detected on legacy BIOS; no EFI boot path is available.") },
@@ -1769,6 +1770,8 @@ const MsgSpec kMsgSpecs[] = {
     { "fedora-initramfs-identical", QT_TRANSLATE_NOOP("MainWindow", "PASS: Fedora initramfs for %1 rebuilt byte-identical; temporary build discarded.") },
     { "fedora-initramfs-rebuilt", QT_TRANSLATE_NOOP("MainWindow", "PASS: Fedora initramfs rebuilt and verified for %1") },
     { "file-copy-mode", QT_TRANSLATE_NOOP("MainWindow", "File Copy %1: %2") },
+    { "filecopy-filesystem-changed", QT_TRANSLATE_NOOP("MainWindow", "File Copy changed diagnostic-relevant files.") },
+    { "filecopy-filesystem-unchanged", QT_TRANSLATE_NOOP("MainWindow", "File Copy made no diagnostic-relevant filesystem change; cached diagnostics remain valid.") },
     { "fix-broken-simulation-exit-code", QT_TRANSLATE_NOOP("MainWindow", "Simulation exit code for '--fix-broken install': %1") },
     { "fs-released-mounts", QT_TRANSLATE_NOOP("MainWindow", "Released the helper's read-only mount(s) of %1 before offline repair.") },
     { "fs-repair", QT_TRANSLATE_NOOP("MainWindow", "REPAIR: %1 (%2) on %3 (fstype=%4, uuid=%5, mount=%6)") },
@@ -21664,12 +21667,11 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
                   .arg(title, diskPath, componentPath),
               QStringLiteral("INFO"), kind);
 
+    const bool isFileCopy = !arguments.isEmpty() && arguments.first() == QStringLiteral("copy");
     const bool targetModified = !arguments.isEmpty()
         && (arguments.first() == QStringLiteral("repair")
             || arguments.first() == QStringLiteral("fs-repair")
-            || arguments.first() == QStringLiteral("host-fs-repair")
-            || (arguments.first() == QStringLiteral("copy")
-                && arguments.value(3) == QStringLiteral("host-to-repair")));
+            || arguments.first() == QStringLiteral("host-fs-repair"));
     bool processSucceeded = false;
     QStringList helperArguments = arguments;
     if (hostMode && !helperArguments.isEmpty()
@@ -21839,7 +21841,7 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
     }
 
     if (!processSucceeded) {
-        if (targetModified) {
+        if (targetModified || isFileCopy) {
             if (m_fullRepairPlanInProgress) {
                 // The plan owns the single post-plan invalidation and
                 // regeneration; a failed stage accumulates the complete set so
@@ -21848,9 +21850,14 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
             } else {
                 // A failed modifying workflow may have completed an earlier stage
                 // before stopping. A failure forces the complete set (fail safe)
-                // until a fresh diagnostic proves the resulting state.
+                // until a fresh diagnostic proves the resulting state.  A failed
+                // File Copy never emits a change verdict, so it falls back to
+                // the same conservative full invalidation.
                 invalidateDiagnosticsForRepair(invalidationKeys, /*failed=*/true,
-                                               QStringLiteral("modifying repair failed"), kind);
+                                               isFileCopy
+                                                   ? QStringLiteral("File Copy failed after modifying files")
+                                                   : QStringLiteral("modifying repair failed"),
+                                               kind);
             }
             // A failed modifying action may have left the boot artifacts in an
             // unknown state; never let Reconcile boot stack reuse a repair
@@ -21863,7 +21870,30 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
     }
 
     if (processSucceeded) {
-        if (targetModified) {
+        if (isFileCopy) {
+            // File Copy completion: the helper emits the stable
+            // `Repair change status filecopy: changed|unchanged` verdict (a
+            // ctime scan against a session marker) only when the copy completed
+            // successfully.  The verdict is the single source of truth here:
+            // invalidate the cached evidence only when the helper reported a
+            // filesystem change.  A missing verdict (an older helper) keeps the
+            // fail-safe changed behavior.
+            const QMap<QString, QString> copyStatuses = parseRepairChangeStatuses(helperOutput);
+            const bool copyProvenUnchanged = copyStatuses.contains(QStringLiteral("filecopy"))
+                && repairChangeStatusIsUnchanged(copyStatuses.value(QStringLiteral("filecopy")));
+            if (copyProvenUnchanged) {
+                appendLog(QStringLiteral("File Copy made no diagnostic-relevant filesystem change; cached diagnostics remain usable."),
+                          QStringLiteral("INFO"), kind);
+            } else {
+                invalidateDiagnosticsForRepair({QStringLiteral("filecopy")}, /*failed=*/false,
+                                               QStringLiteral("File Copy changed diagnostic-relevant files"), kind);
+                // A changed copy may have replaced boot artifacts; drop the
+                // EFI/UKI reuse claim so a later boot-stack reconcile cannot
+                // assume those artifacts are still the repair's.
+                m_efiBootloaderRepaired = false;
+                m_efiBootloaderRepairedScope.clear();
+            }
+        } else if (targetModified) {
             // Evidence-driven invalidation: only actions the helper proved
             // changed invalidate their mapped sections. A missing or malformed
             // status line keeps the fail-safe changed behavior.

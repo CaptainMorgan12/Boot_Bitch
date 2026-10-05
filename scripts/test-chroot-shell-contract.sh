@@ -2498,4 +2498,54 @@ grep -Fqx 'Repair change status shell: changed' "$shell_change_root/chmod-file/o
         -print -quit 2>/dev/null || true)" ]] \
     || { echo 'FAIL: a mtime-based scan found the chmoded file; the change verdict is not ctime-driven' >&2; exit 1; }
 
+# Change-aware File Copy invalidation: the verified File Copy reuses the same
+# ctime-scan verdict as the reviewed shell through the `filecopy` status key.
+# Three cases prove the contract: (a) a copy landing under /etc -> changed;
+# (b) a copy landing under /home (user space, not a scanned root) -> unchanged;
+# (c) a no-op copy (byte-identical files) into /etc -> unchanged.
+run_filecopy_change_detect_case()
+{
+    local name="$1" mutate="$2"
+    local root="$shell_change_root/$name"
+    mkdir -p "$root/target/etc" "$root/target/home/user" "$root/target/boot"
+    printf 'base\n' > "$root/target/etc/hostname"
+    (
+        source <(sed '/^main "$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$root/session"
+        mkdir -p "$SESSION_DIR"
+        SESSION_LOG="$SESSION_DIR/session.log"
+        TARGET_ROOT="$root/target"
+        # run_file_copy touches the marker right before the transfer loop; a
+        # preview never touches it.  Model the real-copy marker placement.  A
+        # real copy's rsync startup guarantees the transfer lands in a later
+        # timestamp tick than the marker; sleep reproduces that gap so the
+        # strict `-cnewer` (>) comparison behaves deterministically here.
+        touch "$SESSION_DIR/shell-change-marker"
+        sleep 1
+        eval "$mutate"
+        filesystem_change_verdict "$TARGET_ROOT" filecopy
+    ) > "$root/output" 2>&1 || true
+}
+
+run_filecopy_change_detect_case filecopy-etc-write 'printf "changed\\n" >> "$TARGET_ROOT/etc/hostname"'
+grep -Fqx 'Repair change status filecopy: changed' "$shell_change_root/filecopy-etc-write/output" \
+    || { echo 'FAIL: a File Copy landing under /etc was not reported as a filesystem change' >&2; cat "$shell_change_root/filecopy-etc-write/output" >&2; exit 1; }
+grep -Fq 'msg:filecopy-filesystem-changed' "$shell_change_root/filecopy-etc-write/output" \
+    || { echo 'FAIL: the /etc File Copy did not emit the changed message key' >&2; exit 1; }
+
+run_filecopy_change_detect_case filecopy-home-write 'printf "changed\\n" >> "$TARGET_ROOT/home/user/foo"'
+grep -Fqx 'Repair change status filecopy: unchanged|reason:filecopy-no-filesystem-change' \
+    "$shell_change_root/filecopy-home-write/output" \
+    || { echo 'FAIL: a File Copy landing under /home was not reported as unchanged' >&2; cat "$shell_change_root/filecopy-home-write/output" >&2; exit 1; }
+grep -Fq 'msg:filecopy-filesystem-unchanged' "$shell_change_root/filecopy-home-write/output" \
+    || { echo 'FAIL: the /home File Copy did not emit the unchanged message key' >&2; exit 1; }
+
+run_filecopy_change_detect_case filecopy-noop ':'
+grep -Fqx 'Repair change status filecopy: unchanged|reason:filecopy-no-filesystem-change' \
+    "$shell_change_root/filecopy-noop/output" \
+    || { echo 'FAIL: a no-op File Copy into /etc was not reported as unchanged' >&2; cat "$shell_change_root/filecopy-noop/output" >&2; exit 1; }
+grep -Fq 'msg:filecopy-filesystem-unchanged' "$shell_change_root/filecopy-noop/output" \
+    || { echo 'FAIL: the no-op File Copy did not emit the unchanged message key' >&2; exit 1; }
+
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."

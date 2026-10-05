@@ -6181,6 +6181,12 @@ run_file_copy_modern()
     fi
     msg_log sources-count "${#sources[@]}"
 
+    # A real copy may write diagnostic-relevant files under a scanned root
+    # (/etc, /boot, ...).  Touch the session marker after the target is
+    # promoted rw but before the first transfer so the post-copy ctime scan
+    # (filesystem_change_verdict below) only attributes this copy's writes.
+    [[ "$mode" == "copy" ]] && touch "$SESSION_DIR/shell-change-marker"
+
     for source in "${sources[@]:-}"; do
         chown_value=""
         if [[ "$ownership" == "smart" ]]; then
@@ -6238,6 +6244,11 @@ run_file_copy_modern()
         msg_log copy-sha-verified "$sha_count"
         msg_log copy-rsync-recheck-pass
         msg_log copy-unrelated-retained
+        if [[ "$direction" == "host-to-repair" ]]; then
+            filesystem_change_verdict "$TARGET_ROOT" filecopy
+        else
+            filesystem_change_verdict "" filecopy
+        fi
     else
         msg_log preview-complete
     fi
@@ -21796,19 +21807,20 @@ shell_command_not_found_hint()
 }
 
 # ---------------------------------------------------------------------------
-# Shell change detection.  A reviewed shell command may or may not touch
-# diagnostic-relevant files, and the GUI invalidates its cached read-only
-# diagnostics only when it did.  A marker in the session directory (never the
-# target) is touched just before the command runs; afterwards ONE find scan
-# compares each diagnostic-relevant root's ctime against that marker and stops
-# at the first hit (`-quit`), so the check is cheap.  `-cnewer` (ctime, not
-# mtime) catches chmod/chown and mtime-preserving edits, not just content
-# writes.  Missing roots (no separate ESP, no rpm/apk database) are
-# noise-suppressed with `2>/dev/null` and simply do not match.  The chroot
-# shell passes "$TARGET_ROOT" as the prefix; the running-host shell passes an
-# empty prefix so the live /etc, /boot, ... are scanned directly.
+# Filesystem change detection.  A reviewed shell command or a verified File
+# Copy may or may not touch diagnostic-relevant files, and the GUI invalidates
+# its cached read-only diagnostics only when it did.  A marker in the session
+# directory (never the target) is touched just before the action runs;
+# afterwards ONE find scan compares each diagnostic-relevant root's ctime
+# against that marker and stops at the first hit (`-quit`), so the check is
+# cheap.  `-cnewer` (ctime, not mtime) catches chmod/chown and mtime-preserving
+# edits, not just content writes.  Missing roots (no separate ESP, no rpm/apk
+# database) are noise-suppressed with `2>/dev/null` and simply do not match.
+# The chroot shell and host-to-repair File Copy pass "$TARGET_ROOT" as the
+# prefix; the running-host shell and repair-to-host File Copy pass an empty
+# prefix so the live /etc, /boot, ... are scanned directly.
 # ---------------------------------------------------------------------------
-shell_change_scan()
+filesystem_change_scan()
 {
     local root_prefix="$1"
     find "${root_prefix}/etc" \
@@ -21820,19 +21832,37 @@ shell_change_scan()
         -cnewer "$SESSION_DIR/shell-change-marker" -print -quit 2>/dev/null || true
 }
 
-# Emit the stable change verdict for a completed shell command.  `changed` is
-# the fail-safe default in the GUI, so only a proven no-filesystem-change emits
-# `unchanged|reason:shell-no-filesystem-change`.
-shell_change_verdict()
+# Emit the stable change verdict for a completed filesystem-modifying action.
+# `changed` is the fail-safe default in the GUI, so only a proven
+# no-filesystem-change emits `unchanged|reason:<key>-no-filesystem-change`.
+# `status_key` names the consuming workflow: `shell` for the reviewed shell
+# command, `filecopy` for the verified File Copy.
+filesystem_change_verdict()
 {
-    local root_prefix="$1"
-    if [[ -n "$(shell_change_scan "$root_prefix")" ]]; then
-        msg_log shell-filesystem-changed
-        repair_change_status shell changed
-    else
-        msg_log shell-filesystem-unchanged
-        repair_change_status shell "unchanged|$(reason shell-no-filesystem-change)"
-    fi
+    local root_prefix="$1" status_key="$2"
+    case "$status_key" in
+        shell)
+            if [[ -n "$(filesystem_change_scan "$root_prefix")" ]]; then
+                msg_log shell-filesystem-changed
+                repair_change_status shell changed
+            else
+                msg_log shell-filesystem-unchanged
+                repair_change_status shell "unchanged|$(reason shell-no-filesystem-change)"
+            fi
+            ;;
+        filecopy)
+            if [[ -n "$(filesystem_change_scan "$root_prefix")" ]]; then
+                msg_log filecopy-filesystem-changed
+                repair_change_status filecopy changed
+            else
+                msg_log filecopy-filesystem-unchanged
+                repair_change_status filecopy "unchanged|$(reason filecopy-no-filesystem-change)"
+            fi
+            ;;
+        *)
+            fail "Internal filesystem change verdict error: unknown status key '$status_key'."
+            ;;
+    esac
 }
 
 # Execute one reviewed command as root inside a fresh target chroot with a
@@ -21955,7 +21985,7 @@ run_chroot_shell_modern()
         exit 124
     fi
     (( rc == 0 )) || fail "Chroot shell command failed (exit code $rc)."
-    shell_change_verdict "$TARGET_ROOT"
+    filesystem_change_verdict "$TARGET_ROOT" shell
 }
 
 # Execute one reviewed command directly on the running host through the
@@ -22051,7 +22081,7 @@ run_host_shell_modern()
         exit "$rc"
     fi
     msg_log host-shell-pass
-    shell_change_verdict ""
+    filesystem_change_verdict "" shell
 }
 
 # ---------------------------------------------------------------------------
