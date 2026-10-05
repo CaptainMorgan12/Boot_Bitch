@@ -11067,6 +11067,7 @@ diagnostic_title()
     case "$1" in
         environment) printf '%s\n' "Environment validation" ;;
         backend)     printf '%s\n' "Distribution and boot backend profile" ;;
+        package)     printf '%s\n' "Package state" ;;
         boot)        printf '%s\n' "Boot diagnostics" ;;
         boot-evidence) printf '%s\n' "Boot evidence and selection history" ;;
         kernel)      printf '%s\n' "Kernel / initramfs" ;;
@@ -11191,6 +11192,194 @@ diagnostic_backend_profile()
 
     if [[ "$TARGET_DISTRO_FAMILY" == alpine ]]; then
         echo "Alpine status: guarded repairs are selected per detected backend; EFI/GRUB availability follows the detected bootloader backend."
+    fi
+}
+
+# Read-only package-state evidence for the `package` diagnostic section.  For
+# every detected package backend it probes pending-configuration, broken-
+# dependency and missing-file state without ever writing to the target.  This
+# evidence justifies the package-stage repair tools (dpkg/fixbroken/aptupdate/
+# upgrade); the concrete repair transactions stay fresh and are re-derived at
+# mutation time.  Every probe is `|| true`-guarded: a missing probe tool emits
+# "unavailable", never an error, and a target with no pending/broken state
+# emits an explicit "Package state: clean" verdict (never empty, never guessed).
+diagnostic_package_state()
+{
+    local scope_label="target" backend dnf_tool
+    local status_out pending_names pending_count broken_out broken_names broken_count
+    local missing_out missing_count integrity_out integrity_count
+    local rc dirty=0 incomplete=0
+    (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
+    profile_target_backends
+
+    echo "${scope_label^} package state (read-only):"
+
+    if ((${#TARGET_PACKAGE_MANAGERS[@]} == 0)); then
+        echo "Package state: unavailable|no package-manager backend detected"
+        return 0
+    fi
+
+    for backend in "${TARGET_PACKAGE_MANAGERS[@]}"; do
+        case "$backend" in
+            apt/dpkg)
+                if ! target_dpkg_ready; then
+                    echo "Package pending configuration: unavailable|dpkg database or executable missing"
+                    echo "Package broken dependencies: unavailable|dpkg database or executable missing"
+                    incomplete=1
+                    continue
+                fi
+                # Pending configuration: read-only dpkg-query of each package's
+                # desired state word.  Any desired-install package not fully
+                # "installed" is pending.
+                set +e
+                status_out="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                    dpkg-query -W -f='${db:Status-Status} ${binary:Package}\n' 2>/dev/null)"
+                rc=$?
+                set -e
+                if (( rc != 0 )); then
+                    echo "Package pending configuration: unavailable|dpkg-query could not read the package database"
+                    incomplete=1
+                else
+                    pending_names="$(printf '%s\n' "$status_out" \
+                        | awk 'NF >= 2 && $1 != "installed" && $1 != "config-files" && $1 != "not-installed" && $1 != "unknown" { print $2 }' \
+                        | LC_ALL=C sort -u | tr '\n' ' ')"
+                    pending_names="${pending_names% }"
+                    pending_count=0
+                    [[ -n "$pending_names" ]] && pending_count="$(wc -w <<<"$pending_names")"
+                    if (( pending_count > 0 )); then
+                        echo "Package pending configuration: $pending_count package(s): $pending_names"
+                        dirty=1
+                    else
+                        echo "Package pending configuration: none"
+                    fi
+                fi
+                # Broken dependencies: read-only `apt-get check` (no network,
+                # no writes).  It reports unmet dependencies and exits 100 when
+                # the dependency graph is broken; a clean target prints nothing.
+                if ! target_has_executable /usr/bin/apt-get /usr/sbin/apt-get /bin/apt-get; then
+                    echo "Package broken dependencies: unavailable|apt-get missing"
+                    incomplete=1
+                else
+                    set +e
+                    broken_out="$(run_selected_chroot /usr/bin/env \
+                        HOME=/root \
+                        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                        DEBIAN_FRONTEND=noninteractive \
+                        APT_LISTCHANGES_FRONTEND=none \
+                        apt-get check 2>&1)"
+                    rc=$?
+                    set -e
+                    if (( rc != 0 )) && ! grep -Eiq 'unmet dependencies|broken' <<<"$broken_out"; then
+                        echo "Package broken dependencies: unavailable|apt-get check could not run"
+                        incomplete=1
+                    elif grep -Eiq 'The following packages have unmet dependencies|E: Unmet dependencies' <<<"$broken_out"; then
+                        broken_names="$(printf '%s\n' "$broken_out" \
+                            | awk '/^[[:space:]]+[^ :]+ : (Depends|PreDepends|Breaks|Conflicts|Recommends):/ { line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+:.*/, "", line); print line }' \
+                            | LC_ALL=C sort -u | tr '\n' ' ')"
+                        broken_names="${broken_names% }"
+                        broken_count=0
+                        [[ -n "$broken_names" ]] && broken_count="$(wc -w <<<"$broken_names")"
+                        if (( broken_count > 0 )); then
+                            echo "Package broken dependencies: $broken_count package(s): $broken_names"
+                        else
+                            echo "Package broken dependencies: yes (unmet dependencies detected)"
+                        fi
+                        dirty=1
+                    else
+                        echo "Package broken dependencies: none"
+                    fi
+                fi
+                ;;
+            apk)
+                if ! target_has_executable /sbin/apk /usr/sbin/apk /usr/bin/apk; then
+                    echo "Package missing files: unavailable|apk executable missing"
+                    incomplete=1
+                else
+                    set +e
+                    missing_out="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                        apk audit --system 2>&1)"
+                    rc=$?
+                    set -e
+                    if (( rc != 0 )); then
+                        echo "Package missing files: unavailable|apk audit --system failed"
+                        incomplete=1
+                    else
+                        missing_count="$(printf '%s\n' "$missing_out" | grep -c '^X ' || true)"
+                        if (( missing_count > 0 )); then
+                            echo "Package missing files: $missing_count file(s)"
+                            dirty=1
+                        else
+                            echo "Package missing files: none"
+                        fi
+                    fi
+                fi
+                ;;
+            pacman)
+                if [[ ! -x "$TARGET_ROOT/usr/bin/pacman" && ! -x "$TARGET_ROOT/usr/bin/pacman-static" ]]; then
+                    echo "Package integrity issues: unavailable|pacman executable missing"
+                    incomplete=1
+                else
+                    set +e
+                    integrity_out="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                        pacman -Qk 2>&1)"
+                    rc=$?
+                    set -e
+                    if (( rc != 0 )); then
+                        integrity_count="$(printf '%s\n' "$integrity_out" | grep -c 'warning:' || true)"
+                        if (( integrity_count > 0 )); then
+                            echo "Package integrity issues: $integrity_count file(s)"
+                            dirty=1
+                        else
+                            echo "Package integrity issues: yes (pacman -Qk reported problems)"
+                            dirty=1
+                        fi
+                    else
+                        echo "Package integrity issues: none"
+                    fi
+                fi
+                ;;
+            rpm)
+                if ! target_has_executable /usr/bin/rpm /bin/rpm /usr/sbin/rpm; then
+                    echo "Package integrity issues: unavailable|rpm executable missing"
+                    incomplete=1
+                else
+                    dnf_tool="$(rpm_dnf_tool || true)"
+                    if [[ -z "$dnf_tool" ]]; then
+                        echo "Package integrity issues: unavailable|dnf5 missing"
+                        incomplete=1
+                    else
+                        set +e
+                        integrity_out="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                            "$dnf_tool" check 2>&1)"
+                        rc=$?
+                        set -e
+                        if (( rc != 0 )); then
+                            integrity_count="$(printf '%s\n' "$integrity_out" | grep -cE '^[[:space:]]*(Problem|package .* (requires|conflicts))' || true)"
+                            if (( integrity_count > 0 )); then
+                                echo "Package integrity issues: $integrity_count dependency problem(s)"
+                                dirty=1
+                            else
+                                echo "Package integrity issues: yes (dnf check reported problems)"
+                                dirty=1
+                            fi
+                        else
+                            echo "Package integrity issues: none"
+                        fi
+                    fi
+                fi
+                ;;
+            *)
+                echo "Package state: $backend: no read-only state probe implemented"
+                ;;
+        esac
+    done
+
+    if (( dirty == 1 )); then
+        echo "Package state: attention|pending or broken package state reported above"
+    elif (( incomplete == 1 )); then
+        echo "Package state: incomplete|one or more package-state probes unavailable"
+    else
+        echo "Package state: clean"
     fi
 }
 
@@ -16612,6 +16801,7 @@ run_one_diagnostic()
     case "$key" in
         environment) diagnostic_environment || rc=$? ;;
         backend)     diagnostic_backend_profile || rc=$? ;;
+        package)     diagnostic_package_state || rc=$? ;;
         filesystem)  diagnostic_filesystem || rc=$? ;;
         boot)        diagnostic_boot || rc=$? ;;
         boot-evidence) diagnostic_boot_evidence || rc=$? ;;
@@ -16657,7 +16847,7 @@ run_target_diagnostic()
         # The File systems section runs last: its read-only check tools require
         # the helper-owned mounts to be released, while every earlier section
         # still reads the mounted target.
-        for key in environment backend boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
             run_one_target_diagnostic "$key" || true
         done
         REPORT_SHARED_PREAMBLE=0
@@ -16689,7 +16879,7 @@ run_host_diagnostic()
         echo
         # See run_target_diagnostic: the File systems section is last because
         # it releases the helper's read-only mounts for the offline check tools.
-        for key in environment backend boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
         done
         REPORT_SHARED_PREAMBLE=0

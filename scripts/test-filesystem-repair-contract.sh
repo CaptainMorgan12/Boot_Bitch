@@ -1397,7 +1397,7 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
     || { echo 'FAIL: combined report lost capability evidence lines' >&2; exit 1; }
-[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 16 ]] \
+[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 17 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }

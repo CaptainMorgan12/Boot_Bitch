@@ -102,8 +102,8 @@ for rule in \
     'assoc accesses: allowed_nodes +1' \
     'case conversion ,, +66' \
     'case conversion \^\^ +20' \
-    'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +498' \
+    'case conversion \^ +24' \
+    'array \[@\] expansions \(all forms\) +500' \
     'mapfile call sites +66' \
     'sed -i -E +1' \
     'sed -nE +89' \
@@ -112,7 +112,7 @@ for rule in \
     'date --iso-8601 +4' \
     '=~ regex literal hoists +11' \
     'os-release gates +1' \
-    'dpkg db:Status sites +5' \
+    'dpkg db:Status sites +6' \
     'wrapped/replaced modern functions +43' \
     'mount-sweep process substitutions rewritten +6' \
     'legacy boot-remount promotion sites +2' \
@@ -131,7 +131,7 @@ for rule in \
     'shim calls: legacy_date_iso +4' \
     'shim calls: legacy_lc +66' \
     'shim calls: legacy_uc +20' \
-    'shim calls: legacy_ucfirst +23' \
+    'shim calls: legacy_ucfirst +24' \
     'shim calls: legacy_assoc_get +31' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +1' \
