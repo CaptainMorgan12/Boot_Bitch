@@ -210,7 +210,8 @@ inline void cacheRepairEvidence(MainWindow &window, const QString &evidence)
     for (const QString &key : {QStringLiteral("report"), QStringLiteral("environment"),
                               QStringLiteral("backend"), QStringLiteral("filesystem"),
                               QStringLiteral("kernel"), QStringLiteral("grub"), QStringLiteral("uki"),
-                              QStringLiteral("display"), QStringLiteral("boot")}) {
+                              QStringLiteral("display"), QStringLiteral("boot"),
+                              QStringLiteral("boot-evidence")}) {
         cache.insert(key, QStringLiteral("Diagnostic: %1\n%2").arg(key, evidence));
     }
 }

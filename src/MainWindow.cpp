@@ -872,20 +872,36 @@ static QString diagnosticKeyForRepairTool(const QString &toolKey)
 {
     if (toolKey == QStringLiteral("validate")) return QStringLiteral("environment");
     if (toolKey == QStringLiteral("grub")) return QStringLiteral("grub");
-    // The Alpine extlinux capability is proven by the boot-chain diagnostic.
-    if (toolKey == QStringLiteral("extlinux")) return QStringLiteral("boot");
+    // The Alpine extlinux capability is proven by the boot-evidence diagnostic
+    // (the extlinux decision lives in the boot-evidence section, not `boot`).
+    if (toolKey == QStringLiteral("extlinux")) return QStringLiteral("boot-evidence");
     if (toolKey == QStringLiteral("initramfs")) return QStringLiteral("kernel");
     if (toolKey == QStringLiteral("efi")) return QStringLiteral("uki");
     if (toolKey == QStringLiteral("display")) return QStringLiteral("display");
     if (toolKey == QStringLiteral("gpu")) return QStringLiteral("gpu");
     if (toolKey == QStringLiteral("dkms")) return QStringLiteral("kernel");
-    if (toolKey == QStringLiteral("bootstack")) return QStringLiteral("report");
+    if (toolKey == QStringLiteral("bootstack")) return QStringLiteral("boot-evidence");
     if (toolKey == QStringLiteral("kernels")) return QStringLiteral("kernel");
     if (toolKey == QStringLiteral("dpkg") || toolKey == QStringLiteral("fixbroken")
         || toolKey == QStringLiteral("aptupdate") || toolKey == QStringLiteral("upgrade")) {
         return QStringLiteral("package");
     }
     return QStringLiteral("report");
+}
+
+// Sections with a helper-side baseline consumer, serialized by the repair-run
+// path as `--evidence <section> <base64>`.  gpu is passed as --gpu-baseline by
+// runGpuRepairSession, and report has no consumer anymore (the boot-stack
+// repair now consumes its four component baselines instead of the combined
+// report).  Any other required section is gated by the popup check only and
+// stays verified fresh by the helper's own preflights.
+static bool repairToolSerializesBaselineSection(const QString &section)
+{
+    return section == QStringLiteral("kernel")
+        || section == QStringLiteral("display")
+        || section == QStringLiteral("uki")
+        || section == QStringLiteral("grub")
+        || section == QStringLiteral("boot-evidence");
 }
 
 // Required diagnostic sections per repair tool: the cached sections whose
@@ -15338,8 +15354,8 @@ QStringList MainWindow::requiredDiagnosticSectionsForTool(const QString &toolKey
     if (toolKey == QStringLiteral("initramfs")) return {QStringLiteral("kernel")};
     if (toolKey == QStringLiteral("efi")) return {QStringLiteral("uki")};
     if (toolKey == QStringLiteral("grub")) return {QStringLiteral("grub")};
-    if (toolKey == QStringLiteral("extlinux")) return {QStringLiteral("boot")};
-    if (toolKey == QStringLiteral("bootstack")) return {QStringLiteral("report")};
+    if (toolKey == QStringLiteral("extlinux")) return {QStringLiteral("boot-evidence")};
+    if (toolKey == QStringLiteral("bootstack")) return {QStringLiteral("boot-evidence"), QStringLiteral("kernel"), QStringLiteral("uki"), QStringLiteral("grub")};
     if (toolKey == QStringLiteral("kernels")) return {QStringLiteral("kernel")};
     if (toolKey == QStringLiteral("gpu")) return {QStringLiteral("gpu"), QStringLiteral("kernel")};
     return {QStringLiteral("report")};
@@ -21978,14 +21994,17 @@ void MainWindow::runSelectedRepairTool()
     arguments.append(stages);
     // Serialize the cached baseline sections the helper consumes so those
     // repairs reuse the cached diagnostic evidence instead of re-collecting:
-    // dkms/initramfs consume the `kernel` section, the display repair consumes
-    // the `display` section.  The interactive kernels/gpu sessions pass
-    // --baseline/--gpu-baseline in their own run functions; required sections
-    // without a helper-side baseline consumer are gated by the popup check
-    // above only and stay verified fresh by the helper's own preflights.
+    // dkms/initramfs consume `kernel`, the display repair consumes `display`,
+    // the EFI/UKI repair consumes `uki`, the GRUB repair consumes `grub`, the
+    // extlinux repair consumes `boot-evidence`, and the boot-stack
+    // reconciliation consumes all four boot component baselines.  The
+    // interactive kernels/gpu sessions pass --baseline/--gpu-baseline in their
+    // own run functions; required sections without a helper-side baseline
+    // consumer are gated by the popup check above only and stay verified fresh
+    // by the helper's own preflights.
     const auto &evidenceCache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
     for (const QString &section : requiredDiagnosticSectionsForTool(key)) {
-        if (section != QStringLiteral("kernel") && section != QStringLiteral("display")) {
+        if (!repairToolSerializesBaselineSection(section)) {
             continue;
         }
         const QString cached = evidenceCache.value(section);
@@ -22128,6 +22147,21 @@ void MainWindow::runFullRepair()
     if (helperStages.contains(QStringLiteral("efi"))
         && helperStages.contains(QStringLiteral("boot-stack"))) {
         arguments.append(QStringLiteral("--post-efi"));
+    }
+    // Serialize the boot-stack component baselines when the plan reconciles the
+    // boot stack, so the reconciliation reuses the cached mapper/crypttab
+    // (boot-evidence), initramfs (kernel), EFI/UKI (uki) and GRUB evidence
+    // instead of re-collecting it.  The per-stage preflights and artifact
+    // fingerprints still re-read live state.
+    if (helperStages.contains(QStringLiteral("boot-stack"))) {
+        const auto &evidenceCache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+        for (const QString &section : requiredDiagnosticSectionsForTool(QStringLiteral("bootstack"))) {
+            const QString cached = evidenceCache.value(section);
+            if (!cached.trimmed().isEmpty()) {
+                arguments << QStringLiteral("--evidence") << section
+                          << QString::fromLatin1(cached.toUtf8().toBase64());
+            }
+        }
     }
     runRepairHelper(tr("Full Repair"), arguments, LogEntryKind::Repair,
                     QStringLiteral("full-repair"), m_fullRepairProgressDialog.data());

@@ -737,7 +737,7 @@ verify_transform_counts()
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
     check_count 'legacy_readarray' 'legacy_readarray' 66
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 108
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 109
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 14
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
     check_count 'legacy_lc' 'legacy_lc ' 66

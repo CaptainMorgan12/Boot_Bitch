@@ -103,10 +103,10 @@ for rule in \
     'case conversion ,, +66' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +502' \
+    'array \[@\] expansions \(all forms\) +503' \
     'mapfile call sites +66' \
     'sed -i -E +1' \
-    'sed -nE +89' \
+    'sed -nE +90' \
     'sed -E +18' \
     'sort -V +14' \
     'date --iso-8601 +4' \
@@ -126,7 +126,7 @@ for rule in \
     'post-rewrite residual: corrupted assoc set +0' \
     'shim calls: legacy_readarray +66' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +108' \
+    'shim calls: legacy_sed_ext +109' \
     'shim calls: legacy_sort_versions +14' \
     'shim calls: legacy_date_iso +4' \
     'shim calls: legacy_lc +66' \
