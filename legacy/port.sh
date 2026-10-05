@@ -742,7 +742,7 @@ verify_transform_counts()
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
     check_count 'legacy_lc' 'legacy_lc ' 66
     check_count 'legacy_uc' 'legacy_uc ' 20
-    check_count 'legacy_ucfirst' 'legacy_ucfirst ' 23
+    check_count 'legacy_ucfirst' 'legacy_ucfirst ' 24
     check_count 'legacy_assoc_get' 'legacy_assoc_get ' 31
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 1

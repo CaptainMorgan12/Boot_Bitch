@@ -170,11 +170,12 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
     window.show();
     QTest::qWait(50);
     QVERIFY(window.m_diagnosticList);
-    QCOMPARE(window.m_diagnosticList->count(), 17);
+    QCOMPARE(window.m_diagnosticList->count(), 18);
 
     const QHash<QString, QString> expected = {
         {QStringLiteral("environment"), QStringLiteral("Summarize the selected system, protection state and inspection readiness.")},
         {QStringLiteral("backend"), QStringLiteral("Detect the distribution, bootloader, ESP and current repair capability.")},
+        {QStringLiteral("package"), QStringLiteral("Summarize pending configuration and broken dependency state read-only.")},
         {QStringLiteral("boot"), QStringLiteral("Show boot mounts, /boot and EFI contents read-only.")},
         {QStringLiteral("boot-evidence"), QStringLiteral("Correlate the boot chain, loader, kernel/initramfs and unlock evidence.")},
         {QStringLiteral("kernel"), QStringLiteral("Verify kernel files and matching initramfs images read-only.")},
@@ -664,7 +665,7 @@ void MainWindowUiTest::requiredDiagnosticSectionsMapping()
     for (const QString &key : {QStringLiteral("dpkg"), QStringLiteral("fixbroken"),
                                QStringLiteral("aptupdate"), QStringLiteral("upgrade")}) {
         QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(key),
-                 QStringList({QStringLiteral("backend")}));
+                 QStringList({QStringLiteral("package")}));
     }
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("dkms")),
              QStringList({QStringLiteral("kernel")}));

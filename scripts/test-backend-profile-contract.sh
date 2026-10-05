@@ -36,7 +36,7 @@ required_helper_functions=(
     grub_artifact_fingerprint fedora_bls_entry_keys guard_fedora_bls_entries_preserved preflight_fedora_grub adaptive_fedora_grub_repair adaptive_grub_stage
     fedora_bios_grub_partition fedora_grub_boot_code_broken partition_table_fingerprint fedora_grub_boot_fingerprint preflight_fedora_grub_reinstall fedora_grub_reinstall_boot_code
     fedora_grub_backup_boot_state fedora_grub_restore_boot_backup fedora_bootstack_pairing_check diagnostic_package_manager_logs package_log_filter target_journal_evidence_present
-    apt_lists_fingerprint rpm_metadata_cache_fingerprint grub_entry_is_foreign diagnostic_repair_capabilities apt_update_allow_release_info_retry apt_update_release_info_change_only
+    apt_lists_fingerprint rpm_metadata_cache_fingerprint grub_entry_is_foreign diagnostic_repair_capabilities diagnostic_package_state apt_update_allow_release_info_retry apt_update_release_info_change_only
     apt_update_release_info_change_repos apt_update_release_info_change_details run_apt_update parse_repair_arguments repair_change_status repair_file_fingerprint
     initramfs_image_fingerprint efi_boot_artifact_fingerprint apt_transaction_reported_no_changes dpkg_configuration_pending dpkg_configure_stage efi_repair_emit_change_status
     display_manager_already_correct apt_simulation_has_pending_packages apt_simulation_requests_full_upgrade run_host_default
@@ -486,6 +486,7 @@ stub_combined_diagnostic_sections()
     mount_target_boot_entry() { :; }
     diagnostic_environment() { printf 'SECTION environment\n'; }
     diagnostic_backend_profile() { printf 'SECTION backend\n'; }
+    diagnostic_package_state() { printf 'SECTION package\n'; }
     diagnostic_boot() { printf 'SECTION boot\n'; }
     diagnostic_boot_evidence() { printf 'SECTION boot-evidence\n'; }
     diagnostic_kernel() { printf 'SECTION kernel\n'; }
@@ -520,9 +521,9 @@ assert_combined_report()
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report lost capability evidence lines" >&2; exit 1; }
-    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 16 ]] \
+    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 17 ]] \
         || { echo "FAIL: $label combined report did not run every diagnostic section" >&2; exit 1; }
-    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 16 ]] \
+    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 17 ]] \
         || { echo "FAIL: $label combined report diagnostic section headers changed" >&2; exit 1; }
     # The dedicated File systems section is part of the combined report and is
     # generated and cached with every other section.
@@ -548,6 +549,66 @@ target_combined="${combined_reports%%=====HOST COMBINED REPORT=====*}"
 host_combined="${combined_reports#*=====HOST COMBINED REPORT=====}"
 assert_combined_report target "$target_combined"
 assert_combined_report host "$host_combined"
+
+# The `package` diagnostic is read-only: its body must never run a modifying
+# package command or write into the target.  It emits stable evidence lines and
+# an explicit clean/attention verdict for the detected backends.
+pkg_state_body="$(sed -n '/^diagnostic_package_state()/,/^}/p' "$HELPER")"
+[[ -n "$pkg_state_body" ]] || { echo 'FAIL: diagnostic_package_state is missing' >&2; exit 1; }
+for pkg_forbidden in 'dpkg --configure' 'dpkg -i ' 'apt-get -y' 'apt-get install' \
+    'apk fix' 'apk add' 'apk del' 'apk upgrade' 'pacman -S' 'pacman -U' 'pacman -R' \
+    'dnf install' 'dnf upgrade' 'dnf5 install' 'dnf5 upgrade' 'rpm -i ' 'rpm -U ' \
+    '> "$TARGET_ROOT"' '>> "$TARGET_ROOT"' 'rm -' 'mkfs' 'mount -' 'run_chroot ' 'run_chroot_keyed '; do
+    if grep -Fq -- "$pkg_forbidden" <<<"$pkg_state_body"; then
+        echo "FAIL: diagnostic_package_state is not read-only (contains: $pkg_forbidden)" >&2
+        exit 1
+    fi
+done
+
+(
+    source <(sed '/^main "$@"/d' "$HELPER")
+    profile_target_backends() { TARGET_PACKAGE_MANAGERS=(apt/dpkg); TARGET_PACKAGE_MANAGER=apt/dpkg; }
+    target_dpkg_ready() { return 0; }
+    target_has_executable() { return 0; }
+    pkg_diag_root="$(mktemp -d)"
+    trap 'rm -rf -- "$pkg_diag_root"' EXIT
+    # Clean target: every probe reports nothing pending or broken.
+    run_selected_chroot() {
+        if [[ "$*" == *dpkg-query* ]]; then
+            printf 'installed bash\ninstalled coreutils\n'
+        elif [[ "$*" == *apt-get* ]]; then
+            printf 'Reading package lists... Done\n'
+        else
+            printf '%s\n' "$*"
+        fi
+        return 0
+    }
+    clean_out="$(TARGET_ROOT="$pkg_diag_root" RUNNING_HOST_MODE=0 diagnostic_package_state)"
+    grep -Fqx 'Package pending configuration: none' <<<"$clean_out" \
+        || { echo 'FAIL: clean target did not report no pending configuration' >&2; printf '%s\n' "$clean_out" >&2; exit 1; }
+    grep -Fqx 'Package broken dependencies: none' <<<"$clean_out" \
+        || { echo 'FAIL: clean target did not report no broken dependencies' >&2; printf '%s\n' "$clean_out" >&2; exit 1; }
+    grep -Fqx 'Package state: clean' <<<"$clean_out" \
+        || { echo 'FAIL: clean target did not report a clean verdict' >&2; printf '%s\n' "$clean_out" >&2; exit 1; }
+    # Pending + broken target names the state and flips the verdict.
+    run_selected_chroot() {
+        if [[ "$*" == *dpkg-query* ]]; then
+            printf 'unpacked libfoo\ninstalled bash\nhalf-configured libbar\n'
+        elif [[ "$*" == *apt-get* ]]; then
+            printf 'You might want to run .\nThe following packages have unmet dependencies:\n libfoo : Depends: libbaz (>= 1.0) but it is not going to be installed\nE: Unmet dependencies. Try .\n'
+        else
+            printf '%s\n' "$*"
+        fi
+        return 0
+    }
+    dirty_out="$(TARGET_ROOT="$pkg_diag_root" RUNNING_HOST_MODE=0 diagnostic_package_state)"
+    grep -Fq 'Package pending configuration: 2 package(s):' <<<"$dirty_out" \
+        || { echo 'FAIL: pending target did not report the pending count' >&2; printf '%s\n' "$dirty_out" >&2; exit 1; }
+    grep -Fq 'Package broken dependencies: 1 package(s):' <<<"$dirty_out" \
+        || { echo 'FAIL: broken target did not report the broken count' >&2; printf '%s\n' "$dirty_out" >&2; exit 1; }
+    grep -Fq 'Package state: attention' <<<"$dirty_out" \
+        || { echo 'FAIL: broken target did not report an attention verdict' >&2; printf '%s\n' "$dirty_out" >&2; exit 1; }
+)
 
 cap_arch_min="$(mktemp -d)"
 trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min"' EXIT

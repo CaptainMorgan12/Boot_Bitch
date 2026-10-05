@@ -830,6 +830,7 @@ const QList<DiagnosticSpec> &diagnosticSpecs()
     static const QList<DiagnosticSpec> specs = {
         {"environment", MainWindow::tr("Environment validation"), MainWindow::tr("Summarizes the selected system, protection state, mounted identity and inspection readiness."), MainWindow::tr("Summarize the selected system, protection state and inspection readiness."), "task-complete"},
         {"backend", MainWindow::tr("Distribution and boot backend profile"), MainWindow::tr("Identifies the distribution family, package manager, initramfs generator, bootloader, ESP location and current guarded repair capability."), MainWindow::tr("Detect the distribution, bootloader, ESP and current repair capability."), "distribution"},
+        {"package", MainWindow::tr("Package state"), MainWindow::tr("Summarizes pending configuration, broken dependencies and missing package files for every detected package manager without changing the selected system."), MainWindow::tr("Summarize pending configuration and broken dependency state read-only."), "system-software-install"},
         {"boot", MainWindow::tr("Boot diagnostics"), MainWindow::tr("Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system."), MainWindow::tr("Show boot mounts, /boot and EFI contents read-only."), "system-run"},
         {"boot-evidence", MainWindow::tr("Boot evidence and selection history"), MainWindow::tr("Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected."), MainWindow::tr("Correlate the boot chain, loader, kernel/initramfs and unlock evidence."), "dialog-information"},
         {"kernel", MainWindow::tr("Kernel / initramfs"), MainWindow::tr("Reviews kernel files and verifies matching initramfs images through a read-only inspection."), MainWindow::tr("Verify kernel files and matching initramfs images read-only."), "kernel"},
@@ -882,7 +883,7 @@ static QString diagnosticKeyForRepairTool(const QString &toolKey)
     if (toolKey == QStringLiteral("kernels")) return QStringLiteral("kernel");
     if (toolKey == QStringLiteral("dpkg") || toolKey == QStringLiteral("fixbroken")
         || toolKey == QStringLiteral("aptupdate") || toolKey == QStringLiteral("upgrade")) {
-        return QStringLiteral("environment");
+        return QStringLiteral("package");
     }
     return QStringLiteral("report");
 }
@@ -949,6 +950,7 @@ struct LogSectionFilterSpec {
 static const LogSectionFilterSpec logSectionFilterSpecs[] = {
     {"environment", "dpkg fixbroken aptupdate upgrade"},
     {"backend", "dpkg fixbroken aptupdate upgrade"},
+    {"package", "dpkg fixbroken aptupdate upgrade"},
     {"boot", "bootstack grub extlinux efi"},
     {"boot-evidence", "bootstack grub extlinux efi"},
     {"kernel", "initramfs dkms kernels"},
@@ -1002,10 +1004,11 @@ static const LogWorkflowFilterSpec logWorkflowFilterSpecs[] = {
     // rebuilds are all package operations. The stage topics carry the visible
     // titles; packagefeedback adds the helper's per-backend BEGIN/SKIP and
     // held-back/skipped lines, so a combined Full Repair entry is captured as
-    // well. The environment and backend evidence sections describe the
-    // detected package managers; the file system check/repair keeps its own
-    // workflow above instead of absorbing the package stages.
-    {"topic:package", "Package repair", "dpkg fixbroken aptupdate upgrade dkms packagefeedback kernels", "environment backend"},
+    // well. The environment, backend and package-state evidence sections
+    // describe the detected package managers and their pending/broken state;
+    // the file system check/repair keeps its own workflow above instead of
+    // absorbing the package stages.
+    {"topic:package", "Package repair", "dpkg fixbroken aptupdate upgrade dkms packagefeedback kernels", "environment backend package"},
     // Dedicated file-copy view: the copy operations alone, plus the storage
     // evidence a transfer can affect, without the check/repair tool entries.
     {"topic:filecopy", "File copy", "filecopy", "environment usage btrfs fstab"},
@@ -14392,6 +14395,11 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
             : QStringLiteral("Running-host backend profiling is collected by the privileged read-only helper.\n"));
         stream << "The profile reports distribution family, package manager, initramfs generator, bootloader, ESP location, kernel layout, and whether modifying actions are currently enabled.\n";
         stream << "Arch-family package, initramfs, GRUB and conventional EFI repairs require a transaction-specific preflight; unsupported stages remain gated.\n";
+    } else if (key == QStringLiteral("package")) {
+        stream << (targetScope
+            ? QStringLiteral("Selected repair-system package state is collected by the privileged read-only helper.\n")
+            : QStringLiteral("Running-host package state is collected by the privileged read-only helper.\n"));
+        stream << "The report summarizes pending configuration, broken dependencies and missing package files for every detected package manager without changing the selected system.\n";
     } else if (key == QStringLiteral("boot")) {
         stream << "Physical drive: " << disk.path << '\n';
         stream << "Detected component: " << preferredPath << '\n';
@@ -14516,7 +14524,7 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         }
     } else if (key == QStringLiteral("report")) {
         static const QStringList keys = {
-            QStringLiteral("environment"), QStringLiteral("backend"), QStringLiteral("boot"), QStringLiteral("kernel"),
+            QStringLiteral("environment"), QStringLiteral("backend"), QStringLiteral("package"), QStringLiteral("boot"), QStringLiteral("kernel"),
             QStringLiteral("grub"), QStringLiteral("uki"), QStringLiteral("display"), QStringLiteral("errors"), QStringLiteral("usage"),
             QStringLiteral("filesystem"), QStringLiteral("fstab"), QStringLiteral("btrfs"), QStringLiteral("mapper"),
             QStringLiteral("luks")
@@ -15323,7 +15331,7 @@ QStringList MainWindow::requiredDiagnosticSectionsForTool(const QString &toolKey
     if (toolKey == QStringLiteral("filesystem")) return {QStringLiteral("filesystem")};
     if (toolKey == QStringLiteral("dpkg") || toolKey == QStringLiteral("fixbroken")
         || toolKey == QStringLiteral("aptupdate") || toolKey == QStringLiteral("upgrade")) {
-        return {QStringLiteral("backend")};
+        return {QStringLiteral("package")};
     }
     if (toolKey == QStringLiteral("dkms")) return {QStringLiteral("kernel")};
     if (toolKey == QStringLiteral("display")) return {QStringLiteral("display")};
