@@ -31,6 +31,7 @@ class QFile;
 class QFrame;
 class QGroupBox;
 class QLabel;
+class QLayout;
 class QLineEdit;
 class QListWidget;
 class QPlainTextEdit;
@@ -39,6 +40,7 @@ class QPushButton;
 class QResizeEvent;
 class QSettings;
 class QSplitter;
+class QStackedWidget;
 class QTabWidget;
 class QTableWidget;
 class QTimer;
@@ -144,6 +146,96 @@ struct SnapshotInventoryRow {
     QString description;
     QString status;
     QString relativePath;
+};
+
+// One parsed firmware boot entry from the helper's `efi-list` TAB-separated
+// protocol. The `id` is the four-hex Boot#### number (without the `Boot`
+// prefix). The type is shared with the UI tests so the production parser and
+// row population can be exercised without a privileged helper.
+struct BootEntryRow {
+    QString id;          // "0000" (uppercase four hex digits)
+    QString label;
+    QString loader;      // decoded loader path, or "device-path-only"
+    QString entryClass;  // host | repair | foreign | unknown
+    QString role;        // uki | fallback | wfai | shim | loader | ...
+    QString partuuid;    // lowercase GPT PARTUUID, or "unknown"
+    QString deviceModel; // drive model annotation, or empty
+    bool listed = true;  // present in BootOrder vs appended by firmware
+};
+
+// The complete `efi-list` result: the BootCurrent/BootOrder header plus every
+// parsed entry row in firmware order.
+struct BootEntriesInventory {
+    QString bootCurrent;
+    QString bootOrder;
+    QList<BootEntryRow> rows;
+};
+
+// One parsed GRUB boot-menu entry from the helper's read-only `grub-list`
+// TAB-separated protocol.  The GRUB menu view is strictly read-only: these
+// fields are only ever rendered, never edited.
+struct GrubMenuEntry {
+    QString title;         // menuentry/submenu title
+    QString cls;           // first --class token, or empty
+    QString id;            // menuentry id, or empty
+    bool foreign = false;  // os-prober "(on /dev/...)" title or "osprober-" id
+    bool isDefault = false;
+    int depth = 0;         // submenu nesting level (0 = top-level)
+    QString kind;          // "menuentry" or "submenu" (helper protocol)
+    QString configfile;    // external config the submenu loads, or empty
+};
+
+// The complete `grub-list` result: the GRUB config path, the resolved default,
+// the ESP GPT PARTUUID / drive model this menu belongs to (empty when no ESP or
+// unresolved), and every menu entry in file order (never sorted or deduped).
+struct GrubMenuInventory {
+    QString configPath;
+    QString defaultEntry;
+    QString espPartuuid;
+    QString driveModel;
+    QList<GrubMenuEntry> rows;
+};
+
+// One parsed extlinux/syslinux boot-menu entry from the helper's read-only
+// `extlinux-list` TAB-separated protocol.  The boot-menu view is strictly
+// read-only: these fields are only ever rendered, never edited.
+struct ExtlinuxEntry {
+    QString label;       // LABEL block name
+    QString menuLabel;   // MENU LABEL text (falls back to the label name)
+    QString kernel;      // KERNEL/LINUX path, or empty
+    QString initrd;      // INITRD path, or empty
+    bool isDefault = false;
+};
+
+// The complete `extlinux-list` result: the resolved config path, the MENU TITLE
+// header text, the DEFAULT header label (empty when absent), and every LABEL
+// block in file order (never sorted or deduped).
+struct ExtlinuxInventory {
+    QString configPath;
+    QString menuTitle;
+    QString defaultEntry;
+    QList<ExtlinuxEntry> rows;
+};
+
+// One parsed GRUB legacy (Debian Etch, GRUB 0.97) boot-menu entry from the
+// helper's read-only `grub-legacy-list` TAB-separated protocol.  The boot-menu
+// view is strictly read-only: these fields are only ever rendered, never
+// edited.  The kernel/initrd fields carry only the path (first token); the
+// kernel command line is never surfaced (it can carry secrets).
+struct GrubLegacyEntry {
+    QString title;       // title line text
+    QString kernel;      // kernel path, or empty
+    QString initrd;      // initrd path, or empty
+    bool isDefault = false;
+};
+
+// The complete `grub-legacy-list` result: the resolved config path, the
+// resolved default index (empty when none), and every title block in file order
+// (never sorted or deduped).
+struct GrubLegacyInventory {
+    QString configPath;
+    QString defaultEntry;
+    QList<GrubLegacyEntry> rows;
 };
 
 // One parsed "File system check <device>: ..." helper evidence line.  It is
@@ -255,6 +347,11 @@ public:
     // calls never change what an operation does or how it blocks.
     void beginBusyOperation(const QString &label);
     void endBusyOperation(const QString &label);
+    // High-level, non-scrolling async progress line (the current step, e.g.
+    // "Diagnostics: kernel (5/16)"). Set/cleared alongside the busy
+    // indicator; it is a status label, never a log entry.
+    void setProgressDetail(const QString &text);
+    void clearProgressDetail();
 
     // Internal desktop color-scheme value. Qt::ColorScheme,
     // QStyleHints::colorScheme() and QStyleHints::colorSchemeChanged exist
@@ -356,6 +453,48 @@ private:
     void runFileCopy();
     bool fileCopyReady(QString *reason = nullptr) const;
 
+    // ---- Boot entries (UEFI firmware entry manager; host and target scope) ----
+
+    QWidget *buildBootEntriesPage();
+    void refreshBootEntries();
+    void populateBootEntriesTable();
+    void updateBootEntriesControls();
+    void moveBootEntry(bool up);
+    void applyBootEntryOrder();
+    void deleteSelectedBootEntry();
+    void renameSelectedBootEntry();
+    // Runs the EFI/UKI bootloader repair (`efi` stage) for the active Boot
+    // entries scope to re-create or re-label missing firmware entries.
+    void restoreBootEntries();
+    // Handles the inline Label-cell edit: rejects a blank/whitespace label
+    // (reverting the cell), cancels a staged rename when the label is edited
+    // back to the persisted value, and otherwise stages the pending rename
+    // (no helper write; Save commits it through the verified helper).
+    void bootEntryLabelChanged(int row, int column);
+    // Read-only GRUB boot-menu view: loads the helper's grub-list protocol for
+    // the active scope and renders it without any editing affordance.  When the
+    // GRUB menu is absent (BIOS/extlinux systems), it falls back to the helper's
+    // extlinux-list protocol and renders the equivalent extlinux/syslinux menu.
+    void refreshGrubMenu();
+    void populateGrubMenuTable();
+    void populateExtlinuxMenuTable();
+    void populateGrubLegacyMenuTable();
+    // True when the Boot entries actions are usable: either Host Maintenance is
+    // active on the resolvable running host, or a repair target is selected and
+    // resolvable, with a privileged session established. There is one UEFI
+    // firmware (the running host's NVRAM), so both scopes manage the same
+    // NVRAM; the selected target's entries are those whose PARTUUID points at
+    // the target ESP.
+    bool bootEntriesReady(QString *reason = nullptr) const;
+    // Resolves the active Boot-entries scope identity: Host Maintenance names
+    // the running host (m_hostPrimaryPath/m_hostPrimaryComponentPath); a
+    // selected repair target names m_previewTargetPath/m_previewTargetComponentPath.
+    void bootEntriesScopeIdentity(bool *isHost, QString *disk, QString *root) const;
+    static BootEntriesInventory parseBootEntriesOutput(const QString &output);
+    static GrubMenuInventory parseGrubMenuOutput(const QString &output);
+    static ExtlinuxInventory parseExtlinuxOutput(const QString &output);
+    static GrubLegacyInventory parseGrubLegacyOutput(const QString &output);
+
     // ---- Snapshots, shell and File Copy --------------------------------------
 
     void updateSnapshotControls();
@@ -394,6 +533,11 @@ private:
     void inspectSelectedSnapshot();
     void rollbackSelectedSnapshot();
     void runChrootShellCommand();
+    // Session-scoped (in-memory only) command history navigation for the
+    // Chroot/Host shell command field. +1 steps Up (toward older entries),
+    // -1 steps Down (toward newer entries); -1 also returns to the saved
+    // draft once past the newest entry.
+    void stepChrootShellHistory(int direction);
     void clearChrootShellOutput();
     // Shared Host/Chroot shell transcript append. The wrapped pane follows the
     // newest output only when it already shows the end, so a user reading
@@ -427,6 +571,10 @@ private:
     // ---- Application log and session logs ------------------------------------
 
     void saveLogAs();
+    // Clears the on-screen action register and, when cached diagnostics are
+    // warm (with confirmation), also clears the diagnostic caches so the repair
+    // tool gates fail closed until diagnostics are regenerated.
+    void clearActionRegister();
     void appendLog(const QString &message, const QString &level = QStringLiteral("INFO"),
                    LogEntryKind kind = LogEntryKind::Application);
     // Appends a recurring one-line status (device scan, diagnostic run framing,
@@ -578,6 +726,14 @@ private:
     void scheduleEvidenceRefresh(const QString &reason);
     void handlePrivilegedSessionEstablished();
     void runScheduledEvidenceRefresh();
+    // Coalescing asynchronous boot-entries refresh that runs after diagnostics
+    // complete (manual Run All, individual diagnostic, or automatic evidence
+    // regeneration after a boot-affecting repair or scope change). Read-only
+    // (`efi-list`/`grub-list`/`extlinux-list`/`grub-legacy-list`); never raises
+    // its own Polkit prompt and never runs while a privileged operation owns
+    // the gate.
+    void scheduleBootEntriesRefresh(const QString &reason);
+    void runScheduledBootEntriesRefresh();
     // Runs the work that arrived while a privileged request owned the gate:
     // one deferred Btrfs snapshot preload and at most one coalesced automatic
     // diagnostics regeneration for the current scope. Both were refused as
@@ -624,7 +780,8 @@ private:
                                  bool showProgressDialog = true,
                                  LogEntryKind kind = LogEntryKind::Application,
                                  const QString &statusIdentity = QString(),
-                                 RepairProgressDialog *sharedProgressDialog = nullptr);
+                                 RepairProgressDialog *sharedProgressDialog = nullptr,
+                                 bool queueWhenBusy = false);
     void closePrivilegedSession();
 
     // ---- Repair tools and result reporting -----------------------------------
@@ -781,6 +938,16 @@ private:
     // is false only on the very first run of a fresh install.
     bool fullRepairStagePreferencePersisted(const QString &key) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
+    // Read-only "current kernel state" preview rendered from the cached
+    // kernel diagnostic section (Kernel running:/latest:/repository latest:/
+    // removable:/missing headers:/orphaned headers:/orphaned kernel:/incomplete:
+    // evidence lines). Returns an empty string when no evidence is cached.
+    QString kernelsRemovalPreview() const;
+    // Derives the concrete kernel-repair actions available from one cached
+    // kernel diagnostic section: each action is offered only when its
+    // evidence exists, and the running kernel is never offered for removal.
+    // Returns an ordered list of (button label, helper stage) pairs.
+    static QList<QPair<QString, QString>> kernelRepairActionsFor(const QString &section);
     // Single explicit mapping from a repair tool/stage key to the diagnostic
     // sections whose cached evidence that repair invalidates. "all" is the
     // combined-report pseudo-section and means the complete set; an empty list
@@ -910,6 +1077,14 @@ private:
                          LogEntryKind kind = LogEntryKind::Repair,
                          const QString &sectionKey = QString(),
                          RepairProgressDialog *sharedProgressDialog = nullptr);
+    // Interactive GPU driver repair session: the helper presents the evidence-
+    // driven decision tree as a terminal-style PROMPT/ANSWER menu.
+    void runGpuRepairSession();
+    // Interactive kernel repair session: the helper presents the evidence-
+    // driven menu as a terminal-style PROMPT/ANSWER menu and dispatches exactly
+    // the action the user chooses.  Nothing is removed or modified until an
+    // action is picked; the running kernel is never offered for removal.
+    void runKernelRepairSession();
 
     // ---- Presentation and responsive layout ----------------------------------
 
@@ -1060,7 +1235,12 @@ private:
     QWidget *m_busyIndicator = nullptr;
     BusyIndicatorWidget *m_busyProgress = nullptr;
     QLabel *m_busyStatusLabel = nullptr;
+    QLabel *m_progressDetailLabel = nullptr;
     QStringList m_activeBusyOperations;
+    // True while the high-level progress-detail label carries a non-empty
+    // text; updateBusyIndicator() then blanks the reference-counted busy label
+    // so exactly one concise progress text is visible at a time.
+    bool m_progressDetailActive = false;
 
     QTreeWidget *m_deviceTree = nullptr;
     // Guards the viewport-resize -> column policy -> relayout chain so a
@@ -1114,6 +1294,12 @@ private:
     QLineEdit *m_chrootShellCommandEdit = nullptr;
     QPlainTextEdit *m_chrootShellOutput = nullptr;
     QPushButton *m_chrootShellRunButton = nullptr;
+    // In-memory shell command history (oldest → newest), never written to
+    // disk. The index is -1 while editing a fresh line; the draft holds the
+    // user's in-progress text saved when navigating Up away from that line.
+    QStringList m_chrootShellHistory;
+    int m_chrootShellHistoryIndex = -1;
+    QString m_chrootShellHistoryDraft;
 
     QSplitter *m_diagnosticSplitter = nullptr;
     QListWidget *m_diagnosticList = nullptr;
@@ -1169,6 +1355,64 @@ private:
     quint64 m_snapshotLoadedGeneration = 0;
     bool m_snapshotInventoryInFlight = false;
     QString m_snapshotRequestScopeKey;
+
+    // ---- Boot entries (running-host UEFI firmware entry manager) -----------
+    QComboBox *m_bootEntriesViewCombo = nullptr;
+    QStackedWidget *m_bootEntriesStack = nullptr;
+    QTableWidget *m_bootEntriesTable = nullptr;
+    QPlainTextEdit *m_bootEntriesDetails = nullptr;
+    QSplitter *m_bootEntriesSplitter = nullptr;
+    QLayout *m_bootEntriesButtonLayout = nullptr;
+    QPushButton *m_bootEntriesLoadButton = nullptr;
+    QPushButton *m_bootEntriesMoveUpButton = nullptr;
+    QPushButton *m_bootEntriesMoveDownButton = nullptr;
+    QPushButton *m_bootEntriesSaveOrderButton = nullptr;
+    QPushButton *m_bootEntriesDeleteButton = nullptr;
+    QPushButton *m_bootEntriesRestoreButton = nullptr;
+    QLabel *m_bootEntriesScopeLabel = nullptr;
+    QLabel *m_bootEntriesStatusLabel = nullptr;
+    // The page heading ("EFI boot entries" vs "GRUB boot entries") so the view
+    // selector can update it in place; the tab label itself stays unchanged.
+    QLabel *m_bootEntriesHeading = nullptr;
+    // The last parsed efi-list inventory, kept as the single source of truth
+    // for the rendered table (row order, BootCurrent marker and listed flag).
+    BootEntriesInventory m_bootEntriesInventory;
+    // Host identity the loaded inventory belongs to ("host:<disk>"); a scope
+    // change clears the table so one host's rows are never shown for another.
+    QString m_bootEntriesScopeKey;
+    bool m_bootEntriesLoaded = false;
+    // Re-entrancy guard: set while the table is populated programmatically so
+    // the inline Label-edit handler never treats a programmatic setText as a
+    // user rename.
+    bool m_bootEntriesUpdating = false;
+    // Staged firmware boot-entry mutations, committed together by the single
+    // Save action. The reorder is already reflected in
+    // m_bootEntriesInventory.rows order (staged by Move Up/Move Down), while
+    // delete and rename are staged separately until Save runs the verified
+    // helper. m_bootEntriesSavedOrder records the id order the last successful
+    // load/save produced, so Save only enables when the order actually changed.
+    QSet<QString> m_bootEntriesPendingDelete;
+    QHash<QString, QString> m_bootEntriesPendingRename; // id -> trimmed new label
+    QStringList m_bootEntriesSavedOrder;
+
+    // ---- GRUB boot-menu view (read-only; host and target scope) ------------
+    QTreeWidget *m_grubMenuTree = nullptr;
+    QPlainTextEdit *m_grubMenuDetails = nullptr;
+    QSplitter *m_grubMenuSplitter = nullptr;
+    QPushButton *m_grubMenuLoadButton = nullptr;
+    GrubMenuInventory m_grubMenuInventory;
+    ExtlinuxInventory m_extlinuxInventory;
+    GrubLegacyInventory m_grubLegacyInventory;
+    // True when the boot-menu tree currently renders extlinux rows (the fallback
+    // path) rather than GRUB menuentry rows.  The selection/details handlers use
+    // it to pick the right inventory for the rendered rows.
+    bool m_bootMenuShowingExtlinux = false;
+    // True when the boot-menu tree currently renders GRUB legacy (menu.lst)
+    // rows rather than GRUB menuentry or extlinux rows.
+    bool m_bootMenuShowingGrubLegacy = false;
+    QString m_grubMenuScopeKey;
+    bool m_grubMenuLoaded = false;
+
     // Persistent "Reboot required" state for a staged running-host rollback.
     // The flag survives an application restart but is cleared by the kernel
     // boot-id reconciliation after a real reboot.
@@ -1275,6 +1519,14 @@ private:
     // no-second-run assertions do not have to wait out the full delay.
     int m_evidenceRefreshDelayMs = 1200;
     QString m_evidenceRefreshReason;
+    QTimer *m_bootEntriesRefreshTimer = nullptr;
+    // Coalescing delay for the asynchronous boot-entries refresh that runs
+    // after diagnostics complete. Short (near-immediate) so the reload appears
+    // prompt, but still long enough to coalesce a burst of completion signals
+    // into one read-only reload. The UI regression tests shorten it like
+    // m_evidenceRefreshDelayMs.
+    int m_bootEntriesRefreshDelayMs = 150;
+    QString m_bootEntriesRefreshReason;
     bool m_evidenceRefreshPending = false;
     bool m_evidenceRefreshInProgress = false;
     bool m_diagnosticsRunInProgress = false;

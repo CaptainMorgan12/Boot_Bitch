@@ -1,0 +1,152 @@
+#!/usr/bin/env bash
+# Boot errors (`errors` diagnostic) shared boot-failure classification
+# contract.  The `errors` diagnostic is the canonical place for boot-failure
+# evidence: `boot_failure_classification()` is the single shared classifier
+# that reads the session journal cache and sets BOOT_REACHED +
+# BOOT_FAILURE_MARKERS, `diagnostic_errors()` emits them, and the GPU capability
+# gate consumes the same BOOT_REACHED instead of re-deriving it.
+#
+# Static wiring plus a behavioural harness that sources the helper without main
+# and stubs only the read-only journal cache.  No real block device, package
+# manager or journalctl is ever touched.
+# shellcheck disable=SC1090,SC2034,SC2317
+set -euo pipefail
+
+ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
+HELPER="${HELPER:-$ROOT_DIR/scripts/boot-repair-helper.sh}"
+
+[[ -x "$HELPER" ]] || { echo 'FAIL: helper is not executable' >&2; exit 1; }
+bash -n "$HELPER"
+
+fail() { printf 'FAIL: %s\n' "$*" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Static wiring contracts
+# ---------------------------------------------------------------------------
+grep -q '^boot_failure_classification()' "$HELPER" \
+    || fail 'helper is missing boot_failure_classification()'
+grep -q '^diagnostic_errors()' "$HELPER" \
+    || fail 'helper is missing diagnostic_errors()'
+grep -q 'BOOT_REACHED="grub"' "$HELPER" \
+    || fail 'BOOT_REACHED must default to grub'
+grep -q "printf 'Boot reached: %s" "$HELPER" \
+    || fail 'diagnostic_errors must emit a Boot reached: line'
+grep -q "printf 'Boot failure markers:" "$HELPER" \
+    || fail 'diagnostic_errors must emit a Boot failure markers: line'
+# The classifier must reuse the existing session journal cache, never spawn a
+# fresh journalctl.
+grep -q 'journal_cached_window_lines 1600 | journal_boot_relevant_filter' "$HELPER" \
+    || fail 'the classifier must read the shared session journal cache'
+
+# ---------------------------------------------------------------------------
+# Behavioural harness
+# ---------------------------------------------------------------------------
+sandbox="$(mktemp -d)"
+cleanup_sandbox() { rm -rf -- "$sandbox"; }
+trap cleanup_sandbox EXIT
+
+fake_root="$sandbox/root"
+mkdir -p "$fake_root/var/log/journal"
+
+source <(sed '/^main "$@"/d' "$HELPER")
+trap - EXIT INT TERM HUP
+
+JOURNAL_FIXTURE="$sandbox/journal.txt"
+journal_cached_window_lines() { cat "$JOURNAL_FIXTURE" 2>/dev/null || true; }
+journal_boot_relevant_filter() { cat; }
+non_journald_log_fallback_ready() { return 1; }
+non_systemd_raw_log_lines() { :; }
+target_logging_backend() { printf 'journald\n'; }
+
+TARGET_ROOT="$fake_root"
+RUNNING_HOST_MODE=0
+SESSION_DIR="$sandbox/session"
+SESSION_LOG="$sandbox/session.log"
+mkdir -p "$SESSION_DIR"
+: > "$SESSION_LOG"
+
+# classify <snippet>: feed a hand-crafted journal snippet through the shared
+# classifier and print "BOOT_REACHED|BOOT_FAILURE_MARKERS".
+classify() {
+    BOOT_FAILURE_CLASSIFIED=0
+    printf '%s\n' "$1" > "$JOURNAL_FIXTURE"
+    boot_failure_classification
+    printf '%s|%s\n' "$BOOT_REACHED" "$BOOT_FAILURE_MARKERS"
+}
+
+expect() {
+    local name="$1" snippet="$2" want_reached="$3" want_markers="$4" got
+    got="$(classify "$snippet")"
+    [[ "$got" == "${want_reached}|${want_markers}" ]] \
+        || fail "$name: got '$got', want '${want_reached}|${want_markers}'"
+}
+
+# desktop: the graphical session marker is the highest reached level.
+expect desktop \
+    'Oct 04 10:00:00 host systemd: Reached target Graphical Interface.' \
+    'desktop' ''
+
+# login-manager: a display manager started but no desktop session yet.
+expect login-manager \
+    'Oct 04 10:00:00 host systemd: Started Simple Desktop Display Manager.' \
+    'login-manager' ''
+
+# tty: multi-user reached but not graphical -> tty-only marker.
+expect tty \
+    'Oct 04 10:00:00 host systemd: Reached target Multi-User System.' \
+    'tty' 'tty-only'
+
+# kernel: only the kernel/command-line marker is present.
+expect kernel \
+    'Oct 04 10:00:00 host kernel: Linux version 6.8.0-123' \
+    'kernel' ''
+
+# grub: no boot evidence -> the fail-closed default.
+expect grub \
+    '' \
+    'grub' ''
+
+# emergency-shell: dropped to the emergency shell.
+expect emergency-shell \
+    'Oct 04 10:00:00 host systemd: Welcome to emergency mode.' \
+    'grub' 'emergency-shell'
+
+# nomodeset: kernel cmdline evidence -> graphics-save-mode (and kernel reached).
+expect nomodeset \
+    'Oct 04 10:00:00 host kernel: Command line: BOOT_IMAGE=/vmlinuz root=/dev/sda1 nomodeset' \
+    'kernel' 'graphics-save-mode'
+
+# rescue: an obvious rescue-shell marker.
+expect rescue \
+    'Oct 04 10:00:00 host systemd: Started Rescue Shell.' \
+    'grub' 'rescue'
+
+# combined markers: tty-only plus nomodeset, comma-joined deterministically.
+expect tty-nomodeset \
+    $'Oct 04 10:00:00 host systemd: Reached target Multi-User System.\nOct 04 10:00:00 host kernel: Command line: BOOT_IMAGE=/vmlinuz root=/dev/sda1 nomodeset' \
+    'tty' 'graphics-save-mode,tty-only'
+
+# ---- diagnostic_errors emits the shared classification ----------------------
+ERRORS_FIXTURE="$sandbox/errors-journal.txt"
+printf '%s\n' \
+    'Oct 04 10:00:00 host systemd: Reached target Graphical Interface.' \
+    'Oct 04 10:00:01 host systemd: unit.service: Failed with result timeout.' \
+    > "$ERRORS_FIXTURE"
+
+# Re-route the classifier's journal read to the errors fixture and stub the
+# error-priority pipeline pieces diagnostic_errors uses.
+journal_cached_window_lines() { cat "$ERRORS_FIXTURE" 2>/dev/null || true; }
+journal_cached_error_lines() { :; }
+journal_current_boot_actionable() { cat; }
+collapse_similar_journal_lines() { cat; }
+diagnostic_package_manager_logs() { :; }
+target_journal_evidence_present() { return 0; }
+profile_target_backends() { TARGET_LOGGING_BACKEND=journald; }
+
+out="$(diagnostic_errors)"
+grep -q '^Boot reached: desktop$' <<<"$out" \
+    || fail "diagnostic_errors must emit 'Boot reached: desktop'; got: $out"
+grep -q '^Boot failure markers: none$' <<<"$out" \
+    || fail "diagnostic_errors must emit 'Boot failure markers: none' when clean; got: $out"
+
+echo 'boot-errors-contract: PASS'

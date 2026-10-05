@@ -212,6 +212,7 @@ transform_syntax()
         -e 's/^\([[:space:]]*\)local -A final_destination_count=()$/\1local -a final_destination_count=() final_destination_count_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A order_index=() seen=()$/\1local -a order_index=() order_index_keys=() seen=() seen_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A current_by_id=() current_by_key=() current_by_partition_label=()$/\1local -a current_by_id=() current_by_id_keys=() current_by_key=() current_by_key_keys=() current_by_partition_label=() current_by_partition_label_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A emitted=()$/\1local -a emitted=() emitted_keys=()/' \
         -e 's/^\([[:space:]]*\)FS_SCOPE_DEVICE_INDEX=()$/\1FS_SCOPE_DEVICE_INDEX=() FS_SCOPE_DEVICE_INDEX_keys=()/' \
         -e 's/^\([[:space:]]*\)current_by_id=()$/\1current_by_id=() current_by_id_keys=()/' \
         -e 's/^\([[:space:]]*\)current_by_key=()$/\1current_by_key=() current_by_key_keys=()/' \
@@ -255,7 +256,7 @@ transform_syntax()
     for name in current_by_partition_label final_destination_count \
         seen_destination_names FS_SCOPE_DEVICE_INDEX destination_priority \
         destination_id current_by_key removed_seen current_by_id order_index \
-        reasons seen essential_by_dev allowed_nodes; do
+        reasons seen emitted essential_by_dev allowed_nodes; do
         note "assoc accesses: ${name}" \
             "$(( $(count_regex "[$][{]${name}[[]" "$file") \
                 + $(count_regex "${name}\[[^]]*\]=" "$file") \
@@ -734,19 +735,19 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 61
+    check_count 'legacy_readarray' 'legacy_readarray' 66
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 81
-    check_count 'legacy_sort_versions' 'legacy_sort_versions' 12
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 108
+    check_count 'legacy_sort_versions' 'legacy_sort_versions' 14
     check_count 'legacy_date_iso' 'legacy_date_iso' 4
     check_count 'legacy_lc' 'legacy_lc ' 66
-    check_count 'legacy_uc' 'legacy_uc ' 15
+    check_count 'legacy_uc' 'legacy_uc ' 20
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 23
-    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 26
+    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 31
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 1
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 56
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 63
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }
@@ -851,9 +852,17 @@ assemble()
 
 # Bash-4 (and later) construct blacklist applied to the assembled helper.
 # Each entry is KIND~LABEL~PATTERN (F = fixed string, R = ERE).  The function
-# is self-contained (grep/printf only) so the contract test can extract and
-# source it to unit-test the blacklist against fixtures (A11-02).  Full-line
-# comments are excluded before scanning.
+# is self-contained (grep only, fed by here-strings) so the contract test can
+# extract and source it to unit-test the blacklist against fixtures (A11-02).
+# Full-line comments are excluded before scanning.
+#
+# A12-08: the probe must feed $code through a here-string, never a pipe.  Under
+# `set -Eeuo pipefail` (port.sh runs with it), `printf '%s\n' "$code" |
+# grep -qF -- "$pattern"` returns 141 when grep -q matches and exits before
+# printf drains a code body larger than the pipe buffer: printf takes SIGPIPE,
+# pipefail promotes that to the pipeline status, the `if` is never true and the
+# blacklist silently stops enforcing.  A here-string is a single command whose
+# status is grep's, so a match reliably returns 0.
 verify_no_bash4()
 {
     local file="$1" rc=0 kind label pattern
@@ -862,12 +871,12 @@ verify_no_bash4()
     while IFS='~' read -r kind label pattern; do
         [[ -n "$pattern" ]] || continue
         if [[ "$kind" == F ]]; then
-            if printf '%s\n' "$code" | grep -qF -- "$pattern"; then
+            if grep -qF -- "$pattern" <<<"$code"; then
                 printf 'ERROR: bash-4 construct remains in %s: %s\n' "$file" "$label" >&2
                 rc=1
             fi
         else
-            if printf '%s\n' "$code" | grep -qE -- "$pattern"; then
+            if grep -qE -- "$pattern" <<<"$code"; then
                 printf 'ERROR: bash-4 construct remains in %s: %s\n' "$file" "$label" >&2
                 rc=1
             fi

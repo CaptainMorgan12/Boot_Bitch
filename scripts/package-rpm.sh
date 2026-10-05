@@ -73,8 +73,11 @@ BUILD_TYPE=Release BUILD_DIR="$BUILD_DIR" "$ROOT_DIR/scripts/build.sh"
         -D "CPACK_RPM_PACKAGE_REQUIRES=${rpm_requires}"
 )
 
+# Detect the project version so validation/install hints target the freshly
+# built package, never a stale older .rpm left in BUILD_DIR from a prior cycle.
+VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\)[[:space:]]*$/\1/p' "$ROOT_DIR/CMakeLists.txt" | head -n1)"
 mapfile -t packages < <(
-    find "$BUILD_DIR" -maxdepth 1 -type f -name '*.rpm' -print | sort
+    find "$BUILD_DIR" -maxdepth 1 -type f -name "boot-bitch-${VERSION}-1.*.rpm" -print | sort
 )
 [[ ${#packages[@]} -gt 0 ]] || {
     echo "CPack ran but no .rpm was generated." >&2

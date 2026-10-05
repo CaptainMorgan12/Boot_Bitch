@@ -38,12 +38,12 @@ grep -q '^host_snapshot_resolve_target()' "$HELPER"
 grep -q '^host_snapshot_rollback_unavailable_reason()' "$HELPER"
 grep -q '^host_reboot_unavailable_reason()' "$HELPER"
 
-# Capability lines are host-scope only and never become a 14th Repair key.
+# Capability lines are host-scope only and never become a Repair tool key.
 grep -Fq 'Host snapshot rollback: available' "$HELPER"
 grep -Fq 'Host snapshot rollback: unavailable|%s' "$HELPER"
 grep -Fq 'Host reboot: available' "$HELPER"
 grep -Fq 'if (( RUNNING_HOST_MODE == 1 )); then' "$HELPER"
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER"
 
 # The host mechanism is the name-preserving transaction, never snapper
 # rollback or a bare set-default.
@@ -729,7 +729,7 @@ if grep -E '^Repair tool [a-z]+: unavailable\|' <<<"$zc_out" | grep -Eqi 'ubuntu
     printf '%s\n' "$zc_out" >&2
     exit 1
 fi
-[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 13 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$zc_out")" -eq 15 ]] \
     || { echo 'FAIL: the ZFS-on-root capability preamble lost a key line' >&2; printf '%s\n' "$zc_out" >&2; exit 1; }
 
 # 8e. Missing ZFS prerequisites fail closed with the exact prerequisite named.

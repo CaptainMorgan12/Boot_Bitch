@@ -84,7 +84,7 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
 for rule in \
-    'assoc declarations \(declare/local -A\) +10' \
+    'assoc declarations \(declare/local -A\) +12' \
     'assoc accesses: current_by_partition_label +6' \
     'assoc accesses: final_destination_count +3' \
     'assoc accesses: seen_destination_names +2' \
@@ -95,23 +95,24 @@ for rule in \
     'assoc accesses: removed_seen +4' \
     'assoc accesses: current_by_id +3' \
     'assoc accesses: order_index +5' \
-    'assoc accesses: reasons +31' \
-    'assoc accesses: seen +4' \
+    'assoc accesses: reasons +35' \
+    'assoc accesses: seen +8' \
+    'assoc accesses: emitted +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
     'case conversion ,, +66' \
-    'case conversion \^\^ +15' \
+    'case conversion \^\^ +20' \
     'case conversion \^ +23' \
-    'array \[@\] expansions \(all forms\) +318' \
-    'mapfile call sites +61' \
+    'array \[@\] expansions \(all forms\) +496' \
+    'mapfile call sites +66' \
     'sed -i -E +1' \
-    'sed -nE +64' \
-    'sed -E +16' \
-    'sort -V +12' \
+    'sed -nE +89' \
+    'sed -E +18' \
+    'sort -V +14' \
     'date --iso-8601 +4' \
     '=~ regex literal hoists +11' \
     'os-release gates +1' \
-    'dpkg db:Status sites +4' \
+    'dpkg db:Status sites +5' \
     'wrapped/replaced modern functions +43' \
     'mount-sweep process substitutions rewritten +6' \
     'legacy boot-remount promotion sites +2' \
@@ -123,19 +124,19 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +61' \
+    'shim calls: legacy_readarray +66' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +81' \
-    'shim calls: legacy_sort_versions +12' \
+    'shim calls: legacy_sed_ext +108' \
+    'shim calls: legacy_sort_versions +14' \
     'shim calls: legacy_date_iso +4' \
     'shim calls: legacy_lc +66' \
-    'shim calls: legacy_uc +15' \
+    'shim calls: legacy_uc +20' \
     'shim calls: legacy_ucfirst +23' \
-    'shim calls: legacy_assoc_get +26' \
+    'shim calls: legacy_assoc_get +31' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +1' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +56' \
+    'shim calls: legacy_assoc_set +63' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \
@@ -171,11 +172,11 @@ pass "generated helper is bash-3.1 syntax clean"
 # --- port pipeline invariants (A9-07/A11-08) --------------------------------
 # The assoc rewrite must never corrupt a name that shares a tail with another
 # array (seen inside removed_seen); and every legacy_assoc_* first argument
-# must be one of the twelve known assoc array names.
+# must be one of the thirteen known assoc array names.
 if grep -qE 'removed_legacy_assoc_set|removed_seen_legacy' "$HELPER"; then
     fail "generated helper contains a corrupted assoc-set rewrite"
 fi
-assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes'
+assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes emitted'
 assoc_unknown="$(grep -oE 'legacy_assoc_(get|get_num|keys|has|set|unset)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$HELPER" \
     | awk '{print $2}' | sort -u \
     | while IFS= read -r n; do

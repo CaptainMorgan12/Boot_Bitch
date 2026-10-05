@@ -23,6 +23,9 @@
 #            the n rows of tier fast are the dev-check quick-tier exclusions
 #
 boot-repair-ui-read-only	ui	80	L	ui	n
+boot-repair-boot-entries-parser	fast	3	S	ui	y
+boot-repair-grub-menu-parser	fast	3	S	ui	y
+boot-repair-grub-legacy-parser	fast	3	S	ui	y
 boot-repair-chroot-shell-contract	fast	120	L	backend	n
 boot-repair-display-manager-contract	fast	2	S	backend	y
 boot-repair-backend-profile-contract	slow	100	L	backend	n
@@ -31,6 +34,10 @@ boot-repair-host-snapshot-contract	fast	10	M	backend	y
 boot-repair-host-default-contract	fast	75	L	backend	n
 boot-repair-reason-key-registry-contract	fast	1	S	backend	y
 boot-repair-msg-key-registry-contract	fast	1	S	backend	y
+boot-repair-kernels-cleanup-contract	fast	5	S	backend	y
+boot-repair-gpu-contract	fast	2	S	backend	y
+boot-repair-gpu-baseline-contract	fast	2	S	backend	y
+boot-repair-boot-errors-contract	fast	2	S	backend	y
 boot-repair-efi-entry-policy-contract	fast	15	M	efi	y
 boot-repair-repair-log-filter-contract	fast	2	S	backend	y
 boot-repair-packaging-profile-contract	packaging	30	M	packaging	n
