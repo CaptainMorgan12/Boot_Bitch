@@ -937,7 +937,7 @@ static const RepairTopicSpec repairTopicSpecs[] = {
     {"fixbroken", "Repair broken dependencies|fix-broken"},
     {"aptupdate", "Refresh package metadata|apt-update"},
     {"upgrade", "Upgrade installed packages|apt-upgrade"},
-    {"dkms", "DKMS"},
+    {"dkms", "DKMS|akmods|AKMS"},
     // The helper's package-backend transcript and package-manager feedback
     // lines are not tied to a single stage title: a combined Full Repair
     // entry carries them for every backend that ran or was skipped. They are
@@ -1314,6 +1314,8 @@ struct ReasonSpec
 };
 
 const ReasonSpec kReasonSpecs[] = {
+    { "akmods-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "akmods preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
+    { "akms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "akms preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
     { "alpine-bootstack-extlinux-disabled", QT_TRANSLATE_NOOP("MainWindow", "Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).") },
     { "alpine-bootstack-grub-disabled", QT_TRANSLATE_NOOP("MainWindow", "Alpine boot-stack reconciliation is not enabled (run the initramfs and GRUB stages separately).") },
     { "alpine-dkms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "Alpine DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
@@ -1540,6 +1542,12 @@ struct MsgSpec
 };
 
 const MsgSpec kMsgSpecs[] = {
+    { "akmods-headers-present", QT_TRANSLATE_NOOP("MainWindow", "akmods preflight: headers/build tree present for %1") },
+    { "akmods-pass", QT_TRANSLATE_NOOP("MainWindow", "PASS: akmods rebuild completed.") },
+    { "akmods-simulate", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE/PREFLIGHT: akmods module rebuild (headers must already be installed; no package guessing is performed)") },
+    { "akms-headers-present", QT_TRANSLATE_NOOP("MainWindow", "akms preflight: headers/build tree present for %1") },
+    { "akms-pass", QT_TRANSLATE_NOOP("MainWindow", "PASS: akms rebuild completed.") },
+    { "akms-simulate", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE/PREFLIGHT: akms module rebuild (headers must already be installed; no package guessing is performed)") },
     { "alpine-efi-backup", QT_TRANSLATE_NOOP("MainWindow", "Backed up Alpine EFI loader files to %1 (firmware fallback present before repair: %2).") },
     { "alpine-efi-fallback-refreshed", QT_TRANSLATE_NOOP("MainWindow", "PASS: refreshed the firmware fallback loader EFI/boot/bootx64.efi from %1.") },
     { "alpine-efi-loader-verified", QT_TRANSLATE_NOOP("MainWindow", "PASS: Alpine EFI loader files verified under %1/EFI/%2") },
@@ -2058,11 +2066,17 @@ const MsgSpec kMsgSpecs[] = {
     { "complete-interrupted-dpkg-before-correction", QT_TRANSLATE_NOOP("MainWindow", "Complete interrupted package configuration before correction") },
     { "create-missing-initramfs", QT_TRANSLATE_NOOP("MainWindow", "Create missing initramfs for %1") },
     { "dnf5-dependency-check", QT_TRANSLATE_NOOP("MainWindow", "dnf5 dependency check (read-only evidence)") },
+    { "inspect-akmods-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect akmods state") },
+    { "inspect-akms-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect akms state") },
     { "inspect-dkms-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state") },
     { "inspect-dkms-state-gpu", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state for GPU driver") },
+    { "post-repair-akmods-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akmods status") },
+    { "post-repair-akms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akms status") },
     { "post-repair-dkms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair DKMS status") },
     { "purge-wrong-gpu-driver", QT_TRANSLATE_NOOP("MainWindow", "Purge the wrong GPU driver") },
     { "read-fedora-grubenv", QT_TRANSLATE_NOOP("MainWindow", "Read Fedora grubenv (grub2-editenv list)") },
+    { "rebuild-akmods-modules", QT_TRANSLATE_NOOP("MainWindow", "Rebuild akmods modules for kernel %1") },
+    { "rebuild-akms-modules", QT_TRANSLATE_NOOP("MainWindow", "Rebuild AKMS modules") },
     { "rebuild-alpine-initramfs", QT_TRANSLATE_NOOP("MainWindow", "Rebuild Alpine initramfs for %1 with mkinitfs") },
     { "rebuild-arch-initramfs", QT_TRANSLATE_NOOP("MainWindow", "Rebuild Arch initramfs images with mkinitcpio -P") },
     { "rebuild-dkms-modules", QT_TRANSLATE_NOOP("MainWindow", "Rebuild DKMS modules") },
@@ -17170,6 +17184,51 @@ QString MainWindow::detectedDisplayManagerName() const
     return QString();
 }
 
+QString MainWindow::detectedModuleBuildSystemLabel() const
+{
+    const QString evidence = currentScopeEvidence();
+    for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+        const QString trimmed = line.trimmed();
+        if (!trimmed.startsWith(QStringLiteral("Module build system:"), Qt::CaseInsensitive)) {
+            continue;
+        }
+        const QString value = trimmed.section(QLatin1Char(':'), 1).trimmed().toLower();
+        if (value == QStringLiteral("akmods")) {
+            return QStringLiteral("akmods");
+        }
+        if (value == QStringLiteral("akms")) {
+            return QStringLiteral("AKMS");
+        }
+        // dkms and any unrecognised token fall back to the generic label.
+        return QStringLiteral("DKMS");
+    }
+    return QStringLiteral("DKMS");
+}
+
+QString MainWindow::rebuildModuleStageText() const
+{
+    const QString label = detectedModuleBuildSystemLabel();
+    if (label == QStringLiteral("akmods")) {
+        return tr("Rebuild akmods modules");
+    }
+    if (label == QStringLiteral("AKMS")) {
+        return tr("Rebuild AKMS modules");
+    }
+    return tr("Rebuild DKMS modules");
+}
+
+QString MainWindow::rebuildModuleActionText() const
+{
+    const QString label = detectedModuleBuildSystemLabel();
+    if (label == QStringLiteral("akmods")) {
+        return tr("Rebuild akmods");
+    }
+    if (label == QStringLiteral("AKMS")) {
+        return tr("Rebuild AKMS");
+    }
+    return tr("Rebuild DKMS");
+}
+
 // Package-manager family key for the missing-Polkit-agent hint. The active
 // scope's detected backend profile is authoritative (it is the same evidence
 // the stage labels use); the running host's own /etc/os-release is the
@@ -19832,7 +19891,7 @@ void MainWindow::updateFullRepairSummary()
         {m_fullRepairBrokenPackages, tr("Repair broken package dependencies"), QStringLiteral("dialog-ok-apply"), QStringLiteral("fixbroken")},
         {m_fullRepairAptUpdate, tr("Refresh package metadata"), QStringLiteral("view-refresh"), QStringLiteral("aptupdate")},
         {m_fullRepairUpgrade, tr("Upgrade installed packages"), QStringLiteral("system-software-update"), QStringLiteral("upgrade")},
-        {m_fullRepairDkms, tr("Rebuild DKMS modules"), QStringLiteral("applications-development"), QStringLiteral("dkms")},
+        {m_fullRepairDkms, rebuildModuleStageText(), QStringLiteral("applications-development"), QStringLiteral("dkms")},
         {m_fullRepairDisplayManager, tr("Restore detected graphical login manager"), QStringLiteral("video-display"), QStringLiteral("display")},
         {m_fullRepairInitramfs, tr("Rebuild initramfs after mapper/crypttab validation"), QStringLiteral("initramfs"), QStringLiteral("initramfs")},
         {m_fullRepairEfi, tr("Reinstall EFI bootloader"), QStringLiteral("drive-removable-media"), QStringLiteral("efi")},
@@ -20005,6 +20064,10 @@ void MainWindow::updateFullRepairSummary()
                 status = planStatus(m_fullRepairUpgrade);
             } else if (key == QStringLiteral("dkms")) {
                 status = planStatus(m_fullRepairDkms);
+                // The tool name follows the detected module-build system, so the
+                // tree keeps showing "akmods"/"AKMS"/"DKMS" after diagnostics
+                // (the initial title is the generic "DKMS" fallback).
+                item->setText(0, detectedModuleBuildSystemLabel());
             } else if (key == QStringLiteral("display")) {
                 status = planStatus(m_fullRepairDisplayManager);
             } else if (key == QStringLiteral("kernels")) {
@@ -20415,10 +20478,10 @@ void MainWindow::updateRepairToolDetails()
         iconName = QStringLiteral("system-software-update");
         planText = tr("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("dkms")) {
-        title = tr("DKMS");
+        title = detectedModuleBuildSystemLabel();
         description = tr(
-            "Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system. The helper refuses this action when DKMS is not installed in the selected system.");
-        buttonText = tr("Rebuild DKMS");
+            "Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system using the detected %1 build system. The helper refuses this action when the detected build system is not installed in the selected system.").arg(detectedModuleBuildSystemLabel());
+        buttonText = rebuildModuleActionText();
         iconName = QStringLiteral("applications-development");
         planText = tr("Full Repair plan: %1").arg(plan);
     } else if (key == QStringLiteral("display")) {
@@ -20613,7 +20676,7 @@ void MainWindow::updateRepairToolDetails()
     } else if (key == QStringLiteral("upgrade")) {
         buttonTooltip = tr("Simulate and apply a safe package upgrade.");
     } else if (key == QStringLiteral("dkms")) {
-        buttonTooltip = tr("Rebuild DKMS kernel modules.");
+        buttonTooltip = tr("Rebuild %1 kernel modules.").arg(detectedModuleBuildSystemLabel());
     } else if (key == QStringLiteral("display")) {
         buttonTooltip = tr("Restore the graphical login manager.");
     } else if (key == QStringLiteral("initramfs")) {
@@ -21282,6 +21345,11 @@ void MainWindow::updateRepairScopeControls()
     if (m_fullRepairUpgrade) {
         m_fullRepairUpgrade->setText(tr("Upgrade installed packages (adaptive APT simulation)"));
     }
+    if (m_fullRepairDkms) {
+        // The stage label names the detected module-build system; with no
+        // cached evidence it stays the generic "Rebuild DKMS modules".
+        m_fullRepairDkms->setText(rebuildModuleStageText());
+    }
     if (m_fullRepairDisplayManager) {
         m_fullRepairDisplayManager->setText(tr("Restore detected graphical login manager and graphical.target"));
     }
@@ -21909,9 +21977,9 @@ void MainWindow::runSelectedRepairTool()
         stages = {QStringLiteral("apt-upgrade")};
         operations = {tr("Run the distribution-specific transaction preflight, then choose a safe upgrade for the %1").arg(selectedSystemLabel)};
     } else if (key == QStringLiteral("dkms")) {
-        title = tr("Rebuild DKMS");
+        title = rebuildModuleActionText();
         stages = {QStringLiteral("dkms")};
-        operations = {tr("Run DKMS autoinstall in the %1").arg(selectedSystemLabel)};
+        operations = {tr("Rebuild out-of-tree kernel modules in the %1 using the detected %2 build system").arg(selectedSystemLabel, detectedModuleBuildSystemLabel())};
     } else if (key == QStringLiteral("display")) {
         title = tr("Restore detected graphical login manager");
         stages = {QStringLiteral("display-manager")};
@@ -22085,7 +22153,7 @@ void MainWindow::runFullRepair()
         else if (stage == QStringLiteral("fix-broken")) operations << tr("Repair broken APT dependencies");
         else if (stage == QStringLiteral("apt-update")) operations << tr("Refresh APT package metadata");
         else if (stage == QStringLiteral("apt-upgrade")) operations << tr("Simulate APT first, then choose a safe upgrade/full-upgrade/dist-upgrade transaction");
-        else if (stage == QStringLiteral("dkms")) operations << tr("Rebuild DKMS modules");
+        else if (stage == QStringLiteral("dkms")) operations << rebuildModuleStageText();
         else if (stage == QStringLiteral("display-manager")) operations << tr("Restore the detected display manager and graphical.target without starting the GUI inside chroot");
         else if (stage == QStringLiteral("initramfs")) operations << tr("Rebuild all initramfs images");
         else if (stage == QStringLiteral("efi")) operations << tr("Repair the %1 EFI / UKI boot path using its validated ESP").arg(selectedSystemLabel);

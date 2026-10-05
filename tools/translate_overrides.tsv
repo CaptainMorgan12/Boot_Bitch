@@ -104,6 +104,8 @@ Repair Dependencies	Abhängigkeiten reparieren	Réparer les dépendances	Reparar
 Refresh Metadata	Metadaten aktualisieren	Actualiser les métadonnées	Actualizar metadatos
 Simulate and Upgrade	Simulieren und aktualisieren	Simuler et mettre à niveau	Simular y actualizar
 Rebuild DKMS	DKMS neu aufbauen	Reconstruire DKMS	Reconstruir DKMS
+Rebuild akmods	akmods neu aufbauen	Reconstruire akmods	Reconstruir akmods
+Rebuild AKMS	AKMS neu aufbauen	Reconstruire AKMS	Reconstruir AKMS
 Restore Graphical Login	Grafischen Login wiederherstellen	Restaurer la connexion graphique	Restaurar el acceso gráfico
 Rebuild Initramfs	initramfs neu aufbauen	Reconstruire les initramfs	Reconstruir initramfs
 Repair EFI / UKI	EFI / UKI reparieren	Réparer EFI / UKI	Reparar EFI / UKI
@@ -127,6 +129,8 @@ Complete interrupted package configuration	Unterbrochene Paketkonfiguration absc
 Repair broken package dependencies	Defekte Paketabhängigkeiten reparieren	Réparer les dépendances de paquets cassées	Reparar dependencias de paquetes rotas
 Upgrade installed packages (adaptive APT simulation)	Installierte Pakete aktualisieren (adaptive APT-Simulation)	Mettre à niveau les paquets installés (simulation APT adaptative)	Actualizar paquetes instalados (simulación APT adaptativa)
 Rebuild DKMS modules	DKMS-Module neu aufbauen	Reconstruire les modules DKMS	Reconstruir los módulos DKMS
+Rebuild akmods modules	akmods-Module neu aufbauen	Reconstruire les modules akmods	Reconstruir los módulos akmods
+Rebuild AKMS modules	AKMS-Module neu aufbauen	Reconstruire les modules AKMS	Reconstruir los módulos AKMS
 Restore detected graphical login manager and graphical.target	Erkannten grafischen Login-Manager und graphical.target wiederherstellen	Restaurer le gestionnaire de connexion graphique détecté et graphical.target	Restaurar el gestor de acceso gráfico detectado y graphical.target
 Rebuild initramfs after mapper/crypttab validation	initramfs nach Mapper-/Crypttab-Prüfung neu aufbauen	Reconstruire initramfs après validation mapper/crypttab	Reconstruir initramfs tras la validación de mapper/crypttab
 Repair EFI / UKI boot path (explicit target ESP repair)	EFI-/UKI-Bootpfad reparieren (explizite Ziel-ESP-Reparatur)	Réparer le chemin de démarrage EFI / UKI (réparation explicite de l'ESP cible)	Reparar la ruta de arranque EFI / UKI (reparación explícita de la ESP de destino)

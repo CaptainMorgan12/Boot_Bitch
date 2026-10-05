@@ -3114,6 +3114,28 @@ target_rpm_detected()
         || [[ -d "$TARGET_ROOT/usr/lib/sysimage/rpm" ]]
 }
 
+# Deterministic kernel-module build-system resolver.  Detects akmods
+# (Fedora/rpm), akms (Alpine/apk) or dkms from read-only target evidence and
+# prints exactly one token (dkms|akmods|akms|none).  Detection is probe-only,
+# never a distribution-ID gate: akmods/akms are specific to their package
+# manager and are preferred over the generic dkms binary when both are present.
+module_build_system()
+{
+    if target_rpm_detected && target_has_executable /usr/sbin/akmods /usr/bin/akmods; then
+        printf 'akmods\n'
+        return 0
+    fi
+    if target_apk_detected && target_has_executable /usr/sbin/akms /usr/bin/akms; then
+        printf 'akms\n'
+        return 0
+    fi
+    if [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
+        printf 'dkms\n'
+        return 0
+    fi
+    printf 'none\n'
+}
+
 # A usable rpm database is the sqlite backend rpm 4.16+/6 uses.  A legacy-only
 # tree (Berkeley DB `Packages`) fails closed instead of being handed to dnf5,
 # which requires the sqlite rpmdb.
@@ -8014,6 +8036,67 @@ repair_kernel_versions()
 
 preflight_dkms()
 {
+    case "$(module_build_system)" in
+        akmods) preflight_akmods ;;
+        akms)   preflight_akms ;;
+        dkms)   preflight_dkms_backend ;;
+        none)   fail "No supported kernel-module build system (dkms, akmods or akms) is installed in the target system." ;;
+    esac
+}
+
+# Fedora akmods preflight: the akmods executable and the per-kernel kernel-devel
+# build tree the dracut backend already requires.  Kernels pair through the rpm
+# module inventory, never through vmlinuz-* alone (which would include the
+# -0-rescue kernel); the guarded rpm backend never guesses package names.
+preflight_akmods()
+{
+    local kver
+    local -a akmods_pairs=()
+
+    target_has_executable /usr/sbin/akmods /usr/bin/akmods \
+        || fail "akmods is not installed in the target system."
+    msg_log akmods-simulate
+    mapfile -t akmods_pairs < <(repair_kernel_versions rpm)
+    ((${#akmods_pairs[@]} > 0)) \
+        || fail "No installed kernel module directories were found for akmods."
+    for kver in "${akmods_pairs[@]}"; do
+        [[ -n "$kver" ]] || continue
+        run_selected_chroot /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            test -e "/lib/modules/$kver/build" \
+            || fail "akmods preflight found no /lib/modules/$kver/build tree; install the matching kernel-devel packages and retry."
+        msg_log akmods-headers-present "$kver"
+    done
+    run_chroot_try "$(msg inspect-akmods-state)" rpm -q 'kmod-*'
+}
+
+# Alpine akms preflight: the akms executable and the per-kernel headers/build
+# tree (the same mkinitfs build-tree check the dkms branch uses).
+preflight_akms()
+{
+    local kver
+    local -a akms_pairs=()
+
+    target_has_executable /usr/sbin/akms /usr/bin/akms \
+        || fail "akms is not installed in the target system."
+    msg_log akms-simulate
+    mapfile -t akms_pairs < <(repair_kernel_versions alpine)
+    ((${#akms_pairs[@]} > 0)) \
+        || fail "No installed kernel module directories were found for akms."
+    for kver in "${akms_pairs[@]}"; do
+        [[ -n "$kver" ]] || continue
+        run_selected_chroot /usr/bin/env PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            test -e "/lib/modules/$kver/build" \
+            || fail "akms preflight found no /lib/modules/$kver/build tree; install the matching headers and retry."
+        msg_log akms-headers-present "$kver"
+    done
+    run_chroot_try "$(msg inspect-akms-state)" akms status
+}
+
+# Debian/Arch dkms preflight (unchanged): the dkms executable, a read-only
+# status probe, and the kernel/header build-tree inventory with the guarded
+# header correction on Debian-family targets.
+preflight_dkms_backend()
+{
     local kver header_pkg alpine_dkms_pair alpine_dkms_kver rpm_dkms_pair rpm_dkms_kver
     local -a missing_headers=() available_headers=() alpine_dkms_pairs=() rpm_dkms_pairs=()
 
@@ -8119,13 +8202,56 @@ preflight_dkms()
 
 adaptive_dkms_repair()
 {
-    preflight_dkms
+    case "$(module_build_system)" in
+        akmods) adaptive_akmods_repair ;;
+        akms)   adaptive_akms_repair ;;
+        dkms)   adaptive_dkms_repair_backend ;;
+        none)   fail "No supported kernel-module build system (dkms, akmods or akms) is installed in the target system." ;;
+    esac
+}
+
+# Fedora akmods rebuild: per-kernel `akmods --force --kernels <kver>` for every
+# kernel the preflight enumerated, then a read-only kmod package inventory.
+adaptive_akmods_repair()
+{
+    local kver
+    preflight_akmods
+    while IFS= read -r kver; do
+        [[ -n "$kver" ]] || continue
+        run_chroot_try_display "$(msg rebuild-akmods-modules "$kver")" \
+            akmods --force --kernels "$kver"
+        ((CHROOT_TRY_RC == 0)) \
+            || fail "akmods --force --kernels $kver failed after preflight."
+    done < <(repair_kernel_versions rpm)
+    msg_log akmods-pass
+    run_chroot_try "$(msg post-repair-akmods-status)" rpm -q 'kmod-*'
+    # akmods rebuilds cannot be proven byte-identical without hashing every
+    # module tree and its side effects; stay changed (fail safe).
+    repair_change_status dkms changed
+}
+
+# Alpine akms rebuild: `akms rebuild` followed by a read-only `akms status`.
+adaptive_akms_repair()
+{
+    preflight_akms
+    run_chroot_try_display "$(msg rebuild-akms-modules)" akms rebuild
+    ((CHROOT_TRY_RC == 0)) || fail "akms rebuild failed after preflight."
+    msg_log akms-pass
+    run_chroot_try "$(msg post-repair-akms-status)" akms status
+    # akms rebuilds cannot be proven byte-identical without hashing every
+    # module tree and its side effects; stay changed (fail safe).
+    repair_change_status dkms changed
+}
+
+adaptive_dkms_repair_backend()
+{
+    preflight_dkms_backend
     run_chroot_try_display "$(msg rebuild-dkms-modules)" dkms autoinstall
     if ((CHROOT_TRY_RC != 0)); then
         if grep -Eiq 'kernel headers.*(not found|missing)|your kernel headers.*cannot be found|/lib/modules/.*/build.*(missing|no such)' \
             <<<"$CHROOT_TRY_OUTPUT"; then
             msg_log dkms-known-missing-headers
-            preflight_dkms
+            preflight_dkms_backend
             run_chroot_try_display "$(msg retry-dkms-autoinstall)" dkms autoinstall
         fi
     fi
@@ -11473,6 +11599,7 @@ diagnostic_backend_profile()
     echo "Kernel layout: ${TARGET_KERNEL_LAYOUT:-unknown}"
     echo "Logging backend: ${TARGET_LOGGING_BACKEND:-none}"
     echo "Repair capability: ${TARGET_REPAIR_BACKEND:-unknown}"
+    echo "Module build system: $(module_build_system)"
 
     # The policy notes below are wording hints.  Availability is decided by the
     # capability probes, never by these lines.
@@ -12254,8 +12381,10 @@ extlinux_unavailable_reason()
 
 dkms_unavailable_reason()
 {
-    local kver pair
-    if [[ ! -x "$TARGET_ROOT/usr/bin/dkms" && ! -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
+    local kver pair msys
+    msys="$(module_build_system)"
+
+    if [[ "$msys" == none ]]; then
         case "$TARGET_DISTRO_FAMILY" in
             arch) reason missing-dkms-arch ;;
             alpine) reason missing-dkms-alpine ;;
@@ -12263,11 +12392,39 @@ dkms_unavailable_reason()
         esac
         return 1
     fi
+
+    if [[ "$msys" == akmods ]]; then
+        # Fedora akmods pairs through the rpm module inventory (the rescue pair
+        # is excluded) and needs the kernel-devel build tree the dracut
+        # preflight re-checks at run time.
+        while IFS= read -r pair; do
+            [[ -n "$pair" ]] || continue
+            kver="${pair%% *}"
+            if ! target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                reason akmods-no-build-tree "$kver"
+                return 1
+            fi
+        done < <(rpm_kernel_pairs_readonly)
+        return 0
+    fi
+
+    if [[ "$msys" == akms ]]; then
+        while IFS= read -r pair; do
+            [[ -n "$pair" ]] || continue
+            kver="${pair%% *}"
+            if ! target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                reason akms-no-build-tree "$kver"
+                return 1
+            fi
+        done < <(alpine_kernel_pairs)
+        return 0
+    fi
+
+    # dkms: Debian/Arch behaviour unchanged.  A dracut (Fedora) target that
+    # still ships the dkms binary is gated by the same build-tree check instead
+    # of the old hard refusal, so the capability follows the executable plus
+    # its per-backend prerequisites.
     if [[ "$TARGET_INITRAMFS_BACKEND" == dracut ]]; then
-        # Fedora DKMS pairs through the rpm module inventory (the rescue pair
-        # is excluded) and needs kernel-devel build trees.  The header
-        # correction path (kernel-devel/akmods) is design-only in this
-        # milestone, so the capability stays unavailable by policy.
         while IFS= read -r pair; do
             [[ -n "$pair" ]] || continue
             kver="${pair%% *}"
@@ -12276,8 +12433,7 @@ dkms_unavailable_reason()
                 return 1
             fi
         done < <(rpm_kernel_pairs_readonly)
-        reason rpm-dkms-header-correction-unimplemented
-        return 1
+        return 0
     fi
     if [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs ]]; then
         while IFS= read -r pair; do
@@ -12508,11 +12664,21 @@ repair_capability_evidence()
             fi
             ;;
         dkms)
-            if [[ ! -x "$TARGET_ROOT/usr/bin/dkms" && ! -x "$TARGET_ROOT/usr/sbin/dkms" ]]; then
-                printf 'dkms executable missing'
-            else
-                detail="dkms executable present"
-                if [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs ]]; then
+            case "$(module_build_system)" in
+                akmods)
+                    detail="akmods executable present"
+                    while IFS= read -r kver; do
+                        [[ -n "$kver" ]] || continue
+                        if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                            detail+="; kernel $kver build tree present"
+                        else
+                            detail+="; kernel $kver build tree missing"
+                        fi
+                    done < <(rpm_kernel_pairs_readonly | awk '{print $1}')
+                    printf '%s' "$detail"
+                    ;;
+                akms)
+                    detail="akms executable present"
                     while IFS= read -r kver; do
                         [[ -n "$kver" ]] || continue
                         if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
@@ -12521,18 +12687,35 @@ repair_capability_evidence()
                             detail+="; kernel $kver build tree missing"
                         fi
                     done < <(alpine_kernel_pairs | awk '{print $1}')
-                else
-                    while IFS= read -r kver; do
-                        [[ -n "$kver" ]] || continue
-                        if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
-                            detail+="; kernel $kver build tree present"
-                        else
-                            detail+="; kernel $kver build tree missing"
-                        fi
-                    done < <(arch_kernel_versions)
-                fi
-                printf '%s' "$detail"
-            fi
+                    printf '%s' "$detail"
+                    ;;
+                dkms)
+                    detail="dkms executable present"
+                    if [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs ]]; then
+                        while IFS= read -r kver; do
+                            [[ -n "$kver" ]] || continue
+                            if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                                detail+="; kernel $kver build tree present"
+                            else
+                                detail+="; kernel $kver build tree missing"
+                            fi
+                        done < <(alpine_kernel_pairs | awk '{print $1}')
+                    else
+                        while IFS= read -r kver; do
+                            [[ -n "$kver" ]] || continue
+                            if target_has_path "/lib/modules/$kver/build" "/usr/lib/modules/$kver/build"; then
+                                detail+="; kernel $kver build tree present"
+                            else
+                                detail+="; kernel $kver build tree missing"
+                            fi
+                        done < <(arch_kernel_versions)
+                    fi
+                    printf '%s' "$detail"
+                    ;;
+                none)
+                    printf 'dkms, akmods and akms executables missing'
+                    ;;
+            esac
             ;;
         display)
             case "$(target_display_manager_backend)" in
@@ -14956,6 +15139,7 @@ diagnostic_kernel()
         [[ -f "$kernel" ]] && kernels+=("$kernel")
     done
     profile_target_backends
+    echo "Module build system: $(module_build_system)"
     echo "${scope_label^} kernel files:"
     if ((${#kernels[@]} == 0)); then
         echo "  none found"

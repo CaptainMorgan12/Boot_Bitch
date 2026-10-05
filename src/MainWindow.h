@@ -630,6 +630,18 @@ private:
     // ...) parsed from the cached display evidence; empty when the evidence
     // names no specific manager.
     QString detectedDisplayManagerName() const;
+    // Display name of the detected kernel-module build system ("akmods" for
+    // Fedora/rpm, "AKMS" for Alpine/apk, otherwise "DKMS"), parsed from the
+    // cached backend profile's `Module build system:` evidence line.  The
+    // capability gate itself stays on the `Repair tool dkms:` line; this label
+    // only selects the user-visible wording and falls back to DKMS with no
+    // evidence.
+    QString detectedModuleBuildSystemLabel() const;
+    // Short-action labels that name the detected module-build system verbatim:
+    // "Rebuild DKMS modules"/"Rebuild akmods modules"/"Rebuild AKMS modules"
+    // and the button form "Rebuild DKMS"/"Rebuild akmods"/"Rebuild AKMS".
+    QString rebuildModuleStageText() const;
+    QString rebuildModuleActionText() const;
     // Package-manager family key ("debian", "arch", "fedora", "alpine") for
     // the missing-Polkit-agent hint. The active scope's detected backend
     // profile is authoritative; the running host's own /etc/os-release is the
