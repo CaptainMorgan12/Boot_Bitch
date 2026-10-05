@@ -9,3 +9,4 @@
 #   date   approval date, YYYY-MM-DD
 #   note   why the overage is accepted (single line, no tabs)
 #
+boot-repair-uki-grub-baseline-contract	fast	2026-10-04	New uki/grub single-source-of-truth baseline guard (parse round-trip + repair consumption); quick budget was already at 120 before this 2s fast test.
