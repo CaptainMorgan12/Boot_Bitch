@@ -10156,6 +10156,90 @@ parse_cached_grub_inventory()
     GRUB_BOOT_CODE="$bootcode"
 }
 
+# Reconstruct the deterministic extlinux evidence from the cached `boot-evidence`
+# diagnostic section (the exact `Extlinux decision:` line and `Extlinux entry
+# keys (normalized):` block diagnostic_boot_evidence emits), so the extlinux
+# repair consumes the single cached source of truth for the resolved config
+# path, the guard-compatible LABEL/LINUX/INITRD/KERNEL entry-key set and the
+# default=/overwrite= values from /etc/update-extlinux.conf instead of
+# re-deriving them.  The write-time preflight (preflight_extlinux) and the
+# entry-preservation guard (guard_extlinux_candidate_preserves_entries) always
+# re-read the live configuration.  Fails closed when the baseline is absent,
+# undecodable, empty or carries no valid decision line.  Read-only.
+parse_cached_extlinux_inventory()
+{
+    local line rest token
+    local baseline=""
+    local -a fields=()
+    local config="" default_val="" overwrite_val=""
+    local in_keys=false keys=""
+
+    if [[ -z "${BOOT_EVIDENCE_BASELINE_B64:-}" ]]; then
+        fail "Run the boot-evidence diagnostic before starting the extlinux repair (no cached boot-evidence baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$BOOT_EVIDENCE_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached boot-evidence baseline could not be decoded; run the boot-evidence diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached boot-evidence baseline is empty; run the boot-evidence diagnostic again."
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        if [[ "$line" == "Extlinux decision:"* ]]; then
+            rest="${line#Extlinux decision: }"
+            IFS=' ' read -r -a fields <<<"$rest"
+            for token in "${fields[@]:-}"; do
+                case "$token" in
+                    config=*)    config="${token#config=}" ;;
+                    default=*)   default_val="${token#default=}" ;;
+                    overwrite=*) overwrite_val="${token#overwrite=}" ;;
+                esac
+            done
+            continue
+        fi
+        if [[ "$line" == "Extlinux entry keys (normalized):" ]]; then
+            in_keys=true
+            continue
+        fi
+        if [[ "$in_keys" == true ]]; then
+            if [[ -z "$line" ]]; then
+                in_keys=false
+            else
+                case "${line%%$'\t'*}" in
+                    LABEL|LINUX|INITRD|KERNEL)
+                        # Only a tab-separated key line is entry evidence; a
+                        # bare keyword or any other non-blank line ends the block.
+                        if [[ "$line" == *$'\t'* ]]; then
+                            keys+="$line"$'\n'
+                        else
+                            in_keys=false
+                        fi
+                        ;;
+                    *) in_keys=false ;;
+                esac
+            fi
+        fi
+    done <<<"$baseline"
+
+    case "$config" in
+        /boot/extlinux.conf|/boot/syslinux/syslinux.cfg|/boot/syslinux.cfg) ;;
+        *) fail "The cached boot-evidence baseline carries no valid extlinux configuration path; run the boot-evidence diagnostic again." ;;
+    esac
+
+    EXTLINUX_CONFIG_PATH="$config"
+    if [[ -n "$default_val" && "$default_val" != none ]]; then
+        EXTLINUX_DEFAULT="$default_val"
+    else
+        EXTLINUX_DEFAULT=""
+    fi
+    if [[ -n "$overwrite_val" && "$overwrite_val" != none ]]; then
+        EXTLINUX_OVERWRITE="$overwrite_val"
+    else
+        EXTLINUX_OVERWRITE=""
+    fi
+    EXTLINUX_ENTRY_KEYS="${keys%$'\n'}"
+}
+
 # Validate that the detected display manager is installed with its unit and
 # graphical.target present, correcting known missing packages through the
 # detected APT backend before the offline systemd link repair is allowed to
@@ -12235,13 +12319,18 @@ extlinux_verify_candidate()
     msg_log extlinux-candidate-count "$count"
 }
 
+# Capture the resolved extlinux configuration (config path argument, defaulting
+# to /boot/extlinux.conf for backward compatibility) and
+# /etc/update-extlinux.conf before the regeneration trial, so any failure can
+# restore them byte-identically.
 extlinux_backup_state()
 {
+    local cfg="${1:-$TARGET_ROOT/boot/extlinux.conf}"
     local dir="$SESSION_DIR/extlinux-backup"
     rm -rf -- "$dir"
     mkdir -p -- "$dir"
-    if [[ -f "$TARGET_ROOT/boot/extlinux.conf" ]]; then
-        cp -a -- "$TARGET_ROOT/boot/extlinux.conf" "$dir/extlinux.conf"
+    if [[ -f "$cfg" ]]; then
+        cp -a -- "$cfg" "$dir/extlinux.conf"
     fi
     if [[ -f "$TARGET_ROOT/etc/update-extlinux.conf" ]]; then
         cp -a -- "$TARGET_ROOT/etc/update-extlinux.conf" "$dir/update-extlinux.conf"
@@ -12249,13 +12338,16 @@ extlinux_backup_state()
     msg_log extlinux-backup "$dir"
 }
 
+# Restore the captured extlinux configuration to the resolved path (config path
+# argument) and /etc/update-extlinux.conf, dropping any trial candidate.
 extlinux_restore_backup()
 {
+    local cfg="${1:-$TARGET_ROOT/boot/extlinux.conf}"
     local dir="$SESSION_DIR/extlinux-backup"
     if [[ -f "$dir/extlinux.conf" ]]; then
-        cp -a -- "$dir/extlinux.conf" "$TARGET_ROOT/boot/extlinux.conf"
+        cp -a -- "$dir/extlinux.conf" "$cfg"
     else
-        rm -f -- "$TARGET_ROOT/boot/extlinux.conf"
+        rm -f -- "$cfg"
     fi
     if [[ -f "$dir/update-extlinux.conf" ]]; then
         cp -a -- "$dir/update-extlinux.conf" "$TARGET_ROOT/etc/update-extlinux.conf"
@@ -12314,13 +12406,15 @@ preflight_extlinux()
 # use the same trial/entry-guard pattern and preserve every existing LABEL.
 adaptive_extlinux_repair()
 {
-    local cfg_before="" cfg_after="" candidate="$TARGET_ROOT/boot/extlinux.conf.new"
+    local cfg="" cfg_before="" cfg_after="" candidate="$TARGET_ROOT/boot/extlinux.conf.new"
     local original_conf="$SESSION_DIR/extlinux-backup/update-extlinux.conf"
     local config="$TARGET_ROOT/etc/update-extlinux.conf"
 
     preflight_extlinux
-    cfg_before="$(repair_file_fingerprint "$TARGET_ROOT/boot/extlinux.conf")"
-    extlinux_backup_state
+    cfg="$(extlinux_resolved_config_path)" \
+        || fail "No extlinux/syslinux configuration was detected under target /boot."
+    cfg_before="$(repair_file_fingerprint "$cfg")"
+    extlinux_backup_state "$cfg"
 
     # Force the documented overwrite=0 behavior for the trial.  The original
     # configuration is restored before the candidate is judged, so the target
@@ -12334,12 +12428,12 @@ adaptive_extlinux_repair()
 
     if (( CHROOT_TRY_RC != 0 )); then
         rm -f -- "$candidate"
-        fail "update-extlinux trial failed; /boot/extlinux.conf was not changed."
+        fail "update-extlinux trial failed; the extlinux configuration was not changed."
     fi
     if [[ ! -s "$candidate" ]]; then
         # update-extlinux removes the candidate when it is byte-identical.
         rm -f -- "$candidate"
-        cfg_after="$(repair_file_fingerprint "$TARGET_ROOT/boot/extlinux.conf")"
+        cfg_after="$(repair_file_fingerprint "$cfg")"
         if [[ "$cfg_before" == "$cfg_after" ]]; then
             repair_change_status extlinux "unchanged|$(reason extlinux-regenerated-identical)"
         else
@@ -12348,24 +12442,24 @@ adaptive_extlinux_repair()
         return 0
     fi
 
-    if ! guard_extlinux_candidate_preserves_entries "$TARGET_ROOT/boot/extlinux.conf" "$candidate"; then
+    if ! guard_extlinux_candidate_preserves_entries "$cfg" "$candidate"; then
         rm -f -- "$candidate"
-        extlinux_restore_backup
+        extlinux_restore_backup "$cfg"
         fail "extlinux regeneration was rolled back because it removed an existing boot entry."
     fi
     if ! extlinux_verify_candidate "$candidate"; then
         rm -f -- "$candidate"
-        extlinux_restore_backup
+        extlinux_restore_backup "$cfg"
         fail "extlinux regeneration candidate failed verification; the previous configuration was restored."
     fi
-    install -m 0644 "$candidate" "$TARGET_ROOT/boot/extlinux.conf"
+    install -m 0644 "$candidate" "$cfg"
     rm -f -- "$candidate"
-    if [[ ! -s "$TARGET_ROOT/boot/extlinux.conf" ]]; then
-        extlinux_restore_backup
-        fail "extlinux regeneration produced no usable /boot/extlinux.conf; the previous configuration was restored."
+    if [[ ! -s "$cfg" ]]; then
+        extlinux_restore_backup "$cfg"
+        fail "extlinux regeneration produced no usable configuration; the previous configuration was restored."
     fi
     msg_log extlinux-regenerated
-    cfg_after="$(repair_file_fingerprint "$TARGET_ROOT/boot/extlinux.conf")"
+    cfg_after="$(repair_file_fingerprint "$cfg")"
     if [[ "$cfg_before" == "$cfg_after" ]]; then
         repair_change_status extlinux "unchanged|$(reason extlinux-conf-identical)"
     else
@@ -12393,6 +12487,56 @@ extlinux_configured_default_label()
     local conf="$TARGET_ROOT/etc/update-extlinux.conf"
     [[ -f "$conf" ]] || return 0
     legacy_sed_ext -n 's/^[[:space:]]*default[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$conf" | head -n1
+}
+
+# `overwrite=` value from /etc/update-extlinux.conf (quotes stripped), if any.
+extlinux_configured_overwrite()
+{
+    local conf="$TARGET_ROOT/etc/update-extlinux.conf"
+    [[ -f "$conf" ]] || return 0
+    legacy_sed_ext -n 's/^[[:space:]]*overwrite[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' "$conf" | head -n1
+}
+
+# Read-only collector of the deterministic extlinux repair decision inputs: the
+# resolved config path (target-relative), the guard-compatible
+# LABEL/LINUX/INITRD/KERNEL entry-key set, and the default=/overwrite= values
+# from /etc/update-extlinux.conf.  Populates the EXTLINUX_* globals shared by
+# the diagnostic emission (diagnostic_boot_evidence) and the baseline parser
+# (parse_cached_extlinux_inventory, which re-derives the same values from the
+# cached section text without re-probing the target).
+extlinux_inventory_collect()
+{
+    local cfg=""
+    EXTLINUX_CONFIG_PATH=""
+    EXTLINUX_DEFAULT=""
+    EXTLINUX_OVERWRITE=""
+    EXTLINUX_ENTRY_KEYS=""
+    cfg="$(extlinux_config_path 2>/dev/null || true)"
+    if [[ -n "$cfg" ]]; then
+        EXTLINUX_CONFIG_PATH="${cfg#"$TARGET_ROOT"}"
+        EXTLINUX_ENTRY_KEYS="$(extlinux_entry_keys "$cfg")"
+    fi
+    if [[ -f "$TARGET_ROOT/etc/update-extlinux.conf" ]]; then
+        EXTLINUX_DEFAULT="$(extlinux_configured_default_label)"
+        EXTLINUX_OVERWRITE="$(extlinux_configured_overwrite)"
+    fi
+}
+
+# Resolve the extlinux configuration path for the repair, preferring the cached
+# `boot-evidence` baseline when the GUI supplied one; otherwise derive it fresh
+# from target evidence.  The write-time preflight (preflight_extlinux) and the
+# entry-preservation guard (guard_extlinux_candidate_preserves_entries) always
+# re-read the live configuration and never consume this cache.
+extlinux_resolved_config_path()
+{
+    if [[ -n "${BOOT_EVIDENCE_BASELINE_B64:-}" ]]; then
+        [[ -n "${EXTLINUX_CONFIG_PATH:-}" ]] || parse_cached_extlinux_inventory
+        if [[ -n "${EXTLINUX_CONFIG_PATH:-}" ]]; then
+            printf '%s\n' "$TARGET_ROOT$EXTLINUX_CONFIG_PATH"
+            return 0
+        fi
+    fi
+    extlinux_config_path || return 1
 }
 
 # True when the configuration marks exactly the wanted LABEL as its default,
@@ -16221,8 +16365,26 @@ diagnostic_boot_evidence()
     fi
     extlinux_cfg="$(extlinux_config_path || true)"
     if [[ -n "$extlinux_cfg" ]]; then
+        extlinux_inventory_collect
         echo "$(legacy_ucfirst "$scope_label") extlinux configuration (${extlinux_cfg#"$TARGET_ROOT"}):"
         extlinux_menu_entries | head -200 || true
+        echo
+        # The normalized entry-key set is the exact identity the
+        # entry-preservation guard compares the generated candidate against.
+        # Emitted here for evidence only: the guard itself always re-reads the
+        # live configuration at mutation time, never this cached listing.
+        echo "Extlinux entry keys (normalized):"
+        if [[ -n "$EXTLINUX_ENTRY_KEYS" ]]; then
+            printf '%s\n' "$EXTLINUX_ENTRY_KEYS"
+        else
+            echo "(no extlinux entries)"
+        fi
+        echo
+        # Machine-parseable decision consumed by the extlinux repair baseline.
+        # Carries the resolved config path and the default=/overwrite= settings
+        # so the repair can plan from the cached section without re-deriving
+        # them (the preflight and entry guard stay fresh).
+        echo "Extlinux decision: config=${EXTLINUX_CONFIG_PATH:-none} default=${EXTLINUX_DEFAULT:-none} overwrite=${EXTLINUX_OVERWRITE:-none}"
     fi
     echo
     diagnostic_boot_chain
@@ -21733,6 +21895,13 @@ UKI_BASELINE_B64=""
 # snapshot/rollback and the mutation-time grubenv re-check always read the live
 # filesystem.  Empty means no baseline was supplied.
 GRUB_BASELINE_B64=""
+# Base64-serialized cached `boot-evidence` diagnostic section handed in by the
+# GUI via --evidence boot-evidence <value>.  It is the single source of truth
+# the extlinux repair consumes for the deterministic config path, entry-key set
+# and default=/overwrite= inputs instead of re-deriving them; the write-time
+# preflight and entry-preservation guard always re-read the live configuration.
+# Empty means no baseline was supplied.
+BOOT_EVIDENCE_BASELINE_B64=""
 # Reconstructed deterministic evidence, populated by parse_cached_uki_inventory
 # and parse_cached_grub_inventory from their cached sections.
 EFI_LOADER_LAYOUT=""      # vendor-uki|generic-grub-efi|alpine-efi-stub|alpine-grub-efi|grub2-bios|syslinux-bios|no-efi-layout
@@ -21743,6 +21912,12 @@ GRUB_LAYOUT=""            # grub|grub2
 GRUB_GENERATOR=""         # generator tool path (grub_generator_tool output) or none
 GRUB_ENV_VALID=""         # valid|invalid|missing
 GRUB_BOOT_CODE=""         # ok|broken|not-applicable
+# Reconstructed deterministic extlinux evidence, populated by
+# parse_cached_extlinux_inventory from the cached `boot-evidence` section.
+EXTLINUX_CONFIG_PATH=""   # /boot/extlinux.conf|/boot/syslinux/syslinux.cfg|/boot/syslinux.cfg (target-relative)
+EXTLINUX_DEFAULT=""       # default= from /etc/update-extlinux.conf, or empty
+EXTLINUX_OVERWRITE=""     # overwrite= from /etc/update-extlinux.conf, or empty
+EXTLINUX_ENTRY_KEYS=""    # newline-joined guard-compatible LABEL/LINUX/INITRD/KERNEL key set
 
 # Map an --evidence section key to its baseline storage variable.  Only the
 # diagnostic sections with a helper-side baseline consumer are accepted; any
@@ -21751,12 +21926,13 @@ GRUB_BOOT_CODE=""         # ok|broken|not-applicable
 store_evidence_baseline()
 {
     case "$1" in
-        kernel)  KERNEL_BASELINE_B64="$2" ;;
-        gpu)     GPU_BASELINE_B64="$2" ;;
-        display) DISPLAY_BASELINE_B64="$2" ;;
-        uki)     UKI_BASELINE_B64="$2" ;;
-        grub)    GRUB_BASELINE_B64="$2" ;;
-        report)  REPORT_BASELINE_B64="$2" ;;
+        kernel)        KERNEL_BASELINE_B64="$2" ;;
+        gpu)           GPU_BASELINE_B64="$2" ;;
+        display)       DISPLAY_BASELINE_B64="$2" ;;
+        uki)           UKI_BASELINE_B64="$2" ;;
+        grub)          GRUB_BASELINE_B64="$2" ;;
+        boot-evidence) BOOT_EVIDENCE_BASELINE_B64="$2" ;;
+        report)        REPORT_BASELINE_B64="$2" ;;
         *) fail "Unknown --evidence diagnostic section key: $1." ;;
     esac
 }
@@ -21773,6 +21949,7 @@ parse_cached_evidence_section()
         display) parse_cached_display_inventory ;;
         uki)     parse_cached_uki_inventory ;;
         grub)    parse_cached_grub_inventory ;;
+        boot-evidence) parse_cached_extlinux_inventory ;;
         report)
             if [[ -z "${REPORT_BASELINE_B64:-}" ]]; then
                 fail "No cached full report baseline was supplied."
@@ -21799,6 +21976,7 @@ parse_repair_arguments()
     DISPLAY_BASELINE_B64=""
     UKI_BASELINE_B64=""
     GRUB_BASELINE_B64=""
+    BOOT_EVIDENCE_BASELINE_B64=""
     REPORT_BASELINE_B64=""
     REPORT_BASELINE_TEXT=""
     EFI_LOADER_LAYOUT=""
@@ -21809,6 +21987,10 @@ parse_repair_arguments()
     GRUB_GENERATOR=""
     GRUB_ENV_VALID=""
     GRUB_BOOT_CODE=""
+    EXTLINUX_CONFIG_PATH=""
+    EXTLINUX_DEFAULT=""
+    EXTLINUX_OVERWRITE=""
+    EXTLINUX_ENTRY_KEYS=""
     local argument
     while (($# > 0)); do
         argument="$1"
@@ -24737,34 +24919,27 @@ reinstall_efi_bootloader()
     # or the Alpine path below).
     reassert_target_write_safety
 
-    # Deterministic loader-layout routing: prefer the cached `uki` baseline when
-    # the GUI supplied one, otherwise derive it from target evidence.  The
-    # write-time ESP validation (validate_selected_esp /
-    # validate_efi_bootloader_target / validate_tuxedo_uki_target), the
-    # efibootmgr -v capture, the ESP backup/rollback and the firmware-entry
-    # reconcilers below always re-run fresh.
-    layout="$(resolve_efi_loader_layout)"
-
     # Alpine uses its own guarded path: grub-install --no-nvram plus an ESP
     # file backup/rollback and the shared firmware reconciler, or the
-    # EFI-stub firmware-entry reconciliation when GRUB is not present.  Its
-    # grub-vs-efi-stub sub-routing stays a fresh runtime preflight inside
-    # adaptive_alpine_efi_repair.
-    if [[ "$layout" == alpine-grub-efi || "$layout" == alpine-efi-stub ]]; then
+    # EFI-stub firmware-entry reconciliation when GRUB is not present.  This
+    # stays a fresh family probe (exactly as before); its grub-vs-efi-stub
+    # sub-routing is a fresh runtime preflight inside adaptive_alpine_efi_repair.
+    if is_alpine_family; then
         adaptive_alpine_efi_repair
         return 0
     fi
 
-    # A BIOS-only layout (grub2 BIOS, syslinux/extlinux) or a layout with no
-    # recognised EFI path has nothing the EFI stage can repair: fail closed with
-    # the same probe-based reason the capability line emits.  The stage gate
-    # normally prevents this branch from being scheduled.
-    if [[ "$layout" == grub2-bios || "$layout" == syslinux-bios || "$layout" == no-efi-layout ]]; then
-        if ! reason="$(efi_unavailable_reason)"; then
-            fail "EFI repair is not available: $reason."
-        fi
-        fail "EFI repair is not available for the detected EFI backend."
-    fi
+    # Deterministic loader-layout routing (vendor UKI vs conventional GRUB EFI)
+    # prefers the cached `uki` baseline when the GUI supplied one, otherwise
+    # derives it from target evidence.  Every other layout (generic GRUB EFI,
+    # grub2 BIOS, syslinux/extlinux or an unresolved layout) falls through to
+    # the conventional path below, which validates the selected ESP fresh and
+    # fails closed there when none is derivable — exactly the pre-baseline
+    # behaviour.  The write-time ESP validation (validate_selected_esp /
+    # validate_efi_bootloader_target / validate_tuxedo_uki_target), the
+    # efibootmgr -v capture, the ESP backup/rollback and the firmware-entry
+    # reconcilers always re-run fresh.
+    layout="$(resolve_efi_loader_layout)"
 
     if command -v sha256sum >/dev/null 2>&1; then
         efi_before="$(efi_boot_artifact_fingerprint)"

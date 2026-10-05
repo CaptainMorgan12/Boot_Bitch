@@ -606,6 +606,56 @@ void MainWindowUiTest::gpuRepairSessionSerializesGpuAndKernelBaselines()
     QCOMPARE(decodedKernel, kernelSection);
 }
 
+// The boot-stack reconciliation must hand its four component baselines to the
+// helper as --evidence <section> <base64> (mapper/crypttab boot-evidence,
+// initramfs kernel, EFI/UKI uki, GRUB grub), so the reconciliation reuses the
+// cached evidence instead of re-collecting it.
+void MainWindowUiTest::bootstackSerializesComponentBaselines()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    cacheRepairEvidence(window, capabilityEvidence(false, true));
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("bootstack-request.log"));
+    QVERIFY2(startChangeStatusFakePrivilegedSession(window, capturePath, QStringList()),
+             "the scripted privileged session must start");
+    closeRepairProgressDialogWhenDone(&window);
+    acceptNextMessageBox(&window, QMessageBox::Yes);
+
+    QTreeWidgetItem *item = repairItem(window, QStringLiteral("bootstack"));
+    QVERIFY(item);
+    window.m_repairToolTree->setCurrentItem(item);
+    window.runSelectedRepairTool();
+
+    const QStringList args = capturedHelperArguments(capturePath);
+    QVERIFY2(args.contains(QStringLiteral("boot-stack")),
+             qPrintable(args.join(QLatin1Char(' '))));
+    for (const QString &section : {QStringLiteral("boot-evidence"), QStringLiteral("kernel"),
+                                   QStringLiteral("uki"), QStringLiteral("grub")}) {
+        int found = -1;
+        for (int i = 0; i + 2 < args.size(); ++i) {
+            if (args.at(i) == QStringLiteral("--evidence") && args.at(i + 1) == section) {
+                found = i;
+                break;
+            }
+        }
+        QVERIFY2(found >= 0,
+                 qPrintable(QStringLiteral("missing --evidence %1 in %2")
+                                .arg(section, args.join(QLatin1Char(' ')))));
+        QVERIFY2(!QByteArray::fromBase64(args.at(found + 2).toLatin1()).isEmpty(),
+                 qPrintable(QStringLiteral("empty %1 baseline payload").arg(section)));
+    }
+}
+
 // A repair tool must refuse to run — with a warning naming the missing
 // diagnostic section by its human-readable title and without launching the
 // privileged helper — when any required cached section is absent. The DKMS
@@ -678,9 +728,10 @@ void MainWindowUiTest::requiredDiagnosticSectionsMapping()
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("grub")),
              QStringList({QStringLiteral("grub")}));
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("extlinux")),
-             QStringList({QStringLiteral("boot")}));
+             QStringList({QStringLiteral("boot-evidence")}));
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("bootstack")),
-             QStringList({QStringLiteral("report")}));
+             QStringList({QStringLiteral("boot-evidence"), QStringLiteral("kernel"),
+                          QStringLiteral("uki"), QStringLiteral("grub")}));
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("kernels")),
              QStringList({QStringLiteral("kernel")}));
     QCOMPARE(MainWindow::requiredDiagnosticSectionsForTool(QStringLiteral("gpu")),

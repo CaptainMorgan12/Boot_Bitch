@@ -53,33 +53,34 @@ grep -q 'Grub menu entry keys (normalized):' "$HELPER" \
     || fail 'diagnostic_grub must emit the normalized menu-entry key set'
 
 # The EFI repair routes on the resolved (baseline-aware) loader layout.
-grep -A20 '^reinstall_efi_bootloader()' "$HELPER" | grep -q 'resolve_efi_loader_layout' \
+grep -q 'resolve_efi_loader_layout' <<<"$(sed -n '/^reinstall_efi_bootloader()/,/^}/p' "$HELPER")" \
     || fail 'reinstall_efi_bootloader must route through resolve_efi_loader_layout'
-grep -A30 '^rebuild_tuxedo_uki()' "$HELPER" | grep -q 'parse_cached_uki_inventory' \
+grep -q 'parse_cached_uki_inventory' <<<"$(sed -n '/^rebuild_tuxedo_uki()/,/^}/p' "$HELPER")" \
     || fail 'rebuild_tuxedo_uki must consume the cached uki baseline'
 # The fresh guards remain inside the EFI repair (never replaced by the baseline).
+reinstall_body="$(sed -n '/^reinstall_efi_bootloader()/,/^}/p' "$HELPER")"
 for guard in validate_selected_esp validate_efi_bootloader_target \
     conventional_efi_backup_state conventional_efi_restore_backup \
     efi_reconcile_firmware_inventory; do
-    grep -A200 '^reinstall_efi_bootloader()' "$HELPER" | grep -q "$guard" \
+    grep -q "$guard" <<<"$reinstall_body" \
         || fail "reinstall_efi_bootloader must keep the fresh guard $guard"
 done
-grep -A60 '^rebuild_tuxedo_uki()' "$HELPER" | grep -q 'validate_tuxedo_uki_target' \
+grep -q 'validate_tuxedo_uki_target' <<<"$(sed -n '/^rebuild_tuxedo_uki()/,/^}/p' "$HELPER")" \
     || fail 'rebuild_tuxedo_uki must keep validate_tuxedo_uki_target fresh'
 
 # The GRUB repairs consume the resolvers while the live guards stay.
 for fn in adaptive_grub_stage adaptive_grub_repair adaptive_fedora_grub_repair; do
-    grep -A30 "^${fn}()" "$HELPER" \
-        | grep -qE 'grub_resolved_(layout|config_path|generator|boot_code_broken)' \
+    grep -qE 'grub_resolved_(layout|config_path|generator|boot_code_broken)' \
+        <<<"$(sed -n "/^${fn}()/,/^}/p" "$HELPER")" \
         || fail "${fn} must consume the resolved grub baseline"
 done
-sed -n '/^adaptive_grub_repair()/,/^}/p' "$HELPER" | grep -q 'guard_grub_candidate_preserves_entries' \
+grep -q 'guard_grub_candidate_preserves_entries' <<<"$(sed -n '/^adaptive_grub_repair()/,/^}/p' "$HELPER")" \
     || fail 'adaptive_grub_repair must keep the live entry-preservation guard'
-sed -n '/^adaptive_fedora_grub_repair()/,/^}/p' "$HELPER" | grep -q 'fedora_grub_reinstall_boot_code' \
+grep -q 'fedora_grub_reinstall_boot_code' <<<"$(sed -n '/^adaptive_fedora_grub_repair()/,/^}/p' "$HELPER")" \
     || fail 'adaptive_fedora_grub_repair must keep the fresh boot-code reinstall'
 # The fresh guards remain inside adaptive_grub_repair even with the baseline
 # consumption (trial generation + live entry guard).
-sed -n '/^adaptive_grub_repair()/,/^}/p' "$HELPER" | grep -q 'preflight_grub' \
+grep -q 'preflight_grub' <<<"$(sed -n '/^adaptive_grub_repair()/,/^}/p' "$HELPER")" \
     || fail 'adaptive_grub_repair must keep the trial preflight_grub'
 
 # ---------------------------------------------------------------------------
