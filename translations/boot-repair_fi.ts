@@ -295,6042 +295,6240 @@
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="833"/>
-        <location filename="../src/MainWindow.cpp" line="15229"/>
-        <location filename="../src/MainWindow.cpp" line="15248"/>
+        <source>Package state</source>
+        <translation>Paketin tila</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="833"/>
+        <source>Summarizes pending configuration, broken dependencies and missing package files for every detected package manager without changing the selected system.</source>
+        <translation>Yhteenvetona odottaa kokoonpanoa, rikki riippuvuuksia ja puuttuvia pakettitiedostoja jokaiselle havaitulle pakettihallinnalle muuttamatta valittua järjestelmää.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="833"/>
+        <source>Summarize pending configuration and broken dependency state read-only.</source>
+        <translation>Yhteenveto keskeneräisistä konfiguraatioista ja rikkinäisestä huoltotilasta.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="834"/>
         <source>Boot diagnostics</source>
         <translation>Saapasdiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="833"/>
+        <location filename="../src/MainWindow.cpp" line="834"/>
         <source>Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.</source>
         <translation>Näyttää saappaat, /boot- ja EFI-sisällöt sekä varastointitodisteet muuttamatta valittua järjestelmää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="833"/>
+        <location filename="../src/MainWindow.cpp" line="834"/>
         <source>Show boot mounts, /boot and EFI contents read-only.</source>
         <translation>Näytä saappaat, /boot ja EFI-sisällöt vain luettuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="834"/>
+        <location filename="../src/MainWindow.cpp" line="835"/>
         <source>Boot evidence and selection history</source>
         <translation>Todisteet ja valintahistoria</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="834"/>
+        <location filename="../src/MainWindow.cpp" line="835"/>
         <source>Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.</source>
         <translation>Korjaa havaittua käynnistysketjua, bootloader-valintaa, ydintä/initramfs:ää, valokuvia, EFI:ää ja avaa todisteita, mukaan lukien yksi tai useampi LUKS-kehotus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="834"/>
+        <location filename="../src/MainWindow.cpp" line="835"/>
         <source>Correlate the boot chain, loader, kernel/initramfs and unlock evidence.</source>
         <translation>Korjaa käynnistysketju, kuormaaja, ydin/initramfs ja avaa todisteet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="835"/>
+        <location filename="../src/MainWindow.cpp" line="836"/>
         <source>Kernel / initramfs</source>
         <translation>Ytimen / initramfs</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="835"/>
+        <location filename="../src/MainWindow.cpp" line="836"/>
         <source>Reviews kernel files and verifies matching initramfs images through a read-only inspection.</source>
         <translation>Tarkistaa ydintiedostoja ja todentaa täsmäävät initramfs-kuvat vain lukutarkastuksella.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="835"/>
+        <location filename="../src/MainWindow.cpp" line="836"/>
         <source>Verify kernel files and matching initramfs images read-only.</source>
         <translation>Varmista ytimen tiedostot ja vastaavat initramfs kuvia vain lukea.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="836"/>
-        <location filename="../src/MainWindow.cpp" line="6631"/>
-        <location filename="../src/MainWindow.cpp" line="15228"/>
-        <location filename="../src/MainWindow.cpp" line="15247"/>
-        <location filename="../src/MainWindow.cpp" line="20344"/>
+        <location filename="../src/MainWindow.cpp" line="837"/>
+        <location filename="../src/MainWindow.cpp" line="6719"/>
+        <location filename="../src/MainWindow.cpp" line="20565"/>
         <source>GRUB configuration</source>
         <translation>GRUB-konfiguraatio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="836"/>
+        <location filename="../src/MainWindow.cpp" line="837"/>
         <source>Reviews GRUB configuration and /etc/default/grub without changing boot files.</source>
         <translation>Arvostelut GRUB asetukset ja /etc/default/grub muuttamatta käynnistystiedostoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="836"/>
+        <location filename="../src/MainWindow.cpp" line="837"/>
         <source>Review GRUB configuration and /etc/default/grub read-only.</source>
         <translation>Tarkista GRUB-asetukset ja /etc/default/grub read-only.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="837"/>
+        <location filename="../src/MainWindow.cpp" line="838"/>
         <source>EFI / UKI boot state</source>
         <translation>EFI / UKI- käynnistystila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="837"/>
+        <location filename="../src/MainWindow.cpp" line="838"/>
         <source>Inspects the selected ESP, vendor or generic UKI images, systemd-boot loader files, embedded kernel/cmdline data and firmware entries with PARTUUID ownership classification.</source>
         <translation>Tarkastaa valitut ESP-, myyjä- tai geneeriset UKI-kuvat, systemd-boot-kuormaajatiedostot, upotetut ytimen/cmdline-tiedot ja firmware-merkinnät, joissa on PAPUUID-omistusluokitus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="837"/>
+        <location filename="../src/MainWindow.cpp" line="838"/>
         <source>Inspect the ESP, UKI images and firmware entries.</source>
         <translation>Tutustu ESP-, UKI-kuviin ja laiteohjelmistoihin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="838"/>
-        <location filename="../src/MainWindow.cpp" line="6627"/>
-        <location filename="../src/MainWindow.cpp" line="20273"/>
+        <location filename="../src/MainWindow.cpp" line="839"/>
+        <location filename="../src/MainWindow.cpp" line="6715"/>
+        <location filename="../src/MainWindow.cpp" line="20494"/>
         <source>Graphical login / display manager</source>
         <translation>Graafinen kirjautuminen / näytönhallinta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="838"/>
+        <location filename="../src/MainWindow.cpp" line="839"/>
         <source>Reviews graphical.target, the configured display manager (for example SDDM, GDM/GDM3, LightDM, or another systemd manager), installed desktop packages, and recent boot/journal evidence without starting the GUI.</source>
         <translation>Arvostelut graafinen. kohde, konfiguroitu näyttö manager (esim. DSDM, GDM/GDM3, LightDM, tai muu järjestelmällinen manager), asennettu työpöytäpaketit, ja viimeaikaiset boot/journal näyttö käynnistämättä GUI.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="838"/>
+        <location filename="../src/MainWindow.cpp" line="839"/>
         <source>Review the configured display manager and login target.</source>
         <translation>Tarkista määritetty näytönhallinta ja kirjautumiskohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="839"/>
+        <location filename="../src/MainWindow.cpp" line="840"/>
         <source>Graphics / GPU driver stack</source>
         <translation>Grafiikka / GPU ajuripino</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="839"/>
+        <location filename="../src/MainWindow.cpp" line="840"/>
         <source>Reviews the kernel GPU driver: detected hardware, the loaded and blacklisted modules, installed driver packages, the expected driver, per-kernel DKMS build status, how far this boot reached and actionable journal driver errors.</source>
         <translation>Tarkistaa ytimen GPU-ajuri: Havaittu laitteisto, ladatut ja mustalla listalla moduulit, asennetut ohjainpaketit, odotettu kuljettaja, per-ydin DKMS rakentaa tilan, kuinka pitkälle tämä käynnistys saavuttaa ja toimii päiväkirjan ajuri virheitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="839"/>
+        <location filename="../src/MainWindow.cpp" line="840"/>
         <source>Review the kernel GPU driver and per-kernel DKMS build status read-only.</source>
         <translation>Tarkista ytimen GPU ajuri ja per-ydin DKMS rakentaa tila vain lukea.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="840"/>
+        <location filename="../src/MainWindow.cpp" line="841"/>
         <source>Boot errors</source>
         <translation>Saapasvirheet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="840"/>
+        <location filename="../src/MainWindow.cpp" line="841"/>
         <source>Reads recent error-priority entries from the running host or selected repair system&apos;s persistent journal when available.</source>
         <translation>Luee viimeisimmät virheprioriteetti merkinnät käynnissä isäntä tai valitun korjausjärjestelmän jatkuva päiväkirja, jos saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="840"/>
+        <location filename="../src/MainWindow.cpp" line="841"/>
         <source>Read recent boot error-priority journal entries.</source>
         <translation>Lue viimeaikaiset käynnistyksen virheprioriteetti päiväkirjan merkinnät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="841"/>
+        <location filename="../src/MainWindow.cpp" line="842"/>
         <source>Disk usage</source>
         <translation>Levyn käyttö</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="841"/>
+        <location filename="../src/MainWindow.cpp" line="842"/>
         <source>Summarizes filesystem capacity/free space for the running host or read-only repair target.</source>
         <translation>Yhdistää tiedostojärjestelmän kapasiteetti / vapaa tila käynnissä isäntä tai luku-vain korjaus kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="841"/>
+        <location filename="../src/MainWindow.cpp" line="842"/>
         <source>Summarize filesystem capacity and free space.</source>
         <translation>Yhteenveto tiedostojärjestelmän kapasiteetti ja vapaa tila.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="842"/>
+        <location filename="../src/MainWindow.cpp" line="843"/>
         <source>File systems</source>
         <translation>Tiedostojärjestelmät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="842"/>
+        <location filename="../src/MainWindow.cpp" line="843"/>
         <source>Runs the read-only file system check for the running host or selected repair system&apos;s root, /boot, ESP and /home filesystems and reports each device&apos;s check tool and result without changing anything.</source>
         <translation>Suorittaa luku-vain tiedostojärjestelmän tarkistus käynnissä isäntä tai valitun korjausjärjestelmän juuren, /boot, ESP ja /home tiedostojärjestelmät ja raportoi kunkin laitteen tarkistustyökalu ja tulos muuttamatta mitään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="842"/>
+        <location filename="../src/MainWindow.cpp" line="843"/>
         <source>Run the read-only file system check and report each device&apos;s result.</source>
         <translation>Suorita vain lukutiedostojärjestelmän tarkistus ja raportoi kunkin laitteen tulos.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="843"/>
+        <location filename="../src/MainWindow.cpp" line="844"/>
         <source>fstab</source>
         <translation>fvab</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="843"/>
+        <location filename="../src/MainWindow.cpp" line="844"/>
         <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Näyttää juoksuisännän tai valitun korjausjärjestelmän fstabin; korjausjärjestelmän tarkastus on asennettu vain luettavaksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="843"/>
+        <location filename="../src/MainWindow.cpp" line="844"/>
         <source>Display the selected system&apos;s fstab read-only.</source>
         <translation>Näytä valitun järjestelmän fstab-luku vain.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="844"/>
+        <location filename="../src/MainWindow.cpp" line="845"/>
         <source>Btrfs status</source>
         <translation>Btrfs- tila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="844"/>
+        <location filename="../src/MainWindow.cpp" line="845"/>
         <source>Shows Btrfs filesystem and subvolume information for the running host or selected repair system.</source>
         <translation>Näyttää Btrfs tiedostojärjestelmän ja alivolume tiedot käynnissä isäntä tai valittu korjausjärjestelmä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="844"/>
+        <location filename="../src/MainWindow.cpp" line="845"/>
         <source>Show Btrfs filesystem and subvolume information.</source>
         <translation>Näytä Btrfs-tiedostojärjestelmä ja alivolyymitiedot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="845"/>
+        <location filename="../src/MainWindow.cpp" line="846"/>
         <source>Mapper status</source>
         <translation>Mapper- tila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="845"/>
+        <location filename="../src/MainWindow.cpp" line="846"/>
         <source>Shows selected mapper ancestry, device-mapper state and cryptsetup status when available.</source>
         <translation>Näyttää valitut mapper esihistoria, laite-mapper tila ja cryptsetup tila, kun saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="845"/>
+        <location filename="../src/MainWindow.cpp" line="846"/>
         <source>Show device-mapper ancestry and cryptsetup state.</source>
         <translation>Näytä laite-mapper esihistorian ja kryptauksen tila.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="846"/>
+        <location filename="../src/MainWindow.cpp" line="847"/>
         <source>LUKS / crypttab</source>
         <translation>LUKS / kryptab</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="846"/>
+        <location filename="../src/MainWindow.cpp" line="847"/>
         <source>Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.</source>
         <translation>Näyttää LUKS/mapped esihistorian sekä kryptaab- ja fstab mapper-viittaukset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="846"/>
+        <location filename="../src/MainWindow.cpp" line="847"/>
         <source>Show LUKS ancestry plus crypttab and fstab mapper references.</source>
         <translation>Näytä LUKS esihistoria sekä kryptaab ja fstab mapper referenssit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="847"/>
-        <location filename="../src/MainWindow.cpp" line="16498"/>
+        <location filename="../src/MainWindow.cpp" line="848"/>
+        <location filename="../src/MainWindow.cpp" line="16599"/>
         <source>Full diagnostic report</source>
         <translation>Täydellinen vianmääritysraportti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="847"/>
+        <location filename="../src/MainWindow.cpp" line="848"/>
         <source>Combines all read-only diagnostics for the selected scope in one privileged inspection session.</source>
         <translation>Yhdistää kaikki luku-vain diagnostiikat valittuun soveltamisalaan yhdessä etuoikeutetussa tarkastusistunnossa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="847"/>
+        <location filename="../src/MainWindow.cpp" line="848"/>
         <source>Combine every read-only diagnostic for the selected scope.</source>
         <translation>Yhdistä jokainen luku-vain diagnostiikka valitun soveltamisalan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1250"/>
+        <location filename="../src/MainWindow.cpp" line="1317"/>
+        <source>akmods preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.</source>
+        <translation>akmods ennen lentoa ei löytynyt rakennettua puuta asennetulle ytimelle %1; asenna vastaavat ytimen devel-paketit ja yritä uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1318"/>
+        <source>akms preflight found no build tree for installed kernel %1; install the matching headers and retry.</source>
+        <translation>akms ennen lentoa ei löytynyt asennettua ydin %1:ää varten rakennettua puuta; asenna vastaavat otsikot ja yritä uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1319"/>
         <source>Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).</source>
         <translation>Alpine käyttää OpenRC:tä, mkinitfs:ää ja syslinux:ää/extlinux:ää; boot-stack-sekvenssien täsmäytys ei ole käytössä (käytä initramfs- ja extlinux-vaiheita erikseen).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1251"/>
+        <location filename="../src/MainWindow.cpp" line="1320"/>
         <source>Alpine boot-stack reconciliation is not enabled (run the initramfs and GRUB stages separately).</source>
         <translation>Alpine-keppien täsmäytys ei ole käytössä ( suorita initramfs- ja GRUB-vaiheet erikseen).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1252"/>
+        <location filename="../src/MainWindow.cpp" line="1321"/>
         <source>Alpine DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.</source>
         <translation>Alpine DKMS ennen lentoa ei löytynyt rakennettua puuta asennetulle ytimelle %1; asentaa vastaavat otsikot ja yrittää uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1253"/>
+        <location filename="../src/MainWindow.cpp" line="1322"/>
         <source>Alpine EFI-stub host default selection is not implemented; use the Alpine EFI repair stage for entry reconciliation.</source>
         <translation>Alpine EFI-Stub isäntä oletusvalintoja ei ole toteutettu; käytä Alpine EFI korjausvaihe maahantulon täsmäytys.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1254"/>
+        <location filename="../src/MainWindow.cpp" line="1323"/>
         <source>Alpine syslinux-EFI boot detected (EFI/syslinux/syslinux.efi); Make Default is not implemented for this backend.</source>
         <translation>Alpine syslinux-EFI boot havaittu (EFI/syslinux/syslinux.efi); Make Oletus ei ole toteutettu tälle taustaosalle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1255"/>
+        <location filename="../src/MainWindow.cpp" line="1324"/>
         <source>Alpine syslinux-EFI boot detected (EFI/syslinux/syslinux.efi); guarded repair is not implemented.</source>
         <translation>Alpine syslinux-EFI boot havaittu (EFI/syslinux/syslinux.efi); vartioitu korjaus ei ole toteutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1256"/>
+        <location filename="../src/MainWindow.cpp" line="1325"/>
         <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Alpin päävarastossa ei ole omistusoikeudellista NVIDIA DKMS -ajuria; tässä kohteessa ei ole saatavilla GPU-ajurivaihtoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1257"/>
+        <location filename="../src/MainWindow.cpp" line="1326"/>
         <source>apk simulated no package changes and the package state is byte-identical.</source>
         <translation>apk simuloi ei pakettimuutoksia ja pakettitila on identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1258"/>
+        <location filename="../src/MainWindow.cpp" line="1327"/>
         <source>APT package lists are byte-identical and no repository index was fetched.</source>
         <translation>APT-pakettiluettelot ovat identtisiä eikä arkistoindeksiä noudettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1259"/>
+        <location filename="../src/MainWindow.cpp" line="1328"/>
         <source>Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction.</source>
         <translation>Standalone APK-metatietojen päivitystä ei ole saatavilla Alpinessa; käytä Päivitys asennettuja paketteja yhteen suojattuun apk-tapahtumaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1260"/>
+        <location filename="../src/MainWindow.cpp" line="1329"/>
         <source>Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction.</source>
         <translation>Standalone APT metadatan päivitystä ei ole saatavilla Archissa; käytä Päivitys asennettuja paketteja yhteen pacman-tapahtumaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1261"/>
+        <location filename="../src/MainWindow.cpp" line="1330"/>
         <source>Arch boot-stack reconciliation requires available initramfs, GRUB and EFI repair prerequisites.</source>
         <translation>Arch boot-stack täsmäytys edellyttää saatavilla initramfs, GRUB ja EFI korjaus edellytykset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1262"/>
+        <location filename="../src/MainWindow.cpp" line="1331"/>
         <source>Arch DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.</source>
         <translation>Arch DKMS ennen lentoa ei löytynyt rakennettua puuta asennetulle ytimelle %1; asenna vastaavat otsikot ja yritä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1263"/>
-        <location filename="../src/MainWindow.cpp" line="1264"/>
+        <location filename="../src/MainWindow.cpp" line="1332"/>
+        <location filename="../src/MainWindow.cpp" line="1333"/>
         <source>Backends: %1</source>
         <translation>Taustaosat: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1265"/>
+        <location filename="../src/MainWindow.cpp" line="1334"/>
         <source>BLS is not enabled; the default is a generated menuentry.</source>
         <translation>BLS ei ole käytössä; oletus on luotu valikko.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1266"/>
+        <location filename="../src/MainWindow.cpp" line="1335"/>
         <source>The initramfs backend is booster, which the current repair implementation does not handle.</source>
         <translation>initramfs-taustaosa on tehoste, jota nykyinen korjaus ei käsittele.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1267"/>
+        <location filename="../src/MainWindow.cpp" line="1336"/>
         <source>initramfs, EFI/UKI and GRUB artifacts are byte-identical.</source>
         <translation>initramfs, EFI/UKI ja GRUB artefaktit ovat identtisiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1268"/>
+        <location filename="../src/MainWindow.cpp" line="1337"/>
         <source>initramfs and GRUB2 artifacts are byte-identical.</source>
         <translation>initramfs- ja GRUB2-esineet ovat identtisiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1269"/>
+        <location filename="../src/MainWindow.cpp" line="1338"/>
         <source>Requires available initramfs and GRUB repair prerequisites.</source>
         <translation>Edellyttää saatavilla initramfs ja GRUB korjaus edellytykset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1270"/>
+        <location filename="../src/MainWindow.cpp" line="1339"/>
         <source>Embedded cmdline does not reference the live LUKS UUID %1.</source>
         <translation>Upotettu cmdline ei viittaa live LUKS UUID %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1271"/>
+        <location filename="../src/MainWindow.cpp" line="1340"/>
         <source>Embedded cmdline does not reference the live root UUID %1.</source>
         <translation>Upotettu cmdline ei viittaa elävää juuria UUID %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1272"/>
+        <location filename="../src/MainWindow.cpp" line="1341"/>
         <source>Embedded cmdline does not select the live Btrfs subvolume /%1.</source>
         <translation>Upotettu cmdline ei valitse suoraa Btrfs-subvolyymia /%1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1273"/>
+        <location filename="../src/MainWindow.cpp" line="1342"/>
         <source>default.target and display-manager.service were already correct.</source>
         <translation>oletus.kohde ja näyttö-hallinta.palvelu oli jo oikein.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1274"/>
+        <location filename="../src/MainWindow.cpp" line="1343"/>
+        <source>The display manager configuration is already correct, but the last boot stopped at a text console (the display manager did not start); the failure is likely elsewhere (driver or service crash).</source>
+        <translation>Näytönhallinan asetukset ovat jo oikeat, mutta viimeinen saapas pysähtyi tekstikonsoliin (näytönhallinta ei käynnistynyt); vika on todennäköisesti muualla (kuljettaja tai käyttöturma).</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1344"/>
         <source>DKMS preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.</source>
         <translation>DKMS:n esilentoa varten ei löytynyt asennettua %1-ydintä varten rakennettua puuta; asenna vastaavat ytimen devel-paketit ja yritä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1275"/>
+        <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
         <translation>dnf4 ei saa tukea vartioidusta rpm-taustasta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1276"/>
+        <location filename="../src/MainWindow.cpp" line="1346"/>
         <source>No missing package files were detected; dnf5 check is reported as evidence.</source>
         <translation>Puuttuvia pakettitiedostoja ei havaittu; dnf5-tarkistus ilmoitetaan todisteena.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1277"/>
+        <location filename="../src/MainWindow.cpp" line="1347"/>
         <source>The dnf5 repository metadata cache is byte-identical.</source>
         <translation>Dnf5-tiedoston metatietovälimuisti on tavullinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1278"/>
+        <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
         <translation>dnf5 simuloidaan ei pakettimuutoksia ja rpm-tietokanta on identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1279"/>
+        <location filename="../src/MainWindow.cpp" line="1349"/>
         <source>dpkg reported no packages pending configuration.</source>
         <translation>dpkg ei raportoinut paketeista, jotka olisivat odottaneet kokoonpanoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1280"/>
+        <location filename="../src/MainWindow.cpp" line="1350"/>
         <source>Alpine uses apk; dpkg configuration is not available on Alpine.</source>
         <translation>Alpine käyttää apk:ää; dpkg:n konfigurointia ei ole saatavilla Alpinella.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1281"/>
+        <location filename="../src/MainWindow.cpp" line="1351"/>
         <source>dpkg configuration is not available on Arch; use the Arch package transaction stages instead.</source>
         <translation>dpkg-konfiguraatiota ei ole saatavilla Archissa, vaan käytä Arch-paketin vaiheita.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1282"/>
+        <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
         <translation>Fedora käyttää rpm/dnf:ää; dpkg:n konfiguraatiota ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1283"/>
+        <location filename="../src/MainWindow.cpp" line="1353"/>
         <source>EFI boot artifacts and firmware entries are byte-identical.</source>
         <translation>EFI boot-esineet ja firmware-merkinnät ovat yksilöllisiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1284"/>
+        <location filename="../src/MainWindow.cpp" line="1354"/>
         <source>EFI-stub entry repair requires efibootmgr in the recovery host.</source>
         <translation>EFI-sivun sisääntulo korjaus vaatii efibootmgr elvytys isäntä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1285"/>
+        <location filename="../src/MainWindow.cpp" line="1355"/>
         <source>EFI-stub boot requires UEFI firmware; the recovery host booted in legacy BIOS mode.</source>
         <translation>EFI-stab boot vaatii UEFI firmware; palautus isäntä käynnistyi vanhassa BIOS-tilassa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1286"/>
+        <location filename="../src/MainWindow.cpp" line="1356"/>
         <source>extlinux.conf is byte-identical.</source>
         <translation>extlinux.conf on identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1287"/>
+        <location filename="../src/MainWindow.cpp" line="1357"/>
         <source>The detected extlinux configuration %1 is not /boot/extlinux.conf.</source>
         <translation>Havaittu extlinux-konfiguraatio %1 ei ole /boot/extlinux.conf.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1288"/>
+        <location filename="../src/MainWindow.cpp" line="1358"/>
         <source>extlinux default label %1 is already selected.</source>
         <translation>extlinux-oletusmerkki %1 on jo valittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1289"/>
+        <location filename="../src/MainWindow.cpp" line="1359"/>
         <source>Extlinux default selection is only available for the running host.</source>
         <translation>Extlinux-oletusvalinta on käytettävissä vain käynnissä olevalle isäntälle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1290"/>
+        <location filename="../src/MainWindow.cpp" line="1360"/>
         <source>extlinux default label set to %1.</source>
         <translation>extlinux-oletusetiketti asetettu %1:ään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1291"/>
+        <location filename="../src/MainWindow.cpp" line="1361"/>
         <source>update-extlinux generated a byte-identical configuration.</source>
         <translation>update-extlinux loi tavu-identtisen kokoonpanon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1292"/>
+        <location filename="../src/MainWindow.cpp" line="1362"/>
         <source>MBR, BIOS boot partition and i386-pc modules are byte-identical.</source>
         <translation>MBR, BIOS boot osio ja i386-PC moduulit ovat byte-identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1293"/>
+        <location filename="../src/MainWindow.cpp" line="1363"/>
         <source>grubenv saved_entry already names the running kernel BLS entry %1.</source>
         <translation>grubenv tallennettu entry nimeää jo käynnissä olevan ytimen BLS merkintä %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1294"/>
+        <location filename="../src/MainWindow.cpp" line="1364"/>
         <source>grubenv saved_entry set to %1 (all other keys preserved).</source>
         <translation>grubenv tallennettu entry asetettu %1 (kaikki muut avaimet säilytetään).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1295"/>
+        <location filename="../src/MainWindow.cpp" line="1365"/>
+        <source>The File Copy made no diagnostic-relevant filesystem change.</source>
+        <translation>Tiedostokopio ei muuttanut vianmääritykseen liittyvää tiedostojärjestelmää.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1366"/>
         <source>The read-only check reported no errors.</source>
         <translation>Vain lukutarkastus ei ilmoittanut virheitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1296"/>
+        <location filename="../src/MainWindow.cpp" line="1367"/>
         <source>The simulated fix-broken transaction proposed no package changes.</source>
         <translation>Simuloitu fix-breaked tapahtuma ehdotti mitään pakettimuutoksia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1297"/>
+        <location filename="../src/MainWindow.cpp" line="1368"/>
         <source>GRUB detected on legacy BIOS; no EFI boot path is available.</source>
         <translation>GRUB havaittu perinteisillä BIOS; EFI boot polku ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1298"/>
+        <location filename="../src/MainWindow.cpp" line="1369"/>
         <source>grub.cfg and grubenv are byte-identical.</source>
         <translation>grub.cfg ja grubenv ovat tunnistettavia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1299"/>
+        <location filename="../src/MainWindow.cpp" line="1370"/>
         <source>grub.cfg is byte-identical.</source>
         <translation>grub.cfg on identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1300"/>
+        <location filename="../src/MainWindow.cpp" line="1371"/>
         <source>GRUB_DEFAULT is not set to saved; grubenv does not select the default entry.</source>
         <translation>GRUB DEFAULT ei ole tallennettu; grubenv ei valitse oletusmerkintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1301"/>
+        <location filename="../src/MainWindow.cpp" line="1372"/>
         <source>The conflicting module blacklist is already byte-identical.</source>
         <translation>Ristiriitainen moduuli musta lista on jo tavu-identtinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1302"/>
+        <location filename="../src/MainWindow.cpp" line="1373"/>
         <source>No expected GPU driver could be derived from hardware, package recommendations or the OEM flavour.</source>
         <translation>Odotettua GPU-ajuria ei voitu saada laitteistosta, pakettisuosituksista tai OEM-mausta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1303"/>
+        <location filename="../src/MainWindow.cpp" line="1374"/>
         <source>Multiple GPU devices were detected with no explicit choice; the GPU driver swap is refused rather than guessing the primary GPU.</source>
         <translation>Useita GPU-laitteita löydettiin ilman nimenomaista vaihtoehtoa; GPU-ohjainvaihdosta ei hyväksytä sen sijaan, että arvattaisiin ensisijainen GPU.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1304"/>
+        <location filename="../src/MainWindow.cpp" line="1375"/>
         <source>No conflicting module needs to be blacklisted for the chosen driver stack.</source>
         <translation>Valitulle ajuripinolle ei tarvitse mustalla listalla olla ristiriitaista moduulia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1305"/>
+        <location filename="../src/MainWindow.cpp" line="1376"/>
         <source>No older kernel is pinned to the GPU driver; nothing to remove.</source>
         <translation>GPU-ohjaimeen ei ole kiinnitetty vanhempaa ydintä; mitään poistettavaa ei ole.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1306"/>
+        <location filename="../src/MainWindow.cpp" line="1377"/>
         <source>No wrong driver package is installed; nothing to purge.</source>
         <translation>Väärää kuljettajapakettia ei ole asennettu; mitään puhdistavaa ei ole.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1307"/>
+        <location filename="../src/MainWindow.cpp" line="1378"/>
         <source>No concrete package set for the expected GPU driver could be derived from the detected package backend and installed-package evidence; the driver swap is refused rather than guessing.</source>
         <translation>Odotetulle GPU-ohjaajalle asetettua konkreettista pakettia ei voitu johtaa havaitusta pakettien taustaosasta ja asennetusta pakettinäytöstä; kuljettajavaihtoa ei hyväksytä eikä arvailla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1308"/>
+        <location filename="../src/MainWindow.cpp" line="1379"/>
         <source>The simulated driver purge proposed no package changes.</source>
         <translation>Simuloitu kuljettaja ei ehdottanut pakettien muuttamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1309"/>
+        <location filename="../src/MainWindow.cpp" line="1380"/>
         <source>The graphics driver stack is consistent: no driver mismatch and no failed or absent DKMS build were found, so the running driver was left untouched.</source>
         <translation>Graafinen ajuripino on johdonmukainen: kuljettajaa ei ollut ja DKMS-rakenne ei ollut vialla eikä poissa, joten kuljettaja jäi koskematta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1310"/>
+        <location filename="../src/MainWindow.cpp" line="1381"/>
         <source>BootOrder, labels and registrations already correct.</source>
         <translation>Saapasjärjestys, etiketit ja rekisteröinnit ovat jo oikein.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1311"/>
+        <location filename="../src/MainWindow.cpp" line="1382"/>
         <source>The running host EFI System Partition could not be resolved.</source>
         <translation>Juoksevaa isäntä EFI System Partitionia ei voitu ratkaista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1312"/>
+        <location filename="../src/MainWindow.cpp" line="1383"/>
         <source>The target dpkg database or executable is incomplete.</source>
         <translation>Kohde dpkg-tietokanta tai suoritustiedosto on puutteellinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1313"/>
+        <location filename="../src/MainWindow.cpp" line="1384"/>
         <source>Rebuilt initramfs images are byte-identical.</source>
         <translation>Uudelleen rakennetut initramfs-kuvat ovat identtisiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1314"/>
+        <location filename="../src/MainWindow.cpp" line="1385"/>
         <source>Less than 1 GiB of free Btrfs space is available.</source>
         <translation>Alle 1 GiB vapaata Btrfs tilaa on saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1315"/>
+        <location filename="../src/MainWindow.cpp" line="1386"/>
         <source>The grubenv file is missing or not a valid GRUB environment block.</source>
         <translation>Grubenv-tiedosto puuttuu tai ei kelpaa GRUB-ympäristöblokiksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1316"/>
+        <location filename="../src/MainWindow.cpp" line="1387"/>
         <source>The simulated kernel-removal transaction proposed no package changes.</source>
         <translation>Simuloitu ytimen poistotapahtuma ei ehdottanut pakettimuutoksia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1317"/>
+        <location filename="../src/MainWindow.cpp" line="1388"/>
         <source>The current kernel is intact; no removable, incomplete or orphaned kernel components were found.</source>
         <translation>Nykyinen ydin on ehjä; mitään irrotettavaa, epätäydellistä tai orvoksi jäänyttä ydinkomponenttia ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1318"/>
+        <location filename="../src/MainWindow.cpp" line="1389"/>
         <source>legacy BIOS target; no EFI boot path is available.</source>
         <translation>perinteisiä BIOS-kohteita; EFI-polkua ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1319"/>
+        <location filename="../src/MainWindow.cpp" line="1390"/>
         <source>apk is not installed in the target.</source>
         <translation>apk:ää ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1320"/>
+        <location filename="../src/MainWindow.cpp" line="1391"/>
         <source>The target apk installed database is missing.</source>
         <translation>Kohteen apk asennettu tietokanta puuttuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1321"/>
+        <location filename="../src/MainWindow.cpp" line="1392"/>
         <source>The target apk world file is missing.</source>
         <translation>Kohde apk maailman tiedosto puuttuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1322"/>
+        <location filename="../src/MainWindow.cpp" line="1393"/>
         <source>apt-get is not installed in the target.</source>
         <translation>apt-get ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1323"/>
+        <location filename="../src/MainWindow.cpp" line="1394"/>
         <source>btrfs-progs is not installed.</source>
         <translation>btrfs-progia ei ole asennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1324"/>
+        <location filename="../src/MainWindow.cpp" line="1395"/>
         <source>DKMS is not installed in the target.</source>
         <translation>DKMS-järjestelmää ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1325"/>
+        <location filename="../src/MainWindow.cpp" line="1396"/>
         <source>DKMS is not installed in the Alpine target system.</source>
         <translation>DKMS-järjestelmää ei ole asennettu Alppien kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1326"/>
+        <location filename="../src/MainWindow.cpp" line="1397"/>
         <source>DKMS is not installed in the Arch target system.</source>
         <translation>DKMS:ää ei ole asennettu Arch-kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1327"/>
+        <location filename="../src/MainWindow.cpp" line="1398"/>
         <source>dnf5 is not installed in the target system.</source>
         <translation>dnnf5 ei ole asennettu kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1328"/>
+        <location filename="../src/MainWindow.cpp" line="1399"/>
         <source>dpkg is not installed in the target.</source>
         <translation>dpkg:ää ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1329"/>
+        <location filename="../src/MainWindow.cpp" line="1400"/>
         <source>dracut is not installed in the target system.</source>
         <translation>dracut ei ole asennettu kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1330"/>
+        <location filename="../src/MainWindow.cpp" line="1401"/>
         <source>The dracut generator directory is missing from the target.</source>
         <translation>dracut-generaattorin hakemisto puuttuu kohteesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1331"/>
+        <location filename="../src/MainWindow.cpp" line="1402"/>
         <source>efibootmgr is not installed; the running host default EFI entry cannot be changed.</source>
         <translation>efibootmgr ei ole asennettu; käynnissä olevaa isäntää EFI-merkintää ei voi muuttaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1332"/>
+        <location filename="../src/MainWindow.cpp" line="1403"/>
         <source>graphical.target is missing from the target.</source>
         <translation>graafinen kohde puuttuu kohteesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1333"/>
+        <location filename="../src/MainWindow.cpp" line="1404"/>
         <source>grub2-editenv is not installed in the target.</source>
         <translation>grub2-editenv ei ole asennettu kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1334"/>
+        <location filename="../src/MainWindow.cpp" line="1405"/>
         <source>grub2-install is not installed in the target.</source>
         <translation>grub2-install ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1335"/>
+        <location filename="../src/MainWindow.cpp" line="1406"/>
         <source>grub2-mkconfig is not installed in the target.</source>
         <translation>grub2-mkconfig ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1336"/>
+        <location filename="../src/MainWindow.cpp" line="1407"/>
         <source>%1 is missing.</source>
         <translation>%1 puuttuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1337"/>
+        <location filename="../src/MainWindow.cpp" line="1408"/>
         <source>Requires GRUB configuration tooling.</source>
         <translation>Vaaditaan GRUB-asetustyökalu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1338"/>
+        <location filename="../src/MainWindow.cpp" line="1409"/>
         <source>grub-efi is not installed in the Alpine target.</source>
         <translation>Grub-efiä ei ole asennettu Alppien kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1339"/>
+        <location filename="../src/MainWindow.cpp" line="1410"/>
         <source>The x86_64-efi GRUB module directory is missing from the Alpine target.</source>
         <translation>Alppien kohteesta puuttuu x86 64-efi GRUB -moduulihakemisto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1340"/>
+        <location filename="../src/MainWindow.cpp" line="1411"/>
         <source>Neither grub-mkconfig nor update-grub is installed in the target system.</source>
         <translation>Kohdejärjestelmään ei ole asennettu grub-mkconfig:ää eikä update-grub:ää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1341"/>
+        <location filename="../src/MainWindow.cpp" line="1412"/>
         <source>grub-install missing.</source>
         <translation>grub-install puuttuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1342"/>
+        <location filename="../src/MainWindow.cpp" line="1413"/>
         <source>grub-install is not installed in the Alpine target.</source>
         <translation>grub-install:ää ei ole asennettu Alppien kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1343"/>
+        <location filename="../src/MainWindow.cpp" line="1414"/>
         <source>The grub package is not installed in the Alpine target.</source>
         <translation>Ravintolaa ei ole asennettu Alppien kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1344"/>
+        <location filename="../src/MainWindow.cpp" line="1415"/>
         <source>The GRUB ZFS module (zfs.mod) is not installed in the target.</source>
         <translation>GRUB ZFS -moduulia (zfs.mod) ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1345"/>
+        <location filename="../src/MainWindow.cpp" line="1416"/>
         <source>update-initramfs/mkinitramfs are not installed in the target.</source>
         <translation>update-initramfs/mkinitrafeja ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1346"/>
+        <location filename="../src/MainWindow.cpp" line="1417"/>
         <source>lsinitrd is not installed in the target system; dracut image verification is unavailable.</source>
         <translation>Lsinitrd ei ole asennettu kohdejärjestelmään; dracut-kuvan tarkistus ei ole käytettävissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1347"/>
+        <location filename="../src/MainWindow.cpp" line="1418"/>
         <source>mkinitcpio is not installed in the target system.</source>
         <translation>mkinitcpio ei ole asennettu kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1348"/>
+        <location filename="../src/MainWindow.cpp" line="1419"/>
         <source>mkinitfs is not installed in the target system.</source>
         <translation>mkinitfs ei ole asennettu kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1349"/>
+        <location filename="../src/MainWindow.cpp" line="1420"/>
         <source>The target has no mkinitfs configuration.</source>
         <translation>Kohteessa ei ole mkinitfs-konfiguraatiota.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1350"/>
+        <location filename="../src/MainWindow.cpp" line="1421"/>
         <source>objcopy is unavailable; TUX.EFI embedded sections cannot be verified.</source>
         <translation>objkopiaa ei ole saatavilla; TUX.EFI sulautettuja osia ei voida todentaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1351"/>
+        <location filename="../src/MainWindow.cpp" line="1422"/>
         <source>pacman is not installed in the target.</source>
         <translation>pacman:ää ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1352"/>
+        <location filename="../src/MainWindow.cpp" line="1423"/>
         <source>The target has no /etc/pacman.conf; refusing a package transaction.</source>
         <translation>Kohde ei ole /etc/pacman.conf; kieltäytyy pakettitapahtuma.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1353"/>
+        <location filename="../src/MainWindow.cpp" line="1424"/>
         <source>The target pacman database directory is missing.</source>
         <translation>Kohteen pacman tietokantahakemisto puuttuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1354"/>
+        <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
         <translation>rpm ei ole asennettu kohdejärjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1355"/>
+        <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
         <translation>Kohdetta ei ole.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1356"/>
+        <location filename="../src/MainWindow.cpp" line="1427"/>
         <source>snapper is not installed.</source>
         <translation>Nappulaa ei ole asennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1357"/>
+        <location filename="../src/MainWindow.cpp" line="1428"/>
         <source>The syslinux package is not installed according to the detected package manager.</source>
         <translation>syslinux-pakettia ei ole asennettu havaitun paketinhallinnan mukaisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1358"/>
+        <location filename="../src/MainWindow.cpp" line="1429"/>
         <source>TUXEDO UKI builder create_boot_uki_base.sh is not installed in the target.</source>
         <translation>TUXEDO UKI builder create boot uki base.sh ei ole asennettu kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1359"/>
+        <location filename="../src/MainWindow.cpp" line="1430"/>
         <source>update-extlinux is not installed in the target.</source>
         <translation>update-extlinux ei ole asennettu kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1360"/>
+        <location filename="../src/MainWindow.cpp" line="1431"/>
         <source>The running host has no /etc/update-extlinux.conf.</source>
         <translation>Juoksevalla isäntällä ei ole /etc/update-extlinux.conf.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1361"/>
+        <location filename="../src/MainWindow.cpp" line="1432"/>
         <source>update-extlinux is not installed in the running host.</source>
         <translation>update-extlinux ei ole asennettu käynnissä isäntä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1362"/>
+        <location filename="../src/MainWindow.cpp" line="1433"/>
         <source>The zfs-initramfs hook is not installed in the target (no /usr/share/initramfs-tools/hooks/zfs).</source>
         <translation>Zfs-initramf-koukkua ei ole asennettu kohteeseen (ei /usr/share/initramfs-tools/hooks/zfs).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1363"/>
+        <location filename="../src/MainWindow.cpp" line="1434"/>
         <source>Multiple extlinux entries reference the running kernel %1 (%2).</source>
         <translation>Useissa extlinux-kirjoituksissa viitataan juoksevaan ytimeen %1 (%2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1364"/>
+        <location filename="../src/MainWindow.cpp" line="1435"/>
         <source>The running @ root contains nested subvolumes that this release does not migrate: %1.</source>
         <translation>Juokseva @ root sisältää pesittyjä alivolumeja, että tämä julkaisu ei siirry: %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1365"/>
+        <location filename="../src/MainWindow.cpp" line="1436"/>
         <source>The proprietary NVIDIA driver needs network access to fetch the package set; this offline target has no usable APT sources.</source>
         <translation>Omistettu NVIDIA-ajuri tarvitsee verkkoyhteyden noutaakseen asetetun paketin; tällä offline-kohteella ei ole käytettävissä olevia APT-lähteitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1366"/>
+        <location filename="../src/MainWindow.cpp" line="1437"/>
         <source>No EFI boot path was detected for the Alpine target (bootloader backend %1).</source>
         <translation>Alpine-kohteelle (Bootloader backend %1) ei havaittu EFI- käynnistyspolkua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1367"/>
+        <location filename="../src/MainWindow.cpp" line="1438"/>
         <source>No installed Alpine kernels were found under target /boot.</source>
         <translation>Alppien siemeniä ei löytynyt kohteesta / saappaasta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1368"/>
+        <location filename="../src/MainWindow.cpp" line="1439"/>
         <source>No /boot (and no resolved EFI System Partition) is visible for the selected scope.</source>
         <translation>Valitulle ulottuvuudelle ei ole näkyvissä /boot (eikä ratkaistua EFI System Partitionia).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1369"/>
+        <location filename="../src/MainWindow.cpp" line="1440"/>
         <source>No installed versioned kernel packages were found; the newest kernel cannot be identified.</source>
         <translation>Asennettuja versioituja ydinpaketteja ei löytynyt; uusinta ydintä ei voida tunnistaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1370"/>
+        <location filename="../src/MainWindow.cpp" line="1441"/>
         <source>No installed kernel is missing its matching headers.</source>
         <translation>Asennettua ydintä ei ole jäljellä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1371"/>
+        <location filename="../src/MainWindow.cpp" line="1442"/>
         <source>No orphaned kernel build/support packages (linux-kbuild or other versioned helpers whose kernel is gone) were found.</source>
         <translation>Orvon ytimen rakenne-/tukipaketteja (linux-kbuild tai muita versioituja apureita, joiden ydin on poissa) ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1372"/>
+        <location filename="../src/MainWindow.cpp" line="1443"/>
         <source>No orphaned kernel headers (headers without a matching kernel) were found.</source>
         <translation>Orpoja ytimen otsikoita (otsikot ilman vastaavaa ydintä) ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1373"/>
+        <location filename="../src/MainWindow.cpp" line="1444"/>
         <source>No orphaned kernel components (module trees or boot files without an owning package) were found.</source>
         <translation>Orvon ytimen komponentteja (moduulipuut tai saapastiedostot ilman omistava paketti) ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1374"/>
+        <location filename="../src/MainWindow.cpp" line="1445"/>
         <source>No incomplete kernel packages (an installed image without its on-disk files) were found.</source>
         <translation>Epätäydellinen ydinpaketti (asennettu kuva ilman levytiedostoja) ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1375"/>
+        <location filename="../src/MainWindow.cpp" line="1446"/>
         <source>No removable kernels are installed (only the running and newest kernels are present).</source>
         <translation>Mitään irrotettavissa olevia ytimiä ei ole asennettu (vain juoksevat ja uusimmat ytimet ovat läsnä).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1376"/>
+        <location filename="../src/MainWindow.cpp" line="1447"/>
         <source>No newer repository kernel is available, or the repository is unreachable.</source>
         <translation>Uudempaa arkiston ydintä ei ole saatavilla, tai arkistoa ei voi tavoittaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1377"/>
+        <location filename="../src/MainWindow.cpp" line="1448"/>
         <source>The target has no configured apk repositories.</source>
         <translation>Kohteessa ei ole konfiguroituja apk-arkistoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1378"/>
+        <location filename="../src/MainWindow.cpp" line="1449"/>
         <source>The target has no configured APT sources to refresh.</source>
         <translation>Kohteella ei ole konfiguroituja APT-lähteitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1379"/>
+        <location filename="../src/MainWindow.cpp" line="1450"/>
         <source>No EFI System Partition was identified for the selected Arch target.</source>
         <translation>Valitulle Arch-kohteelle ei tunnistettu EFI System Partitionia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1380"/>
+        <location filename="../src/MainWindow.cpp" line="1451"/>
         <source>No non-rescue BLS entries are installed.</source>
         <translation>Muita kuin pelastus-BLS-tiedostoja ei ole asennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1381"/>
+        <location filename="../src/MainWindow.cpp" line="1452"/>
         <source>No canonical EFI vendor loader was found on the running host ESP and grub-install is not available.</source>
         <translation>Suoritusisännästä ESP ei löytynyt kanonista EFI-toimittajakuormaajaa eikä grub-install:ää ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1382"/>
+        <location filename="../src/MainWindow.cpp" line="1453"/>
         <source>No supported display manager was detected in the target.</source>
         <translation>Kohdeessa ei havaittu tuettua näytönhallintaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1383"/>
+        <location filename="../src/MainWindow.cpp" line="1454"/>
         <source>No supported display manager unit is installed in the target.</source>
         <translation>Kohdeeseen ei ole asennettu tuettua näytönhallintayksikköä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1384"/>
+        <location filename="../src/MainWindow.cpp" line="1455"/>
         <source>The target has no enabled dnf repositories.</source>
         <translation>Kohde ei ole käytössä dnf-arkistoissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1385"/>
+        <location filename="../src/MainWindow.cpp" line="1456"/>
         <source>The target has no enabled dnf repositories to refresh.</source>
         <translation>Kohde ei ole mahdollistanut dnf-arkistojen päivittämistä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1386"/>
+        <location filename="../src/MainWindow.cpp" line="1457"/>
         <source>No installed dracut kernels were found under target /boot.</source>
         <translation>Kohteen / saappaan alle ei löytynyt asennettuja dracut-ytimiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1387"/>
+        <location filename="../src/MainWindow.cpp" line="1458"/>
         <source>No EFI-stub initramfs image (initramfs-*) is present at the EFI System Partition root.</source>
         <translation>EFI System Partition - juurilla ei ole EFI-stab initramfs-kuvaa (initramfs-*).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1388"/>
+        <location filename="../src/MainWindow.cpp" line="1459"/>
         <source>No EFI-stub kernel image (vmlinuz-*) is present at the EFI System Partition root.</source>
         <translation>EFI System Partition - juurilla ei ole EFI-ydinkuvaa (vmlinuz-*).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1389"/>
+        <location filename="../src/MainWindow.cpp" line="1460"/>
         <source>No EFI System Partition candidate on the selected disk.</source>
         <translation>Valitulla levyllä ei ole EFI System Partition -ehdokasta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1390"/>
+        <location filename="../src/MainWindow.cpp" line="1461"/>
         <source>No EFI System Partition is present or derivable on the selected disk.</source>
         <translation>EFI System Partition ei ole läsnä tai johdettu valitulla levyllä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1391"/>
+        <location filename="../src/MainWindow.cpp" line="1462"/>
         <source>No extlinux/syslinux configuration was detected in the target.</source>
         <translation>Kohteessa ei havaittu extlinux/syslinux-konfiguraatiota.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1392"/>
+        <location filename="../src/MainWindow.cpp" line="1463"/>
         <source>No extlinux/syslinux configuration was detected in the running host.</source>
         <translation>Suorituspalvelimessa ei havaittu extlinux/syslinux-konfiguraatiota.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1393"/>
+        <location filename="../src/MainWindow.cpp" line="1464"/>
         <source>The detected GRUB layout is not a grub2 layout.</source>
         <translation>Havaittu GRUB asettelu ei ole grub2 asettelu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1394"/>
+        <location filename="../src/MainWindow.cpp" line="1465"/>
         <source>No supported file system check tool is installed in the recovery environment.</source>
         <translation>Hyödyntämisympäristöön ei ole asennettu tuettua tiedostojärjestelmän tarkistustyökalua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1395"/>
+        <location filename="../src/MainWindow.cpp" line="1466"/>
         <source>No class-03 GPU device and no target journal/module evidence were found; there is no GPU driver stack to repair.</source>
         <translation>Luokka-03 GPU-laitetta ja kohdelehteä/moduulia ei löytynyt; korjattavia GPU-ohjaimia ei ole.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1396"/>
+        <location filename="../src/MainWindow.cpp" line="1467"/>
         <source>The GPU driver stack looks healthy; no mismatch was proven, so the driver is not touched.</source>
         <translation>GPU ajuri pino näyttää terveeltä; mitään eroa ei todistettu, joten kuljettaja ei kosketa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1397"/>
+        <location filename="../src/MainWindow.cpp" line="1468"/>
         <source>No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected.</source>
         <translation>Tuettua initramfs-taustalaitetta (mkinitfs, mkinitcpio, dracut tai initramfs-tools) ei havaittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1398"/>
+        <location filename="../src/MainWindow.cpp" line="1469"/>
         <source>Unable to determine the live root filesystem UUID.</source>
         <translation>Ei voitu määrittää elävää juuritiedostojärjestelmää UUID.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1399"/>
+        <location filename="../src/MainWindow.cpp" line="1470"/>
         <source>No installed kernel module directories were found for mkinitcpio.</source>
         <translation>mkinitcpio:lle ei löytynyt asennettuja ydinmoduulihakemistoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1400"/>
+        <location filename="../src/MainWindow.cpp" line="1471"/>
         <source>No supported OpenRC display manager service is installed in the target.</source>
         <translation>Kohdeeseen ei ole asennettu tuettua OpenRC-näytönhallintapalvelua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1401"/>
+        <location filename="../src/MainWindow.cpp" line="1472"/>
         <source>No guarded package-manager backend that can both answer installed-state and install packages was detected (detected: %1).</source>
         <translation>Yhtään suojattua pakettihallintataustaosaa, joka voi sekä vastata asennettuun tilaan että asentaa paketteja, ei havaittu ( Havaittu: %1).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1402"/>
+        <location filename="../src/MainWindow.cpp" line="1473"/>
         <source>No guarded package-manager backend was detected (detected: %1).</source>
         <translation>Suojattua pakettihallintataustaa ei havaittu ( Havaittu: %1).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1403"/>
+        <location filename="../src/MainWindow.cpp" line="1474"/>
         <source>No detected package manager can verify the syslinux package.</source>
         <translation>Mikään havaittu pakettien hallinta ei voi varmistaa syslinux-pakettia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1404"/>
+        <location filename="../src/MainWindow.cpp" line="1475"/>
         <source>No supported reboot mechanism was found on the running host.</source>
         <translation>Käynnistävästä isäntästä ei löytynyt tuettua uudelleenkäynnistysmekanismia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1405"/>
+        <location filename="../src/MainWindow.cpp" line="1476"/>
         <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Valitun soveltamisalan juuria, /boot-, ESP- ja /home-tiedostojärjestelmiä ei voitu ratkaista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1406"/>
+        <location filename="../src/MainWindow.cpp" line="1477"/>
         <source>No supported service manager (systemd or OpenRC) was detected in the target.</source>
         <translation>Kohdeessa ei havaittu tuettua palvelupäällikköä (järjestelmällinen tai OpenRC).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1407"/>
+        <location filename="../src/MainWindow.cpp" line="1478"/>
         <source>No Snapper root configuration manages / with FSTYPE=btrfs.</source>
         <translation>Ei Snapper root asetukset hallita / FSTYPE=btrfs.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1408"/>
+        <location filename="../src/MainWindow.cpp" line="1479"/>
         <source>The selected scope has no supported file system type for a read-only check.</source>
         <translation>Valitulla soveltamisalalla ei ole tuettua tiedostojärjestelmän tyyppiä vain lukutarkistusta varten.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1409"/>
+        <location filename="../src/MainWindow.cpp" line="1480"/>
         <source>The running host root filesystem is %1, not Btrfs.</source>
         <translation>Juokseva isäntä juuritiedostojärjestelmä on %1, ei Btrfs.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1410"/>
+        <location filename="../src/MainWindow.cpp" line="1481"/>
         <source>The detected bootloader is %1; GRUB is not the selected bootloader.</source>
         <translation>Havaittu bootloader on %1; GRUB ei ole valittu bootloader.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1411"/>
+        <location filename="../src/MainWindow.cpp" line="1482"/>
         <source>The running root subvolume is %1, not the top-level @.</source>
         <translation>Juokseva juuriosamäärä on %1, ei huipputason @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1412"/>
+        <location filename="../src/MainWindow.cpp" line="1483"/>
         <source>Unable to derive a running host UKI candidate.</source>
         <translation>Suoritettavaa UKI- ehdokasta ei voitu saada.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1413"/>
+        <location filename="../src/MainWindow.cpp" line="1484"/>
         <source>grubenv is already byte-identical; no nomodeset one-boot entry was written.</source>
         <translation>grubenv on jo identtinen; ei ole kirjoitettu nomodeset yhden saappaan merkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1414"/>
+        <location filename="../src/MainWindow.cpp" line="1485"/>
         <source>The nomodeset one-boot fallback requires a GRUB layout with a writable grubenv.</source>
         <translation>Nomodeset one-boot varalla vaatii GRUB asettelu kirjoitettava grubenv.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1415"/>
+        <location filename="../src/MainWindow.cpp" line="1486"/>
         <source>The nomodeset one-boot fallback is refused for UKI/EFI-stub layouts that cannot produce a one-shot artifact.</source>
         <translation>Nomodeset one-boot varauloskäyntiä ei hyväksytä UKI/EFI-pubin asetteluille, jotka eivät pysty tuottamaan yhden kuvan esinettä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1416"/>
+        <location filename="../src/MainWindow.cpp" line="1487"/>
         <source>The OpenRC default runlevel already enabled %1.</source>
         <translation>OpenRC- oletusjuoksutaso on jo käytössä %1:ssä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1417"/>
+        <location filename="../src/MainWindow.cpp" line="1488"/>
         <source>A package manager or package-manager lock is active.</source>
         <translation>Paketinhallinta tai pakettihallinta lukko on aktiivinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1418"/>
+        <location filename="../src/MainWindow.cpp" line="1489"/>
         <source>The pacman transaction reported no packages to install, upgrade or remove.</source>
         <translation>pacman-tapahtumassa ei ilmoitettu mitään asennus-, päivitys- tai poistopaketteja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1419"/>
+        <location filename="../src/MainWindow.cpp" line="1490"/>
         <source>The running host pins subvolid= in fstab or the kernel command line.</source>
         <translation>Juokseva isäntä nastat subvolid = fstab tai ytimen komentorivi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1420"/>
+        <location filename="../src/MainWindow.cpp" line="1491"/>
         <source>The running host root filesystem is read-only.</source>
         <translation>Juokseva isäntä juuritiedostojärjestelmä on vain luettava.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1421"/>
+        <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
         <translation>DKKMS-otsikkokorjausta (kernel-devel/akmods) ei toteuteta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1422"/>
+        <location filename="../src/MainWindow.cpp" line="1493"/>
         <source>The running kernel %1 has no installed BLS entry.</source>
         <translation>Juoksevassa ytimessä %1 ei ole asennettua BLS-merkintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1423"/>
+        <location filename="../src/MainWindow.cpp" line="1494"/>
         <source>The running kernel %1 has no entry in %2.</source>
         <translation>Juoksevan ytimen %1 ei ole merkintä %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1424"/>
+        <location filename="../src/MainWindow.cpp" line="1495"/>
         <source>The running kernel release could not be determined (uname -r is empty).</source>
         <translation>Juoksevaa ytimen julkaisua ei voitu määrittää (uname -r on tyhjä).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1425"/>
+        <location filename="../src/MainWindow.cpp" line="1496"/>
         <source>Secure Boot requires a signed loader.</source>
         <translation>Secure Boot vaatii allekirjoitetun kuormaajan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1426"/>
+        <location filename="../src/MainWindow.cpp" line="1497"/>
         <source>The running host has a separate /boot filesystem outside the root snapshot.</source>
         <translation>Juoksevalla isäntällä on erillinen /boot-tiedostojärjestelmä juurikuvan ulkopuolella.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1427"/>
+        <location filename="../src/MainWindow.cpp" line="1498"/>
+        <source>The shell command made no diagnostic-relevant filesystem change.</source>
+        <translation>Komentotulkin komento ei muuttanut vianmääritykseen liittyvää tiedostojärjestelmää.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1499"/>
         <source>Another snapper command is running.</source>
         <translation>Toinen snapper-komento on käynnissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1428"/>
+        <location filename="../src/MainWindow.cpp" line="1500"/>
         <source>syslinux/extlinux (BIOS) boot detected; no EFI boot path is available.</source>
         <translation>syslinux/extlinux (BIOS) -käynnistys havaittu; EFI- käynnistyspolkua ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1429"/>
+        <location filename="../src/MainWindow.cpp" line="1501"/>
         <source>A sysvinit display-manager script was detected; offline repair is not implemented for sysvinit.</source>
         <translation>Sysvinit näyttö-manager script havaittiin; offline korjausta ei toteuteta sysvinit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1430"/>
+        <location filename="../src/MainWindow.cpp" line="1502"/>
         <source>A Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported.</source>
         <translation>Timeshift btrfs -kuvaston inventaario on läsnä; Snapper @ rollback ei ole tuettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1431"/>
+        <location filename="../src/MainWindow.cpp" line="1503"/>
         <source>UEFI variables are not writable; the running host default EFI entry cannot be changed.</source>
         <translation>UEFI-muuttujat eivät ole kirjoitettavia; käynnissä olevaa isäntää oletus EFI ei voi muuttaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1432"/>
+        <location filename="../src/MainWindow.cpp" line="1504"/>
         <source>%1 is missing or empty.</source>
         <translation>%1 puuttuu tai on tyhjä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1433"/>
+        <location filename="../src/MainWindow.cpp" line="1505"/>
         <source>Embedded kernel %1 is not installed under /boot.</source>
         <translation>Upotettu ydin %1 ei ole asennettu /boot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1434"/>
+        <location filename="../src/MainWindow.cpp" line="1506"/>
         <source>TUX.EFI does not embed a readable .cmdline section.</source>
         <translation>TUX.EFI ei upota luettavaa .cmdline-osaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1435"/>
+        <location filename="../src/MainWindow.cpp" line="1507"/>
         <source>TUX.EFI does not embed a kernel version (.uname).</source>
         <translation>TUX.EFI ei upota ytimen versiota (.Uname).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1436"/>
+        <location filename="../src/MainWindow.cpp" line="1508"/>
         <source>TUX.EFI is not a readable PE/COFF image (objcopy could not read .uname).</source>
         <translation>TUX.EFI ei ole luettavissa oleva PE/COFF-kuva (objcopy ei voi lukea .uname).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1437"/>
+        <location filename="../src/MainWindow.cpp" line="1509"/>
         <source>Unable to create a temporary file for UKI section inspection.</source>
         <translation>Väliaikaista tiedostoa UKI-osiotarkastukseen ei voitu luoda.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1438"/>
+        <location filename="../src/MainWindow.cpp" line="1510"/>
         <source>Backend %1 has no guarded implementation for stage %2.</source>
         <translation>Backend %1 ei ole vartioitu toteutus vaiheessa %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1439"/>
+        <location filename="../src/MainWindow.cpp" line="1511"/>
         <source>The running kernel release could not be determined.</source>
         <translation>Juoksevaa ytimen vapautumista ei voitu määrittää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1440"/>
+        <location filename="../src/MainWindow.cpp" line="1512"/>
         <source>The running host ZFS root pool is not resolvable (zpool is not installed or the pool is not imported).</source>
         <translation>Juokseva isäntä ZFS root allas ei ole resolved (zpool ei ole asennettu tai allasta ei tuoda).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1441"/>
+        <location filename="../src/MainWindow.cpp" line="1513"/>
         <source>The extlinux label %1 cannot be written to /etc/update-extlinux.conf safely.</source>
         <translation>extlinux-etikettiä %1 ei voi kirjoittaa /etc/update-extlinux.conf:lle turvallisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1442"/>
+        <location filename="../src/MainWindow.cpp" line="1514"/>
         <source>The simulated upgrade transaction proposed no package changes.</source>
         <translation>Simuloitu päivitystapahtuma ei ehdottanut pakettimuutoksia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1443"/>
+        <location filename="../src/MainWindow.cpp" line="1515"/>
         <source>Validation is read-only.</source>
         <translation>Validointi on vain luettavaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1476"/>
+        <location filename="../src/MainWindow.cpp" line="1548"/>
+        <source>akmods preflight: headers/build tree present for %1</source>
+        <translation>akmods ennen lentoa: %1:n otsake/rakenna puuta</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1549"/>
+        <source>PASS: akmods rebuild completed.</source>
+        <translation>akmods:n korjaus valmis.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1550"/>
+        <source>SIMULATE/PREFLIGHT: akmods module rebuild (headers must already be installed; no package guessing is performed)</source>
+        <translation>SIMULATE/PREFLIGHT: akmods-moduulin uudelleenrakentaminen (otsimet on jo asennettava; pakettia ei ole arvioitu)</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1551"/>
+        <source>akms preflight: headers/build tree present for %1</source>
+        <translation>akms ennen lentoa: %1:n otsakkeet/rakennukset</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1552"/>
+        <source>PASS: akms rebuild completed.</source>
+        <translation>akms-rakennus valmis.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1553"/>
+        <source>SIMULATE/PREFLIGHT: akms module rebuild (headers must already be installed; no package guessing is performed)</source>
+        <translation>SIMULATE/PREFLIGHT: akms-moduulin uudelleenrakentaminen (otsakkeet on jo asennettava; ei pakettien arvauksia)</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1554"/>
         <source>Backed up Alpine EFI loader files to %1 (firmware fallback present before repair: %2).</source>
         <translation>Varmistettu Alpine EFI kuormaaja tiedostoja %1 (firmware varalla läsnä ennen korjausta: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1477"/>
+        <location filename="../src/MainWindow.cpp" line="1555"/>
         <source>PASS: refreshed the firmware fallback loader EFI/boot/bootx64.efi from %1.</source>
         <translation>PASS: Päivitetty firmware varakuormaaja EFI/boot/bootx64.efi %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1478"/>
+        <location filename="../src/MainWindow.cpp" line="1556"/>
         <source>PASS: Alpine EFI loader files verified under %1/EFI/%2</source>
         <translation>PASS: Alpine EFI kuormaaja tiedostot todennettu %1/EFI/%2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1479"/>
+        <location filename="../src/MainWindow.cpp" line="1557"/>
         <source>Restored the Alpine EFI loader files from the session backup %1.</source>
         <translation>Palautti Alpine EFI lataaja tiedostot istunnon varmuuskopio %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1480"/>
+        <location filename="../src/MainWindow.cpp" line="1558"/>
         <source>Detected %1 EFI-stub firmware entry(ies) on the selected ESP (%2); reconciling firmware state without file synthesis.</source>
         <translation>Havaittiin %1 EFI-stib firmware -merkintä [t] valitussa ESP:ssä (%2); firmware-tilan yhteensovittaminen ilman tiedostosynteesiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1481"/>
+        <location filename="../src/MainWindow.cpp" line="1559"/>
         <source>PASS: Alpine EFI-stub firmware entries verified; no ESP files were changed.</source>
         <translation>PASS: Alpine EFI-stib firmware-tiedostot todennettu; ESP-tiedostoja ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1482"/>
+        <location filename="../src/MainWindow.cpp" line="1560"/>
         <source>Captured complete firmware entry state before Alpine GRUB EFI install: %1</source>
         <translation>Captured täydellinen firmware sisääntulotila ennen Alpine GRUB EFI asentaa: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1483"/>
+        <location filename="../src/MainWindow.cpp" line="1561"/>
         <source>Writable UEFI efivars/efibootmgr are unavailable; Alpine GRUB EFI repair will update loader files and the fallback copy only (read-only firmware-variable mode).</source>
         <translation>Kirjoitettava UEFI efivars / efibootmgr eivät ole saatavilla; Alpine GRUB EFI korjaus päivittää lataajan tiedostoja ja varakopioida vain (lukea vain firmware-variable mode).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1484"/>
+        <location filename="../src/MainWindow.cpp" line="1562"/>
         <source>SIMULATE/PREFLIGHT: Alpine GRUB EFI install target=%1 fs=%2 id=%3 mode=--no-nvram (helper-managed firmware entries)</source>
         <translation>SIMULATE/PREFLIGHT: Alpine GRUB EFI asenna kohde=%1 fs=%2 id=%3 mode=--no-nvram (auttajaohjatut laiteohjelmistot)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1485"/>
+        <location filename="../src/MainWindow.cpp" line="1563"/>
         <source>PASS: Alpine initramfs rebuilt and verified for %1</source>
         <translation>PASS: Alpine initramfs uudelleenrakennettu ja tarkistettu %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1486"/>
+        <location filename="../src/MainWindow.cpp" line="1564"/>
         <source>Alpine missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
         <translation>Alpine puuttuvat-tiedosto korjaus: asentaminen %1 paketti(s) puuttuvat tiedostot: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1487"/>
+        <location filename="../src/MainWindow.cpp" line="1565"/>
         <source>Alpine missing-file detection: no missing package files; running the dependency-only apk fix transaction.</source>
         <translation>Alppien puuttuvan tiedoston havaitseminen: ei puuttuvia pakettitiedostoja; pelkästään riippuvuuden apk-korjaustapahtuman suorittaminen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1488"/>
+        <location filename="../src/MainWindow.cpp" line="1566"/>
         <source>Target %1 is already mounted at %2 (pre-existing source=%3 options=%4 id=%5); leaving it untouched.</source>
         <translation>Kohde %1 on jo asennettu %2 (olemassa oleva lähde=%3 vaihtoehtoja=%4 id=%5); jättäen sen koskemattomana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1489"/>
+        <location filename="../src/MainWindow.cpp" line="1567"/>
         <source>Alpine apk preflight: %1</source>
         <translation>Alpine apk ennen lentoa: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1490"/>
+        <location filename="../src/MainWindow.cpp" line="1568"/>
         <source>REFUSED: apk simulation proposes %1 package changes (safety limit: %2).</source>
         <translation>EPÄÄMINEN: apk-simulaatio ehdottaa %1-paketin muutoksia (turvallisuusraja: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1491"/>
+        <location filename="../src/MainWindow.cpp" line="1569"/>
         <source>REFUSED: apk simulation reported unresolved or conflicting packages.</source>
         <translation>EPÄÄMINEN: apk-simulaatio raportoi ratkaisemattomista tai ristiriitaisista paketeista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1492"/>
+        <location filename="../src/MainWindow.cpp" line="1570"/>
         <source>REFUSED: apk simulation proposes a package downgrade.</source>
         <translation>EPÄÄMINEN: apk-simulaatiossa ehdotetaan paketin vähentämistä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1493"/>
+        <location filename="../src/MainWindow.cpp" line="1571"/>
         <source>REFUSED: apk simulation reported a locked package database.</source>
         <translation>EPÄÄMINEN: apk-simulaatio ilmoitti lukitun pakettitietokannan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1494"/>
+        <location filename="../src/MainWindow.cpp" line="1572"/>
         <source>REFUSED: apk simulation reported incomplete repository metadata.</source>
         <translation>EPÄÄMINEN: apk-simulaation mukaan tietovaraston metatiedot ovat puutteellisia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1495"/>
+        <location filename="../src/MainWindow.cpp" line="1573"/>
         <source>REFUSED: apk simulation would remove &apos;%1&apos; without replacing it in the same transaction.</source>
         <translation>EPÄÄMINEN: apk-simulaatio poistaisi &quot;%1&quot; korvaamatta sitä samassa liiketoimessa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1496"/>
+        <location filename="../src/MainWindow.cpp" line="1574"/>
         <source>REFUSED: apk simulation reported an untrusted package signature.</source>
         <translation>EPÄÄMINEN: apk-simulaatio ilmoitti luottamattomasta paketin allekirjoituksesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1497"/>
+        <location filename="../src/MainWindow.cpp" line="1575"/>
         <source>REFUSED: apk simulation reported an error Boot Bitch does not recognize as safe.</source>
         <translation>EPÄÄMINEN: apk simulointi ilmoitti virhe Boot Bitch ei tunnista turvallista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1498"/>
+        <location filename="../src/MainWindow.cpp" line="1576"/>
         <source>apk simulation replaces package &apos;%1&apos; in the same transaction; removal accepted.</source>
         <translation>apk-simulaatio korvaa paketin &apos;%1&apos; samassa tapahtumassa; poisto hyväksytty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1499"/>
+        <location filename="../src/MainWindow.cpp" line="1577"/>
         <source>KNOWN ISSUE: APT correction is blocked by broken dependencies; simulating --fix-broken before retry.</source>
         <translation>TIEDON NUMERO: APT-korjausta estävät rikkoutuneet riippuvuudet; simulointi -- fix-breaked ennen uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1500"/>
+        <location filename="../src/MainWindow.cpp" line="1578"/>
         <source>KNOWN ISSUE: APT correction is blocked by interrupted dpkg configuration; completing dpkg once and re-simulating.</source>
         <translation>TIEDON NUMERO: APT-korjaus on estetty dpkg:n keskeytyksellä, dpkg:n valmistumisella kerran ja simulaatiolla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1501"/>
+        <location filename="../src/MainWindow.cpp" line="1579"/>
         <source>full-upgrade simulation did not produce an acceptable transaction; evaluating dist-upgrade.</source>
         <translation>Täysimittainen simulaatio ei tuottanut hyväksyttävää tapahtumaa; arviointi dist-upgrade.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1502"/>
+        <location filename="../src/MainWindow.cpp" line="1580"/>
         <source>Full-upgrade simulation was unavailable or unsafe; using the successful standard upgrade transaction.</source>
         <translation>Täysimittaista simulaatiota ei ollut saatavilla tai se ei ollut turvallista; käytössä on onnistunut standardipäivitystapahtuma.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1503"/>
+        <location filename="../src/MainWindow.cpp" line="1581"/>
         <source>apt intent translated: %1</source>
         <translation>apt aikomus käännetty: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1504"/>
+        <location filename="../src/MainWindow.cpp" line="1582"/>
         <source>APT package lists changed or a repository index was fetched; reporting the metadata refresh as changed.</source>
         <translation>APT-pakettiluettelot ovat muuttuneet tai arkistoindeksi noudettiin; metadatan päivitys on ilmoitettava sellaisena kuin se on muutettuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1505"/>
+        <location filename="../src/MainWindow.cpp" line="1583"/>
         <source>Target package policy rejected standard upgrade and requested full/dist upgrade; evaluating full-upgrade.</source>
         <translation>Tavoitepaketti politiikka hylkäsi standardin päivitys ja pyysi täyden / Dist päivitystä; arviointi täyden tason.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1506"/>
+        <location filename="../src/MainWindow.cpp" line="1584"/>
         <source>APT simulation proposes %1 non-protected package removal(s): %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1507"/>
+        <location filename="../src/MainWindow.cpp" line="1585"/>
         <source>REFUSED: APT simulation proposes removing essential packages.</source>
         <translation>EPÄÄMINEN: APT-simulaatiossa ehdotetaan keskeisten pakettien poistamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1508"/>
+        <location filename="../src/MainWindow.cpp" line="1586"/>
         <source>REFUSED: APT simulation would remove protected package &apos;%1&apos;.</source>
         <translation>EPÄÄMINEN: APT-simulaatio poistaisi suojatun paketin &quot;%1.&quot;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1509"/>
+        <location filename="../src/MainWindow.cpp" line="1587"/>
         <source>REFUSED: APT simulation would remove %1 packages (safety limit: %2).</source>
         <translation>EPÄÄMINEN: APT-simulaatio poistaisi %1-paketit (turvallisuusraja: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1510"/>
+        <location filename="../src/MainWindow.cpp" line="1588"/>
         <source>Standard upgrade leaves packages pending; evaluating full-upgrade simulation.</source>
         <translation>Normaali päivitys jättää paketteja odottamaan; arvioi täysimittaista simulaatiota.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1511"/>
+        <location filename="../src/MainWindow.cpp" line="1589"/>
         <source>WARN: accepted release metadata change for %1; metadata refreshed.</source>
         <translation>WARN: hyväksytty julkaisumetatiedon muutos %1; metadatan päivitys.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1512"/>
+        <location filename="../src/MainWindow.cpp" line="1590"/>
         <source>WARNING: apt-get update refused a repository release metadata change for: %1</source>
         <translation>VAROITUS: apt-get update evättiin arkiston julkaisun metatiedon muutos: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1513"/>
+        <location filename="../src/MainWindow.cpp" line="1591"/>
         <source>WARNING: retrying metadata refresh with -o Acquire::AllowReleaseInfoChange=true (release-info changes only; signatures, keys and package verification remain enforced).</source>
         <translation>VAROITUS: uudelleenmetadatan päivittäminen -o Acquire::AllowReleaseInfoChange=true (vain julkaisu-info muutokset; allekirjoitukset, avaimet ja pakettien tarkistus ovat edelleen voimassa).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1514"/>
+        <location filename="../src/MainWindow.cpp" line="1592"/>
         <source>APT upgrade decision: &apos;%1&apos; selected from simulation results.</source>
         <translation>APT-päivityspäätös: &apos;%1&apos; valittu simulaatiotuloksista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1515"/>
+        <location filename="../src/MainWindow.cpp" line="1593"/>
         <source>apt upgrade is disabled by this distribution; running &apos;%1&apos; instead</source>
         <translation>apt-päivitys ei ole käytössä tällä jakelulla; sen sijaan käytetään &apos;%1&apos;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1516"/>
+        <location filename="../src/MainWindow.cpp" line="1594"/>
         <source>PASS: Arch initramfs images rebuilt and verified.</source>
         <translation>PASS: Arch initramfs kuvat uudelleen ja todennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1517"/>
+        <location filename="../src/MainWindow.cpp" line="1595"/>
         <source>AUTO-CORRECT: %1</source>
         <translation>AUTO-CORRECT: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1518"/>
+        <location filename="../src/MainWindow.cpp" line="1596"/>
         <source>AUTO-CORRECT: restored temporary stale mapper alias %1 -&gt; %2 for this repair request.</source>
         <translation>AUTO-CORRECT: kunnostettu väliaikainen vankkumaton mapper alias %1 -&gt; %2 tätä korjauspyyntöä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1519"/>
+        <location filename="../src/MainWindow.cpp" line="1597"/>
         <source>BEGIN: Chroot shell command</source>
         <translation>BEGIN: Chroot-kuorikomento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1520"/>
+        <location filename="../src/MainWindow.cpp" line="1598"/>
         <source>BEGIN: Running-host shell command</source>
         <translation>Alku: Suoritus-ohjain komento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1521"/>
+        <location filename="../src/MainWindow.cpp" line="1599"/>
         <source>BEGIN: %1</source>
         <translation>BEGIN: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1522"/>
+        <location filename="../src/MainWindow.cpp" line="1600"/>
         <source>BEGIN: package backend %1 (%2)</source>
         <translation>BEGIN: paketti taustaosa %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1523"/>
+        <location filename="../src/MainWindow.cpp" line="1601"/>
         <source>BEGIN: Refresh package metadata</source>
         <translation>BEGIN: Päivitä paketin metatiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1524"/>
+        <location filename="../src/MainWindow.cpp" line="1602"/>
         <source>Arch GRUB layout detected; applying the guarded conventional EFI reinstall after initramfs preflight.</source>
         <translation>Arch GRUB asettelu havaittu; soveltamalla vartioitu tavanomainen EFI uudelleen asentaa jälkeen initramfs ennen lentoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1525"/>
+        <location filename="../src/MainWindow.cpp" line="1603"/>
         <source>PASS: boot stack reconciliation completed after component simulations and verification.</source>
         <translation>PASS: boot pino täsmäytys suoritettu jälkeen komponenttien simulaatiot ja todentaminen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1526"/>
+        <location filename="../src/MainWindow.cpp" line="1604"/>
         <source>PASS: boot stack reconciliation completed; EFI/UKI and GRUB were reused from the earlier EFI / UKI stage while mapper/crypttab and initramfs were reconciled.</source>
         <translation>PASS: boot pino täsmäytys valmis; EFI/UKI ja GRUB uudelleenkäytettiin aikaisemmasta EFI / UKI vaiheessa ja mapper / cryptab ja initramfs täsmättiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1527"/>
+        <location filename="../src/MainWindow.cpp" line="1605"/>
         <source>Boot-stack Arch EFI read-only preflight: PASS (%1, %2, id=%3)</source>
         <translation>Boot-stack Arch EFI luku vain ennen lentoa: PASS (%1, %2, id=%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1528"/>
+        <location filename="../src/MainWindow.cpp" line="1606"/>
         <source>Fedora BIOS GRUB2 layout detected; no EFI/UKI artifacts are part of boot-stack reconciliation.</source>
         <translation>Fedora BIOS GRUB2 asettelu havaittu; EFI/UKI-esineet eivät ole osa boot-stack täsmäytys.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1529"/>
+        <location filename="../src/MainWindow.cpp" line="1607"/>
         <source>No TUXEDO UKI builder detected; preserving the distribution&apos;s existing EFI layout during boot-stack reconciliation.</source>
         <translation>TUXEDO UKI -rakentajaa ei ole havaittu; jakelun nykyinen EFI-asettelu säilytetään käynnistyksen täsmäytyksen aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1530"/>
+        <location filename="../src/MainWindow.cpp" line="1608"/>
         <source>NOTE: --post-efi is an EFI-only hint; the Fedora BIOS boot stack reconciles dracut and GRUB2 without an EFI stage.</source>
         <translation>HUOM: -- post-efi on vain EFI:n vihje; Fedora BIOS -kengät täsmäävät dracut:n ja GRUB2:n kanssa ilman EFI-vaihetta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1531"/>
+        <location filename="../src/MainWindow.cpp" line="1609"/>
         <source>SIMULATE/PREFLIGHT: complete boot-stack reconciliation</source>
         <translation>SIMULATE/PREFLIGHT: täydellinen boot-stack täsmäytys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1532"/>
+        <location filename="../src/MainWindow.cpp" line="1610"/>
         <source>SKIP: boot-stack EFI/UKI rebuild skipped because the EFI / UKI bootloader stage already rebuilt and verified this layout in the same run (--post-efi).</source>
         <translation>SKIP: boot-stack EFI/UKI remontoitu koska EFI / UKI bootloader vaihe on jo rakennettu uudelleen ja todennettu tämän asettelun samassa juoksussa (- post-efi).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1533"/>
+        <location filename="../src/MainWindow.cpp" line="1611"/>
         <source>SKIP: boot-stack GRUB regeneration skipped because the EFI / UKI bootloader stage already regenerated the GRUB configuration in the same run (--post-efi).</source>
         <translation>SKIP: boot-stack GRUB regeneraatio ohitettiin, koska EFI / UKI bootloader vaihe jo regeneroitu GRUB kokoonpano samassa ajossa (- post-efi).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1534"/>
+        <location filename="../src/MainWindow.cpp" line="1612"/>
         <source>Boot-stack TUXEDO UKI read-only preflight: PASS (%1, %2)</source>
         <translation>Boot-stack TUXEDO UKI luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1535"/>
+        <location filename="../src/MainWindow.cpp" line="1613"/>
         <source>Bound recovery-host resolver into target chroot (temporary, read-only)</source>
         <translation>Sidottu elvytys-host resolver kohde Chroot (tilapäinen, luku-vain)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1536"/>
+        <location filename="../src/MainWindow.cpp" line="1614"/>
         <source>WARNING: btrfs check --repair is a last-resort operation that upstream documents as dangerous and can make a damaged filesystem worse. The caller must have explicit user confirmation and a backup.</source>
         <translation>VAROITUS: btrfs check --korjaus on viimeinen resort-operaatio, että yläjuoksulla asiakirjat ovat vaarallisia ja voi pahentaa vaurioitunut tiedostojärjestelmä. Soittajalla on oltava käyttäjän vahvistus ja varmuuskopio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1537"/>
+        <location filename="../src/MainWindow.cpp" line="1615"/>
         <source>Chroot shell exit code: %1</source>
         <translation>Chroot kuori exit koodi: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1538"/>
-        <location filename="../src/MainWindow.cpp" line="1539"/>
+        <location filename="../src/MainWindow.cpp" line="1616"/>
+        <location filename="../src/MainWindow.cpp" line="1617"/>
         <source>Command: %1</source>
         <translation>Komento: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1540"/>
+        <location filename="../src/MainWindow.cpp" line="1618"/>
         <source>Configuration read skipped: %1 has no parent directory in the target (bootloader backend: %2).</source>
         <translation>Asetukset luettu ohi: %1:llä ei ole emohakemistoa kohteessa (bootloader backend: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1541"/>
+        <location filename="../src/MainWindow.cpp" line="1619"/>
         <source>Backed up the ESP loader files to %1 before the GRUB EFI reinstall (firmware fallback present before repair: %2).</source>
         <translation>Varmistettu ESP lataaja tiedostot %1 ennen GRUB EFI restall (firmware varalla läsnä ennen korjausta: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1542"/>
+        <location filename="../src/MainWindow.cpp" line="1620"/>
         <source>PASS: refreshed the firmware fallback loader EFI/BOOT/BOOTX64.EFI (--removable).</source>
         <translation>PASS: Päivitetty firmware varakuormaaja EFI/BOOT/BOOTX64.EFI (--removable).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1543"/>
+        <location filename="../src/MainWindow.cpp" line="1621"/>
         <source>Restored the ESP loader files from the session backup %1.</source>
         <translation>Palautti ESP-lataustiedostot istunnon varmuuskopiosta %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1544"/>
+        <location filename="../src/MainWindow.cpp" line="1622"/>
         <source>COPY COMPLETE</source>
         <translation>KOKO TÄYDELLINEN</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1545"/>
+        <location filename="../src/MainWindow.cpp" line="1623"/>
         <source>COPY COMPLETE — SHA-256 verification FAILED</source>
         <translation>COPY TÄYDELLINEN</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1546"/>
+        <location filename="../src/MainWindow.cpp" line="1624"/>
         <source>FAILED verification: %1</source>
         <translation>FAIED-varmennus: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1547"/>
+        <location filename="../src/MainWindow.cpp" line="1625"/>
         <source>%1: %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1548"/>
+        <location filename="../src/MainWindow.cpp" line="1626"/>
         <source>rsync metadata/content re-check: PASS</source>
         <translation>rsync metadatan/sisällön uudelleentarkistus: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1549"/>
+        <location filename="../src/MainWindow.cpp" line="1627"/>
         <source>SHA-256 verification FAILURES: %1 (the copy is not verified complete)</source>
         <translation>SHA-256 verifiointi FAILURES: %1 (kopiota ei ole tarkistettu kokonaan)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1550"/>
+        <location filename="../src/MainWindow.cpp" line="1628"/>
         <source>SHA-256 regular files verified: %1</source>
         <translation>SHA-256 säännöllinen tiedostot todennettu: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1551"/>
+        <location filename="../src/MainWindow.cpp" line="1629"/>
         <source>Source items: %1</source>
         <translation>Lähde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1552"/>
+        <location filename="../src/MainWindow.cpp" line="1630"/>
         <source>Unrelated destination files: retained (no --delete used)</source>
         <translation>Liittymättömät kohdetiedostot: säilytetty (ei --poistettu)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1553"/>
+        <location filename="../src/MainWindow.cpp" line="1631"/>
         <source>Correction simulation exit code: %1 (%2)</source>
         <translation>Korjaussimulaation poistumiskoodi: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1554"/>
+        <location filename="../src/MainWindow.cpp" line="1632"/>
         <source>WARNING: could not mount target %1 from %2; the read-only diagnostic proceeds without it.</source>
         <translation>VAROITUS: kohdetta %1 ei voitu asentaa %2:stä; lukuavain diagnostinen etenee ilman sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1555"/>
+        <location filename="../src/MainWindow.cpp" line="1633"/>
         <source>Created target destination directory %1 with inherited owner %2:%3</source>
         <translation>Luonut kohde kohde hakemisto %1 perinnöllinen omistaja %2:%3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1556"/>
+        <location filename="../src/MainWindow.cpp" line="1634"/>
         <source>Mapper/crypttab consistency gate: PASS</source>
         <translation>Mapper / cryptab johdonmukaisuus portti: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1557"/>
+        <location filename="../src/MainWindow.cpp" line="1635"/>
         <source>Mapper/crypttab gate: no target crypttab entries; PASS</source>
         <translation>Mapper/cryptab-portti: ei kohdekryptab-syötteitä; PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1558"/>
+        <location filename="../src/MainWindow.cpp" line="1636"/>
         <source>Mapper/crypttab gate: entry &apos;%1&apos; resolves outside the selected disk: %2</source>
         <translation>Mapper/cryptab-portti: merkintä &apos;%1&apos; ratkaisee valitun levyn ulkopuolella: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1559"/>
+        <location filename="../src/MainWindow.cpp" line="1637"/>
         <source>Mapper/crypttab gate: %1 -&gt; %2</source>
         <translation>Mapper/cryptab-portti: %1 -&gt; %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1560"/>
+        <location filename="../src/MainWindow.cpp" line="1638"/>
         <source>Mapper/crypttab gate: unresolved entry &apos;%1&apos; -&gt; &apos;%2&apos;</source>
         <translation>Mapper/cryptab-portti: ratkaisematon merkintä &apos;%1&apos; -&gt; &apos;%2&apos;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1561"/>
+        <location filename="../src/MainWindow.cpp" line="1639"/>
         <source>Mapper/crypttab gate: unsupported source syntax for &apos;%1&apos;: %2</source>
         <translation>Mapper/cryptab-portti: tukeematon lähdesyntaksi &apos;%1&apos;:lle: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1562"/>
+        <location filename="../src/MainWindow.cpp" line="1640"/>
         <source>Destination: %1</source>
         <translation>Kohde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1563"/>
+        <location filename="../src/MainWindow.cpp" line="1641"/>
         <source>Detected target OS: %1</source>
         <translation>Kohde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1564"/>
+        <location filename="../src/MainWindow.cpp" line="1642"/>
         <source>WARNING: private /dev filter: the selected target disk identity is unavailable; no block device or mapper will be exposed to the target chroot.</source>
         <translation>VAROITUS: yksityinen /dev-suodatin: valittu kohdelevyn henkilöllisyys ei ole saatavilla; kohdechrootille ei anneta lohkolaitetta tai karttaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1565"/>
+        <location filename="../src/MainWindow.cpp" line="1643"/>
         <source>Private /dev filter: %1 allowed block devices/mappers copied; %2 non-essential device-tree entries refused (plain files, sockets, fifos, and devices outside the selected target disk).</source>
         <translation>Yksityinen /dev-suodatin: %1:n sallimat lohkolaitteet/mapperit kopioitu; %2:n muut kuin olennaiset laite-puumerkinnät hylätty (plain-tiedostot, pistorasiat, fifos ja valitun kohdelevyn ulkopuoliset laitteet).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1566"/>
+        <location filename="../src/MainWindow.cpp" line="1644"/>
         <source>DKMS preflight correction: build tree now present for %1</source>
         <translation>DKMS:n lentoa edeltävä korjaus: %1:n rakennuspuu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1567"/>
+        <location filename="../src/MainWindow.cpp" line="1645"/>
         <source>SIMULATE/PREFLIGHT: dracut DKMS rebuild (headers must already be installed; no package guessing is performed)</source>
         <translation>SIMULATE/PREFLIGHT: dracut DKMS:n uudelleenrakentaminen (otsimet on jo asennettava; paketin arvauksia ei tehdä)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1568"/>
-        <location filename="../src/MainWindow.cpp" line="1569"/>
-        <location filename="../src/MainWindow.cpp" line="1570"/>
+        <location filename="../src/MainWindow.cpp" line="1646"/>
+        <location filename="../src/MainWindow.cpp" line="1647"/>
+        <location filename="../src/MainWindow.cpp" line="1648"/>
         <source>DKMS preflight: headers/build tree present for %1</source>
         <translation>DKMS ennen lentoa: %1:n otsake/rakennuspuu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1571"/>
+        <location filename="../src/MainWindow.cpp" line="1649"/>
         <source>KNOWN ISSUE: DKMS reported missing kernel headers; re-running header preflight/correction once.</source>
         <translation>TIEDON NUMERO: DKMS ilmoitti puuttuvansa ytimen otsikot; uudelleen käynnissä otsikko ennen lentoa / korjaus kerran.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1572"/>
+        <location filename="../src/MainWindow.cpp" line="1650"/>
         <source>DKMS preflight: missing headers for %1; repository package %2 is available.</source>
         <translation>DKMS esilento: puuttuvat otsikot %1:lle; arkistopaketti %2 on saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1573"/>
+        <location filename="../src/MainWindow.cpp" line="1651"/>
         <source>WARNING: DKMS preflight found no build tree for %1 and %2 is unavailable from configured repositories.</source>
         <translation>VAROITUS: DKMS:n ennen lentoa ei löytynyt %1:lle eikä %2:lle rakennettua puuta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1574"/>
+        <location filename="../src/MainWindow.cpp" line="1652"/>
         <source>SIMULATE/PREFLIGHT: mkinitcpio DKMS rebuild (headers must already be installed; no package guessing is performed)</source>
         <translation>SIMULATE/PREFLIGHT: mkinitcpio DKMS:n uudelleenrakentaminen (otsikot on jo asennettava; ei paketin arvausta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1575"/>
+        <location filename="../src/MainWindow.cpp" line="1653"/>
         <source>SIMULATE/PREFLIGHT: mkinitfs DKMS rebuild (headers must already be installed; no package guessing is performed)</source>
         <translation>SIMULATE/PREFLIGHT: mkinitfs DKMS:n uudelleenrakentaminen (otsakkeet on jo asennettava; ei paketin arvauksia)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1576"/>
+        <location filename="../src/MainWindow.cpp" line="1654"/>
         <source>PASS: DKMS autoinstall completed.</source>
         <translation>PASS: DKMS-automaattiasennus valmis.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1577"/>
+        <location filename="../src/MainWindow.cpp" line="1655"/>
         <source>SIMULATE/PREFLIGHT: DKMS module rebuild</source>
         <translation>SIMULATE/PREFLIGHT: DKMS-moduulin jälleenrakentaminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1578"/>
+        <location filename="../src/MainWindow.cpp" line="1656"/>
         <source>%1 was configured offline only; Boot Bitch intentionally did not start a graphical session.</source>
         <translation>%1 konfiguroitu vain offline; Boot Bitch tarkoituksella ei aloittanut graafista istuntoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1579"/>
+        <location filename="../src/MainWindow.cpp" line="1657"/>
         <source>%1 was configured offline only; Boot Bitch intentionally did not start a graphical session inside the chroot.</source>
         <translation>%1 konfiguroitu vain offline; Boot Bitch tarkoituksella ei aloittanut graafista istuntoa sisällä Chroot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1580"/>
+        <location filename="../src/MainWindow.cpp" line="1658"/>
         <source>PASS: default.target -&gt; %1</source>
         <translation>PASS: oletustavoite -&gt; %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1581"/>
+        <location filename="../src/MainWindow.cpp" line="1659"/>
         <source>Detected display manager: %1 (%2)</source>
         <translation>Havaittu näytönhallinta: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1582"/>
+        <location filename="../src/MainWindow.cpp" line="1660"/>
         <source>Enabling %1 in the offline target (it will NOT be started inside the repair chroot).</source>
         <translation>%1:n mahdollistaminen offline-kohteessa (se EI käynnisty korjauschrootin sisällä).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1583"/>
+        <location filename="../src/MainWindow.cpp" line="1661"/>
         <source>WARNING: %1 ExecStart is not executable in the target: %2</source>
         <translation>VAROITUS: %1 ExecStart ei ole suorituskelpoinen kohteessa: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1584"/>
+        <location filename="../src/MainWindow.cpp" line="1662"/>
         <source>PASS: %1 ExecStart is present for headless preflight: %2</source>
         <translation>PASS: %1 ExecStart on läsnä päättömänä ennen lentoa: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1585"/>
+        <location filename="../src/MainWindow.cpp" line="1663"/>
         <source>PASS: display-manager.service -&gt; %1</source>
         <translation>PASS: näyttö-manager.service -&gt; %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1586"/>
+        <location filename="../src/MainWindow.cpp" line="1664"/>
         <source>PASS: %1 command present for headless preflight: %2</source>
         <translation>PASS: %1-komento paikalla päättömänä ennen lentoa: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1587"/>
+        <location filename="../src/MainWindow.cpp" line="1665"/>
         <source>Detected Alpine OpenRC display manager: %1 (%2)</source>
         <translation>Havaittu Alpine OpenRC -näytön hallinta: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1588"/>
+        <location filename="../src/MainWindow.cpp" line="1666"/>
         <source>PASS: /etc/runlevels/default/%1 -&gt; %2</source>
         <translation>PASS: /etc/run levels/default/%1 -&gt; %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1589"/>
+        <location filename="../src/MainWindow.cpp" line="1667"/>
         <source>WARNING: no explicit command= was found for %1; sh -n and rc-service -e still passed.</source>
         <translation>VAROITUS: %1:lle ei löytynyt nimenomaista komentoa; sh -n ja rc-service -e läpäistiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1590"/>
+        <location filename="../src/MainWindow.cpp" line="1668"/>
         <source>%1 will be configured offline only; Boot Bitch will not start a graphical session.</source>
         <translation>%1 konfiguroidaan vain offline-tilassa; Boot Bitch ei käynnistä graafista istuntoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1591"/>
+        <location filename="../src/MainWindow.cpp" line="1669"/>
         <source>Restoring the OpenRC default-runlevel link for %1 (offline only; the service is NOT started).</source>
         <translation>%1:n OpenRC-lähtötason linkin palauttaminen (vain offline; palvelua EI aloiteta).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1592"/>
+        <location filename="../src/MainWindow.cpp" line="1670"/>
         <source>SIMULATE/PREFLIGHT: OpenRC graphical login / display manager (offline only)</source>
         <translation>SIMULATE/PREFLIGHT: OpenRC graafinen kirjautuminen / näyttö hallinta (vain offline)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1593"/>
+        <location filename="../src/MainWindow.cpp" line="1671"/>
         <source>Display-manager preflight plan: set graphical.target default, enable %1, and repair display-manager.service offline.</source>
         <translation>Display-manager esilentosuunnitelma: aseta graafinen.kohde oletus, ota %1 käyttöön ja korjaa näyttö-manager.service offline.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1594"/>
+        <location filename="../src/MainWindow.cpp" line="1672"/>
         <source>Restoring graphical.target as the target default.</source>
         <translation>Palautetaan graafinen kohde oletuksena.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1595"/>
+        <location filename="../src/MainWindow.cpp" line="1673"/>
         <source>Selected %1 from last-boot display-manager journal evidence.</source>
         <translation>Valittu %1 viime saappaan näytön manager päiväkirjan todisteita.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1596"/>
+        <location filename="../src/MainWindow.cpp" line="1674"/>
         <source>Selected %1 from last-boot display-manager journal evidence because multiple managers are installed.</source>
         <translation>Valittu %1 viime saappaan näyttö-hallinta päiväkirjan todisteita, koska useita managereita on asennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1597"/>
+        <location filename="../src/MainWindow.cpp" line="1675"/>
         <source>SIMULATE/PREFLIGHT: graphical login / display manager</source>
         <translation>SIMULATE/PREFLIGHT: graafinen kirjautuminen / näytön hallinta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1598"/>
+        <location filename="../src/MainWindow.cpp" line="1676"/>
         <source>%1 is a static unit; preserving it through the display-manager.service alias.</source>
         <translation>%1 on staattinen yksikkö, joka säilyttää sen näytönohjaimen läpi. Palvelunimi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1599"/>
+        <location filename="../src/MainWindow.cpp" line="1677"/>
         <source>WARNING: systemd-analyze is unavailable; skipped headless display-manager verification.</source>
         <translation>VAROITUS: systemd-analysoiminen ei ole käytettävissä; ohitettu päätön näyttö-manager vahvistus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1600"/>
+        <location filename="../src/MainWindow.cpp" line="1678"/>
         <source>WARNING: headless systemd verification reported issues for %1 (the manager will not be started during repair).</source>
         <translation>VAROITUS: Päätön järjestelmällinen todentaminen raportoitu ongelmia %1 (johtaja ei käynnisty korjauksen aikana).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1601"/>
+        <location filename="../src/MainWindow.cpp" line="1679"/>
         <source>PASS: headless systemd verification for %1</source>
         <translation>PASS: Päätön järjestelmällinen verifiointi %1:lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1602"/>
+        <location filename="../src/MainWindow.cpp" line="1680"/>
         <source>This transaction downloads approximately %1; the apply step reports its progress only when it finishes.</source>
         <translation>Tämä tapahtuma lataa noin %1; sovellettava vaihe raportoi sen etenemistä vain, kun se päättyy.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1603"/>
+        <location filename="../src/MainWindow.cpp" line="1681"/>
         <source>PASS: dnf5 upgrade removes only the old kernel package(s) (%1) — accepted as in-place kernel replacement.</source>
         <translation>PASS: dnf5 päivitys poistaa vain vanhan ytimen paketti(s) (%1) .</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1604"/>
+        <location filename="../src/MainWindow.cpp" line="1682"/>
         <source>dnf5 repository metadata cache rewritten (cache fingerprint changed); reporting the metadata refresh as changed.</source>
         <translation>dnf5 arkiston metadata välimuistin uudelleenkirjoitettu (välimuistin sormenjälki muuttunut); metadatan päivitys muuttunut.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1605"/>
+        <location filename="../src/MainWindow.cpp" line="1683"/>
         <source>PASS: dnf5 metadata cache refreshed (repository metadata cache is byte-identical).</source>
         <translation>PASS: dnf5 metadata välimuisti päivitetty (repository metadata välimuisti on byte-identtinen).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1606"/>
+        <location filename="../src/MainWindow.cpp" line="1684"/>
         <source>REFUSED: dnf5 simulation reported an unresolved or conflicting transaction.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio ilmoitti selvittämättömästä tai ristiriitaisesta tapahtumasta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1607"/>
+        <location filename="../src/MainWindow.cpp" line="1685"/>
         <source>REFUSED: dnf5 simulation proposes a package downgrade.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatiossa ehdotetaan paketin vähentämistä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1608"/>
+        <location filename="../src/MainWindow.cpp" line="1686"/>
         <source>REFUSED: dnf5 simulation failed with exit code %1.</source>
         <translation>EPÄÄMISESTÄ: dnf5-simulaatio epäonnistui lähtökoodin %1 kanssa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1609"/>
+        <location filename="../src/MainWindow.cpp" line="1687"/>
         <source>REFUSED: dnf5 simulation reported a locked package database.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio ilmoitti lukitusta pakettitietokannasta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1610"/>
+        <location filename="../src/MainWindow.cpp" line="1688"/>
         <source>REFUSED: dnf5 simulation reported incomplete repository metadata.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio ilmoitti epätäydellisistä arkistometatiedoista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1611"/>
+        <location filename="../src/MainWindow.cpp" line="1689"/>
         <source>REFUSED: dnf5 upgrade would obsolete critical package &apos;%1&apos;.</source>
         <translation>EPÄÄMINEN: dnf5-päivitys olisi vanhentunut kriittinen paketti &quot;%1.&quot;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1612"/>
+        <location filename="../src/MainWindow.cpp" line="1690"/>
         <source>REFUSED: dnf5 reinstall would replace &apos;%1&apos;, which is not one of the reinstalled packages.</source>
         <translation>EPÄÄMINEN: dnf5 reinstall korvaisi &quot;%1:n,&quot; joka ei kuulu asennettuihin pakkauksiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1613"/>
+        <location filename="../src/MainWindow.cpp" line="1691"/>
         <source>REFUSED: dnf5 simulation proposes package removals.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatiossa ehdotetaan pakettien poistamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1614"/>
+        <location filename="../src/MainWindow.cpp" line="1692"/>
         <source>REFUSED: dnf5 simulation would replace %1 packages (safety limit: %2).</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio korvaisi %1-pakkaukset (turvallisuusraja: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1615"/>
+        <location filename="../src/MainWindow.cpp" line="1693"/>
         <source>REFUSED: dnf5 simulation reported an untrusted or missing package signature key.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio ilmoitti luottamattomasta tai puuttuvasta paketin allekirjoitusavaimesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1616"/>
+        <location filename="../src/MainWindow.cpp" line="1694"/>
         <source>REFUSED: dnf5 simulation proposes %1 package changes (safety limit: %2).</source>
         <translation>EPÄÄMINEN: dnf5-simulaatiossa ehdotetaan %1-paketin muutoksia (turvallisuusraja: %2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1617"/>
+        <location filename="../src/MainWindow.cpp" line="1695"/>
         <source>REFUSED: dnf5 simulation reported an error Boot Bitch does not recognize as safe.</source>
         <translation>EPÄÄMINEN: dnf5-simulaatio ilmoitti virheen Boot Bitch ei tunnista sitä turvalliseksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1618"/>
+        <location filename="../src/MainWindow.cpp" line="1696"/>
         <source>dnf5 preflight version: %1</source>
         <translation>dnf5-versio ennen lentoa: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1619"/>
+        <location filename="../src/MainWindow.cpp" line="1697"/>
         <source>SIMULATE/PREFLIGHT: dracut guarded per-kernel rebuild for %1 installed kernel(s) (single build per kernel; verified before any /boot write)</source>
         <translation>SIMULATE/PREFLIGHT: dracut vartioitu %1-ytimen uudelleenrakennettu (yksi rakenne ytimessä; todennettu ennen /boot kirjoitus)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1620"/>
+        <location filename="../src/MainWindow.cpp" line="1698"/>
         <source>dracut preflight version: %1</source>
         <translation>dracut esilentoversio: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1621"/>
+        <location filename="../src/MainWindow.cpp" line="1699"/>
         <source>e2fsck preen left uncorrected errors (exit code 4); running the confirmed forced repair pass.</source>
         <translation>e2fsck preen vasen korjaamaton virhe (poistumakoodi 4); käynnissä vahvistettu pakotettu korjauspassi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1622"/>
+        <location filename="../src/MainWindow.cpp" line="1700"/>
         <source>Annotating selected-system EFI entries with OS/model identity: %1 / %2 (PARTUUID %3).</source>
         <translation>Ilmoitetaan valittu järjestelmä EFI merkinnät OS / malli identiteetti: %1 / %2 (PARTUUID %3).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1623"/>
+        <location filename="../src/MainWindow.cpp" line="1701"/>
         <source>EFI bootloader ID: %1</source>
         <translation>EFI bootloader ID: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1624"/>
+        <location filename="../src/MainWindow.cpp" line="1702"/>
         <source>PASS: EFI BootOrder already groups each drive&apos;s firmware destinations by normal use.</source>
         <translation>PASS: EFI BootOrder ryhmittää jo jokaisen aseman firmware kohteet normaaliin käyttöön.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1625"/>
+        <location filename="../src/MainWindow.cpp" line="1703"/>
         <source>PASS: EFI BootOrder grouped by drive; all retained firmware entries remain present.</source>
         <translation>PASS: EFI BootOrder ryhmitelty aseman mukaan; kaikki säilytetyt firmware merkinnät pysyvät läsnä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1626"/>
+        <location filename="../src/MainWindow.cpp" line="1704"/>
         <source>Grouping EFI BootOrder by drive and normal boot use: %1</source>
         <translation>EFI BootOrderin ryhmittely ajon ja normaalin boot-käytön avulla: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1627"/>
+        <location filename="../src/MainWindow.cpp" line="1705"/>
         <source>Clearing BootNext introduced during EFI repair.</source>
         <translation>Clearing BootNext otettiin käyttöön EFI korjaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1628"/>
+        <location filename="../src/MainWindow.cpp" line="1706"/>
         <source>PASS: Boot%1 is first in BootOrder; all other entries were retained.</source>
         <translation>PASS: Boot%1 on ensimmäinen BootOrder; kaikki muut merkinnät pidettiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1629"/>
+        <location filename="../src/MainWindow.cpp" line="1707"/>
         <source>PASS: selected ESP firmware destinations reconciled; removed Boot%1.</source>
         <translation>PASS: Valitut ESP firmware kohteet sovitettu; poistettu Boot%1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1630"/>
+        <location filename="../src/MainWindow.cpp" line="1708"/>
         <source>PASS: selected ESP firmware destinations are unique; no duplicate entries removed.</source>
         <translation>PASS: Valitut ESP-ohjelmistokohteet ovat ainutlaatuisia; kaksoismerkintää ei ole poistettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1631"/>
+        <location filename="../src/MainWindow.cpp" line="1709"/>
         <source>Removed firmware boot entry Boot%1.</source>
         <translation>Poistettu firmware boot enter Boot%1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1632"/>
+        <location filename="../src/MainWindow.cpp" line="1710"/>
         <source>PASS: %1 firmware entry restored as Boot%2 on selected system ESP %3.</source>
         <translation>PASS: %1 firmware sisääntulo palautettu Boot%2 valitussa järjestelmässä ESP %3.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1633"/>
+        <location filename="../src/MainWindow.cpp" line="1711"/>
         <source>PASS: generic EFI firmware entry restored as Boot%1 on selected system ESP %2.</source>
         <translation>PASS: yleinen EFI firmware merkintä palautettu Boot%1 valitussa järjestelmässä ESP %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1634"/>
+        <location filename="../src/MainWindow.cpp" line="1712"/>
         <source>EFI grouping did not retain Boot%1 first; re-promoting it once.</source>
         <translation>EFI-ryhmä ei säilyttänyt Boot%1:ää ensin; sen edistäminen uudelleen kerran.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1635"/>
+        <location filename="../src/MainWindow.cpp" line="1713"/>
         <source>EFI entry identity preserved while firmware ID changed: Boot%1 -&gt; Boot%2.</source>
         <translation>EFI-tietue säilyi, kun ohjelmistotunniste muuttui: Boot%1 -&gt; Boot%2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1636"/>
+        <location filename="../src/MainWindow.cpp" line="1714"/>
         <source>iPXE/WebFAI EFI loader is absent on selected system ESP; no recovery firmware entry was created.</source>
         <translation>iPXE/WebFAI EFI-kuormaajaa ei ole valitussa järjestelmässä ESP; palautusohjelmistoja ei ole luotu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1637"/>
+        <location filename="../src/MainWindow.cpp" line="1715"/>
         <source>iPXE/WebFAI EFI loader is present on the selected system ESP, but firmware variables are not writable; no recovery firmware entry was created.</source>
         <translation>iPXE/WebFAI EFI-kuormaaja on mukana valitussa järjestelmässä ESP, mutta firmware-muuttujat eivät ole kirjoitettavia; firmware-tiedostoa ei ole luotu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1638"/>
+        <location filename="../src/MainWindow.cpp" line="1716"/>
         <source>Repair-target EFI entry label preserved while loader changed: Boot%1 -&gt; Boot%2.</source>
         <translation>Korjaa kohde EFI merkintä etiketti säilytetään samalla kuormaaja muuttunut: Boot%1 -&gt; Boot%2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1639"/>
+        <location filename="../src/MainWindow.cpp" line="1717"/>
         <source>EFI Boot%1 already names selected model; leaving label &apos;%2&apos; unchanged.</source>
         <translation>EFI Boot%1 jo nimittää valitun mallin, jolloin etiketti &apos;%2&apos; ei muutu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1640"/>
+        <location filename="../src/MainWindow.cpp" line="1718"/>
         <source>EFI Boot%1 (%2) label updated to &apos;%3&apos; on selected system ESP only.</source>
         <translation>EFI Boot%1 (%2) - nimilappu päivitetty &quot;%3&quot; vain valitussa järjestelmässä ESP.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1641"/>
+        <location filename="../src/MainWindow.cpp" line="1719"/>
         <source>PASS: selected ESP EFI labels retain the drive model after final BootOrder maintenance.</source>
         <translation>PASS: Valitut ESP EFI tarrat säilyttävät ajomallin viimeisen BootSertder-huollon jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1642"/>
+        <location filename="../src/MainWindow.cpp" line="1720"/>
         <source>Selected EFI loader is present at %1, but firmware variables are not writable; no generic firmware entry was created.</source>
         <translation>Valittu EFI-kuormaaja on läsnä %1:ssä, mutta firmware-muuttujat eivät ole kirjoitettavia; geneerisiä firmware-ohjelmia ei luotu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1643"/>
+        <location filename="../src/MainWindow.cpp" line="1721"/>
         <source>PASS: EFI loader files verified under %1/EFI/%2</source>
         <translation>PASS: EFI-kuormaajatiedostot todennettu %1/EFI/%2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1644"/>
+        <location filename="../src/MainWindow.cpp" line="1722"/>
         <source>Making Boot%1 the explicit default while preserving all other EFI entries: %2</source>
         <translation>Tehdään Boot%1:stä nimenomainen oletus säilyttäen samalla kaikki muut EFI-syötteet: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1645"/>
+        <location filename="../src/MainWindow.cpp" line="1723"/>
         <source>Multiple generic EFI entries already point to the selected system loader (%1); destination maintenance will retain one after the repair.</source>
         <translation>Useat yleiset EFI merkinnät osoittavat jo valittuun järjestelmäkuormaajaan (%1); määränpään huolto säilyttää yhden korjauksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1646"/>
+        <location filename="../src/MainWindow.cpp" line="1724"/>
         <source>Multiple iPXE/WebFAI entries already point to the selected system ESP (%1); destination maintenance will retain one after the repair.</source>
         <translation>Useat iPXE/WebFAI-merkinnät osoittavat jo valittuun ESP-järjestelmään (%1); kohdehuolto säilyttää yhden korjauksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1647"/>
+        <location filename="../src/MainWindow.cpp" line="1725"/>
         <source>Multiple TUXEDO UKI entries already point to the selected ESP (%1); destination maintenance will retain one after the repair.</source>
         <translation>Useat TUXEDO UKI merkinnät osoittavat jo valittuun ESP (%1); kohde huolto säilyttää yhden jälkeen korjaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1648"/>
+        <location filename="../src/MainWindow.cpp" line="1726"/>
         <source>Selected EFI vendor directory has no primary loader; no generic firmware entry was created.</source>
         <translation>Valitussa EFI-toimittajahakemistossa ei ole ensisijaista laturia; geneerisiä firmware-ohjelmia ei luotu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1649"/>
+        <location filename="../src/MainWindow.cpp" line="1727"/>
         <source>KNOWN ISSUE: firmware NVRAM registration failed; retrying once as a file-only --no-nvram reinstall.</source>
         <translation>TIEDON NUMERO: firmware NVRAM -rekisteröinti epäonnistui; yritetään uudelleen kerran vain tiedostona -- no-nvram uudelleenasennukseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1650"/>
+        <location filename="../src/MainWindow.cpp" line="1728"/>
         <source>EFI System Partition: %1 (%2)</source>
         <translation>EFI System Partition: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1651"/>
+        <location filename="../src/MainWindow.cpp" line="1729"/>
         <source>EFI registration mode: %1</source>
         <translation>EFI-rekisteröintitila: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1652"/>
+        <location filename="../src/MainWindow.cpp" line="1730"/>
         <source>EFI registration mode: Alpine --no-nvram install with helper-managed firmware entries (writable efivars: %1).</source>
         <translation>EFI-rekisteröintitila: Alpine --no-nvram asennusavulla ohjatut firmware-merkinnät (kirjoitettavat efivars: %1).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1653"/>
+        <location filename="../src/MainWindow.cpp" line="1731"/>
         <source>Removing duplicate/legacy selected-ESP firmware destination Boot%1.</source>
         <translation>Poistaa kaksois-/legacy valittu-ESP firmware kohde Boot%1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1654"/>
+        <location filename="../src/MainWindow.cpp" line="1732"/>
         <source>Renamed firmware boot entry Boot%1 to &apos;%2&apos;.</source>
         <translation>Nimetty firmware boot enter Boot%1 to &apos;%2&apos;.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1655"/>
+        <location filename="../src/MainWindow.cpp" line="1733"/>
         <source>Set EFI BootOrder to %1.</source>
         <translation>Aseta EFI BootOrder %1:ksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1656"/>
+        <location filename="../src/MainWindow.cpp" line="1734"/>
         <source>EFI BootOrder already matches the requested order %1.</source>
         <translation>EFI BootOrder vastaa jo pyydettyä tilausta %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1657"/>
+        <location filename="../src/MainWindow.cpp" line="1735"/>
         <source>EFI repair read-only preflight: PASS (%1, %2, id=%3)</source>
         <translation>EFI korjaus vain ennen lentoa: PASS (%1, %2, id=%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1658"/>
+        <location filename="../src/MainWindow.cpp" line="1736"/>
         <source>EFI repair completed; simulating and regenerating the GRUB fallback configuration.</source>
         <translation>EFI korjaus valmis; simuloi ja uudistaa GRUB varakokoonpano.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1659"/>
+        <location filename="../src/MainWindow.cpp" line="1737"/>
         <source>Restoring reconciled BootNext: %1</source>
         <translation>Yhteensovitetun BootNextin palauttaminen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1660"/>
+        <location filename="../src/MainWindow.cpp" line="1738"/>
         <source>Restoring reconciled EFI BootOrder (all pre-existing entries retained): %1</source>
         <translation>Yhteensovitetun EFI BootOrderin palauttaminen (kaikki aiemmat merkinnät säilytetään): %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1661"/>
+        <location filename="../src/MainWindow.cpp" line="1739"/>
         <source>Restoring %1 firmware entry &apos;%2&apos; for PARTUUID %3 (EFI path %4).</source>
         <translation>Palautetaan %1-ohjelmiston merkintä &quot;%2&quot; PAPUUID %3:lle (EFI-polku %4).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1662"/>
+        <location filename="../src/MainWindow.cpp" line="1740"/>
         <source>Restoring missing %1 firmware entry on selected system ESP %2 as &apos;%3&apos; (%4).</source>
         <translation>Palautetaan puuttuva %1-ohjelmistomerkintä valitussa järjestelmässä ESP %2 nimellä &apos;%3&apos; (%4).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1663"/>
+        <location filename="../src/MainWindow.cpp" line="1741"/>
         <source>Restoring missing generic EFI firmware entry on selected system ESP %1 as &apos;%2&apos; (%3).</source>
         <translation>Palautetaan puuttuva yleinen EFI-ohjelmistomerkintä valitussa järjestelmässä ESP %1 nimellä &apos;%2&apos; (%3).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1664"/>
+        <location filename="../src/MainWindow.cpp" line="1742"/>
         <source>Alpine EFI-stub repair read-only preflight: PASS (%1, %2)</source>
         <translation>Alpine EFI-stib korjaus luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1665"/>
+        <location filename="../src/MainWindow.cpp" line="1743"/>
         <source>TUXEDO UKI firmware entry is absent for the selected system ESP; creating only that selected-system entry as &apos;%1&apos;.</source>
         <translation>TUXEDO UKI firmware -merkintä puuttuu valitusta järjestelmästä ESP; luodaan vain se valittu järjestelmämerkintä &quot;%1.&quot;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1666"/>
+        <location filename="../src/MainWindow.cpp" line="1744"/>
         <source>Writable UEFI efivars detected; first attempt will permit firmware registration.</source>
         <translation>Writable UEFI efivars havaittu; ensimmäinen yritys mahdollistaa firmware rekisteröinti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1667"/>
+        <location filename="../src/MainWindow.cpp" line="1745"/>
         <source>Writable UEFI efivars are unavailable; using the preflight-selected --no-nvram path.</source>
         <translation>Kirjoitettavat UEFI efivarit eivät ole käytettävissä; käytetään esilentoon valittua --nvram-polkua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1668"/>
+        <location filename="../src/MainWindow.cpp" line="1746"/>
         <source>ESP mount: auto-mount failed: target=%1 reason=%2 hint=%3</source>
         <translation>ESP-asennus: Auto-mount epäonnistui: kohde=%1 syy=%2 vihje= %3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1669"/>
+        <location filename="../src/MainWindow.cpp" line="1747"/>
         <source>ESP mount: auto-mount failed: target=%1 reason=mounted source %2 is not a block device on the selected target disk hint=%3</source>
         <translation>ESP-asennus: Auto-mount epäonnistui: tavoite=%1 syy = asennettu lähde %2 ei ole lohko laite valittu kohdelevy vihje = %3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1670"/>
+        <location filename="../src/MainWindow.cpp" line="1748"/>
         <source>ESP mount: auto-mount failed: target=%1 reason=mounted source %2 is %3, not FAT hint=%4</source>
         <translation>ESP-asennus: Auto-mount epäonnistui: tavoite=%1 syy = asennettu lähde %2 on %3, ei FAT vihje = %4</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1671"/>
+        <location filename="../src/MainWindow.cpp" line="1749"/>
         <source>ESP mount cleanup: unmounted leaked ro layer target=%1 source=%2 id=%3</source>
         <translation>ESP asennus siivous: asentamaton ro kerros tavoite=%1 lähde=%2 id=%3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1672"/>
+        <location filename="../src/MainWindow.cpp" line="1750"/>
         <source>ESP mount preflight: target=%1 stack=%2 top-source=%3 top-options=%4 top-id=%5 verdict=%6 leaked-ro=%7</source>
         <translation>ESP mount preflight: kohde=%1 pino=%2 top-source=%3 top-optiot=%4 top-id=%5 tuomio=%6 vuoto-ro=%7</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1673"/>
+        <location filename="../src/MainWindow.cpp" line="1751"/>
         <source>ESP mount: mounted target=%1 source=%2 method=%3</source>
         <translation>ESP-asennus: asennettu kohde=%1-lähde=%2-menetelmä=%3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1674"/>
+        <location filename="../src/MainWindow.cpp" line="1752"/>
         <source>Backed up the extlinux configuration under %1</source>
         <translation>Varmistettu extlinux-konfiguraatiolla %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1675"/>
+        <location filename="../src/MainWindow.cpp" line="1753"/>
         <source>PASS: extlinux candidate references %1 boot artifact(s) present in the target</source>
         <translation>PASS: extlinux ehdokas viittaa %1 boot artefact [s] läsnä kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1676"/>
+        <location filename="../src/MainWindow.cpp" line="1754"/>
         <source>PASS: running host default extlinux entry is LABEL %1 -&gt; LINUX %2 + INITRD %3.</source>
         <translation>PASS: käynnissä isäntä oletus extlinux merkintä on ETIKETTI %1 -&gt; LINUX %2 + INITRD %3.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1677"/>
+        <location filename="../src/MainWindow.cpp" line="1755"/>
         <source>Restored the pre-repair extlinux default configuration</source>
         <translation>Palautti extlinux:n oletusasetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1678"/>
+        <location filename="../src/MainWindow.cpp" line="1756"/>
         <source>Extlinux default entry: label=%1 kernel=%2 action=set</source>
         <translation>Extlinux-oletusmerkintä: etiketti=%1-ydin=%2-toiminto=setti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1679"/>
+        <location filename="../src/MainWindow.cpp" line="1757"/>
         <source>Extlinux default entry: label=%1 kernel=%2 action=unchanged</source>
         <translation>Extlinux-oletussyöte: etiketti=%1-ytimen=%2-toiminto=muuttumaton</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1680"/>
+        <location filename="../src/MainWindow.cpp" line="1758"/>
         <source>PASS: /boot/extlinux.conf regenerated and verified; the boot sector was not written.</source>
         <translation>PASS: /boot/extlinux.conf regeneroitu ja tarkistettu; käynnistyssektoria ei ole kirjoitettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1681"/>
+        <location filename="../src/MainWindow.cpp" line="1759"/>
         <source>Restored the pre-repair extlinux configuration</source>
         <translation>Korjaa extlinux-kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1682"/>
+        <location filename="../src/MainWindow.cpp" line="1760"/>
         <source>SIMULATE/PREFLIGHT: extlinux configuration regeneration via %1 (overwrite=0 trial; no boot sector write)</source>
         <translation>SIMULATE/PREFLIGHT: extlinux:n konfiguraation regeneraatio %1:n avulla (korvaa=0 tutkimus; ei käynnistyssektorin kirjoitusta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1683"/>
+        <location filename="../src/MainWindow.cpp" line="1761"/>
         <source>Fedora default entry: saved_entry=%1 resolves=%2 target=%3 action=set</source>
         <translation>Fedora-oletussyöte: tallennettu entry=%1 ratkaisee=%2-tavoite=%3-toiminto=asetettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1684"/>
+        <location filename="../src/MainWindow.cpp" line="1762"/>
         <source>Fedora default entry: saved_entry=%1 resolves=yes target=%2 action=set</source>
         <translation>Fedora-oletussyöte: saved entry=%1 ratkaisee=kyllä kohde=%2 toiminto=asetettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1685"/>
+        <location filename="../src/MainWindow.cpp" line="1763"/>
         <source>Fedora default entry: saved_entry=%1 resolves=yes target=%2 action=unchanged</source>
         <translation>Fedora-oletussyöte: tallennettu entry=%1 ratkaisee=kyllä kohde=%2 toiminto=muuttumaton</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1686"/>
+        <location filename="../src/MainWindow.cpp" line="1764"/>
         <source>Backed up Fedora GRUB2 configuration artifacts to %1.</source>
         <translation>Varmistin Fedora GRUB2:n konfiguraatioesineet %1: lle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1687"/>
+        <location filename="../src/MainWindow.cpp" line="1765"/>
         <source>PASS: Fedora GRUB2 configuration regenerated and verified.</source>
         <translation>PASS: Fedora GRUB2 asetus regeneroitu ja tarkistettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1688"/>
+        <location filename="../src/MainWindow.cpp" line="1766"/>
         <source>Restored the Fedora GRUB2 configuration artifacts from %1.</source>
         <translation>Palautti Fedora GRUB2-kokoonpanon %1:stä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1689"/>
+        <location filename="../src/MainWindow.cpp" line="1767"/>
         <source>SIMULATE/PREFLIGHT: generate Fedora GRUB2 configuration with --no-grubenv-update</source>
         <translation>SIMULATE/PREFLIGHT: luo Fedora GRUB2-asetukset -- no-grubenv-update</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1690"/>
+        <location filename="../src/MainWindow.cpp" line="1768"/>
         <source>PASS: Fedora GRUB2 trial configuration generated successfully.</source>
         <translation>PASS: Fedora GRUB2 kokeiluversio luotiin onnistuneesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1691"/>
+        <location filename="../src/MainWindow.cpp" line="1769"/>
         <source>Fedora default entry: grubenv keys other than saved_entry preserved (sha256 %1…).</source>
         <translation>Fedora oletusmerkintä: grubenv avaimet muut kuin tallennettu entry säilynyt (sha256 %1…).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1692"/>
+        <location filename="../src/MainWindow.cpp" line="1770"/>
         <source>PASS: Fedora initramfs for %1 rebuilt byte-identical; temporary build discarded.</source>
         <translation>PASS: Fedora initramfs %1 restructed byte-identical; väliaikainen rakentaa hylätty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1693"/>
+        <location filename="../src/MainWindow.cpp" line="1771"/>
         <source>PASS: Fedora initramfs rebuilt and verified for %1</source>
         <translation>PASS: Fedora initramfs uudelleenrakennettu ja tarkistettu %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1694"/>
+        <location filename="../src/MainWindow.cpp" line="1772"/>
         <source>File Copy %1: %2</source>
         <translation>Tiedostokopio %1: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1695"/>
+        <location filename="../src/MainWindow.cpp" line="1773"/>
+        <source>File Copy changed diagnostic-relevant files.</source>
+        <translation>Tiedostokopio muutti vianmääritykseen liittyviä tiedostoja.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1774"/>
+        <source>File Copy made no diagnostic-relevant filesystem change; cached diagnostics remain valid.</source>
+        <translation>Tiedostokopio ei muuttanut vianmääritykseen liittyvää tiedostojärjestelmää; välimuistin diagnostiikka on edelleen voimassa.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1775"/>
         <source>Simulation exit code for &apos;--fix-broken install&apos;: %1</source>
         <translation>Simulointi exit code for &quot;-fix-broken install&quot;: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1696"/>
+        <location filename="../src/MainWindow.cpp" line="1776"/>
         <source>Released the helper&apos;s read-only mount(s) of %1 before offline repair.</source>
         <translation>Vapautti %1:n luku-avainkiinnikkeet ennen offline-korjausta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1697"/>
+        <location filename="../src/MainWindow.cpp" line="1777"/>
         <source>REPAIR: %1 (%2) on %3 (fstype=%4, uuid=%5, mount=%6)</source>
         <translation>KORJAUS: %1 (%2) on %3 (fstype=%4, uud=%5, mount=%6)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1698"/>
+        <location filename="../src/MainWindow.cpp" line="1778"/>
         <source>FAIL: file system repair (%1) reported unresolved issues for %2 (exit code %3).</source>
         <translation>FAIL: tiedostojärjestelmän korjaus (%1) ilmoitti ratkaisemattomia kysymyksiä %2 (poistumiskoodi %3).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1699"/>
+        <location filename="../src/MainWindow.cpp" line="1779"/>
         <source>PASS: file system repair (%1) corrected errors on %2 (exit code %3).</source>
         <translation>PASS: tiedostojärjestelmän korjaus (%1) korjatut virheet %2 (poistumiskoodi %3).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1700"/>
+        <location filename="../src/MainWindow.cpp" line="1780"/>
         <source>PASS: file system repair (%1) completed for %2 with exit code 0.</source>
         <translation>PASS: tiedostojärjestelmän korjaus (%1) valmis %2 kanssa exit koodi 0.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1701"/>
+        <location filename="../src/MainWindow.cpp" line="1781"/>
         <source>PASS: file system repair (%1) corrected errors on %2; a reboot is recommended before using the filesystem (exit code 2).</source>
         <translation>PASS: tiedostojärjestelmän korjaus (%1) korjatut virheet %2; uudelleenkäynnistys suositellaan ennen tiedostojärjestelmän käyttöä (poistumiskoodi 2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1702"/>
+        <location filename="../src/MainWindow.cpp" line="1782"/>
         <source>FAIL: file system repair (%1) timed out for %2 (exit code %3).</source>
         <translation>FAIL: tiedostojärjestelmän korjaus (%1) ajoitettu pois %2 (poistettu koodi %3).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1703"/>
+        <location filename="../src/MainWindow.cpp" line="1783"/>
         <source>File system inspection found no resolvable scope filesystems (root, /boot, ESP and /home).</source>
         <translation>Tiedostojärjestelmän tarkastus ei löytänyt resoluutiotiedostojärjestelmiä (root, /boot, ESP ja / kotiin).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1704"/>
+        <location filename="../src/MainWindow.cpp" line="1784"/>
         <source>File system inspection started (read-only; no repair tool is invoked).</source>
         <translation>Tiedostojärjestelmän tarkastus aloitettiin (vain luku; korjaustyökalua ei käytetä).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1705"/>
+        <location filename="../src/MainWindow.cpp" line="1785"/>
         <source>WARNING: fstab %1 device %2 is not on the selected disk %3; excluded from the file system scope.</source>
         <translation>VAROITUS: fstab %1-laite %2 ei ole valitulla levyllä %3; jätetään tiedostojärjestelmän soveltamisalan ulkopuolelle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1706"/>
+        <location filename="../src/MainWindow.cpp" line="1786"/>
         <source>Captured complete firmware entry state before conventional GRUB EFI install: %1</source>
         <translation>Kaapattu täydellinen firmware sisääntulotila ennen tavanomaista GRUB EFI asennus: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1707"/>
+        <location filename="../src/MainWindow.cpp" line="1787"/>
         <source>SIMULATE/PREFLIGHT: GRUB EFI install target=%1 fs=%2 id=%3 mode=%4</source>
         <translation>SIMULATE/PREFLIGHT: GRUB EFI asenna kohde=%1 fs=%2 id=%3-tila=%4</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1708"/>
+        <location filename="../src/MainWindow.cpp" line="1788"/>
         <source>foreign-entry-added: %1</source>
         <translation>Suomeen lisätty: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1709"/>
+        <location filename="../src/MainWindow.cpp" line="1789"/>
         <source>foreign-entry-removed: %1</source>
         <translation>Ulkomailta poistuneet: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1710"/>
+        <location filename="../src/MainWindow.cpp" line="1790"/>
         <source>menu-entry-added: %1</source>
         <translation>Valikko lisätty: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1711"/>
+        <location filename="../src/MainWindow.cpp" line="1791"/>
         <source>GRUB menu entries added by the candidate: %1</source>
         <translation>GRUB valikko merkinnät lisätään ehdokas: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1712"/>
+        <location filename="../src/MainWindow.cpp" line="1792"/>
         <source>Using grub-mkconfig with an isolated output path for preflight.</source>
         <translation>grub-mkconfig:n käyttäminen erillisellä lähtöreitillä ennen lentoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1713"/>
+        <location filename="../src/MainWindow.cpp" line="1793"/>
         <source>PASS: GRUB configuration regenerated and verified.</source>
         <translation>PASS: GRUB konfiguraatio regeneroitu ja tarkistettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1714"/>
+        <location filename="../src/MainWindow.cpp" line="1794"/>
         <source>SIMULATE/PREFLIGHT: generate GRUB configuration to temporary session output</source>
         <translation>SIMULATE/PREFLIGHT: luo GRUB-konfiguraatio tilapäiseen istuntolähtöön</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1715"/>
+        <location filename="../src/MainWindow.cpp" line="1795"/>
         <source>KNOWN ISSUE: GRUB trial failed on a stale mapper path; retrying once after compatibility alias correction.</source>
         <translation>TUNTEMATON NUMERO: GRUB-koe epäonnistui väljällä karttapolulla; yritetään uudelleen kerran yhteensopivuuden jälkeen alias korjaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1716"/>
+        <location filename="../src/MainWindow.cpp" line="1796"/>
         <source>Trial GRUB generation exit code: %1</source>
         <translation>Trial GRUB generation exit code: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1717"/>
+        <location filename="../src/MainWindow.cpp" line="1797"/>
         <source>PASS: GRUB trial configuration generated successfully.</source>
         <translation>PASS: GRUB kokeiluversio luotiin onnistuneesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1718"/>
+        <location filename="../src/MainWindow.cpp" line="1798"/>
         <source>Backed up the package selection and modprobe.d state to %1.</source>
         <translation>Paketin valinta ja modprobe.d tila %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1719"/>
+        <location filename="../src/MainWindow.cpp" line="1799"/>
         <source>Wrote the blacklist for the conflicting module %1.</source>
         <translation>Kirjoitti mustan listan ristiriitaisesta moduulista %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1720"/>
+        <location filename="../src/MainWindow.cpp" line="1800"/>
         <source>GPU driver install plan: %1</source>
         <translation>GPU-ajurin asennussuunnitelma: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1721"/>
+        <location filename="../src/MainWindow.cpp" line="1801"/>
         <source>Set the one-boot nomodeset next_entry (consumed automatically after one boot).</source>
         <translation>Aseta yhden saappaan nomodeset next entry (merkitty automaattisesti yhden bootin jälkeen).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1722"/>
+        <location filename="../src/MainWindow.cpp" line="1802"/>
         <source>GPU driver purge plan: %1</source>
         <translation>GPU-ajurin puhdistussuunnitelma: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1723"/>
+        <location filename="../src/MainWindow.cpp" line="1803"/>
         <source>Restored the package selection and modprobe.d state from %1.</source>
         <translation>Palautti paketin valinnan ja modprobe.d tila %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1724"/>
+        <location filename="../src/MainWindow.cpp" line="1804"/>
         <source>Backed up GRUB2 BIOS boot code (MBR, BIOS boot partition, i386-pc modules) to %1.</source>
         <translation>Varmistettu GRUB2 BIOS boot koodi (MBR, BIOS boot osio, i386-pc moduulit) %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1725"/>
+        <location filename="../src/MainWindow.cpp" line="1805"/>
         <source>NOTE: GRUB2 BIOS boot-code reinstall is only implemented for a mounted repair target; the running host stays config-only.</source>
         <translation>HUOMAUTUS: GRUB2 BIOS-käynnistyskoodi uudelleenasentaminen toteutetaan vain asennettu korjauskohde; käynnissä isäntä pysyy vain config-.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1726"/>
+        <location filename="../src/MainWindow.cpp" line="1806"/>
         <source>PASS: GRUB2 BIOS boot code reinstalled and verified (partition table byte-identical).</source>
         <translation>PASS: GRUB2 BIOS-käynnistyskoodi uudelleen asennettuna ja todennettuna (osittainen taulukko).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1727"/>
+        <location filename="../src/MainWindow.cpp" line="1807"/>
         <source>GRUB2 boot-code probe: MBR and BIOS boot partition contain a GRUB signature; config-only regeneration.</source>
         <translation>GRUB2-käynnistin: MBR ja BIOS-saappaan osio sisältää GRUB- allekirjoituksen; ainoastaan konfigin regeneraatio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1728"/>
+        <location filename="../src/MainWindow.cpp" line="1808"/>
         <source>REPAIR: reinstall GRUB2 BIOS boot code (%1 --target=i386-pc --boot-directory=/boot --recheck %2)</source>
         <translation>KORJAUS: Asenna uudelleen GRUB2 BIOS- käynnistyskoodi (%1 --tavoite=i386-kpl --boot-kansio=/boot -- tarkista %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1729"/>
+        <location filename="../src/MainWindow.cpp" line="1809"/>
         <source>Restored the GRUB2 BIOS boot code from %1.</source>
         <translation>Palautti GRUB2 BIOS-alkukoodin %1:stä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1730"/>
+        <location filename="../src/MainWindow.cpp" line="1810"/>
         <source>GRUB2 config-only reconciliation requested; the BIOS boot-code reinstall substage is skipped.</source>
         <translation>GRUB2:lta vaaditaan vain konfigurointia; BIOS-käynnistyskoodi uudelleenasennetaan alavaiheen ulkopuolelle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1731"/>
+        <location filename="../src/MainWindow.cpp" line="1811"/>
         <source>UEFI firmware detected; the GRUB2 BIOS boot-code reinstall substage is not applicable.</source>
         <translation>UEFI-ohjelmisto havaittu; GRUB2 BIOS- käynnistyskoodi uudelleen asentaa alavaiheen ei sovelleta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1732"/>
+        <location filename="../src/MainWindow.cpp" line="1812"/>
         <source>Host boot-stack Arch EFI read-only preflight: PASS (%1, %2, id=%3)</source>
         <translation>Isäntä-pino Arch EFI luku vain ennen lentoa: PASS (%1, %2, id=%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1733"/>
+        <location filename="../src/MainWindow.cpp" line="1813"/>
         <source>Host boot-stack TUXEDO UKI read-only preflight: PASS (%1, %2)</source>
         <translation>Isäntäkäynnistys TUXEDO UKI luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1734"/>
+        <location filename="../src/MainWindow.cpp" line="1814"/>
         <source>Host command guard: firmware variables are read-only to package/kernel/vendor hooks; the helper owns explicit firmware registration.</source>
         <translation>Isännän komennon vartiointi: firmware-muuttujat luetaan vain paketti-/ydin-/koukkuihin; auttaja omistaa nimenomaisen firmware-rekisteröinnin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1735"/>
+        <location filename="../src/MainWindow.cpp" line="1815"/>
         <source>Creating host %1 firmware entry on %2 as &apos;%3&apos; (%4); existing host, repair, and foreign entries are untouched.</source>
         <translation>Luodaan isäntä %1 firmware merkintä %2 nimellä &apos;%3&apos; (%4); olemassa isäntä, korjaus, ja ulkomaiset merkinnät ovat koskemattomia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1736"/>
+        <location filename="../src/MainWindow.cpp" line="1816"/>
         <source>PASS: running host default EFI entry is Boot%1 on %2.</source>
         <translation>PASS: käynnissä isäntä oletus EFI merkintä on Boot%1 %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1737"/>
+        <location filename="../src/MainWindow.cpp" line="1817"/>
         <source>WARNING: host destination is group-writable; the copied files may be modified by the owning group: %1</source>
         <translation>VAROITUS: isäntäkohde on ryhmäkirjoitettava; kopioita voi muuttaa omistava ryhmä: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1738"/>
+        <location filename="../src/MainWindow.cpp" line="1818"/>
         <source>Host disk: %1</source>
         <translation>Käyttölevy: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1739"/>
+        <location filename="../src/MainWindow.cpp" line="1819"/>
         <source>Backed up running-host EFI loader files to %1 before the guarded reinstall.</source>
         <translation>Varmistettu käynnissä-host EFI lataaja tiedostot %1 ennen vartioitu uudelleen asentaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1740"/>
+        <location filename="../src/MainWindow.cpp" line="1820"/>
         <source>Canonical running-host EFI loader verified: %1 (%2) on %3.</source>
         <translation>Canonical juoksu-host EFI kuormain todennettu: %1 (%2) %3.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1741"/>
+        <location filename="../src/MainWindow.cpp" line="1821"/>
         <source>Host EFI read-only preflight: PASS (%1, %2, id=%3)</source>
         <translation>Isäntä EFI luku vain ennen lentoa: PASS (%1, %2, id=%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1742"/>
+        <location filename="../src/MainWindow.cpp" line="1822"/>
         <source>EFI repair completed; regenerating the running host GRUB fallback configuration.</source>
         <translation>EFI korjaus valmis; regenerointi käynnissä isäntä GRUB varakokoonpano.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1743"/>
+        <location filename="../src/MainWindow.cpp" line="1823"/>
         <source>Restored the running-host EFI loader files from %1.</source>
         <translation>Palautti ajo-isäntä EFI-lataajan tiedostot %1:stä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1744"/>
+        <location filename="../src/MainWindow.cpp" line="1824"/>
         <source>Host Alpine EFI-stub read-only preflight: PASS (%1, %2)</source>
         <translation>Isäntä Alpine EFI-stib luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1745"/>
+        <location filename="../src/MainWindow.cpp" line="1825"/>
         <source>Writable UEFI variables are unavailable; host maintenance will preserve files and BootOrder without firmware registration.</source>
         <translation>Kirjoitettavat UEFI-muuttujat eivät ole saatavilla; isäntähuolto säilyttää tiedostot ja BootSirder ilman firmware-rekisteröintiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1746"/>
+        <location filename="../src/MainWindow.cpp" line="1826"/>
         <source>Host %1 entries %2 point to %3 on %4; keeping active entry Boot%5 and pruning the remaining duplicates.</source>
         <translation>Host %1 merkinnät %2 pisteen %3 %4; pitämällä aktiivinen merkintä Boot%5 ja karsimalla loput kaksoiskappaleet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1747"/>
+        <location filename="../src/MainWindow.cpp" line="1827"/>
         <source>Host EFI System Partition: %1 (%2) %3</source>
         <translation>Isäntä EFI System Partition: %1 (%2) %3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1748"/>
+        <location filename="../src/MainWindow.cpp" line="1828"/>
         <source>Native running-host repair preflight: PASS</source>
         <translation>Native juoksu-host korjaus ennen lentoa: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1749"/>
+        <location filename="../src/MainWindow.cpp" line="1829"/>
         <source>All requested running-host repair stages completed successfully.</source>
         <translation>Kaikki vaaditut juoksu-host korjausvaiheet suoritettu onnistuneesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1750"/>
+        <location filename="../src/MainWindow.cpp" line="1830"/>
         <source>ROLLBACK: restored BootOrder=%1, but the firmware state differs from the pre-change capture:</source>
         <translation>ROLLBACK: palautettu Boot Order=%1, mutta firmware-tila eroaa ennen muutosta kaappaus:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1751"/>
+        <location filename="../src/MainWindow.cpp" line="1831"/>
         <source>CRITICAL: cannot detach the promoted host rollback mounts; refusing to rename Btrfs roots during recovery.</source>
         <translation>CRITICAINEN: ei voi irrottaa promoted isännän kaatumistelineitä; kieltäytyä nimeämästä Btrfs juuret uudelleen palautumisen aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1752"/>
-        <location filename="../src/MainWindow.cpp" line="1873"/>
+        <location filename="../src/MainWindow.cpp" line="1832"/>
+        <location filename="../src/MainWindow.cpp" line="1953"/>
         <source>CRITICAL: could not determine the preserved root subvolume ID.</source>
         <translation>KRIITINEN: ei voitu määrittää säilynyttä juuri-alavolyymiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1753"/>
+        <location filename="../src/MainWindow.cpp" line="1833"/>
         <source>CRITICAL: could not move the failed host rollback candidate out of @; refusing to promote the preserved root.</source>
         <translation>CRIITIC: Epäonnistunutta isäntäkandidaattia ei voitu siirtää pois @:stä, koska se kieltäytyi edistämästä säilynyttä juuria.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1754"/>
+        <location filename="../src/MainWindow.cpp" line="1834"/>
         <source>CRITICAL: could not move the nested @/.snapshots child back into the preserved root.</source>
         <translation>KRIITINEN: pesittyä lasta ei voitu siirtää takaisin säilyneeseen juureen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1755"/>
+        <location filename="../src/MainWindow.cpp" line="1835"/>
         <source>CRITICAL: could not remount the Btrfs top-level filesystem read-write during host rollback recovery.</source>
         <translation>CRITICA: ei voitu asentaa uudelleen Btrfs-ylätason tiedostojärjestelmän luku-kirjoitusta isäntäkääntäjän palautuksen aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1756"/>
-        <location filename="../src/MainWindow.cpp" line="1876"/>
+        <location filename="../src/MainWindow.cpp" line="1836"/>
+        <location filename="../src/MainWindow.cpp" line="1956"/>
         <source>CRITICAL: could not restore the previous Btrfs default subvolume.</source>
         <translation>CRITICAINEN: edellistä Btrfs-oletusosamäärää ei voitu palauttaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1757"/>
+        <location filename="../src/MainWindow.cpp" line="1837"/>
         <source>RUNNING-HOST SNAPSHOT ROLLBACK COMPLETE</source>
         <translation>RUNNING-Host snapshot rollback valmis</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1758"/>
+        <location filename="../src/MainWindow.cpp" line="1838"/>
         <source>ROLLBACK: created entry Boot%1 is active (BootCurrent/BootNext); it is retained but no longer promoted.</source>
         <translation>ROllBACK: luotu merkintä Boot%1 on aktiivinen (BootCurrent/BootNext); se säilytetään, mutta ei enää edistä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1759"/>
-        <location filename="../src/MainWindow.cpp" line="1877"/>
+        <location filename="../src/MainWindow.cpp" line="1839"/>
+        <location filename="../src/MainWindow.cpp" line="1957"/>
         <source>Creating writable rollback candidate %1</source>
         <translation>Luodaan kirjoitettava vastakanteen ehdokas %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1760"/>
+        <location filename="../src/MainWindow.cpp" line="1840"/>
         <source>Host rollback default-subvolume update failed; automatically restoring the preserved root.</source>
         <translation>Host-rollback oletus-subvolyymi päivitys epäonnistui; automaattisesti palauttaa säilynyt root.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1761"/>
+        <location filename="../src/MainWindow.cpp" line="1841"/>
         <source>Pre-rollback boot artifact fingerprints: fstab=%1 grub=%2 cmdline=%3 uki=%4</source>
         <translation>Esi-rollback-saappaan esineen sormenjäljet: fstab=%1-murska=%2 cmdline=%3 uki=%4</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1762"/>
+        <location filename="../src/MainWindow.cpp" line="1842"/>
         <source>Migrating nested @/.snapshots child subvolume into the promoted root.</source>
         <translation>Muuttaa pesitty @/.snapshots lapsen osavolyymi ylennetty juuri.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1763"/>
+        <location filename="../src/MainWindow.cpp" line="1843"/>
         <source>Host rollback candidate mount/preflight failed; automatically restoring the preserved root.</source>
         <translation>Isännän nousukandidaatin asennus/ennakko epäonnistui; säilynyt juuri palautuu automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1764"/>
+        <location filename="../src/MainWindow.cpp" line="1844"/>
         <source>PASS: the original @ and its boot stack were restored automatically. Failed rollback candidate retained as %1.</source>
         <translation>PASS: alkuperäinen @ ja sen boot pino palautettiin automaattisesti. %1:nä pidetyssä varaehdokkaassa epäonnistuttiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1765"/>
+        <location filename="../src/MainWindow.cpp" line="1845"/>
         <source>CRITICAL: the original @ was restored, but its boot-stack reconciliation also failed. Manual boot repair is required before reboot.</source>
         <translation>CRIITIC: alkuperäinen @ palautettiin, mutta sen boot-stack sovittelu epäonnistui myös. Manuaalinen boot korjaus vaaditaan ennen uudelleenkäynnistystä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1766"/>
-        <location filename="../src/MainWindow.cpp" line="1898"/>
+        <location filename="../src/MainWindow.cpp" line="1846"/>
+        <location filename="../src/MainWindow.cpp" line="1978"/>
         <source>CRITICAL: preserved root %1 is missing; refusing to move the active rollback candidate.</source>
         <translation>CRIITIC: säilynyt juuri %1 puuttuu; kieltäytyy siirtämästä aktiivinen rollback ehdokas.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1767"/>
-        <location filename="../src/MainWindow.cpp" line="1933"/>
+        <location filename="../src/MainWindow.cpp" line="1847"/>
+        <location filename="../src/MainWindow.cpp" line="2015"/>
         <source>Previous root retained as: %1</source>
         <translation>Edellinen juuri säilytetään: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1768"/>
+        <location filename="../src/MainWindow.cpp" line="1848"/>
         <source>Promoted root: @ (subvolume ID %1); the running system keeps the previous root until reboot.</source>
         <translation>Edistetty root: @ (subvolume ID %1); käynnissä järjestelmä pitää edellisen root kunnes uudelleenkäynnistys.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1769"/>
+        <location filename="../src/MainWindow.cpp" line="1849"/>
         <source>HOST ROLLBACK RECOVERY: restoring the preserved pre-rollback @.</source>
         <translation>HOST ROllBACK REKISTERÖINTI: säilyttää pre-rollback @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1770"/>
+        <location filename="../src/MainWindow.cpp" line="1850"/>
         <source>ROLLBACK: restored BootOrder=%1 and removed created entry Boot%2; firmware state equals the pre-change capture.</source>
         <translation>ROLLBACK: palautettu Saapasjärjestys=%1 ja poistettu luotu merkintä Boot%2; firmware tila on yhtä kuin ennen muutosta kaappaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1771"/>
+        <location filename="../src/MainWindow.cpp" line="1851"/>
         <source>Running-host rollback selected: snapshot %1.</source>
         <translation>Running-host rockback valittu: tilannekuva %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1772"/>
+        <location filename="../src/MainWindow.cpp" line="1852"/>
         <source>Rollback source remains unchanged; the running host keeps the current root until reboot.</source>
         <translation>Rollback-lähde pysyy muuttumattomana; käynnissä oleva isäntä pitää nykyisen juuren käynnistymiseen asti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1773"/>
+        <location filename="../src/MainWindow.cpp" line="1853"/>
         <source>Selected rollback target: %1</source>
         <translation>Valittu varakohde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1774"/>
+        <location filename="../src/MainWindow.cpp" line="1854"/>
         <source>Host rollback candidate failed post-switch validation/boot reconciliation; automatically restoring the preserved root.</source>
         <translation>Isäntärock-ehdokas epäonnistui kytkimen jälkeisessä validoinnissa/saappaan täsmäyttämisessä; säilynyt juuri palautuu automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1775"/>
+        <location filename="../src/MainWindow.cpp" line="1855"/>
         <source>Host root component: %1 (%2)</source>
         <translation>Isännän juurikomponentti: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1776"/>
+        <location filename="../src/MainWindow.cpp" line="1856"/>
         <source>Host root mount: / (subvolume=%1)</source>
         <translation>Isännän juuriliitos: / (osatilavuus=%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1777"/>
+        <location filename="../src/MainWindow.cpp" line="1857"/>
         <source>FAIL: Running-host shell command was cancelled at an interactive prompt.</source>
         <translation>Suoritus-ohjain komento peruttiin interaktiivisella käskyllä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1778"/>
+        <location filename="../src/MainWindow.cpp" line="1858"/>
         <source>Running-host shell exit code: %1</source>
         <translation>Running-host kuori exit koodi: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1779"/>
+        <location filename="../src/MainWindow.cpp" line="1859"/>
         <source>FAIL: Running-host shell command (exit code %1)</source>
         <translation>FAIL: Running-host-shell-komento (poistumiskoodi %1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1780"/>
+        <location filename="../src/MainWindow.cpp" line="1860"/>
         <source>PASS: Running-host shell command</source>
         <translation>PASS: Suoritus-ohjain komento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1781"/>
+        <location filename="../src/MainWindow.cpp" line="1861"/>
         <source>Host snapshot inventory skipped: %1 is not Btrfs.</source>
         <translation>Isäntäkuvan inventaario ohitettu: %1 ei ole Btrfs.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1782"/>
+        <location filename="../src/MainWindow.cpp" line="1862"/>
         <source>Host TUXEDO UKI firmware entry already present: Boot%1 on %2.</source>
         <translation>Isäntä TUXEDO UKI firmware-merkintä on jo läsnä: Boot%1 on %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1783"/>
+        <location filename="../src/MainWindow.cpp" line="1863"/>
         <source>Host TUXEDO UKI file is present on %1, but firmware variables are not writable; host registration was not changed.</source>
         <translation>Isäntä TUXEDO UKI tiedosto on läsnä %1, mutta firmware muuttujat eivät ole kirjoitettavia; isäntä rekisteröinti ei muuttunut.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1784"/>
+        <location filename="../src/MainWindow.cpp" line="1864"/>
         <source>Host TUXEDO UKI read-only preflight: PASS (%1, %2)</source>
         <translation>Isäntä TUXEDO UKI luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1785"/>
+        <location filename="../src/MainWindow.cpp" line="1865"/>
         <source>PASS: host TUXEDO UKI firmware entry restored as Boot%1 on %2.</source>
         <translation>PASS: isäntä TUXEDO UKI firmware merkintä palautettu Boot%1 %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1786"/>
+        <location filename="../src/MainWindow.cpp" line="1866"/>
         <source>Restoring missing host TUXEDO UKI firmware entry on %1 as &apos;%2&apos;; existing host, repair, and foreign entries are untouched.</source>
         <translation>Palauttaa puuttuvat isäntä TUXEDO UKI firmware merkintä %1 &apos;%2&apos;; olemassa isäntä, korjaus, ja ulkomaiset merkinnät ovat koskemattomia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1787"/>
+        <location filename="../src/MainWindow.cpp" line="1867"/>
         <source>Running-host validation complete; no host files were changed.</source>
         <translation>Running-host validointi valmis; mitään isäntätiedostoja ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1788"/>
+        <location filename="../src/MainWindow.cpp" line="1868"/>
         <source>Running-host validation summary</source>
         <translation>Running-host validation -tiivistelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1789"/>
+        <location filename="../src/MainWindow.cpp" line="1869"/>
         <source>KNOWN ISSUE: %1 is missing; creating it instead of attempting an update.</source>
         <translation>TIEDON NUMERO: %1 puuttuu; luoda sen sijaan yrittää päivittää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1790"/>
+        <location filename="../src/MainWindow.cpp" line="1870"/>
         <source>PASS: initramfs %1 verified by mkinitfs -l build-input listing</source>
         <translation>PASS: initramfs %1 todentanut mkinitfs -l sisäänrakennettu listaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1791"/>
+        <location filename="../src/MainWindow.cpp" line="1871"/>
         <source>SIMULATE/PREFLIGHT: initramfs generation for %1 installed kernel(s)</source>
         <translation>SIMULATE/PREFLIGHT: initramfs-tuotanto asennetuille %1-ytimille</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1792"/>
+        <location filename="../src/MainWindow.cpp" line="1872"/>
         <source>PASS: trial initramfs build for %1</source>
         <translation>PASS: kokeilu initramfs rakentaa %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1793"/>
+        <location filename="../src/MainWindow.cpp" line="1873"/>
         <source>PASS: initramfs verified for %1</source>
         <translation>PASS: initramfs todennettu %1:lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1794"/>
+        <location filename="../src/MainWindow.cpp" line="1874"/>
         <source>PASS: initramfs %1 verified by zcat/cpio listing</source>
         <translation>PASS: initramfs %1 todennettu zcat/cpio listaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1795"/>
+        <location filename="../src/MainWindow.cpp" line="1875"/>
         <source>KNOWN ISSUE: initrd.img-%1 is missing; creating it instead of attempting an update.</source>
         <translation>TIEDON NUMERO: initrd.img-%1 puuttuu; luoda sen sijaan yrittää päivittää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1796"/>
+        <location filename="../src/MainWindow.cpp" line="1876"/>
         <source>Kernel cleanup plan: removing %1 versioned kernel package(s): %2</source>
         <translation>Ytimen puhdistussuunnitelma: poistamalla %1 versioitu ytimen paketti(s): %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1797"/>
+        <location filename="../src/MainWindow.cpp" line="1877"/>
         <source>Installing the missing headers for the newest kernel: %1</source>
         <translation>Puuttuvien otsikoiden asentaminen uusimpaan ytimeen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1798"/>
+        <location filename="../src/MainWindow.cpp" line="1878"/>
         <source>Installing the repository-latest kernel image: %1</source>
         <translation>Varaston viimeisimmän ytimen kuvan asennus: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1799"/>
+        <location filename="../src/MainWindow.cpp" line="1879"/>
         <source>Orphaned kernel cleanup plan: removing the leftover on-disk components of kernel %1.</source>
         <translation>Orvon ytimen puhdistussuunnitelma: poistamalla jäljellä olevia osia ytimen %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1800"/>
+        <location filename="../src/MainWindow.cpp" line="1880"/>
         <source>FAIL: a protected kernel package was removed by the transaction; restoring protected package(s): %1</source>
         <translation>FAIL: Suojattu ytimen paketti poistettiin tapahtuma; palauttaa suojattu paketti(s): %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1801"/>
+        <location filename="../src/MainWindow.cpp" line="1881"/>
         <source>Kernel reinstall plan: reinstalling %1 incomplete kernel package(s): %2</source>
         <translation>Ytimen asentaminen uudelleen: %1:n epätäydellisen ytimen paketti [s] asentaminen uudelleen: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1802"/>
+        <location filename="../src/MainWindow.cpp" line="1882"/>
         <source>FAIL: kernel removal exited %1; cleaning leftover on-disk components of the removed kernels</source>
         <translation>FAIL: ytimen poisto poistettu %1; puhdistus jäännökset levyllä osat poistettu ytimiä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1803"/>
+        <location filename="../src/MainWindow.cpp" line="1883"/>
         <source>Cleaning leftover on-disk components of removed kernel %1 (zombie cleanup)</source>
         <translation>Poistetun ytimen %1:n (zombien puhdistus) jäänteiden puhdistus levyllä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1804"/>
+        <location filename="../src/MainWindow.cpp" line="1884"/>
         <source>%1 lives on the root filesystem; no separate mount required</source>
         <translation>%1 elää juuritiedostojärjestelmässä; erillistä asennusta ei tarvita</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1805"/>
+        <location filename="../src/MainWindow.cpp" line="1885"/>
         <source>PASS: lsinitcpio verified %1 Arch initramfs image(s)</source>
         <translation>PASS: lsinitcpio todennettu %1 Arch initramfs kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1806"/>
+        <location filename="../src/MainWindow.cpp" line="1886"/>
         <source>PASS: lsinitramfs verified /boot/initrd.img-%1</source>
         <translation>PASS: lsinitramfs todennettu /boot/initrd.img-%1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1807"/>
+        <location filename="../src/MainWindow.cpp" line="1887"/>
         <source>PASS: lsinitrd verified %1</source>
         <translation>PASS: Lsinitrd todennettu %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1808"/>
+        <location filename="../src/MainWindow.cpp" line="1888"/>
         <source>LUKS target is already unlocked by existing mapper: %1</source>
         <translation>LUKS-kohde on jo avattu olemassa olevan mapper: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1809"/>
+        <location filename="../src/MainWindow.cpp" line="1889"/>
         <source>Mapper name: %1</source>
         <translation>Mapper-nimi: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1810"/>
+        <location filename="../src/MainWindow.cpp" line="1890"/>
         <source>LUKS unlock complete. The mapper remains open for this recovery session.</source>
         <translation>LUKS-lukko valmis. Mapper on avoinna toipumisistuntoa varten.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1811"/>
+        <location filename="../src/MainWindow.cpp" line="1891"/>
         <source>Unlocking LUKS target %1</source>
         <translation>Avataan LUKS-tavoite %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1812"/>
+        <location filename="../src/MainWindow.cpp" line="1892"/>
         <source>Mandatory safety preflight: PASS</source>
         <translation>Pakollinen turvallisuus ennen lentoa: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1813"/>
+        <location filename="../src/MainWindow.cpp" line="1893"/>
         <source>Mapper compatibility: %1 already resolves to %2</source>
         <translation>Mapper yhteensopivuus: %1 jo ratkaisee %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1814"/>
+        <location filename="../src/MainWindow.cpp" line="1894"/>
         <source>Mapper compatibility: temporary %1 -&gt; %2</source>
         <translation>Mapper yhteensopivuus: väliaikainen %1 -&gt; %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1815"/>
+        <location filename="../src/MainWindow.cpp" line="1895"/>
         <source>SIMULATE/PREFLIGHT: mkinitcpio trial builds for %1 installed kernel(s)</source>
         <translation>SIMULATE/PREFLIGHT: mkinitcpio kokeilu rakentaa %1 asennettujen ytimet(s)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1816"/>
+        <location filename="../src/MainWindow.cpp" line="1896"/>
         <source>PASS: trial mkinitcpio build for %1</source>
         <translation>PASS: kokeilu mkinitcpio rakentaa %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1817"/>
+        <location filename="../src/MainWindow.cpp" line="1897"/>
         <source>SIMULATE/PREFLIGHT: mkinitfs trial builds for %1 installed kernel(s)</source>
         <translation>SIMULATE/PREFLIGHT: mkinitfs-kokeilu rakentaa %1-asennettuun ytimeen(s)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1818"/>
+        <location filename="../src/MainWindow.cpp" line="1898"/>
         <source>PASS: trial mkinitfs build for %1</source>
         <translation>PASS: tutkimus mkinitfs rakentaa %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1819"/>
+        <location filename="../src/MainWindow.cpp" line="1899"/>
         <source>Mounted target ESP discovered by GPT type: %1 at /boot/efi (%2)</source>
         <translation>Asennettu kohde ESP löydetty GPT-tyypillä: %1 at /boot/efi (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1820"/>
+        <location filename="../src/MainWindow.cpp" line="1900"/>
         <source>Mounted target %1 from %2 (%3)</source>
         <translation>Asennettu kohde %1 %2:stä (%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1821"/>
+        <location filename="../src/MainWindow.cpp" line="1901"/>
         <source>Mounting target %1 from %2 (%3)</source>
         <translation>Asennuskohde %1 %2:stä (%3)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1822"/>
+        <location filename="../src/MainWindow.cpp" line="1902"/>
         <source>Mounting target Btrfs fstab subvolumes (%1)</source>
         <translation>Asennuskohteet Btrfs fstabin alatilavuudet (%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1823"/>
+        <location filename="../src/MainWindow.cpp" line="1903"/>
         <source>Mounting target %1 from %2</source>
         <translation>Asennuskohde %1 %2:stä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1824"/>
+        <location filename="../src/MainWindow.cpp" line="1904"/>
         <source>No TUXEDO UKI builder detected; retaining the distribution&apos;s existing EFI layout.</source>
         <translation>TUXEDO UKI -rakentajaa ei ole havaittu; jakelun nykyinen EFI-asettelu säilytetään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1825"/>
+        <location filename="../src/MainWindow.cpp" line="1905"/>
         <source>FAIL: ntfsfix could not fully repair %1 (exit code %2); run Windows chkdsk /f for a real NTFS repair.</source>
         <translation>FAIL: ntffix ei pystynyt korjaamaan %1:ää (poistumiskoodi %2); suorita Windows chkdsk /f todellista NTFS korjausta varten.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1826"/>
+        <location filename="../src/MainWindow.cpp" line="1906"/>
         <source>NOTE: ntfsfix only clears the NTFS dirty state; Windows chkdsk /f is required for a real NTFS repair.</source>
         <translation>HUOMAUTUS: ntffix puhdistaa vain NTFS:n likaisen tilan; Windows chkdsk /f tarvitaan todelliseen NTFS-korjaukseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1827"/>
+        <location filename="../src/MainWindow.cpp" line="1907"/>
         <source>Orphaned kernel build/support cleanup plan: removing %1 package(s): %2</source>
         <translation>Orvon ytimen rakenne/tuki puhdistussuunnitelma: poistamalla %1-paketti(s): %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1828"/>
+        <location filename="../src/MainWindow.cpp" line="1908"/>
         <source>FAIL: orphaned kernel build/support removal exited %1</source>
         <translation>FAIL: orvon ytimen rakenne / tuki poisto poistettu %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1829"/>
+        <location filename="../src/MainWindow.cpp" line="1909"/>
         <source>Orphaned kernel headers cleanup plan: removing %1 header package(s): %2</source>
         <translation>Orvon ytimen otsakkeet puhdistus suunnitelma: poistamalla %1 otsakepaketti(s): %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1830"/>
+        <location filename="../src/MainWindow.cpp" line="1910"/>
         <source>FAIL: orphaned kernel headers removal exited %1; cleaning leftover header directories</source>
         <translation>FAIL: orvon ytimen otsakkeiden poisto poistunut %1; siivous ylijäämän otsakehakemistot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1831"/>
+        <location filename="../src/MainWindow.cpp" line="1911"/>
         <source>Ownership validation: %1:%2 maps to %3:%4 on both sides; preserving numeric ownership</source>
         <translation>Omistajuuden validointi: %1:%2 kartat %3:%4 molemmin puolin; numeerisen omistusoikeuden säilyttäminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1832"/>
+        <location filename="../src/MainWindow.cpp" line="1912"/>
         <source>Ownership validation: source %1:%2 (%3:%4) does not map identically on the destination side; using destination owner %5:%6</source>
         <translation>Omistajan validointi: lähde %1:%2 (%3:%4) ei kartalla identtisesti kohdepuolella; käyttäen kohdeomistajaa %5:%6</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1833"/>
+        <location filename="../src/MainWindow.cpp" line="1913"/>
         <source>Ownership policy: %1</source>
         <translation>Omistusoikeus: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1834"/>
+        <location filename="../src/MainWindow.cpp" line="1914"/>
         <source>Package backend %1 did not report a change status; treating the stage as changed.</source>
         <translation>Paketin taustaosa %1 ei ilmoittanut muutostilaa; käsittely vaiheessa muuttunut.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1835"/>
+        <location filename="../src/MainWindow.cpp" line="1915"/>
         <source>SKIP: package backend %1 is not runnable for stage &apos;%2&apos;: %3</source>
         <translation>SKIP: Paketin taustaosa %1 ei ole käytettävissä vaiheessa &quot;%2&quot;: %3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1836"/>
+        <location filename="../src/MainWindow.cpp" line="1916"/>
         <source>Package backend %1 change status: %2</source>
         <translation>Paketin taustaosan %1 muutostila: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1837"/>
+        <location filename="../src/MainWindow.cpp" line="1917"/>
         <source>Package stage &apos;%1&apos;: running %2 runnable backend(s): %3</source>
         <translation>Pakettivaihe &apos;%1&apos;: käynnissä %2-juoksutettava taustaosa [s]: %3</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1838"/>
+        <location filename="../src/MainWindow.cpp" line="1918"/>
         <source>PackageKit daemon is running; it is only a conflict while it holds package-manager locks or spawns apt/dpkg.</source>
         <translation>PakettiKit Daemon on käynnissä; se on vain ristiriita, kun sillä on paketti-manageri lukot tai spawns apt/dpkg.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1839"/>
+        <location filename="../src/MainWindow.cpp" line="1919"/>
         <source>Arch pacman transaction completed successfully despite mirror fallback.</source>
         <translation>Arch pacman -tapahtuma suoritettu onnistuneesti huolimatta peilivarauksesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1840"/>
+        <location filename="../src/MainWindow.cpp" line="1920"/>
         <source>WARN: pacman encountered %1 recoverable mirror retrieval failure(s).</source>
         <translation>WARN: pacman havaitsi %1:n palautuvan peilin hakuvirheen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1841"/>
+        <location filename="../src/MainWindow.cpp" line="1921"/>
         <source>PASS: Arch pacman transaction preflight resolved without removals.</source>
         <translation>PASS: Arch pacman tapahtuma ennen lentoa ratkaistu ilman poistoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1842"/>
+        <location filename="../src/MainWindow.cpp" line="1922"/>
         <source>REFUSED: pacman preflight proposes %1 packages (safety limit: 1000).</source>
         <translation>EPÄÄMINEN: pacman:ssä ennen lentoa ehdotetaan %1-paketteja (turvallisuusraja 1000).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1843"/>
+        <location filename="../src/MainWindow.cpp" line="1923"/>
         <source>REFUSED: pacman preflight reported repository, download or transaction integrity errors.</source>
         <translation>EPÄÄMINEN: pacman ennen lentoa raportoitu arkisto, lataus tai tapahtuma eheys virheet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1844"/>
+        <location filename="../src/MainWindow.cpp" line="1924"/>
         <source>REFUSED: pacman preflight proposes removals or unresolved dependencies.</source>
         <translation>EPÄÄMINEN: pacman ennen lentoa ehdottaa poistoja tai ratkaisemattomia riippuvuuksia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1845"/>
+        <location filename="../src/MainWindow.cpp" line="1925"/>
         <source>Arch pacman transaction sandbox prepared under %1; the target package database will not be used for preflight.</source>
         <translation>Arch pacman tapahtumahiekkalaatikko valmistettu %1; kohdepaketti tietokantaa ei käytetä ennen lentoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1846"/>
+        <location filename="../src/MainWindow.cpp" line="1926"/>
         <source>SIMULATE/PREFLIGHT: full Arch pacman transaction (sandboxed database/cache; no target packages will be changed)</source>
         <translation>SIMULATE/PREFLIGHT: koko Arch pacman-tapahtuma (Sandboxed database/cache; kohdepaketteja ei muuteta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1847"/>
+        <location filename="../src/MainWindow.cpp" line="1927"/>
         <source>PASS: dnf5 metadata cache refreshed.</source>
         <translation>PASS: dnf5-metadatavälimuisti päivitetty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1848"/>
+        <location filename="../src/MainWindow.cpp" line="1928"/>
         <source>PASS: %1</source>
         <translation>PASS: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1849"/>
+        <location filename="../src/MainWindow.cpp" line="1929"/>
         <source>PASS: %1 completed through one full pacman transaction.</source>
         <translation>PASS: %1 suoritettu yhdellä täydellä pacman-tapahtumalla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1850"/>
+        <location filename="../src/MainWindow.cpp" line="1930"/>
         <source>PASS: Refresh package metadata</source>
         <translation>PASS: Päivitä paketin metatiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1851"/>
+        <location filename="../src/MainWindow.cpp" line="1931"/>
         <source>PASS: Refresh package metadata (package lists byte-identical; no repository index was fetched)</source>
         <translation>PASS: Päivitä pakettien metatiedot (pakettiluettelot byte-identiteetti; arkistoindeksiä ei noudettu)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1852"/>
+        <location filename="../src/MainWindow.cpp" line="1932"/>
         <source>Host package-manager concurrency gate: PASS</source>
         <translation>Isäntäpaketti-hallintavaluutta portti: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1853"/>
+        <location filename="../src/MainWindow.cpp" line="1933"/>
         <source>Post-upgrade dpkg audit:</source>
         <translation>Korkea-asteen jälkeinen dpkg-tarkastus:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1854"/>
+        <location filename="../src/MainWindow.cpp" line="1934"/>
         <source>PREVIEW COMPLETE — no files were changed.</source>
         <translation>ENNAKKO TÄYDELLINEN</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1855"/>
+        <location filename="../src/MainWindow.cpp" line="1935"/>
         <source>PREVIEW: target destination directory would be created: %1</source>
         <translation>ENNAKKO: kohde kohdehakemisto luodaan: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1856"/>
+        <location filename="../src/MainWindow.cpp" line="1936"/>
         <source>Protected host check: PASS</source>
         <translation>Suojattu isäntätarkistus: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1857"/>
+        <location filename="../src/MainWindow.cpp" line="1937"/>
         <source>Scheduling running-host reboot through the system reboot command.</source>
         <translation>Käynnistetään järjestelmä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1858"/>
+        <location filename="../src/MainWindow.cpp" line="1938"/>
         <source>Scheduling running-host reboot through OpenRC.</source>
         <translation>Suunnitelmia käynnissä-host käynnistää uudelleen OpenRC.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1859"/>
+        <location filename="../src/MainWindow.cpp" line="1939"/>
         <source>Scheduling running-host reboot through systemd.</source>
         <translation>Aikataulun mukaan isännät käynnistyvät uudelleen järjestelmällisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1860"/>
+        <location filename="../src/MainWindow.cpp" line="1940"/>
         <source>WARNING: refusing an unsafe target Btrfs mountpoint (not absolute): %1</source>
         <translation>VAROITUS: vaarallisen kohteen Btrfs asennuspiste (ei absoluuttinen): %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1861"/>
+        <location filename="../src/MainWindow.cpp" line="1941"/>
         <source>WARNING: refusing an unsafe target Btrfs subvolume mount path: %1</source>
         <translation>VAROITUS: vaarallisen kohteen Btrfs alavolyymi asennus polku: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1862"/>
+        <location filename="../src/MainWindow.cpp" line="1942"/>
         <source>WARNING: refusing an unsafe target %1 mount path: %2</source>
         <translation>VAROITUS: epäturvallisen kohteen %1 asennuspolku: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1863"/>
+        <location filename="../src/MainWindow.cpp" line="1943"/>
         <source>Remounting confirmed target filesystem read-write for file copy</source>
         <translation>Luodaan uudelleen vahvistettu kohdetiedostojärjestelmän lukukirjoitus tiedostokopiota varten</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1864"/>
+        <location filename="../src/MainWindow.cpp" line="1944"/>
         <source>Remounting confirmed target root read-write</source>
         <translation>Palautetaan vahvistettu kohde juurilukukirjoitus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1865"/>
+        <location filename="../src/MainWindow.cpp" line="1945"/>
         <source>Remounting target data filesystem %1 read-write</source>
         <translation>Kohteen datatiedostojärjestelmän muuttaminen %1 lukukirjoitus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1866"/>
+        <location filename="../src/MainWindow.cpp" line="1946"/>
         <source>Remounting target %1 read-write</source>
         <translation>Korjataan kohdetta %1 lukukirjoitus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1867"/>
+        <location filename="../src/MainWindow.cpp" line="1947"/>
         <source>All requested repair stages completed successfully.</source>
         <translation>Kaikki vaaditut korjausvaiheet valmistuivat onnistuneesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1868"/>
+        <location filename="../src/MainWindow.cpp" line="1948"/>
         <source>Rollback boot-stack reconciliation: using simulation-first adaptive component workflows.</source>
         <translation>Rollback boot-stack täsmäytys: käyttämällä simulointi-ensimmäinen adaptiivinen komponentti työnkulkuja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1869"/>
+        <location filename="../src/MainWindow.cpp" line="1949"/>
         <source>Rollback candidate default-subvolume update failed; automatically restoring the preserved root.</source>
         <translation>Rollback ehdokas oletus-subvolyymi päivitys epäonnistui; automaattisesti palauttaa säilynyt juuri.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1870"/>
+        <location filename="../src/MainWindow.cpp" line="1950"/>
         <source>Rollback candidate mount/preflight failed; automatically restoring the preserved root.</source>
         <translation>Rollback-ehdokkaan asennus/valmistelu epäonnistui; säilyneen juuren palauttaminen automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1871"/>
+        <location filename="../src/MainWindow.cpp" line="1951"/>
         <source>Rollback candidate failed post-switch validation/boot reconciliation; automatically restoring the preserved root.</source>
         <translation>Rollback-ehdokas epäonnistui kytkimen jälkeisessä validoinnissa/saappaan täsmäyttämisessä; säilynyt juuri palautuu automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1872"/>
+        <location filename="../src/MainWindow.cpp" line="1952"/>
         <source>CRITICAL: cannot detach promoted rollback mounts; refusing to rename Btrfs roots during recovery.</source>
         <translation>CRITICA: ei voi irrottaa promotoituja kaatumistelineitä, kieltäytyä nimeämästä Btrfs-juuria uudelleen palautumisen aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1874"/>
+        <location filename="../src/MainWindow.cpp" line="1954"/>
         <source>CRITICAL: could not move failed rollback candidate out of @; refusing to promote the preserved root.</source>
         <translation>CRITICAINEN: ei voinut siirtää epäonnistunut rockback ehdokas pois @; kieltäytyä edistää säilynyt juuri.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1875"/>
+        <location filename="../src/MainWindow.cpp" line="1955"/>
         <source>CRITICAL: could not remount the Btrfs top-level filesystem read-write during rollback recovery.</source>
         <translation>CRITICA: Btrfs-ylätason tiedostojärjestelmän luku-kirjoitusta ei voitu asentaa uudelleen palautuksen aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1878"/>
+        <location filename="../src/MainWindow.cpp" line="1958"/>
         <source>CRITICAL ROLLBACK FAILURE: could not restore original @ after default-subvolume failure. Do not reboot.</source>
         <translation>KRIITINEN ROLLBACK FILURE: ei voitu palauttaa alkuperäistä @ jälkeen oletus-subvolyymi vika. Älä käynnistä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1879"/>
+        <location filename="../src/MainWindow.cpp" line="1959"/>
         <source>CRITICAL ROLLBACK FAILURE: automatic restoration was incomplete. Do not reboot until Btrfs/boot state is inspected manually.</source>
         <translation>KRIITINEN PYSÄKÖINTI: Automaattinen ennallistaminen oli kesken. Älä käynnistä uudelleen ennen kuin Btrfs/boot-tila on tarkastettu käsin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1880"/>
+        <location filename="../src/MainWindow.cpp" line="1960"/>
         <source>CRITICAL ROLLBACK FAILURE: could not restore original @ after candidate mount failure. Do not reboot.</source>
         <translation>CRIITIC ROLLBACK FILURE: ei voinut palauttaa alkuperäistä @ jälkeen ehdokas asentaa vikaa. Älä käynnistä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1881"/>
+        <location filename="../src/MainWindow.cpp" line="1961"/>
         <source>Detaching target mounts before atomic @ name switch.</source>
         <translation>Irrotetaan kohteen liitokset ennen atomi@ nimikytkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1882"/>
+        <location filename="../src/MainWindow.cpp" line="1962"/>
         <source>ROLLBACK FAILED SAFELY: original @ restored; failed candidate retained as %1.</source>
         <translation>ROLLBACK PYSYVÄSTI: alkuperäinen @ palautettu; epäonnistunut ehdokas valittu %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1883"/>
+        <location filename="../src/MainWindow.cpp" line="1963"/>
         <source>ROLLBACK FAILED SAFELY: original @ restored after default-subvolume failure; failed candidate retained as %1.</source>
         <translation>ROLLBACK HALLINNOLLISESTI: alkuperäinen @ palautettu oletus-subvolyymi vika; epäonnistui ehdokas säilyttää %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1884"/>
+        <location filename="../src/MainWindow.cpp" line="1964"/>
         <source>ROLLBACK FAILED SAFELY: original @ restored after candidate mount failure; failed candidate retained as %1.</source>
         <translation>ROLLBACK HALLINNOLLISESTI: alkuperäinen @ palautettu jälkeen ehdokas asentaa vika; epäonnistui ehdokas säilyttää %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1885"/>
+        <location filename="../src/MainWindow.cpp" line="1965"/>
         <source>Rollback kernel %1 is missing initramfs before rebuild; update-initramfs will be asked to regenerate it.</source>
         <translation>Rollback-ytimen %1 puuttuu initramfs ennen jälleenrakentamista; update-initramfs pyydetään uudistamaan se.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1886"/>
+        <location filename="../src/MainWindow.cpp" line="1966"/>
         <source>Rollback kernel %1 has no matching modules directory.</source>
         <translation>Rollback-ytimen %1:ssä ei ole vastaavaa moduulihakemistoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1887"/>
+        <location filename="../src/MainWindow.cpp" line="1967"/>
         <source>Rollback kernel pair before rebuild: %1</source>
         <translation>Rollback-ytimen pari ennen rakentamista: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1888"/>
+        <location filename="../src/MainWindow.cpp" line="1968"/>
         <source>Rollback kernel pair before rebuild: %1 (mkinitcpio flavor naming)</source>
         <translation>Rollback-ytimen pari ennen jälleenrakentamista: %1 (mkinitcpio makunimitys)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1889"/>
+        <location filename="../src/MainWindow.cpp" line="1969"/>
         <source>PASS: original @ and its boot stack were restored automatically. Failed rollback candidate retained as %1.</source>
         <translation>PASS: alkuperäinen @ ja sen boot pino palautettiin automaattisesti. %1:nä pidetyssä varaehdokkaassa epäonnistuttiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1890"/>
+        <location filename="../src/MainWindow.cpp" line="1970"/>
         <source>CRITICAL: original @ was restored, but its boot-stack reconciliation also failed. Manual boot repair is required before reboot.</source>
         <translation>CRIITIC: alkuperäinen @ palautettiin, mutta sen boot-stack sovittelu epäonnistui myös. Manuaalinen boot korjaus vaaditaan ennen uudelleenkäynnistystä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1891"/>
+        <location filename="../src/MainWindow.cpp" line="1971"/>
         <source>Rollback preflight: snapshot root fstab is compatible with promoted @.</source>
         <translation>Rollback ennen lentoa: tilannekuva root fstab on yhteensopiva promoted @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1892"/>
+        <location filename="../src/MainWindow.cpp" line="1972"/>
         <source>Rollback preflight: snapshot fstab has no root (/) entry.</source>
         <translation>Rollback ennen lentoa: kuvassa fstab ei ole juuria (/) merkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1893"/>
+        <location filename="../src/MainWindow.cpp" line="1973"/>
         <source>Rollback preflight: snapshot root fstab type is &apos;%1&apos;, not btrfs.</source>
         <translation>Rollback ennen lentoa: tilannekuva root fstab tyyppi on &apos;%1&apos;, ei btrfs.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1894"/>
+        <location filename="../src/MainWindow.cpp" line="1974"/>
         <source>Rollback preflight: snapshot fstab expects root subvolume &apos;%1&apos;, but transactional rollback promotes the selected snapshot to @.</source>
         <translation>Rollback ennen lentoa: tilannekuva fstab odottaa root subvolume &apos;%1&apos;, mutta transaktion palautus edistää valitun tilannekuvan @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1895"/>
+        <location filename="../src/MainWindow.cpp" line="1975"/>
         <source>Rollback preflight: snapshot / fstab source cannot be resolved: %1</source>
         <translation>Perääntyminen ennen lentoa: tilannekuvaa / fstab-lähdettä ei voida ratkaista: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1896"/>
+        <location filename="../src/MainWindow.cpp" line="1976"/>
         <source>Rollback preflight: snapshot / fstab root source has an unsupported format: %1</source>
         <translation>Rollback ennen lentoa: kuva / ftab juurilähde on tueton muoto: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1897"/>
+        <location filename="../src/MainWindow.cpp" line="1977"/>
         <source>Rollback preflight: snapshot / fstab source resolves to %1 rather than selected root %2.</source>
         <translation>Rollback ennen lentoa: kuva / fstab-lähde ratkaisee %1:n eikä valitun juuri %2:n.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1899"/>
+        <location filename="../src/MainWindow.cpp" line="1979"/>
         <source>Preserved root name: %1</source>
         <translation>Säilötty juurinimi: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1900"/>
+        <location filename="../src/MainWindow.cpp" line="1980"/>
         <source>PASS: promoted rollback root and boot stack validated.</source>
         <translation>PASS: edistää rockback root ja boot pino validoitu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1901"/>
+        <location filename="../src/MainWindow.cpp" line="1981"/>
         <source>ROLLBACK RECOVERY: restoring preserved pre-rollback @.</source>
         <translation>ROLLBACK ELVYTYS: säilyneen pre-rollback @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1902"/>
+        <location filename="../src/MainWindow.cpp" line="1982"/>
         <source>Transactional rollback selected: snapshot %1 (%2).</source>
         <translation>Transaktiokäännös valittu: valokuva %1 (%2).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1903"/>
+        <location filename="../src/MainWindow.cpp" line="1983"/>
         <source>Rollback source snapshot will remain unchanged.</source>
         <translation>Rollback-lähdekuva pysyy ennallaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1904"/>
+        <location filename="../src/MainWindow.cpp" line="1984"/>
         <source>Root component: %1 (%2)</source>
         <translation>Juurikomponentti: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1905"/>
+        <location filename="../src/MainWindow.cpp" line="1985"/>
         <source>Root component fallback: selected component %1 (%2) lacks /etc/os-release; resolved %3 (%4) from %5.</source>
         <translation>Juurikomponentin varaosa: valitusta %1:stä (%2) puuttuu /etc/os-release; ratkaistu %3 (%4) %5:stä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1906"/>
+        <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
         <translation>RPM puuttuu-file korjaus: asentaminen %1 paketti(s) puuttuvat tiedostot: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1907"/>
+        <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
         <translation>RPM puuttuu-tiedoston havaitseminen: ei puuttuvia pakettitiedostoja; tallennetaan vain lukea dnf5 huoltotodisteita.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1908"/>
+        <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
         <translation>Rpm esilentoversio: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1909"/>
+        <location filename="../src/MainWindow.cpp" line="1989"/>
         <source>Running-host identity and boot-mount check: PASS</source>
         <translation>Running-host identiteetti ja boot-mount tarkistaa: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1910"/>
+        <location filename="../src/MainWindow.cpp" line="1990"/>
         <source>Security: host-to-repair copies keep -aHAX (modes, ownership and xattrs are copied from the trusted host source).</source>
         <translation>Turvallisuus: isäntä-korjaus kopiot pitää -aHAX (tilat, omistajuus ja xatters kopioidaan luotettava isäntä lähde).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1911"/>
+        <location filename="../src/MainWindow.cpp" line="1991"/>
         <source>Security: setuid/setgid bits and file capabilities are removed on repair-to-host copies.</source>
         <translation>Turvallisuus: setuid/setgid-bitit ja tiedoston ominaisuudet poistetaan korjauksesta isännöiksi -kopioilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1912"/>
+        <location filename="../src/MainWindow.cpp" line="1992"/>
         <source>Selected EFI System Partition: %1 (%2) mounted at %3</source>
         <translation>Valittu EFI System Partition: %1 (%2) asennettuna %3:lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1913"/>
+        <location filename="../src/MainWindow.cpp" line="1993"/>
         <source>SELinux enforcement: %1</source>
         <translation>Selinuxin valvonta: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1914"/>
+        <location filename="../src/MainWindow.cpp" line="1994"/>
         <source>SELinux status: %1</source>
         <translation>SELinux-status: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1915"/>
+        <location filename="../src/MainWindow.cpp" line="1995"/>
         <source>SELinux status: sestatus/getenforce are not installed in the target; recorded as unavailable.</source>
         <translation>SELinux status: sestatus/getenforce ei ole asennettu kohteeseen; tallennettu ei saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1916"/>
+        <location filename="../src/MainWindow.cpp" line="1996"/>
         <source>========================================</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1917"/>
+        <location filename="../src/MainWindow.cpp" line="1997"/>
         <source>Session log was NOT appended into the target: unsafe target log path.</source>
         <translation>Istunnon lokia EI ole liitetty kohteeseen: vaarallinen kohdelokin polku.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1918"/>
+        <location filename="../src/MainWindow.cpp" line="1998"/>
+        <source>Shell command changed diagnostic-relevant files.</source>
+        <translation>Shell-komento muutti vianmääritykseen liittyviä tiedostoja.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="1999"/>
+        <source>Shell command made no diagnostic-relevant filesystem change; cached diagnostics remain valid.</source>
+        <translation>Shell-komento ei muuttanut vianmääritykseen liittyvää tiedostojärjestelmää; välimuistidiagnostiikka pysyy voimassa.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2000"/>
         <source>SIMULATE: apk %1 --simulate (no packages will be changed)</source>
         <translation>SIMULATE: apk %1 -- simuloidaan (paketteja ei muuteta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1919"/>
+        <location filename="../src/MainWindow.cpp" line="2001"/>
         <source>SIMULATE: apt-get %1 (no packages will be changed)</source>
         <translation>SIMULATE: apt-get %1 (paketteja ei muuteta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1920"/>
+        <location filename="../src/MainWindow.cpp" line="2002"/>
         <source>SIMULATE CORRECTION: %1</source>
         <translation>YKSINKERTAINEN KORJAUS: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1921"/>
+        <location filename="../src/MainWindow.cpp" line="2003"/>
         <source>SIMULATE: dnf5 %1 --assumeno (no packages will be changed)</source>
         <translation>SIMULATE: dnf5 %1 --assumeno (paketteja ei muuteta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1922"/>
+        <location filename="../src/MainWindow.cpp" line="2004"/>
         <source>SIMULATE: apt-get --fix-broken install (no packages will be changed)</source>
         <translation>SIMULATE: apt-get --fix-broken install (paketteja ei muuteta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1923"/>
+        <location filename="../src/MainWindow.cpp" line="2005"/>
         <source>Simulation exit code for &apos;%1&apos;: %2</source>
         <translation>&quot;%1&quot;:n simulointilähdön koodi: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1924"/>
+        <location filename="../src/MainWindow.cpp" line="2006"/>
         <source>WARNING: skipping unresolved Btrfs fstab entry %1 -&gt; %2</source>
         <translation>VAROITUS: ohitetaan ratkaisematon Btrfs fstab merkintä %1 -&gt; %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1925"/>
+        <location filename="../src/MainWindow.cpp" line="2007"/>
         <source>WARNING: skipping unresolved data fstab entry %1 -&gt; %2</source>
         <translation>VAROITUS: ratkaisemattomien tietojen ohittaminen fstab-tietue %1 -&gt; %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1926"/>
+        <location filename="../src/MainWindow.cpp" line="2008"/>
         <source>Target has snapper apt hooks; guarding the chroot shell against snapshots (temporary, read-only)</source>
         <translation>Kohde on napsija apt koukkuja; vartioi Chroot kuori vastaan valokuvia (tilapäinen, luku-vain)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1927"/>
+        <location filename="../src/MainWindow.cpp" line="2009"/>
         <source>WARNING: could not bind the read-only snapper guard over %1; the chroot shell continues without the snapshot kill-switch.</source>
         <translation>VAROITUS: %1:n päällä ei voitu sitoa vain lukunapsijasuojaa; ruskokuori jatkuu ilman kuvan tappokytkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1928"/>
+        <location filename="../src/MainWindow.cpp" line="2010"/>
         <source>Active writable root: @ (subvolume ID %1)</source>
         <translation>Aktiivinen kirjoitettava juuri: @ (subvolume ID %1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1929"/>
+        <location filename="../src/MainWindow.cpp" line="2011"/>
         <source>Initramfs/UKI/GRUB reconciliation: PASS</source>
         <translation>Initramfs/UKI/GRUB täsmäytys: PASS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1930"/>
+        <location filename="../src/MainWindow.cpp" line="2012"/>
         <source>Btrfs default subvolume now points to the promoted @.</source>
         <translation>Btrfs:n oletusalivolyymi osoittaa nyt ylennettyyn @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1931"/>
+        <location filename="../src/MainWindow.cpp" line="2013"/>
         <source>Snapshot inventory complete: %1 snapshot(s) found.</source>
         <translation>Snapshot-inventaario valmis: %1-kuvake [s] löytyi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1932"/>
+        <location filename="../src/MainWindow.cpp" line="2014"/>
         <source>Snapshot inventory skipped: %1 is not Btrfs.</source>
         <translation>Snapshot inventaario ohitettu: %1 ei ole Btrfs.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1934"/>
+        <location filename="../src/MainWindow.cpp" line="2016"/>
         <source>SNAPSHOT ROLLBACK COMPLETE</source>
         <translation>PALKKAUS PELASTETTU</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1935"/>
+        <location filename="../src/MainWindow.cpp" line="2017"/>
         <source>Selected snapshot: %1</source>
         <translation>Valittu kuvakuva: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1936"/>
+        <location filename="../src/MainWindow.cpp" line="2018"/>
         <source>Source snapshot retained unchanged.</source>
         <translation>Lähdekuva säilyi ennallaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1937"/>
+        <location filename="../src/MainWindow.cpp" line="2019"/>
         <source>Sources: %1</source>
         <translation>Lähteet: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1938"/>
+        <location filename="../src/MainWindow.cpp" line="2020"/>
         <source>Removed leaked Boot Bitch session mount at %1 (source=%2)</source>
         <translation>Poistettu vuotanut Boot Bitch-istuinasennus %1:ssä (lähde=%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1939"/>
+        <location filename="../src/MainWindow.cpp" line="2021"/>
         <source>Target /dev: private writable tmpfs populated from the recovery host with a private devpts at /dev/pts; the running host /dev and its ptys are not modified or leaked.</source>
         <translation>Kohde /dev: Yksityiset kirjoitettavat tmpf:t, jotka on asutettu palautusisännästä yksityisellä devptillä osoitteessa /dev/pts; käynnissä oleva isäntä /dev ja sen ptyt eivät muutu tai vuoda.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1940"/>
+        <location filename="../src/MainWindow.cpp" line="2022"/>
         <source>Target disk: %1</source>
         <translation>Kohdelevy: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1941"/>
+        <location filename="../src/MainWindow.cpp" line="2023"/>
         <source>Target root mount: %1 (subvolume=%2)</source>
         <translation>Kohde juuriliitos: %1 (subvolyymi=%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1942"/>
+        <location filename="../src/MainWindow.cpp" line="2024"/>
         <source>TRY exit code: %1 (%2)</source>
         <translation>Kokeile poistumiskoodi: %1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1943"/>
+        <location filename="../src/MainWindow.cpp" line="2025"/>
         <source>TRY: %1</source>
         <translation>Kokeile: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1944"/>
+        <location filename="../src/MainWindow.cpp" line="2026"/>
         <source>PASS: TUXEDO UKI root/LUKS/subvolume binding verified.</source>
         <translation>PASS: TUXEDO UKI root/LUKS/subvolyymisitoutuminen todennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1945"/>
+        <location filename="../src/MainWindow.cpp" line="2027"/>
         <source>Captured complete firmware entry state before UKI rebuild: %1</source>
         <translation>Kaapattu täydellinen firmware sisääntulotila ennen UKI uudelleen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1946"/>
+        <location filename="../src/MainWindow.cpp" line="2028"/>
         <source>TUXEDO UKI cmdline: %1</source>
         <translation>TUXEDO UKI cmdline: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1947"/>
+        <location filename="../src/MainWindow.cpp" line="2029"/>
         <source>TUXEDO UKI embedded kernel: %1</source>
         <translation>TUXEDO UKI sulautettu ydin: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1948"/>
+        <location filename="../src/MainWindow.cpp" line="2030"/>
         <source>PASS: existing TUXEDO UKI validated for %1 on selected ESP %2; no replacement image was needed.</source>
         <translation>PASS: nykyinen TUXEDO UKI validoitu %1 valitulle ESP %2:lle; korvaavaa kuvaa ei tarvittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1949"/>
+        <location filename="../src/MainWindow.cpp" line="2031"/>
         <source>KNOWN ISSUE: UKI kernel is stale; vendor UKI rebuild will correct it.</source>
         <translation>TIEDON NUMERO: UKI ydin on kulunut; toimittaja UKI jälleenrakentaminen korjaa sen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1950"/>
+        <location filename="../src/MainWindow.cpp" line="2032"/>
         <source>TUXEDO UKI layout detected; simulating/prereflighting the vendor boot path before rebuild.</source>
         <translation>TUXEDO UKI:n ulkoasu havaittu; simuloidaan/esitellään myyjän käynnistyspolkua ennen jälleenrakentamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1951"/>
+        <location filename="../src/MainWindow.cpp" line="2033"/>
         <source>KNOWN ISSUE: newest TUXEDO kernel %1 has no matching initramfs; rebuilding initramfs before UKI.</source>
         <translation>TIEDON NUMERO: uusin TUXEDO ydin %1 ei ole yhteensopiva initramfs; jälleenrakentaminen initramfs ennen UKI.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1952"/>
+        <location filename="../src/MainWindow.cpp" line="2034"/>
         <source>Writable UEFI variables/efibootmgr are unavailable; UKI file rebuild will proceed without BootOrder restoration.</source>
         <translation>Kirjoitettavat UEFI-muuttujat / efibootmgr eivät ole käytettävissä; UKI-tiedoston uudelleenrakentaminen jatkuu ilman BootSerderin palauttamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1953"/>
+        <location filename="../src/MainWindow.cpp" line="2035"/>
         <source>WARNING: objcopy could not inspect the rebuilt UKI .uname section.</source>
         <translation>VAROITUS: objcopy ei voinut tarkastaa uudelleen rakennettu UKI .uname osa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1954"/>
+        <location filename="../src/MainWindow.cpp" line="2036"/>
         <source>UKI preflight: current embedded kernel=%1; target newest kernel=%2</source>
         <translation>UKI ennen lentoa: nykyinen upotettu ydin=%1; kohde uusin ydin=%2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1955"/>
+        <location filename="../src/MainWindow.cpp" line="2037"/>
         <source>PASS: TUXEDO UKI preflight prerequisites are satisfied.</source>
         <translation>PASS: TUXEDO UKI ennen lentoa edellytykset täyttyvät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1956"/>
+        <location filename="../src/MainWindow.cpp" line="2038"/>
         <source>PASS: TUXEDO UKI rebuilt for %1 on selected ESP %2</source>
         <translation>PASS: TUXEDO UKI uudelleenrakennettu %1 valitulle ESP %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1957"/>
+        <location filename="../src/MainWindow.cpp" line="2039"/>
         <source>TUXEDO UKI repair read-only preflight: PASS (%1, %2)</source>
         <translation>TUXEDO UKI korjaus luku vain ennen lentoa: PASS (%1, %2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1958"/>
+        <location filename="../src/MainWindow.cpp" line="2040"/>
         <source>PASS: vendor UKI command produced a changed TUX.EFI image.</source>
         <translation>PASS: Myyjä UKI komento tuotti muuttunut TUX.EFI kuva.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1959"/>
+        <location filename="../src/MainWindow.cpp" line="2041"/>
         <source>WARNING: vendor UKI command completed without changing TUX.EFI; the existing image will be validated against the selected target before this repair is reported successful.</source>
         <translation>VAROITUS: Myyjä UKI-komento valmistunut ilman muutoksia TUX.EFI; nykyinen kuva validoidaan valitun kohteen mukaan ennen kuin tämä korjaus ilmoitetaan onnistuneeksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1960"/>
+        <location filename="../src/MainWindow.cpp" line="2042"/>
         <source>/boot: %1</source>
         <translation>/boot: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1961"/>
+        <location filename="../src/MainWindow.cpp" line="2043"/>
         <source>/boot/efi: %1</source>
         <translation>/boot/efi: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1962"/>
+        <location filename="../src/MainWindow.cpp" line="2044"/>
         <source>Validation complete; no target files were changed.</source>
         <translation>Validointi valmis; kohdetiedostoja ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1963"/>
+        <location filename="../src/MainWindow.cpp" line="2045"/>
         <source>/etc/crypttab: %1</source>
         <translation>/etc/cryptab: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1964"/>
+        <location filename="../src/MainWindow.cpp" line="2046"/>
         <source>ESP mount candidate: %1</source>
         <translation>ESP-asennuskandidaatti: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1965"/>
+        <location filename="../src/MainWindow.cpp" line="2047"/>
         <source>/etc/fstab: %1</source>
         <translation>/etc/fstab: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1966"/>
+        <location filename="../src/MainWindow.cpp" line="2048"/>
         <source>GRUB config: %1</source>
         <translation>GRUB config: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1967"/>
+        <location filename="../src/MainWindow.cpp" line="2049"/>
         <source>Supported modifying backend: %1</source>
         <translation>Tuettu muokkaustaustaosa: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1968"/>
+        <location filename="../src/MainWindow.cpp" line="2050"/>
         <source>OS: %1</source>
         <translation>OS: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1969"/>
+        <location filename="../src/MainWindow.cpp" line="2051"/>
         <source>Root: %1</source>
         <translation>Juuri: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1970"/>
+        <location filename="../src/MainWindow.cpp" line="2052"/>
         <source>Root filesystem: %1</source>
         <translation>Juuritiedostojärjestelmä: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1971"/>
+        <location filename="../src/MainWindow.cpp" line="2053"/>
         <source>Root fs: %1</source>
         <translation>Juurifs: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1972"/>
+        <location filename="../src/MainWindow.cpp" line="2054"/>
         <source>Repair root mount source: %1</source>
         <translation>Korjaa juuriasennuslähde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1973"/>
+        <location filename="../src/MainWindow.cpp" line="2055"/>
         <source>Root subvolume: %1</source>
         <translation>Juuriosamäärä: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1974"/>
+        <location filename="../src/MainWindow.cpp" line="2056"/>
         <source>Validation summary</source>
         <translation>Validoinnin yhteenveto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1975"/>
+        <location filename="../src/MainWindow.cpp" line="2057"/>
         <source>Vendor command completed successfully: %1</source>
         <translation>Valmistajakomento suoritettu onnistuneesti: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1976"/>
+        <location filename="../src/MainWindow.cpp" line="2058"/>
         <source>Repair-to-host capability scan: xattr inspection tooling is unavailable; the rsync security.capability filter was applied and trusted.</source>
         <translation>Korjaus-to-host kyky skannaus: xattr tarkastus työkalut ei ole saatavilla; rsync turvallisuus. käyttökykysuodatinta käytettiin ja luotettiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1977"/>
+        <location filename="../src/MainWindow.cpp" line="2059"/>
         <source>PASS: zpool scrub clean; clearing pool error counters with zpool clear.</source>
         <translation>PASS: zpool pesu puhdas; clearing allas virhelaskurit zpool selkeä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1984"/>
+        <location filename="../src/MainWindow.cpp" line="2066"/>
         <source>Alpine apk audit --system (missing-file detection)</source>
         <translation>Alpine apk -auditointijärjestelmä (puuttuvan tiedoston havaitseminen)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1985"/>
+        <location filename="../src/MainWindow.cpp" line="2067"/>
         <source>Alpine apk info --who-owns (%1 missing files)</source>
         <translation>Alpine apk info -- kuka-owns (%1 puuttuvat tiedostot)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1986"/>
+        <location filename="../src/MainWindow.cpp" line="2068"/>
         <source>Arch pacman full transaction preflight</source>
         <translation>Arch pacman koko tapahtuma ennen lentoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1987"/>
+        <location filename="../src/MainWindow.cpp" line="2069"/>
         <source>Build and verify Fedora initramfs for %1 (temporary output only)</source>
         <translation>Rakenna ja varmista Fedora initramfs %1:lle (vain nykyulostulo)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1988"/>
+        <location filename="../src/MainWindow.cpp" line="2070"/>
         <source>Check Alpine grub-install availability/version</source>
         <translation>Tarkista Alpine grub-install:n saatavuus/versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1989"/>
+        <location filename="../src/MainWindow.cpp" line="2071"/>
         <source>Check grub-install availability/version</source>
         <translation>Tarkista grub-install:n saatavuus/versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1991"/>
+        <location filename="../src/MainWindow.cpp" line="2073"/>
         <source>Complete interrupted package configuration before correction</source>
         <translation>Keskeytä pakettien konfigurointi ennen korjausta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1992"/>
+        <location filename="../src/MainWindow.cpp" line="2074"/>
         <source>Create missing initramfs for %1</source>
         <translation>Luo puuttuva initramfs %1: lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1993"/>
+        <location filename="../src/MainWindow.cpp" line="2075"/>
         <source>dnf5 dependency check (read-only evidence)</source>
         <translation>dnf5-riippuvuustarkastus (vain luettavat todisteet)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1994"/>
+        <location filename="../src/MainWindow.cpp" line="2076"/>
+        <source>Inspect akmods state</source>
+        <translation>Tutki akmods- tila</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2077"/>
+        <source>Inspect akms state</source>
+        <translation>Tutki akms- tila</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2078"/>
         <source>Inspect DKMS state</source>
         <translation>Tutki DKMS-valtio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1995"/>
+        <location filename="../src/MainWindow.cpp" line="2079"/>
         <source>Inspect DKMS state for GPU driver</source>
         <translation>Tutki DKMS-järjestelmä GPU-ajurille</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1996"/>
+        <location filename="../src/MainWindow.cpp" line="2080"/>
+        <source>Post-repair akmods status</source>
+        <translation>Korjaamisen jälkeinen akmods-tila</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2081"/>
+        <source>Post-repair akms status</source>
+        <translation>Korjauksen jälkeinen akms-tila</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2082"/>
         <source>Post-repair DKMS status</source>
         <translation>Korjaamisen jälkeinen DKMS-tilanne</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1997"/>
+        <location filename="../src/MainWindow.cpp" line="2083"/>
         <source>Purge the wrong GPU driver</source>
         <translation>Puhdista väärä GPU-ajuri</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1998"/>
+        <location filename="../src/MainWindow.cpp" line="2084"/>
         <source>Read Fedora grubenv (grub2-editenv list)</source>
         <translation>Lue Fedora grubenv (grub2-editenv-luettelo)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1999"/>
+        <location filename="../src/MainWindow.cpp" line="2085"/>
+        <source>Rebuild akmods modules for kernel %1</source>
+        <translation>Rakenna akmods-moduulit uudelleen ytimeen %1</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2086"/>
+        <location filename="../src/MainWindow.cpp" line="17221"/>
+        <source>Rebuild AKMS modules</source>
+        <translation>Rakenna AKMS-moduulit uudelleen</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="2087"/>
         <source>Rebuild Alpine initramfs for %1 with mkinitfs</source>
         <translation>Korjaa Alpine initramfs %1:lle mkinitfs:llä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2000"/>
+        <location filename="../src/MainWindow.cpp" line="2088"/>
         <source>Rebuild Arch initramfs images with mkinitcpio -P</source>
         <translation>Rakenna Arch initramfs-kuvat uudelleen mkinitcpio -P:llä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2002"/>
+        <location filename="../src/MainWindow.cpp" line="2090"/>
         <source>Record Alpine apk version</source>
         <translation>Record Alpine apk versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2003"/>
+        <location filename="../src/MainWindow.cpp" line="2091"/>
         <source>Record dnf5 version</source>
         <translation>Tallenna dnnf5-versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2004"/>
+        <location filename="../src/MainWindow.cpp" line="2092"/>
         <source>Record dracut version</source>
         <translation>Tallenna dracut versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2005"/>
+        <location filename="../src/MainWindow.cpp" line="2093"/>
         <source>Record grub2-install version</source>
         <translation>Record grub2-install version</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2006"/>
+        <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
         <translation>Tallenteen rpm-versio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2007"/>
+        <location filename="../src/MainWindow.cpp" line="2095"/>
         <source>Record SELinux enforcement mode</source>
         <translation>Tallenna SELinux-valvontatila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2008"/>
+        <location filename="../src/MainWindow.cpp" line="2096"/>
         <source>Record SELinux status</source>
         <translation>Tallenna SELinuxin tila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2009"/>
+        <location filename="../src/MainWindow.cpp" line="2097"/>
         <source>Refresh dnf5 package metadata (dnf5 makecache)</source>
         <translation>Päivitä dnf5-paketin metatiedot (dnf5 makecache)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2010"/>
+        <location filename="../src/MainWindow.cpp" line="2098"/>
         <source>Regenerate extlinux configuration (overwrite=0 trial; no boot sector write)</source>
         <translation>Uudista extlinux-konfiguraatio (korvaa=0 koe; ei käynnistyssektorin kirjoitusta)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2011"/>
+        <location filename="../src/MainWindow.cpp" line="2099"/>
         <source>Regenerate extlinux configuration (default=%1, overwrite=0 trial; no boot sector write)</source>
         <translation>Uudista extlinux-konfiguraatio (oletus=%1, overwrite=0 experience; no boot sector write)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2012"/>
+        <location filename="../src/MainWindow.cpp" line="2100"/>
         <source>Regenerate Fedora GRUB2 configuration (grub2-mkconfig --no-grubenv-update)</source>
         <translation>Luo Fedora GRUB2-kokoonpano (grub2-mkconfig --no-grubenv-update)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2014"/>
+        <location filename="../src/MainWindow.cpp" line="2102"/>
         <source>Regenerate GRUB configuration with grub-mkconfig</source>
         <translation>Luo GRUB-konfiguraatio uudelleen grub-mkconfig:llä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2015"/>
+        <location filename="../src/MainWindow.cpp" line="2103"/>
         <source>Reinstall Alpine GRUB EFI bootloader (--no-nvram)</source>
         <translation>Reinstall Alpine GRUB EFI bootloader (-- no-nvram)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2016"/>
+        <location filename="../src/MainWindow.cpp" line="2104"/>
         <source>Reinstall GRUB EFI bootloader</source>
         <translation>Asenna GRUB EFI-käynnistin uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2017"/>
+        <location filename="../src/MainWindow.cpp" line="2105"/>
         <source>Reinstall GRUB EFI fallback loader (--removable)</source>
         <translation>Asenna GRUB EFI varakuormaaja uudelleen (--poistettava)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2018"/>
+        <location filename="../src/MainWindow.cpp" line="2106"/>
         <source>Reinstall GRUB EFI bootloader files</source>
         <translation>Asenna GRUB EFI -käynnistintiedostot uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2019"/>
+        <location filename="../src/MainWindow.cpp" line="2107"/>
         <source>Reinstall GRUB2 BIOS boot code</source>
         <translation>Asenna GRUB2 BIOS- käynnistyskoodi uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2020"/>
+        <location filename="../src/MainWindow.cpp" line="2108"/>
         <source>Reinstall protected kernel packages (rollback)</source>
         <translation>Asenna suojatut ydinpaketit uudelleen (rollback)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2021"/>
-        <location filename="../src/MainWindow.cpp" line="20153"/>
+        <location filename="../src/MainWindow.cpp" line="2109"/>
+        <location filename="../src/MainWindow.cpp" line="20356"/>
         <source>Remove orphaned kernel build support</source>
         <translation>Poista orvon ytimen rakennetuki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2022"/>
+        <location filename="../src/MainWindow.cpp" line="2110"/>
         <source>Remove orphaned kernel headers</source>
         <translation>Poista orvot ytimen otsikot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2023"/>
+        <location filename="../src/MainWindow.cpp" line="2111"/>
         <source>Remove superseded kernel packages</source>
         <translation>Poista korvatut ydinpaketit</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2024"/>
+        <location filename="../src/MainWindow.cpp" line="2112"/>
         <source>Repair broken dependencies before known package correction</source>
         <translation>Korjaa rikkoutuneet riippuvuudet ennen tunnettua pakettikorjausta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2026"/>
+        <location filename="../src/MainWindow.cpp" line="2114"/>
         <source>Restore package selections after failed GPU repair</source>
         <translation>Palauta pakettivalinnat epäonnistuttuasi GPU-korjauksen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2027"/>
+        <location filename="../src/MainWindow.cpp" line="2115"/>
         <source>Retry DKMS autoinstall after header correction</source>
         <translation>Yritä DKMS:ää asentaa automaattisesti otsikkokorjauksen jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2028"/>
+        <location filename="../src/MainWindow.cpp" line="2116"/>
         <source>Retry GRUB configuration after mapper alias correction</source>
         <translation>Yritä GRUB-koostumusta uudelleen mapper-nimesikorjauksen jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2029"/>
+        <location filename="../src/MainWindow.cpp" line="2117"/>
         <source>Retry GRUB EFI bootloader files without NVRAM update</source>
         <translation>Yritä uudelleen GRUB EFI-käynnistystiedostoja ilman NVRAM-päivitystä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2030"/>
+        <location filename="../src/MainWindow.cpp" line="2118"/>
         <source>Retry initramfs for %1 after mapper alias correction</source>
         <translation>Kokeile initramfs:ää uudelleen %1:lle mapper-aliaskorjausten jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2031"/>
+        <location filename="../src/MainWindow.cpp" line="2119"/>
         <source>Retry trial initramfs build for %1 after mapper alias correction</source>
         <translation>Kokeile uudelleen initramfs rakentaa %1 jälkeen mapper alias korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2032"/>
+        <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
         <translation>RPM-tiedostojen omistuskartoitus (rpm -qf, %1 puuttuvat tiedostot)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2033"/>
+        <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
         <translation>RPM paketti tiedoston verifiointi (rpm - Va -- nofiledigest, vain luku)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2034"/>
+        <location filename="../src/MainWindow.cpp" line="2122"/>
         <source>Set Fedora GRUB2 default BLS entry (%1)</source>
         <translation>Aseta Fedora GRUB2 -oletussyöte (%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2035"/>
+        <location filename="../src/MainWindow.cpp" line="2123"/>
         <source>Set one-boot nomodeset next_entry</source>
         <translation>Aseta yhden saappaan nomodeset next entry</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2036"/>
+        <location filename="../src/MainWindow.cpp" line="2124"/>
         <source>Syntax-check %1 OpenRC init script</source>
         <translation>Syntax-check %1 OpenRC init script</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2037"/>
+        <location filename="../src/MainWindow.cpp" line="2125"/>
         <source>Syntax-check trial Fedora GRUB2 configuration</source>
         <translation>Syntax-tarkistus kokeilu Fedora GRUB2 asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2038"/>
+        <location filename="../src/MainWindow.cpp" line="2126"/>
         <source>Syntax-check trial GRUB configuration</source>
         <translation>Syntax-check kokeiluversio GRUB asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2039"/>
+        <location filename="../src/MainWindow.cpp" line="2127"/>
         <source>Trial initramfs build for %1 (temporary output only)</source>
         <translation>Trial initramfs rakentaa %1 (tilapäistä ulostuloa vain)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2040"/>
+        <location filename="../src/MainWindow.cpp" line="2128"/>
         <source>Trial mkinitcpio build for %1 (temporary output only)</source>
         <translation>Trial mkinitcpio rakentaa %1 (tilapäinen ulostulo vain)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2041"/>
+        <location filename="../src/MainWindow.cpp" line="2129"/>
         <source>Trial mkinitfs build for %1 (temporary output only)</source>
         <translation>Trial mkinitfs rakentaa %1 (tilapäisen ulostulon vain)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2042"/>
+        <location filename="../src/MainWindow.cpp" line="2130"/>
         <source>Update initramfs for %1</source>
         <translation>Päivitä initramfs %1:lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2043"/>
+        <location filename="../src/MainWindow.cpp" line="2131"/>
         <source>Upgrade installed packages (%1)</source>
         <translation>Päivitä asennetut paketit (%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2044"/>
+        <location filename="../src/MainWindow.cpp" line="2132"/>
         <source>Verify Fedora GRUB2 configuration syntax after boot-code reinstall</source>
         <translation>Varmista Fedora GRUB2 -asetussyntaksi käynnistyskoodin uudelleenasennuksen jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2045"/>
+        <location filename="../src/MainWindow.cpp" line="2133"/>
         <source>Verify installed Fedora GRUB2 configuration syntax</source>
         <translation>Tarkista asennettu Fedora GRUB2 asetus syntaksi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2046"/>
+        <location filename="../src/MainWindow.cpp" line="2134"/>
         <source>Verify installed GRUB configuration syntax</source>
         <translation>Tarkista asennettu GRUB-asetus syntaksi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2047"/>
+        <location filename="../src/MainWindow.cpp" line="2135"/>
         <source>Verify mkinitfs build inputs for %1 (mkinitfs -l)</source>
         <translation>Varmista mkinitfs:n rakennussyötteet %1:lle (mkinitfs -l)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2048"/>
+        <location filename="../src/MainWindow.cpp" line="2136"/>
         <source>Verify %1 service exists (rc-service -e)</source>
         <translation>Tarkista %1-palvelu on olemassa (rc-palvelu -e)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2238"/>
-        <location filename="../src/MainWindow.cpp" line="15107"/>
+        <location filename="../src/MainWindow.cpp" line="2326"/>
+        <location filename="../src/MainWindow.cpp" line="15185"/>
         <source>Repair tool %1 is unavailable.</source>
         <translation>Korjaustyökalu %1 ei ole käytettävissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2244"/>
-        <location filename="../src/MainWindow.cpp" line="15112"/>
+        <location filename="../src/MainWindow.cpp" line="2332"/>
+        <location filename="../src/MainWindow.cpp" line="15190"/>
         <source>Repair tool %1 has unknown or unavailable diagnostic evidence.</source>
         <translation>Korjaustyökalu %1 on tuntematon tai ei saatavilla diagnostisia todisteita.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2251"/>
-        <location filename="../src/MainWindow.cpp" line="15115"/>
+        <location filename="../src/MainWindow.cpp" line="2339"/>
+        <location filename="../src/MainWindow.cpp" line="15193"/>
         <source>No capability evidence for repair tool %1 in the selected scope. Run diagnostics first.</source>
         <translation>Valitussa laajuudessa ei ole näyttöä korjaustyökalusta %1. Tee ensin diagnostiikka.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2381"/>
-        <location filename="../src/MainWindow.cpp" line="2386"/>
-        <location filename="../src/MainWindow.cpp" line="2457"/>
+        <location filename="../src/MainWindow.cpp" line="2469"/>
+        <location filename="../src/MainWindow.cpp" line="2474"/>
+        <location filename="../src/MainWindow.cpp" line="2545"/>
         <source>Running-host default boot entry selection is unavailable.</source>
         <translation>Running-host oletus käynnistyksen valinta ei ole käytettävissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2396"/>
-        <location filename="../src/MainWindow.cpp" line="2415"/>
+        <location filename="../src/MainWindow.cpp" line="2484"/>
+        <location filename="../src/MainWindow.cpp" line="2503"/>
         <source>The helper did not identify a bootable running-host default entry.</source>
         <translation>Auttaja ei tunnistanut käynnistyvää juoksu-host-oletusmerkintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="3689"/>
+        <location filename="../src/MainWindow.cpp" line="3777"/>
         <source>About %1</source>
         <translation>Tietoja %1:stä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4239"/>
+        <location filename="../src/MainWindow.cpp" line="4327"/>
         <source>Linux detected — %1</source>
         <translation>Linux havaittu %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4248"/>
+        <location filename="../src/MainWindow.cpp" line="4336"/>
         <source>Unlocked Linux filesystem — inspect to confirm</source>
         <translation>Avaa Linux- tiedostojärjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4251"/>
+        <location filename="../src/MainWindow.cpp" line="4339"/>
         <source>Likely Linux — inspect to confirm</source>
         <translation>Todennäköisesti Linux</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4254"/>
+        <location filename="../src/MainWindow.cpp" line="4342"/>
         <source>Likely Linux — encrypted</source>
         <translation>Todennäköisesti Linux salattu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4257"/>
+        <location filename="../src/MainWindow.cpp" line="4345"/>
         <source>Encrypted — unlock to inspect</source>
         <translation>Salattu Avaa tarkastaa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4260"/>
+        <location filename="../src/MainWindow.cpp" line="4348"/>
         <source>Linux-capable — inspect to confirm</source>
         <translation>Linux-capable</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4262"/>
+        <location filename="../src/MainWindow.cpp" line="4350"/>
         <source>Available for inspection</source>
         <translation>Käytettävissä tarkastusta varten</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4282"/>
+        <location filename="../src/MainWindow.cpp" line="4370"/>
         <source>Encrypted volume</source>
         <translation>Salattu määrä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4284"/>
+        <location filename="../src/MainWindow.cpp" line="4372"/>
         <source>%1 volume</source>
         <translation>%1-tilavuus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4286"/>
+        <location filename="../src/MainWindow.cpp" line="4374"/>
         <source>Partition</source>
         <translation>Jako</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="4291"/>
+        <location filename="../src/MainWindow.cpp" line="4379"/>
         <source>Unnamed device</source>
         <translation>Nimeämätön laite</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5004"/>
+        <location filename="../src/MainWindow.cpp" line="5092"/>
         <source>Preparing the Boot Bitch administrator session; authorization may be requested before the action starts.</source>
         <translation>Boot Bitch-valvojaistunnon valmistelu; valtuutusta voidaan pyytää ennen toimen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5246"/>
-        <location filename="../src/MainWindow.cpp" line="19696"/>
-        <location filename="../src/MainWindow.cpp" line="22363"/>
+        <location filename="../src/MainWindow.cpp" line="5334"/>
+        <location filename="../src/MainWindow.cpp" line="19895"/>
+        <location filename="../src/MainWindow.cpp" line="22706"/>
         <source>Repair file system errors</source>
         <translation>Korjaa tiedostojärjestelmän virheet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5254"/>
+        <location filename="../src/MainWindow.cpp" line="5342"/>
         <source>The read-only check found file system errors in the %1. Select the devices to repair and the mode to use. Each repair runs separately after the helper repeats its scope, mount-state and tool preflights.</source>
         <translation>%1: stä löytyi tiedostojärjestelmän virheitä vain lukemalla. Valitse korjattavat laitteet ja käytettävä tila. Jokainen korjaus toimii erikseen sen jälkeen, kun apuri toistaa sen laajuus, asennustila ja työkalu ennen lentoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5266"/>
-        <location filename="../src/MainWindow.cpp" line="6479"/>
-        <location filename="../src/MainWindow.cpp" line="6480"/>
+        <location filename="../src/MainWindow.cpp" line="5354"/>
+        <location filename="../src/MainWindow.cpp" line="6567"/>
+        <location filename="../src/MainWindow.cpp" line="6568"/>
         <source>Repair</source>
         <translation>Korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5266"/>
-        <location filename="../src/MainWindow.cpp" line="6106"/>
+        <location filename="../src/MainWindow.cpp" line="5354"/>
+        <location filename="../src/MainWindow.cpp" line="6194"/>
         <source>Device</source>
         <translation>Laite</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5267"/>
+        <location filename="../src/MainWindow.cpp" line="5355"/>
         <source>File system</source>
         <translation>Tiedostojärjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5267"/>
+        <location filename="../src/MainWindow.cpp" line="5355"/>
         <source>Mode</source>
         <translation>Tila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5268"/>
+        <location filename="../src/MainWindow.cpp" line="5356"/>
         <source>Issue summary</source>
         <translation>Tiivistelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5661"/>
+        <location filename="../src/MainWindow.cpp" line="5749"/>
         <source>Select and inspect the protected host and repair targets.</source>
         <translation>Valitse ja tarkista suojatut isäntä- ja korjauskohteet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5662"/>
+        <location filename="../src/MainWindow.cpp" line="5750"/>
         <source>Run read-only diagnostics for the current scope.</source>
         <translation>Suorita vain lukudiagnostiikka nykyisen soveltamisalan osalta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5663"/>
+        <location filename="../src/MainWindow.cpp" line="5751"/>
         <source>Manage UEFI firmware boot entries and view the boot menu.</source>
         <translation>Hallitse UEFI firmware-käynnistystuloksia ja näytä käynnistysvalikko.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5664"/>
+        <location filename="../src/MainWindow.cpp" line="5752"/>
         <source>Run guarded repair tools and the Full Repair plan.</source>
         <translation>Suorita vartioidut korjaustyökalut ja Full Repair suunnitelma.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5665"/>
+        <location filename="../src/MainWindow.cpp" line="5753"/>
         <source>Inspect and roll back Btrfs root snapshots.</source>
         <translation>Tarkasta ja kieri takaisin Btrfs juurikuvia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5667"/>
+        <location filename="../src/MainWindow.cpp" line="5755"/>
         <source>Copy files between the host and the repair system.</source>
         <translation>Kopioi tiedostot isäntä ja korjausjärjestelmän välillä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5668"/>
+        <location filename="../src/MainWindow.cpp" line="5756"/>
         <source>Review the session log and diagnostic history.</source>
         <translation>Tarkista istunnon loki ja diagnostinen historia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5669"/>
+        <location filename="../src/MainWindow.cpp" line="5757"/>
         <source>Configure the Full Repair plan and preferences.</source>
         <translation>Aseta koko korjaussuunnitelma ja asetukset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6173"/>
-        <location filename="../src/MainWindow.cpp" line="10735"/>
+        <location filename="../src/MainWindow.cpp" line="6261"/>
+        <location filename="../src/MainWindow.cpp" line="10806"/>
         <source>Authorization deferred; press Authorize.</source>
         <translation>Valtuutusta on lykätty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6332"/>
+        <location filename="../src/MainWindow.cpp" line="6420"/>
         <source>Select a target configuration file to inspect or edit.</source>
         <translation>Valitse tarkastettava tai muokattava kohdeasetustiedosto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6533"/>
-        <location filename="../src/MainWindow.cpp" line="6681"/>
+        <location filename="../src/MainWindow.cpp" line="6621"/>
+        <location filename="../src/MainWindow.cpp" line="6769"/>
         <source>Select a repair drive, or enter Host Maintenance.</source>
         <translation>Valitse korjausasema tai syötä huoltoasema.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6628"/>
-        <location filename="../src/MainWindow.cpp" line="20292"/>
-        <location filename="../src/MainWindow.cpp" line="21824"/>
+        <location filename="../src/MainWindow.cpp" line="6716"/>
+        <location filename="../src/MainWindow.cpp" line="20513"/>
+        <location filename="../src/MainWindow.cpp" line="22152"/>
         <source>GPU driver repair</source>
         <translation>GPU-ohjaimen korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11353"/>
+        <location filename="../src/MainWindow.cpp" line="11427"/>
         <source>Choose an action</source>
         <translation>Valitse toiminto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15947"/>
-        <location filename="../src/MainWindow.cpp" line="16473"/>
+        <location filename="../src/MainWindow.cpp" line="15293"/>
+        <location filename="../src/MainWindow.cpp" line="15316"/>
+        <location filename="../src/MainWindow.cpp" line="15317"/>
+        <location filename="../src/MainWindow.cpp" line="20391"/>
+        <location filename="../src/MainWindow.cpp" line="20394"/>
+        <location filename="../src/MainWindow.cpp" line="20660"/>
+        <location filename="../src/MainWindow.cpp" line="22138"/>
+        <location filename="../src/MainWindow.cpp" line="22141"/>
+        <source>, </source>
+        <translation type="unfinished"></translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="16048"/>
+        <location filename="../src/MainWindow.cpp" line="16574"/>
         <source>Running diagnostics…</source>
         <translation>Suoritetaan diagnostiikkaa…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19880"/>
-        <location filename="../src/MainWindow.cpp" line="19882"/>
-        <location filename="../src/MainWindow.cpp" line="20299"/>
-        <location filename="../src/MainWindow.cpp" line="20389"/>
+        <location filename="../src/MainWindow.cpp" line="16918"/>
+        <source>Clear the action register and cached diagnostics?</source>
+        <translation>Tyhjentäkää toimintarekisteri ja välimuisti.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="16919"/>
+        <source>Cached diagnostics will also be cleared, and repair tools will be disabled until diagnostics are regenerated.</source>
+        <translation>Myös välimuistidiagnostiikka tyhjennetään ja korjaustyökalut poistetaan käytöstä, kunnes diagnostiikka uusitaan.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="16948"/>
+        <source>Cached diagnostics cleared; repair tools are disabled until diagnostics are regenerated.</source>
+        <translation>Akustinen diagnostiikka selvitetty; korjaustyökalut ovat pois käytöstä kunnes diagnostiikka on uusittu.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="17218"/>
+        <source>Rebuild akmods modules</source>
+        <translation>Rakenna akmods-moduulit uudelleen</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="17230"/>
+        <source>Rebuild akmods</source>
+        <translation>Uudelleenrakentaminen akmods</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="17233"/>
+        <source>Rebuild AKMS</source>
+        <translation>Uudelleenrakentaminen AKMS</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20083"/>
+        <location filename="../src/MainWindow.cpp" line="20085"/>
+        <location filename="../src/MainWindow.cpp" line="20520"/>
+        <location filename="../src/MainWindow.cpp" line="20610"/>
         <source>Interactive tool — run individually</source>
         <translation>Interaktiivinen työkalu - suorita erikseen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20013"/>
+        <location filename="../src/MainWindow.cpp" line="20216"/>
         <source>Running kernel: %1.</source>
         <translation>Käynnissä oleva ydin: %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20016"/>
+        <location filename="../src/MainWindow.cpp" line="20219"/>
         <source>Newest installed kernel: %1.</source>
         <translation>Uusin asennettu ydin: %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20019"/>
+        <location filename="../src/MainWindow.cpp" line="20222"/>
         <source>Repository latest kernel: %1 (newer than the installed newest).</source>
         <translation>Versiovaraston viimeisin ydin: %1 (uusi kuin asennettu uusin).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20022"/>
+        <location filename="../src/MainWindow.cpp" line="20225"/>
         <source>No superseded (older) kernels are installed.</source>
         <translation>Korvattuja (vanhoja) siemeniä ei ole asennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20024"/>
+        <location filename="../src/MainWindow.cpp" line="20227"/>
         <source>Superseded kernel(s) available for removal: %1.</source>
         <translation>Yliarvostetut ytimet, jotka voidaan poistaa: %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20037"/>
+        <location filename="../src/MainWindow.cpp" line="20240"/>
         <source>Approximately %1 MB would be restored.</source>
         <translation>Noin %1 MB palautetaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20042"/>
+        <location filename="../src/MainWindow.cpp" line="20245"/>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
         <translation>Puuttuvat otsikot (viimeisimmässä ytimessä ei ole vastaavia otsikoita): %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20050"/>
+        <location filename="../src/MainWindow.cpp" line="20253"/>
         <source>Orphaned kernel components (no owning package): %1.</source>
         <translation>Orvon ytimen komponentit (ei omistuspakettia): %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20054"/>
+        <location filename="../src/MainWindow.cpp" line="20257"/>
         <source>Orphaned kernel build support (kernel gone): %1.</source>
         <translation>Orvon ytimen rakentaa tukea (ydin poissa): %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20058"/>
+        <location filename="../src/MainWindow.cpp" line="20261"/>
         <source>Incomplete kernels (installed package without its on-disk files): %1.</source>
         <translation>Epätäydellinen ytimiä (asennettu paketti ilman levytiedostoja): %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20137"/>
+        <location filename="../src/MainWindow.cpp" line="20340"/>
         <source>Remove oldest/superseded kernel(s)</source>
         <translation>Poista vanhin/yliarvioitu ydin(s)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20141"/>
+        <location filename="../src/MainWindow.cpp" line="20344"/>
         <source>Remove newest kernel</source>
         <translation>Poista uusin ydin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20145"/>
+        <location filename="../src/MainWindow.cpp" line="20348"/>
         <source>Remove orphaned headers</source>
         <translation>Poista orpojen otsikot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20149"/>
+        <location filename="../src/MainWindow.cpp" line="20352"/>
         <source>Remove orphaned kernel components</source>
         <translation>Poista orvon ytimen komponentit</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20157"/>
+        <location filename="../src/MainWindow.cpp" line="20360"/>
         <source>Install missing headers</source>
         <translation>Asenna puuttuvat otsikot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20161"/>
+        <location filename="../src/MainWindow.cpp" line="20364"/>
         <source>Reinstall/complete a kernel</source>
         <translation>Asenna/täydennä ydin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20165"/>
+        <location filename="../src/MainWindow.cpp" line="20368"/>
         <source>Install repository-latest kernel</source>
         <translation>Asenna arkiston viimeisin ydin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20463"/>
+        <location filename="../src/MainWindow.cpp" line="20391"/>
+        <source>Kernel repair refused: run the %1 diagnostic first (no cached kernel evidence).</source>
+        <translation>Ytimen korjaus hylätty: suorita %1-diagnoosi ensin (ei välimuistiydinnäyttöä).</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20393"/>
+        <source>Kernel repair unavailable</source>
+        <translation>Ytimen korjausta ei ole saatavilla</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20394"/>
+        <source>Run the %1 diagnostic before starting kernel repair.</source>
+        <translation>Suorita %1-diagnostiikka ennen kuin aloitat ytimen korjaamisen.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20488"/>
+        <source>Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system using the detected %1 build system. The helper refuses this action when the detected build system is not installed in the selected system.</source>
+        <translation>Rakenna uudelleen out-of-puun ytimen moduulit ytimiä asennettu käynnissä isäntä tai valittu korjausjärjestelmä käyttäen havaittu %1 rakentaa järjestelmä. Auttaja kieltäytyy tästä toimesta, kun havaittua rakennusjärjestelmää ei ole asennettu valittuun järjestelmään.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20651"/>
+        <location filename="../src/MainWindow.cpp" line="20665"/>
+        <source>
+Status: unavailable — %1</source>
+        <translation>
+Tila: ei saatavilla ... %1</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20658"/>
+        <source>
+Status: unavailable — missing diagnostic: %1</source>
+        <translation>
+Tila: ei saatavilla, puuttuu vianmääritys: %1</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20685"/>
+        <source>Rebuild %1 kernel modules.</source>
+        <translation>Rakenna %1-ydinmoduulit uudelleen.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="20699"/>
         <source>Choose a kernel repair action from the evidence.</source>
         <translation>Valitse ytimen korjaustoiminto todisteista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6643"/>
+        <location filename="../src/MainWindow.cpp" line="6731"/>
         <source>Mirrors the Settings → Full Repair plan checkbox.</source>
         <translation>Peilaa Asetukset → Koko korjaussuunnitelman valintaruutu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6878"/>
+        <location filename="../src/MainWindow.cpp" line="6966"/>
         <source>Load Btrfs root snapshots read-only.</source>
         <translation>Lataa Btrfs-juurikuvat vain luettavaksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7737"/>
+        <location filename="../src/MainWindow.cpp" line="7825"/>
         <source>Marked for deletion; Save applies it.</source>
         <translation>Merkitty poistettavaksi; Tallenna soveltaa sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8091"/>
+        <location filename="../src/MainWindow.cpp" line="8179"/>
         <source>Move the selected boot entry up; not applied until Save.</source>
         <translation>Siirrä valittu käynnistysmerkintä ylös; ei sovelleta ennen Tallenna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8097"/>
+        <location filename="../src/MainWindow.cpp" line="8185"/>
         <source>Move the selected boot entry down; not applied until Save.</source>
         <translation>Siirrä valittua käynnistysmerkintää alaspäin; ei sovelleta ennen Tallenna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8129"/>
+        <location filename="../src/MainWindow.cpp" line="8217"/>
         <source>Read-only; switch to the EFI/UKI view to restore.</source>
         <translation>Lue vain; vaihda EFI/UKI-näkymään palauttaaksesi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9211"/>
+        <location filename="../src/MainWindow.cpp" line="9282"/>
         <source>Automatic install requires package mapping and authorization.</source>
         <translation>Automaattinen asennus vaatii pakettikartoituksen ja luvan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10721"/>
+        <location filename="../src/MainWindow.cpp" line="10792"/>
         <source>Authorization request already running.</source>
         <translation>Valtuutuspyyntö on jo käynnissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11938"/>
+        <location filename="../src/MainWindow.cpp" line="12012"/>
         <source>Host maintenance is active; file copy and chroot stay target-only.</source>
         <translation>Isäntähuolto on aktiivinen; tiedostojen kopiointi ja chroot pysyvät vain kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13063"/>
+        <location filename="../src/MainWindow.cpp" line="13137"/>
         <source>Run a guarded rsync dry-run.</source>
         <translation>Tee vartioitu Rsync kuivaajo.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17583"/>
+        <location filename="../src/MainWindow.cpp" line="17782"/>
         <source>Entries from this window.</source>
         <translation>Tämän ikkunan merkinnät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19836"/>
+        <location filename="../src/MainWindow.cpp" line="20035"/>
         <source>Run the selected stages using the cached diagnostics.</source>
         <translation>Suorita valitut vaiheet välimuistin avulla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20297"/>
+        <location filename="../src/MainWindow.cpp" line="20518"/>
         <source>Repair GPU driver</source>
         <translation>Korjaa GPU-ajuri</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20437"/>
+        <location filename="../src/MainWindow.cpp" line="20673"/>
         <source>Run the read-only safety preflight.</source>
         <translation>Suorita vain lukeminen ennen lentoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20439"/>
+        <location filename="../src/MainWindow.cpp" line="20675"/>
         <source>Check and repair the detected file systems.</source>
         <translation>Tarkista ja korjaa havaitut tiedostojärjestelmät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20441"/>
+        <location filename="../src/MainWindow.cpp" line="20677"/>
         <source>Complete interrupted package configuration.</source>
         <translation>Keskeytä pakettien konfigurointi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20443"/>
+        <location filename="../src/MainWindow.cpp" line="20679"/>
         <source>Repair broken package dependencies.</source>
         <translation>Korjaa rikkinäiset pakettiriippuvuudet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20445"/>
+        <location filename="../src/MainWindow.cpp" line="20681"/>
         <source>Refresh package metadata.</source>
         <translation>Päivitä paketin metatiedot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20447"/>
+        <location filename="../src/MainWindow.cpp" line="20683"/>
         <source>Simulate and apply a safe package upgrade.</source>
         <translation>Simuloi ja käytä turvallista pakettipäivitystä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20449"/>
         <source>Rebuild DKMS kernel modules.</source>
-        <translation>Rakenna DKMS-ydinmoduulit uudelleen.</translation>
+        <translation type="vanished">Rakenna DKMS-ydinmoduulit uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20451"/>
+        <location filename="../src/MainWindow.cpp" line="20687"/>
         <source>Restore the graphical login manager.</source>
         <translation>Palauta graafinen kirjautumishallinta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20453"/>
+        <location filename="../src/MainWindow.cpp" line="20689"/>
         <source>Rebuild initramfs images.</source>
         <translation>Rakenna initramfs-kuvat uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20455"/>
+        <location filename="../src/MainWindow.cpp" line="20691"/>
         <source>Repair the EFI / UKI boot path.</source>
         <translation>Korjaa EFI / UKI boot polku.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20457"/>
+        <location filename="../src/MainWindow.cpp" line="20693"/>
         <source>Regenerate the GRUB2 configuration.</source>
         <translation>Luo GRUB2-konfiguraatio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20457"/>
+        <location filename="../src/MainWindow.cpp" line="20693"/>
         <source>Regenerate the GRUB configuration.</source>
         <translation>Uudista GRUB-kokoonpano.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20459"/>
+        <location filename="../src/MainWindow.cpp" line="20695"/>
         <source>Regenerate the extlinux configuration.</source>
         <translation>Uudista extlinux-kokoonpano.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20461"/>
+        <location filename="../src/MainWindow.cpp" line="20697"/>
         <source>Reconcile the boot stack.</source>
         <translation>Tutkikaa saappaat.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20465"/>
+        <location filename="../src/MainWindow.cpp" line="20701"/>
         <source>No repair workflow is registered.</source>
         <translation>Korjaustyötä ei ole rekisteröity.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20473"/>
+        <location filename="../src/MainWindow.cpp" line="20709"/>
         <source>Reuses this session&apos;s bootloader repair; mapper/crypttab and initramfs still run.</source>
         <translation>Käyttää uudelleen tämän istunnon bootloader korjaus; mapper / cryptab ja initramfs edelleen käynnissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5321"/>
+        <location filename="../src/MainWindow.cpp" line="5409"/>
         <source>The read-only check reported issues.</source>
         <translation>Vain lukutarkastus raportoi ongelmia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5336"/>
+        <location filename="../src/MainWindow.cpp" line="5424"/>
         <source>Offline repair modes refuse mounted filesystems; btrfs scrub and zpool scrub are online modes and require a mounted filesystem. btrfs check --repair asks for an extra backup warning before it runs.</source>
         <translation>Offline korjaustilat kieltäytyä asennettu tiedostojärjestelmät; btrfs pesu ja zpool pesu ovat online-tiloja ja vaativat asennettu tiedostojärjestelmä. btrfs tarkistaa -- korjaus pyytää lisävaroitus ennen kuin se toimii.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5344"/>
+        <location filename="../src/MainWindow.cpp" line="5432"/>
         <source>Run Selected Repairs</source>
         <translation>Suorita valitut korjaukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5538"/>
+        <location filename="../src/MainWindow.cpp" line="5626"/>
         <source>Linux recovery and boot-repair utility</source>
         <translation>Linuxin palautus- ja käynnistyskorjausapuohjelma</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5540"/>
+        <location filename="../src/MainWindow.cpp" line="5628"/>
         <source>GUARDED REPAIR  •  %1</source>
         <translation>GUARDED KORJAUS • %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5572"/>
-        <location filename="../src/MainWindow.cpp" line="5576"/>
+        <location filename="../src/MainWindow.cpp" line="5660"/>
+        <location filename="../src/MainWindow.cpp" line="5664"/>
         <source>A Boot Bitch operation is running in the background.</source>
         <translation>Taustalla on Boot Bitch-operaatio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5625"/>
+        <location filename="../src/MainWindow.cpp" line="5713"/>
         <source>Show previous tab</source>
         <translation>Näytä edellinen välilehti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5630"/>
+        <location filename="../src/MainWindow.cpp" line="5718"/>
         <source>Show next tab</source>
         <translation>Näytä seuraava välilehti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5649"/>
-        <location filename="../src/MainWindow.cpp" line="5921"/>
-        <location filename="../src/MainWindow.cpp" line="5971"/>
-        <location filename="../src/MainWindow.cpp" line="5972"/>
+        <location filename="../src/MainWindow.cpp" line="5737"/>
+        <location filename="../src/MainWindow.cpp" line="6009"/>
+        <location filename="../src/MainWindow.cpp" line="6059"/>
+        <location filename="../src/MainWindow.cpp" line="6060"/>
         <source>Systems</source>
         <translation>Järjestelmät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5650"/>
-        <location filename="../src/MainWindow.cpp" line="5923"/>
-        <location filename="../src/MainWindow.cpp" line="6298"/>
-        <location filename="../src/MainWindow.cpp" line="6300"/>
-        <location filename="../src/MainWindow.cpp" line="8985"/>
-        <location filename="../src/MainWindow.cpp" line="9110"/>
+        <location filename="../src/MainWindow.cpp" line="5738"/>
+        <location filename="../src/MainWindow.cpp" line="6011"/>
+        <location filename="../src/MainWindow.cpp" line="6386"/>
+        <location filename="../src/MainWindow.cpp" line="6388"/>
+        <location filename="../src/MainWindow.cpp" line="9056"/>
+        <location filename="../src/MainWindow.cpp" line="9181"/>
         <source>Diagnostics</source>
         <translation>Diagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5651"/>
-        <location filename="../src/MainWindow.cpp" line="7108"/>
-        <location filename="../src/MainWindow.cpp" line="7110"/>
-        <location filename="../src/MainWindow.cpp" line="7397"/>
+        <location filename="../src/MainWindow.cpp" line="5739"/>
+        <location filename="../src/MainWindow.cpp" line="7196"/>
+        <location filename="../src/MainWindow.cpp" line="7198"/>
+        <location filename="../src/MainWindow.cpp" line="7485"/>
         <source>EFI boot entries</source>
         <translation>EFI- käynnistysmerkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5652"/>
+        <location filename="../src/MainWindow.cpp" line="5740"/>
         <source>Repair</source>
         <comment>tab noun</comment>
         <translation>Korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5653"/>
-        <location filename="../src/MainWindow.cpp" line="6761"/>
+        <location filename="../src/MainWindow.cpp" line="5741"/>
+        <location filename="../src/MainWindow.cpp" line="6849"/>
         <source>Snapshots</source>
         <translation>Kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5654"/>
-        <location filename="../src/MainWindow.cpp" line="8575"/>
-        <location filename="../src/MainWindow.cpp" line="13579"/>
-        <location filename="../src/MainWindow.cpp" line="13609"/>
+        <location filename="../src/MainWindow.cpp" line="5742"/>
+        <location filename="../src/MainWindow.cpp" line="8663"/>
+        <location filename="../src/MainWindow.cpp" line="13653"/>
+        <location filename="../src/MainWindow.cpp" line="13683"/>
         <source>Chroot Shell</source>
         <translation>Chroot Shell</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5655"/>
-        <location filename="../src/MainWindow.cpp" line="8654"/>
+        <location filename="../src/MainWindow.cpp" line="5743"/>
+        <location filename="../src/MainWindow.cpp" line="8742"/>
         <source>File Copy</source>
         <translation>Tiedostokopio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5656"/>
-        <location filename="../src/MainWindow.cpp" line="5925"/>
-        <location filename="../src/MainWindow.cpp" line="8892"/>
+        <location filename="../src/MainWindow.cpp" line="5744"/>
+        <location filename="../src/MainWindow.cpp" line="6013"/>
+        <location filename="../src/MainWindow.cpp" line="8980"/>
         <source>Logs</source>
         <translation>Lokit</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5657"/>
-        <location filename="../src/MainWindow.cpp" line="5927"/>
+        <location filename="../src/MainWindow.cpp" line="5745"/>
+        <location filename="../src/MainWindow.cpp" line="6015"/>
         <source>Settings</source>
         <translation>Asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5735"/>
+        <location filename="../src/MainWindow.cpp" line="5823"/>
         <source>Ready — guarded repair mode</source>
         <translation>Valmiina</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5897"/>
+        <location filename="../src/MainWindow.cpp" line="5985"/>
         <source>&amp;File</source>
         <translation>-&amp;tiedosto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5898"/>
-        <location filename="../src/MainWindow.cpp" line="5975"/>
+        <location filename="../src/MainWindow.cpp" line="5986"/>
+        <location filename="../src/MainWindow.cpp" line="6063"/>
         <source>Refresh Devices</source>
         <translation>Päivitä laitteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5904"/>
+        <location filename="../src/MainWindow.cpp" line="5992"/>
         <source>Lock Administrator Session</source>
         <translation>Lukituksen ylläpitäjän istunto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5912"/>
+        <location filename="../src/MainWindow.cpp" line="6000"/>
         <source>Administrator session locked — owned target resources released; the next privileged action will request authorization.</source>
         <translation>Administrator istunto lukittu Omistettu kohderesurssit vapautetaan; seuraava etuoikeutettu toiminta pyytää luvan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5916"/>
+        <location filename="../src/MainWindow.cpp" line="6004"/>
         <source>Quit</source>
         <translation>Lopeta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5920"/>
+        <location filename="../src/MainWindow.cpp" line="6008"/>
         <source>&amp;View</source>
         <translation>-&amp;näkymä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5931"/>
+        <location filename="../src/MainWindow.cpp" line="6019"/>
         <source>Auto-size Device Columns</source>
         <translation>Automaattisesti kootut laitteen sarakkeet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5934"/>
+        <location filename="../src/MainWindow.cpp" line="6022"/>
         <source>Wrap Log Lines</source>
         <translation>Kääri lokirivit</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5939"/>
+        <location filename="../src/MainWindow.cpp" line="6027"/>
         <source>&amp;Help</source>
         <translation>- &amp;ohje</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5940"/>
-        <location filename="../src/MainWindow.cpp" line="18844"/>
+        <location filename="../src/MainWindow.cpp" line="6028"/>
+        <location filename="../src/MainWindow.cpp" line="19043"/>
         <source>Using Boot Bitch</source>
         <translation>Boot Bitch:n käyttö</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5943"/>
-        <location filename="../src/MainWindow.cpp" line="18867"/>
+        <location filename="../src/MainWindow.cpp" line="6031"/>
+        <location filename="../src/MainWindow.cpp" line="19066"/>
         <source>About Boot Bitch</source>
         <translation>Tietoja Boot Bitch:stä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5973"/>
+        <location filename="../src/MainWindow.cpp" line="6061"/>
         <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system.</source>
         <translation>Valitse fyysinen asema; Boot Bitch ratkaisee todennäköisimmän Linux-järjestelmän äänenvoimakkuuden automaattisesti. Juokseva isäntä pysyy suojattuna tavallisilta kohteiden korjauksilta, ja sillä on oma erillinen huoltopolku omaa järjestelmää varten.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5976"/>
+        <location filename="../src/MainWindow.cpp" line="6064"/>
         <source>Re-scan connected storage and repair targets.</source>
         <translation>Skannaa uudelleen liitetyt varastointi- ja korjauskohteet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6013"/>
+        <location filename="../src/MainWindow.cpp" line="6101"/>
         <source>Detecting running system…</source>
         <translation>Havaitaan ajojärjestelmä…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6024"/>
+        <location filename="../src/MainWindow.cpp" line="6112"/>
         <source>Detecting protected storage…</source>
         <translation>Suojatun säilytyksen havaitseminen…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6044"/>
+        <location filename="../src/MainWindow.cpp" line="6132"/>
         <source>PROTECTED</source>
         <translation>SUOJATTU</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6050"/>
+        <location filename="../src/MainWindow.cpp" line="6138"/>
         <source>The running host remains protected from ordinary repair-target operations.</source>
         <translation>Juokseva isäntä on edelleen suojattu tavallisilta korjauskohteilta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6053"/>
+        <location filename="../src/MainWindow.cpp" line="6141"/>
         <source>Details</source>
         <translation>Yksityiskohdat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6055"/>
+        <location filename="../src/MainWindow.cpp" line="6143"/>
         <source>Show read-only details for the protected running host.</source>
         <translation>Näytä vain luettavia tietoja suojatulle ajoisännälle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6059"/>
-        <location filename="../src/MainWindow.cpp" line="9796"/>
+        <location filename="../src/MainWindow.cpp" line="6147"/>
+        <location filename="../src/MainWindow.cpp" line="9867"/>
         <source>Host Maintenance</source>
         <translation>Huolto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6066"/>
-        <location filename="../src/MainWindow.cpp" line="9926"/>
+        <location filename="../src/MainWindow.cpp" line="6154"/>
+        <location filename="../src/MainWindow.cpp" line="9997"/>
         <source>Make Default</source>
         <translation>Tee oletus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6083"/>
+        <location filename="../src/MainWindow.cpp" line="6171"/>
         <source>Available repair targets</source>
         <translation>Käytettävissä olevat korjaustavoitteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6084"/>
+        <location filename="../src/MainWindow.cpp" line="6172"/>
         <source>Repair targets</source>
         <translation>Korjaustavoitteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6085"/>
+        <location filename="../src/MainWindow.cpp" line="6173"/>
         <source>Drives are ranked by visible Linux, EFI, filesystem and encryption evidence. Select the top-level drive; partitions and mapped volumes are informational.</source>
         <translation>Asemat ovat näkyvien Linux-, EFI-, tiedostojärjestelmä- ja salausnäyttöjen rankaisemia. Valitse ylätason asema; osiot ja kartoitetut volyymit ovat informatiivisia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6087"/>
+        <location filename="../src/MainWindow.cpp" line="6175"/>
         <source>Most likely first</source>
         <translation>Todennäköisesti ensin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6105"/>
+        <location filename="../src/MainWindow.cpp" line="6193"/>
         <source>Model / Label</source>
         <translation>Malli / merkki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6105"/>
-        <location filename="../src/MainWindow.cpp" line="6800"/>
-        <location filename="../src/MainWindow.cpp" line="9158"/>
+        <location filename="../src/MainWindow.cpp" line="6193"/>
+        <location filename="../src/MainWindow.cpp" line="6888"/>
+        <location filename="../src/MainWindow.cpp" line="9229"/>
         <source>Status</source>
         <translation>Tila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6105"/>
+        <location filename="../src/MainWindow.cpp" line="6193"/>
         <source>Connection</source>
         <translation>Yhteys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6106"/>
+        <location filename="../src/MainWindow.cpp" line="6194"/>
         <source>Size</source>
         <translation>Koko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6106"/>
+        <location filename="../src/MainWindow.cpp" line="6194"/>
         <source>Filesystem</source>
         <translation>Tiedostojärjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6150"/>
+        <location filename="../src/MainWindow.cpp" line="6238"/>
         <source>Select Target</source>
         <translation>Valitse kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6154"/>
-        <location filename="../src/MainWindow.cpp" line="9738"/>
-        <location filename="../src/MainWindow.cpp" line="10090"/>
-        <location filename="../src/MainWindow.cpp" line="11766"/>
+        <location filename="../src/MainWindow.cpp" line="6242"/>
+        <location filename="../src/MainWindow.cpp" line="9809"/>
+        <location filename="../src/MainWindow.cpp" line="10161"/>
+        <location filename="../src/MainWindow.cpp" line="11840"/>
         <source>Unlock</source>
         <translation>Avaa lukitus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6156"/>
-        <location filename="../src/MainWindow.cpp" line="9740"/>
+        <location filename="../src/MainWindow.cpp" line="6244"/>
+        <location filename="../src/MainWindow.cpp" line="9811"/>
         <source>Select a drive whose detected target is a locked LUKS volume.</source>
         <translation>Valitse asema, jonka havaittu kohde on lukittu LUKS-tilavuus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6177"/>
+        <location filename="../src/MainWindow.cpp" line="6265"/>
         <source>Authorize</source>
         <translation>Hyväksy</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6185"/>
-        <location filename="../src/MainWindow.cpp" line="11935"/>
+        <location filename="../src/MainWindow.cpp" line="6273"/>
+        <location filename="../src/MainWindow.cpp" line="12009"/>
         <source>Committed target: none</source>
         <translation>Sitoutunut tavoite: ei ole</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6191"/>
+        <location filename="../src/MainWindow.cpp" line="6279"/>
         <source>Unlock status</source>
         <translation>Avaa lukitustila</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6205"/>
-        <location filename="../src/MainWindow.cpp" line="9743"/>
+        <location filename="../src/MainWindow.cpp" line="6293"/>
+        <location filename="../src/MainWindow.cpp" line="9814"/>
         <source>Select a drive to see unlock status.</source>
         <translation>Valitse asema nähdäksesi avaimen tilan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6206"/>
-        <location filename="../src/MainWindow.cpp" line="10085"/>
-        <location filename="../src/MainWindow.cpp" line="10769"/>
+        <location filename="../src/MainWindow.cpp" line="6294"/>
+        <location filename="../src/MainWindow.cpp" line="10156"/>
+        <location filename="../src/MainWindow.cpp" line="10840"/>
         <source>No unlock operation recorded for this drive in the current session.</source>
         <translation>Asemalle ei tallenneta avaustoimintoa tässä istunnossa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6210"/>
+        <location filename="../src/MainWindow.cpp" line="6298"/>
         <source>Selected drive details</source>
         <translation>Valitut aseman tiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6250"/>
+        <location filename="../src/MainWindow.cpp" line="6338"/>
         <source>Drive:</source>
         <translation>Aja:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6251"/>
+        <location filename="../src/MainWindow.cpp" line="6339"/>
         <source>Detected target:</source>
         <translation>Havaittu kohde:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6252"/>
+        <location filename="../src/MainWindow.cpp" line="6340"/>
         <source>Model / label:</source>
         <translation>Malli / etiketti:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6253"/>
+        <location filename="../src/MainWindow.cpp" line="6341"/>
         <source>Status:</source>
         <translation>Tila:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6254"/>
+        <location filename="../src/MainWindow.cpp" line="6342"/>
         <source>Size:</source>
         <translation>Koko:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6255"/>
+        <location filename="../src/MainWindow.cpp" line="6343"/>
         <source>Connection:</source>
         <translation>Yhteys:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6256"/>
+        <location filename="../src/MainWindow.cpp" line="6344"/>
         <source>Filesystem:</source>
         <translation>Tiedostojärjestelmä:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6257"/>
+        <location filename="../src/MainWindow.cpp" line="6345"/>
         <source>UUID:</source>
         <translation>Hei.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6258"/>
+        <location filename="../src/MainWindow.cpp" line="6346"/>
         <source>Mounts:</source>
         <translation>Liitännät:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6259"/>
+        <location filename="../src/MainWindow.cpp" line="6347"/>
         <source>Protection:</source>
         <translation>Suojaus:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6301"/>
+        <location filename="../src/MainWindow.cpp" line="6389"/>
         <source>Diagnostics follow the Systems page: the selected repair drive while Host Maintenance is off, or the protected running host while Host Maintenance is active. Running Host diagnostics are available only inside the explicit Host Maintenance scope: enter Host Maintenance on the protected running-host card in Systems first. Both scopes provide read-only diagnostics; host EFI/UKI checks inspect the active ESP and firmware entries, while repair-drive checks mount only that system read-only.</source>
         <translation>Diagnostiikka seuraa Systems-sivua: valittu korjausasema, kun isäntähuolto on pois päältä, tai suojattu juoksun isäntä, kun isäntähuolto on aktiivinen. Running Host -diagnostiikka on saatavilla vain nimenomaisen isäntähuollon soveltamisalan sisällä: kirjoita isännän huolto suojattuun juoksu-host -korttiin ensin. Molemmat soveltamisalat tarjoavat vain lukudiagnostiikkaa; isäntä EFI/UKI-tarkastukset tarkastavat aktiiviset ESP- ja firmware-syötteet, kun taas korjaus-asematarkistukset asentavat vain kyseisen järjestelmän.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6310"/>
-        <location filename="../src/MainWindow.cpp" line="6483"/>
-        <location filename="../src/MainWindow.cpp" line="6764"/>
-        <location filename="../src/MainWindow.cpp" line="8579"/>
-        <location filename="../src/MainWindow.cpp" line="8658"/>
-        <location filename="../src/MainWindow.cpp" line="11881"/>
+        <location filename="../src/MainWindow.cpp" line="6398"/>
+        <location filename="../src/MainWindow.cpp" line="6571"/>
+        <location filename="../src/MainWindow.cpp" line="6852"/>
+        <location filename="../src/MainWindow.cpp" line="8667"/>
+        <location filename="../src/MainWindow.cpp" line="8746"/>
+        <location filename="../src/MainWindow.cpp" line="11955"/>
         <source>Target: none selected</source>
         <translation>Kohde: ei valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6315"/>
-        <location filename="../src/MainWindow.cpp" line="16002"/>
-        <location filename="../src/MainWindow.cpp" line="16521"/>
+        <location filename="../src/MainWindow.cpp" line="6403"/>
+        <location filename="../src/MainWindow.cpp" line="16103"/>
+        <location filename="../src/MainWindow.cpp" line="16622"/>
         <source>Run All</source>
         <translation>Suorita kaikki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6316"/>
+        <location filename="../src/MainWindow.cpp" line="6404"/>
         <source>Run All — run every available read-only diagnostic for the current scope.</source>
         <translation>Suorita Kaikki ... Suorita kaikki saatavilla olevat luku-vain vianmääritys nykyisen soveltamisalan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6334"/>
+        <location filename="../src/MainWindow.cpp" line="6422"/>
         <source>Edit Target File…</source>
         <translation>Muokkaa kohdetiedostoa…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6342"/>
+        <location filename="../src/MainWindow.cpp" line="6430"/>
         <source>Target configuration:</source>
         <translation>Kohdeasetukset:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6353"/>
+        <location filename="../src/MainWindow.cpp" line="6441"/>
         <source>Diagnostic checks</source>
         <translation>Diagnostiset tarkastukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6372"/>
+        <location filename="../src/MainWindow.cpp" line="6460"/>
         <source>Selected diagnostic</source>
         <translation>Valittu vianmääritys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6377"/>
-        <location filename="../src/MainWindow.cpp" line="14147"/>
+        <location filename="../src/MainWindow.cpp" line="6465"/>
+        <location filename="../src/MainWindow.cpp" line="14220"/>
         <source>Select a diagnostic</source>
         <translation>Valitse vianmääritys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6380"/>
-        <location filename="../src/MainWindow.cpp" line="14148"/>
+        <location filename="../src/MainWindow.cpp" line="6468"/>
+        <location filename="../src/MainWindow.cpp" line="14221"/>
         <source>Choose a diagnostic from the list.</source>
         <translation>Valitse diagnostiikka luettelosta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6384"/>
-        <location filename="../src/MainWindow.cpp" line="13484"/>
-        <location filename="../src/MainWindow.cpp" line="21265"/>
+        <location filename="../src/MainWindow.cpp" line="6472"/>
+        <location filename="../src/MainWindow.cpp" line="13558"/>
+        <location filename="../src/MainWindow.cpp" line="21506"/>
         <source>Ready</source>
         <translation>Valmis</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6397"/>
+        <location filename="../src/MainWindow.cpp" line="6485"/>
         <source>Results</source>
         <translation>Tulokset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6400"/>
-        <location filename="../src/MainWindow.cpp" line="14150"/>
-        <location filename="../src/MainWindow.cpp" line="14219"/>
-        <location filename="../src/MainWindow.cpp" line="14228"/>
-        <location filename="../src/MainWindow.cpp" line="14256"/>
+        <location filename="../src/MainWindow.cpp" line="6488"/>
+        <location filename="../src/MainWindow.cpp" line="14223"/>
+        <location filename="../src/MainWindow.cpp" line="14292"/>
+        <location filename="../src/MainWindow.cpp" line="14301"/>
+        <location filename="../src/MainWindow.cpp" line="14329"/>
         <source>Run Diagnostic</source>
         <translation>Suorita diagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6408"/>
+        <location filename="../src/MainWindow.cpp" line="6496"/>
         <source>Diagnostic results appear here.</source>
         <translation>Diagnostiset tulokset näkyvät tässä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6420"/>
+        <location filename="../src/MainWindow.cpp" line="6508"/>
         <source>Copy Results</source>
         <translation>Kopioi tulokset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6421"/>
+        <location filename="../src/MainWindow.cpp" line="6509"/>
         <source>Save Results…</source>
         <translation>Tallenna tulokset…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6481"/>
+        <location filename="../src/MainWindow.cpp" line="6569"/>
         <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (EFI / UKI bootloader, GRUB or extlinux configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance.</source>
         <translation>Suorita yksi korjaustyökalu tai käytä Full Repair suunnitelma vastaan valittu korjausasema. Valitse Host Maintenance on Systems ajaa samat tuetut, vartioidut vaiheet suojattua Juokseva isäntä. Valitse täydellinen korjausvaiheet Asetuksista. Käytössä olevat vaiheet suoritetaan järjestyksessä. Jokainen konfiguroitava vaihe näkyy myös alla yksittäisenä työkaluna; Full Repair- sarake peilaa sen nykyistä asetustilaa. Käynnistystyökalut (EFI / UKI bootloader, GRUB tai extlinux konfiguraatio, boot-stack täsmäytys ja Make Oletus) ovat riippumattomia: suorita ne missä tahansa järjestyksessä, ja myöhemmin toiminta tarkistaa, mitä aikaisempi muutti ja raportoi oman tuloksensa. Aktiivinen laajuus näkyy vieressä Korjaus: valittu korjausasema tai Running Host huolto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6487"/>
-        <location filename="../src/MainWindow.cpp" line="9082"/>
+        <location filename="../src/MainWindow.cpp" line="6575"/>
+        <location filename="../src/MainWindow.cpp" line="9153"/>
         <source>Full Repair plan</source>
         <translation>Täydellinen korjaussuunnitelma</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6499"/>
-        <location filename="../src/MainWindow.cpp" line="19773"/>
+        <location filename="../src/MainWindow.cpp" line="6587"/>
+        <location filename="../src/MainWindow.cpp" line="19972"/>
         <source>No stages selected</source>
         <translation>Ei valittuja vaiheita</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6505"/>
+        <location filename="../src/MainWindow.cpp" line="6593"/>
         <source>Run All diagnostics for the selected target or running host before starting Full Repair. The report is read-only evidence used to choose and confirm repair stages.</source>
         <translation>Suorita kaikki diagnostiikat valitun kohteen tai käynnissä isäntä ennen Full Repair. Raportti on pelkkä luettava todiste korjausvaiheiden valitsemisesta ja vahvistamisesta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6518"/>
+        <location filename="../src/MainWindow.cpp" line="6606"/>
         <source>Configure Plan…</source>
         <translation>Määritä Plan…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6519"/>
+        <location filename="../src/MainWindow.cpp" line="6607"/>
         <source>Open Settings to choose which Full Repair stages are part of the plan.</source>
         <translation>Avaa asetukset valita, mitkä Full Repair vaiheet ovat osa suunnitelmaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6530"/>
-        <location filename="../src/MainWindow.cpp" line="21877"/>
+        <location filename="../src/MainWindow.cpp" line="6618"/>
+        <location filename="../src/MainWindow.cpp" line="22205"/>
         <source>Run Full Repair</source>
         <translation>Suorita koko korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6578"/>
+        <location filename="../src/MainWindow.cpp" line="6666"/>
         <source>Individual repair tools</source>
         <translation>Yksittäiset korjaustyökalut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6584"/>
+        <location filename="../src/MainWindow.cpp" line="6672"/>
         <source>Tool</source>
         <translation>Työkalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6584"/>
-        <location filename="../src/MainWindow.cpp" line="21839"/>
-        <location filename="../src/MainWindow.cpp" line="21924"/>
-        <location filename="../src/MainWindow.cpp" line="21938"/>
+        <location filename="../src/MainWindow.cpp" line="6672"/>
+        <location filename="../src/MainWindow.cpp" line="22167"/>
+        <location filename="../src/MainWindow.cpp" line="22267"/>
+        <location filename="../src/MainWindow.cpp" line="22281"/>
         <source>Full Repair</source>
         <translation>Täysi korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6620"/>
-        <location filename="../src/MainWindow.cpp" line="20218"/>
+        <location filename="../src/MainWindow.cpp" line="6708"/>
+        <location filename="../src/MainWindow.cpp" line="20439"/>
         <source>Validate environment</source>
         <translation>Validointiympäristö</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6621"/>
-        <location filename="../src/MainWindow.cpp" line="20359"/>
-        <location filename="../src/MainWindow.cpp" line="22304"/>
-        <location filename="../src/MainWindow.cpp" line="22335"/>
+        <location filename="../src/MainWindow.cpp" line="6709"/>
+        <location filename="../src/MainWindow.cpp" line="20580"/>
+        <location filename="../src/MainWindow.cpp" line="22647"/>
+        <location filename="../src/MainWindow.cpp" line="22678"/>
         <source>File system repair</source>
         <translation>Tiedostojärjestelmän korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6622"/>
-        <location filename="../src/MainWindow.cpp" line="20226"/>
-        <location filename="../src/MainWindow.cpp" line="21712"/>
+        <location filename="../src/MainWindow.cpp" line="6710"/>
+        <location filename="../src/MainWindow.cpp" line="20447"/>
+        <location filename="../src/MainWindow.cpp" line="21997"/>
         <source>Complete package configuration</source>
         <translation>Täydellinen pakettien kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6623"/>
-        <location filename="../src/MainWindow.cpp" line="20233"/>
-        <location filename="../src/MainWindow.cpp" line="21716"/>
+        <location filename="../src/MainWindow.cpp" line="6711"/>
+        <location filename="../src/MainWindow.cpp" line="20454"/>
+        <location filename="../src/MainWindow.cpp" line="22001"/>
         <source>Repair broken dependencies</source>
         <translation>Korjaa rikkinäiset riippuvuudet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6624"/>
-        <location filename="../src/MainWindow.cpp" line="9089"/>
-        <location filename="../src/MainWindow.cpp" line="19699"/>
-        <location filename="../src/MainWindow.cpp" line="20244"/>
-        <location filename="../src/MainWindow.cpp" line="21113"/>
-        <location filename="../src/MainWindow.cpp" line="21720"/>
+        <location filename="../src/MainWindow.cpp" line="6712"/>
+        <location filename="../src/MainWindow.cpp" line="9160"/>
+        <location filename="../src/MainWindow.cpp" line="19898"/>
+        <location filename="../src/MainWindow.cpp" line="20465"/>
+        <location filename="../src/MainWindow.cpp" line="21349"/>
+        <location filename="../src/MainWindow.cpp" line="22005"/>
         <source>Refresh package metadata</source>
         <translation>Päivitä paketin metatiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6625"/>
-        <location filename="../src/MainWindow.cpp" line="19700"/>
-        <location filename="../src/MainWindow.cpp" line="20255"/>
-        <location filename="../src/MainWindow.cpp" line="21724"/>
+        <location filename="../src/MainWindow.cpp" line="6713"/>
+        <location filename="../src/MainWindow.cpp" line="19899"/>
+        <location filename="../src/MainWindow.cpp" line="20476"/>
+        <location filename="../src/MainWindow.cpp" line="22009"/>
         <source>Upgrade installed packages</source>
         <translation>Asennettujen pakettien päivittäminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6626"/>
-        <location filename="../src/MainWindow.cpp" line="20266"/>
+        <location filename="../src/MainWindow.cpp" line="6714"/>
         <source>DKMS</source>
         <translation>DKMS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6629"/>
-        <location filename="../src/MainWindow.cpp" line="20301"/>
+        <location filename="../src/MainWindow.cpp" line="6717"/>
+        <location filename="../src/MainWindow.cpp" line="20522"/>
         <source>Initramfs</source>
         <translation>Initramfs</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6630"/>
-        <location filename="../src/MainWindow.cpp" line="20313"/>
+        <location filename="../src/MainWindow.cpp" line="6718"/>
+        <location filename="../src/MainWindow.cpp" line="20534"/>
         <source>EFI / UKI bootloader</source>
         <translation>EFI / UKI-käynnistin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6632"/>
-        <location filename="../src/MainWindow.cpp" line="20352"/>
+        <location filename="../src/MainWindow.cpp" line="6720"/>
+        <location filename="../src/MainWindow.cpp" line="20573"/>
         <source>extlinux configuration</source>
         <translation>extlinux- kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6633"/>
-        <location filename="../src/MainWindow.cpp" line="20368"/>
+        <location filename="../src/MainWindow.cpp" line="6721"/>
+        <location filename="../src/MainWindow.cpp" line="20589"/>
         <source>Boot stack reconciliation</source>
         <translation>Boot pino täsmäytys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6661"/>
+        <location filename="../src/MainWindow.cpp" line="6749"/>
         <source>Selected tool</source>
         <translation>Valittu työkalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6676"/>
-        <location filename="../src/MainWindow.cpp" line="20195"/>
+        <location filename="../src/MainWindow.cpp" line="6764"/>
+        <location filename="../src/MainWindow.cpp" line="20416"/>
         <source>Select a repair tool</source>
         <translation>Valitse korjaustyökalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6679"/>
-        <location filename="../src/MainWindow.cpp" line="20198"/>
+        <location filename="../src/MainWindow.cpp" line="6767"/>
+        <location filename="../src/MainWindow.cpp" line="20419"/>
         <source>Run Tool</source>
         <translation>Suorita työkalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6685"/>
+        <location filename="../src/MainWindow.cpp" line="6773"/>
         <source>Select a tool to review its repair action.</source>
         <translation>Valitse työkalu tarkistaa sen korjaustoiminta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6760"/>
+        <location filename="../src/MainWindow.cpp" line="6848"/>
         <source>Btrfs snapshots</source>
         <translation>Btrfs-kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6762"/>
+        <location filename="../src/MainWindow.cpp" line="6850"/>
         <source>Inspect Btrfs root snapshots and perform a transactional rollback. Rollback keeps the source snapshot unchanged, preserves the current @ root, promotes a writable copy to @, rebuilds the boot stack and automatically restores the old root if post-switch validation fails. In Host Maintenance the same workflow targets the running host through Snapper @ snapshots and Boot Bitch @rollback-before-* undo points; the running host starts the promoted root only after a reboot.</source>
         <translation>Tutki Btrfs:n juurikuvat ja suorita transaktion palautus. Rollback pitää lähdekuvan ennallaan, säilyttää nykyisen @ rootin, edistää kirjoitettavaa kopiota @: lle, rakentaa käynnistyspinon uudelleen ja palauttaa vanhan juuren automaattisesti, jos kytkin epäonnistuu. Host Maintenancessa sama työnkulku kohdistuu käynnissä olevaan isäntään Snapper @-kuvien ja Boot Bitch @rollback-ennen-* perumispisteiden kautta; käynnissä oleva isäntä aloittaa promoted rootin vasta uudelleenkäynnistyksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6783"/>
-        <location filename="../src/MainWindow.cpp" line="12820"/>
-        <location filename="../src/MainWindow.cpp" line="12969"/>
+        <location filename="../src/MainWindow.cpp" line="6871"/>
+        <location filename="../src/MainWindow.cpp" line="12894"/>
+        <location filename="../src/MainWindow.cpp" line="13043"/>
         <source>Reboot Now</source>
         <translation>Käynnistä nyt uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6785"/>
-        <location filename="../src/MainWindow.cpp" line="12821"/>
+        <location filename="../src/MainWindow.cpp" line="6873"/>
+        <location filename="../src/MainWindow.cpp" line="12895"/>
         <source>Later</source>
         <translation>Myöhemmin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6791"/>
+        <location filename="../src/MainWindow.cpp" line="6879"/>
         <source>Reboot reminder hidden; the running-host rollback stays staged until the host is rebooted.</source>
         <translation>Uudelleenkäynnistysmuistutus piilotettu; käynnissä-host takaisin pysyy lavastettu kunnes isäntä on uudelleenkäynnistetty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6800"/>
+        <location filename="../src/MainWindow.cpp" line="6888"/>
         <source>Snapshot</source>
         <translation>Kuva</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6800"/>
+        <location filename="../src/MainWindow.cpp" line="6888"/>
         <source>Created</source>
         <translation>Luotu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6800"/>
+        <location filename="../src/MainWindow.cpp" line="6888"/>
         <source>Type</source>
         <translation>Tyyppi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6800"/>
+        <location filename="../src/MainWindow.cpp" line="6888"/>
         <source>Description</source>
         <translation>Tavaran kuvaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6847"/>
+        <location filename="../src/MainWindow.cpp" line="6935"/>
         <source>Load snapshots to inspect recovery points. Snapshot discovery runs through the guarded read-only helper, so root-owned Snapper metadata does not need to be readable by the desktop user.</source>
         <translation>Lataa valokuvia palautuspisteiden tarkastamiseksi. Snapshot löytö kulkee vartioitu lukuavain apuri, joten root-omistettu Snapper metadata ei tarvitse lukea työpöydän käyttäjä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6859"/>
+        <location filename="../src/MainWindow.cpp" line="6947"/>
         <source>Snapshot inventory</source>
         <translation>Kuvaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6871"/>
+        <location filename="../src/MainWindow.cpp" line="6959"/>
         <source>Load Snapshots</source>
         <translation>Lataa kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6872"/>
+        <location filename="../src/MainWindow.cpp" line="6960"/>
         <source>Inspect Selected</source>
         <translation>Tutki valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6873"/>
+        <location filename="../src/MainWindow.cpp" line="6961"/>
         <source>Roll Back to Selected</source>
         <translation>Siirrä takaisin valittuun</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6942"/>
+        <location filename="../src/MainWindow.cpp" line="7030"/>
         <source>Boot %1</source>
         <translation>Boot %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6943"/>
-        <location filename="../src/MainWindow.cpp" line="7051"/>
+        <location filename="../src/MainWindow.cpp" line="7031"/>
+        <location filename="../src/MainWindow.cpp" line="7139"/>
         <source>Label: %1</source>
         <translation>Merkitys: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6944"/>
+        <location filename="../src/MainWindow.cpp" line="7032"/>
         <source>Loader: %1</source>
         <translation>Loader: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6945"/>
-        <location filename="../src/MainWindow.cpp" line="6997"/>
+        <location filename="../src/MainWindow.cpp" line="7033"/>
+        <location filename="../src/MainWindow.cpp" line="7085"/>
         <source>Class: %1</source>
         <translation>Luokka: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6946"/>
+        <location filename="../src/MainWindow.cpp" line="7034"/>
         <source>Role: %1</source>
         <translation>Rooli: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6947"/>
+        <location filename="../src/MainWindow.cpp" line="7035"/>
         <source>PARTUUID: %1</source>
         <translation>PARTUUID: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6949"/>
+        <location filename="../src/MainWindow.cpp" line="7037"/>
         <source>Drive: %1</source>
         <translation>Aja: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6952"/>
+        <location filename="../src/MainWindow.cpp" line="7040"/>
         <source>Listed in BootOrder: yes</source>
         <translation>Luettelo BootOrder: kyllä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6953"/>
+        <location filename="../src/MainWindow.cpp" line="7041"/>
         <source>Listed in BootOrder: no (omitted by firmware)</source>
         <translation>Luettelo BootOrder: ei (firmware)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6955"/>
+        <location filename="../src/MainWindow.cpp" line="7043"/>
         <source>This entry is currently active (BootCurrent).</source>
         <translation>Tämä merkintä on tällä hetkellä aktiivinen (BootCurrent).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6967"/>
+        <location filename="../src/MainWindow.cpp" line="7055"/>
         <source>GRUB menu</source>
         <translation>GRUB-valikko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6970"/>
+        <location filename="../src/MainWindow.cpp" line="7058"/>
         <source>Direct (UKI)</source>
         <translation>Suora (UKI)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6973"/>
+        <location filename="../src/MainWindow.cpp" line="7061"/>
         <source>Network</source>
         <translation>Verkko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6976"/>
+        <location filename="../src/MainWindow.cpp" line="7064"/>
         <source>Fallback</source>
         <translation>Perääntyminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6979"/>
+        <location filename="../src/MainWindow.cpp" line="7067"/>
         <source>Firmware</source>
         <translation>Firmware</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6981"/>
+        <location filename="../src/MainWindow.cpp" line="7069"/>
         <source>Other</source>
         <translation>Muut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6996"/>
-        <location filename="../src/MainWindow.cpp" line="7071"/>
+        <location filename="../src/MainWindow.cpp" line="7084"/>
+        <location filename="../src/MainWindow.cpp" line="7159"/>
         <source>Menu entry: %1</source>
         <translation>Valikkomerkintä: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6997"/>
+        <location filename="../src/MainWindow.cpp" line="7085"/>
         <source>(none)</source>
         <translation>(ei yhtään)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6999"/>
+        <location filename="../src/MainWindow.cpp" line="7087"/>
         <source>Menuentry id: %1</source>
         <translation>Valikkotunniste: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7002"/>
+        <location filename="../src/MainWindow.cpp" line="7090"/>
         <source>Source: foreign (detected by os-prober)</source>
         <translation>Lähde: ulkomainen (todettu os-prober:ssä)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7003"/>
+        <location filename="../src/MainWindow.cpp" line="7091"/>
         <source>Source: native</source>
         <translation>Lähde: syntyperäinen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7005"/>
+        <location filename="../src/MainWindow.cpp" line="7093"/>
         <source>This entry is the current GRUB default.</source>
         <translation>Tämä merkintä on nykyinen GRUB-oletus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7011"/>
+        <location filename="../src/MainWindow.cpp" line="7099"/>
         <source>Loads: %1</source>
         <translation>Kuormat: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7028"/>
+        <location filename="../src/MainWindow.cpp" line="7116"/>
         <source>Firmware boot entries on this disk</source>
         <translation>Firmware- käynnistysmerkinnät tällä levyllä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7030"/>
+        <location filename="../src/MainWindow.cpp" line="7118"/>
         <source>Switch to the EFI/UKI entries view and load it to list this disk&apos;s firmware entries.</source>
         <translation>Vaihda EFI/UKI-syötteisiin nähdäksesi ja lataa se luetellaksesi tämän levyn laiteohjelmistot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7038"/>
+        <location filename="../src/MainWindow.cpp" line="7126"/>
         <source>Boot%1 — %2 — %3 (%4)</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7134"/>
-        <location filename="../src/MainWindow.cpp" line="8026"/>
+        <location filename="../src/MainWindow.cpp" line="7222"/>
+        <location filename="../src/MainWindow.cpp" line="8114"/>
         <source>No scope selected</source>
         <translation>Kohdetta ei ole valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7138"/>
+        <location filename="../src/MainWindow.cpp" line="7226"/>
         <source>EFI/UKI entries</source>
         <translation>EFI/UKI-merkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
         <source>Boot</source>
         <translation>Saapas</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
         <source>Label</source>
         <translation>Merkitys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
         <source>Loader</source>
         <translation>Loader</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
         <source>Boots</source>
         <translation>Saappaat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
-        <location filename="../src/MainWindow.cpp" line="7280"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
+        <location filename="../src/MainWindow.cpp" line="7368"/>
         <source>Class</source>
         <translation>Luokka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7159"/>
+        <location filename="../src/MainWindow.cpp" line="7247"/>
         <source>Drive</source>
         <translation>Aja</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7184"/>
+        <location filename="../src/MainWindow.cpp" line="7272"/>
         <source>What booting this firmware entry does.</source>
         <translation>Mitä firmwaren syöttäminen tekee?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7197"/>
+        <location filename="../src/MainWindow.cpp" line="7285"/>
         <source>Select Host Maintenance on the protected running-host card, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
         <translation>Valitse isännän huolto suojatulla juoksu-host-kortilla tai korjauskohteena Systems, hallita firmware boot merkinnät. Lataa Merkinnät listaa nykyisen soveltamisalan UEFI merkinnät vain lukea.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7204"/>
+        <location filename="../src/MainWindow.cpp" line="7292"/>
         <source>Firmware boot entries</source>
         <translation>Firmware- käynnistysmerkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7214"/>
+        <location filename="../src/MainWindow.cpp" line="7302"/>
         <source>Load Entries</source>
         <translation>Lataa tietueet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7215"/>
+        <location filename="../src/MainWindow.cpp" line="7303"/>
         <source>Move Up</source>
         <translation>Siirrä ylös</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7216"/>
+        <location filename="../src/MainWindow.cpp" line="7304"/>
         <source>Move Down</source>
         <translation>Siirrä alas</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7218"/>
+        <location filename="../src/MainWindow.cpp" line="7306"/>
         <source>Delete Selected</source>
         <translation>Poista valitut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7219"/>
-        <location filename="../src/MainWindow.cpp" line="8537"/>
+        <location filename="../src/MainWindow.cpp" line="7307"/>
+        <location filename="../src/MainWindow.cpp" line="8625"/>
         <source>EFI-/UKI Restore</source>
         <translation>EFI-/UKI Palauta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7280"/>
+        <location filename="../src/MainWindow.cpp" line="7368"/>
         <source>Menu entry</source>
         <translation>Valikkomerkintä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7280"/>
+        <location filename="../src/MainWindow.cpp" line="7368"/>
         <source>Default</source>
         <translation>Oletus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7327"/>
+        <location filename="../src/MainWindow.cpp" line="7415"/>
         <source>Load Menu</source>
         <translation>Lataa valikko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7442"/>
+        <location filename="../src/MainWindow.cpp" line="7530"/>
         <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
         <translation>Valitse käyttöisännän isäntähuolto tai järjestelmäkorjauksen kohde, jotta voit hallita firmware-käynnistyksiä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7480"/>
+        <location filename="../src/MainWindow.cpp" line="7568"/>
         <source>Loading firmware boot entries</source>
         <translation>Ladataan firmware-käynnistystiedostoja</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7487"/>
+        <location filename="../src/MainWindow.cpp" line="7575"/>
         <source>List firmware boot entries</source>
         <translation>Listaa firmware- käynnistysmerkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7502"/>
+        <location filename="../src/MainWindow.cpp" line="7590"/>
         <source>Firmware boot entries could not be loaded. See Logs for details.</source>
         <translation>Firmware-kansioita ei voitu ladata. Katso lisätietoja lokeista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7533"/>
+        <location filename="../src/MainWindow.cpp" line="7621"/>
         <source>Loaded %1 firmware boot entries.</source>
         <translation>Ladattu %1-ohjelmiston käynnistys.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7752"/>
+        <location filename="../src/MainWindow.cpp" line="7840"/>
         <source>Double-click to rename this boot entry. Blank labels are refused.</source>
         <translation>Tupla-napsauta nimetäksesi tämän saappaan. Tyhjiä etikettejä ei hyväksytä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8019"/>
+        <location filename="../src/MainWindow.cpp" line="8107"/>
         <source>Running host: %1</source>
         <translation>Suoritettava isäntä: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8020"/>
+        <location filename="../src/MainWindow.cpp" line="8108"/>
         <source>Running host: not selected</source>
         <translation>Juokseva isäntä: ei valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8023"/>
+        <location filename="../src/MainWindow.cpp" line="8111"/>
         <source>Repair target: %1</source>
         <translation>Korjaustavoite: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8024"/>
+        <location filename="../src/MainWindow.cpp" line="8112"/>
         <source>Repair target: not ready</source>
         <translation>Korjaa kohde: ei valmis</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8043"/>
-        <location filename="../src/MainWindow.cpp" line="8054"/>
+        <location filename="../src/MainWindow.cpp" line="8131"/>
+        <location filename="../src/MainWindow.cpp" line="8142"/>
         <source>Running-host</source>
         <translation>Isäntä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8043"/>
-        <location filename="../src/MainWindow.cpp" line="8054"/>
+        <location filename="../src/MainWindow.cpp" line="8131"/>
+        <location filename="../src/MainWindow.cpp" line="8142"/>
         <source>Repair-target</source>
         <translation>Korjaustavoite</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8053"/>
+        <location filename="../src/MainWindow.cpp" line="8141"/>
         <source>%1 firmware entry management is available. Load Entries to list the UEFI entries read-only.</source>
         <translation>%1 firmware entry management on käytettävissä. Lataa tietueet vain lukeaksesi UEFI- tietueet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8077"/>
+        <location filename="../src/MainWindow.cpp" line="8165"/>
         <source>Load the %1 UEFI firmware boot entries read-only.</source>
         <translation>Lataa %1 UEFI firmware-saappaat vain luettavaksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8078"/>
-        <location filename="../src/MainWindow.cpp" line="8085"/>
+        <location filename="../src/MainWindow.cpp" line="8166"/>
+        <location filename="../src/MainWindow.cpp" line="8173"/>
         <source>running host&apos;s</source>
         <translation>isäntien käyttö</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8078"/>
-        <location filename="../src/MainWindow.cpp" line="8085"/>
+        <location filename="../src/MainWindow.cpp" line="8166"/>
+        <location filename="../src/MainWindow.cpp" line="8173"/>
         <source>repair target&apos;s</source>
         <translation>Korjaa kohteen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8092"/>
-        <location filename="../src/MainWindow.cpp" line="8098"/>
-        <location filename="../src/MainWindow.cpp" line="8112"/>
+        <location filename="../src/MainWindow.cpp" line="8180"/>
+        <location filename="../src/MainWindow.cpp" line="8186"/>
+        <location filename="../src/MainWindow.cpp" line="8200"/>
         <source>Select a boot entry row first.</source>
         <translation>Valitse aloitusrivi ensin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8348"/>
+        <location filename="../src/MainWindow.cpp" line="8436"/>
         <source>Boot entry delete unavailable</source>
         <translation>Saapuminen ei ole käytettävissä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8353"/>
+        <location filename="../src/MainWindow.cpp" line="8441"/>
         <source>Select a boot entry to delete first.</source>
         <translation>Valitse ensin poistettava käynnistysmerkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8366"/>
+        <location filename="../src/MainWindow.cpp" line="8454"/>
         <source>Boot%1 is the currently active firmware entry (BootCurrent) and cannot be deleted.</source>
         <translation>Boot%1 on tällä hetkellä aktiivinen firmware-merkintä (BootCurrent), eikä sitä voida poistaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8370"/>
-        <location filename="../src/MainWindow.cpp" line="8386"/>
+        <location filename="../src/MainWindow.cpp" line="8458"/>
+        <location filename="../src/MainWindow.cpp" line="8474"/>
         <source>Cannot delete boot entry</source>
         <translation>Ei voi poistaa käynnistysmerkintää</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8380"/>
+        <location filename="../src/MainWindow.cpp" line="8468"/>
         <source>Boot%1 belongs to the running host&apos;s own firmware and cannot be deleted while a repair target is selected.</source>
         <translation>Boot%1 kuuluu käynnissä olevan isännän omiin firmware, eikä sitä voida poistaa korjauskohteen valinnan aikana.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8383"/>
-        <location filename="../src/MainWindow.cpp" line="8445"/>
+        <location filename="../src/MainWindow.cpp" line="8471"/>
+        <location filename="../src/MainWindow.cpp" line="8533"/>
         <source>To manage the running host&apos;s own entries, switch to Host Maintenance first.</source>
         <translation>Voit hallita käynnissä isännän omia merkintöjä, vaihtaa isäntä huolto ensin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8569"/>
-        <location filename="../src/MainWindow.cpp" line="13568"/>
-        <location filename="../src/MainWindow.cpp" line="13768"/>
+        <location filename="../src/MainWindow.cpp" line="8657"/>
+        <location filename="../src/MainWindow.cpp" line="13642"/>
+        <location filename="../src/MainWindow.cpp" line="13842"/>
         <source>Chroot shell</source>
         <translation>Chroot-kuori</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8576"/>
-        <location filename="../src/MainWindow.cpp" line="13577"/>
+        <location filename="../src/MainWindow.cpp" line="8664"/>
+        <location filename="../src/MainWindow.cpp" line="13651"/>
         <source>Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.</source>
         <translation>Suorita komento valitun korjausjärjestelmän sisällä juurina (sudoa ei tarvita). Komennot suoritetaan yksi kerrallaan tuoreella krootilla. Kun komento esittää kysymyksen, Boot Bitch näyttää sen ponnahdusikkunassa ja lähettää vastauksesi takaisin komentoon; komento keskeytetään. Ei-interaktiiviset liput, kuten dnf update -y tai apt-get -y päivitys on edelleen suositeltavaa valvomattomia juoksuja. Tulosta säilytetään tässä ikkunassa ja sovelluslokissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8585"/>
-        <location filename="../src/MainWindow.cpp" line="13584"/>
+        <location filename="../src/MainWindow.cpp" line="8673"/>
+        <location filename="../src/MainWindow.cpp" line="13658"/>
         <source>Command, for example: dnf update -y or update-grub</source>
         <translation>Komento, esimerkiksi: dnf update -y tai update-grub</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8590"/>
-        <location filename="../src/MainWindow.cpp" line="13590"/>
+        <location filename="../src/MainWindow.cpp" line="8678"/>
+        <location filename="../src/MainWindow.cpp" line="13664"/>
         <source>Run Command</source>
         <translation>Suorita komento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8592"/>
-        <location filename="../src/MainWindow.cpp" line="13557"/>
+        <location filename="../src/MainWindow.cpp" line="8680"/>
+        <location filename="../src/MainWindow.cpp" line="13631"/>
         <source>Execute the command inside the selected repair system as root.</source>
         <translation>Suorita komento valitun korjausjärjestelmän sisällä juurina.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8608"/>
+        <location filename="../src/MainWindow.cpp" line="8696"/>
         <source>Command output will appear here.</source>
         <translation>Komennon tulostus näkyy täällä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8615"/>
-        <location filename="../src/MainWindow.cpp" line="13595"/>
+        <location filename="../src/MainWindow.cpp" line="8703"/>
+        <location filename="../src/MainWindow.cpp" line="13669"/>
         <source>Commands can modify the target system. Review each command before running it.</source>
         <translation>Komento voi muuttaa kohdejärjestelmää. Tarkista jokainen komento ennen sen suorittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8618"/>
+        <location filename="../src/MainWindow.cpp" line="8706"/>
         <source>Clear Output</source>
         <translation>Tyhjennä tuloste</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8652"/>
+        <location filename="../src/MainWindow.cpp" line="8740"/>
         <source>File copy</source>
         <translation>Tiedostokopiointi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8655"/>
+        <location filename="../src/MainWindow.cpp" line="8743"/>
         <source>Copy and verify files in either direction. Host to Repair remounts only the selected target filesystem read-write after safety checks; Repair to Host keeps the repair target read-only. Browse Target Folders reads the selected repair tree through temporary read-only mounts, while transfers use rsync without --delete, path containment, ownership validation and post-copy verification.</source>
         <translation>Kopioi ja varmista tiedostot kumpaan suuntaan tahansa. Korjaaja asentaa uudelleen vain valitun kohdetiedostojärjestelmän lukeman turvallisuustarkastusten jälkeen; Korjaa Host pitää korjauskohde vain lukea. Selaa Target-kansiot lukevat valitun korjauspuun tilapäisten lukutaukojen kautta, kun taas siirrot käyttävät rsync ilman --delete, polun hallinta, omistuksen validointi ja kopion jälkeinen todentaminen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8667"/>
+        <location filename="../src/MainWindow.cpp" line="8755"/>
         <source>Preview Changes</source>
         <translation>Esikatselumuutokset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8668"/>
-        <location filename="../src/MainWindow.cpp" line="13966"/>
+        <location filename="../src/MainWindow.cpp" line="8756"/>
+        <location filename="../src/MainWindow.cpp" line="14039"/>
         <source>Copy and Verify</source>
         <translation>Kopioi ja varmista</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8671"/>
+        <location filename="../src/MainWindow.cpp" line="8759"/>
         <source>Run an rsync dry-run through the guarded helper. No files are changed.</source>
         <translation>Aja Rsync kuivakäynnillä vartijan läpi. Tiedostoja ei ole muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8685"/>
+        <location filename="../src/MainWindow.cpp" line="8773"/>
         <source>Direction:</source>
         <translation>Suunta:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8687"/>
-        <location filename="../src/MainWindow.cpp" line="13920"/>
+        <location filename="../src/MainWindow.cpp" line="8775"/>
+        <location filename="../src/MainWindow.cpp" line="13993"/>
         <source>Host → Repair</source>
         <translation>Host → korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8688"/>
-        <location filename="../src/MainWindow.cpp" line="13920"/>
+        <location filename="../src/MainWindow.cpp" line="8776"/>
+        <location filename="../src/MainWindow.cpp" line="13993"/>
         <source>Repair → Host</source>
         <translation>Korjaa →-ohjain</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8689"/>
+        <location filename="../src/MainWindow.cpp" line="8777"/>
         <source>Choose which system supplies the source files and which system receives them.</source>
         <translation>Valitse mikä järjestelmä toimittaa lähdetiedostot ja mikä järjestelmä vastaanottaa ne.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8714"/>
-        <location filename="../src/MainWindow.cpp" line="13033"/>
+        <location filename="../src/MainWindow.cpp" line="8802"/>
+        <location filename="../src/MainWindow.cpp" line="13107"/>
         <source>Add Files…</source>
         <translation>Lisää tiedostoja…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8715"/>
-        <location filename="../src/MainWindow.cpp" line="13034"/>
+        <location filename="../src/MainWindow.cpp" line="8803"/>
+        <location filename="../src/MainWindow.cpp" line="13108"/>
         <source>Add Folder…</source>
         <translation>Lisää kansio…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8716"/>
+        <location filename="../src/MainWindow.cpp" line="8804"/>
         <source>Remove</source>
         <translation>Poista</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8717"/>
+        <location filename="../src/MainWindow.cpp" line="8805"/>
         <source>Remove the selected staged source entries from this list.</source>
         <translation>Poista valitut vaiheistetut lähdetiedot tästä luettelosta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8718"/>
-        <location filename="../src/MainWindow.cpp" line="13131"/>
+        <location filename="../src/MainWindow.cpp" line="8806"/>
+        <location filename="../src/MainWindow.cpp" line="13205"/>
+        <location filename="../src/MainWindow.cpp" line="16922"/>
         <source>Clear</source>
         <translation>Tyhjennä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8719"/>
+        <location filename="../src/MainWindow.cpp" line="8807"/>
         <source>Clear every staged source entry from this list.</source>
         <translation>Tyhjennä jokainen vaiheistettu lähdemerkintä tästä luettelosta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8742"/>
+        <location filename="../src/MainWindow.cpp" line="8830"/>
         <source>Choose Path…</source>
         <translation>Valitse polku…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8748"/>
+        <location filename="../src/MainWindow.cpp" line="8836"/>
         <source>3. Ownership and copy policy</source>
         <translation>3. Omistus- ja kopiointipolitiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8751"/>
+        <location filename="../src/MainWindow.cpp" line="8839"/>
         <source>Ownership:</source>
         <translation>Omistusoikeus:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8753"/>
+        <location filename="../src/MainWindow.cpp" line="8841"/>
         <source>Smart destination ownership (recommended)</source>
         <translation>Älykäs määränpään omistus (suositeltu)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8754"/>
+        <location filename="../src/MainWindow.cpp" line="8842"/>
         <source>Preserve source numeric UID/GID</source>
         <translation>Säilytä lähdenumero UID/GID</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8891"/>
+        <location filename="../src/MainWindow.cpp" line="8979"/>
         <source>Application log</source>
         <translation>Sovellusloki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8893"/>
+        <location filename="../src/MainWindow.cpp" line="8981"/>
         <source>Shows this application&apos;s session activity. Session files are listed on the left; Save a copy when you need to share troubleshooting details.</source>
         <translation>Näyttää sovelluksen istuntotoiminnan. Istuntotiedostot ovat vasemmalla; Tallenna kopio, kun haluat jakaa vianmääritystietoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8895"/>
+        <location filename="../src/MainWindow.cpp" line="8983"/>
         <source>Save As…</source>
         <translation>Tallenna As…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8896"/>
+        <location filename="../src/MainWindow.cpp" line="8984"/>
+        <location filename="../src/MainWindow.cpp" line="16917"/>
         <source>Clear Register</source>
         <translation>Tyhjennä rekisteri</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8932"/>
+        <location filename="../src/MainWindow.cpp" line="9003"/>
         <source>Session logs</source>
         <translation>Istunnon lokit</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8946"/>
+        <location filename="../src/MainWindow.cpp" line="9017"/>
         <source>New Session Log</source>
         <translation>Uuden istunnon loki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8947"/>
+        <location filename="../src/MainWindow.cpp" line="9018"/>
         <source>Delete</source>
         <translation>Poista</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8267"/>
+        <location filename="../src/MainWindow.cpp" line="8355"/>
         <source>Delete firmware boot entry</source>
         <translation>Poista laiteohjelmiston käynnistys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8431"/>
+        <location filename="../src/MainWindow.cpp" line="8519"/>
         <source>Boot entry rename unavailable</source>
         <translation>Saapuminen uudelleennimeä ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8442"/>
+        <location filename="../src/MainWindow.cpp" line="8530"/>
         <source>Boot%1 belongs to the running host&apos;s own firmware and cannot be renamed while a repair target is selected.</source>
         <translation>Boot%1 kuuluu käynnissä olevan isännän omaan firmwareon, eikä sitä voida nimetä uudelleen, kun korjauskohde valitaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8454"/>
+        <location filename="../src/MainWindow.cpp" line="8542"/>
         <source>Cannot rename boot entry</source>
         <translation>Saapasta ei voi nimetä uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8290"/>
+        <location filename="../src/MainWindow.cpp" line="8378"/>
         <source>Rename firmware boot entry</source>
         <translation>Nimeä firmware-käynnistys uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8489"/>
+        <location filename="../src/MainWindow.cpp" line="8577"/>
         <source>Boot entry labels cannot be blank; the previous label was kept.</source>
         <translation>Saapastuloetiketit eivät voi olla tyhjiä; edellinen etiketti säilytettiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8490"/>
+        <location filename="../src/MainWindow.cpp" line="8578"/>
         <source>Boot entry label</source>
         <translation>Saapastulonimi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8491"/>
+        <location filename="../src/MainWindow.cpp" line="8579"/>
         <source>A blank boot entry label is not allowed. The previous label was kept.</source>
         <translation>Tyhjä saapasmerkintä ei ole sallittu. Edellinen merkki säilytettiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8499"/>
+        <location filename="../src/MainWindow.cpp" line="8587"/>
         <source>Boot%1 rename cancelled.</source>
         <translation>Boot%1-nimitys peruttu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8518"/>
+        <location filename="../src/MainWindow.cpp" line="8606"/>
         <source>Restore boot entries unavailable</source>
         <translation>Palauta käynnistyssyötteet ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8538"/>
+        <location filename="../src/MainWindow.cpp" line="8626"/>
         <source>Reinstall the EFI/UKI bootloader and re-create or re-label missing firmware entries</source>
         <translation>Asenna EFI/UKI-käynnistin uudelleen ja luo puuttuvat laiteohjelmistot uudelleen tai merkitse ne uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8547"/>
+        <location filename="../src/MainWindow.cpp" line="8635"/>
         <source>Restore / regenerate boot entries</source>
         <translation>Palauta/uudista käynnistysmerkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8949"/>
-        <location filename="../src/MainWindow.cpp" line="13196"/>
+        <location filename="../src/MainWindow.cpp" line="9020"/>
+        <location filename="../src/MainWindow.cpp" line="13270"/>
         <source>Refresh</source>
         <translation>Päivitä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8953"/>
-        <location filename="../src/MainWindow.cpp" line="17665"/>
+        <location filename="../src/MainWindow.cpp" line="9024"/>
+        <location filename="../src/MainWindow.cpp" line="17864"/>
         <source>Add Note</source>
         <translation>Lisää huomautus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8954"/>
+        <location filename="../src/MainWindow.cpp" line="9025"/>
         <source>Append a timestamped NOTE entry to the current session log.</source>
         <translation>Lisää aikaleimattu HUOMAUTUSmerkintä istuntolokiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8969"/>
+        <location filename="../src/MainWindow.cpp" line="9040"/>
         <source>Search log:</source>
         <translation>Etsi loki:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8975"/>
+        <location filename="../src/MainWindow.cpp" line="9046"/>
         <source>Filter application log (fuzzy match; use @section, e.g. @errors, for whole diagnostic sections)…</source>
         <translation>Suodatinsovellusloki (pörröinen ottelu; käytä @sektiota, esim. @errorit, kokonaisissa diagnostisissa osissa)…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8984"/>
+        <location filename="../src/MainWindow.cpp" line="9055"/>
         <source>All entries</source>
         <translation>Kaikki merkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8986"/>
+        <location filename="../src/MainWindow.cpp" line="9057"/>
         <source>Repairs</source>
         <translation>Korjaukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9072"/>
+        <location filename="../src/MainWindow.cpp" line="9143"/>
         <source>Device discovery</source>
         <translation>Laitelöytö</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9074"/>
+        <location filename="../src/MainWindow.cpp" line="9145"/>
         <source>Show devices without an identified Linux installation</source>
         <translation>Näytä laitteet ilman tunnistettua Linux-asennusta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9075"/>
+        <location filename="../src/MainWindow.cpp" line="9146"/>
         <source>Show removable and USB storage</source>
         <translation>Näytä irrotettava ja USB- tallennus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9076"/>
+        <location filename="../src/MainWindow.cpp" line="9147"/>
         <source>Show encrypted devices before unlocking</source>
         <translation>Näytä salatut laitteet ennen avaamista</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9084"/>
+        <location filename="../src/MainWindow.cpp" line="9155"/>
         <source>Repair file system errors (read-only check first)</source>
         <translation>Korjaa tiedostojärjestelmän virheet (lukea vain tarkistaa ensin)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="1990"/>
-        <location filename="../src/MainWindow.cpp" line="9087"/>
-        <location filename="../src/MainWindow.cpp" line="19697"/>
-        <location filename="../src/MainWindow.cpp" line="21857"/>
+        <location filename="../src/MainWindow.cpp" line="2072"/>
+        <location filename="../src/MainWindow.cpp" line="9158"/>
+        <location filename="../src/MainWindow.cpp" line="19896"/>
+        <location filename="../src/MainWindow.cpp" line="22185"/>
         <source>Complete interrupted package configuration</source>
         <translation>Keskeytä pakettien asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2025"/>
-        <location filename="../src/MainWindow.cpp" line="9088"/>
-        <location filename="../src/MainWindow.cpp" line="19698"/>
-        <location filename="../src/MainWindow.cpp" line="21110"/>
+        <location filename="../src/MainWindow.cpp" line="2113"/>
+        <location filename="../src/MainWindow.cpp" line="9159"/>
+        <location filename="../src/MainWindow.cpp" line="19897"/>
+        <location filename="../src/MainWindow.cpp" line="21346"/>
         <source>Repair broken package dependencies</source>
         <translation>Korjaa rikkinäiset pakettiriippuvuudet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9090"/>
-        <location filename="../src/MainWindow.cpp" line="21116"/>
+        <location filename="../src/MainWindow.cpp" line="9161"/>
+        <location filename="../src/MainWindow.cpp" line="21352"/>
         <source>Upgrade installed packages (adaptive APT simulation)</source>
         <translation>Asennettujen pakettien päivittäminen (mukautuva APT-simulaatio)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2001"/>
-        <location filename="../src/MainWindow.cpp" line="9091"/>
-        <location filename="../src/MainWindow.cpp" line="19701"/>
-        <location filename="../src/MainWindow.cpp" line="21861"/>
+        <location filename="../src/MainWindow.cpp" line="2089"/>
+        <location filename="../src/MainWindow.cpp" line="9162"/>
+        <location filename="../src/MainWindow.cpp" line="17223"/>
         <source>Rebuild DKMS modules</source>
         <translation>Rakenna DKMS-moduulit uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9092"/>
-        <location filename="../src/MainWindow.cpp" line="21119"/>
+        <location filename="../src/MainWindow.cpp" line="9163"/>
+        <location filename="../src/MainWindow.cpp" line="21360"/>
         <source>Restore detected graphical login manager and graphical.target</source>
         <translation>Palauta havaittu graafinen kirjautumisen hallinta ja graafinen. kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9093"/>
-        <location filename="../src/MainWindow.cpp" line="19703"/>
-        <location filename="../src/MainWindow.cpp" line="21122"/>
+        <location filename="../src/MainWindow.cpp" line="9164"/>
+        <location filename="../src/MainWindow.cpp" line="19902"/>
+        <location filename="../src/MainWindow.cpp" line="21363"/>
         <source>Rebuild initramfs after mapper/crypttab validation</source>
         <translation>Rakenna initramfs uudelleen mapper/cryptab-validoinnin jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9094"/>
-        <location filename="../src/MainWindow.cpp" line="21104"/>
+        <location filename="../src/MainWindow.cpp" line="9165"/>
+        <location filename="../src/MainWindow.cpp" line="21340"/>
         <source>Repair EFI / UKI boot path (explicit target ESP repair)</source>
         <translation>Korjaa EFI / UKI boot polku (selitä kohde ESP korjaus)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9095"/>
-        <location filename="../src/MainWindow.cpp" line="19705"/>
-        <location filename="../src/MainWindow.cpp" line="21107"/>
+        <location filename="../src/MainWindow.cpp" line="9166"/>
+        <location filename="../src/MainWindow.cpp" line="19904"/>
+        <location filename="../src/MainWindow.cpp" line="21343"/>
         <source>Update GRUB configuration</source>
         <translation>Päivitä GRUB- asetus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9096"/>
-        <location filename="../src/MainWindow.cpp" line="19706"/>
-        <location filename="../src/MainWindow.cpp" line="21125"/>
+        <location filename="../src/MainWindow.cpp" line="9167"/>
+        <location filename="../src/MainWindow.cpp" line="19905"/>
+        <location filename="../src/MainWindow.cpp" line="21366"/>
         <source>Update extlinux configuration</source>
         <translation>Päivitä extlinux- asetus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9112"/>
+        <location filename="../src/MainWindow.cpp" line="9183"/>
         <source>Automatically regenerate read-only diagnostics after repairs or target changes</source>
         <translation>Uudista automaattisesti vain lukudiagnostiikka korjausten tai tavoitemuutosten jälkeen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9118"/>
+        <location filename="../src/MainWindow.cpp" line="9189"/>
         <source>Mandatory safety controls</source>
         <translation>Pakollinen turvavalvonta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9121"/>
+        <location filename="../src/MainWindow.cpp" line="9192"/>
         <source>Protect every physical device backing /, /boot and /boot/efi</source>
         <translation>Suojaa jokaisen fyysisen laitteen tausta /, /boot ja /boot/efi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9122"/>
+        <location filename="../src/MainWindow.cpp" line="9193"/>
         <source>Require explicit confirmation before package installation or repair actions</source>
         <translation>Vaadi nimenomainen vahvistus ennen pakettien asennus- tai korjaustoimia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9123"/>
+        <location filename="../src/MainWindow.cpp" line="9194"/>
         <source>Require mapper/crypttab consistency before initramfs rebuild</source>
         <translation>Vaadi mapper/cryptab johdonmukaisuutta ennen initramfs uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9124"/>
+        <location filename="../src/MainWindow.cpp" line="9195"/>
         <source>Preserve pre-rollback Btrfs root and auto-restore it on validation failure</source>
         <translation>Säilytä pre-rollback Btrfs root ja automaattinen palauttaa sen validointivirhe</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9125"/>
+        <location filename="../src/MainWindow.cpp" line="9196"/>
         <source>Never log LUKS passphrases or authentication secrets</source>
         <translation>Älä koskaan kirjaudu LUKS:n salalauseisiin tai todennussalaisuuksiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9135"/>
+        <location filename="../src/MainWindow.cpp" line="9206"/>
         <source>Host capabilities and dependencies</source>
         <translation>Isäntävalmiudet ja riippuvuussuhteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9150"/>
+        <location filename="../src/MainWindow.cpp" line="9221"/>
         <source>Distribution:</source>
         <translation>Jakautuminen:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9151"/>
+        <location filename="../src/MainWindow.cpp" line="9222"/>
         <source>Package manager family:</source>
         <translation>Pakettipäällikön perhe:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9152"/>
+        <location filename="../src/MainWindow.cpp" line="9223"/>
         <source>KAuth build support:</source>
         <translation>KAuthin rakennetuki:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9157"/>
+        <location filename="../src/MainWindow.cpp" line="9228"/>
         <source>Feature</source>
         <translation>Ominaisuus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9157"/>
+        <location filename="../src/MainWindow.cpp" line="9228"/>
         <source>Command</source>
         <translation>Komento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9157"/>
+        <location filename="../src/MainWindow.cpp" line="9228"/>
         <source>Scope</source>
         <translation>Soveltamisala</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9158"/>
+        <location filename="../src/MainWindow.cpp" line="9229"/>
         <source>Suggested package</source>
         <translation>Ehdotettu paketti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9158"/>
+        <location filename="../src/MainWindow.cpp" line="9229"/>
         <source>Notes</source>
         <translation>Huomautuksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9207"/>
+        <location filename="../src/MainWindow.cpp" line="9278"/>
         <source>Refresh Capabilities</source>
         <translation>Päivitä valmiudet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9208"/>
+        <location filename="../src/MainWindow.cpp" line="9279"/>
         <source>Install Missing Support…</source>
         <translation>Asenna puuttuva tuki…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9435"/>
+        <location filename="../src/MainWindow.cpp" line="9506"/>
         <source>Scanning block devices…</source>
         <translation>Skannataan lohkolaitteet…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9446"/>
-        <location filename="../src/MainWindow.cpp" line="9447"/>
+        <location filename="../src/MainWindow.cpp" line="9517"/>
+        <location filename="../src/MainWindow.cpp" line="9518"/>
         <source>Device scan failed</source>
         <translation>Laitteen skannaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9479"/>
+        <location filename="../src/MainWindow.cpp" line="9550"/>
         <source>Device scan complete — discovery did not modify storage</source>
         <translation>Laitteen skannaus täydellinen ... löytö ei muuttanut tallennusta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9534"/>
+        <location filename="../src/MainWindow.cpp" line="9605"/>
         <source>Showing %1 of %2 repair candidate disk(s); %3 running-system disk(s) protected</source>
         <translation>Näytetään %1 %2 korjaus ehdokas levykkeet; %3 juoksu-järjestelmä levy [s] suojattu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9604"/>
+        <location filename="../src/MainWindow.cpp" line="9675"/>
         <source>Running system protection unresolved</source>
         <translation>Juoksevan järjestelmän suojaus selvittämätön</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9605"/>
+        <location filename="../src/MainWindow.cpp" line="9676"/>
         <source>No protected physical backing disk was identified</source>
         <translation>Suojattua fyysistä taustalevyä ei tunnistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9615"/>
+        <location filename="../src/MainWindow.cpp" line="9686"/>
         <source>Current running Linux system</source>
         <translation>Nykyinen Linux-järjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9619"/>
+        <location filename="../src/MainWindow.cpp" line="9690"/>
         <source>Protected running-system storage</source>
         <translation>Suojattu ajojärjestelmän varastointi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9620"/>
+        <location filename="../src/MainWindow.cpp" line="9691"/>
         <source>Critical mounts: %1</source>
         <translation>Kriittiset kiinnikkeet: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9780"/>
+        <location filename="../src/MainWindow.cpp" line="9851"/>
         <source>Showing protected running-host details</source>
         <translation>Näytetään suojatut ajo-isäntätiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9837"/>
+        <location filename="../src/MainWindow.cpp" line="9908"/>
         <source>Host maintenance unavailable</source>
         <translation>Huoltoa ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9851"/>
+        <location filename="../src/MainWindow.cpp" line="9922"/>
         <source>Exit Host Maintenance</source>
         <translation>Poistuminen isäntähuolto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9900"/>
+        <location filename="../src/MainWindow.cpp" line="9971"/>
         <source>Host default unavailable</source>
         <translation>Isännän oletus ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9906"/>
+        <location filename="../src/MainWindow.cpp" line="9977"/>
         <source>Make host the default boot entry</source>
         <translation>Asenna oletuskäynnistys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9907"/>
+        <location filename="../src/MainWindow.cpp" line="9978"/>
         <source>Restore/ensure and select the running host&apos;s default boot entry?</source>
         <translation>Palauttaa / varmistaa ja valitse käynnissä olevan isännän oletuskäynnistys?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9913"/>
-        <location filename="../src/MainWindow.cpp" line="15185"/>
+        <location filename="../src/MainWindow.cpp" line="9984"/>
+        <location filename="../src/MainWindow.cpp" line="15263"/>
         <source>default boot entry</source>
         <translation>Oletuskäynnistys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9914"/>
-        <location filename="../src/MainWindow.cpp" line="15186"/>
+        <location filename="../src/MainWindow.cpp" line="9985"/>
+        <location filename="../src/MainWindow.cpp" line="15264"/>
         <source>%1 default boot entry</source>
         <translation>%1:n oletuskäynnistys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9916"/>
+        <location filename="../src/MainWindow.cpp" line="9987"/>
         <source>Host disk: %1
 Root: %2
 
@@ -6341,7 +6539,7 @@ Juuri: %2
 Boot Bitch tunnistaa isäntä ESP, palauttaa / varmistaa todennetun %3, ja asettaa sen ensin BootSorder. Vara-/hyödyntämisreitti ja kaikki muut firmware-ohjelmistot pysyvät käynnistyskelpoisina eikä niitä koskaan poisteta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9920"/>
+        <location filename="../src/MainWindow.cpp" line="9991"/>
         <source>Host disk: %1
 Root: %2
 
@@ -6352,22 +6550,22 @@ Juuri: %2
 Boot Bitch tunnistaa juoksuisännän käynnistyskokoonpanon, palauttaa/varmistaa vahvistetun %3:n ja valitsee sen oletusarvoksi. Kaikki muut kengät pysyvät käynnistyskelpoisina, eikä niitä koskaan poisteta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9938"/>
+        <location filename="../src/MainWindow.cpp" line="10009"/>
         <source>Make host default boot entry</source>
         <translation>Tee oletuskäynnistys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9989"/>
+        <location filename="../src/MainWindow.cpp" line="10060"/>
         <source>Host default set to %1</source>
         <translation>Aseta oletus %1:ään</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9992"/>
+        <location filename="../src/MainWindow.cpp" line="10063"/>
         <source>Host default verified</source>
         <translation>Oletus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9993"/>
+        <location filename="../src/MainWindow.cpp" line="10064"/>
         <source>%1
 
 Full helper output is available in Logs.</source>
@@ -6376,27 +6574,27 @@ Full helper output is available in Logs.</source>
 Täysi apuri tuloste on saatavilla lokeissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10000"/>
+        <location filename="../src/MainWindow.cpp" line="10071"/>
         <source>Host default not verified: the helper did not name a verified boot entry.</source>
         <translation>Isännän oletus ei todennettu: auttaja ei nimennyt todennettua käynnistysmerkintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10001"/>
+        <location filename="../src/MainWindow.cpp" line="10072"/>
         <source>Host default not verified</source>
         <translation>Asennuksen oletusarvoa ei tarkistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10003"/>
+        <location filename="../src/MainWindow.cpp" line="10074"/>
         <source>Host default operation failed: %1</source>
         <translation>Oletustoiminto epäonnistui: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10006"/>
+        <location filename="../src/MainWindow.cpp" line="10077"/>
         <source>Host default operation failed</source>
         <translation>Oletustoiminto epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10007"/>
+        <location filename="../src/MainWindow.cpp" line="10078"/>
         <source>The host default operation failed: %1
 
 Full helper output is available in Logs.</source>
@@ -6405,449 +6603,449 @@ Full helper output is available in Logs.</source>
 Täysi apuri tuloste on saatavilla lokeissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10027"/>
+        <location filename="../src/MainWindow.cpp" line="10098"/>
         <source>Pending inspection</source>
         <translation>Ennen tarkastusta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10040"/>
+        <location filename="../src/MainWindow.cpp" line="10111"/>
         <source>PROTECTED — running system; read-only details only</source>
         <translation>SUOJATTU ajojärjestelmä; ainoastaan luettavat tiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10042"/>
+        <location filename="../src/MainWindow.cpp" line="10113"/>
         <source>Live / installer media — not selectable</source>
         <translation>Live / asentaja mediat Ei valittavissa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10044"/>
+        <location filename="../src/MainWindow.cpp" line="10115"/>
         <source>Unlock required before selection</source>
         <translation>Avaa vaaditaan ennen valintaa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10045"/>
+        <location filename="../src/MainWindow.cpp" line="10116"/>
         <source>Eligible repair candidate</source>
         <translation>Tukikelpoiset korjausehdokkaat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10059"/>
+        <location filename="../src/MainWindow.cpp" line="10130"/>
         <source>Commit this physical drive as the repair target.</source>
         <translation>Toimita tämä fyysinen asema korjauskohteena.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10062"/>
+        <location filename="../src/MainWindow.cpp" line="10133"/>
         <source>Live / installer media is read-only boot media and cannot be selected as a repair target.</source>
         <translation>Live / asentaja media on luku-avain media, eikä sitä voida valita korjauskohteeksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10064"/>
+        <location filename="../src/MainWindow.cpp" line="10135"/>
         <source>Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.</source>
         <translation>Avaa salattu äänenvoimakkuus ensin; Valitse kohde tulee saataville sen jälkeen, kun Linux-tiedostojärjestelmä on havaittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10065"/>
+        <location filename="../src/MainWindow.cpp" line="10136"/>
         <source>No selectable repair target was detected on this drive.</source>
         <translation>Asemalla ei havaittu valittua korjauskohdetta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10066"/>
+        <location filename="../src/MainWindow.cpp" line="10137"/>
         <source>The protected running host cannot be selected as a repair target.</source>
         <translation>Suojattua käynnissä olevaa isäntää ei voida valita korjauskohteeksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10082"/>
+        <location filename="../src/MainWindow.cpp" line="10153"/>
         <source>Already unlocked before this Boot Bitch session. No unlock operation was performed here; the visible mapper will be reused and will not be closed by Boot Bitch.</source>
         <translation>Avattu jo ennen Boot Bitch-istuntoa. Täällä ei suoritettu avaustoimintoa; näkyvää karttaa käytetään uudelleen eikä Boot Bitch sulje sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10090"/>
+        <location filename="../src/MainWindow.cpp" line="10161"/>
         <source>Already Unlocked</source>
         <translation>Avattu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10100"/>
+        <location filename="../src/MainWindow.cpp" line="10171"/>
         <source>No locked LUKS component is currently visible on this selected drive.</source>
         <translation>Tällä hetkellä valitulla asemalla ei ole lukittua LUKS-komponenttia.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10102"/>
+        <location filename="../src/MainWindow.cpp" line="10173"/>
         <source>The protected running host cannot be unlocked or modified by Boot Bitch.</source>
         <translation>Boot Bitch ei voi avata tai muokata suojattua juoksu isäntää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10125"/>
-        <location filename="../src/MainWindow.cpp" line="10161"/>
+        <location filename="../src/MainWindow.cpp" line="10196"/>
+        <location filename="../src/MainWindow.cpp" line="10232"/>
         <source>Target unavailable</source>
         <translation>Kohde ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10126"/>
+        <location filename="../src/MainWindow.cpp" line="10197"/>
         <source>The selected drive is no longer available. Refresh devices and select it again.</source>
         <translation>Valittua asemaa ei ole enää saatavilla. Päivitä laitteet ja valitse se uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10139"/>
+        <location filename="../src/MainWindow.cpp" line="10210"/>
         <source>Protected system</source>
         <translation>Suojattu järjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10140"/>
+        <location filename="../src/MainWindow.cpp" line="10211"/>
         <source>The running system cannot be selected as a repair target.</source>
         <translation>Ajojärjestelmää ei voi valita korjauskohteeksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10149"/>
+        <location filename="../src/MainWindow.cpp" line="10220"/>
         <source>Live / installer media cannot be selected</source>
         <translation>Live-/asentajamediaa ei voi valita</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10150"/>
+        <location filename="../src/MainWindow.cpp" line="10221"/>
         <source>This drive carries read-only live/installer media. Insert or select a data drive instead; the boot media itself is never a repair target.</source>
         <translation>Tämä asema kuljettaa vain live-/asentajan mediaa. Aseta tai valitse data-asema sen sijaan; itse käynnistyslevy ei ole koskaan korjauskohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10156"/>
+        <location filename="../src/MainWindow.cpp" line="10227"/>
         <source>Unlock or select a Linux system first</source>
         <translation>Avaa tai valitse Linux-järjestelmä ensin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10157"/>
+        <location filename="../src/MainWindow.cpp" line="10228"/>
         <source>This encrypted drive has no visible Linux filesystem yet. Use Unlock, refresh devices, and select the target after its Linux root is detected.</source>
         <translation>Tällä salatulla asemalla ei ole vielä näkyvää Linux-tiedostojärjestelmää. Avaa, virkistä laitteita ja valitse kohde sen jälkeen, kun sen Linux root on havaittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10162"/>
+        <location filename="../src/MainWindow.cpp" line="10233"/>
         <source>This drive has no resolvable target component. Refresh devices and select it again.</source>
         <translation>Tämä asema ei ole ratkaistavissa kohdekomponentti. Päivitä laitteet ja valitse se uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10180"/>
+        <location filename="../src/MainWindow.cpp" line="10251"/>
         <source>Repair drive selected: %1</source>
         <translation>Korjausasema valittu: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10331"/>
+        <location filename="../src/MainWindow.cpp" line="10402"/>
         <source>Requesting administrator authorization</source>
         <translation>Hallinnoija-valtuutuksen pyytäminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10370"/>
-        <location filename="../src/MainWindow.cpp" line="10513"/>
+        <location filename="../src/MainWindow.cpp" line="10441"/>
+        <location filename="../src/MainWindow.cpp" line="10584"/>
         <source>Administrator authorization active for this Boot Bitch window</source>
         <translation>Tämän Boot Bitch-ikkunan ylläpitäjän valtuutus aktiivinen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10720"/>
+        <location filename="../src/MainWindow.cpp" line="10791"/>
         <source>Requesting administrator authorization…</source>
         <translation>Pyydän valvoja-valtuutusta…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10733"/>
+        <location filename="../src/MainWindow.cpp" line="10804"/>
         <source>Administrator authorization deferred — diagnostics will regenerate after you authorize.</source>
         <translation>Administrator valtuutusta on lykätty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10740"/>
+        <location filename="../src/MainWindow.cpp" line="10811"/>
         <source>Administrator authorization failed — press Authorize to retry.</source>
         <translation>Administrator-valtuutus epäonnistui ...</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10982"/>
-        <location filename="../src/MainWindow.cpp" line="11025"/>
+        <location filename="../src/MainWindow.cpp" line="11056"/>
+        <location filename="../src/MainWindow.cpp" line="11099"/>
         <source>another privileged operation</source>
         <translation>toinen etuoikeutettu operaatio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11029"/>
+        <location filename="../src/MainWindow.cpp" line="11103"/>
         <source>superseded by the scope change to %1 and was not queued</source>
         <translation>korvasi soveltamisalan muutos %1 eikä ollut jonossa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11030"/>
+        <location filename="../src/MainWindow.cpp" line="11104"/>
         <source>refused because &apos;%1&apos; is still running and was not queued. Wait for it to finish and retry, or cancel it</source>
         <translation>Kieltäytyi, koska &quot;%1&quot; on yhä käynnissä eikä ollut jonossa. Odota, että se valmistuu ja yrittää uudelleen, tai peruuttaa sen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11031"/>
+        <location filename="../src/MainWindow.cpp" line="11105"/>
         <source>Privileged request &apos;%1&apos; was %2.</source>
         <translation>%1 oli %2.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11033"/>
+        <location filename="../src/MainWindow.cpp" line="11107"/>
         <source>ERROR: Privileged request &apos;%1&apos; was %2.
 </source>
         <translation>%1 oli %2.
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11117"/>
+        <location filename="../src/MainWindow.cpp" line="11191"/>
         <source>The administrator authorization session could not be established.</source>
         <translation>Hallinnoijan valtuutusistuntoa ei voitu perustaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11123"/>
+        <location filename="../src/MainWindow.cpp" line="11197"/>
         <source>Authorization unavailable</source>
         <translation>Valtuutus puuttuu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11133"/>
+        <location filename="../src/MainWindow.cpp" line="11207"/>
         <source>The privileged helper session is not running; the plan stopped before its request started.</source>
         <translation>Etuoikeutettu auttajan istunto ei ole käynnissä; suunnitelma pysähtyi ennen pyynnön alkua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11145"/>
+        <location filename="../src/MainWindow.cpp" line="11219"/>
         <source>Using the authorized Boot Bitch administrator session. The GUI itself is still running as your normal user.</source>
         <translation>Käyttämällä valtuutettua Boot Bitch:n ylläpitäjäistuntoa. Itse käyttöliittymä toimii edelleen normaalina käyttäjänä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11190"/>
+        <location filename="../src/MainWindow.cpp" line="11264"/>
         <source>Privileged request &apos;%1&apos; exceeded the %2 safety limit; aborting the request and closing the unresponsive helper session so the UI cannot stay busy indefinitely.</source>
         <translation>Etuoikeutettu pyyntö &apos;%1&apos; ylitti %2:n turvallisuusrajan; pyynnön keskeyttäminen ja vastaamattoman auttajan istunnon sulkeminen, jotta käyttöliittymä ei voi pysyä kiireisenä loputtomiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11193"/>
+        <location filename="../src/MainWindow.cpp" line="11267"/>
         <source>The privileged operation exceeded the %1 safety limit and was aborted. Review the output before retrying.</source>
         <translation>Etuoikeutettu toiminta ylitti %1 turvarajan ja se keskeytettiin. Tarkista tuloste ennen kuin yritän uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11304"/>
+        <location filename="../src/MainWindow.cpp" line="11378"/>
         <source>Protocol note: a PROMPT record exceeded the 1024-byte payload bound and was dropped; the helper was answered with an empty ANSWER record.</source>
         <translation>Protokolla huomautus: PROMPT-ennätys ylitti 1024-tavuisen kuorman ja se pudotettiin; apuriin vastattiin tyhjällä ANSWER-levyllä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11329"/>
+        <location filename="../src/MainWindow.cpp" line="11403"/>
         <source>ERROR: The privileged request exceeded the interactive prompt budget; treating the request as a protocol failure.</source>
         <translation>VIRHE: Etuoikeutettu pyyntö ylitti interaktiivisen nopean budjetin; käsitellään pyyntöä pöytäkirjan epäonnistumisena.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11352"/>
+        <location filename="../src/MainWindow.cpp" line="11426"/>
         <source>Shell command is asking for input</source>
         <translation>Shell- komento pyytää syötystä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11357"/>
+        <location filename="../src/MainWindow.cpp" line="11431"/>
         <source>The shell command is waiting for input. Review its output below, type the answer and press OK. Cancel — or an empty answer — stops the command.</source>
         <translation>Käsky odottaa syöttöä. Tarkista sen tulosteen alla, kirjoita vastaus ja paina OK. Peruuta komento tai tyhjä vastaus pysäytä komento.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11372"/>
+        <location filename="../src/MainWindow.cpp" line="11446"/>
         <source>Answer (for example: y, n, Y, I, N, Z, or a word)</source>
         <translation>Vastaus (esimerkiksi: y, n, Y, I, N, Z tai sana)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11377"/>
+        <location filename="../src/MainWindow.cpp" line="11451"/>
         <source>Send Answer</source>
         <translation>Lähetä vastaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11444"/>
+        <location filename="../src/MainWindow.cpp" line="11518"/>
         <source>Privileged operation completed successfully. Administrator authorization remains active for this Boot Bitch window.</source>
         <translation>Ensisijainen operaatio suoritettu onnistuneesti. Hallitsijan valtuutus pysyy aktiivisena tämän Boot Bitch-ikkunan osalta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11445"/>
+        <location filename="../src/MainWindow.cpp" line="11519"/>
         <source>Privileged operation stopped with an error. Administrator authorization remains active; review the output before closing.</source>
         <translation>Etuoikeutettu operaatio päättyi virheellä. Hallitsijan valtuutus pysyy aktiivisena; tarkista tuloste ennen sulkemista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11469"/>
+        <location filename="../src/MainWindow.cpp" line="11543"/>
         <source>The privileged helper session ended unexpectedly. The next root action will require authorization again.</source>
         <translation>Etuoikeutettu avustajakokous päättyi odottamatta. Seuraava juuritoiminta vaatii jälleen luvan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11568"/>
+        <location filename="../src/MainWindow.cpp" line="11642"/>
         <source>ERROR: Privileged request &apos;%1&apos; exceeded the %2 safety limit; the request was aborted and the unresponsive helper session was closed. The operation may not have completed.</source>
         <translation>VIRHE: Etuoikeutettu pyyntö &quot;%1&quot; ylitti %2 turvallisuusrajan; pyyntö keskeytettiin ja vastaamaton auttaja istunto suljettiin. Operaatiota ei ole saatettu päätökseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11658"/>
+        <location filename="../src/MainWindow.cpp" line="11732"/>
         <source>Unlock not required</source>
         <translation>Avaa lukitusta ei vaadita</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11660"/>
+        <location filename="../src/MainWindow.cpp" line="11734"/>
         <source>This drive already has an unlocked Linux filesystem. Boot Bitch will reuse the existing mapper.</source>
         <translation>Tällä asemalla on jo lukitsematon Linux-tiedostojärjestelmä. Boot Bitch käyttää olemassa olevaa karttaa uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11661"/>
+        <location filename="../src/MainWindow.cpp" line="11735"/>
         <source>The selected drive does not currently contain a locked LUKS component that needs to be opened.</source>
         <translation>Valittu asema ei tällä hetkellä sisällä lukittua LUKS-komponenttia, joka on avattava.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11668"/>
-        <location filename="../src/MainWindow.cpp" line="11684"/>
+        <location filename="../src/MainWindow.cpp" line="11742"/>
+        <location filename="../src/MainWindow.cpp" line="11758"/>
         <source>Unlock unavailable</source>
         <translation>Avaa lukitusta ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11669"/>
-        <location filename="../src/MainWindow.cpp" line="21254"/>
-        <location filename="../src/MainWindow.cpp" line="21291"/>
+        <location filename="../src/MainWindow.cpp" line="11743"/>
+        <location filename="../src/MainWindow.cpp" line="21495"/>
+        <location filename="../src/MainWindow.cpp" line="21532"/>
         <source>The privileged Boot Bitch helper was not found. Rebuild or install this source tree.</source>
         <translation>Etuoikeutettua Boot Bitch-apulaista ei löydetty. Rakenna tai asenna tämä lähdepuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11676"/>
+        <location filename="../src/MainWindow.cpp" line="11750"/>
         <source>Unlocking %1</source>
         <translation>Avataan %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11692"/>
+        <location filename="../src/MainWindow.cpp" line="11766"/>
         <source>Unlock LUKS repair target</source>
         <translation>Avaa LUKS-korjauskohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11720"/>
+        <location filename="../src/MainWindow.cpp" line="11794"/>
         <source>LUKS volume:</source>
         <translation>LUKS- tilavuus:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11740"/>
+        <location filename="../src/MainWindow.cpp" line="11814"/>
         <source>Enter the passphrase to unlock this volume.</source>
         <translation>Anna salalause avataksesi tämän äänenvoimakkuuden.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11747"/>
+        <location filename="../src/MainWindow.cpp" line="11821"/>
         <source>LUKS passphrase</source>
         <translation>LUKS-salalause</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11752"/>
+        <location filename="../src/MainWindow.cpp" line="11826"/>
         <source>Administrator authorization is already active. The passphrase is sent only to cryptsetup over the privileged helper pipe and is never logged or placed on a command line.</source>
         <translation>Valtuutus on jo voimassa. Salauslause lähetetään vain kryptattavaksi etuoikeutetun auttajaputken päälle eikä sitä koskaan kirjaudu tai sijoiteta komentoriville.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11782"/>
+        <location filename="../src/MainWindow.cpp" line="11856"/>
         <source>Passphrase required</source>
         <translation>Vaadittu salauslause</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11783"/>
+        <location filename="../src/MainWindow.cpp" line="11857"/>
         <source>An empty passphrase was not submitted. Enter the LUKS passphrase or choose Cancel.</source>
         <translation>Tyhjää salalausetta ei esitetty. Anna LUKS-salalause tai valitse Peruuta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11795"/>
+        <location filename="../src/MainWindow.cpp" line="11869"/>
         <source>Unlock LUKS target</source>
         <translation>Avaa LUKS-kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11827"/>
+        <location filename="../src/MainWindow.cpp" line="11901"/>
         <source>Passphrase not accepted</source>
         <translation>Tunnuslausetta ei hyväksytä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11828"/>
+        <location filename="../src/MainWindow.cpp" line="11902"/>
         <source>The LUKS passphrase was not accepted.</source>
         <translation>LUKS-salalausetta ei hyväksytty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11829"/>
+        <location filename="../src/MainWindow.cpp" line="11903"/>
         <source>Try again? Administrator authorization remains active, so only the disk passphrase will be requested again.</source>
         <translation>Yritä uudelleen? Hallitsijan valtuutus pysyy aktiivisena, joten vain levyn salalause pyydetään uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11870"/>
+        <location filename="../src/MainWindow.cpp" line="11944"/>
         <source>Encrypted target unlocked — select or reselect the repair target</source>
         <translation>Salattu kohde lukittu Valitse tai valitse uudelleen korjauskohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11885"/>
-        <location filename="../src/MainWindow.cpp" line="11933"/>
+        <location filename="../src/MainWindow.cpp" line="11959"/>
+        <location filename="../src/MainWindow.cpp" line="12007"/>
         <source>Host maintenance: %1</source>
         <translation>Huolto: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11890"/>
+        <location filename="../src/MainWindow.cpp" line="11964"/>
         <source>Target: %1</source>
         <translation>Kohde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11891"/>
+        <location filename="../src/MainWindow.cpp" line="11965"/>
         <source>Selected physical repair drive: %1</source>
         <translation>Valittu fyysinen korjausasema: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11910"/>
+        <location filename="../src/MainWindow.cpp" line="11984"/>
         <source>Running Host: %1</source>
         <translation>Suoritusohjain: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11936"/>
+        <location filename="../src/MainWindow.cpp" line="12010"/>
         <source>Committed target: %1</source>
         <translation>Kohde: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11975"/>
+        <location filename="../src/MainWindow.cpp" line="12049"/>
         <source>✓ SELECTED TARGET  •  %1</source>
         <translation>✓ VALITTU TAVOITE • %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12032"/>
+        <location filename="../src/MainWindow.cpp" line="12106"/>
         <source>The running host root is not Btrfs, so Btrfs snapshots are not available.</source>
         <translation>Juoksevan isäntäjuurta ei ole Btrfs, joten Btrfs-kuvia ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12033"/>
+        <location filename="../src/MainWindow.cpp" line="12107"/>
         <source>The selected Linux root is not Btrfs, so Btrfs snapshots are not available.</source>
         <translation>Valittu Linux root ei ole Btrfs, joten Btrfs-kuvia ei ole saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6879"/>
-        <location filename="../src/MainWindow.cpp" line="12047"/>
+        <location filename="../src/MainWindow.cpp" line="6967"/>
+        <location filename="../src/MainWindow.cpp" line="12121"/>
         <source>Inspect the selected snapshot read-only.</source>
         <translation>Tarkasta vain valittu kuvakuva.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7192"/>
+        <location filename="../src/MainWindow.cpp" line="7280"/>
         <source>Select an entry to enable actions; double-click Label to rename.</source>
         <translation>Valitse syöte, jonka avulla toiminnot voidaan ottaa käyttöön; kaksoisnapsauta Etikettiä nimetä uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7227"/>
-        <location filename="../src/MainWindow.cpp" line="8126"/>
+        <location filename="../src/MainWindow.cpp" line="7315"/>
+        <location filename="../src/MainWindow.cpp" line="8214"/>
         <source>Re-create or re-label missing UKI/fallback/WebFAI/iPXE entries.</source>
         <translation>Luo uudelleen tai uudelleen puuttuvat UKI/fallback/WebFAI/iPXE-merkinnät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7307"/>
+        <location filename="../src/MainWindow.cpp" line="7395"/>
         <source>Generated boot menu in file order; read-only.</source>
         <translation>Luotu käynnistysvalikko tiedostojärjestyksessä; luku vain.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8103"/>
+        <location filename="../src/MainWindow.cpp" line="8191"/>
         <source>Apply pending reorder, delete and rename changes.</source>
         <translation>Käytä odottavaa uudelleentilausta, poista ja nimeä muutokset uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8111"/>
+        <location filename="../src/MainWindow.cpp" line="8199"/>
         <source>Mark the selected entry for deletion; Save applies it.</source>
         <translation>Merkitse valittu merkintä poistettavaksi; Tallenna soveltaa sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12048"/>
+        <location filename="../src/MainWindow.cpp" line="12122"/>
         <source>Select a snapshot row first.</source>
         <translation>Valitse ensin kuvakaappausrivi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12057"/>
-        <location filename="../src/MainWindow.cpp" line="12068"/>
+        <location filename="../src/MainWindow.cpp" line="12131"/>
+        <location filename="../src/MainWindow.cpp" line="12142"/>
         <source>Select a valid Linux root snapshot first.</source>
         <translation>Valitse ensin kelvollinen Linuxin juurikuva.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12145"/>
+        <location filename="../src/MainWindow.cpp" line="12219"/>
         <source>Btrfs snapshot preload for %1 is deferred until the running privileged operation finishes; the request was not queued.</source>
         <translation>Btrfs-kuvakuvan esilatausta %1:lle lykätään siihen asti, kunnes käynnissä oleva etuoikeutettu toiminto päättyy; pyyntö ei ollut jonossa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12160"/>
+        <location filename="../src/MainWindow.cpp" line="12234"/>
         <source>Loading Btrfs snapshots in the background…</source>
         <translation>Btrfs-kuvien lataaminen taustalla…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12217"/>
+        <location filename="../src/MainWindow.cpp" line="12291"/>
         <source>Btrfs snapshot inventory is not applicable: the running host root filesystem is %1, not Btrfs.
 
 No snapshot was loaded and the running host was not modified.</source>
@@ -6856,7 +7054,7 @@ No snapshot was loaded and the running host was not modified.</source>
 Kuvaa ei ladattu eikä isäntää muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12218"/>
+        <location filename="../src/MainWindow.cpp" line="12292"/>
         <source>Btrfs snapshot inventory is not applicable: the selected target filesystem is %1, not Btrfs.
 
 No snapshot was loaded and the target was not modified.</source>
@@ -6865,47 +7063,47 @@ No snapshot was loaded and the target was not modified.</source>
 Kuvaa ei ladattu eikä kohdetta muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12232"/>
+        <location filename="../src/MainWindow.cpp" line="12306"/>
         <source>Snapshot inventory unavailable</source>
         <translation>Snapshot-inventaariota ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12261"/>
+        <location filename="../src/MainWindow.cpp" line="12335"/>
         <source>Btrfs snapshot inventory for %1 is deferred until the running privileged operation finishes; the request was not queued.</source>
         <translation>Btrfs-kuvan inventointia %1:lle lykätään, kunnes juoksun etuoikeutettu toiminta päättyy; pyyntö ei ollut jonossa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12267"/>
+        <location filename="../src/MainWindow.cpp" line="12341"/>
         <source>Loading Btrfs snapshots after the running operation finishes…</source>
         <translation>Btrfs-kuvien lataaminen suorituksen jälkeen päättyy…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12273"/>
+        <location filename="../src/MainWindow.cpp" line="12347"/>
         <source>Loading running-host Btrfs snapshots</source>
         <translation>Ladataan juoksuisäntä Btrfs-kuvia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12274"/>
+        <location filename="../src/MainWindow.cpp" line="12348"/>
         <source>Loading Btrfs snapshots</source>
         <translation>Ladataan Btrfs-kuvia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12289"/>
+        <location filename="../src/MainWindow.cpp" line="12363"/>
         <source>Load running-host Btrfs snapshots</source>
         <translation>Kuorma ajo-ohjaamo Btrfs kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12290"/>
+        <location filename="../src/MainWindow.cpp" line="12364"/>
         <source>Load Btrfs snapshots</source>
         <translation>Lataa Btrfs-kuvia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12324"/>
+        <location filename="../src/MainWindow.cpp" line="12398"/>
         <source>Snapshot inventory failed. See Logs for details.</source>
         <translation>Kuvan inventaario epäonnistui. Katso lisätietoja lokeista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12377"/>
+        <location filename="../src/MainWindow.cpp" line="12451"/>
         <source>Loaded %1 running-host Btrfs root snapshot(s) read-only at %2. Select a row and choose Inspect Selected, or double-click a row, for snapshot-specific validation.
 
 No snapshot or host file was modified.</source>
@@ -6914,7 +7112,7 @@ No snapshot or host file was modified.</source>
 Katsausta tai isäntätiedostoa ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12379"/>
+        <location filename="../src/MainWindow.cpp" line="12453"/>
         <source>Loaded %1 Btrfs root snapshot(s) read-only at %2. Select a row and choose Inspect Selected, or double-click a row, for snapshot-specific validation.
 
 No snapshot or target file was modified.</source>
@@ -6923,37 +7121,37 @@ No snapshot or target file was modified.</source>
 Katsausta tai kohdetiedostoa ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12383"/>
+        <location filename="../src/MainWindow.cpp" line="12457"/>
         <source>No Snapper-style Btrfs root snapshots or Boot Bitch rollback backups were found on the running host. The scan was read-only.</source>
         <translation>Suoritusisännästä ei löytynyt Snapper-tyylisiä Btrfs-juurikuvia tai Boot Bitch-kääntövarmuuksia. Skannaus oli vain luettava.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12384"/>
+        <location filename="../src/MainWindow.cpp" line="12458"/>
         <source>No Snapper-style Btrfs root snapshots were found on the selected target. The scan was read-only.</source>
         <translation>Valitusta kohteesta ei löytynyt Snapper-tyylisiä Btrfs-juurikuvia. Skannaus oli vain luettava.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12494"/>
+        <location filename="../src/MainWindow.cpp" line="12568"/>
         <source>Inspecting running-host snapshot %1</source>
         <translation>Tarkastaa juoksu-isäntä kuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12495"/>
+        <location filename="../src/MainWindow.cpp" line="12569"/>
         <source>Inspecting snapshot %1</source>
         <translation>Tarkkailukuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12503"/>
+        <location filename="../src/MainWindow.cpp" line="12577"/>
         <source>Inspect running-host Btrfs snapshot %1</source>
         <translation>Tarkasta juoksu-isäntä Btrfs kuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12504"/>
+        <location filename="../src/MainWindow.cpp" line="12578"/>
         <source>Inspect Btrfs snapshot %1</source>
         <translation>Tutki Btrfs-kuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12513"/>
+        <location filename="../src/MainWindow.cpp" line="12587"/>
         <source>Captured: %1
 
 %2</source>
@@ -6962,17 +7160,17 @@ Katsausta tai kohdetiedostoa ei muutettu.</translation>
 %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12541"/>
+        <location filename="../src/MainWindow.cpp" line="12615"/>
         <source>Rolling back snapshot %1</source>
         <translation>Takakuvakuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12547"/>
+        <location filename="../src/MainWindow.cpp" line="12621"/>
         <source>Preflight snapshot rollback %1</source>
         <translation>%1:n lentoa edeltävä kuvakaappaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12556"/>
+        <location filename="../src/MainWindow.cpp" line="12630"/>
         <source>Rollback preflight captured: %1
 
 %2</source>
@@ -6981,12 +7179,12 @@ Katsausta tai kohdetiedostoa ei muutettu.</translation>
 %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12560"/>
+        <location filename="../src/MainWindow.cpp" line="12634"/>
         <source>Rollback preflight failed</source>
         <translation>Peruuttaminen ennen lentoa epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12561"/>
+        <location filename="../src/MainWindow.cpp" line="12635"/>
         <source>The selected snapshot did not pass the transactional rollback preflight. No rollback was performed.
 
 Review the Snapshots details pane and Logs.</source>
@@ -6995,17 +7193,17 @@ Review the Snapshots details pane and Logs.</source>
 Tarkista Snapshots tiedot paneeli ja lokit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12567"/>
+        <location filename="../src/MainWindow.cpp" line="12641"/>
         <source>Confirm transactional snapshot rollback</source>
         <translation>Vahvista tapahtumakuvan tyhjennys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12568"/>
+        <location filename="../src/MainWindow.cpp" line="12642"/>
         <source>Promote snapshot %1 to the normal writable @ root?</source>
         <translation>Edistää kuvan %1 normaali kirjoitettava @ root?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12569"/>
+        <location filename="../src/MainWindow.cpp" line="12643"/>
         <source>Target disk: %1
 Linux filesystem: %2
 
@@ -7024,19 +7222,19 @@ Jos kriittinen post-kytkin validointi tai boot-stack vaiheessa epäonnistuu, Boo
 Erilliset Btrfs-osavolyymit, kuten /koti, jäävät root rollbackin ulkopuolelle kohteen fstabin mukaisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12577"/>
-        <location filename="../src/MainWindow.cpp" line="12760"/>
+        <location filename="../src/MainWindow.cpp" line="12651"/>
+        <location filename="../src/MainWindow.cpp" line="12834"/>
         <source>Continue to Confirmation</source>
         <translation>Jatka vahvistamista</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12587"/>
-        <location filename="../src/MainWindow.cpp" line="12770"/>
+        <location filename="../src/MainWindow.cpp" line="12661"/>
+        <location filename="../src/MainWindow.cpp" line="12844"/>
         <source>Type ROLLBACK to continue</source>
         <translation>Kirjoita ROLLBACK jatkamaan</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12588"/>
+        <location filename="../src/MainWindow.cpp" line="12662"/>
         <source>This operation changes the active Btrfs root and rebuilds boot artifacts.
 
 Type ROLLBACK exactly to continue:</source>
@@ -7045,12 +7243,12 @@ Type ROLLBACK exactly to continue:</source>
 Tyyppi ROLLBACK jatkaa:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12601"/>
+        <location filename="../src/MainWindow.cpp" line="12675"/>
         <source>Roll back to Btrfs snapshot %1</source>
         <translation>Palaa Btrfs-kuvaan %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12610"/>
+        <location filename="../src/MainWindow.cpp" line="12684"/>
         <source>Rollback finished: %1
 
 %2</source>
@@ -7059,7 +7257,7 @@ Tyyppi ROLLBACK jatkaa:</translation>
 %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12618"/>
+        <location filename="../src/MainWindow.cpp" line="12692"/>
         <source>Rollback completed: %1
 
 %2
@@ -7072,12 +7270,12 @@ Snapshot inventory was cleared because the active root changed. Choose Load Snap
 Kuvan inventaario tyhjennettiin, koska aktiivinen juuri muuttui. Valitse Lataa kuvakaappaukset sen päivittämiseksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12626"/>
+        <location filename="../src/MainWindow.cpp" line="12700"/>
         <source>Snapshot rollback complete</source>
         <translation>Snapshot-vastaisku valmis</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12627"/>
+        <location filename="../src/MainWindow.cpp" line="12701"/>
         <source>Snapshot %1 was promoted to a writable @ root and the boot stack passed reconciliation.
 
 The previous @ was retained under a timestamped @rollback-before-* name. Reboot using the normal boot path when ready.</source>
@@ -7086,7 +7284,7 @@ The previous @ was retained under a timestamped @rollback-before-* name. Reboot 
 Edellinen @ säilytettiin aikaleimalla @rollback-ennen-* nimeä. Käynnistä uudelleen normaalilla käynnistyspolulla, kun olet valmis.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12636"/>
+        <location filename="../src/MainWindow.cpp" line="12710"/>
         <source>Rollback attempt finished: %1
 
 %2
@@ -7099,63 +7297,63 @@ Cached diagnostics and snapshot inventory were cleared because the rollback requ
 Akustiset vianmääritykset ja tilannekuvat tyhjennettiin, koska palautuspyyntö on saattanut muuttua ja/tai palauttaa kohdetilan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12644"/>
+        <location filename="../src/MainWindow.cpp" line="12718"/>
         <source>Snapshot rollback failed</source>
         <translation>Snapshot-käännös epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12645"/>
+        <location filename="../src/MainWindow.cpp" line="12719"/>
         <source>The rollback did not complete successfully. Do not reboot until you review the Snapshots output and Logs. The helper attempts to restore the preserved @ automatically when post-switch validation fails.</source>
         <translation>Se ei onnistunut. Älä käynnistä uudelleen ennen kuin olet tarkistanut Snapshots lähtö ja lokit. Auttaja yrittää palauttaa säilynyt @ automaattisesti, kun post-kytkin validointi epäonnistuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12661"/>
+        <location filename="../src/MainWindow.cpp" line="12735"/>
         <source>Running-host snapshot rollback is only available in Host Maintenance.</source>
         <translation>Running-host-kuvan rollback on saatavilla vain isäntä huolto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12678"/>
-        <location filename="../src/MainWindow.cpp" line="12687"/>
+        <location filename="../src/MainWindow.cpp" line="12752"/>
+        <location filename="../src/MainWindow.cpp" line="12761"/>
         <source>Running-host snapshot rollback is unavailable.</source>
         <translation>Hyökkäyskuva ei ole käytettävissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12681"/>
+        <location filename="../src/MainWindow.cpp" line="12755"/>
         <source>Running-host snapshot rollback has unknown capability evidence.</source>
         <translation>Hyökkäyskuvassa on tuntemattomia kykyjä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12688"/>
+        <location filename="../src/MainWindow.cpp" line="12762"/>
         <source>Run running-host diagnostics in Host Maintenance first.</source>
         <translation>Suorita isännän diagnostiikka.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12691"/>
+        <location filename="../src/MainWindow.cpp" line="12765"/>
         <source>Running-host snapshot rollback is available.</source>
         <translation>Running-host kuvakaappaus on saatavilla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12705"/>
+        <location filename="../src/MainWindow.cpp" line="12779"/>
         <source>Rollback already staged</source>
         <translation>Perääntyminen on jo järjestetty</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12706"/>
+        <location filename="../src/MainWindow.cpp" line="12780"/>
         <source>A running-host rollback to %1 is already staged and takes effect on the next reboot.</source>
         <translation>%1:n juoksuhyökkäys on jo lavastettu ja vaikuttaa seuraavaan uudelleenkäynnistykseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12708"/>
+        <location filename="../src/MainWindow.cpp" line="12782"/>
         <source>an earlier snapshot</source>
         <translation>aiempi tilannekatsaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12709"/>
+        <location filename="../src/MainWindow.cpp" line="12783"/>
         <source>snapshot %1</source>
         <translation>Kuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12710"/>
+        <location filename="../src/MainWindow.cpp" line="12784"/>
         <source>Rolling back again preserves the currently running root as a new @rollback-before-* backup and replaces the staged snapshot. The earlier staged root remains on disk but is no longer the recorded undo point.
 
 Continue only if you intend to replace the staged rollback.</source>
@@ -7164,22 +7362,22 @@ Continue only if you intend to replace the staged rollback.</source>
 Jatka vain, jos aiot korvata lavastetun varauksen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12715"/>
+        <location filename="../src/MainWindow.cpp" line="12789"/>
         <source>Replace Staged Rollback</source>
         <translation>Korvaa vaiheittainen palautus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12723"/>
+        <location filename="../src/MainWindow.cpp" line="12797"/>
         <source>Rolling back running-host snapshot %1</source>
         <translation>Vierivä takaisin käynnissä-host kuva %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12729"/>
+        <location filename="../src/MainWindow.cpp" line="12803"/>
         <source>Preflight running-host rollback %1</source>
         <translation>%1:n lentoa edeltävä varalento</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12738"/>
+        <location filename="../src/MainWindow.cpp" line="12812"/>
         <source>Running-host rollback preflight captured: %1
 
 %2</source>
@@ -7188,12 +7386,12 @@ Jatka vain, jos aiot korvata lavastetun varauksen.</translation>
 %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12742"/>
+        <location filename="../src/MainWindow.cpp" line="12816"/>
         <source>Host rollback preflight failed</source>
         <translation>Isännän paluu ennen lentoa epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12743"/>
+        <location filename="../src/MainWindow.cpp" line="12817"/>
         <source>The selected snapshot did not pass the running-host rollback preflight. No rollback was performed.
 
 Review the Snapshots details pane and Logs.</source>
@@ -7202,17 +7400,17 @@ Review the Snapshots details pane and Logs.</source>
 Tarkista Snapshots tiedot paneeli ja lokit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12749"/>
+        <location filename="../src/MainWindow.cpp" line="12823"/>
         <source>Confirm running-host snapshot rollback</source>
         <translation>Vahvista ajo-isäntä-kuvan muutos</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12750"/>
+        <location filename="../src/MainWindow.cpp" line="12824"/>
         <source>Roll the running host back to snapshot %1?</source>
         <translation>Viedäänkö juontaja takaisin kuvaan %1?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12751"/>
+        <location filename="../src/MainWindow.cpp" line="12825"/>
         <source>Running host: %1
 Root filesystem: %2
 
@@ -7235,7 +7433,7 @@ Boot Bitch ei voi taata, että tietoja ei menetetä: valitun tilannekuvan jälke
 Kaikki käyttäjät kirjautuvat ulos ja tallentamaton työ katoaa, kun isäntä käynnistää uudelleen. Uudelleenkäynnistys ei ole koskaan automaattinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12771"/>
+        <location filename="../src/MainWindow.cpp" line="12845"/>
         <source>This operation stages the selected snapshot as the running host&apos;s next root and rebuilds boot artifacts.
 
 Type ROLLBACK exactly to continue:</source>
@@ -7244,12 +7442,12 @@ Type ROLLBACK exactly to continue:</source>
 Tyyppi ROLLBACK jatkaa:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12784"/>
+        <location filename="../src/MainWindow.cpp" line="12858"/>
         <source>Roll back the running host to snapshot %1</source>
         <translation>Siirrä käynnissä oleva isäntä takaisin %1-kuvaan</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12793"/>
+        <location filename="../src/MainWindow.cpp" line="12867"/>
         <source>Running-host rollback finished: %1
 
 %2</source>
@@ -7258,7 +7456,7 @@ Tyyppi ROLLBACK jatkaa:</translation>
 %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12805"/>
+        <location filename="../src/MainWindow.cpp" line="12879"/>
         <source>Running-host rollback staged: %1
 
 %2
@@ -7271,17 +7469,17 @@ Snapshot inventory and cached running-host diagnostics were cleared because the 
 Snapshot inventaario ja välimuistissa juokseva isännän diagnostiikka tyhjennettiin, - koska seuraava saapas käynnistää promotoidun juuren. Käynnistä uudelleen, kun olet valmis; uudelleenkäynnistys ei ole koskaan automaattinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12815"/>
+        <location filename="../src/MainWindow.cpp" line="12889"/>
         <source>Running-host rollback staged</source>
         <translation>Running-host-retket</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12816"/>
+        <location filename="../src/MainWindow.cpp" line="12890"/>
         <source>Snapshot %1 is staged as the running host&apos;s next root.</source>
         <translation>Snapshot %1 on lavastettu juoksuisännän seuraavaksi juureksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12817"/>
+        <location filename="../src/MainWindow.cpp" line="12891"/>
         <source>Reboot required — the running host will start snapshot %1 after the next reboot. The previous root was retained as an @rollback-before-* undo point and the boot stack passed reconciliation.
 
 Use Reboot Now to reboot immediately, or Later to keep working and reboot manually.</source>
@@ -7290,7 +7488,7 @@ Use Reboot Now to reboot immediately, or Later to keep working and reboot manual
 Käytä Reboot Nyt uudelleenkäynnistää välittömästi, tai Myöhemmin jatkaa työskentelyä ja uudelleenkäynnistä manuaalisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12840"/>
+        <location filename="../src/MainWindow.cpp" line="12914"/>
         <source>Running-host rollback attempt finished: %1
 
 %2
@@ -7303,13 +7501,13 @@ Cached running-host diagnostics and snapshot inventory were cleared. Do not rebo
 Valmiina juoksevan isännän diagnostiikka ja tilannekuvat tyhjennettiin. Älä käynnistä uudelleen ennen kuin olet tarkistanut Snapshots lähtö ja lokit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12847"/>
-        <location filename="../src/MainWindow.cpp" line="12850"/>
+        <location filename="../src/MainWindow.cpp" line="12921"/>
+        <location filename="../src/MainWindow.cpp" line="12924"/>
         <source>Host rollback failed</source>
         <translation>Isännän palautus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12848"/>
+        <location filename="../src/MainWindow.cpp" line="12922"/>
         <source>The running-host rollback did not complete and automatic recovery could not be proven. DO NOT REBOOT. Review the Snapshots output and Logs, and repair the boot stack from another system before rebooting.
 
 The helper output carries HOST_ROLLBACK_RECOVERY and any CRITICAL lines verbatim.</source>
@@ -7318,18 +7516,18 @@ The helper output carries HOST_ROLLBACK_RECOVERY and any CRITICAL lines verbatim
 Auttimen lähtö kuljettaa HOST ROLLBACK RECOVERY ja kaikki CRITICAL lines sanatarkasti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12851"/>
+        <location filename="../src/MainWindow.cpp" line="12925"/>
         <source>The running-host rollback did not complete. The helper reports the preserved @ was restored automatically; do not reboot until you review the Snapshots output and Logs.</source>
         <translation>Running-host takaisin ei valmistunut. Auttaja raportoi säilyneen @:n palautuneen automaattisesti; älä käynnistä uudelleen ennen kuin tarkistat Snapshots-lähdön ja lokit.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12962"/>
-        <location filename="../src/MainWindow.cpp" line="12963"/>
+        <location filename="../src/MainWindow.cpp" line="13036"/>
+        <location filename="../src/MainWindow.cpp" line="13037"/>
         <source>Reboot the running host now?</source>
         <translation>Käynnistätkö juontajan uudelleen?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12964"/>
+        <location filename="../src/MainWindow.cpp" line="13038"/>
         <source>The rolled-back snapshot is already staged and takes effect on the next boot. Rebooting now signs out all users and closes unsaved work.
 
 The host reboots only after this separate confirmation.</source>
@@ -7338,409 +7536,409 @@ The host reboots only after this separate confirmation.</source>
 Isäntä käynnistyy vasta tämän erillisen vahvistuksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12976"/>
+        <location filename="../src/MainWindow.cpp" line="13050"/>
         <source>Rebooting running host</source>
         <translation>Käynnistetään uudelleen käynnissä oleva isäntä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12981"/>
+        <location filename="../src/MainWindow.cpp" line="13055"/>
         <source>Reboot the running host</source>
         <translation>Käynnistä käynnissä oleva isäntä uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12989"/>
+        <location filename="../src/MainWindow.cpp" line="13063"/>
         <source>Running-host reboot scheduled; the host is restarting.</source>
         <translation>Suoritus-host uudelleenkäynnistys suunniteltu; isäntä käynnistää uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12996"/>
+        <location filename="../src/MainWindow.cpp" line="13070"/>
         <source>Host reboot not scheduled</source>
         <translation>Uudelleenkäynnistystä ei ole suunniteltu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12998"/>
+        <location filename="../src/MainWindow.cpp" line="13072"/>
         <source>The running host did not schedule a reboot. The staged rollback and its reminder remain in effect.</source>
         <translation>Juokseva isäntä ei suunnitellut uudelleenkäynnistystä. Lavastettu peruutus ja sen muistutus ovat edelleen voimassa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13016"/>
+        <location filename="../src/MainWindow.cpp" line="13090"/>
         <source>Repair → Host file copy</source>
         <translation>Korjaus → Kopioi tiedosto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13017"/>
+        <location filename="../src/MainWindow.cpp" line="13091"/>
         <source>Host → Repair file copy</source>
         <translation>Host → Korjaustiedoston kopio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13021"/>
+        <location filename="../src/MainWindow.cpp" line="13095"/>
         <source>1. Select source paths from repaired system</source>
         <translation>1. Valitse lähdepolut korjatusta järjestelmästä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13022"/>
+        <location filename="../src/MainWindow.cpp" line="13096"/>
         <source>2. Choose destination on this host</source>
         <translation>2. Valitse kohde tässä isäntä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13023"/>
+        <location filename="../src/MainWindow.cpp" line="13097"/>
         <source>Add File Path…</source>
         <translation>Lisää tiedostopolku…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13024"/>
+        <location filename="../src/MainWindow.cpp" line="13098"/>
         <source>Add Folder Path…</source>
         <translation>Lisää kansiopolku…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13026"/>
+        <location filename="../src/MainWindow.cpp" line="13100"/>
         <source>Enter an absolute folder path as it appears inside the repaired system.</source>
         <translation>Anna absoluuttinen kansiopolku sellaisena kuin se näkyy korjatussa järjestelmässä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13027"/>
+        <location filename="../src/MainWindow.cpp" line="13101"/>
         <source>Choose a host destination folder</source>
         <translation>Valitse kohdekansio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13028"/>
+        <location filename="../src/MainWindow.cpp" line="13102"/>
         <source>Browse…</source>
         <translation>Selaa…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13031"/>
+        <location filename="../src/MainWindow.cpp" line="13105"/>
         <source>1. Select source files or folders from this host</source>
         <translation>1. Valitse lähdetiedostot tai kansiot tästä isäntä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13032"/>
+        <location filename="../src/MainWindow.cpp" line="13106"/>
         <source>2. Choose destination in repaired system</source>
         <translation>2. Valitse kohde korjatussa järjestelmässä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13035"/>
+        <location filename="../src/MainWindow.cpp" line="13109"/>
         <source>Choose one or more source files from the running host.</source>
         <translation>Valitse yksi tai useampi lähdekooditiedosto käynnissä olevasta isäntästä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13036"/>
+        <location filename="../src/MainWindow.cpp" line="13110"/>
         <source>Choose a source folder from the running host.</source>
         <translation>Valitse lähdekansio käynnissä olevasta isännästä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13038"/>
+        <location filename="../src/MainWindow.cpp" line="13112"/>
         <source>Select a repair target first</source>
         <translation>Valitse korjauskohde ensin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13039"/>
+        <location filename="../src/MainWindow.cpp" line="13113"/>
         <source>Choose an absolute destination path inside the repaired system</source>
         <translation>Valitse korjattuun järjestelmään absoluuttinen kohdepolku</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13040"/>
+        <location filename="../src/MainWindow.cpp" line="13114"/>
         <source>Browse Target Folders…</source>
         <translation>Selaa kohdekansioita…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13077"/>
+        <location filename="../src/MainWindow.cpp" line="13151"/>
         <source>Choose host destination folder</source>
         <translation>Valitse kohdekansio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13090"/>
+        <location filename="../src/MainWindow.cpp" line="13164"/>
         <source>Select a repair target</source>
         <translation>Valitse korjauskohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13091"/>
+        <location filename="../src/MainWindow.cpp" line="13165"/>
         <source>Select the repair drive in Systems before choosing a destination inside it.</source>
         <translation>Valitse järjestelmän korjausasema ennen kohdetta sen sisällä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13101"/>
+        <location filename="../src/MainWindow.cpp" line="13175"/>
         <source>Select repair-system destination</source>
         <translation>Valitse korjausjärjestelmän kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13108"/>
+        <location filename="../src/MainWindow.cpp" line="13182"/>
         <source>Choose a destination folder inside the repaired system</source>
         <translation>Valitse kohdekansio korjatun järjestelmän sisällä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13117"/>
+        <location filename="../src/MainWindow.cpp" line="13191"/>
         <source>Browse folders from the selected repaired system through temporary read-only mounts. Nothing is written while browsing, and the guarded copy validates the chosen path again before any write.</source>
         <translation>Selaa valitun korjatun järjestelmän kansioita tilapäisten lukulaitteiden avulla. Mitään ei kirjoiteta selailun aikana, ja vartioitu kopio validoi valitun polun uudelleen ennen kirjoittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13126"/>
+        <location filename="../src/MainWindow.cpp" line="13200"/>
         <source>Absolute path inside repaired system (for example /home/user/Recovered)</source>
         <translation>Absoluuttinen polku korjatun järjestelmän sisällä (esim. /koti/käyttäjä/peritty)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13128"/>
+        <location filename="../src/MainWindow.cpp" line="13202"/>
         <source>Browse repair folders…</source>
         <translation>Selaa korjauskansioita…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13132"/>
+        <location filename="../src/MainWindow.cpp" line="13206"/>
         <source>Clear the destination path.</source>
         <translation>Tyhjentäkää kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13147"/>
-        <location filename="../src/MainWindow.cpp" line="13233"/>
+        <location filename="../src/MainWindow.cpp" line="13221"/>
+        <location filename="../src/MainWindow.cpp" line="13307"/>
         <source>Browse repaired-system folders</source>
         <translation>Selaa korjattuja järjestelmäkansioita</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13160"/>
+        <location filename="../src/MainWindow.cpp" line="13234"/>
         <source>Choose a folder from the repaired system</source>
         <translation>Valitse kansio korjatusta järjestelmästä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13169"/>
+        <location filename="../src/MainWindow.cpp" line="13243"/>
         <source>The selected repair filesystem is mounted read-only only for the current directory listing. The mount is removed after the request; the host filesystem is never used as the folder tree.</source>
         <translation>Valittu korjaustiedostojärjestelmä on asennettu vain luettavaksi nykyisen kansion listalle. Asennus poistetaan pyynnön jälkeen; isäntätiedostojärjestelmää ei koskaan käytetä kansiopuuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13194"/>
+        <location filename="../src/MainWindow.cpp" line="13268"/>
         <source>Up</source>
         <translation>Ylös</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13195"/>
+        <location filename="../src/MainWindow.cpp" line="13269"/>
         <source>Open Selected</source>
         <translation>Avaa valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13197"/>
+        <location filename="../src/MainWindow.cpp" line="13271"/>
         <source>Show the parent folder in the repaired system.</source>
         <translation>Näytä kantakansio korjatussa järjestelmässä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13198"/>
+        <location filename="../src/MainWindow.cpp" line="13272"/>
         <source>Open the selected repaired-system folder.</source>
         <translation>Avaa valittu korjattu järjestelmäkansio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13199"/>
+        <location filename="../src/MainWindow.cpp" line="13273"/>
         <source>Reload this repaired-system folder through a fresh read-only mount.</source>
         <translation>Lataa tämä korjattu järjestelmäkansio uudelleen vain uuden lukuliitoksen läpi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13206"/>
+        <location filename="../src/MainWindow.cpp" line="13280"/>
         <source>Read-only target view; no files are modified.</source>
         <translation>Lue vain kohdenäkymä; tiedostoja ei muuteta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13212"/>
+        <location filename="../src/MainWindow.cpp" line="13286"/>
         <source>Choose This Folder</source>
         <translation>Valitse tämä kansio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13225"/>
+        <location filename="../src/MainWindow.cpp" line="13299"/>
         <source>Invalid repair-system path.</source>
         <translation>Virheellinen korjausjärjestelmän polku.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13237"/>
+        <location filename="../src/MainWindow.cpp" line="13311"/>
         <source>Unable to read this repaired-system folder. Review Logs for the helper error.</source>
         <translation>Korjattua järjestelmäkansiota ei voitu lukea. Tarkista lokit auttaja virhe.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13267"/>
+        <location filename="../src/MainWindow.cpp" line="13341"/>
         <source>Current repaired-system folder: %1</source>
         <translation>Nykyinen korjattu järjestelmäkansio: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13271"/>
+        <location filename="../src/MainWindow.cpp" line="13345"/>
         <source>Read-only target view; %1 subfolder(s) found. Nothing was modified.</source>
         <translation>Read-ainoa kohdenäkymä; %1 alikansioita löytyi. Mitään ei muutettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13324"/>
-        <location filename="../src/MainWindow.cpp" line="13355"/>
-        <location filename="../src/MainWindow.cpp" line="13402"/>
+        <location filename="../src/MainWindow.cpp" line="13398"/>
+        <location filename="../src/MainWindow.cpp" line="13429"/>
+        <location filename="../src/MainWindow.cpp" line="13476"/>
         <source>Invalid repair path</source>
         <translation>Virheellinen korjauspolku</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13325"/>
-        <location filename="../src/MainWindow.cpp" line="13356"/>
-        <location filename="../src/MainWindow.cpp" line="13403"/>
+        <location filename="../src/MainWindow.cpp" line="13399"/>
+        <location filename="../src/MainWindow.cpp" line="13430"/>
+        <location filename="../src/MainWindow.cpp" line="13477"/>
         <source>Use an absolute path inside the repaired system. Parent-directory escape paths are not accepted.</source>
         <translation>Käytä absoluuttista polkua korjatun järjestelmän sisällä. Vanhempainhakemiston pakoteitä ei hyväksytä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13345"/>
+        <location filename="../src/MainWindow.cpp" line="13419"/>
         <source>Repair-system source file</source>
         <translation>Korjausjärjestelmän lähdetiedosto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13346"/>
+        <location filename="../src/MainWindow.cpp" line="13420"/>
         <source>Enter an absolute file path inside the repaired system:</source>
         <translation>Anna absoluuttinen tiedostopolku korjattuun järjestelmään:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13370"/>
+        <location filename="../src/MainWindow.cpp" line="13444"/>
         <source>Select host files</source>
         <translation>Valitse isäntätiedostot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13392"/>
+        <location filename="../src/MainWindow.cpp" line="13466"/>
         <source>Repair-system source folder</source>
         <translation>Korjausjärjestelmän lähdekansio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13393"/>
+        <location filename="../src/MainWindow.cpp" line="13467"/>
         <source>Enter an absolute folder path inside the repaired system:</source>
         <translation>Anna korjattuun järjestelmään absoluuttinen kansiopolku:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13417"/>
+        <location filename="../src/MainWindow.cpp" line="13491"/>
         <source>Select host folder</source>
         <translation>Valitse kansio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13457"/>
+        <location filename="../src/MainWindow.cpp" line="13531"/>
         <source>Add at least one source file or folder.</source>
         <translation>Lisää vähintään yksi lähdekooditiedosto tai kansio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13461"/>
+        <location filename="../src/MainWindow.cpp" line="13535"/>
         <source>Choose a destination folder.</source>
         <translation>Valitse kohdekansio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13465"/>
+        <location filename="../src/MainWindow.cpp" line="13539"/>
         <source>rsync is required for verified File Copy.</source>
         <translation>rsync vaaditaan todennettu tiedostokopio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13474"/>
+        <location filename="../src/MainWindow.cpp" line="13548"/>
         <source>Repair → Host requires an existing, non-symlink host destination folder.</source>
         <translation>Korjaus → Isäntä vaatii olemassa olevan, ei-symlin isäntäkohdekansion.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13479"/>
+        <location filename="../src/MainWindow.cpp" line="13553"/>
         <source>Host → Repair requires a specific absolute path inside the repaired system.</source>
         <translation>Host → Korjaus vaatii tietyn absoluuttisen polun korjattuun järjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13556"/>
-        <location filename="../src/MainWindow.cpp" line="13612"/>
+        <location filename="../src/MainWindow.cpp" line="13630"/>
+        <location filename="../src/MainWindow.cpp" line="13686"/>
         <source>Execute a command on the running host as root.</source>
         <translation>Suorita komento käynnissä isännälle juurina.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13568"/>
-        <location filename="../src/MainWindow.cpp" line="13768"/>
+        <location filename="../src/MainWindow.cpp" line="13642"/>
+        <location filename="../src/MainWindow.cpp" line="13842"/>
         <source>Host shell</source>
         <translation>Komentotulkki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13576"/>
+        <location filename="../src/MainWindow.cpp" line="13650"/>
         <source>Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.</source>
         <translation>Suorita käynnissä olevan isännän käsky juurina (suota ei tarvita). Komennot suoritetaan suoraan aktiivisessa järjestelmässä. Kun komento esittää kysymyksen, Boot Bitch näyttää sen ponnahdusikkunassa ja lähettää vastauksesi takaisin komentoon; komento keskeytetään. Ei-interaktiiviset liput, kuten apt-get-y-päivitys, ovat edelleen suositeltavia valvomattomille ajoille. Tulosta säilytetään tässä ikkunassa ja sovelluslokissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13583"/>
+        <location filename="../src/MainWindow.cpp" line="13657"/>
         <source>Command to run on the running host, for example: apt update</source>
         <translation>Suoritettava komento, esimerkiksi: apt-päivitys</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13590"/>
+        <location filename="../src/MainWindow.cpp" line="13664"/>
         <source>Run on Host</source>
         <translation>Suorita isäntä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13594"/>
+        <location filename="../src/MainWindow.cpp" line="13668"/>
         <source>Commands can modify the running host. Review each command before running it.</source>
         <translation>Komento voi muuttaa käynnissä olevaa isäntää. Tarkista jokainen komento ennen sen suorittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13608"/>
+        <location filename="../src/MainWindow.cpp" line="13682"/>
         <source>Shell</source>
         <translation>Shell</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13609"/>
+        <location filename="../src/MainWindow.cpp" line="13683"/>
         <source>Host Shell</source>
         <translation>Isäntäkuori</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5666"/>
-        <location filename="../src/MainWindow.cpp" line="13613"/>
+        <location filename="../src/MainWindow.cpp" line="5754"/>
+        <location filename="../src/MainWindow.cpp" line="13687"/>
         <source>Execute a command inside the selected repair system as root.</source>
         <translation>Suorita komento valitun korjausjärjestelmän sisällä juurina.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6634"/>
-        <location filename="../src/MainWindow.cpp" line="20183"/>
-        <location filename="../src/MainWindow.cpp" line="20382"/>
+        <location filename="../src/MainWindow.cpp" line="6722"/>
+        <location filename="../src/MainWindow.cpp" line="20404"/>
+        <location filename="../src/MainWindow.cpp" line="20603"/>
         <source>Kernel repair</source>
         <translation>Ytimen korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13653"/>
+        <location filename="../src/MainWindow.cpp" line="13727"/>
         <source>• %1: %2 changed from &apos;%3&apos; to &apos;%4&apos;</source>
         <translation>• %1: %2 vaihdettu &apos;%3&apos;:stä &apos;%4&apos;:ksi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13718"/>
+        <location filename="../src/MainWindow.cpp" line="13792"/>
         <source>A diagnostic or repair is still running; wait a moment and retry the command.</source>
         <translation>Diagnostiikka tai korjaus on vielä käynnissä; odota hetki ja yritä komentoa uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13724"/>
+        <location filename="../src/MainWindow.cpp" line="13798"/>
         <source>Host shell unavailable</source>
         <translation>Komentotulkkia ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13725"/>
+        <location filename="../src/MainWindow.cpp" line="13799"/>
         <source>Chroot shell unavailable</source>
         <translation>Chroot-kuori ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13740"/>
+        <location filename="../src/MainWindow.cpp" line="13814"/>
         <source>The running-host identity is unresolved; no host shell command was sent.</source>
         <translation>Juoksu-isäntä-identiteetti on selvittämätön; mitään komentoa ei lähetetty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13741"/>
+        <location filename="../src/MainWindow.cpp" line="13815"/>
         <source>The repair target identity is incomplete; no chroot shell command was sent.</source>
         <translation>Korjaa kohde on epätäydellinen; Chroot- komentoa ei lähetetty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13764"/>
+        <location filename="../src/MainWindow.cpp" line="13838"/>
         <source>Running host shell command</source>
         <translation>Suoritetaan isäntäkomentoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13765"/>
+        <location filename="../src/MainWindow.cpp" line="13839"/>
         <source>Running chroot shell command</source>
         <translation>Suoritetaan chroot-komentoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13812"/>
+        <location filename="../src/MainWindow.cpp" line="13886"/>
         <source>the affected repository</source>
         <translation>kyseinen tietokanta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13818"/>
+        <location filename="../src/MainWindow.cpp" line="13892"/>
         <source>Repository metadata changed</source>
         <translation>Versiovaraston metatiedot muuttuneet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13819"/>
+        <location filename="../src/MainWindow.cpp" line="13893"/>
         <source>The repository changed its release metadata:
 %1</source>
         <translation>Arkisto muutti julkaisumetadataa:
 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13825"/>
+        <location filename="../src/MainWindow.cpp" line="13899"/>
         <source>The package manager refused the change. Allowing it re-runs the command once with Acquire::AllowReleaseInfoChange=true; the change is accepted for this retry only. Signature, key and package verification remain enforced.
 
 Retry command:
@@ -7751,63 +7949,63 @@ Uudelleenkomento:
 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13833"/>
+        <location filename="../src/MainWindow.cpp" line="13907"/>
         <source>Allow and Retry</source>
         <translation>Salli ja yritä uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13852"/>
+        <location filename="../src/MainWindow.cpp" line="13926"/>
         <source>Host shell response incomplete</source>
         <translation>Komentotulkin vastaus epätäydellinen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13852"/>
+        <location filename="../src/MainWindow.cpp" line="13926"/>
         <source>Chroot shell response incomplete</source>
         <translation>Chroot-kuoren vaste epätäydellinen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13853"/>
+        <location filename="../src/MainWindow.cpp" line="13927"/>
         <source>The privileged helper did not return a complete response for this command. The request was treated as failed; review the output and Logs before retrying.</source>
         <translation>Etuoikeutettu apulainen ei palauttanut täydellistä vastausta tähän komentoon. Pyyntöä käsiteltiin epäonnistuneena; tarkista tuloste ja lokit ennen uudelleentarkastelua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13887"/>
-        <location filename="../src/MainWindow.cpp" line="13914"/>
+        <location filename="../src/MainWindow.cpp" line="13960"/>
+        <location filename="../src/MainWindow.cpp" line="13987"/>
         <source>File Copy unavailable</source>
         <translation>Tiedostokopiota ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13896"/>
+        <location filename="../src/MainWindow.cpp" line="13969"/>
         <source>Previewing file copy</source>
         <translation>Esikatselen tiedostokopiota</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13907"/>
+        <location filename="../src/MainWindow.cpp" line="13980"/>
         <source>Preview File Copy</source>
         <translation>Esikatselutiedoston kopiointi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13921"/>
+        <location filename="../src/MainWindow.cpp" line="13994"/>
         <source>Smart destination ownership</source>
         <translation>Älykäs määränpään omistus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13944"/>
+        <location filename="../src/MainWindow.cpp" line="14017"/>
         <source>… %1 more item(s)</source>
         <translation>… %1 lisää kohdetta [s)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13949"/>
+        <location filename="../src/MainWindow.cpp" line="14022"/>
         <source>Confirm File Copy</source>
         <translation>Vahvista tiedostokopio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13950"/>
+        <location filename="../src/MainWindow.cpp" line="14023"/>
         <source>%1 — copy and verify %2 source item(s)?</source>
         <translation>%1 ... Kopioi ja varmista %2-lähdetieto[s]?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13952"/>
+        <location filename="../src/MainWindow.cpp" line="14025"/>
         <source>Destination: %1
 Ownership: %2
 
@@ -7824,7 +8022,7 @@ Lähteet:
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13955"/>
+        <location filename="../src/MainWindow.cpp" line="14028"/>
         <source>The repair target stays read-only. Existing same-name files in the host destination may be overwritten. The privileged helper refuses system-critical host destinations.
 
 </source>
@@ -7833,7 +8031,7 @@ Lähteet:
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13957"/>
+        <location filename="../src/MainWindow.cpp" line="14030"/>
         <source>The selected repair filesystem is promoted read-write only after host/target safety checks. Existing same-name target files may be overwritten.
 
 </source>
@@ -7842,7 +8040,7 @@ Lähteet:
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13959"/>
+        <location filename="../src/MainWindow.cpp" line="14032"/>
         <source>SENSITIVE TARGET PATH: this destination can change boot or operating-system files.
 
 </source>
@@ -7851,996 +8049,996 @@ Lähteet:
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13962"/>
+        <location filename="../src/MainWindow.cpp" line="14035"/>
         <source>rsync does not use --delete, so unrelated destination files remain. A second checksum/metadata pass and SHA-256 verification of regular files run after the copy.</source>
         <translation>rsync ei käytä --delete, joten etuyhteydetön kohde tiedostot pysyvät. Toinen tarkistussumma/metadatapassi ja SHA-256-tarkistus säännöllisistä tiedostoista suoritetaan kopion jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13971"/>
+        <location filename="../src/MainWindow.cpp" line="14044"/>
         <source>Copying files</source>
         <translation>Kopioidaan tiedostoja</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13986"/>
+        <location filename="../src/MainWindow.cpp" line="14059"/>
         <source>File Copy — %1</source>
         <translation>Tiedoston kopiointi %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13997"/>
+        <location filename="../src/MainWindow.cpp" line="14070"/>
         <source>Available — KF6 KAuth linked</source>
         <translation>Saatavilla KF6 KAuth linked</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13999"/>
+        <location filename="../src/MainWindow.cpp" line="14072"/>
         <source>Not compiled — optional integration unavailable</source>
         <translation>Ei ole laadittua valinnaista integrointia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14019"/>
-        <location filename="../src/MainWindow.cpp" line="14031"/>
+        <location filename="../src/MainWindow.cpp" line="14092"/>
+        <location filename="../src/MainWindow.cpp" line="14104"/>
         <source>Available</source>
         <translation>Saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14019"/>
-        <location filename="../src/MainWindow.cpp" line="14031"/>
+        <location filename="../src/MainWindow.cpp" line="14092"/>
+        <location filename="../src/MainWindow.cpp" line="14104"/>
         <source>Missing</source>
         <translation>Puuttuu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14110"/>
+        <location filename="../src/MainWindow.cpp" line="14183"/>
         <source>Running Host diagnostics require Host Maintenance. Choose Enter Host Maintenance on the protected running-host card in Systems first.</source>
         <translation>Running Isännän diagnostiikka vaatii ylläpitoa. Valitse Enter Isäntä Kunnossapito suojattu juoksu-host-kortti Systems ensin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14197"/>
+        <location filename="../src/MainWindow.cpp" line="14270"/>
         <source>Individual diagnostics have changed. Please re-run all diagnostics.</source>
         <translation>Yksittäiset diagnoosit ovat muuttuneet. Tarkista kaikki diagnostiikat.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14218"/>
+        <location filename="../src/MainWindow.cpp" line="14291"/>
         <source>Select a repair target in Systems.</source>
         <translation>Valitse korjauskohde järjestelmistä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14238"/>
+        <location filename="../src/MainWindow.cpp" line="14311"/>
         <source>Cached: %1 result</source>
         <translation>Välimuisti: %1:n tulos</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14242"/>
+        <location filename="../src/MainWindow.cpp" line="14315"/>
         <source>Cached: %1 — protected running-host result.</source>
         <translation>Välimuisti: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14243"/>
+        <location filename="../src/MainWindow.cpp" line="14316"/>
         <source>Re-run Diagnostic</source>
         <translation>Uudelleenajodiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14247"/>
+        <location filename="../src/MainWindow.cpp" line="14320"/>
         <source>Please re-run this diagnostic after the last repair or target configuration change.</source>
         <translation>Suorita tämä vianmääritys uudelleen viimeisen korjaus- tai kohdeasetusmuutoksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14249"/>
+        <location filename="../src/MainWindow.cpp" line="14322"/>
         <source>Available — read-only selected repair-system inspection; administrator authorization is already active for this Boot Bitch window.</source>
         <translation>Saatavana vain luettu korjausjärjestelmän tarkastus; järjestelmänvalvojan valtuutus on jo käytössä tässä Boot Bitch-ikkunassa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14250"/>
+        <location filename="../src/MainWindow.cpp" line="14323"/>
         <source>Available — read-only selected repair-system inspection; the first root action will request administrator authorization.</source>
         <translation>Saatavana vain lukea valitun korjaus-järjestelmän tarkastus; ensimmäinen juuri toiminto pyytää ylläpitäjän valtuutus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14253"/>
+        <location filename="../src/MainWindow.cpp" line="14326"/>
         <source>Please re-run this diagnostic after the last repair action.</source>
         <translation>Suorita tämä vianmääritys uudelleen viimeisen korjaustoimen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14254"/>
+        <location filename="../src/MainWindow.cpp" line="14327"/>
         <source>Available — protected running host</source>
         <translation>Saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14510"/>
+        <location filename="../src/MainWindow.cpp" line="14588"/>
         <source>Run running-host diagnostics</source>
         <translation>Suorita isännän diagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14511"/>
+        <location filename="../src/MainWindow.cpp" line="14589"/>
         <source>Read-only running-host diagnostic</source>
         <translation>Vain ajo-ohjaindiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14514"/>
+        <location filename="../src/MainWindow.cpp" line="14592"/>
         <source>Run All target diagnostics</source>
         <translation>Suorita kaikki kohdediagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14515"/>
+        <location filename="../src/MainWindow.cpp" line="14593"/>
         <source>Read-only target diagnostic</source>
         <translation>Vain lukukohdediagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14570"/>
+        <location filename="../src/MainWindow.cpp" line="14648"/>
         <source>Starting read-only %1 diagnostic &apos;%2&apos; on %3 (%4).</source>
         <translation>Käynnistetään %1-diagnostiikka &quot;%2&quot; %3:llä (%4).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14581"/>
+        <location filename="../src/MainWindow.cpp" line="14659"/>
         <source>Read-only %1 diagnostic &apos;%2&apos; %3.</source>
         <translation>Lue vain %1-diagnostiikka &apos;%2&apos; %3.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14583"/>
+        <location filename="../src/MainWindow.cpp" line="14661"/>
         <source>completed</source>
         <translation>valmis</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14583"/>
+        <location filename="../src/MainWindow.cpp" line="14661"/>
         <source>failed</source>
         <translation>epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14619"/>
-        <location filename="../src/MainWindow.cpp" line="14699"/>
+        <location filename="../src/MainWindow.cpp" line="14697"/>
+        <location filename="../src/MainWindow.cpp" line="14777"/>
         <source>%1 finished with exit code 0 (success).</source>
         <translation>%1 päättyi lähtökoodiin 0 (menestys).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14634"/>
-        <location filename="../src/MainWindow.cpp" line="14751"/>
+        <location filename="../src/MainWindow.cpp" line="14712"/>
+        <location filename="../src/MainWindow.cpp" line="14829"/>
         <source>Target diagnostic unavailable</source>
         <translation>Kohdediagnoosi ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14655"/>
+        <location filename="../src/MainWindow.cpp" line="14733"/>
         <source>Discarded the read-only target diagnostic &apos;%1&apos; because the active repair target changed while the request was running.</source>
         <translation>Hylättiin pelkkä lukukohdediagnostiikka &quot;%1,&quot; koska aktiivinen korjauskohde muuttui pyynnön ollessa käynnissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14715"/>
-        <location filename="../src/MainWindow.cpp" line="14750"/>
+        <location filename="../src/MainWindow.cpp" line="14793"/>
+        <location filename="../src/MainWindow.cpp" line="14828"/>
         <source>Host diagnostic unavailable</source>
         <translation>Isäntädiagnostiikka ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14936"/>
+        <location filename="../src/MainWindow.cpp" line="15014"/>
         <source>No repair target is ready for diagnostics.</source>
         <translation>Mikään korjauskohde ei ole valmis diagnostiikkaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14939"/>
+        <location filename="../src/MainWindow.cpp" line="15017"/>
         <source>The selected repair target is ready for diagnostics.</source>
         <translation>Valittu korjauskohde on valmis diagnostiikkaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14944"/>
+        <location filename="../src/MainWindow.cpp" line="15022"/>
         <source>Running Host diagnostics require Host Maintenance. Choose Host Maintenance on the protected running-host card in Systems first.</source>
         <translation>Running Isännän diagnostiikka vaatii ylläpitoa. Valitse ensin suojatun juoksu-host-kortin isäntähuolto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14950"/>
+        <location filename="../src/MainWindow.cpp" line="15028"/>
         <source>The running host is not resolved for diagnostics.</source>
         <translation>Juoksevaa isäntää ei ole selvitetty diagnostiikkaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14953"/>
+        <location filename="../src/MainWindow.cpp" line="15031"/>
         <source>The running host is ready for diagnostics.</source>
         <translation>Juokseva isäntä on valmis diagnostiikkaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14968"/>
+        <location filename="../src/MainWindow.cpp" line="15046"/>
         <source>Target diagnostics were invalidated by a repair or target change.</source>
         <translation>Kohdediagnoosi mitätöitiin korjauksella tai kohteen muutoksella.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14972"/>
+        <location filename="../src/MainWindow.cpp" line="15050"/>
         <source>Target diagnostic sections were invalidated by a repair action and await regeneration.</source>
         <translation>Kohteen diagnostiset osat mitätöitiin korjaustoimi ja odotetaan uudistumista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14976"/>
+        <location filename="../src/MainWindow.cpp" line="15054"/>
         <source>No cached diagnostics belong to the selected target.</source>
         <translation>Mikään välimuistidiagnostiikka ei kuulu valittuun kohteeseen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14980"/>
+        <location filename="../src/MainWindow.cpp" line="15058"/>
         <source>No cached diagnostics exist for the selected target.</source>
         <translation>Valitulle kohteelle ei ole välimuistidiagnostiikkaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14987"/>
+        <location filename="../src/MainWindow.cpp" line="15065"/>
         <source>Running-host diagnostic sections were invalidated by a repair action and await regeneration.</source>
         <translation>Korjaaminen mitätöitiin ja odotetaan regeneraatiota.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14991"/>
+        <location filename="../src/MainWindow.cpp" line="15069"/>
         <source>No cached running-host diagnostics exist.</source>
         <translation>Mitään välimuistia ei ole.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15007"/>
+        <location filename="../src/MainWindow.cpp" line="15085"/>
         <source>Automatic diagnostics regeneration is disabled in Settings.</source>
         <translation>Automaattinen diagnostiikan regenerointi ei ole käytössä Asetuksissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15010"/>
+        <location filename="../src/MainWindow.cpp" line="15088"/>
         <source>A diagnostic or repair operation is already in progress.</source>
         <translation>Diagnostinen tai korjaus on jo käynnissä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15020"/>
+        <location filename="../src/MainWindow.cpp" line="15098"/>
         <source>Current-scope diagnostic evidence is fresh.</source>
         <translation>Tämänhetkinen diagnostinen näyttö on tuore.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15043"/>
+        <location filename="../src/MainWindow.cpp" line="15121"/>
         <source>Unknown repair tool: %1.</source>
         <translation>Tuntematon korjaustyökalu: %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15047"/>
-        <location filename="../src/MainWindow.cpp" line="15238"/>
-        <location filename="../src/MainWindow.cpp" line="21234"/>
+        <location filename="../src/MainWindow.cpp" line="15125"/>
+        <location filename="../src/MainWindow.cpp" line="15301"/>
+        <location filename="../src/MainWindow.cpp" line="21475"/>
         <source>Select a repair target in Systems first.</source>
         <translation>Valitse ensin järjestelmän korjauskohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15050"/>
-        <location filename="../src/MainWindow.cpp" line="15082"/>
+        <location filename="../src/MainWindow.cpp" line="15128"/>
+        <location filename="../src/MainWindow.cpp" line="15160"/>
         <source>Diagnostic evidence belongs to a different target. Run diagnostics for the selected target.</source>
         <translation>Diagnostiset todisteet kuuluvat eri kohteeseen. Suorita valitun kohteen diagnostiikka.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15058"/>
+        <location filename="../src/MainWindow.cpp" line="15136"/>
         <source>Target state changed after the last diagnostic or repair action. Please regenerate diagnostics before starting another repair.</source>
         <translation>Kohdetila muuttui viimeisen vianmäärityksen tai korjaustoimen jälkeen. Korjaa diagnostiikka ennen uuden korjauksen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15062"/>
-        <location filename="../src/MainWindow.cpp" line="15101"/>
+        <location filename="../src/MainWindow.cpp" line="15140"/>
+        <location filename="../src/MainWindow.cpp" line="15179"/>
         <source>Repair tool %1 is available in the selected scope&apos;s cached diagnostics.</source>
         <translation>Korjaamotyökalu %1 on saatavilla valitun sovelluksen välimuistidiagnostiikassa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15153"/>
+        <location filename="../src/MainWindow.cpp" line="15231"/>
         <source>Unrecognised running-host default-entry capability evidence: %1. Run running-host diagnostics again, and update Boot Bitch if the helper format changed.</source>
         <translation>Tunnistamaton juoksu-isäntä-oletus-sisääntulokykyä osoittava näyttö: %1. Suorita juoksu-isäntä-diagnostiikka uudelleen ja päivitä Boot Bitch, jos auttajamuoto on muuttunut.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15159"/>
+        <location filename="../src/MainWindow.cpp" line="15237"/>
         <source>The running host&apos;s verified default boot entry can be restored or promoted.</source>
         <translation>Juoksevan isäntän todennettu oletuskäynnistys voidaan palauttaa tai edistää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15165"/>
+        <location filename="../src/MainWindow.cpp" line="15243"/>
         <source>The cached running-host diagnostics do not decide whether the host default entry can be restored. Regenerate running-host diagnostics in Host Maintenance, and update Boot Bitch if the helper format changed.</source>
         <translation>Välimuistin juoksu-host diagnostiikka ei päätä, onko isäntä oletus syöte voidaan palauttaa. Uudista juoksu-isäntä-diagnostiikka isäntä huolto, ja päivittää Boot Bitch jos auttaja muodossa muuttunut.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15166"/>
+        <location filename="../src/MainWindow.cpp" line="15244"/>
         <source>No running-host default-entry capability evidence is cached. Run read-only running-host diagnostics in Host Maintenance before using Make Default.</source>
         <translation>- Ei ole. Suorita vain luku-asentajan diagnostiikka isännän kunnossapidossa ennen Make Oletuksen käyttöä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15230"/>
+        <location filename="../src/MainWindow.cpp" line="15293"/>
         <source>Run the %1 diagnostic for the protected running host before starting this maintenance action.</source>
         <translation>Suorita %1-diagnostiikka suojatulle juoksuisännälle ennen tämän huoltotoimen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15233"/>
+        <location filename="../src/MainWindow.cpp" line="15296"/>
         <source>Required read-only running-host diagnostics are cached for this maintenance action.</source>
         <translation>Vaaditaan vain ajo-ohjaindiagnostiikka.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15242"/>
+        <location filename="../src/MainWindow.cpp" line="15305"/>
         <source>Run the selected target diagnostic before starting this repair.</source>
         <translation>Suorita valittu kohdediagnostiikka ennen tämän korjauksen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15252"/>
+        <location filename="../src/MainWindow.cpp" line="15316"/>
         <source>Target state changed after the last diagnostic or repair action. Run the %1 diagnostic for this target before starting this repair.</source>
         <translation>Kohdetila muuttui viimeisen vianmäärityksen tai korjaustoimen jälkeen. Suorita %1-diagnostiikka tälle kohteelle ennen tämän korjauksen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15253"/>
+        <location filename="../src/MainWindow.cpp" line="15317"/>
         <source>Run the %1 diagnostic for this target before starting this repair.</source>
         <translation>Suorita %1-diagnostiikka tälle kohteelle ennen tämän korjauksen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15256"/>
+        <location filename="../src/MainWindow.cpp" line="15320"/>
         <source>Required read-only diagnostic evidence is cached for this repair tool.</source>
         <translation>Vaadittu luku vain diagnostinen näyttö on välimuistissa tätä korjaustyökalua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15497"/>
+        <location filename="../src/MainWindow.cpp" line="15598"/>
         <source>package metadata refreshed — changes were applied</source>
         <translation>package metadatan päivittämiä muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15498"/>
+        <location filename="../src/MainWindow.cpp" line="15599"/>
         <source>package metadata already current — no changes</source>
         <translation>paketti metatiedot jo nykyinen ... ei muutoksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15499"/>
+        <location filename="../src/MainWindow.cpp" line="15600"/>
         <source>package metadata refresh failed</source>
         <translation>pakettimetadatan päivitys epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15500"/>
+        <location filename="../src/MainWindow.cpp" line="15601"/>
         <source>package metadata refresh not checked</source>
         <translation>pakettimetadatan päivitystä ei ole tarkistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15501"/>
+        <location filename="../src/MainWindow.cpp" line="15602"/>
         <source>package metadata refresh did not run</source>
         <translation>paketti metadatan päivitystä ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15503"/>
+        <location filename="../src/MainWindow.cpp" line="15604"/>
         <source>package configuration completed — changes were applied</source>
         <translation>pakettien konfigurointi valmistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15504"/>
+        <location filename="../src/MainWindow.cpp" line="15605"/>
         <source>nothing to configure</source>
         <translation>ei mitään konfiguroitavaa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15505"/>
+        <location filename="../src/MainWindow.cpp" line="15606"/>
         <source>package configuration failed</source>
         <translation>pakettien konfigurointi epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15506"/>
+        <location filename="../src/MainWindow.cpp" line="15607"/>
         <source>package configuration not checked</source>
         <translation>pakettien kokoonpanoa ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15507"/>
+        <location filename="../src/MainWindow.cpp" line="15608"/>
         <source>package configuration did not run</source>
         <translation>pakettien konfigurointia ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15509"/>
+        <location filename="../src/MainWindow.cpp" line="15610"/>
         <source>broken dependencies repaired — changes were applied</source>
         <translation>rikkinäisiä riippuvuuksia korjattiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15510"/>
+        <location filename="../src/MainWindow.cpp" line="15611"/>
         <source>no broken dependencies</source>
         <translation>ei rikkoutuneita riippuvuuksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15511"/>
+        <location filename="../src/MainWindow.cpp" line="15612"/>
         <source>broken dependency repair failed</source>
         <translation>rikki riippuvuus korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15512"/>
+        <location filename="../src/MainWindow.cpp" line="15613"/>
         <source>broken dependency repair not checked</source>
         <translation>rikki riippuvuus korjausta ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15513"/>
+        <location filename="../src/MainWindow.cpp" line="15614"/>
         <source>broken dependency repair did not run</source>
         <translation>rikki riippuvuus korjaus ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15515"/>
+        <location filename="../src/MainWindow.cpp" line="15616"/>
         <source>packages upgraded — changes were applied</source>
         <translation>Paketteja paranneltu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15516"/>
+        <location filename="../src/MainWindow.cpp" line="15617"/>
         <source>no packages to upgrade</source>
         <translation>ei päivitettäviä paketteja</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15517"/>
+        <location filename="../src/MainWindow.cpp" line="15618"/>
         <source>package upgrade failed</source>
         <translation>pakettipäivitys epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15518"/>
+        <location filename="../src/MainWindow.cpp" line="15619"/>
         <source>package upgrade not checked</source>
         <translation>pakettipäivitystä ei valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15519"/>
+        <location filename="../src/MainWindow.cpp" line="15620"/>
         <source>package upgrade did not run</source>
         <translation>pakettipäivitystä ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15521"/>
+        <location filename="../src/MainWindow.cpp" line="15622"/>
         <source>DKMS modules rebuilt — changes were applied</source>
         <translation>DKMS-moduuleja rakennettiin uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15522"/>
+        <location filename="../src/MainWindow.cpp" line="15623"/>
         <source>DKMS modules already current — no changes</source>
         <translation>DKMS-moduulit eivät muutu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15523"/>
+        <location filename="../src/MainWindow.cpp" line="15624"/>
         <source>DKMS rebuild failed</source>
         <translation>DKMS:n jälleenrakennus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15524"/>
+        <location filename="../src/MainWindow.cpp" line="15625"/>
         <source>DKMS rebuild not checked</source>
         <translation>DKMS-korjausta ei tarkistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15525"/>
+        <location filename="../src/MainWindow.cpp" line="15626"/>
         <source>DKMS rebuild did not run</source>
         <translation>DKMS:n jälleenrakennusta ei toteutettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15527"/>
+        <location filename="../src/MainWindow.cpp" line="15628"/>
         <source>display manager repaired — changes were applied</source>
         <translation>Näytönhallinta korjattuja muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15528"/>
+        <location filename="../src/MainWindow.cpp" line="15629"/>
         <source>display manager already correct — no changes</source>
         <translation>Näytä hallinta jo korjata ... ei muutoksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15529"/>
+        <location filename="../src/MainWindow.cpp" line="15630"/>
         <source>display manager repair failed</source>
         <translation>näytönhallinan korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15530"/>
+        <location filename="../src/MainWindow.cpp" line="15631"/>
         <source>display manager repair not checked</source>
         <translation>näytönhallinan korjausta ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15531"/>
+        <location filename="../src/MainWindow.cpp" line="15632"/>
         <source>display manager repair did not run</source>
         <translation>näytönhallinan korjausta ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15533"/>
+        <location filename="../src/MainWindow.cpp" line="15634"/>
         <source>initramfs rebuilt — images regenerated</source>
         <translation>initramfs regeneroitu kuvat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15534"/>
+        <location filename="../src/MainWindow.cpp" line="15635"/>
         <source>initramfs already current — no changes</source>
         <translation>initramfs jo nykyisellään ei muutoksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15535"/>
+        <location filename="../src/MainWindow.cpp" line="15636"/>
         <source>initramfs rebuild failed</source>
         <translation>initramfs-korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15536"/>
+        <location filename="../src/MainWindow.cpp" line="15637"/>
         <source>initramfs rebuild not checked</source>
         <translation>initramfs-korjausta ei tarkistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15537"/>
+        <location filename="../src/MainWindow.cpp" line="15638"/>
         <source>initramfs rebuild did not run</source>
         <translation>initramfs:n korjaus ei onnistunut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15539"/>
+        <location filename="../src/MainWindow.cpp" line="15640"/>
         <source>EFI boot path repaired — changes were applied</source>
         <translation>EFI:n käynnistyspolku korjattiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15540"/>
+        <location filename="../src/MainWindow.cpp" line="15641"/>
         <source>EFI boot path already correct — no changes</source>
         <translation>EFI- käynnistyspolku ei muutoksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15541"/>
+        <location filename="../src/MainWindow.cpp" line="15642"/>
         <source>EFI boot path repair failed</source>
         <translation>EFI- käynnistyspolun korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15542"/>
+        <location filename="../src/MainWindow.cpp" line="15643"/>
         <source>EFI boot path repair not checked</source>
         <translation>EFI-käynnistyspolun korjausta ei tarkistettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15543"/>
+        <location filename="../src/MainWindow.cpp" line="15644"/>
         <source>EFI boot path repair did not run</source>
         <translation>EFI- käynnistyspolun korjaus ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15545"/>
+        <location filename="../src/MainWindow.cpp" line="15646"/>
         <source>GRUB configuration regenerated — changes were applied</source>
         <translation>GRUB-asetusten regeneroituja muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15546"/>
+        <location filename="../src/MainWindow.cpp" line="15647"/>
         <source>GRUB configuration already current — no changes</source>
         <translation>GRUB: n asetus on jo voimassa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15547"/>
+        <location filename="../src/MainWindow.cpp" line="15648"/>
         <source>GRUB regeneration failed</source>
         <translation>GRUB regeneraatio epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15548"/>
+        <location filename="../src/MainWindow.cpp" line="15649"/>
         <source>GRUB regeneration not checked</source>
         <translation>GRUB regenerointia ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15549"/>
+        <location filename="../src/MainWindow.cpp" line="15650"/>
         <source>GRUB regeneration did not run</source>
         <translation>GRUB:n regenerointia ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15551"/>
+        <location filename="../src/MainWindow.cpp" line="15652"/>
         <source>extlinux configuration regenerated — changes were applied</source>
         <translation>extlinux-asetusten regeneroituja muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15552"/>
+        <location filename="../src/MainWindow.cpp" line="15653"/>
         <source>extlinux configuration already current — no changes</source>
         <translation>extlinux: n asetus on jo voimassa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15553"/>
+        <location filename="../src/MainWindow.cpp" line="15654"/>
         <source>extlinux regeneration failed</source>
         <translation>extlinux regeneraatio epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15554"/>
+        <location filename="../src/MainWindow.cpp" line="15655"/>
         <source>extlinux regeneration not checked</source>
         <translation>extlinux regenerointia ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15555"/>
+        <location filename="../src/MainWindow.cpp" line="15656"/>
         <source>extlinux regeneration did not run</source>
         <translation>extlinux:n regenerointia ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15557"/>
+        <location filename="../src/MainWindow.cpp" line="15658"/>
         <source>file system repaired — changes were applied</source>
         <translation>tiedostojärjestelmän korjatut muutokset tehtiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15558"/>
+        <location filename="../src/MainWindow.cpp" line="15659"/>
         <source>no file system errors found — no changes</source>
         <translation>tiedostojärjestelmän virheitä ei löytynyt</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15559"/>
+        <location filename="../src/MainWindow.cpp" line="15660"/>
         <source>file system repair failed</source>
         <translation>tiedostojärjestelmän korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15560"/>
+        <location filename="../src/MainWindow.cpp" line="15661"/>
         <source>not all filesystems were checked</source>
         <translation>kaikkia tiedostojärjestelmiä ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15561"/>
+        <location filename="../src/MainWindow.cpp" line="15662"/>
         <source>file system repair did not run</source>
         <translation>tiedostojärjestelmän korjausta ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15563"/>
+        <location filename="../src/MainWindow.cpp" line="15664"/>
         <source>boot stack reconciled — changes were applied</source>
         <translation>boot pino täsmäämään ... muutokset tehtiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15564"/>
+        <location filename="../src/MainWindow.cpp" line="15665"/>
         <source>boot stack already current — no changes</source>
         <translation>boot pino jo nykyinen ... ei muutoksia</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15565"/>
+        <location filename="../src/MainWindow.cpp" line="15666"/>
         <source>boot stack repair failed</source>
         <translation>Käynnistyspinon korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15566"/>
+        <location filename="../src/MainWindow.cpp" line="15667"/>
         <source>boot stack not checked</source>
         <translation>boot pinoa ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15567"/>
+        <location filename="../src/MainWindow.cpp" line="15668"/>
         <source>boot stack repair did not run</source>
         <translation>boot pino korjaus ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15569"/>
+        <location filename="../src/MainWindow.cpp" line="15670"/>
         <source>validation completed — changes were applied</source>
         <translation>Validointia on muutettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15570"/>
+        <location filename="../src/MainWindow.cpp" line="15671"/>
         <source>validation is read-only — no changes</source>
         <translation>Validointi on vain luettavaa .</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15571"/>
+        <location filename="../src/MainWindow.cpp" line="15672"/>
         <source>validation failed</source>
         <translation>Validointi epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15572"/>
+        <location filename="../src/MainWindow.cpp" line="15673"/>
         <source>validation not checked</source>
         <translation>validointia ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15573"/>
+        <location filename="../src/MainWindow.cpp" line="15674"/>
         <source>validation did not run</source>
         <translation>validointia ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15575"/>
+        <location filename="../src/MainWindow.cpp" line="15676"/>
         <source>host boot default updated — changes were applied</source>
         <translation>Käynnistyksen oletus päivitettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15576"/>
+        <location filename="../src/MainWindow.cpp" line="15677"/>
         <source>host boot default already correct — no changes</source>
         <translation>isäntäkäynnistyksen oletus korjasi jo</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15577"/>
+        <location filename="../src/MainWindow.cpp" line="15678"/>
         <source>host boot default update failed</source>
         <translation>Käynnistän oletuspäivitys epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15578"/>
+        <location filename="../src/MainWindow.cpp" line="15679"/>
         <source>host boot default not checked</source>
         <translation>isäntäkäynnistyksen oletus ei valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15579"/>
+        <location filename="../src/MainWindow.cpp" line="15680"/>
         <source>host boot default update did not run</source>
         <translation>Käynnistyksen oletuspäivitys ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15581"/>
+        <location filename="../src/MainWindow.cpp" line="15682"/>
         <source>firmware boot order updated — changes were applied</source>
         <translation>firmware boot order updated</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15582"/>
+        <location filename="../src/MainWindow.cpp" line="15683"/>
         <source>firmware boot order already current — no changes</source>
         <translation>firmware boot-tilaus on jo käynnissä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15583"/>
+        <location filename="../src/MainWindow.cpp" line="15684"/>
         <source>firmware boot order update failed</source>
         <translation>firmware- käynnistystilauksen päivitys epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15584"/>
+        <location filename="../src/MainWindow.cpp" line="15685"/>
         <source>firmware boot order not checked</source>
         <translation>firmware- käynnistystilaus ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15585"/>
+        <location filename="../src/MainWindow.cpp" line="15686"/>
         <source>firmware boot order update did not run</source>
         <translation>firmware- käynnistystilauksen päivitystä ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15587"/>
+        <location filename="../src/MainWindow.cpp" line="15688"/>
         <source>firmware boot entry deleted — changes were applied</source>
         <translation>firmware boot -merkintä poistettuja muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15588"/>
+        <location filename="../src/MainWindow.cpp" line="15689"/>
         <source>firmware boot entry was already absent — no changes</source>
         <translation>firmware boot- merkintä oli jo poissa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15589"/>
+        <location filename="../src/MainWindow.cpp" line="15690"/>
         <source>firmware boot entry delete failed</source>
         <translation>firmware-käynnistyslopun poisto epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15590"/>
-        <location filename="../src/MainWindow.cpp" line="15596"/>
+        <location filename="../src/MainWindow.cpp" line="15691"/>
+        <location filename="../src/MainWindow.cpp" line="15697"/>
         <source>firmware boot entry not checked</source>
         <translation>firmware boot -merkintää ei tarkastettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15591"/>
+        <location filename="../src/MainWindow.cpp" line="15692"/>
         <source>firmware boot entry delete did not run</source>
         <translation>firmware- käynnistyslopun poisto ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15593"/>
+        <location filename="../src/MainWindow.cpp" line="15694"/>
         <source>firmware boot entry renamed — changes were applied</source>
         <translation>firmware boot-maininnan nimeksi muutettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15594"/>
+        <location filename="../src/MainWindow.cpp" line="15695"/>
         <source>firmware boot entry label already correct — no changes</source>
         <translation>firmware boot entry - etiketti jo oikea</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15595"/>
+        <location filename="../src/MainWindow.cpp" line="15696"/>
         <source>firmware boot entry rename failed</source>
         <translation>firmware- käynnistysmerkinnän uudelleennimi epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15597"/>
+        <location filename="../src/MainWindow.cpp" line="15698"/>
         <source>firmware boot entry rename did not run</source>
         <translation>firmware- käynnistyksen uudelleennimi ei toiminut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15599"/>
+        <location filename="../src/MainWindow.cpp" line="15700"/>
         <source>repair successful — changes were applied</source>
         <translation>Korjaavia muutoksia sovellettiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15600"/>
+        <location filename="../src/MainWindow.cpp" line="15701"/>
         <source>no repair needed — no changes were detected</source>
         <translation>korjausta ei tarvittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15601"/>
+        <location filename="../src/MainWindow.cpp" line="15702"/>
         <source>repair failed</source>
         <translation>korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15602"/>
+        <location filename="../src/MainWindow.cpp" line="15703"/>
         <source>not checked — no repair was attempted</source>
         <translation>ei tarkastettua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15603"/>
+        <location filename="../src/MainWindow.cpp" line="15704"/>
         <source>repair did not run</source>
         <translation>korjausta ei suoritettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15929"/>
+        <location filename="../src/MainWindow.cpp" line="16030"/>
         <source>Automatic running-host diagnostics regeneration skipped: Host Maintenance is not active.</source>
         <translation>Automaattinen juoksu-host-diagnostiikka regeneraatio ohitettu: isäntä huolto ei ole aktiivinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15939"/>
+        <location filename="../src/MainWindow.cpp" line="16040"/>
         <source>Regenerating target diagnostics</source>
         <translation>Regeneroidaan kohdediagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15940"/>
+        <location filename="../src/MainWindow.cpp" line="16041"/>
         <source>Regenerating running-host diagnostics</source>
         <translation>Regeneroiva ajo-ohjaindiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15945"/>
-        <location filename="../src/MainWindow.cpp" line="16445"/>
+        <location filename="../src/MainWindow.cpp" line="16046"/>
+        <location filename="../src/MainWindow.cpp" line="16546"/>
         <source>Running…</source>
         <translation>Running…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15995"/>
-        <location filename="../src/MainWindow.cpp" line="16175"/>
+        <location filename="../src/MainWindow.cpp" line="16096"/>
+        <location filename="../src/MainWindow.cpp" line="16276"/>
         <source>%1 diagnostic run: %2</source>
         <translation>%1-diagnostiikka: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8222"/>
-        <location filename="../src/MainWindow.cpp" line="15996"/>
-        <location filename="../src/MainWindow.cpp" line="16175"/>
-        <location filename="../src/MainWindow.cpp" line="16494"/>
+        <location filename="../src/MainWindow.cpp" line="8310"/>
+        <location filename="../src/MainWindow.cpp" line="16097"/>
+        <location filename="../src/MainWindow.cpp" line="16276"/>
+        <location filename="../src/MainWindow.cpp" line="16595"/>
         <source>Target</source>
         <translation>Kohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5547"/>
+        <location filename="../src/MainWindow.cpp" line="5635"/>
         <source>Ordinary repairs need a non-host target; the host uses its own maintenance mode.</source>
         <translation>Tavalliset korjaukset edellyttävät muuta kuin isäntäkohdetta; isäntä käyttää omaa huoltotilaansa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5906"/>
+        <location filename="../src/MainWindow.cpp" line="5994"/>
         <source>End the privileged session and close Boot Bitch-owned LUKS mappings.</source>
         <translation>Päätä etuoikeutettu istunto ja sulje Boot Bitch-omistettu LUKS kuvat.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6068"/>
+        <location filename="../src/MainWindow.cpp" line="6156"/>
         <source>Restore the host&apos;s default boot entry and make it default.</source>
         <translation>Palauta isännän oletuskäynnistysmerkintä ja tee siitä oletus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6187"/>
+        <location filename="../src/MainWindow.cpp" line="6275"/>
         <source>No repair target committed; rows are inspection-only until Select Target.</source>
         <translation>Korjaa kohdetta ei ole tehty; rivit ovat vain tarkastus, kunnes Valitse kohde.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6260"/>
+        <location filename="../src/MainWindow.cpp" line="6348"/>
         <source>Best component visible before privileged probing.</source>
         <translation>Paras komponentti näkyvissä ennen etuoikeutettua etsintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6336"/>
+        <location filename="../src/MainWindow.cpp" line="6424"/>
         <source>Read or edit the selected target configuration file.</source>
         <translation>Lue tai muokkaa valittua kohdeasetustiedostoa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6422"/>
+        <location filename="../src/MainWindow.cpp" line="6510"/>
         <source>Copy the diagnostic results to the clipboard.</source>
         <translation>Kopioi vianmääritystulokset leikepöydälle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6423"/>
+        <location filename="../src/MainWindow.cpp" line="6511"/>
         <source>Save the diagnostic results to a file.</source>
         <translation>Tallenna diagnostiset tulokset tiedostoon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6784"/>
+        <location filename="../src/MainWindow.cpp" line="6872"/>
         <source>Reboot the host after confirmation; all users are signed out.</source>
         <translation>Käynnistä isäntä uudelleen vahvistuksen jälkeen; kaikki käyttäjät ovat kirjautuneet ulos.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6786"/>
+        <location filename="../src/MainWindow.cpp" line="6874"/>
         <source>Hide the reminder until Host Maintenance is re-entered.</source>
         <translation>Piilota muistutus, kunnes isäntähuolto palaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6880"/>
+        <location filename="../src/MainWindow.cpp" line="6968"/>
         <source>Run a read-only rollback preflight, then promote a writable copy to @.</source>
         <translation>Suorita lukuavainrollback ennen lentoa, sitten promote kirjoitettava kopio @.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7053"/>
-        <location filename="../src/MainWindow.cpp" line="7073"/>
+        <location filename="../src/MainWindow.cpp" line="7141"/>
+        <location filename="../src/MainWindow.cpp" line="7161"/>
         <source>Kernel: %1</source>
         <translation>Ytimen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7056"/>
-        <location filename="../src/MainWindow.cpp" line="7076"/>
+        <location filename="../src/MainWindow.cpp" line="7144"/>
+        <location filename="../src/MainWindow.cpp" line="7164"/>
         <source>Initramfs: %1</source>
         <translation>Initramfs: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7059"/>
+        <location filename="../src/MainWindow.cpp" line="7147"/>
         <source>This entry is the current extlinux default.</source>
         <translation>Tämä merkintä on nykyinen extlinux-oletus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7139"/>
-        <location filename="../src/MainWindow.cpp" line="7319"/>
-        <location filename="../src/MainWindow.cpp" line="7396"/>
+        <location filename="../src/MainWindow.cpp" line="7227"/>
+        <location filename="../src/MainWindow.cpp" line="7407"/>
+        <location filename="../src/MainWindow.cpp" line="7484"/>
         <source>Boot menu</source>
         <translation>Saapasvalikko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7141"/>
+        <location filename="../src/MainWindow.cpp" line="7229"/>
         <source>Switch between the UEFI/UKI firmware entries and the read-only boot menu.</source>
         <translation>Vaihda UEFI/UKI-ohjelmistosyötteiden ja vain luettavan käynnistysvalikon välillä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7217"/>
-        <location filename="../src/MainWindow.cpp" line="8226"/>
+        <location filename="../src/MainWindow.cpp" line="7305"/>
+        <location filename="../src/MainWindow.cpp" line="8314"/>
         <source>Save</source>
         <translation>Tallenna</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7312"/>
+        <location filename="../src/MainWindow.cpp" line="7400"/>
         <source>Switch the view selector to Boot menu to list the current scope&apos;s boot menu read-only.</source>
         <translation>Vaihda näkymän valitsija Boot-valikkoon luetellaksesi nykyisen komennon käynnistysvalikon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7525"/>
+        <location filename="../src/MainWindow.cpp" line="7613"/>
         <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
         <translation>Ei UEFI firmware boot- merkintöjä löytyi ... tämä järjestelmä on BIOS/legacy tai puuttuu efibootmgr, joten ei ole firmware boot- järjestyksessä hallita.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7556"/>
+        <location filename="../src/MainWindow.cpp" line="7644"/>
         <source>Loading boot menu</source>
         <translation>Ladataan aloitusvalikkoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7563"/>
-        <location filename="../src/MainWindow.cpp" line="7605"/>
-        <location filename="../src/MainWindow.cpp" line="7633"/>
+        <location filename="../src/MainWindow.cpp" line="7651"/>
+        <location filename="../src/MainWindow.cpp" line="7693"/>
+        <location filename="../src/MainWindow.cpp" line="7721"/>
         <source>List boot menu</source>
         <translation>Listan käynnistysvalikko</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7577"/>
+        <location filename="../src/MainWindow.cpp" line="7665"/>
         <source>The boot menu could not be loaded. See Logs for details.</source>
         <translation>Alkuvalikkoa ei voitu ladata. Katso lisätietoja lokeista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7669"/>
+        <location filename="../src/MainWindow.cpp" line="7757"/>
         <source>No boot menu entries were found.</source>
         <translation>Alkuvalikkoa ei löytynyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7623"/>
-        <location filename="../src/MainWindow.cpp" line="7651"/>
-        <location filename="../src/MainWindow.cpp" line="7683"/>
+        <location filename="../src/MainWindow.cpp" line="7711"/>
+        <location filename="../src/MainWindow.cpp" line="7739"/>
+        <location filename="../src/MainWindow.cpp" line="7771"/>
         <source>Loaded %1 boot menu entries.</source>
         <translation>Ladattu %1- käynnistysvalikko.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7747"/>
+        <location filename="../src/MainWindow.cpp" line="7835"/>
         <source>Renamed to &quot;%1&quot; — Save applies it.</source>
         <translation>Nimetty &quot;%1&quot;:ksi Tallenna soveltaa sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8006"/>
+        <location filename="../src/MainWindow.cpp" line="8094"/>
         <source>Boot menu on %1</source>
         <translation>Saapasvalikko %1: llä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8038"/>
+        <location filename="../src/MainWindow.cpp" line="8126"/>
         <source>%1 boot menu entries loaded read-only.</source>
         <translation>%1- käynnistysvalikko ladattu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8041"/>
+        <location filename="../src/MainWindow.cpp" line="8129"/>
         <source>%1 boot menu viewing is available. Load Menu to list the boot menu read-only.</source>
         <translation>%1-valikon katselu on saatavilla. Lataa valikko luetellaksesi vain aloitusvalikon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8051"/>
+        <location filename="../src/MainWindow.cpp" line="8139"/>
         <source>%1 firmware boot entries loaded. Reorder rows, edit labels or mark an entry for deletion, then Save to apply all changes.</source>
         <translation>%1-ohjelmiston käynnistysmerkinnät ladattu. Tilaa rivit uudelleen, muokkaa tarroja tai merkitse poistomerkintä, sitten Tallenna kaikkien muutosten soveltaminen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8084"/>
+        <location filename="../src/MainWindow.cpp" line="8172"/>
         <source>Load the %1 boot menu read-only.</source>
         <translation>Lataa %1-kengänvalikko.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8105"/>
+        <location filename="../src/MainWindow.cpp" line="8193"/>
         <source>No pending firmware boot entry changes. Reorder rows, edit labels or mark an entry for deletion first.</source>
         <translation>Firmaohjelmiston käynnistys ei muutu. Tilaa rivit uudelleen, muokkaa tarroja tai merkitse ensin poistomerkintä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8171"/>
+        <location filename="../src/MainWindow.cpp" line="8259"/>
         <source>Save firmware boot entry changes unavailable</source>
         <translation>Tallenna firmware boot entry muutoksia ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8175"/>
+        <location filename="../src/MainWindow.cpp" line="8263"/>
         <source>Load boot entries before saving changes.</source>
         <translation>Lataa käynnistysmerkinnät ennen muutosten tallentamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8189"/>
+        <location filename="../src/MainWindow.cpp" line="8277"/>
         <source>No pending firmware boot entry changes to save.</source>
         <translation>Ei odottavia firmwaren käynnistysmuutoksia tallennettavaksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8202"/>
+        <location filename="../src/MainWindow.cpp" line="8290"/>
         <source>Reorder firmware boot order to: %1</source>
         <translation>Tilaa firmware- käynnistystilaus uudelleen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8206"/>
+        <location filename="../src/MainWindow.cpp" line="8294"/>
         <source>Delete Boot%1 (%2)</source>
         <translation>Poista Boot%1 (%2)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8212"/>
+        <location filename="../src/MainWindow.cpp" line="8300"/>
         <source>Rename Boot%1 (%2) to &quot;%3&quot;</source>
         <translation>Nimeä Boot%1 (%2) uudelleen &quot;%3&quot;:ksi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8218"/>
+        <location filename="../src/MainWindow.cpp" line="8306"/>
         <source>Save firmware boot entry changes</source>
         <translation>Tallenna firmware- käynnistysmuutokset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8219"/>
+        <location filename="../src/MainWindow.cpp" line="8307"/>
         <source>Apply all pending firmware boot entry changes?</source>
         <translation>Toteuttaa kaikki vireillä olevat firmware-käynnistysmuutokset?</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8220"/>
+        <location filename="../src/MainWindow.cpp" line="8308"/>
         <source>%1 disk: %2
 Root: %3
 
@@ -8855,50 +9053,50 @@ Juuri: %3
 Jokainen muutos kulkee todennetun auttaja, joka tarkistaa tietueen uudelleen, kirjoittaa sen, lukee sen takaisin ja palauttaa edellisen tilan mahdolliset eroavuudet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8222"/>
-        <location filename="../src/MainWindow.cpp" line="15996"/>
-        <location filename="../src/MainWindow.cpp" line="16175"/>
-        <location filename="../src/MainWindow.cpp" line="16494"/>
+        <location filename="../src/MainWindow.cpp" line="8310"/>
+        <location filename="../src/MainWindow.cpp" line="16097"/>
+        <location filename="../src/MainWindow.cpp" line="16276"/>
+        <location filename="../src/MainWindow.cpp" line="16595"/>
         <source>Host</source>
         <translation>Palvelin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8245"/>
+        <location filename="../src/MainWindow.cpp" line="8333"/>
         <source>Save firmware boot order</source>
         <translation>Tallenna firmware- käynnistystilaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8256"/>
+        <location filename="../src/MainWindow.cpp" line="8344"/>
         <source>reorder: %1</source>
         <translation>uudelleenjärjestäminen: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8278"/>
+        <location filename="../src/MainWindow.cpp" line="8366"/>
         <source>delete Boot%1: %2</source>
         <translation>Poista Boot%1: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8301"/>
+        <location filename="../src/MainWindow.cpp" line="8389"/>
         <source>rename Boot%1: %2</source>
         <translation>Boot%1: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8321"/>
+        <location filename="../src/MainWindow.cpp" line="8409"/>
         <source>Firmware boot entry changes saved.</source>
         <translation>Firmware-käynnistyksen muutokset tallennettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8329"/>
+        <location filename="../src/MainWindow.cpp" line="8417"/>
         <source>Firmware boot entry changes failed: %1</source>
         <translation>Firmware-käynnistystietojen muutokset epäonnistuivat: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8331"/>
+        <location filename="../src/MainWindow.cpp" line="8419"/>
         <source>Firmware boot entry changes failed</source>
         <translation>Firmwaren käynnistysmuutos epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8332"/>
+        <location filename="../src/MainWindow.cpp" line="8420"/>
         <source>One or more firmware boot entry changes failed:
 %1
 
@@ -8909,913 +9107,910 @@ Pending changes were kept so you can retry. Full helper output is available in L
 Odotettaessa muutoksia pidettiin, jotta voit yrittää uudelleen. Täysi apuri tuloste on saatavilla lokeissa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8397"/>
+        <location filename="../src/MainWindow.cpp" line="8485"/>
         <source>Deletion of Boot%1 cancelled.</source>
         <translation>Boot%1:n poisto peruttu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8404"/>
+        <location filename="../src/MainWindow.cpp" line="8492"/>
         <source>Boot%1 marked for deletion — press Save to apply.</source>
         <translation>Boot%1 merkitty poistettavaksi paina Tallenna käyttää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8465"/>
+        <location filename="../src/MainWindow.cpp" line="8553"/>
         <source>Boot%1 rename staged — press Save to apply.</source>
         <translation>Boot%1 uudelleennimeä vaiheistettu paina Tallenna soveltaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8619"/>
+        <location filename="../src/MainWindow.cpp" line="8707"/>
         <source>Clear the command output window.</source>
         <translation>Tyhjennä komennon lähtöikkuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8672"/>
-        <location filename="../src/MainWindow.cpp" line="13064"/>
+        <location filename="../src/MainWindow.cpp" line="8760"/>
+        <location filename="../src/MainWindow.cpp" line="13138"/>
         <source>Copy staged items and verify them; same-name destinations are overwritten.</source>
         <translation>Kopioi lavastetut kohteet ja varmista ne; samannimiset kohteet korvataan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8756"/>
+        <location filename="../src/MainWindow.cpp" line="8844"/>
         <source>Smart mode validates UID/GID mapping and falls back to the destination owner.</source>
         <translation>Älytila validoi UID/GID-kartoituksen ja palaa määränpään omistajalle.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8897"/>
+        <location filename="../src/MainWindow.cpp" line="8985"/>
         <source>Save the application log to a file.</source>
         <translation>Tallenna sovellusloki tiedostoon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8898"/>
+        <location filename="../src/MainWindow.cpp" line="8986"/>
         <source>Clear the on-screen action register.</source>
         <translation>Tyhjennä näytön toimintarekisteri.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8950"/>
+        <location filename="../src/MainWindow.cpp" line="9021"/>
         <source>Start a new session log file.</source>
         <translation>Käynnistä uusi istuntolokitiedosto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8951"/>
+        <location filename="../src/MainWindow.cpp" line="9022"/>
         <source>Delete the selected session log.</source>
         <translation>Poista valittu istuntoloki.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8952"/>
+        <location filename="../src/MainWindow.cpp" line="9023"/>
         <source>Refresh the session log list.</source>
         <translation>Päivitä istuntolokiluettelo.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8977"/>
+        <location filename="../src/MainWindow.cpp" line="9048"/>
         <source>Fuzzy filter; a term starting with @ selects a whole diagnostic section.</source>
         <translation>Fuzzy suodatin; termi alkaen @ valitsee koko diagnostinen osio.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8995"/>
+        <location filename="../src/MainWindow.cpp" line="9066"/>
         <source>Filter the log by entry kind.</source>
         <translation>Suodata loki maahantulon lajikohtaisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9085"/>
+        <location filename="../src/MainWindow.cpp" line="9156"/>
         <source>Read-only check of root, /boot, ESP and /home, then per-device repair.</source>
         <translation>Lue vain juuri, /boot, ESP ja / kotiin, sitten per-laite korjaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9113"/>
+        <location filename="../src/MainWindow.cpp" line="9184"/>
         <source>Regenerate cached diagnostics after repairs or target changes.</source>
         <translation>Uudista välimuistidiagnostiikka korjausten tai kohdemuutosten jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9209"/>
+        <location filename="../src/MainWindow.cpp" line="9280"/>
         <source>Re-probe the available repair capabilities.</source>
         <translation>Suorita uudelleen käytettävissä olevat korjausominaisuudet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11359"/>
+        <location filename="../src/MainWindow.cpp" line="11433"/>
         <source>Select an action below:</source>
         <translation>Valitse alla oleva toiminto:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11373"/>
+        <location filename="../src/MainWindow.cpp" line="11447"/>
         <source>Number of the action (0 = Abort)</source>
         <translation>Toimenpiteen määrä (0 = Keskeytys)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11986"/>
+        <location filename="../src/MainWindow.cpp" line="12060"/>
         <source>Committed repair target: %1</source>
         <translation>Sitoutunut korjaus tavoite: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12040"/>
+        <location filename="../src/MainWindow.cpp" line="12114"/>
         <source>List host root snapshots read-only.</source>
         <translation>Listaa juurikuvat vain luettavaksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12041"/>
+        <location filename="../src/MainWindow.cpp" line="12115"/>
         <source>List root snapshots read-only.</source>
         <translation>Lue vain juurikuvat.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12073"/>
+        <location filename="../src/MainWindow.cpp" line="12147"/>
         <source>Validate a rollback plan, promote a writable copy to @, and reconcile the boot stack.</source>
         <translation>Validoidaan varasuunnitelma, edistetään kirjoitettava kopio @, ja sovittaa boot pino.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12074"/>
+        <location filename="../src/MainWindow.cpp" line="12148"/>
         <source>Validate a rollback plan, promote a writable copy to @, and reconcile the bootloader.</source>
         <translation>Validoida varasuunnitelma, mainostaa kirjoitettava kopio @, ja sovittaa bootloader.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="12426"/>
+        <location filename="../src/MainWindow.cpp" line="12500"/>
         <source>Snapshot #%1 · %2</source>
         <translation>Snapshot #%1 · %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13025"/>
+        <location filename="../src/MainWindow.cpp" line="13099"/>
         <source>Absolute path inside the repaired system, e.g. /home/user/document.txt.</source>
         <translation>Absoluuttinen polku korjattuun järjestelmään, esim. /home/user/document.txt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13041"/>
+        <location filename="../src/MainWindow.cpp" line="13115"/>
         <source>Browse read-only and choose an absolute destination path.</source>
         <translation>Selaa vain lukea ja valitse ehdoton kohde polku.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13552"/>
+        <location filename="../src/MainWindow.cpp" line="13626"/>
         <source>Commands stay disabled until diagnostics generation completes.</source>
         <translation>Komennot pysyvät poissa käytöstä, kunnes diagnostiikka on valmis.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15188"/>
+        <location filename="../src/MainWindow.cpp" line="15266"/>
         <source>Restore the host&apos;s %1 and place it first in BootOrder.</source>
         <translation>Palauta isännän %1 ja aseta se ensin BootOrder:ään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="15189"/>
+        <location filename="../src/MainWindow.cpp" line="15267"/>
         <source>Restore the host&apos;s %1 and make it the default.</source>
         <translation>Palauta isännän %1 ja tee siitä oletus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16038"/>
+        <location filename="../src/MainWindow.cpp" line="16139"/>
         <source>A privileged operation is already running; the diagnostic was not started. Try again when it finishes.</source>
         <translation>Etuoikeutettu operaatio on jo käynnissä; diagnoosia ei aloitettu. Yritä uudelleen, kun se loppuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16049"/>
-        <location filename="../src/MainWindow.cpp" line="16409"/>
+        <location filename="../src/MainWindow.cpp" line="16150"/>
+        <location filename="../src/MainWindow.cpp" line="16510"/>
         <source>Host diagnostic refused: %1</source>
         <translation>Isännän vianmääritys hylätty: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16053"/>
-        <location filename="../src/MainWindow.cpp" line="16413"/>
+        <location filename="../src/MainWindow.cpp" line="16154"/>
+        <location filename="../src/MainWindow.cpp" line="16514"/>
         <source>Host Maintenance required</source>
         <translation>Huolto vaaditaan</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16084"/>
+        <location filename="../src/MainWindow.cpp" line="16185"/>
         <source>Running diagnostic: %1</source>
         <translation>Suoritusdiagnostiikka: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16188"/>
-        <location filename="../src/MainWindow.cpp" line="16423"/>
+        <location filename="../src/MainWindow.cpp" line="16289"/>
+        <location filename="../src/MainWindow.cpp" line="16524"/>
         <source>No repair target selected</source>
         <translation>Korjaa kohdetta ei ole valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16196"/>
+        <location filename="../src/MainWindow.cpp" line="16297"/>
         <source>Read target configuration</source>
         <translation>Lue kohteen asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16200"/>
+        <location filename="../src/MainWindow.cpp" line="16301"/>
         <source>Configuration unavailable</source>
         <translation>Asetukset eivät ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16211"/>
+        <location filename="../src/MainWindow.cpp" line="16312"/>
         <source>Edit target %1</source>
         <translation>Muokkaa kohdetta %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16214"/>
+        <location filename="../src/MainWindow.cpp" line="16315"/>
         <source>Edit this target file through the guarded administrator helper. A successful save invalidates cached diagnostics; rerun diagnostics before repair. Generated files such as /boot/grub/grub.cfg may be replaced by the next bootloader update.</source>
         <translation>Muokkaa tätä kohdetiedostoa vartioidun järjestelmänvalvojan avulla. Onnistunut säästää mitätöi välimuistin diagnostiikka; uudelleen diagnostiikka ennen korjausta. Luodut tiedostot, kuten /boot/grub/grub.cfg, voidaan korvata seuraavalla bootloader-päivityksellä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16226"/>
+        <location filename="../src/MainWindow.cpp" line="16327"/>
         <source>Save Target File</source>
         <translation>Tallenna kohdetiedosto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16233"/>
-        <location filename="../src/MainWindow.cpp" line="16275"/>
+        <location filename="../src/MainWindow.cpp" line="16334"/>
+        <location filename="../src/MainWindow.cpp" line="16376"/>
         <source>Write target configuration</source>
         <translation>Kirjoita kohdeasetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16234"/>
+        <location filename="../src/MainWindow.cpp" line="16335"/>
         <source>Write the edited contents to %1? This modifies the repair target and invalidates cached diagnostics.</source>
         <translation>Kirjoittaa muokatun sisällön %1? Tämä muuttaa korjauskohdetta ja mitätöi välimuistin diagnostiikan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16245"/>
+        <location filename="../src/MainWindow.cpp" line="16346"/>
         <source>Configuration write refused</source>
         <translation>Asetusten kirjoittaminen hylättiin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16246"/>
+        <location filename="../src/MainWindow.cpp" line="16347"/>
         <source>The edited content contains NUL bytes; the guarded write refuses it.</source>
         <translation>Editoitu sisältö sisältää NUL tavuja; vartioitu kirjoitus kieltäytyy siitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16251"/>
+        <location filename="../src/MainWindow.cpp" line="16352"/>
         <source>File too large</source>
         <translation>Tiedosto liian suuri</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16252"/>
+        <location filename="../src/MainWindow.cpp" line="16353"/>
         <source>The edited file is larger than 1 MiB; the guarded write refuses it. Edit the file from a console instead.</source>
         <translation>Editoitu tiedosto on suurempi kuin 1 MiB; vartioitu kirjoitus kieltäytyy siitä. Muokkaa tiedostoa konsolista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16257"/>
+        <location filename="../src/MainWindow.cpp" line="16358"/>
         <source>Configuration write unavailable</source>
         <translation>Asetuksen kirjoitusta ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16258"/>
+        <location filename="../src/MainWindow.cpp" line="16359"/>
         <source>The edited content could not be written to a private temporary file in the application log directory; the write was not started.</source>
         <translation>Muokkattua sisältöä ei voitu kirjoittaa sovelluslokihakemistossa olevaan väliaikaiseen tiedostoon; kirjoitusta ei aloitettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16286"/>
+        <location filename="../src/MainWindow.cpp" line="16387"/>
         <source>Configuration write failed</source>
         <translation>Asetuksen kirjoitus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16306"/>
+        <location filename="../src/MainWindow.cpp" line="16407"/>
         <source>Configuration saved</source>
         <translation>Asetukset tallennettu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16390"/>
+        <location filename="../src/MainWindow.cpp" line="16491"/>
         <source>The full diagnostic report is already running; results appear when it completes.</source>
         <translation>Koko diagnostinen raportti on jo käynnissä; tulokset näkyvät, kun se valmistuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16394"/>
+        <location filename="../src/MainWindow.cpp" line="16495"/>
         <source>Full diagnostics will run after the current diagnostic finishes.</source>
         <translation>Täydellinen diagnostiikka suoritetaan nykyisten diagnostisten viimeistelyjen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16424"/>
+        <location filename="../src/MainWindow.cpp" line="16525"/>
         <source>Select a repair target in Systems, or enter Host Maintenance for running-host diagnostics.</source>
         <translation>Valitse järjestelmäkorjauksen kohde tai syötä isännän diagnostiikkaa varten.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16430"/>
+        <location filename="../src/MainWindow.cpp" line="16531"/>
         <source>Regenerating diagnostics automatically</source>
         <translation>Regeneroidaan vianmääritys automaattisesti</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16431"/>
+        <location filename="../src/MainWindow.cpp" line="16532"/>
         <source>Running all diagnostics</source>
         <translation>Kaikki diagnostiikat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16496"/>
+        <location filename="../src/MainWindow.cpp" line="16597"/>
         <source>Starting all available read-only diagnostics (%1 scope).</source>
         <translation>Aloitetaan kaikki saatavilla olevat luku-vain diagnostiikat (%1-laajuus).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16517"/>
+        <location filename="../src/MainWindow.cpp" line="16618"/>
         <source>All available read-only diagnostic summaries generated and cached by diagnostic.</source>
         <translation>Kaikki saatavilla olevat vain diagnostiset yhteenvetoja luotu ja välimuistissa diagnostinen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16518"/>
+        <location filename="../src/MainWindow.cpp" line="16619"/>
         <source>Run All diagnostics failed; failed output was not cached as successful diagnostic data.</source>
         <translation>Suorita Kaikki diagnostiikka epäonnistui; epäonnistui ulostulo ei välimuistissa kuin onnistunut diagnostinen tiedot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16628"/>
+        <location filename="../src/MainWindow.cpp" line="16729"/>
         <source>Regenerating diagnostics</source>
         <translation>Regenerointidiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16638"/>
+        <location filename="../src/MainWindow.cpp" line="16739"/>
         <source>Regenerating read-only diagnostics…</source>
         <translation>Regenerointi vain lukudiagnostiikka…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16660"/>
+        <location filename="../src/MainWindow.cpp" line="16761"/>
         <source>Read-only diagnostics regenerated automatically.</source>
         <translation>Vain lukudiagnostiikka regeneroitu automaattisesti.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16661"/>
+        <location filename="../src/MainWindow.cpp" line="16762"/>
         <source>Automatic diagnostics regeneration did not complete; repair actions remain disabled until diagnostics are regenerated.</source>
         <translation>Automaattinen diagnostiikan regenerointi ei valmistunut; korjaustoimet pysyvät poissa käytöstä kunnes diagnostiikka on uusittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16744"/>
+        <location filename="../src/MainWindow.cpp" line="16845"/>
         <source>Diagnostic results copied</source>
         <translation>Diagnostiset tulokset kopioitu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16769"/>
+        <location filename="../src/MainWindow.cpp" line="16870"/>
         <source>Unable to save diagnostics</source>
         <translation>Diagnostiikkaa ei voitu tallentaa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16775"/>
+        <location filename="../src/MainWindow.cpp" line="16876"/>
         <source>Diagnostics saved to %1</source>
         <translation>%1: lle tallennetut diagnostiikat</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16784"/>
+        <location filename="../src/MainWindow.cpp" line="16885"/>
         <source>Save application log</source>
         <translation>Tallenna sovellusloki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16793"/>
+        <location filename="../src/MainWindow.cpp" line="16894"/>
         <source>Unable to save log</source>
         <translation>Lokia ei voitu tallentaa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16801"/>
+        <location filename="../src/MainWindow.cpp" line="16902"/>
         <source>Log saved to %1</source>
         <translation>Loki tallennettu %1: lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16858"/>
-        <location filename="../src/MainWindow.cpp" line="17578"/>
+        <location filename="../src/MainWindow.cpp" line="17012"/>
+        <location filename="../src/MainWindow.cpp" line="17777"/>
         <source> · %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="16886"/>
+        <location filename="../src/MainWindow.cpp" line="17040"/>
         <source>%1 — %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17570"/>
+        <location filename="../src/MainWindow.cpp" line="17769"/>
         <source>Current session</source>
         <translation>Nykyinen istunto</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17574"/>
+        <location filename="../src/MainWindow.cpp" line="17773"/>
         <source>Current session — not started</source>
         <translation>Nykyinen istunto ei alkanut</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17576"/>
+        <location filename="../src/MainWindow.cpp" line="17775"/>
         <source> — %1</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17628"/>
+        <location filename="../src/MainWindow.cpp" line="17827"/>
         <source>Viewing prior session log %1 — generated %2 — read only</source>
         <translation>Katselen aiemman istunnon loki %1 ... luotu %2... Lue vain</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17666"/>
+        <location filename="../src/MainWindow.cpp" line="17865"/>
         <source>Note:</source>
         <translation>Huom:</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17702"/>
-        <location filename="../src/MainWindow.cpp" line="17709"/>
+        <location filename="../src/MainWindow.cpp" line="17901"/>
+        <location filename="../src/MainWindow.cpp" line="17908"/>
         <source>Delete session log</source>
         <translation>Poista istuntoloki</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17703"/>
+        <location filename="../src/MainWindow.cpp" line="17902"/>
         <source>Delete %1 permanently? This cannot be undone.</source>
         <translation>Poista %1 pysyvästi? Tätä ei voi perua.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="17710"/>
+        <location filename="../src/MainWindow.cpp" line="17909"/>
         <source>Unable to delete %1.</source>
         <translation>%1:ää ei voitu poistaa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18522"/>
+        <location filename="../src/MainWindow.cpp" line="18721"/>
         <source>(no matching entries for this filter)</source>
         <translation>(ei täsmääviä merkintöjä tälle suodattimelle)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18845"/>
+        <location filename="../src/MainWindow.cpp" line="19044"/>
         <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live USB or another Linux installation on a different physical drive. The running host is protected from ordinary repair-target selection, but it can be explicitly selected through Host Maintenance for guarded native diagnostics and supported maintenance stages. Diagnostics follow the Systems page: the selected repair drive while Host Maintenance is off, or the protected running host while it is active. The first root action requests administrator authorization once for this Boot Bitch window; File → Lock Administrator Session ends that helper session immediately.</source>
         <translation>Boot Bitch:n on oltava erilaisessa Linux-käyttöympäristössä kuin korjattavassa järjestelmässä. Käytä Linux live USB tai toinen Linux asennus eri fyysisellä asemalla. Juokseva isäntä on suojattu tavalliselta korjauskohteen valinnalta, mutta se voidaan nimenomaisesti valita isännän kunnossapidon kautta vartioituun diagnostiikkaan ja tuettuihin huoltovaiheisiin. Diagnostiikka seuraa Systems-sivua: valittu korjausasema, kun isäntähuolto on pois päältä, tai suojattu juoksu isäntä, kun se on aktiivinen. Ensimmäinen juuritoiminta pyytää järjestelmänvalvojan valtuutusta kerran tähän Boot Bitch-ikkunaan; Tiedosto → Lock Administrator istunto päättyy, että auttaja istunto välittömästi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18860"/>
+        <location filename="../src/MainWindow.cpp" line="19059"/>
         <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1 &lt;/h3&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18861"/>
+        <location filename="../src/MainWindow.cpp" line="19060"/>
         <source>&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;A native Qt 6 Linux recovery and boot-repair utility.&lt;/p&gt;</source>
         <translation>&lt;p&gt;&lt;b&gt;Kehikko:&lt;/b&gt; KapteeniMorgan12&lt;/p&gt;&lt;p&gt;Alkuperäinen Qt 6 Linux-hyödyke- ja käynnistyskorjausapuohjelma.&lt;/p&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18863"/>
+        <location filename="../src/MainWindow.cpp" line="19062"/>
         <source>&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. Debian/Ubuntu-family repairs can run through a privileged helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;</source>
         <translation>&lt;p&gt;&lt;b&gt;Varattu korjaustila: &lt;/b&gt; lukuavain vianmääritys voi tarkastaa joko suojatun ohjauslaitteen tai erikseen valitun korjausaseman. Debian/Ubuntu-perheen korjaukset voidaan suorittaa etuoikeutetun auttajan kautta vahvistuksen jälkeen; isäntähuolto mahdollistaa samat tuetut vaiheet natiivisti aktiivisessa järjestelmässä sen jälkeen, kun isäntähenkilöllisyys ja käynnistysmomentti on toistettu. &lt;/p&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18864"/>
+        <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
         <translation>&lt;p&gt;Arch-perhejärjestelmät paljastavat taustaprofiloinnin ja suojatun paketin, initramfs:n, GRUB:n ja tavanomaisten EFI:n korjaukset, kun niiden tapahtumakohtaiset esilennot päättyvät. Fedora/RPM-perhejärjestelmät paljastavat suojatut dnf-pakettitapahtumat, dracut initramfs:n uudelleenrakennukset, GRUB2:n konfiguroinnin ja käynnistyskoodin korjaamisen sekä järjestelmän GDM-näyttöpolun samasta luotainnäytöstä; muut RPM-perhejärjestelmät pysyvät diagnostiikassa vain siihen asti, kunnes niiden tapahtumatausta on toteutettu.&lt;/p&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18865"/>
+        <location filename="../src/MainWindow.cpp" line="19064"/>
         <source>&lt;p&gt;The first privileged action authorizes one narrow helper session for the current Boot Bitch window while the Qt GUI remains unprivileged. It can be ended at any time from File → Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;p&gt;Ensimmäinen etuoikeutettu toiminto mahdollistaa yhden kapean auttajan istunnon nykyiseen Boot Bitch-ikkunaan, kun Qt-käyttöliittymä on edelleen vailla etuoikeutta. Se voidaan lopettaa milloin tahansa tiedoston → Lock Administrator Session. &lt;/p&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="18866"/>
+        <location filename="../src/MainWindow.cpp" line="19065"/>
         <source>&lt;p&gt;LUKS target unlock, verified bidirectional File Copy, read-only host/repair diagnostics, transactional Btrfs snapshot rollback, offline graphical login recovery, distribution-aware EFI/UKI repair and boot-stack reconciliation are enabled through the guarded helper. Snapshot rollback preserves the previous @ and automatically restores it if critical post-switch reconciliation fails.&lt;/p&gt;</source>
         <translation>&lt;p&gt;LUKS-kohteen lukija, todennettu kaksisuuntainen tiedostokopio, luku-/korjausdiagnostiikka, tapahtumakohtainen Btrfs-kuvakaappausrockback, offline-graafinen kirjautumisten palautus, jakelu-aware EFI/UKI-korjaus ja boot-stack täsmäytys ovat käytössä suojatun apurin kautta. Snapshot-käännös säilyttää edellisen @:n ja palauttaa sen automaattisesti, jos kriittinen kytkinten jälkeinen täsmäytys epäonnistuu. &lt;/p&gt;</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19702"/>
-        <location filename="../src/MainWindow.cpp" line="21732"/>
+        <location filename="../src/MainWindow.cpp" line="19901"/>
+        <location filename="../src/MainWindow.cpp" line="22017"/>
         <source>Restore detected graphical login manager</source>
         <translation>Palauta havaittu graafinen kirjautumishallinta</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19704"/>
+        <location filename="../src/MainWindow.cpp" line="19903"/>
         <source>Reinstall EFI bootloader</source>
         <translation>Asenna EFI-käynnistin uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19718"/>
-        <location filename="../src/MainWindow.cpp" line="21160"/>
+        <location filename="../src/MainWindow.cpp" line="19917"/>
+        <location filename="../src/MainWindow.cpp" line="21401"/>
         <source>Reinstall Alpine GRUB EFI loader</source>
         <translation>Asenna Alpine GRUB EFI -kuormaaja uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19720"/>
-        <location filename="../src/MainWindow.cpp" line="21163"/>
+        <location filename="../src/MainWindow.cpp" line="19919"/>
+        <location filename="../src/MainWindow.cpp" line="21404"/>
         <source>Regenerate Alpine GRUB configuration</source>
         <translation>Uudista Alpine GRUB -kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19730"/>
-        <location filename="../src/MainWindow.cpp" line="21133"/>
+        <location filename="../src/MainWindow.cpp" line="19929"/>
+        <location filename="../src/MainWindow.cpp" line="21374"/>
         <source>Update GRUB2 configuration</source>
         <translation>Päivitä GRUB2-asetus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19732"/>
-        <location filename="../src/MainWindow.cpp" line="21136"/>
+        <location filename="../src/MainWindow.cpp" line="19931"/>
+        <location filename="../src/MainWindow.cpp" line="21377"/>
         <source>Reinstall GRUB2 bootloader</source>
         <translation>Asenna GRUB2-käynnistin uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19739"/>
-        <location filename="../src/MainWindow.cpp" line="21207"/>
+        <location filename="../src/MainWindow.cpp" line="19938"/>
+        <location filename="../src/MainWindow.cpp" line="21448"/>
         <source>Rebuild initramfs (dracut)</source>
         <translation>Uudelleenrakentaminen initramfs (dracut)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19767"/>
+        <location filename="../src/MainWindow.cpp" line="19966"/>
         <source>%1. %2</source>
         <translation type="unfinished"></translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19769"/>
+        <location filename="../src/MainWindow.cpp" line="19968"/>
         <source>Execution order %1: %2</source>
         <translation>Teloitusmääräys %1: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19775"/>
+        <location filename="../src/MainWindow.cpp" line="19974"/>
         <source>No Full Repair stages selected — use Configure Plan… or Settings.</source>
         <translation>Ei täyskorjausvaiheita valittu . Käytä Configure Plan… tai Asetukset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19780"/>
+        <location filename="../src/MainWindow.cpp" line="19979"/>
         <source>1 stage selected</source>
         <translation>1 vaihe valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19781"/>
+        <location filename="../src/MainWindow.cpp" line="19980"/>
         <source>%1 stages selected</source>
         <translation>%1-vaiheet valittu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19813"/>
+        <location filename="../src/MainWindow.cpp" line="20012"/>
         <source>No repair stages are selected. Use Configure Plan… to choose the stages Full Repair will run.</source>
         <translation>Korjausvaiheita ei ole valittu. Käytä Configure Plan… valita vaiheet Full Repair suoritetaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19814"/>
+        <location filename="../src/MainWindow.cpp" line="20013"/>
         <source>No selected stages are available. %1</source>
         <translation>Valittuja vaiheita ei ole saatavilla. %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19821"/>
+        <location filename="../src/MainWindow.cpp" line="20020"/>
         <source> Please regenerate diagnostics before starting another repair.</source>
         <translation>Korjaa diagnostiikka ennen uuden korjauksen aloittamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19824"/>
+        <location filename="../src/MainWindow.cpp" line="20023"/>
         <source>Ready: required cached read-only diagnostics are available for the selected stages. Review them in Diagnostics or Logs before confirming.</source>
         <translation>Valmiina: valittuihin vaiheisiin on saatavilla välimuistia vain lukudiagnostiikkaa varten. Tarkista ne Diagnostiikassa tai lokissa ennen vahvistamista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19830"/>
-        <location filename="../src/MainWindow.cpp" line="21839"/>
+        <location filename="../src/MainWindow.cpp" line="20029"/>
+        <location filename="../src/MainWindow.cpp" line="22167"/>
         <source>No Full Repair stages are selected.</source>
         <translation>Täydellistä korjausvaihetta ei ole valittu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19849"/>
+        <location filename="../src/MainWindow.cpp" line="20048"/>
         <source>Disabled in Settings</source>
         <translation>Ei käytössä asetuksissa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19856"/>
+        <location filename="../src/MainWindow.cpp" line="20055"/>
         <source>Enabled in Settings</source>
         <translation>Käytössä asetuksissa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19857"/>
+        <location filename="../src/MainWindow.cpp" line="20056"/>
         <source>Disabled in Settings — enable it to include this stage</source>
         <translation>Ei käytössä Asetuksissa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19861"/>
+        <location filename="../src/MainWindow.cpp" line="20060"/>
         <source>Always preflight</source>
         <translation>Aina ennen lentoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19892"/>
+        <location filename="../src/MainWindow.cpp" line="20095"/>
         <source>Manual recovery tool</source>
         <translation>Manuaalinen talteenottotyökalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="19897"/>
+        <location filename="../src/MainWindow.cpp" line="20100"/>
         <source>Unavailable: %1</source>
         <translation>Ei saatavilla: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20046"/>
+        <location filename="../src/MainWindow.cpp" line="20249"/>
         <source>Orphaned headers (no matching kernel): %1.</source>
         <translation>Orvot otsikot (ei vastaavaa ydintä): %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20196"/>
+        <location filename="../src/MainWindow.cpp" line="20417"/>
         <source>Select a tool to review its workflow.</source>
         <translation>Valitse työkalu tarkistaa sen työnkulku.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20219"/>
+        <location filename="../src/MainWindow.cpp" line="20440"/>
         <source>Check the running host or selected repair system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Tarkista käynnissä isäntä tai valittu korjausjärjestelmän liittimet, tiedostojärjestelmän metatiedot, käynnistystiedostot, mapper johdonmukaisuus ja riippuvuus valmius ennen mitään korjausta. Tämä on riippumaton lentoa edeltävä turvallisuusvaihe eikä valinnainen täyskorjausvaihe.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20222"/>
+        <location filename="../src/MainWindow.cpp" line="20443"/>
         <source>Validate</source>
         <translation>Validointi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20224"/>
+        <location filename="../src/MainWindow.cpp" line="20445"/>
         <source>Full Repair: automatic safety preflight</source>
         <translation>Täysi korjaus: automaattinen turvallisuus ennen lentoa</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20227"/>
+        <location filename="../src/MainWindow.cpp" line="20448"/>
         <source>Complete interrupted dpkg package configuration in the running host or selected repair system. This is the same stage controlled by Settings → Full Repair plan → Complete interrupted package configuration, but it can also be run independently here.</source>
         <translation>Täydellinen keskeytynyt dpkg paketti kokoonpano käynnissä isäntä tai valittu korjausjärjestelmä. Tämä on sama vaihe ohjataan Asetukset → Full Repair Plan → Complete keskeytynyt pakettien kokoonpano, mutta se voidaan myös ajaa itsenäisesti täällä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20229"/>
+        <location filename="../src/MainWindow.cpp" line="20450"/>
         <source>Complete Configuration</source>
         <translation>Täydellinen asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20231"/>
-        <location filename="../src/MainWindow.cpp" line="20242"/>
-        <location filename="../src/MainWindow.cpp" line="20253"/>
-        <location filename="../src/MainWindow.cpp" line="20264"/>
-        <location filename="../src/MainWindow.cpp" line="20271"/>
-        <location filename="../src/MainWindow.cpp" line="20290"/>
-        <location filename="../src/MainWindow.cpp" line="20310"/>
-        <location filename="../src/MainWindow.cpp" line="20335"/>
-        <location filename="../src/MainWindow.cpp" line="20350"/>
-        <location filename="../src/MainWindow.cpp" line="20357"/>
-        <location filename="../src/MainWindow.cpp" line="20366"/>
+        <location filename="../src/MainWindow.cpp" line="20452"/>
+        <location filename="../src/MainWindow.cpp" line="20463"/>
+        <location filename="../src/MainWindow.cpp" line="20474"/>
+        <location filename="../src/MainWindow.cpp" line="20485"/>
+        <location filename="../src/MainWindow.cpp" line="20492"/>
+        <location filename="../src/MainWindow.cpp" line="20511"/>
+        <location filename="../src/MainWindow.cpp" line="20531"/>
+        <location filename="../src/MainWindow.cpp" line="20556"/>
+        <location filename="../src/MainWindow.cpp" line="20571"/>
+        <location filename="../src/MainWindow.cpp" line="20578"/>
+        <location filename="../src/MainWindow.cpp" line="20587"/>
         <source>Full Repair plan: %1</source>
         <translation>Koko korjaussuunnitelma: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20234"/>
+        <location filename="../src/MainWindow.cpp" line="20455"/>
         <source>Repair package dependencies in the running host or selected repair system after the mandatory safety preflight. Debian/Ubuntu uses APT; Arch uses one sandbox-preflighted full pacman transaction; Alpine uses apk fix with a simulation first. This maps directly to Settings → Repair broken package dependencies.</source>
         <translation>Korjaa pakettiriippuvuus käynnissä isäntä tai valittu korjausjärjestelmä jälkeen pakollinen turvallisuus ennen lentoa. Debian/Ubuntu käyttää APT:tä; Arch käyttää yhtä hiekkalaatikkoa edeltävää täyttä pacman-tapahtumaa; Alpine käyttää apk-korjausta ensin simulaatiolla. Tämä kartoittaa suoraan Asetukset → Korjaus rikki pakettiriippuvuudet.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20240"/>
+        <location filename="../src/MainWindow.cpp" line="20461"/>
         <source>Repair Dependencies</source>
         <translation>Korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20245"/>
+        <location filename="../src/MainWindow.cpp" line="20466"/>
         <source>Refresh Debian/Ubuntu APT metadata in the running host or selected repair system without upgrading installed packages. Arch and Alpine deliberately refuse a partial metadata-only transaction; their guarded upgrade refreshes the package index itself. This maps directly to Settings → Refresh package metadata.</source>
         <translation>Päivitä Debian/Ubuntu APT -metadata käynnissä olevassa isäntä- tai valitussa korjausjärjestelmässä ilman asennettujen pakettien päivittämistä. Arch ja Alpine kieltäytyvät tarkoituksella osittaisesta metatietotapahtumasta; niiden vartioitu päivitys päivittää itse pakettiindeksin. Tämä kartoittaa suoraan Asetukset → Päivitä paketin metatiedot.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20251"/>
+        <location filename="../src/MainWindow.cpp" line="20472"/>
         <source>Refresh Metadata</source>
         <translation>Päivitä metatiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20256"/>
+        <location filename="../src/MainWindow.cpp" line="20477"/>
         <source>Simulate the distribution&apos;s package transaction first, inspect proposed removals, then apply a safe upgrade. Debian/Ubuntu chooses an APT mode; Arch runs one full pacman transaction; Alpine runs one guarded apk upgrade transaction. This maps directly to Settings → Upgrade installed packages.</source>
         <translation>Simuloi jakelun pakettitapahtuma ensin, tarkasta ehdotetut poistot ja tee sitten turvallinen päivitys. Debian/Ubuntu valitsee APT-tilan; Arch ajaa yhden täyden pacman-tapahtuman; Alpine käyttää yhtä suojattua apk-päivitystapahtumaa. Tämä kartat suoraan Asetukset → Päivitys asennettu paketteja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20262"/>
+        <location filename="../src/MainWindow.cpp" line="20483"/>
         <source>Simulate and Upgrade</source>
         <translation>Simuloi ja paranna</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20267"/>
         <source>Rebuild out-of-tree kernel modules for kernels installed in the running host or selected repair system. The helper refuses this action when DKMS is not installed in the selected system.</source>
-        <translation>Rakennetaan uudelleen out-of-puun ytimen moduulit ytimiä asennettu käynnissä isäntä tai valittu korjausjärjestelmä. Auttaja kieltäytyy tästä, kun DKMS:ää ei ole asennettu valittuun järjestelmään.</translation>
+        <translation type="vanished">Rakennetaan uudelleen out-of-puun ytimen moduulit ytimiä asennettu käynnissä isäntä tai valittu korjausjärjestelmä. Auttaja kieltäytyy tästä, kun DKMS:ää ei ole asennettu valittuun järjestelmään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20269"/>
-        <location filename="../src/MainWindow.cpp" line="21728"/>
+        <location filename="../src/MainWindow.cpp" line="17235"/>
         <source>Rebuild DKMS</source>
         <translation>Uudelleenrakentaminen DKMS</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20274"/>
+        <location filename="../src/MainWindow.cpp" line="20495"/>
         <source>Restore the display manager identified from the running host or selected repair system&apos;s boot evidence and configuration (for example SDDM, GDM/GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service. </source>
         <translation>Palauta näytön hallinta tunnistettu käynnissä isäntä tai valitun korjausjärjestelmän käynnistysnäyttö ja kokoonpano (esim. DSDM, GDM / GDM3, LightDM, tai muu järjestelmällinen manager), asettaa graafisesti. kohde oletuksena ja korjata näytön hallinta. Palvelu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20277"/>
+        <location filename="../src/MainWindow.cpp" line="20498"/>
         <source>The detected backend is GDM (Fedora naming); its configuration lives in /etc/gdm/custom.conf. </source>
         <translation>Havaittu taustaosa on GDM (Fedora nameing); sen kokoonpano elää /etc/gdm/custom.conf.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20280"/>
+        <location filename="../src/MainWindow.cpp" line="20501"/>
         <source>The detected backend is GDM3; its configuration lives in /etc/gdm3/daemon.conf. </source>
         <translation>Havaittu taustaosa on GDM3; sen kokoonpano elää /etc/gdm3/daemon.conf.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20283"/>
-        <location filename="../src/MainWindow.cpp" line="20329"/>
+        <location filename="../src/MainWindow.cpp" line="20504"/>
+        <location filename="../src/MainWindow.cpp" line="20550"/>
         <source>The detected backend is %1. </source>
         <translation>Havaittu taustaosa on %1.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20285"/>
+        <location filename="../src/MainWindow.cpp" line="20506"/>
         <source>When OpenRC is the detected service manager, the same action restores the detected manager&apos;s default runlevel symlink without starting it. Boot Bitch deliberately does not start a graphical session inside a repair chroot or host helper; use Diagnostics to inspect installed packages, service configuration, and recent boot/journal evidence first when graphical boot fails.</source>
         <translation>Kun OpenRC on havaittu huoltopäällikkö, sama toiminto palauttaa todetun managerin oletusjuoksutason symlinkin käynnistämättä sitä. Boot Bitch ei tarkoituksellisesti aloita graafista istuntoa korjauschroot- tai isäntäavustimen sisällä; käyttää Diagnostics-järjestelmää tarkastaakseen asennetut paketit, palvelun konfiguraatio ja viimeaikaiset boot/journal-todisteet ensin, kun graafinen käynnistys epäonnistuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20288"/>
+        <location filename="../src/MainWindow.cpp" line="20509"/>
         <source>Restore Graphical Login</source>
         <translation>Palauta graafinen kirjautuminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20302"/>
+        <location filename="../src/MainWindow.cpp" line="20523"/>
         <source>Rebuild initramfs images for the running host or selected repair system only after mapper and crypttab consistency checks pass. The helper uses update-initramfs on Debian/Ubuntu, transaction-specific mkinitcpio trials on Arch, and mkinitfs trials on Alpine.</source>
         <translation>Rakenna initramfs-kuvat uudelleen käynnissä olevaan isäntään tai valittuun korjausjärjestelmään vasta kun mapper- ja cryptab-yhteensopivuustarkistus on läpäissyt. Apuri käyttää update-initramfs:ää Debian/Ubuntussa, tapahtumakohtaisia mkinitcpio-kokeita Archilla ja mkinitfs-kokeita Alpinella.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20308"/>
+        <location filename="../src/MainWindow.cpp" line="20529"/>
         <source>Rebuild Initramfs</source>
         <translation>Initramfsin uudelleenrakentaminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20323"/>
+        <location filename="../src/MainWindow.cpp" line="20544"/>
         <source>The detected syslinux/extlinux layout is repaired through its configuration and boot code, never through EFI. </source>
         <translation>Havaittu syslinux/extlinux-asettelu korjataan sen konfiguraatiolla ja käynnistyskoodilla, ei koskaan EFI:n kautta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20333"/>
+        <location filename="../src/MainWindow.cpp" line="20554"/>
         <source>Repair EFI / UKI</source>
         <translation>Korjaus EFI / UKI</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20338"/>
+        <location filename="../src/MainWindow.cpp" line="20559"/>
         <source>GRUB2 configuration</source>
         <translation>GRUB2-konfiguraatio</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20342"/>
+        <location filename="../src/MainWindow.cpp" line="20563"/>
         <source>Regenerate GRUB2</source>
         <translation>Regeneroi GRUB2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20345"/>
+        <location filename="../src/MainWindow.cpp" line="20566"/>
         <source>Regenerate the running host or selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. Debian/Ubuntu uses update-grub; Arch and Alpine use grub-mkconfig with an isolated trial output, an entry-preserving guard and a rollback when a previous menu entry would be lost. This does not reinstall EFI loader files; use EFI / UKI bootloader when the firmware loader itself needs repair.</source>
         <translation>Uudista ajon isäntä tai valitun korjausjärjestelmän GRUB-valikko/konfiguraatio pakollisen lentoa edeltävän turvallisuuslennon jälkeen. Debian/Ubuntu käyttää update-grub:ää; Arch and Alpine use grub-mkconfig:ää, jossa on erillinen koetuloste, sisäänpääsyä säilyttävä suoja ja varauloskäynti, kun edellinen valikkomerkintä katoaa. Tämä ei asenna EFI-kuormaajatiedostoja uudelleen; käytä EFI / UKI-käynnistintä, kun firmware-kuormaaja itse tarvitsee korjausta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20347"/>
+        <location filename="../src/MainWindow.cpp" line="20568"/>
         <source>Regenerate GRUB</source>
         <translation>Regeneroi GRUB</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20353"/>
+        <location filename="../src/MainWindow.cpp" line="20574"/>
         <source>Regenerate the running host or selected repair system&apos;s extlinux bootloader configuration after the mandatory safety preflight. The detected syslinux/extlinux backend uses update-extlinux with an entry-preserving guard and a boot-artifact backup; existing boot entries are never dropped. This regenerates the configuration only and does not reinstall bootloader files.</source>
         <translation>Uudista käyttöisännän tai valitun korjausjärjestelmän extlinux-käynnistinkokoonpano pakollisen turvalennon jälkeen. Havaittu syslinux/extlinux backend käyttää update-extlinux sisääntulosuojalla ja boot-artifact-varmistuksella; olemassa olevia käynnistysmerkintöjä ei koskaan pudoteta. Tämä uusii vain konfiguraation eikä asenna uudelleen bootloader-tiedostoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20355"/>
+        <location filename="../src/MainWindow.cpp" line="20576"/>
         <source>Regenerate extlinux</source>
         <translation>Regeneroi extlinux</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20364"/>
+        <location filename="../src/MainWindow.cpp" line="20585"/>
         <source>Check File Systems</source>
         <translation>Tarkista tiedostojärjestelmät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20378"/>
+        <location filename="../src/MainWindow.cpp" line="20599"/>
         <source>Reconcile Boot Stack</source>
         <translation>Reconcile Boot Stack</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20380"/>
+        <location filename="../src/MainWindow.cpp" line="20601"/>
         <source>Full Repair plan: Manual recovery tool</source>
         <translation>Koko korjaussuunnitelma: Manuaalinen palautustyökalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20387"/>
+        <location filename="../src/MainWindow.cpp" line="20608"/>
         <source>Repair kernels</source>
         <translation>Korjaamon siemenet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20391"/>
+        <location filename="../src/MainWindow.cpp" line="20612"/>
         <source>Unknown repair tool</source>
         <translation>Tuntematon korjaustyökalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20392"/>
+        <location filename="../src/MainWindow.cpp" line="20613"/>
         <source>No repair workflow is registered for this item.</source>
         <translation>Tätä kohtaa varten ei ole rekisteröity korjaustyötä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20393"/>
+        <location filename="../src/MainWindow.cpp" line="20614"/>
         <source>Unavailable</source>
         <translation>Ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20395"/>
+        <location filename="../src/MainWindow.cpp" line="20616"/>
         <source>Full Repair plan: unavailable</source>
         <translation>Täydellinen korjaussuunnitelma: ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20419"/>
+        <location filename="../src/MainWindow.cpp" line="20640"/>
         <source>
 Reuse: the bootloader repair from this session will be reused (the duplicate bootloader rebuild and GRUB regeneration are skipped).</source>
         <translation>
 Uudelleenkäyttö: bootloader korjaus tästä istunnosta käytetään uudelleen (kaksinkertainen bootloader jälleenrakentaminen ja GRUB regeneration ohitetaan).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20429"/>
         <source>
 Unavailable: %1</source>
-        <translation>
+        <translation type="vanished">
 Ei saatavilla: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21071"/>
+        <location filename="../src/MainWindow.cpp" line="21307"/>
         <source> This stage is off by default: select it here to include it in Full Repair.</source>
         <translation>Tämä vaihe on pois päältä oletuksena: valitse se tästä sisällyttää sen Full Repair.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21143"/>
+        <location filename="../src/MainWindow.cpp" line="21384"/>
         <source>Repair broken package dependencies (all detected package managers)</source>
         <translation>Korjaa rikkinäiset pakettiriippuvuudet (kaikki havaitut pakettipäälliköt)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21146"/>
+        <location filename="../src/MainWindow.cpp" line="21387"/>
         <source>Upgrade installed packages (all detected package managers)</source>
         <translation>Asennettujen pakettien päivittäminen (kaikki havaitut pakettien hallinnoijat)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21153"/>
+        <location filename="../src/MainWindow.cpp" line="21394"/>
         <source>Repair Alpine packages (apk fix)</source>
         <translation>Korjaa Alpine paketteja (apk fix)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21156"/>
+        <location filename="../src/MainWindow.cpp" line="21397"/>
         <source>Upgrade Alpine packages (apk upgrade)</source>
         <translation>Päivitä Alpine paketteja (apk päivitys)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21172"/>
+        <location filename="../src/MainWindow.cpp" line="21413"/>
         <source>Repair Arch package dependencies (full pacman transaction)</source>
         <translation>Korjaa Arch-paketin riippuvuudet (täydellinen pacman-tapahtuma)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21175"/>
+        <location filename="../src/MainWindow.cpp" line="21416"/>
         <source>Upgrade Arch packages (full pacman transaction)</source>
         <translation>Päivitä Arch-paketit (täydellinen pacman-tapahtuma)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21183"/>
+        <location filename="../src/MainWindow.cpp" line="21424"/>
         <source>Repair Fedora packages (dnf)</source>
         <translation>Korjaa Fedora-paketit (dnf)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21186"/>
+        <location filename="../src/MainWindow.cpp" line="21427"/>
         <source>Refresh package metadata (dnf makecache)</source>
         <translation>Päivitä paketin metatiedot (dnf makecache)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21189"/>
+        <location filename="../src/MainWindow.cpp" line="21430"/>
         <source>Upgrade Fedora packages (dnf upgrade)</source>
         <translation>Päivitä Fedora paketteja (dnf päivitys)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21194"/>
+        <location filename="../src/MainWindow.cpp" line="21435"/>
         <source>Restore detected graphical login manager (OpenRC runlevel)</source>
         <translation>Palauta havaittu graafinen kirjautumisohjelma (OpenRC juoksutaso)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21202"/>
+        <location filename="../src/MainWindow.cpp" line="21443"/>
         <source>Restore detected graphical login manager (%1)</source>
         <translation>Palauta havaittu graafinen kirjautumishallinta (%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21211"/>
+        <location filename="../src/MainWindow.cpp" line="21452"/>
         <source>Rebuild initramfs (mkinitfs)</source>
         <translation>Rakenna initramfs uudelleen (mkinitfs)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21215"/>
+        <location filename="../src/MainWindow.cpp" line="21456"/>
         <source>Rebuild initramfs (mkinitcpio)</source>
         <translation>Uudelleenrakentaminen initramfs (mkinitcpio)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21220"/>
-        <location filename="../src/MainWindow.cpp" line="21754"/>
+        <location filename="../src/MainWindow.cpp" line="21461"/>
+        <location filename="../src/MainWindow.cpp" line="22039"/>
         <source>Regenerate extlinux configuration</source>
         <translation>Luo extlinux- asetus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21241"/>
+        <location filename="../src/MainWindow.cpp" line="21482"/>
         <source>The running host is protected and cannot be repaired from itself.</source>
         <translation>Juokseva isäntä on suojattu eikä sitä voi korjata itsestään.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21245"/>
+        <location filename="../src/MainWindow.cpp" line="21486"/>
         <source>The selected Linux root is still LUKS-encrypted. Unlock it first, refresh devices, then select the mapped filesystem.</source>
         <translation>Valittu Linux root on edelleen LUKS-salattu. Avaa se ensin, virkistä laitteet, valitse sitten kartoitettu tiedostojärjestelmä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21249"/>
+        <location filename="../src/MainWindow.cpp" line="21490"/>
         <source>No mountable Linux root filesystem has been identified on the selected target.</source>
         <translation>Valitussa kohteessa ei ole löytynyt asennettavissa olevaa Linuxin juuritiedostojärjestelmää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21260"/>
+        <location filename="../src/MainWindow.cpp" line="21501"/>
         <source>pkexec/Polkit is required to authorize repair operations.</source>
         <translation>Pkexec/Polkit on annettava korjausten käyttöön.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21280"/>
+        <location filename="../src/MainWindow.cpp" line="21521"/>
         <source>The running host disk and root component could not be resolved.</source>
         <translation>Juoksevaa isäntälevyä ja juurikomponenttia ei voitu ratkaista.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21287"/>
+        <location filename="../src/MainWindow.cpp" line="21528"/>
         <source>The selected host identity is no longer marked as the protected running system. Refresh devices before retrying.</source>
         <translation>Valittua isäntätunnusta ei ole enää merkitty suojatuksi ajojärjestelmäksi. Päivitä laitteita ennen kuin yrität uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21297"/>
+        <location filename="../src/MainWindow.cpp" line="21538"/>
         <source>pkexec/Polkit is required to authorize host maintenance.</source>
         <translation>Pkexec/Polkit on annettava käyttöön isäntähuolto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21302"/>
+        <location filename="../src/MainWindow.cpp" line="21543"/>
         <source>Running host is ready for explicit guarded maintenance.</source>
         <translation>Juokseva isäntä on valmiina vartioituun huoltoon.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21310"/>
+        <location filename="../src/MainWindow.cpp" line="21551"/>
         <source>Select Host Maintenance on the protected running-host card first.</source>
         <translation>Valitse ensin suojatun juoksu-host-kortin isäntähuolto.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21323"/>
+        <location filename="../src/MainWindow.cpp" line="21564"/>
         <source>Confirm changes to the running host</source>
         <translation>Vahvista muutokset käynnissä olevaan isäntään</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21324"/>
+        <location filename="../src/MainWindow.cpp" line="21565"/>
         <source>Host disk: %1
 Linux root: %2
 
@@ -9832,12 +10027,12 @@ Seuraavat suojatut muutokset tapahtuvat natiivisti aktiivisessa järjestelmäss�
 Auttaja tarkistaa itsenäisesti, että valitut levyn taustat /, /boot ja /boot/efi, ja soveltaa samaa pakettia, mapper, EFI/NVRAM ja GRUB säilytyssuojat käytetään korjauskohteisiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21331"/>
+        <location filename="../src/MainWindow.cpp" line="21572"/>
         <source>Confirm changes to the selected repair system</source>
         <translation>Vahvista muutokset valittuun korjausjärjestelmään</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21332"/>
+        <location filename="../src/MainWindow.cpp" line="21573"/>
         <source>Target disk: %1
 Linux root: %2
 
@@ -9854,86 +10049,86 @@ Seuraavat tavoitejärjestelmän muutokset tehdään:
 Juokseva isäntä tarkastetaan itsenäisesti uudelleen ja etuoikeutettu avustaja kieltäytyy.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21341"/>
+        <location filename="../src/MainWindow.cpp" line="21582"/>
         <source>Run Repair</source>
         <translation>Suorita korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21360"/>
+        <location filename="../src/MainWindow.cpp" line="21601"/>
         <source>Repair unavailable</source>
         <translation>Korjausta ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21432"/>
+        <location filename="../src/MainWindow.cpp" line="21689"/>
         <source>Repair: %1…</source>
         <translation>Korjaus: %1…</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21606"/>
+        <location filename="../src/MainWindow.cpp" line="21868"/>
         <source>%1 failed</source>
         <translation>%1 epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21607"/>
+        <location filename="../src/MainWindow.cpp" line="21869"/>
         <source>The repair action failed. Review the captured helper output in Logs for the failing stage and its reason.</source>
         <translation>Korjaaminen epäonnistui. Tarkista kaapattu auttaja lähtö lokeissa vika vaiheessa ja sen syy.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21659"/>
+        <location filename="../src/MainWindow.cpp" line="21944"/>
         <source>A file system check and repair is already running. Wait for it to finish before starting another repair; this request was not queued.</source>
         <translation>Tiedostojärjestelmän tarkistus ja korjaus on jo käynnissä. Odota, että se päättyy ennen kuin aloitat toisen korjauksen; tämä pyyntö ei ollut jonossa.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21663"/>
+        <location filename="../src/MainWindow.cpp" line="21948"/>
         <source>File system repair in progress</source>
         <translation>Tiedostojärjestelmän korjaus käynnissä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21681"/>
-        <location filename="../src/MainWindow.cpp" line="21846"/>
+        <location filename="../src/MainWindow.cpp" line="21966"/>
+        <location filename="../src/MainWindow.cpp" line="22174"/>
         <source>Repair diagnostics required</source>
         <translation>Tarvittava korjausdiagnostiikka</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="8529"/>
-        <location filename="../src/MainWindow.cpp" line="21685"/>
-        <location filename="../src/MainWindow.cpp" line="21791"/>
+        <location filename="../src/MainWindow.cpp" line="8617"/>
+        <location filename="../src/MainWindow.cpp" line="21970"/>
+        <location filename="../src/MainWindow.cpp" line="22076"/>
         <source>Repair tool unavailable</source>
         <translation>Korjaustyökalua ei saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="5301"/>
+        <location filename="../src/MainWindow.cpp" line="5389"/>
         <source>Device: %1 · File system: %2 · Mount: %3 · Check tool: %4</source>
         <translation>Laite: %1 · Tiedostojärjestelmä: %2 · Mount: %3 · Tarkista työkalu: %4</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6061"/>
-        <location filename="../src/MainWindow.cpp" line="9797"/>
+        <location filename="../src/MainWindow.cpp" line="6149"/>
+        <location filename="../src/MainWindow.cpp" line="9868"/>
         <source>Host Maintenance — run guarded repair stages against the running system.</source>
         <translation>Isäntä Huolto Aja vartioidut korjausvaiheet vastaan ajojärjestelmä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6088"/>
+        <location filename="../src/MainWindow.cpp" line="6176"/>
         <source>Click a column header to sort by it; click again to reverse the order.</source>
         <translation>Napsauta sarakkeen otsikkoa lajitellaksesi sen; klikkaa uudelleen peruuttaaksesi tilauksen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6179"/>
+        <location filename="../src/MainWindow.cpp" line="6267"/>
         <source>Establish the privileged helper session for the current scope now.</source>
         <translation>Auttajaistunto on järjestettävä nyt.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="6401"/>
+        <location filename="../src/MainWindow.cpp" line="6489"/>
         <source>Run the selected read-only diagnostic for the current scope.</source>
         <translation>Suorita valittu luku vain vianmääritys nykyisen soveltamisalan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7079"/>
+        <location filename="../src/MainWindow.cpp" line="7167"/>
         <source>This entry is the current GRUB legacy default.</source>
         <translation>Tämä merkintä on nykyinen GRUB perintö oletus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7111"/>
+        <location filename="../src/MainWindow.cpp" line="7199"/>
         <source>Manage UEFI firmware boot entries. Entries are listed read-only; Move Up/Move Down reorder them in the table only, Delete Selected marks an entry for deletion and double-clicking the Label column stages a rename. Save commits all staged changes (reorder, delete and rename) through the verified helper. The active (BootCurrent) entry can never be deleted or renamed. Changes are verified and rolled back on any mismatch.
 
 Firmware boot entries live in the running host&apos;s UEFI NVRAM (there is only one firmware). In Host Maintenance you manage the running host&apos;s own entries; with a repair target selected you manage that drive&apos;s entries, which are the NVRAM entries whose PARTUUID points to that drive&apos;s EFI system partition. A repair target has no firmware of its own.
@@ -9980,461 +10175,480 @@ Saapasvalikko (vain luku):
 Käytä yllä olevaa näkymän valitsinta vaihtaaksesi UEFI/UKI-ohjelmistosyötteiden ja käynnistysvalikon välillä. Käynnistysvalikko listaa järjestelmän bootloaderin ytimiä/OS-syötteitä juuri niin kuin ne näkyvät sen kokoonpanossa, tiedostojärjestyksessä, ja nykyinen oletusmerkintä on merkitty ✓:llä. GRUB-järjestelmissä tämä on GRUB-valikko (grub.cfg); BIOS/extlinux-järjestelmissä se on extlinux/syslinux-valikko (/boot/extlinux.conf tai syslinux.cfg); Debian Etch (GRUB-perintö 0.97), se on valikko.lst-valikko (/boot/grub/menu.lst). Tämä näkymä on tiukasti lukea vain ... Se ei koskaan uusi tai muokata bootloader asetukset.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="7664"/>
+        <location filename="../src/MainWindow.cpp" line="7752"/>
         <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
         <translation>Asemasta ei löytynyt käynnistysvalikon asetuksia. Järjestelmässä ei saa olla GRUB:ää, extlinux:ää/syslinux:ää tai GRUB:n perinteistä käynnistysvalikkoa tai sen kokoonpano elää muualla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9702"/>
+        <location filename="../src/MainWindow.cpp" line="9773"/>
         <source>Inspect this partition/volume. %1</source>
         <translation>Tarkista tämä osio/tilavuus. %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9707"/>
+        <location filename="../src/MainWindow.cpp" line="9778"/>
         <source>Select this physical drive as the repair target. %1</source>
         <translation>Valitse tämä fyysinen asema korjauskohteeksi. %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="9852"/>
+        <location filename="../src/MainWindow.cpp" line="9923"/>
         <source>Exit Host Maintenance — return to ordinary repair-target mode.</source>
         <translation>Poistu isäntä huolto ... palata tavalliseen korjaus-kohdetilaan.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10094"/>
+        <location filename="../src/MainWindow.cpp" line="10165"/>
         <source>Unlock %1 via cryptsetup through the privileged helper; the passphrase is never logged.</source>
         <translation>Avaa %1 salausjärjestelmän kautta etuoikeutetun auttimen kautta; salauslausetta ei koskaan kirjata.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10097"/>
+        <location filename="../src/MainWindow.cpp" line="10168"/>
         <source>An unlocked Linux filesystem is already visible; Boot Bitch reuses the existing mapper.</source>
         <translation>Avaamaton Linux-tiedostojärjestelmä on jo näkyvissä; Boot Bitch käyttää olemassa olevaa karttaa uudelleen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="10983"/>
+        <location filename="../src/MainWindow.cpp" line="11057"/>
         <source>Privileged request &apos;%1&apos; is queued behind the running &apos;%2&apos; and will start when it finishes.</source>
         <translation>Etuoikeutettu pyyntö &apos;%1&apos; on jonossa juoksun &apos;%2&apos; takana ja alkaa, kun se päättyy.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11012"/>
+        <location filename="../src/MainWindow.cpp" line="11086"/>
         <source>Privileged request &apos;%1&apos; waited for the running &apos;%2&apos; but it did not finish in time; the request was refused.</source>
         <translation>Etuoikeutettu pyyntö &apos;%1&apos; odotti käynnissä olevaa &apos;%2&apos; mutta se ei päättynyt ajoissa; pyyntö hylättiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11015"/>
+        <location filename="../src/MainWindow.cpp" line="11089"/>
         <source>ERROR: Privileged request &apos;%1&apos; was refused because &apos;%2&apos; is still running after the queue wait limit; wait for it to finish and retry, or cancel it.
 </source>
         <translation>VIRHE: Etuoikeutettu pyyntö &apos;%1&apos; hylättiin, koska &apos;%2&apos; on edelleen käynnissä jonotusrajan jälkeen; odota, että se päättyy ja yrittää uudelleen, tai peruuttaa sen.
 </translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11887"/>
+        <location filename="../src/MainWindow.cpp" line="11961"/>
         <source>Running host selected for guarded maintenance: %1 · Root component: %2</source>
         <translation>%1 · Juurikomponentti: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11894"/>
+        <location filename="../src/MainWindow.cpp" line="11968"/>
         <source> · Automatically detected system component: %1</source>
         <translation>· Automaattisesti havaittu järjestelmän komponentti: %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11912"/>
+        <location filename="../src/MainWindow.cpp" line="11986"/>
         <source>Running host selected for the Host Shell: %1 · Root component: %2</source>
         <translation>Isäntä Shell: %1 · Juurikomponentti: %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11940"/>
+        <location filename="../src/MainWindow.cpp" line="12014"/>
         <source>Row selection is inspection only; press Select Target to commit a repair drive.</source>
         <translation>Rivivalinta on vain tarkastus; paina Valitse Target korjataksesi aseman.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="11941"/>
+        <location filename="../src/MainWindow.cpp" line="12015"/>
         <source>Committed repair target: Repair, Diagnostics, Snapshots and File Copy target this drive until Select Target picks another. %1</source>
         <translation>Sitoutunut korjaus tavoite: Korjaus, Diagnostiikka, Snapshots ja Tiedosto Kopioi tämän aseman kunnes Valitse Target valitsee toisen. %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="13129"/>
+        <location filename="../src/MainWindow.cpp" line="13203"/>
         <source>Open a read-only folder view; the target is unmounted after each listing.</source>
         <translation>Avaa vain lukukansion näkymä; kohde ei ole asennettu jokaisen listauksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="14241"/>
+        <location filename="../src/MainWindow.cpp" line="14314"/>
         <source>Cached %1 result; use Re-run for fresh data.</source>
         <translation>Cached %1 tulos; käytä Re-run tuoreita tietoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21066"/>
+        <location filename="../src/MainWindow.cpp" line="21302"/>
         <source>No cached capability evidence yet; your saved selection is kept and re-checked after diagnostics.</source>
         <translation>Säästetty valintasi säilytetään ja tarkistetaan uudelleen diagnostiikan jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21690"/>
+        <location filename="../src/MainWindow.cpp" line="21975"/>
         <source>Validate running host</source>
         <translation>Validoidaan käynnissä oleva palvelin</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21695"/>
+        <location filename="../src/MainWindow.cpp" line="21980"/>
         <source>Validate repair target</source>
         <translation>Validoidaan korjauskohde</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21709"/>
-        <location filename="../src/MainWindow.cpp" line="21853"/>
-        <location filename="../src/MainWindow.cpp" line="22239"/>
+        <location filename="../src/MainWindow.cpp" line="21994"/>
+        <location filename="../src/MainWindow.cpp" line="22181"/>
+        <location filename="../src/MainWindow.cpp" line="22582"/>
         <source>running host</source>
         <translation>käynnissä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21710"/>
-        <location filename="../src/MainWindow.cpp" line="21854"/>
-        <location filename="../src/MainWindow.cpp" line="22240"/>
+        <location filename="../src/MainWindow.cpp" line="21995"/>
+        <location filename="../src/MainWindow.cpp" line="22182"/>
+        <location filename="../src/MainWindow.cpp" line="22583"/>
         <source>selected repair system</source>
         <translation>valittu korjausjärjestelmä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21714"/>
+        <location filename="../src/MainWindow.cpp" line="21999"/>
         <source>Complete interrupted package configuration in the %1 with dpkg --configure -a</source>
         <translation>Täydellinen keskeytyspakettien kokoonpano %1: ssä dpkg: llä -- configure -a</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21718"/>
+        <location filename="../src/MainWindow.cpp" line="22003"/>
         <source>Repair broken APT package dependencies in the %1</source>
         <translation>Korjaa rikkinäiset APT-pakettiriippuvuudet %1:ssä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21722"/>
+        <location filename="../src/MainWindow.cpp" line="22007"/>
         <source>Refresh APT package metadata in the %1</source>
         <translation>Päivitä APT-paketin metatiedot %1:ssä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21726"/>
+        <location filename="../src/MainWindow.cpp" line="22011"/>
         <source>Run the distribution-specific transaction preflight, then choose a safe upgrade for the %1</source>
         <translation>Suorita jakelukohtainen tapahtuma ennen lentoa, valitse turvallinen päivitys %1:lle</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21730"/>
         <source>Run DKMS autoinstall in the %1</source>
-        <translation>Suorita DKMS autoinstall %1</translation>
+        <translation type="vanished">Suorita DKMS autoinstall %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21734"/>
+        <location filename="../src/MainWindow.cpp" line="22019"/>
         <source>Set graphical.target as the %1&apos;s default boot target</source>
         <translation>Aseta graafinen kohde %1:n oletuskäynnistyskohteeksi</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21735"/>
+        <location filename="../src/MainWindow.cpp" line="22020"/>
         <source>Enable the detected display manager and repair display-manager.service without starting it inside a chroot or host helper</source>
         <translation>Ota huomioon havaittu näytönhallinta ja korjaus näytön hallinta. palvelu aloittamatta sitä sisällä Chroot tai isäntä apuri</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21737"/>
+        <location filename="../src/MainWindow.cpp" line="22022"/>
         <source>Rebuild initramfs</source>
         <translation>Rakenna initramfs uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21739"/>
+        <location filename="../src/MainWindow.cpp" line="22024"/>
         <source>Trial-build and then rebuild all initramfs images for the %1</source>
         <translation>Kokeile rakentaa ja sitten rakentaa kaikki initramfs kuvia %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21741"/>
+        <location filename="../src/MainWindow.cpp" line="22026"/>
         <source>Repair EFI / UKI bootloader</source>
         <translation>Korjaus EFI / UKI bootloader</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21745"/>
-        <location filename="../src/MainWindow.cpp" line="21769"/>
+        <location filename="../src/MainWindow.cpp" line="22030"/>
+        <location filename="../src/MainWindow.cpp" line="22054"/>
         <source>detected bootloader</source>
         <translation>havaittu bootloader</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21747"/>
+        <location filename="../src/MainWindow.cpp" line="22032"/>
         <source>Repair the %1&apos;s %2 boot path through its guarded installer or vendor builder, preserving every other boot entry</source>
         <translation>Korjaa %1 %2-käynnistyspolku vartioidun asentajan tai myyjän rakentajan kautta, säilyttäen kaikki muut saappaan merkinnät</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21748"/>
+        <location filename="../src/MainWindow.cpp" line="22033"/>
         <source>Restore one verified default-loader entry when the guarded installer only wrote files</source>
         <translation>Palauta yksi todennettu oletuslataajan merkintä, kun suojattu asentaja vain kirjoitti tiedostoja</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="2013"/>
-        <location filename="../src/MainWindow.cpp" line="21750"/>
+        <location filename="../src/MainWindow.cpp" line="2101"/>
+        <location filename="../src/MainWindow.cpp" line="22035"/>
         <source>Regenerate GRUB configuration</source>
         <translation>Luo GRUB- asetus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20237"/>
+        <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
         <translation>Fedora/RPM palauttaa puuttuvat tai korruptoituneet pakettitiedostot yhden simuloidun dnf:n avulla.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20248"/>
+        <location filename="../src/MainWindow.cpp" line="20469"/>
         <source> Fedora uses dnf makecache as its standalone metadata stage.</source>
         <translation>Fedora käyttää dnf makecachea erillisenä metatietona.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20259"/>
+        <location filename="../src/MainWindow.cpp" line="20480"/>
         <source> Fedora runs one guarded dnf upgrade transaction after a removal- and downgrade-free, signature-checked simulation.</source>
         <translation>Fedora käyttää yhtä vartioitua dnf-päivitystapahtumaa poistovapaan ja alennuksen jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20293"/>
+        <location filename="../src/MainWindow.cpp" line="20514"/>
         <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
         <translation>Kävele näyttöohjatun interaktiivisen istunnon korjata ytimen GPU-ajuri (nvidia/nuveau/amdgpu/radeon/mesa), soveltamalla vain pieni vartioitu vaihe valitset oman rollback. Kaksi päätöspistettä opastaa istuntoa: ytimen-vs-driver (vaihda uusin ydin, jota kuljettaja ei voi rakentaa, tai poista vanhempi ydin, johon kuljettaja on kiinnitetty) ja väärä-driver (puhdista väärä kuljettaja, asenna oikea, ja rakentaa se uudelleen kaikkia asennettu ydin). Erillinen yksisaapas nomodeset-järjestelmä saavuttaa rikkinäisen kuljettajan konsolin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20305"/>
+        <location filename="../src/MainWindow.cpp" line="20526"/>
         <source> The detected dracut backend pairs each installed kernel with its /boot vmlinuz and initramfs image, verifies a trial build with lsinitrd, and backs up each image so a failed verification restores it.</source>
         <translation>Havaittu dracut backend paria kunkin asennetun ytimen /boot vmlinuz ja initramfs kuva, tarkastaa kokeilun rakentaa lsinitrd, ja varmuuskopioi jokaisen kuvan niin epäonnistunut todentaminen palauttaa sen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20314"/>
+        <location filename="../src/MainWindow.cpp" line="20535"/>
         <source>Repair the running host or selected repair system&apos;s boot path with the detected backend&apos;s guarded installer or vendor builder, restoring one verified default-loader entry and preserving every other ESP&apos;s firmware entries and BootOrder. </source>
         <translation>Korjaa juoksuisännän tai valitun korjausjärjestelmän käynnistyspolku havaittujen taustaosan vartioituun asentajaan tai myyjärakentajaan, palauta yksi todennettu oletuslatain ja säilytä kaikki muut ESP:n laiteohjelmistomerkinnät ja BootOrder.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20317"/>
+        <location filename="../src/MainWindow.cpp" line="20538"/>
         <source>The detected vendor UKI layout (for example the TUXEDO TUX.EFI builder) is rebuilt or re-registered through its official builder. </source>
         <translation>Havaittu myyjä UKI asettelu (esimerkiksi TUXEDO TUX.EFI rakentaja) rakennetaan uudelleen tai rekisteröidään uudelleen virallisen rakennuttajan kautta.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20320"/>
+        <location filename="../src/MainWindow.cpp" line="20541"/>
         <source>The detected Fedora GRUB2/BLS backend repairs the boot code on a BIOS layout, leaving /boot/grub2/grub.cfg and the BLS entries intact. </source>
         <translation>Havaittu Fedora GRUB2/BLS backend korjaa boot koodin BIOS asettelu, jättäen /boot/grub2/grub.cfg ja BLS merkinnät ehjät.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20326"/>
+        <location filename="../src/MainWindow.cpp" line="20547"/>
         <source>The detected GRUB EFI layout uses a guarded grub-install on the validated ESP and restores one verified vendor-loader firmware entry if the installer only writes files. </source>
         <translation>Havaittu GRUB EFI asettelu käyttää vartioitua grub-install:ää validoidussa ESP:ssä ja palauttaa yhden todennetun myyjä-loader-ohjelmiston merkinnän, jos asentaja kirjoittaa vain tiedostoja.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20331"/>
+        <location filename="../src/MainWindow.cpp" line="20552"/>
         <source>A failed install restores the ESP backup; decoded entries keep their distribution/vendor label and drive model, and unrelated entries on other disks are never removed.</source>
         <translation>Epäonnistunut asennus palauttaa ESP:n varmuuskopion; dekoodatut merkinnät säilyttävät jakelu-/vendor-etikettinsä ja -ajomallinsa, eikä muita levyjä ole koskaan poistettu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20339"/>
+        <location filename="../src/MainWindow.cpp" line="20560"/>
         <source>Regenerate the running host or selected repair system&apos;s GRUB2 configuration (grub2-mkconfig --no-grubenv-update, /boot/grub2/grub.cfg with the BLS entries preserved) after the mandatory safety preflight, using an entry-preserving guard and a rollback so no menu or BLS entry is lost. When the read-only boot-code probe finds the MBR or BIOS boot partition broken, the same stage performs a guarded grub2-install --target=i386-pc boot-code reinstall with backup and rollback; it never writes firmware NVRAM or reinstalls EFI loader files — use EFI / UKI bootloader when the firmware loader itself needs repair.</source>
         <translation>Uudista juoksuisäntä tai valitun korjausjärjestelmän GRUB2-asetukset (grub2-mkconfig --no-grubenv-update, /boot/grub2/grub.cfg säilytetyillä BLS-merkinnöillä) pakollisen lentoa edeltävän lennon jälkeen käyttäen sisäänpääsynestosuojaa ja rollbackia, joten valikkoa tai BLS-merkintää ei menetetä. Kun MBR- tai BIOS-saappaan osio on rikki, sama vaihe suorittaa vartioidun grub2-asennuksen --kohde=i386-PC-saappaankoodin uudelleenasennuksen varmuuskopiolla ja rollbackilla; se ei koskaan kirjoita firmware NVRAM:ää tai asenna EFI-kuormaajatiedostoja uudelleen .</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20360"/>
+        <location filename="../src/MainWindow.cpp" line="20581"/>
         <source>Run a read-only file system check on the selected system&apos;s root, /boot, ESP and /home filesystems, then repair only the devices that report errors. Detected tools are used per file system — e2fsck/xfs_repair and the other native checkers, btrfs/zpool scrub, and the FAT/exFAT/NTFS tools — with the risky btrfs check --repair gated behind a separate backup confirmation. Offline tools refuse mounted filesystems, the online modes run where available, the running host root is never repaired offline, and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Suorita vain lukutiedostojärjestelmän tarkistus valitun järjestelmän juurelle, /bootille, ESP:lle ja /home-tiedostojärjestelmille ja korjaa sitten vain virheet ilmoittavia laitteita. Havaittuja työkaluja käytetään tiedostojärjestelmää kohti .../e2fsck/xfs repair ja muut natiivit tarkistajat, btrfs/zpool scrub ja FAT/exFAT/NTFS -työkalut, joissa on riskialtis btrfs-tarkistus -- korjataan erillisen varmistuksen jälkeen. Offline-työkalut hylkäävät asennettuja tiedostojärjestelmiä, online-tilat toimivat, käynnissä olevaa isäntäjuurta ei koskaan korjata offline-tilassa, ja tuettuja tiedostojärjestelmiä raportoidaan sen sijaan, että arvattaisiin.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20369"/>
+        <location filename="../src/MainWindow.cpp" line="20590"/>
         <source>Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, repair the detected bootloader path (vendor UKI builder, GRUB EFI, extlinux or Fedora BLS), reconcile one canonical default destination per purpose, and regenerate the detected bootloader configuration. </source>
         <translation>Reconcile korjattu tai palautettu root sen boot artefacts: validoi mapper / cryptab, uudelleen asennettu-ydin initramfs kuvia, korjata havaittu bootloader polku (vektori UKI rakentaja, GRUB EFI, extlinux tai Fedora BLS), sovittaa yksi kanoninen oletuskohde käyttötarkoitusta kohden, ja uudistaa havaittu bootloader kokoonpano.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20372"/>
+        <location filename="../src/MainWindow.cpp" line="20593"/>
         <source>On a Fedora BIOS target this validates mapper/crypttab, rebuilds the dracut initramfs images and regenerates the GRUB2 configuration (config-only; the guarded bootloader reinstall stays in the GRUB stage). </source>
         <translation>Fedora BIOS -kohteessa tämä validoi mapper/cryptab-kohteen, rakentaa dracut initramfs -kuvat uudelleen ja uudistaa GRUB2-konfiguraation (vain konfiguraatio; vartioitu bootloader pysyy GRUB-vaiheessa).</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20375"/>
+        <location filename="../src/MainWindow.cpp" line="20596"/>
         <source>When the EFI / UKI bootloader repair already ran for the same system in this session, this action reuses it (skipping the duplicate bootloader rebuild and GRUB regeneration) while mapper/crypttab validation and initramfs reconciliation still run. This is the focused recovery action for a root/boot mismatch after a partial update or snapshot restore; it never deletes kernels or unrelated boot entries.</source>
         <translation>Kun EFI / UKI bootloader korjaus jo toimi samassa järjestelmässä tässä istunnossa, tämä toiminto käyttää sitä uudelleen (slipping dumple bootloader restruction and GRUB regeneration) samalla mapper / cryptab validointi ja initramfs täsmäytys vielä käynnissä. Tämä on kohdennettu palautustoimi root/boot-epäsuhdannetta varten osittaisen päivityksen tai tilannekatsauksen palauttamisen jälkeen; se ei koskaan poista ytimiä tai etuyhteydetöntä käynnistysmerkintää.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="20383"/>
+        <location filename="../src/MainWindow.cpp" line="20604"/>
         <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Tarkista asennetun ytimen varasto ja valitse yksi konkreettinen ytimen korjaustoiminto: poista vanhin/ylin tai uusin ydin, poista orvot otsikot/komponentit/rakentamistuki, asenna puuttuvat otsikot, asenna uudelleen keskeneräinen ydin tai asenna arkiston viimeisin ydin. Mitään ei poisteta tai muuteta ennen kuin valitset toimen ja vahvistat sen. Juokseva ydin on aina suojattu, ja loput ytimien initramfs-kuvat ja bootloader-asetukset regeneroidaan poiston jälkeen.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21752"/>
+        <location filename="../src/MainWindow.cpp" line="22015"/>
+        <source>Rebuild out-of-tree kernel modules in the %1 using the detected %2 build system</source>
+        <translation>Rakenna uudelleen out-of-puun ytimen moduulit %1 käyttäen havaittua %2 rakennusjärjestelmä</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="22037"/>
         <source>Trial-generate and then regenerate the %1&apos;s GRUB configuration</source>
         <translation>Trial generate and then regenerate the %1 GRUB configuration</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21756"/>
+        <location filename="../src/MainWindow.cpp" line="22041"/>
         <source>Regenerate the %1&apos;s extlinux bootloader configuration with an entry-preserving guard</source>
         <translation>Uudista %1 extlinux -käynnistyslaitteen konfiguraatio sisääntulosuojalla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21758"/>
+        <location filename="../src/MainWindow.cpp" line="22043"/>
         <source>Reconcile boot stack</source>
         <translation>Reconcile boot pino</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21771"/>
+        <location filename="../src/MainWindow.cpp" line="22056"/>
         <source>Validate mapper/crypttab against the %1</source>
         <translation>Validoidaan mapper/cryptab %1:ää vastaan</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21772"/>
+        <location filename="../src/MainWindow.cpp" line="22057"/>
         <source>Trial-build and rebuild initramfs for installed kernels</source>
         <translation>Trial-rakentaminen ja jälleenrakentaminen initramfs asennettuja ytimiä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21773"/>
+        <location filename="../src/MainWindow.cpp" line="22058"/>
         <source>Repair the detected %1 boot path, removing only duplicate default destinations</source>
         <translation>Korjaa havaittu %1- käynnistyspolku, poista vain kaksoisoletuskohteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21774"/>
+        <location filename="../src/MainWindow.cpp" line="22059"/>
         <source>Regenerate the detected bootloader configuration</source>
         <translation>Uusia havaittujen bootloader-asetusten asetukset</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21776"/>
+        <location filename="../src/MainWindow.cpp" line="22061"/>
         <source>Reuse the bootloader repair already completed for this %1: skip the duplicate bootloader rebuild and GRUB regeneration</source>
         <translation>Uudelleenkäytä tätä %1:tä varten valmiiksi saatettua bootloader-korjausta: jätä väliin kaksoiskomponenttikäynnistys ja GRUB:n uudistaminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21792"/>
+        <location filename="../src/MainWindow.cpp" line="22077"/>
         <source>No repair workflow is registered for the selected tool.</source>
         <translation>Valitulle työkalulle ei ole rekisteröity korjaustöitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21803"/>
-        <location filename="../src/MainWindow.cpp" line="21875"/>
+        <location filename="../src/MainWindow.cpp" line="22088"/>
+        <location filename="../src/MainWindow.cpp" line="22203"/>
         <source>Read-only diagnostics completed; review the full evidence in Logs before confirming repair.</source>
         <translation>Lue vain diagnostiikka valmis; tarkista kaikki todisteet lokit ennen vahvistamista korjaus.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21856"/>
+        <location filename="../src/MainWindow.cpp" line="22138"/>
+        <source>GPU driver repair refused: run the %1 diagnostic first (no cached GPU evidence).</source>
+        <translation>GPU-kuljettajan korjaus hylätty: suorita %1-diagnostiikka ensin (ei välimuistinäyttöä).</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="22140"/>
+        <source>GPU driver repair unavailable</source>
+        <translation>GPU-ohjaimen korjausta ei saatavilla</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="22141"/>
+        <source>Run the %1 diagnostic before starting the GPU driver repair.</source>
+        <translation>Suorita %1-diagnostiikka ennen GPU-ajurin korjausta.</translation>
+    </message>
+    <message>
+        <location filename="../src/MainWindow.cpp" line="22184"/>
         <source>Run the read-only file system check, then repair the selected devices</source>
         <translation>Suorita vain lukutiedostojärjestelmän tarkistus ja korjaa valitut laitteet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21858"/>
+        <location filename="../src/MainWindow.cpp" line="22186"/>
         <source>Repair broken APT dependencies</source>
         <translation>Korjaa rikkinäiset APT-riippuvuudet</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21859"/>
+        <location filename="../src/MainWindow.cpp" line="22187"/>
         <source>Refresh APT package metadata</source>
         <translation>Päivitä APT-paketin metatiedot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21860"/>
+        <location filename="../src/MainWindow.cpp" line="22188"/>
         <source>Simulate APT first, then choose a safe upgrade/full-upgrade/dist-upgrade transaction</source>
         <translation>Simuloi APT ensin, valitse sitten turvallinen päivitys/täydellinen/dist-upgrade tapahtuma</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21862"/>
+        <location filename="../src/MainWindow.cpp" line="22190"/>
         <source>Restore the detected display manager and graphical.target without starting the GUI inside chroot</source>
         <translation>Palauta havaittu näytönhallinta ja graafinen. kohde aloittamatta GUI sisällä Chroot</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21863"/>
+        <location filename="../src/MainWindow.cpp" line="22191"/>
         <source>Rebuild all initramfs images</source>
         <translation>Rakenna kaikki initramfs-kuvat uudelleen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21864"/>
+        <location filename="../src/MainWindow.cpp" line="22192"/>
         <source>Repair the %1 EFI / UKI boot path using its validated ESP</source>
         <translation>Korjaa %1 EFI / UKI boot polku käyttämällä validoitua ESP</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21865"/>
+        <location filename="../src/MainWindow.cpp" line="22193"/>
         <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Uudista %1 GRUB -kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21866"/>
+        <location filename="../src/MainWindow.cpp" line="22194"/>
         <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Uusi %1 extlinux -kokoonpano</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21946"/>
+        <location filename="../src/MainWindow.cpp" line="22289"/>
         <source>The Full Repair plan is running. The read-only file system check pre-stage runs first, then the selected repair stages; each stage&apos;s output streams here as it completes.</source>
         <translation>Koko korjaussuunnitelma on käynnissä. Luku-vain tiedostojärjestelmä tarkistaa pre-stage toimii ensin, sitten valitut korjausvaiheet; kunkin vaiheen lähtövirrat täällä, kun se valmistuu.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21964"/>
+        <location filename="../src/MainWindow.cpp" line="22307"/>
         <source>Full Repair plan finished with failures. Review the per-stage results (✓/✗/▪) in Logs, then close this window.</source>
         <translation>Täydellinen korjaussuunnitelma päättyi epäonnistumisiin. Tarkista kunkin vaiheen tulokset (✓/✗/▪) in Logs ja sulje tämä ikkuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="21965"/>
+        <location filename="../src/MainWindow.cpp" line="22308"/>
         <source>Full Repair plan finished. Review the per-stage results (✓/✗/▪) in Logs, then close this window.</source>
         <translation>Koko korjaussuunnitelma valmis. Tarkista kunkin vaiheen tulokset (✓/✗/▪) in Logs ja sulje tämä ikkuna.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22164"/>
+        <location filename="../src/MainWindow.cpp" line="22507"/>
         <source>File system check unavailable</source>
         <translation>Tiedostojärjestelmän tarkistus ei ole käytettävissä</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22190"/>
+        <location filename="../src/MainWindow.cpp" line="22533"/>
         <source>Check File Systems (Full Repair pre-stage)</source>
         <translation>Tarkista tiedostojärjestelmät (koko korjausta edeltävä vaihe)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22191"/>
+        <location filename="../src/MainWindow.cpp" line="22534"/>
         <source>Check File Systems (manual)</source>
         <translation>Tarkista tiedostojärjestelmät (manual)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22205"/>
+        <location filename="../src/MainWindow.cpp" line="22548"/>
         <source>File system check failed</source>
         <translation>Tiedostojärjestelmän tarkistus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22206"/>
+        <location filename="../src/MainWindow.cpp" line="22549"/>
         <source>The read-only file system check failed. Review the captured helper output in Logs for the reason.</source>
         <translation>Vain lukutiedostojen tarkistus epäonnistui. Tarkista kaapattu auttajan tuloste lokeissa syystä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22222"/>
+        <location filename="../src/MainWindow.cpp" line="22565"/>
         <source>File system repair unavailable</source>
         <translation>Tiedostojärjestelmän korjausta ei ole saatavilla</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22235"/>
+        <location filename="../src/MainWindow.cpp" line="22578"/>
         <source>Checking and repairing file systems (Full Repair)</source>
         <translation>Tiedostojärjestelmien tarkistaminen ja korjaaminen (Full Repair)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22236"/>
+        <location filename="../src/MainWindow.cpp" line="22579"/>
         <source>Checking and repairing file systems</source>
         <translation>Tiedostojärjestelmien tarkastaminen ja korjaaminen</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22286"/>
+        <location filename="../src/MainWindow.cpp" line="22629"/>
         <source>%1 mounted filesystem(s) were skipped because their check tools are offline-only</source>
         <translation>%1:n asennettu tiedostojärjestelmä [s] ohitettiin, koska niiden tarkistustyökalut ovat offline-vain</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22290"/>
+        <location filename="../src/MainWindow.cpp" line="22633"/>
         <source>%1 filesystem(s) are unsupported or have no installed check tool</source>
         <translation>%1-tiedostojärjestelmät [s] eivät ole tuettuja tai niillä ei ole asennettua tarkistustyökalua</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22294"/>
+        <location filename="../src/MainWindow.cpp" line="22637"/>
         <source>No file system errors were detected on the %1&apos;s root, /boot, ESP or /home filesystems. No repair was run.</source>
         <translation>Tiedostojärjestelmän virheitä ei havaittu %1-juurta, /boot-, ESP- tai /home-tiedostojärjestelmissä. Korjauksia ei tehty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22296"/>
+        <location filename="../src/MainWindow.cpp" line="22639"/>
         <source>No repairable file system errors were detected on the %1&apos;s root, /boot, ESP or /home filesystems, but %2. No repair was run.</source>
         <translation>%1:n juurissa, /bootissa, ESP:ssä tai /home-tiedostojärjestelmissä ei havaittu korjattavia tiedostojärjestelmän virheitä, mutta %2:ssä. Korjauksia ei tehty.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22328"/>
+        <location filename="../src/MainWindow.cpp" line="22671"/>
         <source>The read-only check found issues on %1 mounted filesystem(s) that have no safe repair mode from this environment. Unmount the filesystem and check again, or repair it from a live system that is not using it.</source>
         <translation>Lue vain tarkistus löysi ongelmia %1 asennettu tiedostojärjestelmä [s], joilla ei ole turvallista korjaustilaa tästä ympäristöstä. Avaa tiedostojärjestelmä ja tarkista uudelleen tai korjaa se elävästä järjestelmästä, joka ei käytä sitä.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22361"/>
+        <location filename="../src/MainWindow.cpp" line="22704"/>
         <source>Run %1 repair on %2</source>
         <translation>Suorita %1 korjaus %2</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22384"/>
+        <location filename="../src/MainWindow.cpp" line="22727"/>
         <source>Dangerous Btrfs repair</source>
         <translation>Vaarallinen Btrfs korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22385"/>
+        <location filename="../src/MainWindow.cpp" line="22728"/>
         <source>btrfs check --repair is a last-resort tool</source>
         <translation>btrfs-tarkistus --korjaus on viimeinen resort-työkalu</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22386"/>
+        <location filename="../src/MainWindow.cpp" line="22729"/>
         <source>Upstream Btrfs documentation warns that check --repair can make a damaged filesystem worse and can lose data. Back up everything you can reach first. Prefer a scrub, a rescue, or a fresh backup/restore when either is possible.
 
 Run btrfs check --repair on:
@@ -10445,32 +10659,32 @@ Suorita btrfs-tarkistus -- korjaus:
 %1</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22392"/>
+        <location filename="../src/MainWindow.cpp" line="22735"/>
         <source>Run dangerous Btrfs repair</source>
         <translation>Suorita vaarallinen Btrfs korjaus</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22429"/>
+        <location filename="../src/MainWindow.cpp" line="22772"/>
         <source>File system repair (%1)</source>
         <translation>Tiedostojärjestelmän korjaus (%1)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22430"/>
+        <location filename="../src/MainWindow.cpp" line="22773"/>
         <source>File system repair (%1, manual)</source>
         <translation>Tiedostojärjestelmän korjaus (%1, manuaalinen)</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22468"/>
+        <location filename="../src/MainWindow.cpp" line="22811"/>
         <source>File system repair failed</source>
         <translation>Tiedostojärjestelmän korjaus epäonnistui</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22469"/>
+        <location filename="../src/MainWindow.cpp" line="22812"/>
         <source>One or more file system repairs failed. Review the captured helper output in Logs for the failing device and its reason.</source>
         <translation>Yksi tai useampi tiedostojärjestelmän korjaus epäonnistui. Tarkista kaapattu auttajan lähtö lokeissa vikalaitteen ja sen syyn vuoksi.</translation>
     </message>
     <message>
-        <location filename="../src/MainWindow.cpp" line="22685"/>
+        <location filename="../src/MainWindow.cpp" line="23028"/>
         <source>Device columns auto-sized. Drag headers to fine-tune widths.</source>
         <translation>Laitepatruunat automaattisesti. Vedä otsikkoja hienosäätimeen.</translation>
     </message>
