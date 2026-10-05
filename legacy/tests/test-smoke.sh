@@ -588,9 +588,9 @@ grep -q 'Repair change status validate: unchanged|reason:validation-read-only' "
     || fail "validate did not emit its change status"
 
 run_target_diagnostic all > "$FIXTURE/diagnose.txt" 2>&1
-[[ "$(grep -c '^Repair tool ' "$FIXTURE/diagnose.txt")" -eq 13 ]] \
-    || fail "diagnose all did not emit exactly 13 Repair tool lines"
-for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
+[[ "$(grep -c '^Repair tool ' "$FIXTURE/diagnose.txt")" -eq 15 ]] \
+    || fail "diagnose all did not emit exactly 15 Repair tool lines"
+for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
     grep -q "^Repair tool ${key}: " "$FIXTURE/diagnose.txt" || fail "diagnose is missing Repair tool $key"
 done
 grep -q '^Repair tool efi: unavailable|reason:legacy-bios-no-efi$' \

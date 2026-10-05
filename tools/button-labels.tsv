@@ -1,0 +1,62 @@
+# Boot Bitch short button/action label glossary.
+#
+# Purpose: GUI button labels and other short action strings must stay SHORT
+# action words, never machine-translated sentences.  Argos (and other MT
+# backends) tends to render a one- or two-word button such as "Move Down" as a
+# full imperative sentence, so these short labels are pinned here and applied
+# last, winning over both tools/translate_overrides.tsv and the machine-
+# translation backend for the exact source string.
+#
+# Format: source<TAB>de<TAB>fr<TAB>es  (identical to translate_overrides.tsv)
+#   - Blank lines and lines starting with '#' are ignored.
+#   - A cell may be empty to mean "no confident override for this language";
+#     that string then falls through to machine translation.
+#   - The source column matches the UNESCAPED <source> text exactly (e.g.
+#     "&File", not "&amp;File").
+#   - This glossary is loaded after translate_overrides.tsv and wins for any
+#     source present in both files, so a short label is pinned in exactly one
+#     authoritative place.
+#
+# Character-drift guard: tools/translate_ts.py also runs a post-translation
+# pass that only REPORTS (it never edits) short labels whose translation is
+# > 1.8x the source character length and which have no override in this
+# glossary or in translate_overrides.tsv.  A "short label" is a source with no
+# newline, at most 24 characters and at most 3 whitespace-separated words.
+# Each candidate prints a line of the form:
+#     DRIFT <lang> <source> -> <translation>
+# so a maintainer can review it and add a row here (de/fr/es) to pin a short
+# form.
+Move Up	Hoch	Monter	Subir
+Move Down	Runter	Descendre	Bajar
+Delete Selected	Auswahl löschen	Supprimer la sélection	Eliminar selección
+Label	Bezeichnung	Libellé	Etiqueta
+Loader	Bootloader	Chargeur	Cargador
+Boots	Bootverhalten	Démarrage	Arranque
+Drive	Laufwerk	Lecteur	Disco
+Save	Speichern	Enregistrer	Guardar
+Load Entries	Einträge laden	Charger les entrées	Cargar entradas
+EFI-/UKI Restore	EFI-/UKI wiederherstellen	Restaurer EFI-/UKI	Restaurar EFI-/UKI
+Authorize	Autorisieren	Autoriser	Autorizar
+Run All	Alle ausführen	Tout exécuter	Ejecutar todo
+Run Tool	Ausführen	Exécuter	Ejecutar
+Close	Schließen	Fermer	Cerrar
+Cancel	Abbrechen	Annuler	Cancelar
+Refresh	Aktualisieren	Actualiser	Actualizar
+Delete	Löschen	Supprimer	Eliminar
+Remove	Entfernen	Supprimer	Quitar
+Clear	Leeren	Effacer	Borrar
+Quit	Beenden	Quitter	Salir
+Later	Später	Plus tard	Más tarde
+Add Note	Notiz hinzufügen	Ajouter une note	Añadir nota
+Class	Klasse	Classe	Clase
+Menu entry	Menüeintrag	Entrée de menu	Entrada de menú
+Default	Standard	Défaut	Predeterminado
+Repair kernels	Kernel reparieren	Réparer les noyaux	Reparar kernels
+Kernel repair	Kernel reparieren	Réparation des noyaux	Reparación de kernels
+Remove oldest/superseded kernel(s)	Älteste/überholte Kernel entfernen	Supprimer le(s) noyau(x) obsolète(s)	Eliminar kernel(s) antiguo(s)
+Remove newest kernel	Neuesten Kernel entfernen	Supprimer le noyau le plus récent	Eliminar el kernel más reciente
+Remove orphaned headers	Verwaiste Header entfernen	Supprimer les en-têtes orphelins	Eliminar headers huérfanos
+Remove orphaned kernel components	Verwaiste Kernel-Komponenten entfernen	Supprimer les composants de noyau orphelins	Eliminar componentes de kernel huérfanos
+Install missing headers	Fehlende Header installieren	Installer les en-têtes manquants	Instalar headers faltantes
+Reinstall/complete a kernel	Kernel neu installieren/vervollständigen	Réinstaller/compléter un noyau	Reinstalar/completar un kernel
+Install repository-latest kernel	Neuesten Repository-Kernel installieren	Installer le noyau le plus récent du dépôt	Instalar el kernel más reciente del repositorio

@@ -18,14 +18,21 @@ GUI_SRC="$ROOT_DIR/src/MainWindow.cpp"
 
 # Extract the message keys a helper can emit.  The helper calls `msg_log` (and
 # `msg`) with a literal lowercase kebab-case key; full-line comments are
-# excluded.
+# excluded.  Keyed step labels routed through `run_chroot_keyed <key>` are
+# extracted separately (their key is a literal argument, not a `msg <key>`
+# call).
 extract_helper_keys()
 {
     local file="$1"
-    grep -vE '^[[:space:]]*#' "$file" \
-        | grep -oE '\bmsg(_log)? [a-z0-9-]+' \
-        | sed -E 's/^msg(_log)? //' \
-        | sort -u
+    {
+        grep -vE '^[[:space:]]*#' "$file" \
+            | grep -oE '\bmsg(_log)? [a-z0-9-]+' \
+            | sed -E 's/^msg(_log)? //'
+        grep -vE '^[[:space:]]*#' "$file" \
+            | grep -oE '\brun_chroot_keyed [a-z0-9-]+' \
+            | sed -E 's/^run_chroot_keyed //' \
+            || true
+    } | sort -u
 }
 
 # Extract the keys from the GUI's authoritative MsgSpec table.

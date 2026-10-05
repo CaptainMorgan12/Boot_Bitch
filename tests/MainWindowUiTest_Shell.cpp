@@ -5,6 +5,8 @@
 #include "MainWindowUiTest.h"
 #include "UiTestHelpers.h"
 
+#include <QKeyEvent>
+
 using namespace UiTestDetail;
 
 
@@ -19,7 +21,7 @@ void MainWindowUiTest::targetShellDispatchStillUsesShell()
     prepareRepairScope(window);
     window.updateTargetLabels();
     QVERIFY(window.m_chrootShellRunButton->isEnabled());
-    QCOMPARE(window.m_tabs->tabText(4), QStringLiteral("Chroot Shell"));
+    QCOMPARE(window.m_tabs->tabText(5), QStringLiteral("Chroot Shell"));
 
     QTemporaryDir captureDir;
     QVERIFY(captureDir.isValid());
@@ -33,6 +35,75 @@ void MainWindowUiTest::targetShellDispatchStillUsesShell()
              QStringList({QStringLiteral("shell"), QStringLiteral("/dev/test-system"),
                           QStringLiteral("/dev/test-root"), QStringLiteral("update-grub")}));
     QVERIFY(window.m_chrootShellOutput->toPlainText().contains(QStringLiteral("[exit 0]")));
+
+    // The command field is cleared at dispatch, not at completion, so a user
+    // who types the next command while "update-grub" runs never loses it.
+    QVERIFY2(window.m_chrootShellCommandEdit->text().isEmpty(),
+             "the command field must be empty once a command has been dispatched");
+    // The dispatched command is recorded in the session history.
+    QCOMPARE(window.m_chrootShellHistory, QStringList({QStringLiteral("update-grub")}));
+}
+
+// Session-scoped (in-memory) shell command history: Up walks toward older
+// entries, Down walks back toward newer entries and finally restores the draft
+// the user was typing before they navigated away.
+void MainWindowUiTest::chrootShellHistoryNavigatesUpAndDown()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    QVERIFY(window.m_chrootShellCommandEdit);
+
+    // Three commands dispatched this session, oldest → newest.
+    window.m_chrootShellHistory = {
+        QStringLiteral("apt update"),
+        QStringLiteral("apt upgrade"),
+        QStringLiteral("apt full-upgrade")
+    };
+    window.m_chrootShellHistoryIndex = -1;
+    window.m_chrootShellHistoryDraft.clear();
+
+    // Type a fresh draft, then navigate Up.
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("pacman -Syu"));
+
+    window.stepChrootShellHistory(+1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt full-upgrade"));
+    QCOMPARE(window.m_chrootShellHistoryDraft, QStringLiteral("pacman -Syu"));
+
+    window.stepChrootShellHistory(+1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt upgrade"));
+
+    window.stepChrootShellHistory(+1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt update"));
+
+    // Already at the oldest entry: another Up stays put.
+    window.stepChrootShellHistory(+1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt update"));
+
+    // Down walks back toward newer entries.
+    window.stepChrootShellHistory(-1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt upgrade"));
+    window.stepChrootShellHistory(-1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt full-upgrade"));
+
+    // Past the newest entry: return to the saved draft and reset the index.
+    window.stepChrootShellHistory(-1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("pacman -Syu"));
+    QCOMPARE(window.m_chrootShellHistoryIndex, -1);
+    QVERIFY(window.m_chrootShellHistoryDraft.isEmpty());
+
+    // Down on a fresh line is a no-op.
+    window.stepChrootShellHistory(-1);
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("pacman -Syu"));
+
+    // The event filter is wired: a real Up key press navigates the same way.
+    window.m_chrootShellHistoryIndex = -1;
+    window.m_chrootShellHistoryDraft.clear();
+    window.m_chrootShellCommandEdit->setText(QStringLiteral("dnf update"));
+    QKeyEvent up(QEvent::KeyPress, Qt::Key_Up, Qt::NoModifier);
+    QVERIFY(QApplication::sendEvent(window.m_chrootShellCommandEdit, &up));
+    QCOMPARE(window.m_chrootShellCommandEdit->text(), QStringLiteral("apt full-upgrade"));
+    QCOMPARE(window.m_chrootShellHistoryDraft, QStringLiteral("dnf update"));
 }
 
 // While a diagnostics generation/refresh is in flight the Chroot/Host Shell
@@ -57,8 +128,8 @@ void MainWindowUiTest::shellRunCommandDisabledDuringDiagnosticsRefresh()
              "the Run Command must be disabled while an evidence refresh is in flight");
     QVERIFY2(window.m_chrootShellRunButton->toolTip().contains(QStringLiteral("diagnostics"), Qt::CaseInsensitive),
              "the disabled tooltip must name the diagnostics refresh");
-    QVERIFY2(window.m_chrootShellRunButton->toolTip().contains(QStringLiteral("half-refreshed"), Qt::CaseInsensitive),
-             "the disabled tooltip must explain the half-refreshed evidence state");
+    QVERIFY2(window.m_chrootShellRunButton->toolTip().contains(QStringLiteral("generation completes"), Qt::CaseInsensitive),
+             "the disabled tooltip must explain that commands wait for diagnostics generation");
 
     // Refresh completed: re-enabled.
     window.m_evidenceRefreshInProgress = false;

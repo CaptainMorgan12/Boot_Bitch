@@ -50,6 +50,7 @@
 #include <QScrollBar>
 #include <QSettings>
 #include <QSplitter>
+#include <QStackedWidget>
 #include <QStatusBar>
 #include <QStyleOptionViewItem>
 #include <QStyleHints>
@@ -169,10 +170,12 @@ inline QString capabilityEvidence(bool arch, bool dkms)
                           "Repair tool upgrade: available\n"
                           "Repair tool dkms: %6\n"
                           "Repair tool display: unavailable|No display manager installed\n"
+                          "Repair tool gpu: available\n"
                           "Repair tool initramfs: available\n"
                           "Repair tool efi: available\n"
                           "Repair tool grub: available\n"
-                          "Repair tool bootstack: available\n")
+                          "Repair tool bootstack: available\n"
+                          "Repair tool kernels: available\n")
         .arg(arch ? QStringLiteral("arch") : QStringLiteral("debian"),
              arch ? QStringLiteral("pacman") : QStringLiteral("apt/dpkg"),
              arch ? QStringLiteral("mkinitcpio") : QStringLiteral("initramfs-tools"),
@@ -227,10 +230,10 @@ inline void prepareFilesystemPlan(MainWindow &window)
     window.updateFullRepairSummary();
 
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairGrub}) {
+                              window.m_fullRepairAptUpdate,
+                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                              window.m_fullRepairEfi, window.m_fullRepairGrub}) {
         if (toggle) {
             toggle->setChecked(false);
         }
@@ -552,6 +555,39 @@ inline void closeRepairProgressDialogWhenDone(QObject *context)
     poll->start();
 }
 
+// Fills the modal LUKS passphrase dialog (objectName "luksUnlockDialog") with
+// the given passphrase and clicks Unlock, so a headless test can drive
+// unlockSelectedTarget()'s blocking prompt without user interaction.
+inline void fillUnlockPassphrase(QObject *context, const QString &passphrase)
+{
+    QTimer *poll = new QTimer(context);
+    poll->setInterval(5);
+    QObject::connect(poll, &QTimer::timeout, context, [poll, passphrase] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *dialog = qobject_cast<QDialog *>(top);
+            if (!dialog || !dialog->isVisible()
+                || dialog->objectName() != QStringLiteral("luksUnlockDialog")) {
+                continue;
+            }
+            auto *edit = dialog->findChild<QLineEdit *>();
+            auto *buttons = dialog->findChild<QDialogButtonBox *>();
+            if (!edit || !buttons) {
+                continue;
+            }
+            edit->setText(passphrase);
+            if (QPushButton *ok = buttons->button(QDialogButtonBox::Ok)) {
+                ok->click();
+            } else {
+                dialog->accept();
+            }
+            poll->stop();
+            poll->deleteLater();
+            return;
+        }
+    });
+    poll->start();
+}
+
 // The scheduler's coalescing delay is 1200 ms; tests that observe a real
 // automatic run shorten it through MainWindow::m_evidenceRefreshDelayMs and
 // wait long enough that a second (unwanted) run would have fired.
@@ -603,6 +639,36 @@ inline void acceptNextMessageBox(QObject *context, QMessageBox::StandardButton b
             } else {
                 box->done(button);
             }
+            poll->deleteLater();
+            return;
+        }
+    });
+    poll->start();
+}
+
+// Clicks the custom-named button (matched by text) on the next visible modal
+// message box. Mirrors acceptNextMessageBox() but targets a custom button text
+// (e.g. the confirmation dialog's "Clear" button) rather than a standard one.
+inline void acceptNextMessageBoxByText(QObject *context, const QString &text)
+{
+    QTimer *poll = new QTimer(context);
+    poll->setInterval(5);
+    QObject::connect(poll, &QTimer::timeout, context, [poll, text] {
+        for (QWidget *top : QApplication::topLevelWidgets()) {
+            auto *box = qobject_cast<QMessageBox *>(top);
+            if (!box || !box->isVisible()) {
+                continue;
+            }
+            poll->stop();
+            for (QAbstractButton *candidate : box->buttons()) {
+                if (candidate->text() == text) {
+                    candidate->click();
+                    poll->deleteLater();
+                    return;
+                }
+            }
+            // The named button is absent: dismiss rather than hang the test.
+            box->reject();
             poll->deleteLater();
             return;
         }

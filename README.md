@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.27 — maintenance release
+# Boot Bitch 0.2.28 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.27 includes the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.28 includes the EFI boot entries manager, the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -24,13 +24,13 @@ Download the artifact for your system from the GitHub release page and verify it
 
 | System | Artifact | Install |
 | --- | --- | --- |
-| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.27_amd64.deb` | `sudo apt install ./boot-repair_0.2.27_amd64.deb` |
-| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.27-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.27-etch1_amd64.deb` |
-| Arch | `boot-bitch-0.2.27-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.27-x86_64.pkg.tar.zst` |
-| Fedora/RHEL | `boot-bitch-0.2.27.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.27.x86_64.rpm` |
-| openSUSE/SUSE | `boot-bitch-0.2.27.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.27.x86_64.rpm` |
-| Alpine | `boot-bitch-0.2.27.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.27.apk` |
-| Any Linux desktop | `boot-repair_0.2.27_x86_64.AppImage` | `chmod +x boot-repair_0.2.27_x86_64.AppImage && ./boot-repair_0.2.27_x86_64.AppImage` |
+| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.28_amd64.deb` | `sudo apt install ./boot-repair_0.2.28_amd64.deb` |
+| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.28-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.28-etch1_amd64.deb` |
+| Arch | `boot-bitch-0.2.28-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.28-x86_64.pkg.tar.zst` |
+| Fedora/RHEL | `boot-bitch-0.2.28.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.28.x86_64.rpm` |
+| openSUSE/SUSE | `boot-bitch-0.2.28.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.28.x86_64.rpm` |
+| Alpine | `boot-bitch-0.2.28.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.28.apk` |
+| Any Linux desktop | `boot-repair_0.2.28_x86_64.AppImage` | `chmod +x boot-repair_0.2.28_x86_64.AppImage && ./boot-repair_0.2.28_x86_64.AppImage` |
 
 The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-repair/boot-repair-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
 
@@ -168,7 +168,7 @@ The tests cover the MainWindow workflow plus the chroot-shell, display-manager, 
 - Btrfs rollback keeps the source snapshot unchanged, preserves the previous root as `@rollback-before-*`, and restores it automatically when critical post-switch validation fails.
 - Missing optional runtime tools disable only the related feature; host tools are never installed silently.
 
-Still intentionally constrained in 0.2.27:
+Still intentionally constrained in 0.2.28:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin, no separate `/boot` and no other nested `@` child subvolumes, and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed;
@@ -219,6 +219,16 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 ### Settings
 
 ![Settings for Full Repair stages, diagnostics refresh and safety controls](docs/screenshots/08-settings.png)
+
+## 0.2.28 refinements
+
+0.2.28 introduces the EFI boot entries manager — a guarded view of the UEFI firmware's boot entries and the GRUB boot menu — plus the completed 22-language localization of the new surface and a hardened Debian Etch port. Highlights:
+
+- EFI boot entries: list, reorder, rename and delete the running firmware's `Boot####`/`BootOrder` entries for the running host or a selected repair target, with the active BootCurrent entry always protected, blank labels refused, and every NVRAM write verified and rolled back on mismatch.
+- At-a-glance boot meaning: a "Boots" column shows what each entry does (GRUB menu, direct UKI boot, network/WebFAI, fallback), and an "EFI-/UKI Restore" action re-runs the EFI/UKI-Bootloader repair for the current scope to re-create missing entries.
+- Read-only GRUB menu: a dropdown switches to the GRUB boot menu (`grub.cfg`) as a collapsible tree with submenu nesting, the default entry marked, submenus that load an external config file surfaced, and a cross-reference to the firmware entries on the same disk.
+- Localization: all new and changed strings are translated into all 22 languages.
+- Debian Etch port: a masked drift-gate `pipefail` bug was fixed and the new firmware/GRUB code was made bash-3 safe, so the legacy helper builds correctly again.
 
 ## 0.2.27 refinements
 

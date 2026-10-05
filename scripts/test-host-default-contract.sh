@@ -63,7 +63,7 @@ grep -Fq 'extlinux_default_entry_unavailable_reason' <<<"$(sed -n '/^host_defaul
 # the entry-preservation guard and a backup/restore, and never writes a boot
 # sector, ldlinux.sys, the MBR or runs the extlinux installer.
 extlinux_default_body="$(sed -n '/^extlinux_default_entry_ensure()/,/^}/p' "$HELPER")"
-grep -Fq 'overwrite=0' <<<"$extlinux_default_body" \
+grep -Fq 'extlinux_conf_with_default "$conf" "$trial" "$label" 0' <<<"$extlinux_default_body" \
     || fail_test 'extlinux default ensure lost the overwrite=0 trial pattern'
 grep -Fq 'guard_extlinux_candidate_preserves_entries' <<<"$extlinux_default_body" \
     || fail_test 'extlinux default ensure lost the entry-preservation guard'

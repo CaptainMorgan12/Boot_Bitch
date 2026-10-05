@@ -52,6 +52,26 @@ machine translation, or stays English if no backend is available).  The source
 column is compared against the *unescaped* <source> text (i.e. ``&File``, not
 ``&amp;File``).
 
+Short button/action label glossary
+----------------------------------
+``tools/button-labels.tsv`` uses the same shape and is loaded after (and wins
+over) ``translate_overrides.tsv`` for the exact source string.  It pins short
+button/action labels to short action words so the MT backend cannot render them
+as full sentences.
+
+Character-drift guard
+---------------------
+After translation, a source that looks like a short label (no newline, at most
+24 characters, at most 3 whitespace-separated words) whose translation is more
+than 1.8x the source character length, and which has no override in either
+glossary for the target language, is reported on stdout as::
+
+    DRIFT <lang> <source> -> <translation>
+
+The guard only reports — it never edits a translation — so a maintainer can
+review the line and pin a short form in ``button-labels.tsv``.
+
+
 Exit status
 -----------
 0 on success (even if the backend was unavailable and only overrides applied),
@@ -138,6 +158,8 @@ PROTECTED_TERMS = tuple(sorted((
     "mkinitcpio", "mkinitfs", "initramfs", "extlinux", "syslinux",
     "pacman", "TUXEDO", "dracut", "Btrfs", "UEFI", "NVRAM",
     "GRUB", "LUKS", "ESP", "EFI", "UKI", "ZFS", "Shell",
+    "BootCurrent", "BootOrder", "BootNext", "menuentry", "os-prober",
+    "PARTUUID", "WebFAI", "iPXE", "shim",
     "apt", "apk", "dnf", "dpkg", "dkms",
 ), key=len, reverse=True))
 
@@ -154,6 +176,12 @@ ANSI_RE = re.compile(r"\x1b\[[0-9;]*m")
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 DEFAULT_OVERRIDES = os.path.join(SCRIPT_DIR, "translate_overrides.tsv")
+DEFAULT_BUTTON_LABELS = os.path.join(SCRIPT_DIR, "button-labels.tsv")
+
+# Character-drift guard: a "short label" source (no newline, <= 24 characters,
+# <= 3 whitespace-separated words) whose machine translation is more than this
+# many times the source's character length is reported as a drift candidate.
+DRIFT_LENGTH_RATIO = 1.8
 
 
 # --------------------------------------------------------------------------- #
@@ -249,8 +277,18 @@ def write_ts(parsed: dict, path: str) -> None:
             # merge a disambiguated entry back into its plain homonym.
             if msg.get("comment"):
                 lines.append(f"        <comment>{escape_text(msg['comment'])}</comment>")
+            # Preserve lupdate's "vanished" (obsolete) marker so a source that
+            # was renamed/removed is not machine-translated back into a dead
+            # entry; lrelease ignores "vanished" entries and a later lupdate
+            # removes them.
+            ttype = msg.get("type")
             translation = msg["translation"]
-            if translation.strip():
+            if ttype == "vanished":
+                lines.append(
+                    f'        <translation type="vanished">'
+                    f'{escape_text(translation)}</translation>'
+                )
+            elif translation.strip():
                 lines.append(
                     f"        <translation>{escape_text(translation)}</translation>"
                 )
@@ -322,6 +360,23 @@ def is_token_only(source: str) -> bool:
     if not stripped:
         return True
     return not re.search(r"[A-Za-z]", stripped)
+
+
+def is_short_label(source: str) -> bool:
+    """True when ``source`` looks like a button/action label rather than prose.
+
+    Heuristic used by the character-drift guard: no newline, at most 24
+    characters, and at most 3 whitespace-separated words.  Short labels are the
+    strings most at risk of being machine-translated into a full sentence, so
+    they are the only strings the drift guard inspects.
+    """
+    if "\n" in source:
+        return False
+    if len(source) > 24:
+        return False
+    if len(source.split()) > 3:
+        return False
+    return True
 
 
 def placeholders(text: str):
@@ -746,6 +801,13 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Path to the overrides TSV (source<TAB>de<TAB>fr<TAB>es).",
     )
     parser.add_argument(
+        "--button-labels",
+        default=DEFAULT_BUTTON_LABELS,
+        help="Path to the short button/action label glossary TSV "
+        "(source<TAB>de<TAB>fr<TAB>es). Loaded after --overrides and wins for "
+        "any exact source present in both.",
+    )
+    parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
@@ -768,6 +830,16 @@ def main(argv=None) -> int:
 
     parsed = parse_ts(args.ts)
     overrides = load_overrides(args.overrides)
+    button_labels = load_overrides(args.button_labels)
+
+    # Effective overrides: the general overrides glossary, then the short
+    # button/action label glossary on top.  Both are applied last and win over
+    # machine translation, but a short label pinned in button-labels.tsv wins
+    # for the exact source string, so a curated short form (e.g. "Run Tool" ->
+    # "Ausführen") cannot be shadowed by an older long-form override.
+    effective_overrides = {src: dict(entry) for src, entry in overrides.items()}
+    for src, entry in button_labels.items():
+        effective_overrides.setdefault(src, {}).update(entry)
 
     # Normalise the .ts language attribute to the two-letter Qt code. lupdate
     # writes region-qualified codes (de_DE, it_IT, nb_NO); the application
@@ -779,6 +851,8 @@ def main(argv=None) -> int:
     needed = []
     for ctx in parsed["contexts"]:
         for msg in ctx["messages"]:
+            if msg["type"] == "vanished":
+                continue  # obsolete (renamed/removed) source: never re-translated
             if not msg["translation"].strip():
                 needed.append(msg["source"])
     unique_sources = list(dict.fromkeys(needed))
@@ -793,7 +867,7 @@ def main(argv=None) -> int:
     term_only_result = {}
     mt_sources = []
     for src in human_sources:
-        override = overrides.get(src, {}).get(args.target)
+        override = effective_overrides.get(src, {}).get(args.target)
         if override is not None:
             override_result[src] = override
         elif src in TERM_TOKENS:
@@ -843,6 +917,8 @@ def main(argv=None) -> int:
     backend_counts = {}
     for ctx in parsed["contexts"]:
         for msg in ctx["messages"]:
+            if msg["type"] == "vanished":
+                continue  # obsolete; leave untouched and not counted
             src = msg["source"]
             if not msg["translation"].strip():
                 if src in final and final[src] is not None:
@@ -863,6 +939,52 @@ def main(argv=None) -> int:
                     left_count += 1
             else:
                 translated_count += 1  # already translated in a previous run
+
+    # Curated glossaries win over a previously committed translation too: apply
+    # any effective override (button labels first, then the general overrides)
+    # to already-finished messages, so a newly pinned short form (e.g. "Run
+    # Tool" -> "Ausführen") actually ships even when the old catalog carried a
+    # longer machine translation.  A non-matching override is left untouched
+    # rather than clobbering a good existing translation.
+    override_rewrites = 0
+    for ctx in parsed["contexts"]:
+        for msg in ctx["messages"]:
+            if msg["type"] == "vanished":
+                continue  # obsolete; never override
+            if not msg["translation"].strip():
+                continue
+            src = msg["source"]
+            ov = effective_overrides.get(src, {}).get(args.target)
+            if ov is None or not verify(src, ov):
+                continue
+            if msg["translation"] == ov:
+                continue
+            msg["translation"] = ov
+            msg["type"] = None
+            override_rewrites += 1
+
+    # Character-drift guard: report (never fix) short labels whose shipped
+    # translation is more than DRIFT_LENGTH_RATIO times the source length and
+    # which have no override for this language in either glossary.  It runs over
+    # the final catalog (after the fill and the override-rewrite pass above) so
+    # a drifting label is flagged whether it was just machine-translated or
+    # carried over from an earlier run.  A reported string is a candidate for a
+    # curated short form in button-labels.tsv (or, for a domain term,
+    # translate_overrides.tsv).
+    drift_lines = []
+    for ctx in parsed["contexts"]:
+        for msg in ctx["messages"]:
+            if msg["type"] == "vanished":
+                continue  # obsolete entries are not shipped; skip the drift scan
+            src = msg["source"]
+            trans = msg["translation"]
+            if not trans.strip() or not is_short_label(src):
+                continue
+            if (overrides.get(src, {}).get(args.target) is not None
+                    or button_labels.get(src, {}).get(args.target) is not None):
+                continue  # already curated for this language; will not drift
+            if len(trans) > DRIFT_LENGTH_RATIO * len(src):
+                drift_lines.append((src, trans))
 
     total = translated_count + left_count
 
@@ -888,11 +1010,15 @@ def main(argv=None) -> int:
     print(f"translate_ts: total messages      {total}")
     print(f"translate_ts: translated          {translated_count}")
     print(f"translate_ts:   overrides          {override_count}")
+    print(f"translate_ts:   override rewrites    {override_rewrites}")
     print(f"translate_ts:   protected terms     {term_count}")
     print(f"translate_ts:   machine-translated {mt_count}")
     for label in sorted(backend_counts):
         print(f"translate_ts:     {label:<8}        {backend_counts[label]}")
     print(f"translate_ts: left English        {left_count}")
+    print(f"translate_ts: drift candidates    {len(drift_lines)}")
+    for src, cand in drift_lines:
+        print(f"DRIFT {args.target} {src} -> {cand}")
     if token_sources:
         print(f"translate_ts: skipped token-only  {len(token_sources)}")
     if mismatch_warnings:

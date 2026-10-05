@@ -316,6 +316,11 @@
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.28" date="2026-10-03">
+      <description>
+        <p>EFI boot entries manager with a read-only boot menu (GRUB, extlinux/syslinux and GRUB-legacy fallback), a smoother LUKS unlock flow, bash-style chroot/host shell command history, tooltip and responsive-layout polish, the completed 22-language localization, and a hardened Debian Etch port.</p>
+      </description>
+    </release>
     <release version="0.2.27" date="2026-09-28">
       <description>
         <p>A development-speed release: faster CI, parallel and cache-aware gates, an incremental hygiene scan, guarded build caching and a test-budget contract, plus Qt 3 legacy GUI parity fixes.</p>

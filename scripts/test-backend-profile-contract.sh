@@ -318,7 +318,7 @@ cmp "$fake_root/var/lib/pacman/local/example-1/desc" "$TARGET_ROOT$ARCH_PACMAN_D
 [[ -d "$TARGET_ROOT$ARCH_PACMAN_DB_REL/sync" ]]
 [[ -z "$(ls -A "$TARGET_ROOT$ARCH_PACMAN_DB_REL/sync")" ]]
 [[ -s "$fake_root/var/lib/pacman/sync/core.db" ]]
-grep -q '"Arch pacman full transaction preflight" -Syyuw --noconfirm' "$HELPER"
+grep -q 'arch_pacman_transaction_try "$(msg arch-pacman-full-preflight)" -Syyuw --noconfirm' "$HELPER"
 
 # A2-04/A4-07: cleanup() removes TEMP_TARGET_PATHS entries with rm -rf, so the
 # recorded pacman sandbox path must be the host-joined target path — never the
@@ -379,10 +379,10 @@ cap_assert_lines()
     local output
     output="$(cat)"
     [[ "$(sed -n '1p' <<<"$output")" == 'Repair capability probes (read-only, selected target):' ]]
-    [[ "$(grep -c '^Repair tool ' <<<"$output")" -eq 13 ]]
-    [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$output")" -eq 13 ]]
+    [[ "$(grep -c '^Repair tool ' <<<"$output")" -eq 15 ]]
+    [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$output")" -eq 15 ]]
     grep -Fqx 'Repair capability evidence (read-only):' <<<"$output"
-    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack)
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)
     local idx
     for idx in "${!keys[@]}"; do
         sed -n "$((idx + 2))p" <<<"$output" | grep -Fqx "Repair tool ${keys[$idx]}: available" \
@@ -470,9 +470,9 @@ individual_report="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE=""
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability preamble' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$individual_report")" -eq 1 ]] \
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability evidence header' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 13 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 15 ]] \
     || { echo 'FAIL: individual diagnostic lost capability key lines' >&2; exit 1; }
-[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$individual_report")" -eq 13 ]] \
+[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$individual_report")" -eq 15 ]] \
     || { echo 'FAIL: individual diagnostic lost capability evidence lines' >&2; exit 1; }
 
 # A combined Run All report emits the shared capability preamble once at the
@@ -492,6 +492,7 @@ stub_combined_diagnostic_sections()
     diagnostic_grub() { printf 'SECTION grub\n'; }
     diagnostic_uki() { printf 'SECTION uki\n'; }
     diagnostic_display() { printf 'SECTION display\n'; }
+    diagnostic_gpu() { printf 'SECTION gpu\n'; }
     diagnostic_errors() { printf 'SECTION errors\n'; }
     diagnostic_usage() { printf 'SECTION usage\n'; }
     diagnostic_filesystem() { printf 'SECTION filesystem\n'; }
@@ -515,19 +516,19 @@ assert_combined_report()
         || { echo "FAIL: $label combined report emitted duplicate capability preambles" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
         || { echo "FAIL: $label combined report emitted duplicate capability evidence headers" >&2; exit 1; }
-    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 13 ]] \
+    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
-    [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 13 ]] \
+    [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report lost capability evidence lines" >&2; exit 1; }
-    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 15 ]] \
+    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 16 ]] \
         || { echo "FAIL: $label combined report did not run every diagnostic section" >&2; exit 1; }
-    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 15 ]] \
+    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 16 ]] \
         || { echo "FAIL: $label combined report diagnostic section headers changed" >&2; exit 1; }
     # The dedicated File systems section is part of the combined report and is
     # generated and cached with every other section.
     grep -Fqx 'Diagnostic: filesystem' <<<"$combined_report" \
         || { echo "FAIL: $label combined report lost the File systems section" >&2; exit 1; }
-    for cap_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
+    for cap_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
         [[ "$(grep -c "^Repair tool $cap_key: " <<<"$combined_report")" -eq 1 ]] \
             || { echo "FAIL: $label combined report does not contain exactly one 'Repair tool $cap_key' line" >&2; exit 1; }
     done
@@ -1334,7 +1335,7 @@ grep -Fq 'mkinitfs -l "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs -l verification fallback is not wired' >&2; exit 1; }
 grep -Fq "zcat '\$image' | cpio -t" "$HELPER" \
     || { echo 'FAIL: zcat/cpio initramfs verification is not wired' >&2; exit 1; }
-grep -Fq 'run_chroot_try_display "Rebuild Alpine initramfs for $kver with mkinitfs" mkinitfs "$kver"' "$HELPER" \
+grep -Fq 'run_chroot_try_display "$(msg rebuild-alpine-initramfs "$kver")" mkinitfs "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs per-kernel apply is not wired' >&2; exit 1; }
 if grep -Fq 'mkinitcpio -P' <<<"$(sed -n '/^adaptive_alpine_initramfs_repair()/,/^}/p' "$HELPER")"; then
     echo 'FAIL: Alpine initramfs repair must not use mkinitcpio -P' >&2
@@ -2350,7 +2351,7 @@ grep -Fq 'msg:bootstack-skip-grub' "$bootstack_stage_log" \
 # The UI is the only source of the hint, and its label states the reuse.
 grep -q '^bool MainWindow::efiRepairReuseAvailable() const' "$ROOT_DIR/src/MainWindow.cpp"
 grep -Fq 'stages.append(QStringLiteral("--post-efi"))' "$ROOT_DIR/src/MainWindow.cpp"
-grep -Fq 'second UKI rebuild and duplicate GRUB regeneration are skipped' "$ROOT_DIR/src/MainWindow.cpp"
+grep -Fq 'duplicate bootloader rebuild and GRUB regeneration are skipped' "$ROOT_DIR/src/MainWindow.cpp"
 
 # ---------------------------------------------------------------------------
 # Evidence-driven diagnostics invalidation. Every successful modifying repair
@@ -3474,7 +3475,7 @@ grep -Fq 'adaptive_rpm_apply "Repair RPM package files (dnf5 reinstall ${missing
     || { echo 'FAIL: rpm fix-broken reinstall is not wired' >&2; exit 1; }
 grep -Fq 'adaptive_rpm_stage "Upgrade installed RPM packages (dnf5 upgrade)" upgrade upgrade' "$HELPER" \
     || { echo 'FAIL: rpm upgrade stage is not wired' >&2; exit 1; }
-grep -Fq 'Refresh dnf5 package metadata (dnf5 makecache)' "$HELPER" \
+grep -Fq 'run_chroot_try_display "$(msg refresh-dnf5-metadata)" "${RPM_DNF_TOOL:-dnf5}" makecache' "$HELPER" \
     || { echo 'FAIL: dnf5 makecache stage is not wired' >&2; exit 1; }
 
 # dnf5 prints "Metadata cache created." even when the repository metadata cache

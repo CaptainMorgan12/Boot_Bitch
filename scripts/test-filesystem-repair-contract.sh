@@ -40,7 +40,7 @@ for check_tool in e2fsck fsck.fat btrfs xfs_repair fsck.exfat ntfsfix fsck.f2fs 
 done
 
 # The capability key is present and keeps every existing key unchanged.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack)' "$HELPER"
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER"
 grep -Fq 'File system check %s: %s uuid=%s mount=%s tool=%s result=%s' "$HELPER"
 grep -Fq 'File system check detail %s: tool=%s output=%s' "$HELPER"
 grep -Fq 'File system check summary: devices=0 clean=0 issues=0 unsupported=0 tool-missing=0 skipped=0' "$HELPER"
@@ -753,14 +753,14 @@ grep -Fqx 'Repair capability evidence filesystem: scope filesystems unresolved' 
     || { echo "FAIL: missing unresolved filesystem evidence" >&2; exit 1; }
 grep -Fqx 'Repair tool validate: available' <<<"$cap_unresolved" \
     || { echo "FAIL: existing capability keys changed" >&2; exit 1; }
-for cap_key in dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
+for cap_key in dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
     grep -Eq "^Repair tool $cap_key: " <<<"$cap_unresolved" \
         || { echo "FAIL: existing capability key missing: $cap_key" >&2; exit 1; }
 done
-[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 13 ]] \
-    || { echo "FAIL: expected 13 capability keys" >&2; exit 1; }
+[[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 15 ]] \
+    || { echo "FAIL: expected 15 capability keys" >&2; exit 1; }
 # Running-host maintenance adds host-scope capability evidence but must never
-# become a 14th `Repair tool` key; target scope never emits the host lines.
+# become a `Repair tool` key; target scope never emits the host lines.
 host_caps="$(run_harness '
 RUNNING_HOST_MODE=1
 TARGET_ROOT=""
@@ -771,8 +771,8 @@ TARGET_INITRAMFS_BACKEND=mkinitcpio
 TARGET_BOOTLOADER_BACKEND=grub
 diagnostic_repair_capabilities
 ')"
-[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 13 ]] \
-    || { echo "FAIL: host scope changed the 13 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
+[[ "$(grep -c '^Repair tool ' <<<"$host_caps")" -eq 15 ]] \
+    || { echo "FAIL: host scope changed the 15 Repair tool keys" >&2; printf '%s\n' "$host_caps" >&2; exit 1; }
 grep -Eq '^Host snapshot rollback: (available|unavailable\|)' <<<"$host_caps" \
     || { echo "FAIL: host snapshot rollback capability line is missing" >&2; exit 1; }
 grep -Eq '^Host reboot: (available|unavailable\|)' <<<"$host_caps" \
@@ -1393,11 +1393,11 @@ run_target_diagnostic all
     || { echo 'FAIL: combined report emitted duplicate capability preambles' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
     || { echo 'FAIL: combined report emitted duplicate capability evidence headers' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 13 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 15 ]] \
     || { echo 'FAIL: combined report lost capability key lines' >&2; exit 1; }
-[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 13 ]] \
+[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
     || { echo 'FAIL: combined report lost capability evidence lines' >&2; exit 1; }
-[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 15 ]] \
+[[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 16 ]] \
     || { echo 'FAIL: combined report did not run every diagnostic section' >&2; exit 1; }
 grep -Fqx 'Repair tool filesystem: available' <<<"$combined_report" \
     || { echo 'FAIL: combined report lost the filesystem capability key line' >&2; exit 1; }

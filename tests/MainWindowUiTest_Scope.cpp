@@ -132,6 +132,111 @@ void MainWindowUiTest::blankAndDataTargetsSelectableWhileOpticalAndLuksStayGated
     window.m_previewTargetComponentPath.clear();
 }
 
+// Regression for the LUKS unlock being routed through the shared privileged
+// session: it must reuse the already-granted administrator authorization (no
+// second Polkit prompt) and, when a different-scope request owns the gate,
+// queue behind it instead of being superseded. Mapper reuse (a second unlock
+// of the same drive is a helper-side no-op) stays out of the GUI.
+void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    // A deterministic fake lsblk with a single locked LUKS target (the crypt
+    // child carries no unlocked Linux child), so every unlock attempt resolves
+    // the same locked encrypted node and the post-unlock refreshDevices() never
+    // flips the topology to "already unlocked".
+    QTemporaryDir lsblkDir;
+    QVERIFY(lsblkDir.isValid());
+    const QString lockedJson = QStringLiteral(
+        "{\"blockdevices\":["
+        "{\"name\":\"vdb\",\"kname\":\"vdb\",\"path\":\"/dev/vdb\",\"type\":\"disk\","
+        "\"maj:min\":\"252:16\",\"size\":\"10737418240\",\"mountpoints\":[],"
+        "\"model\":\"Test target\",\"tran\":\"virtio\",\"rm\":false,\"ro\":false,\"pkname\":\"\","
+        "\"children\":["
+        "{\"name\":\"vdb2\",\"kname\":\"vdb2\",\"path\":\"/dev/vdb2\",\"type\":\"part\","
+        "\"maj:min\":\"252:18\",\"size\":\"10695475200\",\"fstype\":\"crypto_LUKS\",\"mountpoints\":[],"
+        "\"model\":null,\"tran\":null,\"rm\":false,\"ro\":false,\"pkname\":\"vdb\"}]}]}");
+    const QString scriptPath = lsblkDir.filePath(QStringLiteral("fake-lsblk.sh"));
+    {
+        QFile script(scriptPath);
+        QVERIFY(script.open(QIODevice::WriteOnly | QIODevice::Text));
+        script.write("#!/bin/sh\n");
+        script.write("printf '%s' '");
+        script.write(lockedJson.toUtf8());
+        script.write("'\n");
+        script.close();
+        QVERIFY(QFile::setPermissions(scriptPath,
+                                      QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                          | QFileDevice::ExeOwner));
+    }
+    qputenv("BOOT_REPAIR_LSBLK", scriptPath.toUtf8());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // The locked LUKS target must be visible so the unlock path can be driven.
+    QVERIFY(window.m_deviceIndex.contains(QStringLiteral("/dev/vdb")));
+    QVERIFY(window.m_deviceIndex.contains(QStringLiteral("/dev/vdb2")));
+
+    const QStringList expectedRequest = {
+        QStringLiteral("unlock"), QStringLiteral("/dev/vdb"), QStringLiteral("/dev/vdb2")
+    };
+
+    // Phase 1: the unlock runs over the shared privileged session and writes
+    // the unlock request there (authentication carries forward, no dedicated
+    // pkexec process).
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.filePath(QStringLiteral("session.capture"));
+    QVERIFY(startFakePrivilegedSession(window, capturePath, QStringLiteral("success")));
+    QVERIFY(window.m_privilegedSessionReady);
+
+    selectTopLevelDisk(window, QStringLiteral("/dev/vdb"));
+    fillUnlockPassphrase(&window, QStringLiteral("correct horse battery staple"));
+    window.unlockSelectedTarget();
+
+    QCOMPARE(capturedHelperArguments(capturePath), expectedRequest);
+
+    // Phase 2: while a different-scope request owns the gate the unlock must
+    // queue behind it (not be superseded) and then proceed once the gate
+    // clears.
+    QTemporaryDir queueCaptureDir;
+    QVERIFY(queueCaptureDir.isValid());
+    const QString queueCapturePath = queueCaptureDir.filePath(QStringLiteral("session.capture"));
+    QVERIFY(startFakePrivilegedSession(window, queueCapturePath, QStringLiteral("success")));
+    QVERIFY(window.m_privilegedSessionReady);
+
+    window.m_privilegedOperationActive = true;
+    window.m_privilegedOperationScopeKey = QStringLiteral("/dev/other-disk");
+    window.m_privilegedOperationTitle = QStringLiteral("host diagnostic");
+
+    // Clear the gate shortly after the unlock starts waiting, so the unlock is
+    // exercised through its queued path and then proceeds.
+    QTimer::singleShot(300, &window, [&window] {
+        window.m_privilegedOperationActive = false;
+        window.m_privilegedOperationScopeKey.clear();
+        window.m_privilegedOperationTitle.clear();
+    });
+
+    selectTopLevelDisk(window, QStringLiteral("/dev/vdb"));
+    fillUnlockPassphrase(&window, QStringLiteral("correct horse battery staple"));
+    window.unlockSelectedTarget();
+
+    // The request reached the shared session (so the unlock proceeded rather
+    // than being superseded), and the gate was still held when the unlock
+    // started (so it had to queue first).
+    QCOMPARE(capturedHelperArguments(queueCapturePath), expectedRequest);
+    const QString actionLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
+    QVERIFY2(actionLog.contains(QStringLiteral("queued behind")),
+             "the unlock must queue behind the running host diagnostic instead of being superseded");
+
+    qunsetenv("BOOT_REPAIR_LSBLK");
+}
+
 void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
 {
     // The harness shares one settings file for the whole process; simulate the
@@ -140,9 +245,9 @@ void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
     // exists, while the tool/plan/Run gates fail closed regardless.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -196,9 +301,9 @@ void MainWindowUiTest::missingCapabilityEvidenceFailsClosed()
     // tool/plan/Run gates fail closed.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -288,9 +393,9 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
     // everything else at its first-run default.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.setValue(QStringLiteral("repair/dkms"), true);
@@ -315,7 +420,8 @@ void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePrefere
         QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
         window.m_fullRepairGrub->setChecked(true);
         for (QCheckBox *check : {window.m_fullRepairBrokenPackages, window.m_fullRepairUpgrade,
-                                 window.m_fullRepairInitramfs, window.m_fullRepairEfi}) {
+                                 window.m_fullRepairInitramfs,
+                                 window.m_fullRepairEfi}) {
             check->setChecked(false);
         }
         window.updateFullRepairSummary();
@@ -489,9 +595,9 @@ void MainWindowUiTest::settingsStageCheckboxesFirstRunStayDisabledUntilEvidence(
     // Simulate the first run: no persisted stage selections.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -562,9 +668,9 @@ void MainWindowUiTest::settingsStageCheckboxesPersistAcrossDiagnosticWarmth()
     // upgrade on. Everything else stays at its first-run default.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.setValue(QStringLiteral("repair/dkms"), true);
@@ -631,9 +737,9 @@ void MainWindowUiTest::settingsStageSelectionSurvivesRelaunchWithoutCleanClose()
 {
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -690,9 +796,9 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterFullRepairDoesNotCrash()
     // Simulate the first run: no persisted stage selections.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -753,10 +859,11 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterFullRepairDoesNotCrash()
     // A filesystem-free plan (grub only) so the Full Repair reaches the helper
     // directly without the interactive per-device repair flow.
     for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate, window.m_fullRepairUpgrade,
-                              window.m_fullRepairDkms, window.m_fullRepairDisplayManager,
-                              window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                              window.m_fullRepairExtlinux, window.m_fullRepairFilesystem}) {
+                              window.m_fullRepairAptUpdate,
+                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
+                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
+                              window.m_fullRepairEfi, window.m_fullRepairExtlinux,
+                              window.m_fullRepairFilesystem}) {
         if (toggle) {
             toggle->setChecked(false);
         }
@@ -821,9 +928,9 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     // Simulate the first run: no persisted stage selections.
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -927,8 +1034,8 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     // resized while inspecting the repair tool titles/buttons: the repair
     // splitter and the ElidedLabel Selected-tool title must be laid out and
     // painted while the window changes width.
-    window.m_tabs->setCurrentIndex(2); // Repair tab
-    QCOMPARE(window.m_tabs->currentIndex(), 2);
+    window.m_tabs->setCurrentIndex(3); // Repair tab
+    QCOMPARE(window.m_tabs->currentIndex(), 3);
     QTest::qWait(50);
     QCoreApplication::processEvents();
     QVERIFY(window.m_repairToolTree);
@@ -992,9 +1099,9 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash()
 
     QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
     for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/refreshMetadata", "repair/upgradePackages", "repair/dkms",
-                            "repair/displayManager", "repair/initramfs", "repair/efiBootloader",
-                            "repair/grub", "repair/extlinux"}) {
+                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
+                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
+                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
         persist.remove(QString::fromLatin1(key));
     }
     persist.sync();
@@ -1066,7 +1173,7 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash()
         QSKIP("the chosen disk is not a selectable repair target on this system");
     }
 
-    window.m_tabs->setCurrentIndex(2); // Repair tab
+    window.m_tabs->setCurrentIndex(3); // Repair tab
     QTest::qWait(50);
     QCoreApplication::processEvents();
     if (window.m_repairToolTree) {

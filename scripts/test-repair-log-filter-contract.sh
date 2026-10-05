@@ -23,13 +23,13 @@ fail_test() { echo "FAIL: $*" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Static contract: the filter exists and every repair transcript pipeline
-# runs through it (run_chroot, run_chroot_try and both UKI builder paths;
-# run_chroot_try_display delegates to run_chroot_try).
+# runs through it (run_chroot, run_chroot_keyed, run_chroot_try and both UKI
+# builder paths; run_chroot_try_display delegates to run_chroot_try).
 # ---------------------------------------------------------------------------
 grep -q '^repair_log_filter()' "$HELPER" || fail_test 'missing repair_log_filter helper'
 filtered_pipelines="$(grep -c 'repair_log_filter | tee -a "\$SESSION_LOG"' "$HELPER" || true)"
-[[ "$filtered_pipelines" -eq 4 ]] \
-    || fail_test "expected 4 filtered transcript pipelines, found $filtered_pipelines"
+[[ "$filtered_pipelines" -eq 5 ]] \
+    || fail_test "expected 5 filtered transcript pipelines, found $filtered_pipelines"
 
 # ---------------------------------------------------------------------------
 # Fixture: the exact verbose block shape observed in the TUXEDO repair log,

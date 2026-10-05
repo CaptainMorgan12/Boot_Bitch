@@ -2286,6 +2286,13 @@ Usage:
   $PROGRAM_NAME host-diagnose <host-disk> <root-device> <diagnostic|all>
   $PROGRAM_NAME host-default <host-disk> <root-device>
   $PROGRAM_NAME host-shell   <host-disk> <root-device> <command>
+  $PROGRAM_NAME efi-list     <disk> <root-device>
+  $PROGRAM_NAME grub-list    <disk> <root-device>
+  $PROGRAM_NAME extlinux-list <disk> <root-device>
+  $PROGRAM_NAME grub-legacy-list <disk> <root-device>
+  $PROGRAM_NAME efi-reorder  <disk> <root-device> <csv-bootorder>
+  $PROGRAM_NAME efi-delete   <disk> <root-device> <boot####>
+  $PROGRAM_NAME efi-rename   <disk> <root-device> <boot####> <label>
   $PROGRAM_NAME fs-inspect   <disk> <root-device>
   $PROGRAM_NAME fs-repair    <disk> <root-device> <device> <mode>
   $PROGRAM_NAME host-fs-inspect <host-disk> <root-device>
@@ -2661,6 +2668,17 @@ esp_mount_cleanup_command()
     unit="$(esp_mount_unit_name "$path")"
     printf 'inspect: findmnt -T %s -o TARGET,SOURCE,OPTIONS,ID; clear: umount %s (repeat until one /dev row remains); or for the systemd automount: umount -R %s && systemctl start %s' \
         "$path" "$path" "$path" "$unit"
+}
+
+# Root-mount equivalent of esp_mount_cleanup_command, used when the selected
+# target root still cannot be mounted after the stale-session sweep.  The
+# leaked mount is always a helper-owned session mount (never a systemd unit),
+# so the clear command is the recursive detach of the session mount tree.
+root_mount_cleanup_command()
+{
+    local path="$1"
+    printf 'inspect: findmnt -T %s -o TARGET,SOURCE,OPTIONS,ID; clear: umount -R %s (fallback if busy: umount -l %s)' \
+        "$path" "$path" "$path"
 }
 
 # True when systemd knows an automount unit for the supplied mount unit name.
@@ -3370,6 +3388,35 @@ assert_target_is_running_host()
     done
 }
 
+# Boolean scope probe: true when the supplied disk's single top-level disk backs
+# the currently running root filesystem (with the ZFS-on-root fallback).  This
+# is the core identity decision of assert_target_is_running_host, factored out
+# WITHOUT calling fail so the firmware boot-entry commands can branch host vs
+# target scope before preparing either.  Returns 0 (running host) / 1 (not the
+# host); never writes, mounts or raises a failure.
+is_running_host_target()
+{
+    local target="$1" root_device="$2" root_source root_block
+    local -a target_tops=() root_tops=()
+
+    legacy_readarray -t target_tops < <(top_disks_for "$target" | sort -u)
+    ((${#target_tops[@]} == 1)) || return 1
+
+    root_source="$(findmnt -rn -o SOURCE --target / 2>/dev/null | head -n1 || true)"
+    root_source="${root_source%%\[*}"
+    [[ -n "$root_source" ]] || return 1
+    root_block="$(canonical_block "$root_source" 2>/dev/null || true)"
+    if [[ -z "$root_block" ]]; then
+        # ZFS-on-root: findmnt resolves / to a dataset, not a block device.
+        # Map the dataset to its pool vdev partition exactly as
+        # assert_target_is_running_host does.
+        root_block="$(zfs_dataset_backing_block "$root_source" "$root_device" 2>/dev/null || true)"
+    fi
+    [[ -n "$root_block" ]] || return 1
+    legacy_readarray -t root_tops < <(top_disks_for "$root_block" | sort -u)
+    [[ ${#root_tops[@]} -eq 1 && "${root_tops[0]}" == "${target_tops[0]}" ]]
+}
+
 # ---------------------------------------------------------------------------
 # fstab/crypttab resolution and guarded target mount preparation
 # ---------------------------------------------------------------------------
@@ -3662,7 +3709,7 @@ populate_writable_dev()
 
 mount_special_modern()
 {
-    local kind="$1" source="$2" destination="$3" root_real parent_real ptmx_bind=0
+    local kind="$1" source="$2" destination="$3" root_real parent_real ptmx_bind=0 nested_target
     root_real="$(realpath_existing "$TARGET_ROOT" 2>/dev/null)" \
         || fail "Unable to resolve target root before mounting $kind."
     [[ "$destination" == "$TARGET_ROOT/"* && ! -L "$destination" ]] \
@@ -3731,6 +3778,16 @@ mount_special_modern()
         if (( ptmx_bind == 1 )); then
             MOUNTS+=("$destination/ptmx")
         fi
+    fi
+    if [[ "$kind" == "rbind" || "$kind" == "rbind-ro" ]]; then
+        # A recursive bind clones every nested mount of the source (for example
+        # /sys/fs/cgroup under /sys).  Only the top mountpoint is recorded by
+        # default; record the clone targets after their parent so the reverse
+        # cleanup detaches the deepest clones before the top rbind.
+        while IFS= read -r nested_target; do
+            [[ -n "$nested_target" && "$nested_target" == "$destination"/* ]] || continue
+            MOUNTS+=("$nested_target")
+        done < <(findmnt -rn -o TARGET 2>/dev/null || true)
     fi
 }
 
@@ -5119,6 +5176,69 @@ profile_esp_root()
     printf '%s\n' "$TARGET_ROOT$TARGET_ESP_MOUNT"
 }
 
+# Defensive self-heal for a leaked prior session.  A helper whose EXIT trap
+# never ran (SIGKILL during an interactive hang, a wedged broker, a crash)
+# leaves its /run/boot-repair/session.* mounts behind; the next request for the
+# same disk then fails with "already mounted on ...".  This sweep detaches every
+# mount under a session directory whose ROOT mount is backed by the SELECTED
+# target disk, deepest-first, so a new session can mount cleanly.  Scope is
+# strict: only Boot Bitch's own session mounts for this disk are touched, never
+# a foreign session (another disk) or the running host's / or /boot/efi.  The
+# sweep is run before any new mount, so read-only diagnostics stay read-only in
+# every other respect.
+sweep_stale_target_mounts()
+{
+    local target_disk="$1" target_top="" source source_dev sess
+    local -a owned_sessions=() sweep_paths=() sweep_sources=()
+    local idx
+
+    [[ -n "$STATE_ROOT" && -d "$STATE_ROOT" ]] || return 0
+    [[ -n "$target_disk" ]] || return 0
+    target_top="$(top_disks_for "$target_disk" 2>/dev/null | head -n1 || true)"
+    [[ -n "$target_top" ]] || return 0
+
+    # Identify stale session directories whose root mount is on this disk.
+    for sess in "$STATE_ROOT"/session.*; do
+        [[ -d "$sess" ]] || continue
+        # Never touch the current run's own (still unmounted) session dir.
+        [[ -n "$SESSION_DIR" && "$sess" == "$SESSION_DIR" ]] && continue
+        [[ -n "$SESSION_DIR" && "$sess" == "$SESSION_DIR"/* ]] && continue
+        mountpoint -q "$sess/mount" 2>/dev/null || continue
+        source="$(findmnt -rn -o SOURCE --target "$sess/mount" 2>/dev/null | head -n1 || true)"
+        [[ -n "$source" ]] || continue
+        source="${source%%\[*}"
+        source_dev="$(canonical_block "$source" 2>/dev/null || true)"
+        [[ -n "$source_dev" ]] || continue
+        [[ "$(top_disks_for "$source_dev" 2>/dev/null | head -n1 || true)" == "$target_top" ]] || continue
+        owned_sessions+=("$sess")
+    done
+    ((${#owned_sessions[@]} > 0)) || return 0
+
+    # findmnt lists mounts bottom-up (parents before children), so collect them
+    # in that order and detach top-down (reverse) for a clean teardown.
+    while IFS=' ' read -r sess_source sess_target; do
+        [[ -n "$sess_target" ]] || continue
+        for sess in "${owned_sessions[@]:-}"; do
+            if [[ "$sess_target" == "$sess" || "$sess_target" == "$sess"/* ]]; then
+                sweep_paths+=("$sess_target")
+                sweep_sources+=("${sess_source:-unknown}")
+                break
+            fi
+        done
+    done < <(findmnt -rn -o SOURCE,TARGET 2>/dev/null || true)
+
+    for (( idx=${#sweep_paths[@]}-1; idx>=0; --idx )); do
+        sess_target="${sweep_paths[$idx]}"
+        [[ -n "$sess_target" ]] || continue
+        mountpoint -q "$sess_target" 2>/dev/null || continue
+        if umount "$sess_target" 2>/dev/null || umount -l "$sess_target" 2>/dev/null; then
+            msg_log stale-mount-swept "$sess_target" "${sweep_sources[$idx]:-unknown}"
+        else
+            mount_cleanup_leak_evidence "$sess_target"
+        fi
+    done
+}
+
 # Identify and mount the selected repair target at MOUNT_BASE.  mode ro mounts
 # only the root (and locates/mounts the Btrfs root subvolume); mode rw also
 # mounts /boot, the ESP, /dev, /proc, /sys, /run and the resolver.  Sets
@@ -5148,6 +5268,13 @@ prepare_target()
     [[ "$fstype" != "crypto_LUKS" ]] || fail "The selected root component is still LUKS-encrypted. Unlock it first, then refresh and select the mapped Linux filesystem."
     [[ -n "$fstype" ]] || fail "No filesystem was detected on the selected root component."
 
+    # Self-heal any helper-owned mounts a killed prior session left on this
+    # disk before the first new mount; otherwise the root/ESP mount fails with
+    # "already mounted on /run/boot-repair/session.*" and read-only diagnostics
+    # never complete.  Scoped to the selected target disk (never a foreign
+    # session or the running host).
+    sweep_stale_target_mounts "$TARGET_DISK"
+
     [[ -n "$SESSION_DIR" ]] || SESSION_DIR="$(mktemp -d "$STATE_ROOT/session.XXXXXX")"
     MOUNT_BASE="$SESSION_DIR/mount"
     SESSION_LOG="$SESSION_DIR/session.log"
@@ -5167,7 +5294,13 @@ prepare_target()
             xfs) root_mount_options+=",norecovery" ;;
         esac
     fi
-    mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o "$root_mount_options"
+    # Fail closed instead of half-mounting: if the root still cannot be mounted
+    # after the sweep (for example the device is held by a non-session mount),
+    # name the exact manual cleanup command rather than leaving a partial stack
+    # or emitting only the raw mount(8) error.
+    if ! mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o "$root_mount_options"; then
+        fail "Target root $ROOT_DEVICE could not be mounted at $MOUNT_BASE after clearing leaked session mounts; the device may still be held elsewhere. $(root_mount_cleanup_command "$MOUNT_BASE")"
+    fi
     TARGET_ROOT="$MOUNT_BASE"
     TARGET_SUBVOL=""
 
@@ -6418,6 +6551,31 @@ run_chroot()
     msg_log pass-label "$label"
 }
 
+# Keyed step-label variant of run_chroot.  The display label is a stable
+# msg:<key> token (passed as the first argument, localized by the GUI exactly
+# like every other display line) while the failure message keeps plain English
+# prose so an ERROR: line never contains a machine key.  The raw command
+# transcript re-inherits the caller's locale exactly as run_chroot does.
+run_chroot_keyed()
+{
+    local key="$1" fallback="$2"; shift 2
+    local display_locale=""
+    msg_log begin-label "$(msg "$key")"
+    set +e
+    display_locale="$(display_locale_env)"
+    run_selected_chroot /usr/bin/env \
+        $display_locale \
+        HOME=/root \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive \
+        APT_LISTCHANGES_FRONTEND=none \
+        "$@" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+    local rc=${PIPESTATUS[0]}
+    set -e
+    ((rc == 0)) || fail "$fallback failed with exit code $rc"
+    msg_log pass-label "$(msg "$key")"
+}
+
 # ---------------------------------------------------------------------------
 # Package-manager feedback evidence
 # ---------------------------------------------------------------------------
@@ -6858,7 +7016,7 @@ dpkg_configure_stage()
     if dpkg_configuration_pending; then
         pending=true
     fi
-    run_chroot "Complete interrupted package configuration" dpkg --configure -a
+    run_chroot_keyed complete-interrupted-dpkg "Complete interrupted package configuration" dpkg --configure -a
     if [[ "$pending" == true ]]; then
         repair_change_status dpkg changed
     else
@@ -7012,7 +7170,7 @@ adaptive_apt_upgrade()
     esac
 
     msg_log apt-upgrade-decision "$chosen"
-    run_chroot_try_display "Upgrade installed packages ($chosen)" apt-get -y "$chosen"
+    run_chroot_try_display "$(msg upgrade-installed-packages "$chosen")" apt-get -y "$chosen"
     ((CHROOT_TRY_RC == 0)) \
         || fail "Upgrade installed packages ($chosen) failed with exit code $CHROOT_TRY_RC."
     apply_output="$CHROOT_TRY_OUTPUT"
@@ -7082,7 +7240,7 @@ adaptive_fix_broken()
     apt_simulation_is_safe "$output" \
         || fail "The simulated apt-get --fix-broken transaction failed Boot Bitch safety checks."
 
-    run_chroot_try_display "Repair broken package dependencies" apt-get -y -f install
+    run_chroot_try_display "$(msg repair-broken-package-deps)" apt-get -y -f install
     ((CHROOT_TRY_RC == 0)) \
         || fail "Repair broken package dependencies failed with exit code $CHROOT_TRY_RC."
 
@@ -7220,7 +7378,7 @@ preflight_arch_pacman_transaction()
 {
     arch_pacman_prepare_sandbox
     msg_log pacman-simulate-full
-    arch_pacman_transaction_try "Arch pacman full transaction preflight" -Syyuw --noconfirm
+    arch_pacman_transaction_try "$(msg arch-pacman-full-preflight)" -Syyuw --noconfirm
     ((ARCH_PACMAN_TRY_RC == 0)) \
         || fail "Arch pacman transaction preflight failed; no target packages were changed."
     arch_pacman_transaction_is_safe "$ARCH_PACMAN_TRY_OUTPUT" "$ARCH_PACMAN_TRY_RC" \
@@ -7356,7 +7514,7 @@ APK_MAX_MISSING_PACKAGES=1000
 alpine_apk_audit_missing_paths()
 {
     local output
-    run_chroot_try "Alpine apk audit --system (missing-file detection)" \
+    run_chroot_try "$(msg alpine-apk-audit)" \
         apk audit --system >/dev/null
     (( CHROOT_TRY_RC == 0 )) \
         || fail "apk audit --system failed with exit code $CHROOT_TRY_RC; refusing a package repair without reliable missing-file detection."
@@ -7390,7 +7548,7 @@ alpine_apk_missing_file_packages()
     for owner in "${missing_paths[@]:-}"; do
         absolute_paths+=("/$owner")
     done
-    run_chroot_try "Alpine apk info --who-owns (${#missing_paths[@]} missing files)" \
+    run_chroot_try "$(msg alpine-apk-who-owns "${#missing_paths[@]}")" \
         apk info --who-owns "${absolute_paths[@]:-}" >/dev/null
     (( CHROOT_TRY_RC == 0 )) \
         || fail "apk info --who-owns could not map every missing file to an installed package; refusing the repair."
@@ -7505,7 +7663,7 @@ alpine_apk_preflight()
     if [[ "$free_kb" =~ ^[0-9]+$ ]] && (( free_kb < required_kb )); then
         fail "The target /boot has ${free_kb} KiB free; at least ${required_kb} KiB is required for a safe package transaction."
     fi
-    run_chroot_try "Record Alpine apk version" apk --version
+    run_chroot_try "$(msg record-alpine-apk-version)" apk --version
     msg_log apk-preflight "$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
 }
 
@@ -7847,23 +8005,23 @@ rpm_preflight()
     if [[ "$free_kb" =~ ^[0-9]+$ ]] && (( free_kb < required_kb )); then
         fail "The target /boot has ${free_kb} KiB free; at least ${required_kb} KiB is required for a safe package transaction."
     fi
-    run_chroot_try "Record dnf5 version" "$RPM_DNF_TOOL" --version
+    run_chroot_try "$(msg record-dnf5-version)" "$RPM_DNF_TOOL" --version
     (( CHROOT_TRY_RC == 0 )) \
         || fail "$RPM_DNF_TOOL --version failed with exit code $CHROOT_TRY_RC; refusing the package repair."
     version_line="$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
     [[ "$version_line" =~ dnf5[[:space:]]+version[[:space:]]+5\. ]] \
         || fail "The target dnf5 version '${version_line:-unknown}' is not a supported dnf5 5.x release."
     msg_log dnf5-version "$version_line"
-    run_chroot_try "Record rpm version" rpm --version
+    run_chroot_try "$(msg record-rpm-version)" rpm --version
     (( CHROOT_TRY_RC == 0 )) \
         || fail "rpm --version failed with exit code $CHROOT_TRY_RC; refusing the package repair."
     msg_log rpm-version "$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
     # SELinux state is recorded as evidence only; Boot Bitch never changes it.
     if target_has_executable /usr/sbin/sestatus /usr/bin/sestatus /sbin/sestatus; then
-        run_chroot_try "Record SELinux status" sestatus
+        run_chroot_try "$(msg record-selinux-status)" sestatus
         msg_log selinux-status "$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
     elif target_has_executable /usr/sbin/getenforce /usr/bin/getenforce /sbin/getenforce; then
-        run_chroot_try "Record SELinux enforcement mode" getenforce
+        run_chroot_try "$(msg record-selinux-enforcement)" getenforce
         msg_log selinux-enforcement "$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
     else
         msg_log selinux-unavailable
@@ -8088,7 +8246,7 @@ rpm_transaction_reported_no_changes()
 rpm_verify_missing_paths()
 {
     local paths
-    run_chroot_try "RPM package file verification (rpm -Va --nofiledigest, read-only)" \
+    run_chroot_try "$(msg rpm-package-file-verification)" \
         /usr/bin/env LC_ALL=C rpm -Va --nofiledigest >/dev/null
     if (( CHROOT_TRY_RC != 0 && CHROOT_TRY_RC != 1 )); then
         fail "rpm -Va --nofiledigest failed with exit code $CHROOT_TRY_RC; refusing a package repair without reliable missing-file detection."
@@ -8123,7 +8281,7 @@ rpm_missing_file_packages()
     if ((${#missing_paths[@]} > RPM_MAX_MISSING_FILES)); then
         fail "rpm -Va --nofiledigest reports ${#missing_paths[@]} missing files (safety limit: $RPM_MAX_MISSING_FILES); refusing an unbounded repair."
     fi
-    run_chroot_try "RPM file ownership mapping (rpm -qf, ${#missing_paths[@]} missing files)" \
+    run_chroot_try "$(msg rpm-file-ownership-mapping "${#missing_paths[@]}")" \
         /usr/bin/env LC_ALL=C rpm -qf --qf '%{NAME}\t%{FILEMODES}\n' "${missing_paths[@]:-}" >/dev/null
     if (( CHROOT_TRY_RC != 0 )) \
         || grep -Eq 'is not owned by any package|no package owns' <<<"$CHROOT_TRY_OUTPUT"; then
@@ -8257,7 +8415,7 @@ adaptive_rpm_fix_broken()
     fi
     if ((${#missing_packages[@]} == 0)); then
         msg_log rpm-no-missing-files
-        run_chroot_try "dnf5 dependency check (read-only evidence)" "${RPM_DNF_TOOL:-dnf5}" check --dependencies
+        run_chroot_try "$(msg dnf5-dependency-check)" "${RPM_DNF_TOOL:-dnf5}" check --dependencies
         # dnf5 check exits 1 when problems are found; that evidence is reported
         # but never auto-fixed by this stage.
         if (( CHROOT_TRY_RC != 0 && CHROOT_TRY_RC != 1 )); then
@@ -8298,7 +8456,7 @@ adaptive_rpm_metadata_refresh()
     local cache_before cache_after
     rpm_preflight
     cache_before="$(rpm_metadata_cache_fingerprint)"
-    run_chroot_try_display "Refresh dnf5 package metadata (dnf5 makecache)" "${RPM_DNF_TOOL:-dnf5}" makecache
+    run_chroot_try_display "$(msg refresh-dnf5-metadata)" "${RPM_DNF_TOOL:-dnf5}" makecache
     (( CHROOT_TRY_RC == 0 )) || fail "dnf5 makecache failed with exit code $CHROOT_TRY_RC."
     cache_after="$(rpm_metadata_cache_fingerprint)"
     if [[ "$cache_before" != "cache missing" && "$cache_before" != "no-sha256sum" \
@@ -8324,12 +8482,977 @@ installed_kernel_versions()
         | legacy_sort_versions -u
 }
 
+# ---------------------------------------------------------------------------
+# Debian/APT kernel inventory (read-only, evidence-driven)
+# ---------------------------------------------------------------------------
+# The kernel diagnostic and the guarded `kernels` repair stage share one
+# inventory collection so capability evidence and the removal plan cannot
+# drift.  Everything here is read-only: the dpkg status database is parsed
+# directly (no dpkg-query chroot, no write), exactly like
+# target_dpkg_package_installed.
+
+# Prints every fully-installed *versioned* kernel package name (one per line):
+# linux-image-<kver>-*, linux-headers-<kver>-*, linux-modules-<kver>-*,
+# linux-modules-extra-<kver>-*.  A "versioned" kernel package is one whose
+# remainder after the prefix starts with a digit, so the metapackages
+# (linux-image-generic, linux-image-amd64, linux-headers-tuxedo-amd64, ...) are
+# never listed here and are detected separately by
+# apt_managed_kernel_metapackage().  Kernel identity is now derived from
+# dpkg -S ownership (see dpkg_path_owner) rather than from this name parse, so
+# this list is only a supplementary probe.
+apt_installed_kernel_packages()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 0
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            if (state != "install ok installed") next
+            if (name ~ /^linux-(image|headers|modules|modules-extra)-[0-9]/) {
+                print name
+            }
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
+# Prints every fully-installed versioned kernel build/support package name (one
+# per line): linux-kbuild-<ver>, linux-base-<ver>, linux-binary-<ver>, and the
+# general class of linux-<kind>-<ver> helper packages whose kernel version is
+# derived from their version token.  The concrete kernel package classes
+# (image/headers/modules/modules-extra) are excluded (they are enumerated by
+# apt_installed_kernel_packages), as are the unversioned helpers (linux-base,
+# linux-libc-dev, ...): a support package must carry a digit-led version token
+# after its kind prefix.  Identity is never parsed from the distribution ID or
+# the package-name flavour suffix.
+apt_installed_kernel_support_packages()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 0
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            if (state != "install ok installed") next
+            if (name !~ /^linux-/) next
+            if (name ~ /^linux-(image|headers|modules|modules-extra)-/) next
+            rest = name
+            sub(/^linux-/, "", rest)
+            if (rest !~ /(^|-)[0-9]/) next
+            print name
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
+# Read-only `dpkg -S` equivalent for a target that is not chrooted: searches
+# the package file lists (/var/lib/dpkg/info/*.list) directly, exactly the
+# database dpkg -S reads.  A path is owned by a package when its .list file
+# lists that exact path or a file inside it (the queried path is a directory
+# prefix).  Prints the owning package name(s) one per line.  This is the
+# authoritative, flavour-agnostic kernel->package mapping.
+#
+# The path->package index is built once per target (every .list file is read a
+# single time) and reused across every lookup, so the kernel inventory no
+# longer re-reads the whole dpkg file-list database for each module tree.  The
+# index lives in a throwaway file under the session directory (removed by
+# cleanup()); dpkg_path_owner_map_clear() drops it after any package mutation
+# so the next lookup re-reads a fresh map.
+DPKG_PATH_OWNER_INDEX=""
+
+# Build the path->package index: one `path<TAB>package` line per .list entry.
+# Read-only; returns 1 when there is no dpkg info directory or no .list files.
+dpkg_path_owner_map_build()
+{
+    local info_dir="$TARGET_ROOT/var/lib/dpkg/info" file idx
+    [[ -d "$info_dir" ]] || return 1
+    local -a list_files=()
+    while IFS= read -r file; do
+        [[ -n "$file" ]] && list_files+=("$file")
+    done < <(find "$info_dir" -maxdepth 1 -type f -name '*.list' 2>/dev/null | LC_ALL=C sort)
+    ((${#list_files[@]} > 0)) || return 1
+    idx="$(mktemp "${SESSION_DIR:-${TMPDIR:-/tmp}}/dpkg-owner.XXXXXX" 2>/dev/null || true)"
+    [[ -n "$idx" ]] || return 1
+    awk '
+        FNR == 1 {
+            pkg = FILENAME
+            sub(/\.list$/, "", pkg)
+            sub(/^.*\//, "", pkg)
+        }
+        length($0) > 0 { print $0 "\t" pkg }
+    ' "${list_files[@]:-}" > "$idx" 2>/dev/null || true
+    DPKG_PATH_OWNER_INDEX="$idx"
+    return 0
+}
+
+# Drop the cached path->package index (used after a package mutation so the
+# next lookup re-reads a fresh map).
+dpkg_path_owner_map_clear()
+{
+    [[ -n "$DPKG_PATH_OWNER_INDEX" ]] && rm -f -- "$DPKG_PATH_OWNER_INDEX" 2>/dev/null || true
+    DPKG_PATH_OWNER_INDEX=""
+}
+
+dpkg_path_owner()
+{
+    local path="$1"
+    [[ -n "$path" ]] || return 1
+    path="${path%/}"
+    [[ "$path" == /* ]] || return 1
+    [[ -n "$DPKG_PATH_OWNER_INDEX" && -f "$DPKG_PATH_OWNER_INDEX" ]] || dpkg_path_owner_map_build || return 1
+    awk -F '\t' -v p="$path" '
+        $1 == p || index($1, p "/") == 1 { print $2 }
+    ' "$DPKG_PATH_OWNER_INDEX" 2>/dev/null | LC_ALL=C sort -u
+}
+
+# Print the dependency package names (Depends/Pre-Depends/Recommends, version
+# constraints and architecture qualifiers stripped) of one installed package,
+# one per line.  Read-only dpkg status parse; used to group the arch-independent
+# common headers with the arch headers package that depends on them.
+apt_package_depends()
+{
+    local pkg="$1" status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -n "$pkg" && -f "$status_file" ]] || return 0
+    awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; deps = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^(Depends|Pre-Depends|Recommends): /)
+                    deps = deps " " substr($i, index($i, ": ") + 2)
+            }
+            if (name != pkg) next
+            gsub(/\([^)]*\)/, "", deps)
+            n = split(deps, tok, /[ ,|]+/)
+            for (j = 1; j <= n; j++) {
+                sub(/:.*/, "", tok[j])
+                if (tok[j] ~ /^[[:alnum:]][[:alnum:].+-]*$/) print tok[j]
+            }
+            exit
+        }
+    ' "$status_file" | LC_ALL=C sort -u
+}
+
+# Print the directories a package owns directly under a prefix (its .list
+# file's top-level children), one per line.  Used to locate the arch-independent
+# common-headers directory so it can be sized and removed with its package.
+apt_package_owned_dirs()
+{
+    local pkg="$1" prefix="$2" listfile="$TARGET_ROOT/var/lib/dpkg/info/$pkg.list"
+    [[ -f "$listfile" ]] || return 0
+    awk -v p="$prefix" '
+        index($0, p) == 1 && index(substr($0, length(p) + 1), "/") == 0 {
+            print $0
+        }
+    ' "$listfile" 2>/dev/null | LC_ALL=C sort -u
+}
+
+# Prints every installed managed kernel metapackage (one per line): a
+# linux-image-* or linux-headers-* package whose remainder after the prefix
+# does not start with a digit.  That generically captures the image metas
+# (linux-image-generic, linux-image-amd64, linux-image-tuxedo,
+# linux-image-oem-*, linux-image-generic-hwe-*, linux-image-virtual, ...) AND
+# the headers metas (linux-headers-generic, linux-headers-amd64,
+# linux-headers-tuxedo-amd64, linux-headers-generic-hwe-*, ...), while versioned
+# image/headers/modules packages never qualify.  Each metapackage is a
+# protected role=metapackage token and is never removed.
+apt_managed_kernel_metapackage()
+{
+    local status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -f "$status_file" ]] || return 1
+    awk '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; state = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^Status: /) state = substr($i, 9)
+            }
+            if (state != "install ok installed") next
+            rest = name
+            if (name ~ /^linux-image-/) sub(/^linux-image-/, "", rest)
+            else if (name ~ /^linux-headers-/) sub(/^linux-headers-/, "", rest)
+            else next
+            if (rest !~ /^[0-9]/) print name
+        }
+    ' "$status_file" | LC_ALL=C sort
+}
+
+# Prints the versioned kernel versions pinned by the managed metapackage's
+# Depends/Pre-Depends/Recommends fields (role=managed-default).  Only
+# linux-image-*/linux-headers-* references whose version starts with a digit
+# are kept; a version constraint such as "(= 6.5.0-10038.1)" is stripped.  A
+# common-headers version reference (e.g. 6.5.0-10038) never matches a real
+# module-tree version, so it is harmless.
+apt_managed_kernel_versions()
+{
+    local meta="$1" status_file="$TARGET_ROOT/var/lib/dpkg/status"
+    [[ -n "$meta" && -f "$status_file" ]] || return 0
+    awk -v meta="$meta" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) name = substr($i, 10)
+                else if ($i ~ /^(Depends|Pre-Depends|Recommends): /) {
+                    deps = deps " " substr($i, index($i, ": ") + 2)
+                }
+            }
+            if (name != meta) next
+            n = split(deps, tok, /[ ,|()]+/)
+            for (j = 1; j <= n; j++) {
+                if (tok[j] ~ /^linux-(image|headers)-/) {
+                    v = tok[j]
+                    sub(/^linux-(image|headers)-/, "", v)
+                    if (v ~ /^[0-9]/) print v
+                }
+            }
+            exit
+        }
+    ' "$status_file" | LC_ALL=C sort -u
+}
+
+# Derive the canonical kernel version from a *versioned* kernel package name.
+# Returns 1 for anything that is not a concrete versioned kernel package: a
+# metapackage, and the arch-independent common headers
+# (linux-headers-<series>-common[-<arch>], which belong to a series and never
+# to one kernel version).  linux-modules-extra-* is matched before
+# linux-modules-* so the longer prefix wins.  Inventory and validation no
+# longer call this (they map via dpkg -S ownership); it remains for callers
+# that already hold a concrete versioned package name.
+apt_kernel_version_from_package()
+{
+    local pkg="$1" rest=""
+    case "$pkg" in
+        linux-modules-extra-*) rest="${pkg#linux-modules-extra-}" ;;
+        linux-image-*)         rest="${pkg#linux-image-}" ;;
+        linux-modules-*)       rest="${pkg#linux-modules-}" ;;
+        linux-headers-*)
+            rest="${pkg#linux-headers-}"
+            [[ "$rest" == *-common || "$rest" == *-common-* ]] && return 1
+            ;;
+        *)                     return 1 ;;
+    esac
+    [[ "$rest" =~ ^[0-9] ]] || return 1
+    printf '%s\n' "$rest"
+}
+
+# Derive the kernel-version key from a versioned kernel build/support package
+# name (linux-kbuild-<ver>, linux-base-<ver>, linux-binary-<ver>, ...).  The key
+# is everything from the first digit-led hyphen token to the end, so
+# `linux-kbuild-7.1.10.2` -> `7.1.10.2` and `linux-base-6.5.0-10038` ->
+# `6.5.0-10038`.  Returns 1 for anything that is not a concrete versioned
+# support package (metapackages and unversioned helpers never reach here).
+apt_kernel_support_version_from_package()
+{
+    local pkg="$1" key=""
+    [[ "$pkg" == linux-* ]] || return 1
+    key="$(awk -v p="$pkg" '
+        BEGIN {
+            n = split(p, tok, /-/)
+            version = ""
+            for (i = 2; i <= n; i++) {
+                if (tok[i] ~ /^[0-9]/) {
+                    version = tok[i]
+                    for (j = i + 1; j <= n; j++) version = version "-" tok[j]
+                    break
+                }
+            }
+            if (version == "") exit 1
+            print version
+        }
+    ')"
+    [[ -n "$key" ]] || return 1
+    printf '%s\n' "$key"
+}
+
+# True when the supplied build/support-package version key has no installed
+# kernel: no module tree and no installed linux-image-/linux-modules-* package
+# whose version equals the key or extends it with a hyphen-terminated flavour
+# suffix (linux-kbuild-6.5.0-10038 matches the 6.5.0-10038-tuxedo module tree,
+# but never 6.5.0-10038.1).  This is the same generic module-tree + dpkg-status
+# evidence discipline as the rest of the inventory; never distro-ID parsing.
+kernel_support_version_is_orphaned()
+{
+    local key="$1" v pkg pver
+    [[ -n "$key" ]] || return 1
+    for v in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+        [[ "$v" == "$key" || "$v" == "$key"-* ]] && return 1
+    done
+    while IFS= read -r pkg; do
+        [[ "$pkg" == linux-image-* || "$pkg" == linux-modules-* || "$pkg" == linux-modules-extra-* ]] || continue
+        pver="$(apt_kernel_version_from_package "$pkg" || true)"
+        [[ -n "$pver" ]] || continue
+        [[ "$pver" == "$key" || "$pver" == "$key"-* ]] && return 1
+    done < <(apt_installed_kernel_packages)
+    return 0
+}
+
+# Total on-disk size (bytes) for one installed kernel version: the vmlinuz
+# image, the matching initramfs image, the module tree and the arch headers
+# tree.  The arch-independent common-headers tree is added by the caller
+# (kernel_inventory_collect) from its ownership mapping.
+kernel_version_total_size()
+{
+    local kver="$1" total=0 size=0 image moddir hdr
+    for image in "$TARGET_ROOT/boot/vmlinuz-$kver" \
+                 "$TARGET_ROOT/boot/initrd.img-$kver" \
+                 "$TARGET_ROOT/boot/initramfs-$kver" \
+                 "$TARGET_ROOT/boot/initramfs-$kver.img"; do
+        [[ -f "$image" ]] || continue
+        size="$(stat -c %s -- "$image" 2>/dev/null || echo 0)"
+        total=$((total + size))
+    done
+    for moddir in "/lib/modules/$kver" "/usr/lib/modules/$kver"; do
+        [[ -d "$TARGET_ROOT$moddir" ]] || continue
+        size="$(find "$TARGET_ROOT$moddir" -type f -printf '%s\n' 2>/dev/null | awk '{ s += $1 } END { print s + 0 }' || echo 0)"
+        total=$((total + size))
+    done
+    for hdr in "$TARGET_ROOT/usr/src/linux-headers-$kver"; do
+        [[ -d "$hdr" ]] || continue
+        size="$(find "$hdr" -type f -printf '%s\n' 2>/dev/null | awk '{ s += $1 } END { print s + 0 }' || echo 0)"
+        total=$((total + size))
+    done
+    printf '%s\n' "$total"
+}
+
+# Shared kernel-inventory globals, populated by kernel_inventory_collect().
+# KERNEL_INVENTORY_VERSIONS/PKGS/SIZES are parallel (index = canonical kernel
+# version, ascending).  KERNEL_REMOVABLE_PKGS is the flat removal plan (one
+# package per element); KERNEL_MISSING_HEADERS lists the protected kernels
+# (running/latest) that have no installed headers; KERNEL_ORPHANED_HEADERS
+# lists the header versions installed without a matching module tree;
+# KERNEL_LATEST_PKGS is the newest kernel's grouped package set (used only
+# when the caller explicitly opts to remove the newest kernel).
+KERNEL_INVENTORY_VERSIONS=()
+KERNEL_INVENTORY_PKGS=()
+KERNEL_INVENTORY_SIZES=()
+KERNEL_RUNNING=""
+KERNEL_LATEST=""
+KERNEL_REPO_LATEST=""
+KERNEL_METAPACKAGES=()
+KERNEL_MANAGED=()
+KERNEL_REMOVABLE=()
+KERNEL_REMOVABLE_PKGS=()
+KERNEL_LATEST_PKGS=()
+KERNEL_MISSING_HEADERS=()
+KERNEL_ORPHANED_HEADERS=()
+# KERNEL_ORPHANED_KERNELS lists kernel versions whose on-disk artifacts (module
+# tree or boot files) exist without any owning package (zombie state after a
+# failed/interrupted purge).  KERNEL_PARTIAL lists kernel versions whose
+# versioned image package is installed but whose vmlinuz or module tree is
+# missing (a broken/partial kernel to reinstall).
+KERNEL_ORPHANED_KERNELS=()
+KERNEL_PARTIAL=()
+# KERNEL_ORPHANED_SUPPORT_VERSIONS/PKGS are parallel: version keys and their
+# comma-joined package lists for orphaned kernel build/support packages
+# (linux-kbuild-<ver> etc.) whose kernel version is gone.
+KERNEL_ORPHANED_SUPPORT_VERSIONS=()
+KERNEL_ORPHANED_SUPPORT_PKGS=()
+# Sub-action selectors for the interactive kernel repair menu.  KERNEL_REMOVE_MODE
+# narrows kernel_is_removal_candidate() to one concrete action (empty keeps the
+# Full Repair `kernels` semantics: superseded + optional --remove-newest);
+# KERNEL_STAGE_STATUS_KEY names the `Repair change status kernels:<step>` line
+# the guarded sub-action emits so each menu action is a distinct, auditable stage.
+KERNEL_REMOVE_MODE=""
+KERNEL_STAGE_STATUS_KEY="kernels"
+# True when the last kernel-cleanup package stage actually applied a removal
+# (versus proving no changes).  repair_kernel_remove_oldest /
+# repair_kernel_remove_newest / repair_kernel_cleanup consult it so a no-op
+# removal never triggers an unnecessary initramfs/bootloader regeneration.
+KERNEL_CLEANUP_APPLIED=false
+
+# Collect the read-only kernel inventory, the running/latest/managed
+# protection set and the removable complement.  Kernel identity comes from the
+# authoritative module-tree directories (/usr/lib/modules/* and
+# /lib/modules/*), and each kernel's packages are mapped through dpkg -S
+# ownership (never by parsing a package-name flavour suffix), so the
+# arch-independent common headers are grouped with the kernel whose arch
+# headers depend on them.  The protection set is running ∪ latest ∪
+# managed-default ∪ metapackage(s); every metapackage is a role=metapackage
+# token (never removed) and never a versioned kernel.
+kernel_inventory_collect()
+{
+    local v pkg meta m i dir joined arch_headers vsize
+    local -a versions=() vpkgs=()
+
+    KERNEL_INVENTORY_VERSIONS=()
+    KERNEL_INVENTORY_PKGS=()
+    KERNEL_INVENTORY_SIZES=()
+    KERNEL_RUNNING="$(running_kernel_version)"
+    KERNEL_LATEST=""
+    KERNEL_REPO_LATEST=""
+    KERNEL_METAPACKAGES=()
+    KERNEL_MANAGED=()
+    KERNEL_REMOVABLE=()
+    KERNEL_REMOVABLE_PKGS=()
+    KERNEL_LATEST_PKGS=()
+    KERNEL_MISSING_HEADERS=()
+    KERNEL_ORPHANED_HEADERS=()
+    KERNEL_ORPHANED_KERNELS=()
+    KERNEL_PARTIAL=()
+    KERNEL_ORPHANED_SUPPORT_VERSIONS=()
+    KERNEL_ORPHANED_SUPPORT_PKGS=()
+
+    profile_target_backends
+
+    # Metapackages (image + headers), never removable.
+    while IFS= read -r meta; do
+        [[ -n "$meta" ]] && KERNEL_METAPACKAGES+=("$meta")
+    done < <(apt_managed_kernel_metapackage)
+
+    # Canonical versions from the authoritative module-tree directories
+    # (deduped across /usr/lib and /lib layouts).
+    while IFS= read -r v; do
+        [[ -n "$v" ]] || continue
+        versions+=("$v")
+    done < <(find "$TARGET_ROOT/usr/lib/modules" "$TARGET_ROOT/lib/modules" \
+             -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null | LC_ALL=C legacy_sort_versions -u)
+
+    for v in "${versions[@]:-}"; do
+        vpkgs=()
+        # Module trees (both layouts; deduped below).
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] && vpkgs+=("$pkg")
+        done < <(dpkg_path_owner "/usr/lib/modules/$v"; dpkg_path_owner "/lib/modules/$v")
+        # Kernel image (vmlinuz) and the arch headers.
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] && vpkgs+=("$pkg")
+        done < <(dpkg_path_owner "/boot/vmlinuz-$v")
+        arch_headers=""
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] || continue
+            vpkgs+=("$pkg")
+            arch_headers="$pkg"
+        done < <(dpkg_path_owner "/usr/src/linux-headers-$v")
+        # Group the arch-independent common headers via the arch headers
+        # package's dependency (generic; no flavour parsing).
+        if [[ -n "$arch_headers" ]]; then
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] || continue
+                [[ "$pkg" == linux-headers-* ]] || continue
+                [[ "$pkg" == "$arch_headers" ]] && continue
+                target_dpkg_package_installed "$pkg" && vpkgs+=("$pkg")
+            done < <(apt_package_depends "$arch_headers")
+        fi
+
+        joined="$(printf '%s\n' "${vpkgs[@]:-}" | LC_ALL=C sort -u | paste -sd, -)"
+        KERNEL_INVENTORY_VERSIONS+=("$v")
+        KERNEL_INVENTORY_PKGS+=("$joined")
+
+        vsize="$(kernel_version_total_size "$v")"
+        # Add the arch-independent common-headers trees the kernel's grouped
+        # packages own, so the MB estimate reflects the complete package set.
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] || continue
+            case "$pkg" in
+                linux-headers-*-common|linux-headers-*-common-*) ;;
+                *) continue ;;
+            esac
+            while IFS= read -r dir; do
+                [[ -n "$dir" ]] || continue
+                vsize=$((vsize + $(dir_size_bytes "$TARGET_ROOT$dir")))
+            done < <(apt_package_owned_dirs "$pkg" "/usr/src/linux-headers-")
+        done < <(tr ',' '\n' <<<"$joined")
+        KERNEL_INVENTORY_SIZES+=("$vsize")
+    done
+
+    if ((${#KERNEL_INVENTORY_VERSIONS[@]} > 0)); then
+        KERNEL_LATEST="${KERNEL_INVENTORY_VERSIONS[${#KERNEL_INVENTORY_VERSIONS[@]}-1]}"
+    fi
+
+    # Managed-default versions pinned by the metapackages (image + headers).
+    for meta in "${KERNEL_METAPACKAGES[@]:-}"; do
+        while IFS= read -r v; do
+            [[ -n "$v" ]] || continue
+            KERNEL_MANAGED+=("$v")
+        done < <(apt_managed_kernel_versions "$meta")
+    done
+
+    for v in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+        if [[ "$v" == "$KERNEL_RUNNING" || "$v" == "$KERNEL_LATEST" ]]; then
+            continue
+        fi
+        local managed=false
+        for m in "${KERNEL_MANAGED[@]:-}"; do
+            [[ "$m" == "$v" ]] && managed=true
+        done
+        [[ "$managed" == false ]] && KERNEL_REMOVABLE+=("$v")
+    done
+
+    # Flat removal plan (packages, one per element).
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        kernel_is_removable "${KERNEL_INVENTORY_VERSIONS[$i]}" || continue
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] && KERNEL_REMOVABLE_PKGS+=("$pkg")
+        done < <(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]}")
+    done
+
+    # Newest kernel's grouped package set (for the optional remove-newest plan).
+    if [[ -n "$KERNEL_LATEST" ]]; then
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            [[ "${KERNEL_INVENTORY_VERSIONS[$i]}" == "$KERNEL_LATEST" ]] || continue
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] && KERNEL_LATEST_PKGS+=("$pkg")
+            done < <(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]}")
+            break
+        done
+    fi
+
+    # Missing-headers probe for the protected (running/latest) kernels.
+    for v in "$KERNEL_RUNNING" "$KERNEL_LATEST"; do
+        [[ -n "$v" ]] || continue
+        if [[ -z "$(dpkg_path_owner "/usr/src/linux-headers-$v")" ]]; then
+            KERNEL_MISSING_HEADERS+=("$v")
+        fi
+    done
+
+    # Orphaned-headers probe: versioned arch-headers packages whose kernel
+    # module tree is absent.  The arch-independent common headers (including the
+    # bare linux-headers-<series> generic naming) are identified as the
+    # linux-headers-* dependencies of the arch headers packages, so they are
+    # never reported as a standalone orphaned version; they are swept with their
+    # arch headers during the cleanup.
+    local -a common_headers=()
+    local hdr_pkg hdr_dep hdr_ver orphan_matched orphan_common
+    while IFS= read -r hdr_pkg; do
+        [[ -n "$hdr_pkg" ]] || continue
+        while IFS= read -r hdr_dep; do
+            [[ "$hdr_dep" == linux-headers-* ]] || continue
+            common_headers+=("$hdr_dep")
+        done < <(apt_package_depends "$hdr_pkg")
+    done < <(apt_installed_kernel_packages | awk '/^linux-headers-/')
+    while IFS= read -r hdr_pkg; do
+        [[ -n "$hdr_pkg" ]] || continue
+        [[ "$hdr_pkg" == linux-headers-* ]] || continue
+        orphan_common=false
+        for hdr_dep in "${common_headers[@]:-}"; do
+            [[ "$hdr_dep" == "$hdr_pkg" ]] && orphan_common=true
+        done
+        [[ "$orphan_common" == true ]] && continue
+        hdr_ver="$(apt_kernel_version_from_package "$hdr_pkg" || true)"
+        [[ -n "$hdr_ver" ]] || continue
+        orphan_matched=false
+        for m in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+            [[ "$m" == "$hdr_ver" ]] && orphan_matched=true
+        done
+        [[ "$orphan_matched" == false ]] && KERNEL_ORPHANED_HEADERS+=("$hdr_ver")
+    done < <(apt_installed_kernel_packages | awk '/^linux-headers-/')
+    if ((${#KERNEL_ORPHANED_HEADERS[@]} > 0)); then
+        KERNEL_ORPHANED_HEADERS=("$(printf '%s\n' "${KERNEL_ORPHANED_HEADERS[@]:-}" | LC_ALL=C sort -u)")
+    fi
+
+    # Orphaned-kernel probe (zombie state): an inventory version whose grouped
+    # package set is empty (no package owns its module tree nor its vmlinuz), or
+    # a stray /boot image with no module tree and no owning package.  Such a
+    # version is on-disk residue only and is removed by the zombie cleanup.
+    local orphan_kver known
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        [[ -z "${KERNEL_INVENTORY_PKGS[$i]}" ]] \
+            && KERNEL_ORPHANED_KERNELS+=("${KERNEL_INVENTORY_VERSIONS[$i]}")
+    done
+    while IFS= read -r orphan_kver; do
+        [[ -n "$orphan_kver" ]] || continue
+        known=false
+        for m in "${KERNEL_INVENTORY_VERSIONS[@]:-}" "${KERNEL_ORPHANED_KERNELS[@]:-}"; do
+            [[ "$m" == "$orphan_kver" ]] && known=true
+        done
+        [[ "$known" == false ]] || continue
+        [[ -z "$(dpkg_path_owner "/boot/vmlinuz-$orphan_kver")" ]] \
+            && KERNEL_ORPHANED_KERNELS+=("$orphan_kver")
+    done < <(installed_kernel_versions)
+
+    # Orphaned build/support probe: a versioned linux-<kind>-<ver> helper package
+    # (linux-kbuild-<ver>, linux-base-<ver>, linux-binary-<ver>, ...) whose kernel
+    # version is gone.  The version key is matched against the live module trees
+    # and the installed image/modules packages (exact or hyphen-flavour-prefix),
+    # never by parsing the package-name flavour or the distribution ID.
+    local sup_pkg sup_ver sup_joined sup_i
+    local -a sup_versions=() sup_pkgs=()
+    while IFS= read -r sup_pkg; do
+        [[ -n "$sup_pkg" ]] || continue
+        sup_ver="$(apt_kernel_support_version_from_package "$sup_pkg" || true)"
+        [[ -n "$sup_ver" ]] || continue
+        kernel_support_version_is_orphaned "$sup_ver" || continue
+        sup_i=-1
+        for i in "${!sup_versions[@]}"; do
+            [[ "${sup_versions[$i]}" == "$sup_ver" ]] && sup_i=$i
+        done
+        if (( sup_i >= 0 )); then
+            sup_pkgs[$sup_i]="${sup_pkgs[$sup_i]},$sup_pkg"
+        else
+            sup_versions+=("$sup_ver")
+            sup_pkgs+=("$sup_pkg")
+        fi
+    done < <(apt_installed_kernel_support_packages)
+    for i in "${!sup_versions[@]}"; do
+        sup_joined="$(tr ',' '\n' <<<"${sup_pkgs[$i]}" | LC_ALL=C sort -u | paste -sd, -)"
+        KERNEL_ORPHANED_SUPPORT_VERSIONS+=("${sup_versions[$i]}")
+        KERNEL_ORPHANED_SUPPORT_PKGS+=("$sup_joined")
+    done
+
+    # Partial-kernel probe (broken/partial install): a versioned image package is
+    # still installed but its vmlinuz or module tree is missing on disk.  The
+    # reinstall action completes it through apt-get --reinstall.
+    local img_pkg img_kver img_missing
+    while IFS= read -r img_pkg; do
+        [[ "$img_pkg" == linux-image-* ]] || continue
+        img_kver="$(apt_kernel_version_from_package "$img_pkg" || true)"
+        [[ -n "$img_kver" ]] || continue
+        img_missing=false
+        [[ -f "$TARGET_ROOT/boot/vmlinuz-$img_kver" ]] || img_missing=true
+        if [[ "$img_missing" == false ]]; then
+            [[ -d "$TARGET_ROOT/usr/lib/modules/$img_kver" || -d "$TARGET_ROOT/lib/modules/$img_kver" ]] \
+                || img_missing=true
+        fi
+        if [[ "$img_missing" == true ]]; then
+            KERNEL_PARTIAL+=("$img_kver")
+        fi
+    done < <(apt_installed_kernel_packages)
+    if ((${#KERNEL_PARTIAL[@]} > 0)); then
+        KERNEL_PARTIAL=("$(printf '%s\n' "${KERNEL_PARTIAL[@]:-}" | LC_ALL=C sort -u)")
+    fi
+}
+
+# Reconstruct the kernel-inventory globals from the cached `kernel` diagnostic
+# section (the exact lines diagnostic_kernel_inventory emits), so the
+# interactive kernel repair menu and its sub-actions consume the single cached
+# source of truth instead of re-collecting.  KERNEL_BASELINE_B64 holds the
+# base64-serialized section (set by parse_repair_arguments from --baseline).
+# Fails closed when the baseline is absent, undecodable, empty or names no
+# installed kernels.  Read-only: no target probe is run here.
+parse_cached_kernel_inventory()
+{
+    local line v rest role size pkgs p baseline i
+    local -a versions=() pkgsl=() sizes=()
+
+    if [[ -z "${KERNEL_BASELINE_B64:-}" ]]; then
+        fail "Run the kernel diagnostic before starting the kernel repair (no cached kernel inventory baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$KERNEL_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached kernel inventory baseline could not be decoded; run the kernel diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached kernel inventory baseline is empty; run the kernel diagnostic again."
+
+    KERNEL_INVENTORY_VERSIONS=()
+    KERNEL_INVENTORY_PKGS=()
+    KERNEL_INVENTORY_SIZES=()
+    KERNEL_RUNNING=""
+    KERNEL_LATEST=""
+    KERNEL_REPO_LATEST=""
+    KERNEL_METAPACKAGES=()
+    KERNEL_MANAGED=()
+    KERNEL_REMOVABLE=()
+    KERNEL_REMOVABLE_PKGS=()
+    KERNEL_LATEST_PKGS=()
+    KERNEL_MISSING_HEADERS=()
+    KERNEL_ORPHANED_HEADERS=()
+    KERNEL_ORPHANED_KERNELS=()
+    KERNEL_ORPHANED_SUPPORT_VERSIONS=()
+    KERNEL_ORPHANED_SUPPORT_PKGS=()
+    KERNEL_PARTIAL=()
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            "Kernel running: "*)
+                v="${line#Kernel running: }"
+                [[ "$v" != unknown ]] && KERNEL_RUNNING="$v"
+                ;;
+            "Kernel latest: "*)
+                v="${line#Kernel latest: }"
+                [[ "$v" != unknown ]] && KERNEL_LATEST="$v"
+                ;;
+            "Kernel repository latest: "*)
+                v="${line#Kernel repository latest: }"
+                [[ "$v" != unavailable && "$v" != unknown ]] && KERNEL_REPO_LATEST="$v"
+                ;;
+            "Kernel installed: "*)
+                rest="${line#Kernel installed: }"
+                v="${rest%% *}"
+                size="${rest#*size=}"; size="${size%% *}"
+                pkgs="${rest#*pkgs=}"; pkgs="${pkgs%% *}"
+                versions+=("$v")
+                pkgsl+=("$pkgs")
+                sizes+=("${size:-0}")
+                ;;
+            "Kernel protected: "*)
+                rest="${line#Kernel protected: }"
+                v="${rest%% *}"
+                role="${rest#*role=}"
+                if [[ "$role" == metapackage ]]; then
+                    KERNEL_METAPACKAGES+=("$v")
+                else
+                    case ",${role}," in
+                        *,managed-default,*) KERNEL_MANAGED+=("$v") ;;
+                    esac
+                fi
+                ;;
+            "Kernel removable: "*)
+                rest="${line#Kernel removable: }"
+                [[ "$rest" == none ]] && continue
+                v="${rest%% *}"
+                pkgs="${rest#*pkgs=}"
+                KERNEL_REMOVABLE+=("$v")
+                while IFS= read -r p; do
+                    [[ -n "$p" ]] && KERNEL_REMOVABLE_PKGS+=("$p")
+                done <<<"$(tr ',' '\n' <<<"${pkgs:-}")"
+                ;;
+            "Kernel missing headers: "*)
+                KERNEL_MISSING_HEADERS+=("${line#Kernel missing headers: }")
+                ;;
+            "Kernel orphaned headers: "*)
+                KERNEL_ORPHANED_HEADERS+=("${line#Kernel orphaned headers: }")
+                ;;
+            "Kernel orphaned kernel: "*)
+                KERNEL_ORPHANED_KERNELS+=("${line#Kernel orphaned kernel: }")
+                ;;
+            "Kernel orphaned build support: "*)
+                rest="${line#Kernel orphaned build support: }"
+                v="${rest%% *}"
+                pkgs="${rest#*pkg=}"
+                KERNEL_ORPHANED_SUPPORT_VERSIONS+=("$v")
+                KERNEL_ORPHANED_SUPPORT_PKGS+=("$pkgs")
+                ;;
+            "Kernel incomplete: "*)
+                KERNEL_PARTIAL+=("${line#Kernel incomplete: }")
+                ;;
+        esac
+    done <<<"$baseline"
+
+    KERNEL_INVENTORY_VERSIONS=("${versions[@]:-}")
+    KERNEL_INVENTORY_PKGS=("${pkgsl[@]:-}")
+    KERNEL_INVENTORY_SIZES=("${sizes[@]:-}")
+
+    ((${#KERNEL_INVENTORY_VERSIONS[@]} > 0)) \
+        || fail "The cached kernel inventory baseline names no installed kernels; run the kernel diagnostic again."
+
+    # Newest kernel's grouped package set (for the optional remove-newest plan).
+    if [[ -n "$KERNEL_LATEST" ]]; then
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            [[ "${KERNEL_INVENTORY_VERSIONS[$i]}" == "$KERNEL_LATEST" ]] || continue
+            while IFS= read -r p; do
+                [[ -n "$p" ]] && KERNEL_LATEST_PKGS+=("$p")
+            done <<<"$(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]:-}")"
+            break
+        done
+    fi
+}
+
+# Size in bytes of one directory tree (0 when absent).  Sums file sizes with
+# find -printf instead of du -sk so the tree is walked once without block
+# accounting (read-only, no external process beyond find/awk).
+dir_size_bytes()
+{
+    local dir="$1"
+    [[ -d "$dir" ]] || { printf '0\n'; return 0; }
+    find "$dir" -type f -printf '%s\n' 2>/dev/null | awk '{ s += $1 } END { print s + 0 }' || echo 0
+}
+
+# True when the supplied kernel version is in the pre-computed removable set.
+kernel_is_removable()
+{
+    local v
+    for v in "${KERNEL_REMOVABLE[@]:-}"; do
+        [[ "$v" == "$1" ]] && return 0
+    done
+    return 1
+}
+
+# True when the supplied package is in the pre-computed removable package set
+# (the union of the removable kernels' grouped packages, including their
+# common headers).
+kernel_package_is_removable()
+{
+    local p
+    for p in "${KERNEL_REMOVABLE_PKGS[@]:-}"; do
+        [[ "$p" == "$1" ]] && return 0
+    done
+    return 1
+}
+
+# True when the supplied kernel version is a removal candidate: an older
+# (superseded) kernel, or — only when the caller explicitly requested it via
+# --remove-newest — the newest installed kernel while it is not the running
+# kernel.  The running kernel is never a candidate: its modules are loaded.
+# KERNEL_REMOVE_MODE narrows the decision to one interactive menu action
+# (`oldest` = superseded only; `newest` = the newest kernel while not running);
+# an empty mode keeps the Full Repair `kernels` semantics.
+kernel_is_removal_candidate()
+{
+    local v="$1"
+    case "$KERNEL_REMOVE_MODE" in
+        newest)
+            [[ "$v" == "$KERNEL_LATEST" && "$v" != "$KERNEL_RUNNING" ]]
+            ;;
+        oldest)
+            kernel_is_removable "$v"
+            ;;
+        *)
+            kernel_is_removable "$v" && return 0
+            if [[ "$REPAIR_REMOVE_NEWEST" == true && "$v" == "$KERNEL_LATEST" && "$v" != "$KERNEL_RUNNING" ]]; then
+                return 0
+            fi
+            return 1
+            ;;
+    esac
+}
+
+# Package-level mirror of kernel_is_removal_candidate(): accepts the removable
+# set plus, when --remove-newest is in effect and the newest kernel is not the
+# running kernel, the newest kernel's grouped package set.  KERNEL_REMOVE_MODE
+# narrows the decision the same way as kernel_is_removal_candidate().
+kernel_package_is_removal_candidate()
+{
+    local p
+    case "$KERNEL_REMOVE_MODE" in
+        newest)
+            if [[ "$KERNEL_LATEST" != "$KERNEL_RUNNING" ]]; then
+                for p in "${KERNEL_LATEST_PKGS[@]:-}"; do
+                    [[ "$p" == "$1" ]] && return 0
+                done
+            fi
+            return 1
+            ;;
+        oldest)
+            kernel_package_is_removable "$1"
+            ;;
+        *)
+            kernel_package_is_removable "$1" && return 0
+            if [[ "$REPAIR_REMOVE_NEWEST" == true && "$KERNEL_LATEST" != "$KERNEL_RUNNING" ]]; then
+                for p in "${KERNEL_LATEST_PKGS[@]:-}"; do
+                    [[ "$p" == "$1" ]] && return 0
+                done
+            fi
+            return 1
+            ;;
+    esac
+}
+
 apt_package_available()
 {
     local package="$1"
     run_selected_chroot /usr/bin/env \
         HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
         apt-cache show "$package" >/dev/null 2>&1
+}
+
+# Print the decompressed contents of one apt package-index file to stdout.
+# Read-only; a compressed file whose decompressor is not installed contributes
+# nothing rather than binary garbage.
+apt_list_decompress()
+{
+    local file="$1"
+    [[ -f "$file" ]] || return 0
+    case "$file" in
+        *.gz)
+            if command -v zcat >/dev/null 2>&1; then zcat -- "$file" 2>/dev/null || true; fi
+            ;;
+        *.xz)
+            if command -v xzcat >/dev/null 2>&1; then xzcat -- "$file" 2>/dev/null || true; fi
+            ;;
+        *.lz4)
+            if command -v lz4cat >/dev/null 2>&1; then lz4cat -- "$file" 2>/dev/null || true; fi
+            ;;
+        *.zst)
+            if command -v zstdcat >/dev/null 2>&1; then zstdcat -- "$file" 2>/dev/null || true; fi
+            ;;
+        *.bz2)
+            if command -v bzcat >/dev/null 2>&1; then bzcat -- "$file" 2>/dev/null || true; fi
+            ;;
+        *)
+            cat -- "$file" 2>/dev/null || true
+            ;;
+    esac
+}
+
+# Read-only repository probe for the latest available kernel version of the
+# detected managed image metapackage (or, when no image metapackage is
+# installed, the newest installed versioned image package's own family).  Reads
+# the package indexes directly (/var/lib/apt/lists/*_Packages*) instead of
+# spawning apt-cache, so the probe is fast on targets with many repositories;
+# never writes.  Prints the canonical kernel version string (module-tree style)
+# on success and returns 1 otherwise (offline, no candidate, or no resolvable
+# image dependency).  This is informational wording only and never gates the
+# kernels capability on network.
+apt_kernel_repo_latest()
+{
+    local meta img lists_dir file best_version best_img
+    # Prefer an installed linux-image-* metapackage; fall back to the newest
+    # installed versioned image package so the family is still identifiable.
+    meta=""
+    while IFS= read -r img; do
+        [[ "$img" == linux-image-* ]] || continue
+        meta="$img"
+        break
+    done < <(apt_managed_kernel_metapackage)
+    if [[ -z "$meta" ]]; then
+        img="$(dpkg_path_owner "/boot/vmlinuz-$KERNEL_LATEST" 2>/dev/null | head -n1 || true)"
+        [[ "$img" == linux-image-* ]] || return 1
+        meta="$img"
+    fi
+
+    lists_dir="$TARGET_ROOT/var/lib/apt/lists"
+    [[ -d "$lists_dir" ]] || return 1
+
+    # The highest-versioned stanza for the metapackage across every index file
+    # names the candidate; its Depends pins the versioned linux-image-<V> whose
+    # <V> is the canonical kernel version.  One awk pass over the decompressed
+    # indexes, then a version sort of the candidate set.
+    best_version=""
+    best_img=""
+    while IFS=$'\t' read -r version img; do
+        best_version="$version"
+        best_img="$img"
+    done < <(
+        {
+            while IFS= read -r file; do
+                [[ -n "$file" ]] || continue
+                apt_list_decompress "$file"
+            done < <(find "$lists_dir" -maxdepth 1 -type f -name '*_Packages*' 2>/dev/null | LC_ALL=C sort)
+        } | awk -v meta="$meta" '
+            BEGIN { RS = ""; FS = "\n" }
+            {
+                name = ""; ver = ""; deps = ""
+                for (i = 1; i <= NF; i++) {
+                    line = $i
+                    if (line ~ /^Package: /) name = substr(line, 10)
+                    else if (line ~ /^Version: /) ver = substr(line, 10)
+                    else if (line ~ /^(Depends|Pre-Depends): /) deps = deps " " substr(line, index(line, ": ") + 2)
+                    else if (line ~ /^[[:space:]]/ && deps != "") deps = deps " " line
+                }
+                if (name != meta || ver == "") next
+                img = ""
+                n = split(deps, tok, /[ ,|]+/)
+                for (j = 1; j <= n; j++) {
+                    k = tok[j]
+                    sub(/\(.*\)/, "", k)
+                    if (k ~ /^linux-image-[0-9]/) {
+                        sub(/^linux-image-/, "", k)
+                        img = k
+                        break
+                    }
+                }
+                printf "%s\t%s\n", ver, img
+            }
+        ' | LC_ALL=C legacy_sort_versions -k1,1 | tail -n 1
+    )
+
+    [[ -n "$best_version" ]] || return 1
+    if [[ -n "$best_img" ]]; then
+        printf '%s\n' "$best_img"
+    else
+        printf '%s\n' "$best_version"
+    fi
 }
 
 # Simulate and safety-check a known package correction, then apply it.  label
@@ -8371,7 +9494,7 @@ safe_apt_install_packages()
 
     if ((rc != 0)) && grep -Eiq 'dpkg was interrupted|dpkg --configure -a' <<<"$output"; then
         msg_log apt-correction-blocked-dpkg
-        run_chroot "Complete interrupted package configuration before correction" dpkg --configure -a
+        run_chroot_keyed complete-interrupted-dpkg-before-correction "Complete interrupted package configuration before correction" dpkg --configure -a
         simulate_install_once
     fi
 
@@ -8388,7 +9511,7 @@ safe_apt_install_packages()
         set -e
         printf '%s\n' "$fix_output" | tee -a "$SESSION_LOG"
         if ((fix_rc == 0)) && apt_simulation_is_safe "$fix_output"; then
-            run_chroot "Repair broken dependencies before known package correction" apt-get -y -f install
+            run_chroot_keyed repair-broken-deps-before-correction "Repair broken dependencies before known package correction" apt-get -y -f install
             simulate_install_once
         fi
     fi
@@ -8453,7 +9576,7 @@ preflight_dkms()
                 || fail "DKMS preflight found no /lib/modules/$alpine_dkms_kver/build tree; install the matching headers and retry."
             msg_log dkms-headers-present "$alpine_dkms_kver"
         done
-        run_chroot_try "Inspect DKMS state" dkms status
+        run_chroot_try "$(msg inspect-dkms-state)" dkms status
         return 0
     fi
 
@@ -8476,7 +9599,7 @@ preflight_dkms()
                 || fail "DKMS preflight found no /lib/modules/$rpm_dkms_kver/build tree; install the matching kernel-devel packages and retry."
             msg_log dkms-headers-present-rpm "$rpm_dkms_kver"
         done
-        run_chroot_try "Inspect DKMS state" dkms status
+        run_chroot_try "$(msg inspect-dkms-state)" dkms status
         return 0
     fi
 
@@ -8491,7 +9614,7 @@ preflight_dkms()
                 || fail "DKMS preflight found no /lib/modules/$kver/build tree; install the matching headers and retry."
             msg_log dkms-headers-present-kver "$kver"
         done < <(arch_kernel_versions)
-        run_chroot_try "Inspect DKMS state" dkms status
+        run_chroot_try "$(msg inspect-dkms-state)" dkms status
         return 0
     fi
 
@@ -8499,7 +9622,7 @@ preflight_dkms()
         || fail "DKMS is not installed in the target system."
 
     msg_log dkms-simulate
-    run_chroot_try "Inspect DKMS state" dkms status
+    run_chroot_try "$(msg inspect-dkms-state)" dkms status
     # dkms status may return nonzero when no modules are registered; that is not
     # itself a repair failure. The kernel/header inventory below decides whether
     # autoinstall has a viable build environment.
@@ -8541,18 +9664,18 @@ preflight_dkms()
 adaptive_dkms_repair()
 {
     preflight_dkms
-    run_chroot_try_display "Rebuild DKMS modules" dkms autoinstall
+    run_chroot_try_display "$(msg rebuild-dkms-modules)" dkms autoinstall
     if ((CHROOT_TRY_RC != 0)); then
         if grep -Eiq 'kernel headers.*(not found|missing)|your kernel headers.*cannot be found|/lib/modules/.*/build.*(missing|no such)' \
             <<<"$CHROOT_TRY_OUTPUT"; then
             msg_log dkms-known-missing-headers
             preflight_dkms
-            run_chroot_try_display "Retry DKMS autoinstall after header correction" dkms autoinstall
+            run_chroot_try_display "$(msg retry-dkms-autoinstall)" dkms autoinstall
         fi
     fi
     ((CHROOT_TRY_RC == 0)) || fail "DKMS autoinstall failed after preflight/known correction."
     msg_log dkms-pass
-    run_chroot_try "Post-repair DKMS status" dkms status
+    run_chroot_try "$(msg post-repair-dkms-status)" dkms status
     # DKMS rebuilds cannot be proven byte-identical without hashing every
     # module tree and its side effects; stay changed (fail safe).
     repair_change_status dkms changed
@@ -8901,10 +10024,10 @@ preflight_alpine_display_manager()
         || fail "$DISPLAY_MANAGER_LABEL init script is missing from the target: /etc/init.d/$DISPLAY_MANAGER_SERVICE"
     target_package_installed "$DISPLAY_MANAGER_PACKAGE" \
         || fail "$DISPLAY_MANAGER_LABEL is not installed according to the detected package manager; refusing to enable an unverified display manager."
-    run_chroot_try "Syntax-check $DISPLAY_MANAGER_LABEL OpenRC init script" sh -n "/etc/init.d/$DISPLAY_MANAGER_SERVICE"
+    run_chroot_try "$(msg syntax-check-openrc-init "$DISPLAY_MANAGER_LABEL")" sh -n "/etc/init.d/$DISPLAY_MANAGER_SERVICE"
     (( CHROOT_TRY_RC == 0 )) \
         || fail "$DISPLAY_MANAGER_LABEL init script failed sh -n; refusing to enable it."
-    run_chroot_try "Verify $DISPLAY_MANAGER_LABEL service exists (rc-service -e)" rc-service -e "$DISPLAY_MANAGER_SERVICE"
+    run_chroot_try "$(msg verify-openrc-service "$DISPLAY_MANAGER_LABEL")" rc-service -e "$DISPLAY_MANAGER_SERVICE"
     (( CHROOT_TRY_RC == 0 )) \
         || fail "rc-service does not recognize $DISPLAY_MANAGER_SERVICE in the target."
     command_path="$(alpine_display_manager_command_path "$DISPLAY_MANAGER_SERVICE")"
@@ -9002,11 +10125,11 @@ preflight_initramfs()
         # visible inside the target rather than in the host session directory.
         sim_path="/tmp/boot-repair-initramfs-preflight-${kver}.img"
         rm -f -- "$TARGET_ROOT$sim_path"
-        run_chroot_try "Trial initramfs build for $kver (temporary output only)" \
+        run_chroot_try "$(msg trial-initramfs-build "$kver")" \
             mkinitramfs -o "$sim_path" "$kver"
         if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
             if repair_stale_mapper_mount_alias; then
-                run_chroot_try "Retry trial initramfs build for $kver after mapper alias correction" \
+                run_chroot_try "$(msg retry-trial-initramfs-build "$kver")" \
                     mkinitramfs -o "$sim_path" "$kver"
             fi
         fi
@@ -9084,7 +10207,7 @@ preflight_arch_initramfs()
     for kver in "${kernels[@]:-}"; do
         sim_path="/tmp/boot-repair-initramfs-preflight-${kver}.img"
         rm -f -- "$TARGET_ROOT$sim_path"
-        run_chroot_try "Trial mkinitcpio build for $kver (temporary output only)" \
+        run_chroot_try "$(msg trial-mkinitcpio-build "$kver")" \
             mkinitcpio -k "$kver" -g "$sim_path"
         ((CHROOT_TRY_RC == 0)) \
             || fail "Trial mkinitcpio build failed for $kver; target initramfs files were not changed."
@@ -9100,7 +10223,7 @@ adaptive_arch_initramfs_repair()
     local image verify_rc
     local -a images=()
     preflight_arch_initramfs
-    run_chroot_try_display "Rebuild Arch initramfs images with mkinitcpio -P" mkinitcpio -P
+    run_chroot_try_display "$(msg rebuild-arch-initramfs)" mkinitcpio -P
     ((CHROOT_TRY_RC == 0)) || fail "mkinitcpio -P failed after transaction-specific preflight."
     legacy_readarray -t images < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f -name 'initramfs-*.img' -size +0c -print 2>/dev/null | legacy_sort_versions)
     ((${#images[@]} > 0)) || fail "mkinitcpio completed but no non-empty /boot/initramfs-*.img image was found."
@@ -9134,7 +10257,7 @@ alpine_initramfs_verify()
         msg_log initramfs-zcat-verified "$image"
         return 0
     fi
-    run_chroot_try "Verify mkinitfs build inputs for $kver (mkinitfs -l)" mkinitfs -l "$kver"
+    run_chroot_try "$(msg verify-mkinitfs-build-inputs "$kver")" mkinitfs -l "$kver"
     (( CHROOT_TRY_RC == 0 )) \
         || fail "Generated Alpine initramfs could not be verified with zcat/cpio or mkinitfs -l: $image"
     msg_log initramfs-mkinitfs-verified "$image"
@@ -9164,7 +10287,7 @@ preflight_alpine_initramfs()
         [[ -n "$kver" ]] || continue
         sim_path="/tmp/boot-repair-initramfs-preflight-${kver}"
         rm -f -- "$TARGET_ROOT$sim_path"
-        run_chroot_try "Trial mkinitfs build for $kver (temporary output only)" \
+        run_chroot_try "$(msg trial-mkinitfs-build "$kver")" \
             mkinitfs -o "$sim_path" "$kver"
         (( CHROOT_TRY_RC == 0 )) \
             || fail "Trial mkinitfs build failed for $kver; target initramfs files were not changed."
@@ -9188,7 +10311,7 @@ adaptive_alpine_initramfs_repair()
     for pair in "${pairs[@]:-}"; do
         read -r kver suffix _boot_image initramfs_image <<<"$pair"
         [[ -n "$kver" ]] || continue
-        run_chroot_try_display "Rebuild Alpine initramfs for $kver with mkinitfs" mkinitfs "$kver"
+        run_chroot_try_display "$(msg rebuild-alpine-initramfs "$kver")" mkinitfs "$kver"
         (( CHROOT_TRY_RC == 0 )) \
             || fail "mkinitfs failed for $kver after transaction-specific preflight."
         [[ -s "$TARGET_ROOT$initramfs_image" ]] \
@@ -9277,7 +10400,7 @@ preflight_dracut_initramfs()
     fi
 
     msg_log dracut-simulate "${#pairs[@]}"
-    run_chroot_try "Record dracut version" dracut --version
+    run_chroot_try "$(msg record-dracut-version)" dracut --version
     (( CHROOT_TRY_RC == 0 )) \
         || fail "dracut --version failed with exit code $CHROOT_TRY_RC; refusing the dracut rebuild."
     msg_log dracut-version "$(sed -n '1p' <<<"$CHROOT_TRY_OUTPUT")"
@@ -9321,7 +10444,7 @@ adaptive_dracut_initramfs_repair()
         #    never touch /boot: prove every image fingerprint is unchanged
         #    after the build and before any install is allowed.
         fingerprint_before="$(initramfs_image_fingerprint)"
-        run_chroot_try_display "Build and verify Fedora initramfs for $kver (temporary output only)" \
+        run_chroot_try_display "$(msg build-verify-fedora-initramfs "$kver")" \
             dracut -f --kver "$kver" "$build_path"
         (( CHROOT_TRY_RC == 0 )) \
             || fail "dracut build failed for $kver; target initramfs files were not changed."
@@ -9427,13 +10550,13 @@ adaptive_initramfs_repair_modern()
                 msg_log initrd-missing "$kver"
             fi
             if [[ "$mode" == "-u" ]]; then
-                run_chroot_try_display "Update initramfs for $kver" update-initramfs -u -k "$kver"
+                run_chroot_try_display "$(msg update-initramfs "$kver")" update-initramfs -u -k "$kver"
             else
-                run_chroot_try_display "Create missing initramfs for $kver" update-initramfs -c -k "$kver"
+                run_chroot_try_display "$(msg create-missing-initramfs "$kver")" update-initramfs -c -k "$kver"
             fi
             if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
                 if repair_stale_mapper_mount_alias; then
-                    run_chroot_try_display "Retry initramfs for $kver after mapper alias correction" \
+                    run_chroot_try_display "$(msg retry-initramfs "$kver")" \
                         update-initramfs "$mode" -k "$kver"
                 fi
             fi
@@ -9726,7 +10849,7 @@ preflight_grub()
         fail "GRUB trial configuration contains no Linux boot entry despite installed kernels."
     fi
     if [[ -x "$TARGET_ROOT/usr/bin/grub-script-check" || -x "$TARGET_ROOT/usr/sbin/grub-script-check" ]]; then
-        run_chroot_try "Syntax-check trial GRUB configuration" grub-script-check "$target_sim_path"
+        run_chroot_try "$(msg syntax-check-trial-grub-config)" grub-script-check "$target_sim_path"
         rm -f "$TARGET_ROOT$target_sim_path"
         ((CHROOT_TRY_RC == 0)) || fail "Trial GRUB configuration failed grub-script-check."
     fi
@@ -9830,18 +10953,18 @@ adaptive_grub_repair_modern()
         rm -f "$old_cfg"
     fi
     if [[ "$generator" == update-grub ]]; then
-        run_chroot_try_display "Regenerate GRUB configuration" update-grub
+        run_chroot_try_display "$(msg regenerate-grub-config)" update-grub
     else
-        run_chroot_try_display "Regenerate GRUB configuration with grub-mkconfig" grub-mkconfig -o /boot/grub/grub.cfg
+        run_chroot_try_display "$(msg regenerate-grub-config-mkconfig)" grub-mkconfig -o /boot/grub/grub.cfg
     fi
     if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
         if repair_stale_mapper_mount_alias; then
             [[ -s "$old_cfg" ]] && install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
             preflight_grub
             if [[ "$generator" == update-grub ]]; then
-                run_chroot_try_display "Retry GRUB configuration after mapper alias correction" update-grub
+                run_chroot_try_display "$(msg retry-grub-config)" update-grub
             else
-                run_chroot_try_display "Retry GRUB configuration after mapper alias correction" grub-mkconfig -o /boot/grub/grub.cfg
+                run_chroot_try_display "$(msg retry-grub-config)" grub-mkconfig -o /boot/grub/grub.cfg
             fi
         fi
     fi
@@ -9858,7 +10981,7 @@ adaptive_grub_repair_modern()
         fi
     fi
     if [[ -x "$TARGET_ROOT/usr/bin/grub-script-check" || -x "$TARGET_ROOT/usr/sbin/grub-script-check" ]]; then
-        run_chroot_try "Verify installed GRUB configuration syntax" grub-script-check /boot/grub/grub.cfg
+        run_chroot_try "$(msg verify-installed-grub-config)" grub-script-check /boot/grub/grub.cfg
         ((CHROOT_TRY_RC == 0)) || fail "Installed GRUB configuration failed grub-script-check after regeneration."
     fi
     msg_log grub-regenerated
@@ -10045,7 +11168,7 @@ preflight_fedora_grub()
         || fail "grubenv is missing or not a valid GRUB environment block."
     # Read the block with the target's own editor as additional evidence: a
     # file that passes the byte checks but cannot be parsed fails closed.
-    run_chroot_try "Read Fedora grubenv (grub2-editenv list)" "$editenv_tool" "$grubenv" list
+    run_chroot_try "$(msg read-fedora-grubenv)" "$editenv_tool" "$grubenv" list
     (( CHROOT_TRY_RC == 0 )) \
         || fail "grub2-editenv could not read $grubenv; refusing a GRUB2 regeneration."
 
@@ -10093,7 +11216,7 @@ preflight_fedora_grub()
         fail "Fedora GRUB2 trial configuration contains neither a blscfg directive nor a menuentry."
     fi
     if script_tool="$(grub_script_check_tool)"; then
-        run_chroot_try "Syntax-check trial Fedora GRUB2 configuration" "$script_tool" "$target_sim_path"
+        run_chroot_try "$(msg syntax-check-trial-fedora-grub2)" "$script_tool" "$target_sim_path"
         rm -f -- "$TARGET_ROOT$target_sim_path"
         (( CHROOT_TRY_RC == 0 )) || fail "Trial Fedora GRUB2 configuration failed grub2-script-check."
     else
@@ -10126,7 +11249,7 @@ fedora_grub_regenerate_config()
     fi
     install -m 0600 "$TARGET_ROOT$config" "$old_cfg"
 
-    run_chroot_try_display "Regenerate Fedora GRUB2 configuration (grub2-mkconfig --no-grubenv-update)" \
+    run_chroot_try_display "$(msg regenerate-fedora-grub2)" \
         "$generator" --no-grubenv-update -o "$config"
     if (( CHROOT_TRY_RC != 0 )); then
         if fedora_grub_restore_backup && fedora_grub_verify_backup_restore "$FEDORA_GRUB_BACKUP_DIR"; then
@@ -10166,7 +11289,7 @@ fedora_grub_regenerate_config()
         fail "Fedora GRUB2 regeneration changed the BLS entry set and the restore could not be proven."
     fi
     if [[ -n "$script_tool" ]]; then
-        run_chroot_try "Verify installed Fedora GRUB2 configuration syntax" "$script_tool" "$config"
+        run_chroot_try "$(msg verify-installed-fedora-grub2)" "$script_tool" "$config"
         if (( CHROOT_TRY_RC != 0 )); then
             if fedora_grub_restore_backup && fedora_grub_verify_backup_restore "$FEDORA_GRUB_BACKUP_DIR"; then
                 fail "Installed Fedora GRUB2 configuration failed grub2-script-check; the previous configuration was restored."
@@ -10340,7 +11463,7 @@ fedora_default_entry_ensure()
     keys_before="$(grubenv_keys_except_saved_entry "$TARGET_ROOT$grubenv")"
 
     msg_log fedora-default-set "${current:-unset}" "$resolves" "$target"
-    run_chroot_try "Set Fedora GRUB2 default BLS entry ($target)" \
+    run_chroot_try "$(msg set-fedora-grub2-default-bls "$target")" \
         "$editenv" "$grubenv" set "saved_entry=$target"
     if (( CHROOT_TRY_RC != 0 )); then
         if fedora_default_restore_grubenv "$backup" "$grubenv" "$before_sha"; then
@@ -10552,7 +11675,7 @@ preflight_fedora_grub_reinstall()
         same_single_top_disk "$TARGET_DISK" "$boot_source" \
             || fail "the target /boot is not on the selected disk $TARGET_DISK; refusing to reinstall GRUB2 boot code."
     fi
-    run_chroot_try "Record grub2-install version" "$install_tool" --version
+    run_chroot_try "$(msg record-grub2-install-version)" "$install_tool" --version
     (( CHROOT_TRY_RC == 0 )) \
         || fail "grub2-install is present but could not execute during the preflight."
 }
@@ -10579,7 +11702,7 @@ fedora_grub_reinstall_boot_code()
         || fail "Unable to back up the GRUB2 BIOS boot code before reinstall."
 
     msg_log grub2-bios-reinstall "$(basename -- "$install_tool")" "$TARGET_DISK"
-    run_chroot_try_display "Reinstall GRUB2 BIOS boot code" \
+    run_chroot_try_display "$(msg reinstall-grub2-bios)" \
         "$install_tool" --target=i386-pc --boot-directory=/boot --recheck "$TARGET_DISK"
 
     table_after="$(partition_table_fingerprint)"
@@ -10599,7 +11722,7 @@ fedora_grub_reinstall_boot_code()
     fi
     script_tool="$(grub_script_check_tool 2>/dev/null || true)"
     if [[ -n "$script_tool" ]]; then
-        run_chroot_try "Verify Fedora GRUB2 configuration syntax after boot-code reinstall" "$script_tool" "$config"
+        run_chroot_try "$(msg verify-fedora-grub2-after-bootcode)" "$script_tool" "$config"
         if (( CHROOT_TRY_RC != 0 )); then
             if fedora_grub_restore_boot_backup && fedora_grub_boot_backup_restored "$FEDORA_GRUB_BOOT_BACKUP_DIR"; then
                 fail "Installed Fedora GRUB2 configuration failed grub2-script-check; the MBR, BIOS boot partition and i386-pc modules were restored byte-identical."
@@ -10858,7 +11981,7 @@ adaptive_extlinux_repair()
     if ! grep -Eq '^[[:space:]]*overwrite=' "$config"; then
         printf '\noverwrite=0\n' >> "$config"
     fi
-    run_chroot_try_display "Regenerate extlinux configuration (overwrite=0 trial; no boot sector write)" update-extlinux
+    run_chroot_try_display "$(msg regenerate-extlinux-config)" update-extlinux
     cp -a -- "$original_conf" "$config"
 
     if (( CHROOT_TRY_RC != 0 )); then
@@ -11152,7 +12275,7 @@ extlinux_default_entry_ensure()
     trial="$SESSION_DIR/extlinux-default-trial.conf"
     extlinux_conf_with_default "$conf" "$trial" "$label" 0
     extlinux_replace_conf "$trial" "$conf" || fail "Unable to stage the extlinux default trial configuration."
-    run_chroot_try_display "Regenerate extlinux configuration (default=$label, overwrite=0 trial; no boot sector write)" update-extlinux
+    run_chroot_try_display "$(msg regenerate-extlinux-config-default "$label")" update-extlinux
     if (( CHROOT_TRY_RC != 0 )); then
         extlinux_default_restore_backup "$backup_dir" "$cfg"
         fail "update-extlinux trial failed while selecting default label $label; the previous extlinux configuration was restored."
@@ -11280,7 +12403,7 @@ preflight_generic_efi()
         nvram_mode="--no-nvram file-only reinstall"
     fi
     msg_log grub-efi-simulate "$EFI_ESP_SOURCE" "$EFI_ESP_FSTYPE" "$EFI_BOOTLOADER_ID" "$nvram_mode"
-    run_chroot_try "Check grub-install availability/version" "$EFI_GRUB_INSTALL_PATH" --version
+    run_chroot_try "$(msg check-grub-install)" "$EFI_GRUB_INSTALL_PATH" --version
     ((CHROOT_TRY_RC == 0)) || fail "grub-install is present but could not execute during EFI preflight."
 }
 
@@ -11382,6 +12505,7 @@ diagnostic_title()
         grub)        printf '%s\n' "GRUB configuration" ;;
         uki)         printf '%s\n' "EFI / UKI boot state" ;;
         display)     printf '%s\n' "Graphical login / display manager" ;;
+        gpu)         printf '%s\n' "Graphics / GPU driver stack" ;;
         errors)      printf '%s\n' "Boot errors" ;;
         usage)       printf '%s\n' "Disk usage" ;;
         filesystem)  printf '%s\n' "File systems" ;;
@@ -11566,6 +12690,7 @@ package_stage_backends()
             fix-broken:apt/dpkg|fix-broken:apk|fix-broken:pacman|fix-broken:rpm) printf '%s\n' "$backend" ;;
             apt-update:apt/dpkg|apt-update:rpm) printf '%s\n' "$backend" ;;
             apt-upgrade:apt/dpkg|apt-upgrade:apk|apt-upgrade:pacman|apt-upgrade:rpm) printf '%s\n' "$backend" ;;
+            kernel-cleanup:apt/dpkg) printf '%s\n' "$backend" ;;
         esac
     done
     return 0
@@ -12115,6 +13240,60 @@ bootstack_unavailable_reason_modern()
     return 0
 }
 
+# Fail-closed capability probe for the `kernels` repair stage.  The gate is
+# decided from the same read-only inventory the repair uses (probe, don't
+# prefilter): a guarded kernel-cleanup package backend must be detected and
+# runnable, /boot (or a resolved ESP) must be visible, the running kernel must
+# be identifiable, and the kernel inventory must be collectable (>=1 kernel).
+# Fullness is reported by the kernel diagnostic, never gated here; the
+# interactive kernel menu runs even when no kernel is currently removable and
+# offers a verify/reinstall fallback in that case.
+kernels_unavailable_reason()
+{
+    local reason
+    local pkgmgr
+    local -a applicable=() runnable=()
+
+    profile_target_backends
+    kernel_inventory_collect
+
+    if ((${#TARGET_PACKAGE_MANAGERS[@]} == 0)); then
+        reason no-package-manager "${TARGET_PACKAGE_MANAGERS[*]:-none}"
+        return 1
+    fi
+
+    while IFS= read -r pkgmgr; do
+        [[ -n "$pkgmgr" ]] && applicable+=("$pkgmgr")
+    done < <(package_stage_backends kernel-cleanup)
+    if ((${#applicable[@]} == 0)); then
+        reason no-package-manager "${TARGET_PACKAGE_MANAGERS[*]:-none}"
+        return 1
+    fi
+    for pkgmgr in "${applicable[@]:-}"; do
+        if reason="$(package_backend_unavailable_reason kernel-cleanup "$pkgmgr")"; then
+            runnable+=("$pkgmgr")
+        fi
+    done
+    if ((${#runnable[@]} == 0)); then
+        package_backend_unavailable_reason kernel-cleanup "${applicable[0]}"
+        return 1
+    fi
+
+    if [[ ! -d "$TARGET_ROOT/boot" && "$TARGET_ESP_MOUNT" == unresolved ]]; then
+        reason no-boot-filesystem
+        return 1
+    fi
+    if [[ -z "$KERNEL_RUNNING" ]]; then
+        reason running-kernel-not-identified
+        return 1
+    fi
+    if ((${#KERNEL_INVENTORY_VERSIONS[@]} == 0)); then
+        reason no-kernel-inventory
+        return 1
+    fi
+    return 0
+}
+
 # Read-only evidence for one detected package-manager backend.
 package_backend_evidence()
 {
@@ -12539,6 +13718,21 @@ repair_capability_evidence_modern()
             ;;
         filesystem)
             filesystem_capability_evidence
+            ;;
+        gpu)
+            gpu_collect_evidence
+            boot_failure_classification
+            printf 'GPU driver stack: expected=%s; mismatch=%s; boot=%s; dkms=%s' \
+                "${GPU_EXPECTED:-none}" \
+                "$([[ -n "$GPU_MISMATCH" ]] && printf present || printf none)" \
+                "${BOOT_REACHED:-unknown}" \
+                "${GPU_DKMS_BUILD_STATUS:-none}"
+            ;;
+        kernels)
+            kernel_inventory_collect
+            printf 'running=%s; latest=%s; removable=%d; backend=%s' \
+                "${KERNEL_RUNNING:-unknown}" "${KERNEL_LATEST:-unknown}" \
+                "${#KERNEL_REMOVABLE[@]}" "${TARGET_PACKAGE_MANAGERS[*]:-none}"
             ;;
         *)
             printf 'no evidence recorded'
@@ -13575,7 +14769,7 @@ diagnostic_repair_capabilities_modern()
 {
     local key reason
     profile_target_backends
-    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack)
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)
     local -a reasons=() reasons_keys=()
 
     for key in "${keys[@]:-}"; do
@@ -13593,11 +14787,13 @@ diagnostic_repair_capabilities_modern()
     if reason="$(package_stage_unavailable_reason apt-upgrade)"; then legacy_assoc_set reasons "upgrade" "available"; else legacy_assoc_set reasons "upgrade" "$reason"; fi
     if reason="$(dkms_unavailable_reason)"; then legacy_assoc_set reasons "dkms" "available"; else legacy_assoc_set reasons "dkms" "$reason"; fi
     if reason="$(display_unavailable_reason)"; then legacy_assoc_set reasons "display" "available"; else legacy_assoc_set reasons "display" "$reason"; fi
+    if reason="$(gpu_unavailable_reason)"; then legacy_assoc_set reasons "gpu" "available"; else legacy_assoc_set reasons "gpu" "$reason"; fi
     if reason="$(initramfs_unavailable_reason)"; then legacy_assoc_set reasons "initramfs" "available"; else legacy_assoc_set reasons "initramfs" "$reason"; fi
     if reason="$(efi_unavailable_reason)"; then legacy_assoc_set reasons "efi" "available"; else legacy_assoc_set reasons "efi" "$reason"; fi
     if reason="$(grub_unavailable_reason)"; then legacy_assoc_set reasons "grub" "available"; else legacy_assoc_set reasons "grub" "$reason"; fi
     if reason="$(extlinux_unavailable_reason)"; then legacy_assoc_set reasons "extlinux" "available"; else legacy_assoc_set reasons "extlinux" "$reason"; fi
     if reason="$(bootstack_unavailable_reason)"; then legacy_assoc_set reasons "bootstack" "available"; else legacy_assoc_set reasons "bootstack" "$reason"; fi
+    if reason="$(kernels_unavailable_reason)"; then legacy_assoc_set reasons "kernels" "available"; else legacy_assoc_set reasons "kernels" "$reason"; fi
 
     # File system repair is backend-independent: the selected scope's root,
     # /boot, ESP and /home filesystems are inspected with the host's
@@ -13644,8 +14840,8 @@ diagnostic_repair_capabilities_modern()
     done
 
     # Running-host maintenance adds two scope-specific capability lines. They
-    # are deliberately not `Repair tool` keys: the 13-key gating contract and
-    # the Settings/Full Repair plan stay untouched, and the Snapshots tab
+    # are deliberately not `Repair tool` keys: the gating contract and the
+    # Settings/Full Repair plan stay untouched, and the Snapshots tab
     # consumes these lines from the cached host capability preamble.
     if (( RUNNING_HOST_MODE == 1 )); then
         local host_reason
@@ -14635,7 +15831,94 @@ diagnostic_kernel()
         fi
     done
     shopt -u nullglob
+    diagnostic_kernel_inventory
     return "$rc"
+}
+
+# Kernel inventory evidence for the `kernel` diagnostic.  This is the single
+# source of truth the GUI parses for the interactive `kernels` repair preview
+# and menu: running/latest/protected/removable kernels, the per-kernel package
+# mapping, missing/orphaned headers, orphaned kernels and orphaned build-
+# support packages.  Emitted after the kernel-file/initramfs pairing so the
+# `kernel` diagnostic carries the complete kernel picture.  Read-only.
+diagnostic_kernel_inventory()
+{
+    local i v role managed m meta total_kernels removable_kernels
+    kernel_inventory_collect
+    # Informational repository evidence (read-only apt-cache); never gates the
+    # kernels capability.
+    KERNEL_REPO_LATEST="$(apt_kernel_repo_latest || true)"
+
+    total_kernels="${#KERNEL_INVENTORY_VERSIONS[@]}"
+    removable_kernels="${#KERNEL_REMOVABLE[@]}"
+    echo "Kernel inventory: total=$total_kernels protected=$((total_kernels - removable_kernels)) removable=$removable_kernels backend=${TARGET_PACKAGE_MANAGERS[*]:-none}"
+    echo "Kernel running: ${KERNEL_RUNNING:-unknown}"
+    echo "Kernel latest: ${KERNEL_LATEST:-unknown}"
+    echo "Kernel repository latest: ${KERNEL_REPO_LATEST:-unavailable}"
+    echo "Kernel state: running=${KERNEL_RUNNING:-unknown} installed-latest=${KERNEL_LATEST:-unknown} repo-latest=${KERNEL_REPO_LATEST:-unavailable}"
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        v="${KERNEL_INVENTORY_VERSIONS[$i]}"
+        role=""
+        [[ "$v" == "$KERNEL_RUNNING" ]] && role="running"
+        [[ "$v" == "$KERNEL_LATEST" ]] && role="${role:+$role,}latest"
+        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] && role="${role:+$role,}older"
+        [[ -n "$KERNEL_REPO_LATEST" && "$v" == "$KERNEL_REPO_LATEST" ]] && role="${role:+$role,}repo-latest"
+        echo "Kernel installed: $v size=${KERNEL_INVENTORY_SIZES[$i]:-0} pkgs=${KERNEL_INVENTORY_PKGS[$i]:-} role=${role:-none}"
+    done
+    for v in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+        role=""
+        [[ "$v" == "$KERNEL_RUNNING" ]] && role="running"
+        [[ "$v" == "$KERNEL_LATEST" ]] && role="${role:+$role,}latest"
+        managed=false
+        for m in "${KERNEL_MANAGED[@]:-}"; do
+            [[ "$m" == "$v" ]] && managed=true
+        done
+        if [[ "$managed" == true ]]; then
+            role="${role:+$role,}managed-default"
+        fi
+        if [[ -n "$role" ]]; then
+            echo "Kernel protected: $v role=$role"
+        fi
+    done
+    if (( ${#KERNEL_METAPACKAGES[@]} > 0 )); then
+        for meta in "${KERNEL_METAPACKAGES[@]:-}"; do
+            echo "Kernel protected: $meta role=metapackage"
+        done
+    fi
+    if (( removable_kernels == 0 )); then
+        echo "Kernel removable: none"
+    else
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            v="${KERNEL_INVENTORY_VERSIONS[$i]}"
+            kernel_is_removable "$v" || continue
+            echo "Kernel removable: $v size=${KERNEL_INVENTORY_SIZES[$i]:-0} pkgs=${KERNEL_INVENTORY_PKGS[$i]:-}"
+        done
+    fi
+    if (( ${#KERNEL_MISSING_HEADERS[@]} > 0 )); then
+        for v in "${KERNEL_MISSING_HEADERS[@]:-}"; do
+            echo "Kernel missing headers: $v"
+        done
+    fi
+    if (( ${#KERNEL_ORPHANED_HEADERS[@]} > 0 )); then
+        for v in "${KERNEL_ORPHANED_HEADERS[@]:-}"; do
+            echo "Kernel orphaned headers: $v"
+        done
+    fi
+    if (( ${#KERNEL_ORPHANED_KERNELS[@]} > 0 )); then
+        for v in "${KERNEL_ORPHANED_KERNELS[@]:-}"; do
+            echo "Kernel orphaned kernel: $v"
+        done
+    fi
+    if (( ${#KERNEL_ORPHANED_SUPPORT_VERSIONS[@]} > 0 )); then
+        for i in "${!KERNEL_ORPHANED_SUPPORT_VERSIONS[@]}"; do
+            echo "Kernel orphaned build support: ${KERNEL_ORPHANED_SUPPORT_VERSIONS[$i]} pkg=${KERNEL_ORPHANED_SUPPORT_PKGS[$i]}"
+        done
+    fi
+    if (( ${#KERNEL_PARTIAL[@]} > 0 )); then
+        for v in "${KERNEL_PARTIAL[@]:-}"; do
+            echo "Kernel incomplete: $v"
+        done
+    fi
 }
 
 diagnostic_grub()
@@ -15145,6 +16428,1304 @@ diagnostic_display()
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Graphics / GPU driver stack (gpu) — read-only diagnostic + guarded repair
+# ---------------------------------------------------------------------------
+# The `gpu` diagnostic collects read-only evidence about the kernel GPU driver
+# (nvidia/nouveau/amdgpu/radeon/mesa) and the `gpu` repair stage swaps a
+# proven-wrong driver for the correct one on Debian-family (apt/dpkg) targets.
+# Every decision is derived from target evidence; the distribution ID is only a
+# wording/ordering hint.  Hardware probes are recovery-host-scope-only: a
+# foreign chroot target's hardware is never probed, so the host's driver is
+# never installed onto a foreign disk.
+GPU_HARDWARE=""
+GPU_HARDWARE_NOTE=""
+GPU_HARDWARE_DRIVER_IN_USE=""
+GPU_HARDWARE_DEVICES=()
+GPU_HARDWARE_DRIVERS=()
+GPU_LOADED_MODULES=""
+GPU_BLACKLISTED_MODULES=""
+GPU_INSTALLED_PKGS=""
+GPU_EXPECTED=""
+GPU_EXPECTED_SOURCE=""
+GPU_OEM_FLAVOUR=""
+GPU_MISMATCH=""
+GPU_MISMATCH_REASON=""
+GPU_JOURNAL_ERRORS="0"
+GPU_DKMS_BUILD_STATUS=""
+GPU_EVIDENCE_COLLECTED=0
+
+# Read-only PCI class-03 (VGA/3D/Display) inventory from the recovery host.
+# Prints "<vendor:device> (<subvendor:subdevice>)" lines; nothing is executed.
+gpu_class03_devices()
+{
+    local dev vendor device svendor sdevice
+    [[ -d /sys/bus/pci/devices ]] || return 0
+    for dev in /sys/bus/pci/devices/*; do
+        [[ -f "$dev/class" ]] || continue
+        [[ "$(cut -c1-6 "$dev/class" 2>/dev/null || true)" == "0x0300" ]] || continue
+        vendor="$(sed 's/^0x//' "$dev/vendor" 2>/dev/null || true)"
+        device="$(sed 's/^0x//' "$dev/device" 2>/dev/null || true)"
+        svendor="$(sed 's/^0x//' "$dev/subsystem_vendor" 2>/dev/null || true)"
+        sdevice="$(sed 's/^0x//' "$dev/subsystem_device" 2>/dev/null || true)"
+        [[ -n "$vendor$device" ]] || continue
+        printf '%s:%s (%s:%s)\n' "${vendor:-0000}" "${device:-0000}" "${svendor:-0000}" "${sdevice:-0000}"
+    done
+}
+
+# Read-only PCI vendor -> driver-family mapping (a data table, never a gate).
+gpu_pciid_to_driver()
+{
+    case "$1" in
+        10de) printf 'nvidia\n' ;;
+        1002) printf 'amdgpu\n' ;;
+        8086) printf 'i915\n' ;;
+        *)    printf '' ;;
+    esac
+}
+
+# Hardware is authoritative only in host maintenance.  A repair target's
+# hardware is never probed (labelled target-only) so a foreign disk never gets
+# the recovery host's driver.
+gpu_hardware_evidence()
+{
+    local dev vendor device svendor sdevice drv
+    GPU_HARDWARE=""
+    GPU_HARDWARE_DRIVER_IN_USE=""
+    GPU_HARDWARE_DEVICES=()
+    GPU_HARDWARE_DRIVERS=()
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for dev in /sys/bus/pci/devices/*; do
+            [[ -f "$dev/class" ]] || continue
+            [[ "$(cut -c1-6 "$dev/class" 2>/dev/null || true)" == "0x0300" ]] || continue
+            vendor="$(sed 's/^0x//' "$dev/vendor" 2>/dev/null || true)"
+            device="$(sed 's/^0x//' "$dev/device" 2>/dev/null || true)"
+            svendor="$(sed 's/^0x//' "$dev/subsystem_vendor" 2>/dev/null || true)"
+            sdevice="$(sed 's/^0x//' "$dev/subsystem_device" 2>/dev/null || true)"
+            [[ -n "$vendor$device" ]] || continue
+            drv="$(basename "$(readlink "$dev/driver/module" 2>/dev/null || true)" 2>/dev/null || true)"
+            GPU_HARDWARE_DEVICES+=("${vendor:-0000}:${device:-0000} (${svendor:-0000}:${sdevice:-0000})")
+            GPU_HARDWARE_DRIVERS+=("${drv:-none}")
+        done
+        if ((${#GPU_HARDWARE_DEVICES[@]} > 0)); then
+            GPU_HARDWARE="${GPU_HARDWARE_DEVICES[0]}"
+            GPU_HARDWARE_DRIVER_IN_USE="${GPU_HARDWARE_DRIVERS[0]}"
+            GPU_HARDWARE_NOTE="recovery-host"
+        else
+            GPU_HARDWARE_NOTE="none-detected"
+        fi
+    else
+        GPU_HARDWARE_NOTE="target-only"
+    fi
+}
+
+# Which kernel modules are actually loaded (host scope) and which are
+# blacklisted (read from the target's modprobe.d, both scopes).
+gpu_loaded_module_evidence()
+{
+    local mod
+    local -a loaded=() blacklisted=()
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for mod in nvidia nouveau amdgpu radeon i915 xe; do
+            if [[ -d "/sys/module/$mod" ]] || grep -qw "$mod" /proc/modules 2>/dev/null; then
+                loaded+=("$mod")
+            fi
+        done
+    fi
+    if ((${#loaded[@]} > 0)); then
+        GPU_LOADED_MODULES="$(printf '%s\n' "${loaded[@]:-}" | LC_ALL=C sort -u | paste -sd, -)"
+    else
+        GPU_LOADED_MODULES="none"
+    fi
+
+    if [[ -d "$TARGET_ROOT/etc/modprobe.d" ]]; then
+        for mod in nvidia nouveau amdgpu radeon; do
+            if grep -rEilq "^[[:space:]]*blacklist[[:space:]]+${mod}([[:space:]]|$)" \
+                "$TARGET_ROOT/etc/modprobe.d" 2>/dev/null; then
+                blacklisted+=("$mod")
+            fi
+        done
+    fi
+    if ((${#blacklisted[@]} > 0)); then
+        GPU_BLACKLISTED_MODULES="$(printf '%s\n' "${blacklisted[@]:-}" | LC_ALL=C sort -u | paste -sd, -)"
+    else
+        GPU_BLACKLISTED_MODULES="none"
+    fi
+}
+
+# Installed driver packages via the detected package backend(s) (read-only).
+gpu_installed_driver_packages()
+{
+    local line status pkgver
+    local -a pkgs=()
+    if target_dpkg_detected; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            status="${line%% *}"
+            pkgver="${line#* }"
+            [[ "$status" == installed ]] || continue
+            [[ -n "$pkgver" ]] || continue
+            pkgs+=("$pkgver")
+        done < <(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            dpkg-query -W -f='${db:Status-Status} ${binary:Package}@${Version}\n' \
+            'nvidia-*' 'libnvidia-*' 'xserver-xorg-video-*' 'mesa-*' \
+            'libgl1-mesa-*' 'libglx-*' 'firmware-misc-nonfree' 'firmware-nvidia-gsp' \
+            2>/dev/null || true)
+    elif target_rpm_detected; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && pkgs+=("$line")
+        done < <(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            rpm -qa --qf '%{NAME}@%{VERSION}-%{RELEASE}\n' 2>/dev/null \
+            | grep -E '^(xorg-x11-drv-nvidia|akmod-nvidia|kmod-nvidia|xorg-x11-drv-nouveau|xorg-x11-drv-amdgpu|mesa-dri-drivers|mesa-libGL)' || true)
+    elif target_pacman_detected; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && pkgs+=("$line")
+        done < <(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            pacman -Q 2>/dev/null \
+            | grep -E '^(nvidia|nvidia-dkms|nvidia-open|mesa|lib32-mesa|xf86-video-amdgpu|xf86-video-nouveau|xf86-video-ati)' \
+            | sed 's/ /@/' || true)
+    elif target_apk_detected; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && pkgs+=("$line")
+        done < <(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            apk info -v 2>/dev/null \
+            | grep -E '^(xf86-video-|mesa-dri-|mesa-|linux-lts)' \
+            | legacy_sed_ext 's/-([0-9][0-9a-zA-Z._+-]*)$/@\1/' || true)
+    fi
+    if ((${#pkgs[@]} > 0)); then
+        GPU_INSTALLED_PKGS="$(printf '%s\n' "${pkgs[@]:-}" | LC_ALL=C sort -u | paste -sd, -)"
+    else
+        GPU_INSTALLED_PKGS="none"
+    fi
+}
+
+# Package-name view of GPU_INSTALLED_PKGS (one name per line, read-only).
+gpu_installed_package_names()
+{
+    local inst="${GPU_INSTALLED_PKGS:-}" item name
+    [[ "$inst" == none ]] && return 0
+    IFS=',' read -r -a _gpu_items <<<"$inst"
+    for item in "${_gpu_items[@]:-}"; do
+        name="${item%@*}"
+        name="${name//[[:space:]]/}"
+        [[ -n "$name" ]] && printf '%s\n' "$name"
+    done
+}
+
+# Map an installed driver package name to its driver family; unrelated packages
+# (mesa, xserver, firmware, display manager) map to empty and are never purged.
+# The mapping is package-name evidence across every supported backend (Debian/
+# Ubuntu apt/dpkg, Fedora rpm/dnf, Arch pacman, Alpine apk), never a
+# distribution-ID gate.
+gpu_package_family()
+{
+    case "$1" in
+        # Debian/Ubuntu (apt/dpkg) + Arch (pacman) + Alpine (apk) nvidia naming.
+        # nvidia-* covers nvidia-driver, nvidia-dkms, nvidia-open, nvidia-lts,
+        # nvidia-driver-bin, nvidia-kernel-dkms, ... ; `nvidia` is the bare
+        # Arch package name.
+        nvidia|nvidia-*|libnvidia-*|xserver-xorg-video-nvidia) printf 'nvidia\n' ;;
+        xserver-xorg-video-amdgpu|amdgpu-dkms|amdgpu-dkms-firmware) printf 'amdgpu\n' ;;
+        xserver-xorg-video-radeon) printf 'radeon\n' ;;
+        xserver-xorg-video-nouveau) printf 'nouveau\n' ;;
+        # Fedora/RHEL (rpm/dnf) naming.
+        akmod-nvidia|kmod-nvidia|xorg-x11-drv-nvidia) printf 'nvidia\n' ;;
+        xorg-x11-drv-amdgpu) printf 'amdgpu\n' ;;
+        xorg-x11-drv-ati) printf 'radeon\n' ;;
+        xorg-x11-drv-nouveau) printf 'nouveau\n' ;;
+        # Arch (pacman) + Alpine (apk) xf86 naming.
+        xf86-video-amdgpu) printf 'amdgpu\n' ;;
+        xf86-video-ati) printf 'radeon\n' ;;
+        xf86-video-nouveau) printf 'nouveau\n' ;;
+        *) printf '' ;;
+    esac
+}
+
+# Weak evidence hint (source=oem-flavour): true when the installed nvidia
+# package set is a vendor/open/HWE/selected build rather than the plain generic
+# nvidia-driver + nvidia-kernel-dkms + nvidia-utils set.  Recognized families:
+#   * TUXEDO: nvidia-driver-bin / nvidia-open-kernel-dkms, or any nvidia/
+#     libnvidia package carrying the -tux build suffix;
+#   * Ubuntu/Debian OEM/HWE open flavour: nvidia-driver-<major>-open or an
+#     open nvidia-kernel-* package;
+#   * ubuntu-drivers-common-selected driver: a versioned nvidia-driver-<major>
+#     meta installed while ubuntu-drivers-common is present.
+# This is a hint only and never a gate by itself: the hardware-PCI-ID and
+# backend-recommends paths remain the primary, generic decisions.
+gpu_oem_nvidia_flavour_detected()
+{
+    local inst="${GPU_INSTALLED_PKGS:-}" item name ver
+    local versioned_meta=""
+    IFS=',' read -r -a _gpu_oem_items <<<"$inst"
+    for item in "${_gpu_oem_items[@]:-}"; do
+        [[ -n "$item" ]] || continue
+        name="${item%@*}"
+        name="${name//[[:space:]]/}"
+        ver="${item#*@}"
+        ver="${ver//[[:space:]]/}"
+        case "$name" in
+            nvidia-driver-bin|nvidia-open-kernel-dkms) return 0 ;;
+            nvidia-driver-[0-9]*-open|nvidia-driver-[0-9]*-open-*) return 0 ;;
+            nvidia-kernel-source-[0-9]*-open|nvidia-kernel-common-[0-9]*-open) return 0 ;;
+            nvidia-driver-[0-9]*) versioned_meta="$name" ;;
+        esac
+        if [[ "$name" == nvidia-* || "$name" == libnvidia-* ]] \
+            && [[ "$ver" == *tux* ]]; then
+            return 0
+        fi
+    done
+    if [[ -n "$versioned_meta" ]] \
+        && ( target_dpkg_package_installed ubuntu-drivers-common \
+             || target_has_executable /usr/bin/ubuntu-drivers /usr/sbin/ubuntu-drivers ); then
+        return 0
+    fi
+    return 1
+}
+
+# Expected driver derived in order: hardware PCI ID, OEM/HWE nvidia flavour,
+# backend recommends, installed-set evidence.  Returns an empty string when no
+# driver can be derived (fail closed).
+gpu_expected_driver()
+{
+    local vendor driver inst
+    GPU_EXPECTED=""
+    GPU_EXPECTED_SOURCE=""
+    GPU_OEM_FLAVOUR="none"
+    if [[ "$TARGET_OS_ID" == tuxedo ]] || target_dpkg_package_installed tuxedoos-desktop; then
+        GPU_OEM_FLAVOUR="tuxedo"
+    elif target_dpkg_package_installed ubuntu-drivers-common \
+        || target_has_executable /usr/bin/ubuntu-drivers /usr/sbin/ubuntu-drivers; then
+        GPU_OEM_FLAVOUR="ubuntu-oem"
+    fi
+
+    if [[ -n "$GPU_HARDWARE" ]]; then
+        vendor="${GPU_HARDWARE%%:*}"
+        driver="$(gpu_pciid_to_driver "$vendor")"
+        if [[ -n "$driver" ]]; then
+            GPU_EXPECTED="$driver"
+            GPU_EXPECTED_SOURCE="hardware-pciid"
+            return 0
+        fi
+    fi
+
+    inst="${GPU_INSTALLED_PKGS:-}"
+    # OEM/HWE/open nvidia flavour: the target ships its own (or a vendor/open)
+    # nvidia driver.  The installed package evidence is authoritative here,
+    # before the standard nvidia-driver meta is consulted, so the OEM build is
+    # never mistaken for a generic "standard open nvidia" package set.
+    if gpu_oem_nvidia_flavour_detected; then
+        GPU_EXPECTED="nvidia"
+        GPU_EXPECTED_SOURCE="oem-flavour"
+        return 0
+    fi
+    # Backend-provided NVIDIA meta package availability, then installed-set
+    # evidence (never used to guess a driver the target does not name).
+    if run_selected_chroot /usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        apt-cache show nvidia-driver >/dev/null 2>&1 \
+        && { [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; }; then
+        GPU_EXPECTED="nvidia"
+        GPU_EXPECTED_SOURCE="backend-recommends"
+        return 0
+    fi
+    if [[ "$inst" == *xserver-xorg-video-amdgpu* || "$inst" == *amdgpu* ]]; then
+        GPU_EXPECTED="amdgpu"
+        GPU_EXPECTED_SOURCE="backend-recommends"
+        return 0
+    fi
+    if [[ "$inst" == *xserver-xorg-video-nouveau* ]]; then
+        GPU_EXPECTED="nouveau"
+        GPU_EXPECTED_SOURCE="backend-recommends"
+        return 0
+    fi
+    if [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; then
+        GPU_EXPECTED="nvidia"
+        GPU_EXPECTED_SOURCE="backend-recommends"
+        return 0
+    fi
+    if [[ "$inst" == *mesa-* || "$inst" == *libgl1-mesa-* ]]; then
+        GPU_EXPECTED="mesa"
+        GPU_EXPECTED_SOURCE="backend-recommends"
+        return 0
+    fi
+    GPU_EXPECTED=""
+}
+
+# Driver module name for the expected driver (empty when none/mesa).
+gpu_expected_module_name()
+{
+    case "${GPU_EXPECTED:-}" in
+        nvidia)  printf 'nvidia\n' ;;
+        amdgpu)  printf 'amdgpu\n' ;;
+        radeon)  printf 'radeon\n' ;;
+        nouveau) printf 'nouveau\n' ;;
+        i915)    printf 'i915\n' ;;
+        *)       printf '' ;;
+    esac
+}
+
+# True when the driver module for <kver> is present anywhere under its module
+# tree (read-only).
+gpu_module_present()
+{
+    local kver="$1" mod="$2" base p
+    for base in /lib/modules /usr/lib/modules; do
+        for p in \
+            "$TARGET_ROOT$base/$kver/kernel/drivers/gpu/drm/$mod/$mod.ko" \
+            "$TARGET_ROOT$base/$kver/updates/dkms/$mod.ko" \
+            "$TARGET_ROOT$base/$kver/extra/$mod.ko" \
+            "$TARGET_ROOT$base/$kver/updates/$mod.ko"; do
+            [[ -f "$p" ]] && return 0
+        done
+    done
+    return 1
+}
+
+# True when a built DKMS module artifact for the GPU driver is present for
+# <kver> (read-only).  TUXEDO names its DKMS modules nvidia-current-open
+# (-drm/-modeset/-uvm/-peermem) and tuxedo-drivers, not the bare `nvidia`, so
+# this globs the kernel's updates/dkms tree for any nvidia/tuxedo *.ko* instead
+# of hard-coding nvidia.ko.
+gpu_dkms_module_present()
+{
+    local kver="$1" base d
+    for base in /lib/modules /usr/lib/modules; do
+        d="$TARGET_ROOT$base/$kver/updates/dkms"
+        [[ -d "$d" ]] || continue
+        if find "$d" -maxdepth 1 -type f \
+            \( -name 'nvidia*.ko*' -o -name 'tuxedo*.ko*' \) -print -quit 2>/dev/null \
+            | grep -q .; then
+            return 0
+        fi
+    done
+    return 1
+}
+
+# Per-kernel DKMS build status: built (module present), failed (dkms status
+# reports a build failure) or absent (module directory exists, no module).
+gpu_dkms_build_status()
+{
+    GPU_DKMS_BUILD_STATUS=""
+    local kver mod status dkms_status=""
+    local -a parts=()
+    mod="$(gpu_expected_module_name)"
+    if [[ -n "$mod" ]] && target_has_executable /usr/bin/dkms /usr/sbin/dkms; then
+        run_chroot_try "$(msg inspect-dkms-state-gpu)" dkms status >/dev/null
+        dkms_status="${CHROOT_TRY_OUTPUT:-}"
+    fi
+    while IFS= read -r kver; do
+        [[ -n "$kver" ]] || continue
+        status="absent"
+        if [[ -n "$mod" ]] && gpu_module_present "$kver" "$mod"; then
+            status="built"
+        elif [[ "$mod" == nvidia ]] && gpu_dkms_module_present "$kver"; then
+            status="built"
+        elif [[ -n "$dkms_status" ]] \
+            && grep -Eiq "${kver}.*(bad exit status|failed|FAILED|error)" <<<"$dkms_status"; then
+            status="failed"
+        fi
+        parts+=("$kver=$status")
+    done < <(installed_kernel_versions)
+    if ((${#parts[@]} > 0)); then
+        GPU_DKMS_BUILD_STATUS="$(printf '%s, ' "${parts[@]:-}")"
+        GPU_DKMS_BUILD_STATUS="${GPU_DKMS_BUILD_STATUS%, }"
+    else
+        GPU_DKMS_BUILD_STATUS="none"
+    fi
+}
+
+# Installed vs loaded vs expected correlation verdict (read-only).
+gpu_driver_mismatch_evidence()
+{
+    GPU_MISMATCH=""
+    GPU_MISMATCH_REASON=""
+    local expected="${GPU_EXPECTED:-}" inst="${GPU_INSTALLED_PKGS:-}" loaded="${GPU_LOADED_MODULES:-}"
+    [[ -z "$expected" ]] && return 0
+    case "$expected" in
+        nvidia)
+            if [[ "$loaded" == *nouveau* ]] && [[ "$loaded" != *nvidia* ]]; then
+                GPU_MISMATCH="nvidia vs nouveau"
+                GPU_MISMATCH_REASON="expected nvidia but only nouveau is loading"
+            elif [[ "$inst" == *xserver-xorg-video-nouveau* ]] && [[ "$inst" != *nvidia-driver* && "$inst" != *nvidia-kernel* ]]; then
+                GPU_MISMATCH="nvidia vs nouveau"
+                GPU_MISMATCH_REASON="expected nvidia but the installed driver is nouveau"
+            fi
+            # A correct nvidia driver whose DKMS module is not built for one or
+            # more kernels is reported by `GPU DKMS build status` (=absent or
+            # =failed), never as a driver mismatch: that is a "rebuild DKMS"
+            # situation, not a wrong-driver situation.
+            ;;
+        amdgpu|radeon)
+            if [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; then
+                GPU_MISMATCH="$expected vs nvidia"
+                GPU_MISMATCH_REASON="expected $expected but nvidia is installed"
+            elif [[ "$inst" == *xserver-xorg-video-nouveau* ]]; then
+                GPU_MISMATCH="$expected vs nouveau"
+                GPU_MISMATCH_REASON="expected $expected but nouveau is installed"
+            fi
+            ;;
+        nouveau)
+            if [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; then
+                GPU_MISMATCH="nouveau vs nvidia"
+                GPU_MISMATCH_REASON="expected nouveau but nvidia is installed"
+            fi
+            ;;
+    esac
+}
+
+# Shared boot-failure classification: the canonical "how far did this boot get"
+# evidence, emitted by diagnostic_errors and consumed by the GPU capability
+# gate.  Reads the existing session journal cache (never spawns a fresh
+# journalctl) and sets BOOT_REACHED plus BOOT_FAILURE_MARKERS once per helper
+# session.  Read-only: no target probe mutates anything.
+BOOT_REACHED="grub"
+BOOT_FAILURE_MARKERS=""
+BOOT_FAILURE_CLASSIFIED=0
+
+boot_failure_classification()
+{
+    (( BOOT_FAILURE_CLASSIFIED == 1 )) && return 0
+    BOOT_REACHED="grub"
+    BOOT_FAILURE_MARKERS=""
+    local journal=""
+    local -a markers=()
+    if [[ "$(target_logging_backend)" == journald ]] && command -v journalctl >/dev/null 2>&1; then
+        journal="$(journal_cached_window_lines 1600 | journal_boot_relevant_filter 2>/dev/null || true)"
+    elif non_journald_log_fallback_ready; then
+        journal="$(non_systemd_raw_log_lines 2>/dev/null || true)"
+    fi
+    [[ -n "$journal" ]] || { BOOT_FAILURE_CLASSIFIED=1; return 0; }
+
+    # How far the boot reached (highest marker wins; default grub).
+    if grep -Eiq 'kwin_x11|gnome-shell|plasmashell|Reached target Graphical Interface' <<<"$journal"; then
+        BOOT_REACHED="desktop"
+    elif grep -Eiq 'Started .*Display Manager|Started Simple Desktop Display Manager' <<<"$journal"; then
+        BOOT_REACHED="login-manager"
+    elif grep -Eiq 'Reached target Multi-User System|Started Login Service' <<<"$journal"; then
+        BOOT_REACHED="tty"
+    elif grep -Eiq 'Command line:|Booting Linux|Linux version' <<<"$journal"; then
+        BOOT_REACHED="kernel"
+    fi
+
+    # Failure markers (comma-separated, empty when none).
+    if grep -Eiq 'emergency\.target|You are in emergency mode|Welcome to emergency mode|Started Emergency Shell|emergency mode' <<<"$journal"; then
+        markers+=("emergency-shell")
+    fi
+    if grep -Eiq 'rescue\.target|Started Rescue Shell|Welcome to rescue mode|You are in rescue mode|rescue mode' <<<"$journal"; then
+        markers+=("rescue")
+    fi
+    if grep -Eiq 'nomodeset|safe graphics|failsafe' <<<"$journal"; then
+        markers+=("graphics-save-mode")
+    fi
+    if [[ "$BOOT_REACHED" == tty ]]; then
+        markers+=("tty-only")
+    fi
+
+    if (( ${#markers[@]} > 0 )); then
+        BOOT_FAILURE_MARKERS="$(printf '%s\n' "${markers[@]:-}" | LC_ALL=C sort -u | paste -sd, -)"
+    fi
+    BOOT_FAILURE_CLASSIFIED=1
+    return 0
+}
+
+# Count of actionable journal driver-error lines (read-only).
+gpu_journal_correlation()
+{
+    GPU_JOURNAL_ERRORS="0"
+    local journal="" count=0
+    if [[ "$(target_logging_backend)" == journald ]] && command -v journalctl >/dev/null 2>&1; then
+        journal="$(journal_cached_window_lines 1600 | journal_boot_relevant_filter 2>/dev/null || true)"
+    elif non_journald_log_fallback_ready; then
+        journal="$(non_systemd_raw_log_lines 2>/dev/null | syslog_non_user_filter 2>/dev/null || true)"
+    fi
+    [[ -n "$journal" ]] || return 0
+    count="$(printf '%s\n' "$journal" \
+        | grep -Ei 'NVRM|nvidia|nouveau|drm|kwin|gnome-shell|amdgpu|radeon|Xorg' \
+        | grep -iE 'error|failed|segfault|tainted|unknown chipset|no such device' \
+        | journal_current_boot_actionable \
+        | collapse_similar_journal_lines \
+        | grep -c . || true)"
+    GPU_JOURNAL_ERRORS="$count"
+}
+
+# Populate every GPU_* global from read-only evidence.  Shared by the
+# diagnostic, the capability gate and the repair preflight so they cannot drift.
+gpu_collect_evidence()
+{
+    (( GPU_EVIDENCE_COLLECTED == 1 )) && return 0
+    profile_target_backends
+    gpu_hardware_evidence
+    gpu_loaded_module_evidence
+    gpu_installed_driver_packages
+    gpu_expected_driver
+    gpu_dkms_build_status
+    gpu_driver_mismatch_evidence
+    gpu_journal_correlation
+    GPU_EVIDENCE_COLLECTED=1
+}
+
+# Reconstruct every GPU_* global from the cached `gpu` diagnostic section (the
+# exact lines diagnostic_gpu emits), so the interactive GPU repair menu consumes
+# the single cached source of truth instead of re-collecting.  GPU_BASELINE_B64
+# holds the base64-serialized section (set by parse_repair_arguments from
+# --gpu-baseline).  Fails closed when the baseline is absent, undecodable or
+# empty.  Read-only: no target probe is run here.
+parse_cached_gpu_inventory()
+{
+    local line rest v drv
+    local baseline=""
+
+    if [[ -z "${GPU_BASELINE_B64:-}" ]]; then
+        fail "Run the GPU diagnostic before starting the GPU repair (no cached GPU baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$GPU_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached GPU baseline could not be decoded; run the GPU diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached GPU baseline is empty; run the GPU diagnostic again."
+
+    GPU_HARDWARE=""
+    GPU_HARDWARE_NOTE=""
+    GPU_HARDWARE_DRIVER_IN_USE=""
+    GPU_HARDWARE_DEVICES=()
+    GPU_HARDWARE_DRIVERS=()
+    GPU_LOADED_MODULES=""
+    GPU_BLACKLISTED_MODULES=""
+    GPU_INSTALLED_PKGS=""
+    GPU_EXPECTED=""
+    GPU_EXPECTED_SOURCE=""
+    GPU_OEM_FLAVOUR=""
+    GPU_MISMATCH=""
+    GPU_MISMATCH_REASON=""
+    GPU_DKMS_BUILD_STATUS=""
+    GPU_JOURNAL_ERRORS="0"
+    GPU_EVIDENCE_COLLECTED=0
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            "GPU hardware: "*)
+                # "<vendor:device> (<subvendor:subdevice>) [driver-in-use=<drv>]"
+                rest="${line#GPU hardware: }"
+                v="${rest%% \[driver-in-use=*}"
+                drv="${rest#*\[driver-in-use=}"; drv="${drv%\]}"
+                [[ -n "$v" ]] || continue
+                GPU_HARDWARE_DEVICES+=("$v")
+                GPU_HARDWARE_DRIVERS+=("${drv:-none}")
+                ;;
+            "GPU hardware note: "*)
+                GPU_HARDWARE_NOTE="${line#GPU hardware note: }"
+                ;;
+            "GPU kernel module loaded: "*)
+                GPU_LOADED_MODULES="${line#GPU kernel module loaded: }"
+                ;;
+            "GPU kernel module blacklisted: "*)
+                GPU_BLACKLISTED_MODULES="${line#GPU kernel module blacklisted: }"
+                ;;
+            "GPU installed driver packages: "*)
+                GPU_INSTALLED_PKGS="${line#GPU installed driver packages: }"
+                ;;
+            "GPU expected driver: "*)
+                rest="${line#GPU expected driver: }"
+                v="${rest%% *}"
+                drv="${rest#*(source=}"; drv="${drv%)}"
+                [[ "$v" != none ]] && GPU_EXPECTED="$v" || GPU_EXPECTED=""
+                [[ "$drv" != unknown ]] && GPU_EXPECTED_SOURCE="$drv" || GPU_EXPECTED_SOURCE=""
+                ;;
+            "GPU OEM flavour: "*)
+                GPU_OEM_FLAVOUR="${line#GPU OEM flavour: }"
+                ;;
+            "GPU driver mismatch: "*)
+                rest="${line#GPU driver mismatch: }"
+                if [[ "$rest" == none ]]; then
+                    GPU_MISMATCH=""
+                    GPU_MISMATCH_REASON=""
+                else
+                    GPU_MISMATCH="${rest%% \(reason=*}"
+                    GPU_MISMATCH_REASON="${rest#*(reason=}"; GPU_MISMATCH_REASON="${GPU_MISMATCH_REASON%)}"
+                fi
+                ;;
+            "GPU DKMS build status: "*)
+                GPU_DKMS_BUILD_STATUS="${line#GPU DKMS build status: }"
+                ;;
+            "GPU journal errors: "*)
+                v="${line#GPU journal errors: }"
+                GPU_JOURNAL_ERRORS="${v%% *}"
+                ;;
+        esac
+    done <<<"$baseline"
+
+    # The first device backs the legacy scalar pair (the capability gate and the
+    # menu summary read GPU_HARDWARE/GPU_HARDWARE_DRIVER_IN_USE).
+    if ((${#GPU_HARDWARE_DEVICES[@]} > 0)); then
+        GPU_HARDWARE="${GPU_HARDWARE_DEVICES[0]}"
+        GPU_HARDWARE_DRIVER_IN_USE="${GPU_HARDWARE_DRIVERS[0]:-none}"
+    fi
+}
+
+# Top-level read-only diagnostic section.  Never writes to the target.
+diagnostic_gpu()
+{
+    gpu_collect_evidence
+    # Emit every class-03 device, one line per device, so a hybrid (multi-GPU)
+    # stack's full hardware inventory survives into the cached section the GPU
+    # repair baseline parses.  GPU_HARDWARE_DEVICES/GPU_HARDWARE_DRIVERS are the
+    # parallel arrays gpu_hardware_evidence populates; the first pair backs the
+    # legacy GPU_HARDWARE/GPU_HARDWARE_DRIVER_IN_USE scalars.
+    local i
+    for i in "${!GPU_HARDWARE_DEVICES[@]}"; do
+        printf 'GPU hardware: %s [driver-in-use=%s]\n' \
+            "${GPU_HARDWARE_DEVICES[$i]}" "${GPU_HARDWARE_DRIVERS[$i]:-none}"
+    done
+    printf 'GPU hardware note: %s\n' "$GPU_HARDWARE_NOTE"
+    printf 'GPU kernel module loaded: %s\n' "$GPU_LOADED_MODULES"
+    printf 'GPU kernel module blacklisted: %s\n' "$GPU_BLACKLISTED_MODULES"
+    printf 'GPU installed driver packages: %s\n' "$GPU_INSTALLED_PKGS"
+    printf 'GPU expected driver: %s (source=%s)\n' "${GPU_EXPECTED:-none}" "${GPU_EXPECTED_SOURCE:-unknown}"
+    printf 'GPU OEM flavour: %s\n' "$GPU_OEM_FLAVOUR"
+    if [[ -n "$GPU_MISMATCH" ]]; then
+        printf 'GPU driver mismatch: %s (reason=%s)\n' "$GPU_MISMATCH" "$GPU_MISMATCH_REASON"
+    else
+        printf 'GPU driver mismatch: none\n'
+    fi
+    printf 'GPU DKMS build status: %s\n' "$GPU_DKMS_BUILD_STATUS"
+    printf 'GPU journal errors: %s actionable lines\n' "$GPU_JOURNAL_ERRORS"
+}
+
+# Capability gate for the `gpu` repair key.  Fail closed: absent evidence never
+# makes `gpu` available.
+gpu_unavailable_reason()
+{
+    local -a applicable=()
+    local expected inst
+    gpu_collect_evidence
+    boot_failure_classification
+    expected="${GPU_EXPECTED:-}"
+    inst="${GPU_INSTALLED_PKGS:-}"
+    legacy_readarray -t applicable < <(package_stage_backends fix-broken)
+    if ((${#applicable[@]} == 0)); then
+        reason no-package-backend "${TARGET_PACKAGE_MANAGERS[*]:-none}"
+        return 1
+    fi
+    if [[ "$expected" == nvidia ]] && is_alpine_family; then
+        reason alpine-nvidia-unsupported
+        return 1
+    fi
+    if ((${#GPU_HARDWARE_DEVICES[@]} > 1)); then
+        reason gpu-hybrid-ambiguous
+        return 1
+    fi
+    if [[ "$GPU_HARDWARE_NOTE" == none-detected ]] \
+        && [[ "$GPU_LOADED_MODULES" == none ]] \
+        && [[ "$inst" == none ]] \
+        && [[ "$GPU_JOURNAL_ERRORS" == 0 ]]; then
+        reason no-gpu-hardware
+        return 1
+    fi
+    if [[ -z "$expected" ]]; then
+        reason gpu-driver-unknown
+        return 1
+    fi
+    # A correct driver whose DKMS module is not built (or failed to build) for
+    # a kernel is still an actionable "rebuild DKMS" situation, so it keeps the
+    # stage available even though it is not a driver mismatch.
+    local dkms_actionable=false
+    if [[ "$GPU_DKMS_BUILD_STATUS" == *failed* || "$GPU_DKMS_BUILD_STATUS" == *absent* ]]; then
+        dkms_actionable=true
+    fi
+    if [[ -z "$GPU_MISMATCH" ]] && [[ "$dkms_actionable" != true ]] \
+        && [[ "$BOOT_REACHED" != tty && "$BOOT_REACHED" != grub && "$BOOT_REACHED" != kernel ]]; then
+        reason no-gpu-mismatch
+        return 1
+    fi
+    if [[ "$expected" == nvidia ]] && ! target_apt_sources_present \
+        && [[ "$inst" != *nvidia-driver* && "$inst" != *nvidia-kernel* ]]; then
+        reason nvidia-dkms-requires-network
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Guarded GPU driver repair (Debian/TUXEDO apt/dpkg only)
+# ---------------------------------------------------------------------------
+# Each primitive is a small simulation-first mutation with its own rollback and
+# an `Repair change status gpu:<step>:` line.  The GUI drives them one at a time
+# through the §4.4 decision tree; `adaptive_gpu_repair` below runs the complete
+# purge -> install -> blacklist -> dkms -> initramfs -> bootloader sequence for
+# the Full Repair plan.
+
+# Prepare the GPU evidence for one repair action.  With a cached baseline
+# (interactive GUI session) the read-only evidence is parsed from the cached
+# `gpu` diagnostic section, then the safety-critical driver decision is
+# re-derived fresh (hardware + installed packages + expected driver + mismatch)
+# and compared against the baseline: a changed expected driver fails closed
+# before any mutation, so a stale baseline can never drive a wrong-driver purge.
+# The concrete package list is re-verified separately by each guarded apt
+# simulation + apt_simulation_is_safe in the purge action.  Without a baseline
+# (direct CLI invocation) the evidence is collected fresh.
+gpu_repair_prepare_evidence()
+{
+    if [[ -n "${GPU_BASELINE_B64:-}" ]]; then
+        parse_cached_gpu_inventory
+        local baseline_expected="${GPU_EXPECTED:-}"
+        # Re-derive the driver decision from the then-current target state.
+        GPU_EVIDENCE_COLLECTED=0
+        gpu_hardware_evidence
+        gpu_installed_driver_packages
+        gpu_expected_driver
+        gpu_driver_mismatch_evidence
+        [[ "${GPU_EXPECTED:-}" == "$baseline_expected" ]] \
+            || fail "The expected GPU driver changed from $baseline_expected to ${GPU_EXPECTED:-} since the diagnostic; run the GPU diagnostic again before repairing."
+    else
+        gpu_collect_evidence
+    fi
+}
+
+# The proven-wrong driver package set to purge (never mesa/xserver/kernel/DM).
+gpu_wrong_driver_packages()
+{
+    local expected="${GPU_EXPECTED:-}" pkg family
+    local -a wrong=()
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        family="$(gpu_package_family "$pkg")"
+        [[ -n "$family" ]] || continue
+        [[ "$family" == "$expected" ]] && continue
+        wrong+=("$pkg")
+    done < <(gpu_installed_package_names)
+    printf '%s\n' "${wrong[@]:-}" | LC_ALL=C sort -u
+}
+
+# The package backend a GPU driver install should target: the first detected
+# backend (TARGET_PACKAGE_MANAGERS, native-first) that can install GPU driver
+# packages.  Evidence-driven, never a distribution-ID gate.
+gpu_install_backend()
+{
+    local b
+    for b in "${TARGET_PACKAGE_MANAGERS[@]:-}"; do
+        case "$b" in
+            apt/dpkg|rpm|pacman|apk) printf '%s\n' "$b"; return 0 ;;
+        esac
+    done
+    return 1
+}
+
+# The proven OEM nvidia package set (the installed nvidia-family packages) to
+# reinstall when the OEM/HWE/open flavour is the expected driver.  Evidence
+# reuse, never a guess: only nvidia-family packages present in the installed-set
+# evidence are returned.  Returns 1 when no such package is present.
+gpu_oem_nvidia_package_set()
+{
+    local inst="${GPU_INSTALLED_PKGS:-}" item name
+    local -a pkgs=()
+    IFS=',' read -r -a _gpu_oem_set_items <<<"$inst"
+    for item in "${_gpu_oem_set_items[@]:-}"; do
+        [[ -n "$item" ]] || continue
+        name="${item%@*}"
+        name="${name//[[:space:]]/}"
+        [[ -n "$name" ]] || continue
+        case "$name" in
+            nvidia-*|libnvidia-*|xserver-xorg-video-nvidia) pkgs+=("$name") ;;
+        esac
+    done
+    ((${#pkgs[@]} > 0)) || return 1
+    printf '%s\n' "${pkgs[@]:-}" | LC_ALL=C sort -u
+}
+
+# The generic Debian/Ubuntu nvidia driver meta: a versioned nvidia-driver-<major>
+# meta when one is already installed (evidence), otherwise the unversioned
+# nvidia-driver meta.
+gpu_apt_nvidia_driver_set()
+{
+    local inst="${GPU_INSTALLED_PKGS:-}" item name meta="nvidia-driver"
+    IFS=',' read -r -a _gpu_apt_meta_items <<<"$inst"
+    for item in "${_gpu_apt_meta_items[@]:-}"; do
+        [[ -n "$item" ]] || continue
+        name="${item%@*}"
+        name="${name//[[:space:]]/}"
+        case "$name" in
+            nvidia-driver-[0-9]*) meta="$name"; break ;;
+        esac
+    done
+    printf '%s nvidia-kernel-dkms nvidia-utils\n' "$meta"
+}
+
+# The correct driver package set to install for the expected driver, selected
+# from the detected package backend (TARGET_PACKAGE_MANAGERS) and the OEM
+# flavour — never from the distribution ID alone.  Fails closed: prints nothing
+# when no concrete package set can be derived from evidence (the reason is
+# reported by gpu_package_set_unavailable_reason()).
+gpu_correct_driver_packages()
+{
+    local expected="${GPU_EXPECTED:-}" backend=""
+    backend="$(gpu_install_backend)" || return 0
+
+    case "$expected" in
+        nvidia)
+            # Alpine's main repository has no proprietary NVIDIA DKMS driver:
+            # keep the fail-closed behaviour the capability gate reports.
+            [[ "$backend" == apk ]] && return 0
+            # OEM/HWE/open nvidia flavour: reinstall the proven OEM set instead
+            # of substituting a generic closed-driver meta.
+            if [[ "$backend" == apt/dpkg ]] && gpu_oem_nvidia_flavour_detected; then
+                gpu_oem_nvidia_package_set || return 0
+                return 0
+            fi
+            case "$backend" in
+                apt/dpkg) gpu_apt_nvidia_driver_set ;;
+                rpm)      printf 'akmod-nvidia xorg-x11-drv-nvidia\n' ;;
+                pacman)   printf 'nvidia nvidia-utils\n' ;;
+                *)        return 0 ;;
+            esac
+            ;;
+        amdgpu)
+            case "$backend" in
+                apt/dpkg) printf 'xserver-xorg-video-amdgpu mesa-vulkan-drivers\n' ;;
+                rpm)      printf 'xorg-x11-drv-amdgpu mesa-dri-drivers\n' ;;
+                pacman)   printf 'xf86-video-amdgpu mesa\n' ;;
+                apk)      printf 'xf86-video-amdgpu mesa-dri-gallium\n' ;;
+                *)        return 0 ;;
+            esac
+            ;;
+        nouveau)
+            case "$backend" in
+                apt/dpkg) printf 'xserver-xorg-video-nouveau\n' ;;
+                rpm)      printf 'xorg-x11-drv-nouveau\n' ;;
+                pacman|apk) printf 'xf86-video-nouveau\n' ;;
+                *)        return 0 ;;
+            esac
+            ;;
+        radeon)
+            case "$backend" in
+                apt/dpkg) printf 'xserver-xorg-video-radeon\n' ;;
+                rpm)      printf 'xorg-x11-drv-ati\n' ;;
+                pacman|apk) printf 'xf86-video-ati\n' ;;
+                *)        return 0 ;;
+            esac
+            ;;
+        *)
+            return 0
+            ;;
+    esac
+}
+
+# The stable reason key for the case where gpu_correct_driver_packages()
+# produced no package set.  Read-only and deterministic, so the caller may
+# re-derive it in its own shell (the package function runs in a command
+# substitution and cannot surface a reason through a global).
+gpu_package_set_unavailable_reason()
+{
+    local expected="${GPU_EXPECTED:-}" backend=""
+    backend="$(gpu_install_backend)" || { printf 'no-package-backend\n'; return 0; }
+    case "$expected" in
+        nvidia)
+            [[ "$backend" == apk ]] && { printf 'alpine-nvidia-unsupported\n'; return 0; }
+            ;;
+        amdgpu|nouveau|radeon) ;;
+        *)
+            printf 'gpu-driver-unknown\n'
+            return 0
+            ;;
+    esac
+    printf 'gpu-package-set-unknown\n'
+}
+
+# The conflicting module to blacklist for the chosen stack.
+gpu_conflicting_module()
+{
+    case "${GPU_EXPECTED:-}" in
+        nvidia)  printf 'nouveau\n' ;;
+        nouveau) printf 'nvidia\n' ;;
+        *)       printf '' ;;
+    esac
+}
+
+# Backup the package/modprobe state the gpu stage may touch.
+gpu_backup_state()
+{
+    local backup="$SESSION_DIR/gpu-backup"
+    rm -rf -- "$backup"
+    mkdir -p -- "$backup/etc/modprobe.d" || return 1
+    if target_has_executable /usr/bin/dpkg /usr/sbin/dpkg /bin/dpkg; then
+        run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+            dpkg --get-selections > "$backup/dpkg-selections" 2>/dev/null || true
+    fi
+    if [[ -d "$TARGET_ROOT/etc/modprobe.d" ]]; then
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            cp -a -- "$f" "$backup/etc/modprobe.d/${f##*/}" 2>/dev/null || true
+        done < <(find "$TARGET_ROOT/etc/modprobe.d" -maxdepth 1 -type f 2>/dev/null)
+    fi
+    [[ -f "$TARGET_ROOT/etc/X11/xorg.conf" ]] && cp -a -- "$TARGET_ROOT/etc/X11/xorg.conf" "$backup/xorg.conf" 2>/dev/null || true
+    msg_log gpu-backup-state "$backup"
+    return 0
+}
+
+# Restore the backed-up package/modprobe state on failure.
+gpu_restore_state()
+{
+    local backup="$SESSION_DIR/gpu-backup"
+    [[ -d "$backup" ]] || return 1
+    if [[ -f "$backup/dpkg-selections" ]] && target_has_executable /usr/bin/dpkg /usr/sbin/dpkg /bin/dpkg; then
+        run_chroot_try_display "$(msg restore-gpu-package-selections)" \
+            dpkg --set-selections < "$backup/dpkg-selections" >/dev/null
+    fi
+    if [[ -d "$backup/etc/modprobe.d" ]]; then
+        mkdir -p -- "$TARGET_ROOT/etc/modprobe.d" || return 1
+        while IFS= read -r f; do
+            [[ -n "$f" ]] || continue
+            cp -a -- "$f" "$TARGET_ROOT/etc/modprobe.d/${f##*/}" 2>/dev/null || true
+        done < <(find "$backup/etc/modprobe.d" -maxdepth 1 -type f 2>/dev/null)
+    fi
+    msg_log gpu-restore-state "$backup"
+    return 0
+}
+
+# Simulation-first apt purge of the wrong driver set with rollback.
+repair_gpu_purge_wrong_driver()
+{
+    gpu_repair_prepare_evidence
+    local -a wrong=()
+    legacy_readarray -t wrong < <(gpu_wrong_driver_packages)
+    if ((${#wrong[@]} == 0)); then
+        repair_change_status "gpu:purge-wrong-driver" "unchanged|$(reason gpu-no-wrong-driver)"
+        return 0
+    fi
+    [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]] || fail "apt-get is unavailable; cannot purge the wrong driver."
+    msg_log gpu-purge-plan "${wrong[*]}"
+    gpu_backup_state
+    local output sim_rc
+    set +e
+    output="$(run_selected_chroot /usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+        apt-get -s -o Debug::NoLocking=1 remove --purge "${wrong[@]:-}" 2>&1)"
+    sim_rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    msg_log simulation-exit-code "remove --purge (gpu)" "$sim_rc"
+    (( sim_rc == 0 )) || { gpu_restore_state || true; fail "The simulated driver purge failed with exit code $sim_rc."; }
+    apt_simulation_is_safe "$output" || { gpu_restore_state || true; fail "The simulated driver purge was rejected by Boot Bitch safety policy."; }
+    if apt_transaction_reported_no_changes "$output"; then
+        repair_change_status "gpu:purge-wrong-driver" "unchanged|$(reason gpu-purge-no-changes)"
+        return 0
+    fi
+    run_chroot_try_display "$(msg purge-wrong-gpu-driver)" apt-get -y remove --purge "${wrong[@]:-}"
+    (( CHROOT_TRY_RC == 0 )) || { gpu_restore_state || true; fail "Driver purge failed with exit code $CHROOT_TRY_RC."; }
+    repair_change_status "gpu:purge-wrong-driver" changed
+}
+
+# Install the correct driver set (simulation-first).
+repair_gpu_install_correct_driver()
+{
+    gpu_repair_prepare_evidence
+    local -a correct=()
+    read -r -a correct <<<"$(gpu_correct_driver_packages)"
+    if ((${#correct[@]} == 0)); then
+        repair_change_status "gpu:install-correct-driver" "unchanged|$(reason "$(gpu_package_set_unavailable_reason)")"
+        return 0
+    fi
+    msg_log gpu-install-plan "${correct[*]}"
+    safe_apt_install_packages "Install the correct GPU driver" no "${correct[@]:-}"
+    repair_change_status "gpu:install-correct-driver" changed
+}
+
+# Write the blacklist for the conflicting module (fingerprint + rollback).
+repair_gpu_blacklist_module()
+{
+    gpu_repair_prepare_evidence
+    local conflicting="$(gpu_conflicting_module)"
+    if [[ -z "$conflicting" ]]; then
+        repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-no-blacklist-needed)"
+        return 0
+    fi
+    local conf="$TARGET_ROOT/etc/modprobe.d/blacklist-${conflicting}.conf"
+    local fp_before="$(repair_file_fingerprint "$conf")"
+    if [[ -f "$conf" ]] && grep -Eq "^[[:space:]]*blacklist[[:space:]]+${conflicting}([[:space:]]|$)" "$conf"; then
+        repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-blacklist-identical)"
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "$conf")"
+    if [[ -f "$conf" ]]; then
+        cp -a -- "$conf" "$SESSION_DIR/gpu-blacklist-${conflicting}.conf.bak" || fail "Failed to back up $conf."
+    fi
+    local tmp="$conf.boot-repair-tmp"
+    printf 'blacklist %s\n' "$conflicting" > "$tmp" || fail "Failed to write blacklist for $conflicting."
+    install -m 0644 "$tmp" "$conf" || fail "Failed to install blacklist for $conflicting."
+    rm -f -- "$tmp"
+    local fp_after="$(repair_file_fingerprint "$conf")"
+    if [[ "$fp_before" == "$fp_after" ]]; then
+        repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-blacklist-identical)"
+    else
+        msg_log gpu-blacklist-written "$conflicting"
+        repair_change_status "gpu:blacklist-module" changed
+    fi
+}
+
+# Rebuild the driver against every installed kernel via DKMS.
+repair_gpu_rebuild_dkms()
+{
+    gpu_repair_prepare_evidence
+    adaptive_dkms_repair
+    adaptive_initramfs_repair
+    repair_change_status "gpu:rebuild-dkms" changed
+}
+
+# Rebuild initramfs + bootloader configuration after a driver/kernel change.
+repair_gpu_rebuild_boot()
+{
+    gpu_repair_prepare_evidence
+    adaptive_initramfs_repair
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        adaptive_extlinux_repair
+    else
+        adaptive_grub_stage
+    fi
+    repair_change_status "gpu:rebuild-boot" changed
+}
+
+# Decision A.2 — remove the older kernel(s) the driver is pinned to (or any
+# removable superseded kernel), keeping running/latest/managed.
+repair_gpu_remove_older_kernel()
+{
+    repair_kernel_prepare_inventory
+    if ((${#KERNEL_REMOVABLE[@]} == 0)); then
+        repair_change_status "gpu:remove-older-kernel" "unchanged|$(reason gpu-no-older-kernel)"
+        return 0
+    fi
+    local v
+    for v in "${KERNEL_REMOVABLE[@]:-}"; do
+        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] \
+            || fail "gpu kernel-removal protection set violation for $v."
+    done
+    run_package_stage kernel-cleanup kernels
+    if kernel_inventory_had_removable_kernels; then
+        adaptive_initramfs_repair
+        if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+            adaptive_extlinux_repair
+        else
+            adaptive_grub_stage
+        fi
+    fi
+    repair_change_status "gpu:remove-older-kernel" changed
+}
+
+# Decision A.1 — remove the newest kernel the driver cannot build against,
+# reinstall the OEM/HWE kernel + headers, and rebuild the driver via DKMS.
+repair_gpu_replace_kernel()
+{
+    local meta=""
+    repair_kernel_prepare_inventory
+    meta="$(apt_managed_kernel_metapackage || true)"
+    if [[ -n "$meta" ]]; then
+        safe_apt_install_packages "Reinstall the managed OEM/HWE kernel for GPU driver rebuild" yes "$meta"
+    fi
+    # Install missing headers before the DKMS rebuild (preflight_dkms handles
+    # the repository-header correction for the Debian layout).
+    adaptive_dkms_repair
+    repair_gpu_rebuild_boot
+    repair_change_status "gpu:replace-kernel" changed
+}
+
+# Read-only verification of the graphics driver stack.  This is the terminal
+# the interactive menu reaches when the driver is already correct and no DKMS
+# build is failed or absent (nothing actionable remains): it re-reads the
+# read-only evidence (hardware, loaded module, installed packages, expected
+# driver, DKMS build state, boot reached and journal correlation) without
+# changing anything and reports unchanged with a gpu-verified reason.  The
+# running/current driver is never modified, and the menu never returns silently.
+repair_gpu_verify()
+{
+    GPU_EVIDENCE_COLLECTED=0
+    gpu_collect_evidence
+    repair_change_status gpu "unchanged|$(reason gpu-verified)"
+}
+
+# Decision B sequence driver: purge wrong -> install correct -> rebuild-all.
+# Reused by the automated Full Repair stage and the interactive B branch.
+repair_gpu_driver_swap()
+{
+    repair_gpu_purge_wrong_driver
+    repair_gpu_install_correct_driver
+    repair_gpu_blacklist_module
+    repair_gpu_rebuild_dkms
+    repair_gpu_rebuild_boot
+}
+
+# Preflight for the automated `gpu` stage (Full Repair): re-derive evidence,
+# prove a mismatch, require removal-safe purge + a derivable correct driver.
+preflight_gpu()
+{
+    gpu_collect_evidence
+    if ! gpu_unavailable_reason >/dev/null; then
+        fail "$(gpu_unavailable_reason)."
+    fi
+    local -a correct=()
+    read -r -a correct <<<"$(gpu_correct_driver_packages)"
+    ((${#correct[@]} > 0)) || fail "$(reason "$(gpu_package_set_unavailable_reason)")."
+    [[ "$TARGET_INITRAMFS_BACKEND" == initramfs-tools ]] \
+        || fail "The GPU driver swap is only guarded for the initramfs-tools backend (detected: ${TARGET_INITRAMFS_BACKEND:-unknown})."
+}
+
+# Automated `gpu` stage (Full Repair): evidence-driven purge -> install ->
+# blacklist -> dkms -> initramfs -> bootloader, with rollback.
+adaptive_gpu_repair()
+{
+    preflight_gpu
+    gpu_backup_state
+    if ! repair_gpu_driver_swap; then
+        gpu_restore_state || true
+        fail "GPU driver swap failed; restored the pre-state."
+    fi
+    repair_change_status gpu changed
+}
+
+# Interactive `gpu` repair session.  Walks the evidence-driven decision tree
+# over the shared PROMPT/ANSWER channel: a wrong driver is offered a purge +
+# install, while a correct driver whose DKMS module is not built is offered a
+# DKMS rebuild (never a purge + install).  The FIRST display consumes the cached
+# `gpu` diagnostic baseline (compute-once); after a sub-action runs the next
+# display re-collects fresh so a completed action (driver swap, DKMS rebuild,
+# kernel removal) adapts the next menu, and the baseline is cleared so no later
+# sub-action re-parses a stale one.  An invalid answer re-parses the same
+# baseline without re-collecting.  A consistent stack reports the verified
+# result once and returns without prompting.
+gpu_interactive_menu()
+{
+    # A direct CLI invocation (no session protocol) has no interactive channel:
+    # fall back to the automated purge -> install sequence instead of blocking.
+    if ! shell_interactive_enabled; then
+        adaptive_gpu_repair
+        return
+    fi
+
+    local idx answer choice menu="" found=""
+    local -a labels=() stages=()
+
+    while :; do
+        if [[ -n "${GPU_BASELINE_B64:-}" ]]; then
+            # Pre-mutation display: consume the cached diagnostic baseline.
+            parse_cached_gpu_inventory
+        else
+            # Post-mutation (or no-baseline CLI) display: reflect the
+            # then-current target state.
+            GPU_EVIDENCE_COLLECTED=0
+            gpu_collect_evidence
+        fi
+        labels=()
+        stages=()
+
+        if [[ -n "$GPU_MISMATCH" ]]; then
+            labels+=("Purge wrong driver, install correct, rebuild all")
+            stages+=("driver-swap")
+            labels+=("One-boot nomodeset fallback (reach a console)")
+            stages+=("nomodeset")
+        elif [[ "$GPU_DKMS_BUILD_STATUS" == *failed* || "$GPU_DKMS_BUILD_STATUS" == *absent* ]]; then
+            labels+=("Rebuild the driver module with DKMS")
+            stages+=("rebuild-dkms")
+            labels+=("Replace the newest kernel and rebuild the driver")
+            stages+=("replace-kernel")
+            labels+=("Remove the older kernel the driver is pinned to")
+            stages+=("remove-older-kernel")
+            labels+=("One-boot nomodeset fallback (reach a console)")
+            stages+=("nomodeset")
+        fi
+
+        # Consistent stack: no mismatch and no failed/absent DKMS build leaves
+        # nothing actionable.  Report the read-only verified result and return;
+        # never prompt with a verify action (that would never terminate).
+        if ((${#labels[@]} == 0)); then
+            repair_gpu_verify
+            return 0
+        fi
+
+        menu=""
+        menu+="Found:"$'\n'
+        found=""
+        if [[ -n "$GPU_MISMATCH" ]]; then
+            found+="driver mismatch: $GPU_MISMATCH (reason=${GPU_MISMATCH_REASON:-})"$'\n'
+        fi
+        if [[ -n "$GPU_DKMS_BUILD_STATUS" && "$GPU_DKMS_BUILD_STATUS" != none ]]; then
+            found+="DKMS build status: $GPU_DKMS_BUILD_STATUS"$'\n'
+        fi
+        if [[ -n "${GPU_EXPECTED:-}" ]]; then
+            found+="expected driver: ${GPU_EXPECTED} (source=${GPU_EXPECTED_SOURCE:-unknown})"$'\n'
+        fi
+        if [[ -n "$GPU_HARDWARE" ]]; then
+            found+="hardware: $GPU_HARDWARE [driver-in-use=${GPU_HARDWARE_DRIVER_IN_USE:-none}]"$'\n'
+        fi
+        if [[ -n "$GPU_LOADED_MODULES" && "$GPU_LOADED_MODULES" != none ]]; then
+            found+="loaded modules: $GPU_LOADED_MODULES"$'\n'
+        fi
+        menu+="$found"$'\n'
+        menu+="GPU driver repair:"$'\n'
+        for idx in "${!labels[@]}"; do
+            menu+="$((idx + 1))) ${labels[$idx]}"$'\n'
+        done
+        menu+="0) Abort"
+
+        if ! helper_menu_prompt "$menu" || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+            return 0
+        fi
+        answer="$HELPER_MENU_ANSWER"
+        if [[ "$answer" == "0" ]]; then
+            return 0
+        fi
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+            choice="${stages[$((answer - 1))]}"
+        else
+            continue
+        fi
+
+        case "$choice" in
+            driver-swap) repair_gpu_driver_swap ;;
+            rebuild-dkms) repair_gpu_rebuild_dkms ;;
+            replace-kernel) repair_gpu_replace_kernel ;;
+            remove-older-kernel) repair_gpu_remove_older_kernel ;;
+            nomodeset) repair_nomodeset ;;
+        esac
+        # The chosen sub-action may have mutated the target: drop the cached
+        # baseline so the next display re-collects fresh and no later sub-action
+        # re-parses the stale pre-mutation baseline.
+        GPU_BASELINE_B64=""
+        GPU_EVIDENCE_COLLECTED=0
+    done
+}
+
+# ---------------------------------------------------------------------------
+# nomodeset one-boot fallback
+# ---------------------------------------------------------------------------
+# A broken GPU driver can still reach a console with nomodeset.  Implemented as
+# a one-shot GRUB `next_entry` (never a permanent GRUB_CMDLINE_LINUX edit);
+# refused for UKI-only layouts that cannot produce a one-shot artifact.
+repair_nomodeset()
+{
+    if is_tuxedo_uki_layout || [[ "$TARGET_BOOTLOADER_BACKEND" == "generic UKI" \
+        || "$TARGET_BOOTLOADER_BACKEND" == "systemd-boot" \
+        || "$TARGET_BOOTLOADER_BACKEND" == "systemd-boot + UKI" ]]; then
+        repair_change_status nomodeset "unchanged|$(reason nomodeset-uki-only)"
+        return 0
+    fi
+    if [[ "$TARGET_BOOTLOADER_BACKEND" != grub ]]; then
+        repair_change_status nomodeset "unchanged|$(reason nomodeset-no-grub)"
+        return 0
+    fi
+    grub2_layout_detected && { repair_change_status nomodeset "unchanged|$(reason nomodeset-no-grub)"; return 0; }
+    local editenv_tool grubenv
+    editenv_tool="$(grub_editenv_tool)" || fail "grub-editenv is not installed; cannot set a one-boot nomodeset entry."
+    grubenv="$(grub_env_path)"
+    grub_env_block_valid || fail "grubenv is missing or invalid; refusing a nomodeset one-boot entry."
+    local fp_before="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    run_chroot_try "$(msg set-one-boot-nomodeset)" "$editenv_tool" "$grubenv" set next_entry='Boot (nomodeset)'
+    (( CHROOT_TRY_RC == 0 )) || fail "grub-editenv could not set the nomodeset one-boot entry."
+    local fp_after="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    if [[ "$fp_before" == "$fp_after" ]]; then
+        repair_change_status nomodeset "unchanged|$(reason nomodeset-identical)"
+    else
+        msg_log gpu-nomodeset-next-entry
+        repair_change_status nomodeset changed
+    fi
+}
+
 # Filter candidate package-manager log lines for the diagnostics report.
 # Known transient mirror-retry noise (per-mirror transfer failures that
 # dnf/librepo retries and resolves) is dropped, volatile fields (mount prefix,
@@ -15246,6 +17827,13 @@ diagnostic_errors()
     local scope_label="target"
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     profile_target_backends
+    boot_failure_classification
+    printf 'Boot reached: %s\n' "$BOOT_REACHED"
+    if [[ -n "$BOOT_FAILURE_MARKERS" ]]; then
+        printf 'Boot failure markers: %s\n' "$BOOT_FAILURE_MARKERS"
+    else
+        printf 'Boot failure markers: none\n'
+    fi
     if ! command -v journalctl >/dev/null 2>&1 || ! target_journal_evidence_present; then
         if non_journald_log_fallback_ready; then
             echo "Recent ${scope_label} error-priority syslog entries ($(non_journald_log_source_label) log, latest entries):"
@@ -15291,6 +17879,36 @@ diagnostic_errors()
     diagnostic_package_manager_logs "$scope_label"
 }
 
+# Read-only free-space evidence line for one directory: the target /boot, or a
+# separately resolved ESP.  Prints "Boot space <label>: total=… used=… free=…
+# pct=… fstype=…".  Purely disk-capacity evidence; it never writes anything.
+boot_space_evidence_line()
+{
+    local dir="$1" label="$2"
+    local fstype="unknown" total=0 used=0 free=0 pct=0
+    local stat_line b f a S df_line pct_str
+    if stat_line="$(stat -f -c '%b %f %a %S' "$dir" 2>/dev/null)" && [[ -n "$stat_line" ]]; then
+        read -r b f a S <<<"$stat_line"
+        [[ "$S" -gt 0 ]] 2>/dev/null || S=1
+        total=$((b * S))
+        free=$((a * S))
+        used=$(((b - f) * S))
+    else
+        df_line="$(df -P -B1 "$dir" 2>/dev/null | awk 'NR==2 {print $2, $3, $4, $5}')"
+        if [[ -n "$df_line" ]]; then
+            read -r total used free pct_str <<<"$df_line"
+            pct="${pct_str%\%}"
+        fi
+    fi
+    if (( total > 0 )); then
+        pct=$((used * 100 / total))
+    fi
+    fstype="$(findmnt -rn -o FSTYPE --target "$dir" 2>/dev/null | head -n1 || true)"
+    [[ -n "$fstype" ]] || fstype="unknown"
+    printf 'Boot space %s: total=%s used=%s free=%s pct=%s fstype=%s\n' \
+        "$label" "$total" "$used" "$free" "$pct" "$fstype"
+}
+
 diagnostic_usage()
 {
     echo "Filesystem usage:"
@@ -15300,6 +17918,13 @@ diagnostic_usage()
         echo
         echo "Btrfs filesystem usage:"
         btrfs filesystem usage "$MOUNT_BASE" 2>&1 || true
+    fi
+    # /boot (and, when a separate ESP is resolved, the ESP) free-space evidence
+    # is disk-capacity evidence, kept here with the other usage data.
+    profile_target_backends
+    boot_space_evidence_line "$(target_path /boot)" "/boot"
+    if [[ "${TARGET_ESP_MOUNT:-unresolved}" != "unresolved" && "$TARGET_ESP_MOUNT" != "/boot" ]]; then
+        boot_space_evidence_line "$(target_path "$TARGET_ESP_MOUNT")" "ESP $TARGET_ESP_MOUNT"
     fi
 }
 
@@ -15407,6 +18032,7 @@ run_one_diagnostic()
         grub)        diagnostic_grub || rc=$? ;;
         uki)         diagnostic_uki || rc=$? ;;
         display)     diagnostic_display || rc=$? ;;
+        gpu)         diagnostic_gpu || rc=$? ;;
         errors)      diagnostic_errors || rc=$? ;;
         usage)       diagnostic_usage || rc=$? ;;
         fstab)       diagnostic_fstab || rc=$? ;;
@@ -15444,7 +18070,7 @@ run_target_diagnostic()
         # The File systems section runs last: its read-only check tools require
         # the helper-owned mounts to be released, while every earlier section
         # still reads the mounted target.
-        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
             run_one_target_diagnostic "$key" || true
         done
         REPORT_SHARED_PREAMBLE=0
@@ -15476,7 +18102,7 @@ run_host_diagnostic_modern()
         echo
         # See run_target_diagnostic: the File systems section is last because
         # it releases the helper's read-only mounts for the offline check tools.
-        for key in environment backend boot boot-evidence kernel grub uki display errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
         done
         REPORT_SHARED_PREAMBLE=0
@@ -17443,6 +20069,40 @@ shell_interactive_ready()
     command -v od >/dev/null 2>&1 || return 1
 }
 
+# Present one evidence-driven menu over the same token-carrying PROMPT/ANSWER
+# channel the chroot shell uses.  Registers a pump token with the broker, emits
+# one PROMPT record carrying the menu text, then reads exactly one ANSWER
+# record from the protocol pipe and stores the decoded answer in
+# HELPER_MENU_ANSWER (empty when the prompt was cancelled or no answer arrived
+# in time).  The PUMP/PROMPT records are written to stdout so the broker can
+# forward them; the answer travels back through the HELPER_MENU_ANSWER variable
+# rather than through a command substitution, whose stdout capture would
+# swallow the PUMP/PROMPT records before the broker ever saw them and leave the
+# GUI waiting for a prompt it never receives.  The prompt text is only ever
+# displayed, never interpreted or executed; an unanswerable prompt fails closed
+# instead of blocking the request.
+helper_menu_prompt()
+{
+    local prompt_text="$1"
+    local token="" encoded="" tag="" id=""
+    HELPER_MENU_ANSWER=""
+    command -v od >/dev/null 2>&1 || return 1
+    command -v base64 >/dev/null 2>&1 || return 1
+    command -v tr >/dev/null 2>&1 || return 1
+    token="$(od -An -N8 -tx8 /dev/urandom 2>/dev/null | tr -d ' \n' || true)"
+    if [[ -z "$token" ]]; then
+        return 1
+    fi
+    printf 'PUMP\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$token"
+    encoded="$(printf '%s' "$prompt_text" | base64 | tr -d '\n')"
+    printf 'PROMPT\t%s\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$token" "$encoded"
+    if IFS=$'\t' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded \
+        && [[ "$tag" == "ANSWER" && "$id" == "${BOOT_REPAIR_SESSION_REQUEST:-0}" ]]; then
+        HELPER_MENU_ANSWER="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
+    fi
+    [[ -n "$HELPER_MENU_ANSWER" ]]
+}
+
 # Shell-quote every argument so the joined string can be executed safely by
 # /bin/sh -c inside script(1).  POSIX single-quote quoting (with '\'' for an
 # embedded quote) instead of bash's %q, so the string stays portable; the
@@ -18318,7 +20978,7 @@ validate_running_host_modern()
 validate_stage()
 {
     case "$1" in
-        dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux) return 0 ;;
+        dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux|kernels|gpu|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot|nomodeset|kernel-remove-oldest|kernel-remove-newest|kernel-remove-orphaned-headers|kernel-remove-orphaned-kernels|kernel-remove-orphaned-support|kernel-install-headers|kernel-reinstall|kernel-install-repo-latest) return 0 ;;
         *) fail "Unknown repair stage: $1" ;;
     esac
 }
@@ -18328,9 +20988,27 @@ stage_rank()
     case "$1" in
         dpkg-configure) printf '10\n' ;;
         fix-broken) printf '20\n' ;;
+        kernels) printf '25\n' ;;
+        kernel-remove-oldest) printf '25\n' ;;
+        kernel-remove-newest) printf '25\n' ;;
+        kernel-remove-orphaned-headers) printf '25\n' ;;
+        kernel-remove-orphaned-kernels) printf '25\n' ;;
+        kernel-remove-orphaned-support) printf '25\n' ;;
+        kernel-install-headers) printf '25\n' ;;
+        kernel-reinstall) printf '25\n' ;;
+        kernel-install-repo-latest) printf '25\n' ;;
         apt-update) printf '30\n' ;;
         apt-upgrade) printf '40\n' ;;
         dkms) printf '50\n' ;;
+        gpu) printf '55\n' ;;
+        gpu-remove-older-kernel) printf '55\n' ;;
+        gpu-replace-kernel) printf '55\n' ;;
+        gpu-purge-wrong-driver) printf '55\n' ;;
+        gpu-install-correct-driver) printf '55\n' ;;
+        gpu-blacklist-module) printf '55\n' ;;
+        gpu-rebuild-dkms) printf '55\n' ;;
+        gpu-rebuild-boot) printf '55\n' ;;
+        nomodeset) printf '55\n' ;;
         display-manager) printf '60\n' ;;
         initramfs) printf '70\n' ;;
         efi) printf '80\n' ;;
@@ -18346,16 +21024,49 @@ stage_rank()
 # the same plan/session; the helper never infers it from the stage list.
 REPAIR_STAGES=()
 REPAIR_POST_EFI=false
+REPAIR_INSTALL_LATEST_HEADERS=false
+REPAIR_REMOVE_NEWEST=false
+REPAIR_CLEAN_ORPHANED_HEADERS=false
 BOOT_STACK_POST_EFI=false
+# Base64-serialized cached `kernel` diagnostic section handed in by the GUI via
+# --baseline <value>.  It is the single source of truth the interactive kernel
+# repair menu consumes instead of re-collecting the inventory.  Empty means no
+# baseline was supplied (direct CLI invocation).
+KERNEL_BASELINE_B64=""
+# Base64-serialized cached `gpu` diagnostic section handed in by the GUI via
+# --gpu-baseline <value>.  It is the single source of truth the interactive GPU
+# repair menu and the GPU mutation preflight consume instead of re-collecting.
+# Empty means no baseline was supplied (direct CLI invocation).
+GPU_BASELINE_B64=""
 
 parse_repair_arguments()
 {
     REPAIR_STAGES=()
     REPAIR_POST_EFI=false
+    REPAIR_INSTALL_LATEST_HEADERS=false
+    REPAIR_REMOVE_NEWEST=false
+    REPAIR_CLEAN_ORPHANED_HEADERS=false
+    KERNEL_BASELINE_B64=""
+    GPU_BASELINE_B64=""
     local argument
-    for argument in "$@"; do
+    while (($# > 0)); do
+        argument="$1"
+        shift
         case "$argument" in
             --post-efi) REPAIR_POST_EFI=true ;;
+            --install-latest-headers) REPAIR_INSTALL_LATEST_HEADERS=true ;;
+            --remove-newest) REPAIR_REMOVE_NEWEST=true ;;
+            --clean-orphaned-headers) REPAIR_CLEAN_ORPHANED_HEADERS=true ;;
+            --baseline)
+                (($# > 0)) || fail "The --baseline kernel repair mode hint requires a value."
+                KERNEL_BASELINE_B64="$1"
+                shift
+                ;;
+            --gpu-baseline)
+                (($# > 0)) || fail "The --gpu-baseline GPU repair baseline requires a value."
+                GPU_BASELINE_B64="$1"
+                shift
+                ;;
             -*) fail "Unknown repair stage mode hint: $argument" ;;
             *) REPAIR_STAGES+=("$argument") ;;
         esac
@@ -18418,6 +21129,22 @@ validate_repair_stages_against_backends()
             boot-stack)
                 if ! reason="$(bootstack_unavailable_reason)"; then
                     fail "$reason."
+                fi
+                ;;
+            kernels|kernel-remove-oldest|kernel-remove-newest|kernel-remove-orphaned-headers|kernel-remove-orphaned-kernels|kernel-remove-orphaned-support|kernel-install-headers|kernel-reinstall|kernel-install-repo-latest)
+                if ! reason="$(kernels_unavailable_reason)"; then
+                    fail "$reason."
+                fi
+                ;;
+            gpu|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot)
+                if ! reason="$(gpu_unavailable_reason)"; then
+                    fail "$reason."
+                fi
+                ;;
+            nomodeset)
+                profile_target_backends
+                if [[ "$TARGET_BOOTLOADER_BACKEND" != grub ]] || grub2_layout_detected; then
+                    fail "$(reason nomodeset-no-grub)."
                 fi
                 ;;
         esac
@@ -21007,7 +23734,7 @@ alpine_efi_stub_reconcile()
 alpine_grub_efi_apply()
 {
     local efi_dir
-    run_chroot_try_display "Reinstall Alpine GRUB EFI bootloader (--no-nvram)" "$@"
+    run_chroot_try_display "$(msg reinstall-alpine-grub-efi)" "$@"
     if ((CHROOT_TRY_RC != 0)); then
         log "ERROR: Alpine grub-install failed with exit code $CHROOT_TRY_RC." >&2
         return 1
@@ -21087,7 +23814,7 @@ alpine_grub_efi_repair()
     validate_efi_bootloader_target
 
     msg_log alpine-grub-efi-simulate "$EFI_ESP_SOURCE" "$EFI_ESP_FSTYPE" "$EFI_BOOTLOADER_ID"
-    run_chroot_try "Check Alpine grub-install availability/version" "$EFI_GRUB_INSTALL_PATH" --version
+    run_chroot_try "$(msg check-alpine-grub-install)" "$EFI_GRUB_INSTALL_PATH" --version
     ((CHROOT_TRY_RC == 0)) \
         || fail "grub-install is present but could not execute during the Alpine EFI preflight."
 
@@ -21293,18 +24020,18 @@ reinstall_efi_bootloader()
     if uefi_nvram_writable; then
         nvram_mode="firmware NVRAM update enabled"
         msg_log efi-writable-detected
-        run_chroot_try "Reinstall GRUB EFI bootloader" "${install_args[@]:-}"
+        run_chroot_try "$(msg reinstall-grub-efi)" "${install_args[@]:-}"
         if ((CHROOT_TRY_RC != 0)) \
            && grep -Eiq 'EFI variables are not supported|efivar|NVRAM|could not prepare.*Boot|failed to register|failed to set EFI variable' <<<"$CHROOT_TRY_OUTPUT"; then
             msg_log efi-nvram-registration-failed-retry
             nvram_mode="file reinstall only (--no-nvram fallback)"
-            run_chroot_try "Retry GRUB EFI bootloader files without NVRAM update" \
+            run_chroot_try "$(msg retry-grub-efi-no-nvram)" \
                 "${install_args[@]:-}" --no-nvram
         fi
     else
         nvram_mode="file reinstall only (--no-nvram)"
         msg_log efi-writable-unavailable
-        run_chroot_try "Reinstall GRUB EFI bootloader files" \
+        run_chroot_try "$(msg reinstall-grub-efi-files)" \
             "${install_args[@]:-}" --no-nvram
     fi
 
@@ -21320,7 +24047,7 @@ reinstall_efi_bootloader()
     # path stale.  Refresh it unconditionally with a --no-nvram --removable
     # pass (harmless on durable-NVRAM systems) and fail closed with a full ESP
     # rollback when it does not produce a non-empty fallback loader.
-    run_chroot_try "Reinstall GRUB EFI fallback loader (--removable)" \
+    run_chroot_try "$(msg reinstall-grub-efi-fallback)" \
         "${install_args[@]:-}" --no-nvram --removable
     if ((CHROOT_TRY_RC != 0)) \
        || [[ ! -s "$(target_path "${TARGET_ESP_MOUNT:-/boot/efi}")/EFI/BOOT/BOOTX64.EFI" ]]; then
@@ -21561,6 +24288,814 @@ efi_promote_entry_first()
     msg_log efi-default-first "$wanted"
 }
 
+# ---------------------------------------------------------------------------
+# Guarded old-kernel cleanup (Debian/APT backend)
+# ---------------------------------------------------------------------------
+# The `kernels` repair stage removes only superseded kernels (installed ∖
+# { running ∪ latest ∪ managed-default ∪ metapackage }) through an explicit
+# `apt-get remove --purge` of the old versioned kernel packages, then rebuilds
+# initramfs and regenerates the bootloader configuration.  It never reuses
+# apt_simulation_is_safe (which refuses every linux-* removal); the dedicated
+# validator below permits only the pre-computed removable set and refuses any
+# protected version, metapackage or essential package.
+
+# Dedicated APT simulation validator for kernel removals.  Permits a removal
+# only when the package is in the pre-computed removable package set (the
+# union of the removable kernels' grouped packages, including their common
+# headers); any other package -- a protected kernel's package, a metapackage
+# or a cascaded dependency -- is refused.  The protected essentials are still
+# refused explicitly for defense in depth.  Membership is decided by exact
+# package name, never by parsing the package-name flavour suffix.
+apt_kernel_removal_is_safe()
+{
+    local output="$1" pkg
+    local -a removals=()
+
+    if grep -Eiq 'essential packages will be removed|WARNING:.*essential.*removed' <<<"$output"; then
+        msg_log apt-refused-essential
+        return 1
+    fi
+
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        removals+=("${pkg%%:*}")
+    done < <(awk '$1 == "Remv" {print $2}' <<<"$output")
+
+    for pkg in "${removals[@]:-}"; do
+        case "$pkg" in
+            grub*|systemd*|libc6*|apt|apt-transport-*|dpkg|base-files|base-passwd|\
+            cryptsetup|cryptsetup-initramfs|initramfs-tools|initramfs-tools-core)
+                msg_log apt-refused-protected "$pkg"
+                return 1
+                ;;
+        esac
+        if ! kernel_package_is_removal_candidate "$pkg"; then
+            msg_log apt-refused-protected "$pkg"
+            return 1
+        fi
+    done
+
+    if ((${#removals[@]} > 0)); then
+        msg_log apt-proposes-removals "${#removals[@]}" "${removals[*]}"
+    fi
+    return 0
+}
+
+# True when every supplied protected kernel package is still fully installed
+# (read-only dpkg status check), used for the post-remove assert and rollback.
+apt_kernel_protected_set_present()
+{
+    local pkg
+    for pkg in "$@"; do
+        target_dpkg_package_installed "$pkg" || return 1
+    done
+    return 0
+}
+
+# Remove the leftover on-disk components of one removed kernel version so no
+# zombie remains even when apt-get remove --purge failed part-way (for example
+# a DKMS prerm hook error).  Only the version being removed is ever cleaned,
+# never a protected version.  Extra positional arguments are the removal
+# plan's common-headers packages, whose arch-independent directory is removed
+# too (only for the last kernel of a series).
+apt_kernel_zombie_cleanup()
+{
+    local kver="$1" pkg dir
+    shift
+    msg_log kernel-zombie-cleanup "$kver"
+    rm -rf -- "$TARGET_ROOT/usr/lib/modules/$kver" "$TARGET_ROOT/lib/modules/$kver"
+    rm -rf -- "$TARGET_ROOT"/usr/src/linux-headers-"$kver"*
+    rm -f -- "$TARGET_ROOT/boot/vmlinuz-$kver" \
+             "$TARGET_ROOT/boot/initrd.img-$kver" \
+             "$TARGET_ROOT/boot/System.map-$kver" \
+             "$TARGET_ROOT/boot/config-$kver"
+    for pkg in "$@"; do
+        case "$pkg" in
+            linux-headers-*-common|linux-headers-*-common-*) ;;
+            *) continue ;;
+        esac
+        while IFS= read -r dir; do
+            [[ -n "$dir" ]] || continue
+            [[ "$dir" == /usr/src/linux-headers-* ]] || continue
+            rm -rf -- "$TARGET_ROOT$dir"
+        done < <(apt_package_owned_dirs "$pkg" "/usr/src/linux-headers-")
+    done
+}
+
+# Install the missing arch headers for the newest (and running) kernel when the
+# inventory proves they are absent, so the kept kernel has a matching headers
+# package.  The headers package name is derived from the image package name
+# (linux-image-<V> -> linux-headers-<V>), never from the version string.
+apt_install_missing_latest_headers()
+{
+    local v img hdr
+    local -a install_pkgs=()
+    for v in "$KERNEL_LATEST" "$KERNEL_RUNNING"; do
+        [[ -n "$v" ]] || continue
+        [[ -n "$(dpkg_path_owner "/usr/src/linux-headers-$v")" ]] && continue
+        img="$(dpkg_path_owner "/boot/vmlinuz-$v" | head -n1 || true)"
+        [[ "$img" == linux-image-* ]] || continue
+        hdr="linux-headers-${img#linux-image-}"
+        install_pkgs+=("$hdr")
+    done
+    # Deduplicate (running == latest on a single-kernel system).
+    install_pkgs=("$(printf '%s\n' "${install_pkgs[@]:-}" | LC_ALL=C sort -u | paste -sd' ' -)")
+    ((${#install_pkgs[@]} > 0)) || return 0
+    msg_log kernel-headers-install "${install_pkgs[*]}"
+    safe_apt_install_packages "Install missing kernel headers for the newest kernel" no "${install_pkgs[@]:-}"
+}
+
+# True when the simulated orphaned-headers removal proposes exactly the
+# expected orphaned header packages (exact membership, never the kernel
+# protected set or unrelated packages).  The expected set is passed as a
+# newline-joined string.
+apt_orphaned_headers_removal_is_safe()
+{
+    local output="$1" expected="$2" pkg
+    if grep -Eiq 'essential packages will be removed|WARNING:.*essential.*removed' <<<"$output"; then
+        msg_log apt-refused-essential
+        return 1
+    fi
+    while IFS= read -r pkg; do
+        [[ -n "$pkg" ]] || continue
+        pkg="${pkg%%:*}"
+        case "$pkg" in
+            grub*|systemd*|libc6*|apt|apt-transport-*|dpkg|base-files|base-passwd|\
+            cryptsetup|cryptsetup-initramfs|initramfs-tools|initramfs-tools-core)
+                msg_log apt-refused-protected "$pkg"
+                return 1
+                ;;
+        esac
+        if ! grep -Fxq "$pkg" <<<"$expected"; then
+            msg_log apt-refused-protected "$pkg"
+            return 1
+        fi
+    done < <(awk '$1 == "Remv" {print $2}' <<<"$output")
+    return 0
+}
+
+# Remove the orphaned header packages (headers installed without a matching
+# kernel module tree), simulation-first with the same protected-set discipline
+# as the kernel removal.  Each orphaned version's arch headers and its grouped
+# common-headers packages are removed via apt, then the leftover on-disk header
+# directories are swept by the zombie cleanup.  Emits its own `kernels` change
+# status so the stage reads changed when only orphaned headers were removed.
+apt_cleanup_orphaned_headers()
+{
+    local v pkg arch_headers output sim_rc
+    local -a remove_packages=()
+
+    for v in "${KERNEL_ORPHANED_HEADERS[@]:-}"; do
+        arch_headers=""
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] || continue
+            arch_headers="$pkg"
+            remove_packages+=("$pkg")
+        done < <(dpkg_path_owner "/usr/src/linux-headers-$v")
+        if [[ -n "$arch_headers" ]]; then
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] || continue
+                [[ "$pkg" == linux-headers-* ]] || continue
+                [[ "$pkg" == "$arch_headers" ]] && continue
+                target_dpkg_package_installed "$pkg" && remove_packages+=("$pkg")
+            done < <(apt_package_depends "$arch_headers")
+        fi
+    done
+    # Deduplicate and keep a deterministic order for the validator's exact match.
+    remove_packages=("$(printf '%s\n' "${remove_packages[@]:-}" | LC_ALL=C sort -u)")
+
+    if ((${#remove_packages[@]} == 0)); then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-orphaned-headers)"
+        return 0
+    fi
+
+    msg_log orphaned-headers-plan "${#remove_packages[@]}" "${remove_packages[*]}"
+
+    msg_log simulate-apt "remove --purge (orphaned headers)"
+    set +e
+    output="$(
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get -s -o Debug::NoLocking=1 remove --purge "${remove_packages[@]:-}" 2>&1
+    )"
+    sim_rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    msg_log simulation-exit-code "remove --purge (orphaned headers)" "$sim_rc"
+    (( sim_rc == 0 )) || fail "The simulated orphaned-headers removal failed with exit code $sim_rc."
+    apt_orphaned_headers_removal_is_safe "$output" "$(printf '%s\n' "${remove_packages[@]:-}")" \
+        || fail "The simulated orphaned-headers removal failed Boot Bitch kernel safety checks."
+
+    if apt_transaction_reported_no_changes "$output"; then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-orphaned-headers)"
+        return 0
+    fi
+
+    run_chroot_try_display "$(msg remove-orphaned-kernel-headers)" apt-get -y remove --purge "${remove_packages[@]:-}"
+    if (( CHROOT_TRY_RC != 0 )); then
+        msg_log orphaned-headers-removal-failed "$CHROOT_TRY_RC"
+        for v in "${KERNEL_ORPHANED_HEADERS[@]:-}"; do
+            apt_kernel_zombie_cleanup "$v" "${remove_packages[@]:-}"
+        done
+        fail "Orphaned kernel headers removal failed with exit code $CHROOT_TRY_RC."
+    fi
+
+    repair_change_status "$KERNEL_STAGE_STATUS_KEY" changed
+}
+
+# Remove the orphaned kernel build/support packages (linux-kbuild-<ver> and the
+# general class of versioned linux-<kind>-<ver> helpers whose kernel version is
+# gone), simulation-first with the same protected-set discipline as the kernel
+# removal.  The shared orphaned-removal validator permits only the exact
+# expected package set and refuses the protected essentials; the running/latest
+# kernel's own build-support packages are never in the expected set (the
+# inventory only orphaned versions whose kernel is gone).  Emits its own
+# `kernels` change status so the stage reads changed when only orphaned
+# build-support packages were removed.
+apt_cleanup_orphaned_build_support()
+{
+    local output sim_rc i pkg
+    local -a remove_packages=()
+
+    for i in "${!KERNEL_ORPHANED_SUPPORT_VERSIONS[@]}"; do
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] && remove_packages+=("$pkg")
+        done < <(tr ',' '\n' <<<"${KERNEL_ORPHANED_SUPPORT_PKGS[$i]}")
+    done
+    # Deduplicate and keep a deterministic order for the validator's exact match.
+    remove_packages=("$(printf '%s\n' "${remove_packages[@]:-}" | LC_ALL=C sort -u)")
+
+    if ((${#remove_packages[@]} == 0)); then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-orphaned-build-support)"
+        return 0
+    fi
+
+    msg_log orphaned-build-support-plan "${#remove_packages[@]}" "${remove_packages[*]}"
+
+    msg_log simulate-apt "remove --purge (orphaned build support)"
+    set +e
+    output="$(
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get -s -o Debug::NoLocking=1 remove --purge "${remove_packages[@]:-}" 2>&1
+    )"
+    sim_rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    msg_log simulation-exit-code "remove --purge (orphaned build support)" "$sim_rc"
+    (( sim_rc == 0 )) || fail "The simulated orphaned build-support removal failed with exit code $sim_rc."
+    apt_orphaned_headers_removal_is_safe "$output" "$(printf '%s\n' "${remove_packages[@]:-}")" \
+        || fail "The simulated orphaned build-support removal failed Boot Bitch kernel safety checks."
+
+    if apt_transaction_reported_no_changes "$output"; then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-orphaned-build-support)"
+        return 0
+    fi
+
+    run_chroot_try_display "$(msg remove-orphaned-kernel-build-support)" apt-get -y remove --purge "${remove_packages[@]:-}"
+    if (( CHROOT_TRY_RC != 0 )); then
+        msg_log orphaned-build-support-removal-failed "$CHROOT_TRY_RC"
+        fail "Orphaned kernel build-support removal failed with exit code $CHROOT_TRY_RC."
+    fi
+
+    repair_change_status "$KERNEL_STAGE_STATUS_KEY" changed
+}
+
+# The apt/dpkg kernel-cleanup backend, dispatched from run_package_stage for
+# `kernel-cleanup:apt/dpkg`.  Simulation-first, then explicit removal, then a
+# protected-set assert with reinstall rollback on mismatch; a failed purge
+# triggers the zombie cleanup so no half-removed kernel survives.
+apt_kernel_cleanup_stage()
+{
+    local output sim_rc pkg ver i
+    local -a remove_packages=() protected_packages=()
+
+    KERNEL_CLEANUP_APPLIED=false
+
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        ver="${KERNEL_INVENTORY_VERSIONS[$i]}"
+        if kernel_is_removal_candidate "$ver"; then
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] && remove_packages+=("$pkg")
+            done < <(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]}")
+        else
+            while IFS= read -r pkg; do
+                [[ -n "$pkg" ]] && protected_packages+=("$pkg")
+            done < <(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]}")
+        fi
+    done
+    # Protect every managed metapackage (image AND headers metas).
+    for pkg in "${KERNEL_METAPACKAGES[@]:-}"; do
+        [[ -n "$pkg" ]] && protected_packages+=("$pkg")
+    done
+
+    if ((${#remove_packages[@]} == 0)); then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason no-removable-kernels)"
+        return 0
+    fi
+
+    msg_log kernel-cleanup-plan "${#remove_packages[@]}" "${remove_packages[*]}"
+
+    # Simulation first: no mutation happens before the plan validates against
+    # the protected set.
+    msg_log simulate-apt "remove --purge (kernel cleanup)"
+    set +e
+    output="$(
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            DEBIAN_FRONTEND=noninteractive \
+            APT_LISTCHANGES_FRONTEND=none \
+            apt-get -s -o Debug::NoLocking=1 remove --purge "${remove_packages[@]:-}" 2>&1
+    )"
+    sim_rc=$?
+    set -e
+    printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+    msg_log simulation-exit-code "remove --purge (kernel cleanup)" "$sim_rc"
+    (( sim_rc == 0 )) || fail "The simulated kernel-removal transaction failed with exit code $sim_rc."
+    apt_kernel_removal_is_safe "$output" \
+        || fail "The simulated kernel-removal transaction failed Boot Bitch kernel safety checks."
+
+    if apt_transaction_reported_no_changes "$output"; then
+        repair_change_status "$KERNEL_STAGE_STATUS_KEY" "unchanged|$(reason kernel-removal-no-changes)"
+        return 0
+    fi
+
+    # Apply the exact simulated transaction.
+    run_chroot_try_display "$(msg remove-superseded-kernels)" apt-get -y remove --purge "${remove_packages[@]:-}"
+    if (( CHROOT_TRY_RC != 0 )); then
+        # A DKMS prerm hook or an interrupted transaction can abort the purge
+        # mid-way, leaving a half-removed kernel.  Clean the on-disk components
+        # of every version being removed so no zombie remains, then fail closed.
+        msg_log kernel-removal-failed "$CHROOT_TRY_RC"
+        for ver in "${KERNEL_INVENTORY_VERSIONS[@]:-}"; do
+            kernel_is_removal_candidate "$ver" || continue
+            apt_kernel_zombie_cleanup "$ver" "${remove_packages[@]:-}"
+        done
+        fail "Kernel removal failed with exit code $CHROOT_TRY_RC."
+    fi
+
+    # Assert the protected set survived; restore it and fail closed otherwise.
+    if ! apt_kernel_protected_set_present "${protected_packages[@]:-}"; then
+        msg_log kernel-protected-removed "${protected_packages[*]}"
+        run_chroot_try_display "$(msg reinstall-protected-kernels)" apt-get -y install "${protected_packages[@]:-}"
+        fail "protected kernel was removed; restored."
+    fi
+
+    KERNEL_CLEANUP_APPLIED=true
+    repair_change_status "$KERNEL_STAGE_STATUS_KEY" changed
+}
+
+# Prepare the kernel inventory for one repair action.  With a cached baseline
+# (interactive GUI session) the inventory is parsed from the cached `kernel`
+# diagnostic section and the running kernel is re-verified fresh against
+# uname -r: the baseline's protection set is stale if the running kernel
+# changed, so that mismatch fails closed before any mutation.  Without a
+# baseline (direct CLI invocation) the inventory is collected fresh.  The
+# concrete package list is re-checked by each guarded apt simulation/validator,
+# not here.  Cheap and targeted: this never re-derives the full inventory.
+repair_kernel_prepare_inventory()
+{
+    if [[ -n "${KERNEL_BASELINE_B64:-}" ]]; then
+        parse_cached_kernel_inventory
+        local fresh
+        fresh="$(running_kernel_version)"
+        [[ -n "$fresh" ]] \
+            || fail "The running kernel could not be determined; run the kernel diagnostic again."
+        [[ "$fresh" == "$KERNEL_RUNNING" ]] \
+            || fail "The running kernel changed from $KERNEL_RUNNING to $fresh since the diagnostic; run the kernel diagnostic again before repairing."
+    else
+        kernel_inventory_collect
+    fi
+}
+
+# Interactive `kernels` repair session.  Derives the evidence-driven actions
+# from the cached `kernel` diagnostic baseline, presents them as a numbered
+# terminal menu over the shared PROMPT/ANSWER channel, and runs exactly the
+# chosen sub-action.  The FIRST menu display consumes the cached baseline
+# (compute-once); after a sub-action runs the next display re-collects fresh so
+# an already-removed kernel is no longer offered, and the baseline is cleared so
+# no later sub-action re-parses a stale one.  Every chosen sub-action re-verifies
+# the running kernel and the concrete package list fresh before mutating.  A
+# consistent inventory reports the verified result once and returns without
+# prompting.  Nothing is removed or modified until an action is chosen; the
+# running kernel is never offered.
+kernel_interactive_menu()
+{
+    # A direct CLI invocation (no session protocol) has no interactive channel
+    # and no cached diagnostic baseline: fall back to the non-interactive
+    # cleanup, which collects the inventory fresh, instead of blocking.
+    if ! shell_interactive_enabled; then
+        repair_kernel_cleanup
+        return
+    fi
+
+    # The interactive session is evidence-guided: fail closed when the caller
+    # did not supply the cached baseline (the GUI always passes --baseline).
+    [[ -n "${KERNEL_BASELINE_B64:-}" ]] \
+        || fail "Run the kernel diagnostic before starting the kernel repair (no cached kernel inventory baseline was supplied)."
+
+    local idx answer choice repo_latest menu="" found="" ki kv kpkgs
+    local -a labels=() stages=()
+
+    while :; do
+        if [[ -n "${KERNEL_BASELINE_B64:-}" ]]; then
+            # Pre-mutation display: consume the cached diagnostic baseline.
+            parse_cached_kernel_inventory
+        else
+            # Post-mutation display: reflect the then-current target state.
+            kernel_inventory_collect
+        fi
+        labels=()
+        stages=()
+
+        if ((${#KERNEL_REMOVABLE[@]} > 0)); then
+            labels+=("Remove oldest/superseded kernel(s)")
+            stages+=("remove-oldest")
+        fi
+        if [[ -n "$KERNEL_LATEST" && -n "$KERNEL_RUNNING" && "$KERNEL_LATEST" != "$KERNEL_RUNNING" ]]; then
+            labels+=("Remove newest kernel")
+            stages+=("remove-newest")
+        fi
+        if ((${#KERNEL_ORPHANED_HEADERS[@]} > 0)); then
+            labels+=("Remove orphaned headers")
+            stages+=("remove-orphaned-headers")
+        fi
+        if ((${#KERNEL_ORPHANED_KERNELS[@]} > 0)); then
+            labels+=("Remove orphaned kernel components")
+            stages+=("remove-orphaned-kernels")
+        fi
+        if ((${#KERNEL_ORPHANED_SUPPORT_VERSIONS[@]} > 0)); then
+            labels+=("Remove orphaned kernel build support")
+            stages+=("remove-orphaned-support")
+        fi
+        if ((${#KERNEL_MISSING_HEADERS[@]} > 0)); then
+            labels+=("Install missing headers")
+            stages+=("install-headers")
+        fi
+        if ((${#KERNEL_PARTIAL[@]} > 0)); then
+            labels+=("Reinstall/complete a kernel")
+            stages+=("reinstall")
+        fi
+        repo_latest="$KERNEL_REPO_LATEST"
+        if [[ -n "$repo_latest" && "$repo_latest" != "$KERNEL_LATEST" ]]; then
+            labels+=("Install repository-latest kernel")
+            stages+=("install-repo-latest")
+        fi
+
+        # Consistent inventory: nothing removable/orphaned/missing/partial and
+        # no newer repository kernel.  Report the read-only verified result and
+        # return; never prompt with a verify action (that would never terminate).
+        if ((${#labels[@]} == 0)); then
+            repair_kernel_verify
+            return 0
+        fi
+
+        menu=""
+        menu+="Found:"$'\n'
+        found=""
+        for ki in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            kv="${KERNEL_INVENTORY_VERSIONS[$ki]}"
+            kernel_is_removable "$kv" || continue
+            found+="removable kernel: $kv"
+            kpkgs="${KERNEL_INVENTORY_PKGS[$ki]:-}"
+            [[ -n "$kpkgs" ]] && found+=" (pkgs=$kpkgs)"
+            found+=$'\n'
+        done
+        if ((${#KERNEL_ORPHANED_HEADERS[@]} > 0)); then
+            found+="orphaned headers: $(printf '%s\n' "${KERNEL_ORPHANED_HEADERS[@]:-}" | paste -sd, -)"$'\n'
+        fi
+        if ((${#KERNEL_ORPHANED_KERNELS[@]} > 0)); then
+            found+="orphaned kernel components: $(printf '%s\n' "${KERNEL_ORPHANED_KERNELS[@]:-}" | paste -sd, -)"$'\n'
+        fi
+        if ((${#KERNEL_ORPHANED_SUPPORT_PKGS[@]} > 0)); then
+            found+="orphaned kernel build support: $(printf '%s\n' "${KERNEL_ORPHANED_SUPPORT_PKGS[@]:-}" | paste -sd, -)"$'\n'
+        fi
+        if ((${#KERNEL_MISSING_HEADERS[@]} > 0)); then
+            found+="missing headers: $(printf '%s\n' "${KERNEL_MISSING_HEADERS[@]:-}" | paste -sd, -)"$'\n'
+        fi
+        if ((${#KERNEL_PARTIAL[@]} > 0)); then
+            found+="incomplete kernel: $(printf '%s\n' "${KERNEL_PARTIAL[@]:-}" | paste -sd, -)"$'\n'
+        fi
+        if [[ -n "$repo_latest" && "$repo_latest" != "$KERNEL_LATEST" ]]; then
+            found+="repository-latest kernel available: $repo_latest"$'\n'
+        fi
+        menu+="$found"$'\n'
+        menu+="Kernel repair:"$'\n'
+        for idx in "${!labels[@]}"; do
+            menu+="$((idx + 1))) ${labels[$idx]}"$'\n'
+        done
+        menu+="0) Abort"
+
+        if ! helper_menu_prompt "$menu" || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+            return 0
+        fi
+        answer="$HELPER_MENU_ANSWER"
+        if [[ "$answer" == "0" ]]; then
+            return 0
+        fi
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+            choice="${stages[$((answer - 1))]}"
+        else
+            continue
+        fi
+
+        case "$choice" in
+            remove-oldest) repair_kernel_remove_oldest ;;
+            remove-newest) repair_kernel_remove_newest ;;
+            remove-orphaned-headers) repair_kernel_remove_orphaned_headers ;;
+            remove-orphaned-kernels) repair_kernel_remove_orphaned_kernels ;;
+            remove-orphaned-support) repair_kernel_remove_orphaned_support ;;
+            install-headers) repair_kernel_install_headers ;;
+            reinstall) repair_kernel_reinstall ;;
+            install-repo-latest) repair_kernel_install_repo_latest ;;
+        esac
+        # The chosen sub-action may have mutated the target: drop the cached
+        # baseline so the next display re-collects fresh and no later sub-action
+        # re-parses the stale pre-mutation baseline.
+        KERNEL_BASELINE_B64=""
+    done
+}
+
+# Orchestrator for the `kernels` repair stage: collect the protection set,
+# run the kernel-cleanup package stage, then rebuild initramfs and regenerate
+# the bootloader configuration for the remaining kernels when the removal
+# changed anything.  Emits the combined `Repair change status kernels:` line
+# via run_package_stage plus the initramfs/GRUB stages' own status lines.
+repair_kernel_cleanup()
+{
+    repair_kernel_prepare_inventory
+
+    # The Full Repair `kernels` stage keeps the default candidate semantics and
+    # the plain `kernels` change-status key (the interactive sub-actions set
+    # their own mode/key per invocation).
+    KERNEL_REMOVE_MODE=""
+    KERNEL_STAGE_STATUS_KEY="kernels"
+
+    # Reassert the hard invariant immediately before the mutation: the running
+    # and latest kernels must never be in the removable set.
+    local v
+    for v in "${KERNEL_REMOVABLE[@]:-}"; do
+        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] \
+            || fail "kernel cleanup protection set violation for $v."
+    done
+
+    # The running kernel is always protected (its modules are loaded).  An
+    # explicit --remove-newest is refused when the newest kernel IS the running
+    # kernel; the user must boot another kernel first.
+    if [[ "$REPAIR_REMOVE_NEWEST" == true && "$KERNEL_LATEST" == "$KERNEL_RUNNING" ]]; then
+        fail "The newest installed kernel is the running kernel; it cannot be removed. Boot another kernel first."
+    fi
+
+    run_package_stage kernel-cleanup kernels
+    # The removal backend may have mutated the dpkg file-list database; drop the
+    # cached path->package index so the header sweeps below re-read a fresh map.
+    dpkg_path_owner_map_clear
+
+    # The removal backend reports its own change status; only rebuild when a
+    # kernel was actually removed (a no-op removal skips the regen).
+    if [[ "$KERNEL_CLEANUP_APPLIED" == true ]]; then
+        adaptive_initramfs_repair
+        if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+            adaptive_extlinux_repair
+        else
+            adaptive_grub_stage
+        fi
+    fi
+
+    # When the caller confirmed it, clean the orphaned header packages (headers
+    # installed without a matching kernel).
+    if [[ "$REPAIR_CLEAN_ORPHANED_HEADERS" == true ]]; then
+        apt_cleanup_orphaned_headers
+    fi
+
+    # When the caller confirmed it, install the missing newest-kernel headers
+    # after the removal so the kept kernel has a matching headers package.
+    if [[ "$REPAIR_INSTALL_LATEST_HEADERS" == true ]]; then
+        apt_install_missing_latest_headers
+    fi
+}
+
+# True when the collected inventory had at least one removable kernel.
+kernel_inventory_had_removable_kernels()
+{
+    ((${#KERNEL_REMOVABLE[@]} > 0))
+}
+
+# ---------------------------------------------------------------------------
+# Interactive kernel repair sub-actions (Debian/APT only)
+# ---------------------------------------------------------------------------
+# Each sub-action is one guarded stage: the menu's chosen action runs through
+# its own helper invocation and emits a distinct `Repair change status
+# kernels:<step>:` line so every choice is auditable and independently rolled
+# back.  Nothing is removed or modified unless the caller requested this exact
+# stage; the running kernel is always protected.
+
+# Remove the superseded (older) kernels only, keeping running/latest/managed.
+repair_kernel_remove_oldest()
+{
+    repair_kernel_prepare_inventory
+    local v
+    for v in "${KERNEL_REMOVABLE[@]:-}"; do
+        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] \
+            || fail "kernel repair protection set violation for $v."
+    done
+    KERNEL_REMOVE_MODE=oldest
+    KERNEL_STAGE_STATUS_KEY="kernels:remove-oldest"
+    apt_kernel_cleanup_stage
+    dpkg_path_owner_map_clear
+    # Only rebuild when a kernel was actually removed; a no-op removal (the apt
+    # simulation proved no changes) must not trigger a pointless regen.
+    if [[ "$KERNEL_CLEANUP_APPLIED" == true ]]; then
+        adaptive_initramfs_repair
+        if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+            adaptive_extlinux_repair
+        else
+            adaptive_grub_stage
+        fi
+    fi
+    KERNEL_REMOVE_MODE=""
+    KERNEL_STAGE_STATUS_KEY="kernels"
+}
+
+# Remove the newest kernel only when it is not the running kernel (the "newest
+# broke boot" case).  The running kernel is never offered or removed.
+repair_kernel_remove_newest()
+{
+    repair_kernel_prepare_inventory
+    if [[ "$KERNEL_LATEST" == "$KERNEL_RUNNING" ]]; then
+        fail "The newest installed kernel is the running kernel; it cannot be removed. Boot another kernel first."
+    fi
+    KERNEL_REMOVE_MODE=newest
+    KERNEL_STAGE_STATUS_KEY="kernels:remove-newest"
+    apt_kernel_cleanup_stage
+    dpkg_path_owner_map_clear
+    # Only rebuild when a kernel was actually removed; a no-op removal must not
+    # trigger a pointless initramfs/bootloader regen.
+    if [[ "$KERNEL_CLEANUP_APPLIED" == true ]]; then
+        adaptive_initramfs_repair
+        if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+            adaptive_extlinux_repair
+        else
+            adaptive_grub_stage
+        fi
+    fi
+    KERNEL_REMOVE_MODE=""
+    KERNEL_STAGE_STATUS_KEY="kernels"
+}
+
+# Remove the orphaned header packages (headers without a matching kernel),
+# reusing the existing cleanup and reporting the sub-action key.
+repair_kernel_remove_orphaned_headers()
+{
+    repair_kernel_prepare_inventory
+    KERNEL_STAGE_STATUS_KEY="kernels:remove-orphaned-headers"
+    apt_cleanup_orphaned_headers
+    KERNEL_STAGE_STATUS_KEY="kernels"
+}
+
+# Remove the orphaned kernel build/support packages (linux-kbuild-<ver> etc.
+# whose kernel version is gone), reusing the guarded apt cleanup and reporting
+# the sub-action key.  The removal mutates the dpkg file-list database, so the
+# cached path->package index is dropped afterward.
+repair_kernel_remove_orphaned_support()
+{
+    repair_kernel_prepare_inventory
+    KERNEL_STAGE_STATUS_KEY="kernels:remove-orphaned-support"
+    apt_cleanup_orphaned_build_support
+    dpkg_path_owner_map_clear
+    KERNEL_STAGE_STATUS_KEY="kernels"
+}
+
+# Remove orphaned kernel components (zombie state): on-disk module trees / boot
+# files that no package owns.  Only the orphaned versions are swept; the
+# running, latest and any fully-installed kernel are never touched.
+repair_kernel_remove_orphaned_kernels()
+{
+    repair_kernel_prepare_inventory
+    if ((${#KERNEL_ORPHANED_KERNELS[@]} == 0)); then
+        repair_change_status "kernels:remove-orphaned-kernels" "unchanged|$(reason no-orphaned-kernels)"
+        return 0
+    fi
+    local v
+    for v in "${KERNEL_ORPHANED_KERNELS[@]:-}"; do
+        [[ "$v" != "$KERNEL_RUNNING" && "$v" != "$KERNEL_LATEST" ]] \
+            || fail "orphaned kernel cleanup protection set violation for $v."
+        msg_log kernel-orphaned-plan "$v"
+        apt_kernel_zombie_cleanup "$v"
+    done
+    dpkg_path_owner_map_clear
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        adaptive_extlinux_repair
+    else
+        adaptive_grub_stage
+    fi
+    repair_change_status "kernels:remove-orphaned-kernels" changed
+}
+
+# Install the missing headers for the newest (and running) kernel.
+repair_kernel_install_headers()
+{
+    repair_kernel_prepare_inventory
+    if ((${#KERNEL_MISSING_HEADERS[@]} == 0)); then
+        repair_change_status "kernels:install-headers" "unchanged|$(reason no-missing-headers)"
+        return 0
+    fi
+    apt_install_missing_latest_headers
+    dpkg_path_owner_map_clear
+    repair_change_status "kernels:install-headers" changed
+}
+
+# Reinstall/complete a broken or partial kernel: the versioned image/modules/
+# headers packages of each detected partial kernel are reinstalled through the
+# guarded APT correction path.
+repair_kernel_reinstall()
+{
+    repair_kernel_prepare_inventory
+    if ((${#KERNEL_PARTIAL[@]} == 0)); then
+        repair_change_status "kernels:reinstall" "unchanged|$(reason no-partial-kernels)"
+        return 0
+    fi
+    local pkg kver wanted
+    local -a reinstall_pkgs=()
+    while IFS= read -r pkg; do
+        [[ "$pkg" == linux-image-* || "$pkg" == linux-modules-* \
+            || "$pkg" == linux-modules-extra-* || "$pkg" == linux-headers-* ]] || continue
+        kver="$(apt_kernel_version_from_package "$pkg" || true)"
+        [[ -n "$kver" ]] || continue
+        wanted=false
+        for v in "${KERNEL_PARTIAL[@]:-}"; do
+            [[ "$v" == "$kver" ]] && wanted=true
+        done
+        [[ "$wanted" == true ]] && reinstall_pkgs+=("$pkg")
+    done < <(apt_installed_kernel_packages)
+    reinstall_pkgs=("$(printf '%s\n' "${reinstall_pkgs[@]:-}" | LC_ALL=C sort -u)")
+    ((${#reinstall_pkgs[@]} > 0)) || {
+        repair_change_status "kernels:reinstall" "unchanged|$(reason no-partial-kernels)"
+        return 0
+    }
+    msg_log kernel-reinstall-plan "${#reinstall_pkgs[@]}" "${reinstall_pkgs[*]}"
+    safe_apt_install_packages "Reinstall the incomplete kernel package(s)" yes "${reinstall_pkgs[@]:-}"
+    dpkg_path_owner_map_clear
+    adaptive_initramfs_repair
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        adaptive_extlinux_repair
+    else
+        adaptive_grub_stage
+    fi
+    repair_change_status "kernels:reinstall" changed
+}
+
+# Verify the current kernel is intact (read-only).  This is the terminal the
+# interactive menu reaches when the inventory has nothing actionable to remove
+# or reinstall: it re-checks the running (and latest, when different) kernel's
+# vmlinuz and module tree without changing anything and reports unchanged with
+# a kernel-verified reason.  A missing component falls through to the guarded
+# reinstall path.  The running kernel is never offered for removal here.
+repair_kernel_verify()
+{
+    repair_kernel_prepare_inventory
+    local v
+    for v in "$KERNEL_RUNNING" "$KERNEL_LATEST"; do
+        [[ -n "$v" ]] || continue
+        if [[ ! -f "$TARGET_ROOT/boot/vmlinuz-$v" ]] \
+            || { [[ ! -d "$TARGET_ROOT/usr/lib/modules/$v" && ! -d "$TARGET_ROOT/lib/modules/$v" ]]; }; then
+            repair_kernel_reinstall
+            return
+        fi
+    done
+    repair_change_status "kernels:verify" "unchanged|$(reason kernel-verified)"
+}
+
+# Install the repository-latest kernel image when the repository evidence names
+# a kernel newer than the installed newest, then rebuild initramfs + GRUB.
+repair_kernel_install_repo_latest()
+{
+    repair_kernel_prepare_inventory
+    KERNEL_REPO_LATEST="$(apt_kernel_repo_latest || true)"
+    if [[ -z "$KERNEL_REPO_LATEST" || "$KERNEL_REPO_LATEST" == "$KERNEL_LATEST" ]]; then
+        repair_change_status "kernels:install-repo-latest" "unchanged|$(reason no-repo-latest-kernel)"
+        return 0
+    fi
+    local image_pkg="linux-image-$KERNEL_REPO_LATEST"
+    msg_log kernel-install-repo-latest "$image_pkg"
+    safe_apt_install_packages "Install the repository-latest kernel" no "$image_pkg"
+    dpkg_path_owner_map_clear
+    adaptive_initramfs_repair
+    if [[ "$TARGET_BOOTLOADER_BACKEND" == syslinux/extlinux ]]; then
+        adaptive_extlinux_repair
+    else
+        adaptive_grub_stage
+    fi
+    repair_change_status "kernels:install-repo-latest" changed
+}
+
 # Run one modifying package stage across every detected package-manager
 # backend, in native-first deterministic order.  Each backend performs its own
 # mandatory preflight, simulation and guards; a backend failure aborts the
@@ -21620,6 +25155,7 @@ run_package_stage_modern()
             apt-upgrade:apk) adaptive_alpine_apk_upgrade ;;
             apt-upgrade:pacman) adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade ;;
             apt-upgrade:rpm) adaptive_rpm_upgrade ;;
+            kernel-cleanup:apt/dpkg) apt_kernel_cleanup_stage ;;
             *) fail "No guarded implementation for package stage '$stage' backend '$backend'." ;;
         esac
         backend_feedback="$PACKAGE_FEEDBACK_SUMMARY"
@@ -21699,7 +25235,7 @@ run_host_repair_modern()
         [[ "$stage" == grub ]] && grub_requested=true
         [[ "$stage" == boot-stack ]] && boot_stack_requested=true
         case "$stage" in
-            dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager) package_stage=true ;;
+            dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|kernels|gpu|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot|kernel-remove-oldest|kernel-remove-newest|kernel-remove-orphaned-headers|kernel-remove-orphaned-kernels|kernel-remove-orphaned-support|kernel-install-headers|kernel-reinstall|kernel-install-repo-latest) package_stage=true ;;
         esac
     done
 
@@ -21758,6 +25294,24 @@ run_host_repair_modern()
             grub) adaptive_grub_stage ;;
             extlinux) adaptive_extlinux_repair ;;
             boot-stack) repair_boot_stack ;;
+            kernels) kernel_interactive_menu ;;
+            kernel-remove-oldest) repair_kernel_remove_oldest ;;
+            kernel-remove-newest) repair_kernel_remove_newest ;;
+            kernel-remove-orphaned-headers) repair_kernel_remove_orphaned_headers ;;
+            kernel-remove-orphaned-kernels) repair_kernel_remove_orphaned_kernels ;;
+            kernel-remove-orphaned-support) repair_kernel_remove_orphaned_support ;;
+            kernel-install-headers) repair_kernel_install_headers ;;
+            kernel-reinstall) repair_kernel_reinstall ;;
+            kernel-install-repo-latest) repair_kernel_install_repo_latest ;;
+            gpu) gpu_interactive_menu ;;
+            gpu-remove-older-kernel) repair_gpu_remove_older_kernel ;;
+            gpu-replace-kernel) repair_gpu_replace_kernel ;;
+            gpu-purge-wrong-driver) repair_gpu_purge_wrong_driver ;;
+            gpu-install-correct-driver) repair_gpu_install_correct_driver ;;
+            gpu-blacklist-module) repair_gpu_blacklist_module ;;
+            gpu-rebuild-dkms) repair_gpu_rebuild_dkms ;;
+            gpu-rebuild-boot) repair_gpu_rebuild_boot ;;
+            nomodeset) repair_nomodeset ;;
         esac
     done
 
@@ -22417,6 +25971,907 @@ run_host_default_modern()
     fi
 }
 
+# ---------------------------------------------------------------------------
+# UEFI firmware boot-entry manager (efi-list / efi-reorder / efi-delete /
+# efi-rename).  There is one UEFI firmware (the running host's NVRAM, read and
+# written through efibootmgr), so every command resolves its scope first: a
+# running-host disk uses prepare_running_host, while a selected repair target
+# disk uses prepare_target ro and classifies firmware entries whose GPT
+# PARTUUID points at the target's ESP as `repair`.  The read-only list never
+# writes efivars, and every mutating command reuses the efibootmgr primitives,
+# the never-active/next invariant and the verified label-updater/rollback
+# pattern already used by the EFI repair and Make Default paths.  Identity
+# stays PARTUUID + decoded loader path; labels are cosmetic annotation only.
+# ---------------------------------------------------------------------------
+
+# Read-only target preparation shared by the efi-list command in target scope.
+# Mirrors the EFI/UKI repair preflight: mount the selected root read-only, bring
+# up the boot entries and the ESP read-only (guarded exactly like the repair
+# path), then resolve the mounted ESP so firmware entries can be classified by
+# GPT PARTUUID.  Never writes efivars and never promotes a mount read-write.
+prepare_target_efi_readonly()
+{
+    prepare_target ro
+    mount_target_boot_entry "/boot" ro
+    mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
+    mount_target_esp_by_type ro || true
+    profile_target_backends
+    detect_mounted_esp || true
+}
+
+# Resolve one firmware entry's drive model from its GPT PARTUUID (empty when
+# the partition or its model cannot be resolved).
+efi_entry_device_model()
+{
+    local partuuid="$1" esp
+    [[ -n "$partuuid" ]] || return 1
+    esp="$(blkid -t "PARTUUID=$partuuid" -o device 2>/dev/null | head -n1 || true)"
+    [[ -n "$esp" && -b "$esp" ]] || return 1
+    efi_selected_system_model "$esp" 2>/dev/null || true
+}
+
+# Print one machine-readable entry line for efi-list.  The first field is the
+# firmware ID, followed by TAB-separated label, loader (or device-path-only),
+# class (host|foreign|unknown), policy role, PARTUUID, drive model and the
+# listed/unlisted flag.  Labels and loaders may contain spaces, so TAB is the
+# only field separator.
+efi_list_print_entry()
+{
+    local line="$1" listed="$2" id part loader class role model
+    id="$(efi_entry_id_line "$line")"
+    [[ -n "$id" ]] || return 0
+    part="$(efi_entry_partuuid_line "$line")"
+    loader="$(efi_entry_loader_line "$line" || true)"
+    class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+    # Host scope collapses repair into host (both PARTUUIDs are the running
+    # host's ESP); target scope keeps `repair` verbatim so the GUI can show the
+    # selected drive's own entries.
+    [[ "$RUNNING_HOST_MODE" == 1 && "$class" == repair ]] && class=host
+    role="$(efi_entry_policy_role "$line")"
+    model="$(efi_entry_device_model "$part" 2>/dev/null || true)"
+    printf 'Boot%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$id" \
+        "$(efi_entry_label_line "$line")" \
+        "${loader:-device-path-only}" \
+        "$class" \
+        "$role" \
+        "${part:-unknown}" \
+        "$model" \
+        "$listed"
+}
+
+# Read-only firmware boot-entry listing.  Emits BootCurrent and BootOrder
+# header lines, then one TAB-separated line per entry ordered by the current
+# BootOrder; entries firmware keeps but omits from BootOrder are appended with
+# the `unlisted` flag.  Exit 0 even with zero entries (header only).  Never
+# writes efivars.
+run_efi_list()
+{
+    local raw_disk="$1" raw_root="$2" current current_order id line
+    local -a order_ids=()
+    local -a emitted=() emitted_keys=()
+
+    CURRENT_STAGE="boot entries list"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" no
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target_efi_readonly
+    fi
+    command -v efibootmgr >/dev/null 2>&1 \
+        || fail "efibootmgr is not installed; firmware boot entries cannot be listed."
+    efi_set_inventory_esp_ids
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    printf 'BootCurrent: %s\n' "$(legacy_sed_ext -n 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    printf 'BootOrder: %s\n' "$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)"
+
+    current_order="$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)"
+    if [[ -n "$current_order" ]]; then
+        IFS=',' read -ra order_ids <<< "$current_order"
+    fi
+    for id in "${order_ids[@]:-}"; do
+        id="$(legacy_uc "$id")"
+        [[ "$id" =~ ^[0-9A-F]{4}$ ]] || continue
+        [[ -n "$(legacy_assoc_get emitted "$id")" ]] && continue
+        line="$(grep -E "^Boot${id}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+        [[ -n "$line" ]] || continue
+        legacy_assoc_set emitted "$id" 1
+        efi_list_print_entry "$line" listed
+    done
+    while IFS= read -r line; do
+        id="$(efi_entry_id_line "$line")"
+        [[ -n "$id" ]] || continue
+        [[ -n "$(legacy_assoc_get emitted "$id")" ]] && continue
+        legacy_assoc_set emitted "$id" 1
+        efi_list_print_entry "$line" unlisted
+    done < <(legacy_sed_ext -n '/^Boot[0-9A-Fa-f]{4}\*?[[:space:]]/p' <<<"$current")
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Read-only GRUB boot-menu listing (grub-list).  The GRUB menu (the list of
+# kernels/OSes inside GRUB, generated into grub.cfg) is separate from the UEFI
+# firmware entries; this command exposes it read-only so the GUI can show it
+# alongside the firmware entries for visual alignment.  It never writes
+# grub.cfg, grubenv or any other file: the default-entry resolution below only
+# reads /etc/default/grub and the grubenv through `strings` (tolerating the
+# binary grubenv header).  A missing/unreadable default marks no row and still
+# exits 0.
+# ---------------------------------------------------------------------------
+
+# Title of one menuentry/submenu declaration: the first quoted string after the
+# keyword (grub-mkconfig always quotes it; single or double quotes).
+grub_list_entry_title()
+{
+    legacy_sed_ext -n "s/^[[:space:]]*(menuentry|submenu)[[:space:]]+(['\"])([^'\"]*)\\2.*/\\3/p" <<<"$1" | head -n1
+}
+
+# First --class token of a declaration (empty when it declares no class).
+grub_list_entry_class()
+{
+    grep -oE -- '--class[[:space:]]+[^[:space:]]+' <<<"$1" \
+        | head -n1 \
+        | legacy_sed_ext 's/^--class[[:space:]]+//; s/\{$//'
+}
+
+# Menuentry id: the quoted token following the literal "$menuentry_id_option"
+# GRUB variable reference (empty when the declaration carries no id).
+grub_list_entry_id()
+{
+    legacy_sed_ext -n "s/.*\\\$menuentry_id_option[[:space:]]+(['\"])([^'\"]*)\\1.*/\\2/p" <<<"$1" | head -n1
+}
+
+# configfile path of a submenu body: the quoted token following the literal
+# `configfile` directive (empty when the line carries no configfile). Only
+# consulted while inside a submenu body (submenu_depth > 0), where the
+# directive names the external config the submenu loads instead of declaring
+# menuentry children of its own.
+grub_list_entry_configfile()
+{
+    legacy_sed_ext -n "s/.*configfile[[:space:]]+[\"']([^\"']*)[\"'].*/\1/p" <<<"$1" | head -n1
+}
+
+run_grub_list()
+{
+    local raw_disk="$1" raw_root="$2" config="" line="" title="" cls="" id=""
+    local foreign="" default_mark="" i=""
+    local grub_default="" saved_entry="" match_value="" label="" default_index=-1
+    local grub_esp_partuuid="" grub_esp_model=""
+    local depth="" kind="" opens="" closes="" brace_depth=0 submenu_depth=0
+    local sub_index="" cfg_path=""
+    local -a titles=() classes=() ids=() foreign_flags=() depths=() kinds=()
+    local -a configfiles=() submenu_open_depths=() submenu_open_indices=()
+
+    CURRENT_STAGE="GRUB menu list"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" no
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+
+    config="$(grub_config_path)"
+    if [[ ! -s "$TARGET_ROOT$config" ]]; then
+        printf 'GRUB config: %s (not found)\n' "$config"
+        return 0
+    fi
+    printf 'GRUB config: %s\n' "$config"
+
+    # Correlate this GRUB menu with the EFI firmware entries on the same disk:
+    # report the selected ESP's GPT PARTUUID (lowercased, matching the efi-list
+    # protocol) and its drive model so the GUI can pull in the firmware entries
+    # that live on that same disk. Read-only: both probes only inspect devices.
+    if [[ -n "$EFI_ESP_SOURCE" ]]; then
+        grub_esp_partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null | tr '[:upper:]' '[:lower:]' || true)"
+        grub_esp_model="$(efi_selected_system_model "$EFI_ESP_SOURCE" 2>/dev/null || true)"
+    fi
+    printf 'GRUB esp: %s\n' "$grub_esp_partuuid"
+    printf 'GRUB drive: %s\n' "$grub_esp_model"
+
+    # Parse menuentry/submenu declarations in file order (never sorted or
+    # deduped): the menu order is exactly what the user wants to confirm.
+    # Submenu nesting is tracked via brace depth: grub.cfg uses `{`/`}` for
+    # menuentry, submenu and `function` bodies while `if`/`else` use
+    # `then`/`fi` (no braces), so `submenu {` blocks are the only constructs
+    # that open a deeper nesting level for their children.
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*submenu[[:space:]] ]]; then
+            kind="submenu"
+            depth="$submenu_depth"
+            submenu_open_depths+=("$brace_depth")
+            submenu_depth=$((submenu_depth + 1))
+        elif [[ "$line" =~ ^[[:space:]]*menuentry[[:space:]] ]]; then
+            kind="menuentry"
+            depth="$submenu_depth"
+        else
+            kind=""
+            depth=""
+        fi
+        if [[ -n "$kind" ]]; then
+            title="$(grub_list_entry_title "$line" || true)"
+            cls="$(grub_list_entry_class "$line" || true)"
+            id="$(grub_list_entry_id "$line" || true)"
+            if grub_entry_is_foreign "$title $id"; then
+                foreign=1
+            else
+                foreign=0
+            fi
+            titles+=("$title")
+            classes+=("$cls")
+            ids+=("$id")
+            foreign_flags+=("$foreign")
+            depths+=("$depth")
+            kinds+=("$kind")
+            configfiles+=("")
+            if [[ "$kind" == submenu ]]; then
+                # Remember this submenu's row index so a later configfile
+                # directive inside its body can be associated with it. The
+                # index is the row being appended (current titles size).
+                submenu_open_indices+=("$(( ${#titles[@]} - 1 ))")
+            fi
+        fi
+        # A `configfile` directive inside a submenu body names the external
+        # config the submenu loads (e.g. grub-btrfs.cfg snapshots): the
+        # submenu has no menuentry children of its own, so surface the target
+        # path on the submenu row. First occurrence wins (only the first
+        # configfile per submenu body is captured).
+        if (( submenu_depth > 0 )) && (( ${#submenu_open_indices[@]} > 0 )); then
+            cfg_path="$(grub_list_entry_configfile "$line" || true)"
+            if [[ -n "$cfg_path" ]]; then
+                sub_index="${submenu_open_indices[${#submenu_open_indices[@]} - 1]}"
+                if [[ -n "$sub_index" && -z "${configfiles[$sub_index]}" ]]; then
+                    configfiles[$sub_index]="$cfg_path"
+                fi
+            fi
+        fi
+        opens="$(tr -cd '{' <<<"$line" | wc -c)"
+        closes="$(tr -cd '}' <<<"$line" | wc -c)"
+        brace_depth=$((brace_depth + opens - closes))
+        while (( ${#submenu_open_depths[@]} > 0 )) && (( brace_depth <= submenu_open_depths[${#submenu_open_depths[@]} - 1] )); do
+            unset "submenu_open_depths[${#submenu_open_depths[@]} - 1]"
+            unset "submenu_open_indices[${#submenu_open_indices[@]} - 1]"
+            submenu_depth=$((submenu_depth - 1))
+        done
+    done < "$TARGET_ROOT$config"
+
+    # Best-effort default entry.  GRUB_DEFAULT=saved resolves through the
+    # grubenv saved_entry; a bare title/id string matches a title or id; a bare
+    # integer matches the Nth listed entry (0-based).  Unresolvable -> none.
+    grub_default="$(legacy_sed_ext -n 's/^[[:space:]]*GRUB_DEFAULT[[:space:]]*=[[:space:]]*"?([^"#[:space:]]+)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/default/grub" 2>/dev/null | head -n1 || true)"
+    # GRUB's documented default when GRUB_DEFAULT is unset or commented out is
+    # the first menu entry (index 0).
+    [[ -z "$grub_default" ]] && grub_default="0"
+    if [[ "$grub_default" == saved ]]; then
+        saved_entry="$(strings "$TARGET_ROOT$(grub_env_path)" 2>/dev/null \
+            | legacy_sed_ext -n 's/^saved_entry=(.*)$/\1/p' | head -n1 || true)"
+        match_value="$saved_entry"
+        label="${saved_entry:-saved}"
+    else
+        match_value="$grub_default"
+        label="$grub_default"
+    fi
+    # `saved` with no recorded saved_entry (or an unreadable grubenv) falls back
+    # to GRUB's first-entry default too.
+    [[ -z "$match_value" ]] && { match_value="0"; label="0"; }
+
+    if [[ "$match_value" =~ ^[0-9]+$ ]]; then
+        default_index="$match_value"
+        (( default_index < ${#titles[@]} )) || default_index=-1
+    elif [[ -n "$match_value" ]]; then
+        for i in "${!titles[@]}"; do
+            if [[ "${titles[$i]}" == "$match_value" || "${ids[$i]}" == "$match_value" ]]; then
+                default_index=$i
+                break
+            fi
+        done
+    fi
+
+    printf 'GRUB default: %s\n' "$label"
+
+    for i in "${!titles[@]}"; do
+        default_mark=0
+        [[ "$i" -eq "$default_index" ]] && default_mark=1
+        printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+            "${titles[$i]}" "${classes[$i]}" "${ids[$i]}" "${foreign_flags[$i]}" \
+            "$default_mark" "${depths[$i]}" "${kinds[$i]}" "${configfiles[$i]}"
+    done
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Read-only extlinux/syslinux boot-menu listing (extlinux-list).  BIOS-only
+# systems have no UEFI firmware entries, but extlinux/syslinux provides the
+# equivalent boot menu in /boot/extlinux.conf (or one of the syslinux.cfg
+# variants).  This command exposes that menu read-only so the GUI Boot entries
+# tab can show the equivalent boot entries.  It never writes anything: it only
+# reads the resolved configuration file.
+#
+# Protocol (mirrors grub-list; TAB is the only field separator):
+#   EXTLINUX config: <path>        resolved config (relative to the target root)
+#   EXTLINUX menu title: <text>    MENU TITLE header text, or empty
+#   EXTLINUX default: <label>      DEFAULT header label, or empty
+#   <label>\t<menu-label>\t<kernel>\t<initrd>\t<default>
+# where <default> is 1 for exactly the row whose LABEL matches the DEFAULT
+# header label (none when DEFAULT is absent or names no known label), else 0.
+# A missing config prints only "EXTLINUX config: (not found)" and exits 0.
+# The LABEL blocks' APPEND kernel command lines are deliberately not surfaced:
+# they can carry secrets (cryptroot=, passphrase=), and the GUI never renders
+# them.  A missing/unreadable default marks no row and still exits 0.
+# ---------------------------------------------------------------------------
+
+# Label name of a LABEL line (empty when the line declares no label).  The
+# label is the first whitespace-delimited token after the directive.
+extlinux_list_label()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*LABEL[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$1" | head -n1
+}
+
+# Text of a MENU LABEL line (empty when the line is not a MENU LABEL).
+extlinux_list_menu_label()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*MENU[[:space:]]+LABEL[[:space:]]+(.*)$/\1/p' <<<"$1" | head -n1
+}
+
+# Path of a KERNEL or LINUX line (empty when the line is neither).
+extlinux_list_kernel()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*(KERNEL|LINUX)[[:space:]]+([^[:space:]]+).*/\2/p' <<<"$1" | head -n1
+}
+
+# Path of an INITRD line (empty when the line is not an INITRD).
+extlinux_list_initrd()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*INITRD[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$1" | head -n1
+}
+
+# The DEFAULT label from the config header (empty when the line is not a
+# DEFAULT directive).
+extlinux_list_default_name()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*DEFAULT[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$1" | head -n1
+}
+
+# The MENU TITLE text from the config header (empty when the line is not a
+# MENU TITLE directive).
+extlinux_list_menu_title()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*MENU[[:space:]]+TITLE[[:space:]]+(.*)$/\1/p' <<<"$1" | head -n1
+}
+
+run_extlinux_list()
+{
+    local raw_disk="$1" raw_root="$2"
+    local config="" candidate="" line="" extracted=""
+    local label="" menu_label="" kernel="" initrd=""
+    local default_name="" menu_title="" default_index=-1 i="" default_mark=0
+    local -a labels=() menu_labels=() kernels=() initrds=()
+
+    CURRENT_STAGE="extlinux menu list"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" no
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+
+    config=""
+    for candidate in /boot/extlinux.conf /boot/syslinux/syslinux.cfg /boot/syslinux.cfg; do
+        if [[ -s "$TARGET_ROOT$candidate" ]]; then
+            config="$candidate"
+            break
+        fi
+    done
+    if [[ -z "$config" ]]; then
+        printf 'EXTLINUX config: (not found)\n'
+        return 0
+    fi
+    printf 'EXTLINUX config: %s\n' "$config"
+
+    default_name=""
+    menu_title=""
+    label=""
+    menu_label=""
+    kernel=""
+    initrd=""
+
+    # Parse LABEL blocks in file order (never sorted or deduped): the menu
+    # order is exactly what the user wants to confirm.  Each LABEL block is a
+    # flat run of directive lines; the first occurrence of each directive wins
+    # (extlinux.conf conventionally carries one KERNEL/INITRD/MENU LABEL per
+    # block).  DEFAULT and MENU TITLE are captured from the header (before the
+    # first LABEL), matching how update-extlinux emits them.
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*LABEL[[:space:]] ]]; then
+            # Flush the previous block (if any), then begin the new one.
+            if [[ -n "$label" ]]; then
+                labels+=("$label")
+                menu_labels+=("$menu_label")
+                kernels+=("$kernel")
+                initrds+=("$initrd")
+            fi
+            label="$(extlinux_list_label "$line" || true)"
+            menu_label=""
+            kernel=""
+            initrd=""
+            continue
+        fi
+        if [[ -z "$label" ]]; then
+            # Header directives (before the first LABEL block).
+            if [[ -z "$default_name" ]]; then
+                default_name="$(extlinux_list_default_name "$line" || true)"
+            fi
+            if [[ -z "$menu_title" ]]; then
+                menu_title="$(extlinux_list_menu_title "$line" || true)"
+            fi
+            continue
+        fi
+        # Within a LABEL block: collect each directive once (first wins).
+        if [[ -z "$menu_label" ]]; then
+            extracted="$(extlinux_list_menu_label "$line" || true)"
+            if [[ -n "$extracted" ]]; then
+                menu_label="$extracted"
+                continue
+            fi
+        fi
+        if [[ -z "$kernel" ]]; then
+            extracted="$(extlinux_list_kernel "$line" || true)"
+            if [[ -n "$extracted" ]]; then
+                kernel="$extracted"
+                continue
+            fi
+        fi
+        if [[ -z "$initrd" ]]; then
+            extracted="$(extlinux_list_initrd "$line" || true)"
+            if [[ -n "$extracted" ]]; then
+                initrd="$extracted"
+                continue
+            fi
+        fi
+    done < "$TARGET_ROOT$config"
+
+    # Flush the final block (a config with no LABEL at all yields no rows).
+    if [[ -n "$label" ]]; then
+        labels+=("$label")
+        menu_labels+=("$menu_label")
+        kernels+=("$kernel")
+        initrds+=("$initrd")
+    fi
+
+    printf 'EXTLINUX menu title: %s\n' "$menu_title"
+    printf 'EXTLINUX default: %s\n' "$default_name"
+
+    # Resolve the DEFAULT header label to its row index.  Only a label that is
+    # actually listed is marked default; an unknown/absent DEFAULT marks none.
+    default_index=-1
+    if [[ -n "$default_name" ]]; then
+        for i in "${!labels[@]}"; do
+            if [[ "${labels[$i]}" == "$default_name" ]]; then
+                default_index=$i
+                break
+            fi
+        done
+    fi
+
+    for i in "${!labels[@]}"; do
+        menu_label="${menu_labels[$i]}"
+        [[ -z "$menu_label" ]] && menu_label="${labels[$i]}"
+        default_mark=0
+        [[ "$i" -eq "$default_index" ]] && default_mark=1
+        printf '%s\t%s\t%s\t%s\t%s\n' \
+            "${labels[$i]}" "$menu_label" "${kernels[$i]}" "${initrds[$i]}" "$default_mark"
+    done
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Read-only GRUB legacy (Debian Etch, GRUB 0.97) boot-menu listing
+# (grub-legacy-list).  GRUB legacy stores its menu in /boot/grub/menu.lst as a
+# flat run of `title` blocks (kernel/initrd paths plus per-entry options), with
+# a global `default <N>` (0-based) or `default saved` in the header.  This
+# command exposes that menu read-only so the GUI can show Etch's boot entries;
+# it never writes anything and never surfaces a kernel command line (it can
+# carry secrets), only the kernel/initrd first token (the path).
+#
+# Protocol (TAB is the only field separator):
+#   GRUB legacy config: <path>        resolved config (relative to the target root)
+#   GRUB legacy default: <index>      resolved 0-based default index, or empty
+#   <title>\t<kernel>\t<initrd>\t<default>
+# where <default> is 1 for exactly the row whose index equals the resolved
+# default, else 0.  `default saved` resolves through /boot/grub/default
+# (best-effort; unresolvable marks no row).  A missing config prints only
+# "GRUB legacy config: (not found)" and exits 0.
+# ---------------------------------------------------------------------------
+
+# Title text of a `title` line (everything after the directive).
+grub_legacy_list_title()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*title[[:space:]]+(.*)$/\1/p' <<<"$1" | head -n1
+}
+
+# First token of a `kernel` line (the path only; options are never surfaced).
+grub_legacy_list_kernel()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*kernel[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$1" | head -n1
+}
+
+# First token of an `initrd` line (the path only).
+grub_legacy_list_initrd()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*initrd[[:space:]]+([^[:space:]]+).*/\1/p' <<<"$1" | head -n1
+}
+
+# Numeric index of a `default <N>` line (empty when the line is not one).
+grub_legacy_list_default_index()
+{
+    legacy_sed_ext -n 's/^[[:space:]]*default[[:space:]]+([0-9]+).*/\1/p' <<<"$1" | head -n1
+}
+
+run_grub_legacy_list()
+{
+    local raw_disk="$1" raw_root="$2"
+    local config="/boot/grub/menu.lst"
+    local line="" extracted=""
+    local title="" kernel="" initrd=""
+    local default_index=-1 default_saved=0 i="" default_mark=0
+    local -a titles=() kernels=() initrds=()
+
+    CURRENT_STAGE="GRUB legacy menu list"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" no
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+
+    if [[ ! -s "$TARGET_ROOT$config" ]]; then
+        printf 'GRUB legacy config: (not found)\n'
+        return 0
+    fi
+    printf 'GRUB legacy config: %s\n' "$config"
+
+    title=""
+    kernel=""
+    initrd=""
+    default_index=-1
+    default_saved=0
+
+    # Parse title blocks in file order (never sorted or deduped): the menu
+    # order is exactly what the user wants to confirm.  Each title block is a
+    # flat run of directive lines; the first occurrence of kernel/initrd wins.
+    # The header (before the first title) captures the `default` directive;
+    # `default saved` is resolved afterwards through /boot/grub/default.
+    while IFS= read -r line; do
+        [[ "$line" =~ ^[[:space:]]*# ]] && continue
+        if [[ "$line" =~ ^[[:space:]]*title[[:space:]] ]]; then
+            # Flush the previous entry (if any), then begin the new one.
+            if [[ -n "$title" ]]; then
+                titles+=("$title")
+                kernels+=("$kernel")
+                initrds+=("$initrd")
+            fi
+            title="$(grub_legacy_list_title "$line" || true)"
+            kernel=""
+            initrd=""
+            continue
+        fi
+        if [[ -z "$title" ]]; then
+            # Header directives (before the first title block).
+            if [[ "$line" =~ ^[[:space:]]*default[[:space:]] ]] && (( default_index < 0 )) && (( default_saved == 0 )); then
+                if [[ "$line" =~ ^[[:space:]]*default[[:space:]]+saved[[:space:]]*$ ]]; then
+                    default_saved=1
+                else
+                    extracted="$(grub_legacy_list_default_index "$line" || true)"
+                    if [[ -n "$extracted" ]]; then
+                        default_index="$extracted"
+                    fi
+                fi
+            fi
+            continue
+        fi
+        # Within a title block: collect each directive once (first wins).
+        if [[ -z "$kernel" ]]; then
+            extracted="$(grub_legacy_list_kernel "$line" || true)"
+            if [[ -n "$extracted" ]]; then
+                kernel="$extracted"
+                continue
+            fi
+        fi
+        if [[ -z "$initrd" ]]; then
+            extracted="$(grub_legacy_list_initrd "$line" || true)"
+            if [[ -n "$extracted" ]]; then
+                initrd="$extracted"
+                continue
+            fi
+        fi
+    done < "$TARGET_ROOT$config"
+
+    # Flush the final entry (a config with no title at all yields no rows).
+    if [[ -n "$title" ]]; then
+        titles+=("$title")
+        kernels+=("$kernel")
+        initrds+=("$initrd")
+    fi
+
+    # Resolve `default saved` from /boot/grub/default (a plain text file holding
+    # the 0-based saved index).  Best-effort: an absent/unreadable/non-numeric
+    # value marks no row.
+    if (( default_saved == 1 )); then
+        extracted="$(legacy_sed_ext -n 's/^[[:space:]]*([0-9]+)[[:space:]]*$/\1/p' \
+            "$TARGET_ROOT/boot/grub/default" 2>/dev/null | head -n1 || true)"
+        if [[ -n "$extracted" ]]; then
+            default_index="$extracted"
+        else
+            default_index=-1
+        fi
+    fi
+
+    # Only an index that actually resolves to a known entry is marked default.
+    (( default_index >= 0 && default_index < ${#titles[@]} )) || default_index=-1
+
+    if (( default_index >= 0 )); then
+        printf 'GRUB legacy default: %s\n' "$default_index"
+    else
+        printf 'GRUB legacy default: \n'
+    fi
+
+    for i in "${!titles[@]}"; do
+        default_mark=0
+        [[ "$i" -eq "$default_index" ]] && default_mark=1
+        printf '%s\t%s\t%s\t%s\n' \
+            "${titles[$i]}" "${kernels[$i]}" "${initrds[$i]}" "$default_mark"
+    done
+    return 0
+}
+
+# Set the BootOrder to the caller's complete list.  Safety: the requested list
+# must be a permutation of every existing firmware ID (fail closed on any
+# difference), BootCurrent/BootNext are never removed, the write is re-read
+# from firmware and verified, and any mismatch restores the previous BootOrder
+# and fails loudly.
+run_efi_reorder()
+{
+    local raw_disk="$1" raw_root="$2" requested="$3"
+    local current prev_order current_id next_id id verify out_csv
+    local -a existing_ids=() requested_ids=() order_ids=()
+    local -a seen=() seen_keys=()
+
+    CURRENT_STAGE="boot entry reorder"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" yes
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+    uefi_nvram_writable \
+        || fail "UEFI variables are not writable; BootOrder cannot be changed."
+    command -v efibootmgr >/dev/null 2>&1 \
+        || fail "efibootmgr is not installed; BootOrder cannot be changed."
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    prev_order="$(sed -n 's/^BootOrder: //p' <<<"$current" | head -n1 || true)"
+    current_id="$(legacy_sed_ext -n 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    next_id="$(legacy_sed_ext -n 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    legacy_readarray -t existing_ids < <(legacy_sed_ext -n 's/^Boot([0-9A-Fa-f]{4})\*?[[:space:]].*/\1/p' <<<"$current" | tr '[:lower:]' '[:upper:]' | sort -u)
+
+    [[ -n "$requested" ]] \
+        || fail "Refusing to change BootOrder: an empty order would remove every firmware entry."
+    IFS=',' read -ra order_ids <<< "$requested"
+    for id in "${order_ids[@]:-}"; do
+        id="$(legacy_uc "$id")"
+        [[ "$id" =~ ^[0-9A-F]{4}$ ]] || fail "Invalid Boot#### ID in requested BootOrder: ${id:-<empty>}"
+        [[ -n "$(legacy_assoc_get seen "$id")" ]] && fail "Duplicate Boot#### ID in requested BootOrder: $id"
+        legacy_assoc_set seen "$id" 1
+        requested_ids+=("$id")
+    done
+
+    for id in "${existing_ids[@]:-}"; do
+        [[ -n "$(legacy_assoc_get seen "$id")" ]] \
+            || fail "Refusing to change BootOrder: existing firmware entry Boot$id is missing from the requested order."
+    done
+    for id in "${requested_ids[@]:-}"; do
+        grep -Eq "^Boot${id}\*?[[:space:]]" <<<"$current" \
+            || fail "Refusing to change BootOrder: Boot$id is not an existing firmware entry."
+    done
+    for id in "$current_id" "$next_id"; do
+        [[ -n "$id" ]] || continue
+        [[ -n "$(legacy_assoc_get seen "$id")" ]] \
+            || fail "Refusing to change BootOrder: active/next firmware entry Boot$id would be removed."
+    done
+
+    out_csv="$(IFS=','; printf '%s' "${requested_ids[*]}")"
+    if [[ "$out_csv" == "$prev_order" ]]; then
+        msg_log efi-reorder-unchanged "$out_csv"
+        repair_change_status efi-reorder unchanged
+        return 0
+    fi
+
+    msg_log efi-reorder-applied "$out_csv"
+    efibootmgr -o "$out_csv" 2>&1 | tee -a "$SESSION_LOG" \
+        || fail "efibootmgr could not write the requested BootOrder."
+    verify="$(efibootmgr -v 2>/dev/null || true)"
+    if [[ "$(sed -n 's/^BootOrder: //p' <<<"$verify" | head -n1 || true)" != "$out_csv" ]]; then
+        efibootmgr -o "$prev_order" 2>&1 | tee -a "$SESSION_LOG" || true
+        fail "Firmware did not retain the requested BootOrder; the previous BootOrder was restored."
+    fi
+    repair_change_status efi-reorder changed
+}
+
+# Delete exactly one firmware entry.  Safety: the active (BootCurrent) and
+# next (BootNext) entries are refused, the complete definition is captured
+# before the delete so a removal the firmware does not confirm can be
+# recreated, and the re-read must prove the ID is gone.
+run_efi_delete()
+{
+    local raw_disk="$1" raw_root="$2" bootnum="$3"
+    local current current_id next_id line order verify new_order id class
+    local -a ids=()
+
+    CURRENT_STAGE="boot entry delete"
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" yes
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+    efi_set_inventory_esp_ids
+    uefi_nvram_writable \
+        || fail "UEFI variables are not writable; the boot entry cannot be deleted."
+    command -v efibootmgr >/dev/null 2>&1 \
+        || fail "efibootmgr is not installed; the boot entry cannot be deleted."
+
+    bootnum="$(legacy_uc "$bootnum")"
+    [[ "$bootnum" =~ ^[0-9A-F]{4}$ ]] || fail "Invalid Boot#### ID: ${bootnum:-missing}"
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    current_id="$(legacy_sed_ext -n 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    next_id="$(legacy_sed_ext -n 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$bootnum" != "$current_id" ]] \
+        || fail "Refusing to delete the active firmware entry Boot$bootnum (BootCurrent)."
+    [[ "$bootnum" != "$next_id" ]] \
+        || fail "Refusing to delete the next-boot firmware entry Boot$bootnum (BootNext)."
+
+    line="$(grep -E "^Boot${bootnum}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+    [[ -n "$line" ]] || fail "Firmware entry Boot$bootnum does not exist."
+
+    if [[ "$RUNNING_HOST_MODE" == 0 ]]; then
+        # Target scope: a repair target has no firmware of its own — its "boot
+        # entries" are NVRAM entries whose PARTUUID points at the target ESP.
+        # Never let a selected target delete the running host's own entry.
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        [[ "$class" != host ]] \
+            || fail "Refusing to modify the running host's own firmware entry Boot$bootnum while a repair target is selected."
+    fi
+
+    # Capture the complete definition before deleting so a removal the firmware
+    # does not confirm can be recreated.
+    efibootmgr -b "$bootnum" -B 2>&1 | tee -a "$SESSION_LOG" \
+        || fail "efibootmgr could not delete Boot$bootnum."
+
+    verify="$(efibootmgr -v 2>/dev/null || true)"
+    if grep -Eq "^Boot${bootnum}\*?[[:space:]]" <<<"$verify"; then
+        efi_create_entry_from_definition "$line" deleted || true
+        fail "Firmware still reports Boot$bootnum after deletion; the entry was recreated from its captured definition and the delete was aborted."
+    fi
+
+    # Keep BootOrder free of the removed ID, mirroring destination maintenance.
+    order="$(sed -n 's/^BootOrder: //p' <<<"$verify" | head -n1 || true)"
+    if [[ -n "$order" ]]; then
+        IFS=',' read -ra ids <<< "$order"
+        new_order=""
+        for id in "${ids[@]:-}"; do
+            id="$(legacy_uc "$id")"
+            [[ "$id" == "$bootnum" ]] && continue
+            new_order+="${new_order:+,}$id"
+        done
+        if [[ "$new_order" != "$order" ]]; then
+            efibootmgr -o "$new_order" 2>&1 | tee -a "$SESSION_LOG" \
+                || fail "Unable to remove Boot$bootnum from BootOrder after deletion."
+            verify="$(efibootmgr -v 2>/dev/null || true)"
+            [[ "$(sed -n 's/^BootOrder: //p' <<<"$verify" | head -n1 || true)" == "$new_order" ]] \
+                || fail "BootOrder still references the deleted entry Boot$bootnum after cleanup."
+        fi
+    fi
+
+    msg_log efi-entry-deleted "$bootnum"
+    repair_change_status efi-delete changed
+}
+
+# Rename exactly one firmware entry.  Safety: a blank label is refused, the
+# active (BootCurrent) and next (BootNext) entries are never renamed, the
+# rename goes through the root-owned label updater (--bootnum --partuuid
+# --loader --label --backup) so it is verified and rollback-able, and the
+# re-read must prove the new label or the previous label is restored and the
+# rename fails loudly.
+run_efi_rename()
+{
+    local raw_disk="$1" raw_root="$2" bootnum="$3" label="$4"
+    local current current_id next_id line partuuid loader old_label updater backup_dir backup verify verify_label class
+
+    CURRENT_STAGE="boot entry rename"
+    # Refuse a blank name before any privileged work (the GUI guards too, but
+    # the helper must refuse a blank label itself).
+    [[ -n "$label" ]] || fail "A blank EFI boot entry label was rejected."
+    [[ "$label" =~ ^[[:space:]]*$ ]] && fail "A blank EFI boot entry label was rejected."
+
+    if is_running_host_target "$raw_disk" "$raw_root"; then
+        RUNNING_HOST_MODE=1
+        prepare_running_host "$raw_disk" "$raw_root" yes
+    else
+        RUNNING_HOST_MODE=0
+        prepare_target ro
+    fi
+    efi_set_inventory_esp_ids
+    uefi_nvram_writable \
+        || fail "UEFI variables are not writable; the boot entry label cannot be changed."
+    command -v efibootmgr >/dev/null 2>&1 \
+        || fail "efibootmgr is not installed; the boot entry label cannot be changed."
+
+    bootnum="$(legacy_uc "$bootnum")"
+    [[ "$bootnum" =~ ^[0-9A-F]{4}$ ]] || fail "Invalid Boot#### ID: ${bootnum:-missing}"
+
+    current="$(efibootmgr -v 2>/dev/null || true)"
+    current_id="$(legacy_sed_ext -n 's/^BootCurrent: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    next_id="$(legacy_sed_ext -n 's/^BootNext: ([0-9A-Fa-f]{4}).*/\1/p' <<<"$current" | head -n1 | tr '[:lower:]' '[:upper:]' || true)"
+    [[ "$bootnum" != "$current_id" ]] \
+        || fail "Refusing to rename the active firmware entry Boot$bootnum (BootCurrent)."
+    [[ "$bootnum" != "$next_id" ]] \
+        || fail "Refusing to rename the next-boot firmware entry Boot$bootnum (BootNext)."
+
+    line="$(grep -E "^Boot${bootnum}\*?[[:space:]]" <<<"$current" | head -n1 || true)"
+    [[ -n "$line" ]] || fail "Firmware entry Boot$bootnum does not exist."
+
+    if [[ "$RUNNING_HOST_MODE" == 0 ]]; then
+        # Target scope: never rename the running host's own firmware entry
+        # while a repair target is selected.
+        class="$(efi_entry_class_line "$line" "$EFI_HOST_ESP_PARTUUID" "$EFI_TARGET_ESP_PARTUUID")"
+        [[ "$class" != host ]] \
+            || fail "Refusing to modify the running host's own firmware entry Boot$bootnum while a repair target is selected."
+    fi
+
+    partuuid="$(efi_entry_partuuid_line "$line")"
+    loader="$(efi_entry_loader_line "$line" || true)"
+    [[ -n "$partuuid" && -n "$loader" ]] \
+        || fail "Boot$bootnum has no decodable PARTUUID/loader path; it cannot be renamed through the verified label updater."
+    old_label="$(efi_entry_label_line "$line")"
+    if [[ "$old_label" == "$label" ]]; then
+        repair_change_status efi-rename unchanged
+        return 0
+    fi
+
+    updater="$(efi_label_updater_path)" \
+        || fail "EFI label updater is not installed; refusing to rename Boot$bootnum without verification."
+    backup_dir="$SESSION_DIR/efi-label-backups"
+    mkdir -p -- "$backup_dir"
+    backup="$backup_dir/Boot${bootnum}.bin"
+    "$updater" --bootnum "$bootnum" --partuuid "$partuuid" \
+        --loader "$loader" --label "$label" --backup "$backup" 2>&1 \
+        | tee -a "$SESSION_LOG" \
+        || fail "Unable to rename Boot$bootnum in place."
+
+    verify="$(efibootmgr -v 2>/dev/null || true)"
+    verify_line="$(grep -E "^Boot${bootnum}\*?[[:space:]]" <<<"$verify" | head -n1 || true)"
+    verify_label="$(efi_entry_label_line "$verify_line")"
+    if [[ "$verify_label" != "$label" ]]; then
+        "$updater" --bootnum "$bootnum" --partuuid "$partuuid" \
+            --loader "$loader" --label "$old_label" --backup "$backup" 2>&1 \
+            | tee -a "$SESSION_LOG" \
+            || log "WARNING: rename rollback also failed; the original label bytes remain in $backup." | tee -a "$SESSION_LOG" >&2
+        fail "Boot$bootnum rename could not be verified; the previous label was restored."
+    fi
+
+    msg_log efi-rename-applied "$bootnum" "$label"
+    repair_change_status efi-rename changed
+}
+
 # repair entry point: enforce safe stage ordering, run every mandatory
 # read-only safety preflight (including EFI/UKI and boot-stack checks) before
 # promoting the target to read-write, then execute the requested stages.
@@ -22530,6 +26985,60 @@ run_repair()
                 ;;
             extlinux)
                 adaptive_extlinux_repair
+                ;;
+            kernels)
+                kernel_interactive_menu
+                ;;
+            kernel-remove-oldest)
+                repair_kernel_remove_oldest
+                ;;
+            kernel-remove-newest)
+                repair_kernel_remove_newest
+                ;;
+            kernel-remove-orphaned-headers)
+                repair_kernel_remove_orphaned_headers
+                ;;
+            kernel-remove-orphaned-kernels)
+                repair_kernel_remove_orphaned_kernels
+                ;;
+            kernel-remove-orphaned-support)
+                repair_kernel_remove_orphaned_support
+                ;;
+            kernel-install-headers)
+                repair_kernel_install_headers
+                ;;
+            kernel-reinstall)
+                repair_kernel_reinstall
+                ;;
+            kernel-install-repo-latest)
+                repair_kernel_install_repo_latest
+                ;;
+            gpu)
+                gpu_interactive_menu
+                ;;
+            gpu-remove-older-kernel)
+                repair_gpu_remove_older_kernel
+                ;;
+            gpu-replace-kernel)
+                repair_gpu_replace_kernel
+                ;;
+            gpu-purge-wrong-driver)
+                repair_gpu_purge_wrong_driver
+                ;;
+            gpu-install-correct-driver)
+                repair_gpu_install_correct_driver
+                ;;
+            gpu-blacklist-module)
+                repair_gpu_blacklist_module
+                ;;
+            gpu-rebuild-dkms)
+                repair_gpu_rebuild_dkms
+                ;;
+            gpu-rebuild-boot)
+                repair_gpu_rebuild_boot
+                ;;
+            nomodeset)
+                repair_nomodeset
                 ;;
         esac
     done
@@ -22675,22 +27184,28 @@ disk_lock_file()
 
 # Acquire the non-blocking per-disk flock into the fd named by $2.
 # Return codes: 0 acquired, 1 lock tooling/state unavailable, 2 busy.
+#
+# The lock is held on the fixed fd 7 rather than a bash-4.1 `exec {fd}>`
+# auto-allocation: session_server (the only caller) never opens another fd in
+# its own process — it reads requests from stdin and writes protocol lines to
+# stdout/stderr, and the interactive runner's own fds 8/9/11/12 belong to the
+# separate per-request child dispatch — so fd 7 cannot collide with a live fd
+# while this lock is held.  The fixed fd keeps the legacy port bash-3.1-valid
+# (no auto-fd allocation, no `printf -v`).
 acquire_disk_lock()
 {
-    local canonical="$1" fdvar="$2" file fd
+    local canonical="$1" fdvar="$2" file
     [[ -n "${STATE_ROOT:-}" ]] || return 1
     file="$(disk_lock_file "$canonical")"
     command -v flock >/dev/null 2>&1 || return 1
     mkdir -p -- "$STATE_ROOT" 2>/dev/null || true
     [[ -d "$STATE_ROOT" ]] || return 1
-    if ! exec {fd}>"$file" 2>/dev/null; then
-        return 1
-    fi
-    if ! flock -n "$fd" 2>/dev/null; then
-        eval "exec ${fd}>&-" 2>/dev/null || true
+    exec 7>"$file" 2>/dev/null || return 1
+    if ! flock -n 7 2>/dev/null; then
+        exec 7>&- 2>/dev/null || true
         return 2
     fi
-    printf -v "$fdvar" '%s' "$fd"
+    eval "$fdvar=7"
     return 0
 }
 
@@ -22889,7 +27404,7 @@ session_server()
         fi
         case "$command" in
             unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair) ;;
-            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot) ;;
+            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot|efi-list|grub-list|extlinux-list|grub-legacy-list|efi-reorder|efi-delete|efi-rename) ;;
             *)
                 secret=""
                 session_protocol_error "$request_id" "Command is not permitted by the privileged-session broker: $command"
@@ -22909,7 +27424,7 @@ session_server()
         # fs-inspect/browse/snapshot list|inspect|plan) skip the lock.
         request_lock_required=1
         case "$command" in
-            diagnose|validate|config-read|fs-inspect|browse-target|host-diagnose|host-validate|host-fs-inspect)
+            diagnose|validate|config-read|fs-inspect|browse-target|host-diagnose|host-validate|host-fs-inspect|efi-list|grub-list|extlinux-list|grub-legacy-list)
                 request_lock_required=0 ;;
             snapshots|host-snapshots)
                 case "${op_args[2]:-}" in
@@ -23129,6 +27644,34 @@ main()
         host-default)
             [[ $# -eq 0 ]] || fail "host-default does not accept extra arguments."
             run_host_default "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        efi-list)
+            [[ $# -eq 0 ]] || fail "efi-list does not accept extra arguments."
+            run_efi_list "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        grub-list)
+            [[ $# -eq 0 ]] || fail "grub-list does not accept extra arguments."
+            run_grub_list "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        extlinux-list)
+            [[ $# -eq 0 ]] || fail "extlinux-list does not accept extra arguments."
+            run_extlinux_list "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        grub-legacy-list)
+            [[ $# -eq 0 ]] || fail "grub-legacy-list does not accept extra arguments."
+            run_grub_legacy_list "$TARGET_DISK" "$ROOT_DEVICE"
+            ;;
+        efi-reorder)
+            [[ $# -eq 1 ]] || fail "efi-reorder requires exactly one BootOrder CSV."
+            run_efi_reorder "$TARGET_DISK" "$ROOT_DEVICE" "$1"
+            ;;
+        efi-delete)
+            [[ $# -eq 1 ]] || fail "efi-delete requires exactly one Boot#### ID."
+            run_efi_delete "$TARGET_DISK" "$ROOT_DEVICE" "$1"
+            ;;
+        efi-rename)
+            [[ $# -eq 2 ]] || fail "efi-rename requires exactly one Boot#### ID and a label."
+            run_efi_rename "$TARGET_DISK" "$ROOT_DEVICE" "$1" "$2"
             ;;
         host-shell)
             [[ $# -eq 1 ]] || fail "host-shell requires exactly one command string."

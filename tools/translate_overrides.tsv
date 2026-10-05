@@ -8,14 +8,13 @@
 #     not "&amp;File").  Use literal UTF-8 for ellipsis (…), bullet (•),
 #     arrows (→) and check/cross marks (✓/✗).
 #   - Overrides are applied LAST and always win over machine translation.
-Repair	Reparieren	Réparer	Reparar
+Repair	Reparatur	Réparation	Reparación
+Repair: %1…	Reparatur: %1…	Réparation : %1…	Reparación: %1…
 Unlock	Entsperren	Déverrouiller	Desbloquear
-Run All	Alle ausführen	Tout exécuter	Ejecutar todo
 Run Selected Repairs	Ausgewählte Reparaturen ausführen	Exécuter les réparations sélectionnées	Ejecutar reparaciones seleccionadas
 Run Full Repair	Vollständige Reparatur ausführen	Exécuter la réparation complète	Ejecutar la reparación completa
 Full Repair	Vollständige Reparatur	Réparation complète	Reparación completa
 Full Repair plan	Plan für die vollständige Reparatur	Plan de réparation complète	Plan de reparación completa
-Authorize	Autorisieren	Autoriser	Autorizar
 Select Target	Ziel auswählen	Sélectionner la cible	Seleccionar destino
 Select a repair target	Reparaturziel auswählen	Sélectionner une cible de réparation	Seleccionar un destino de reparación
 Select a repair target first	Zuerst ein Reparaturziel auswählen	Sélectionnez d'abord une cible de réparation	Primero seleccione un destino de reparación
@@ -32,7 +31,7 @@ file system repaired — changes were applied	Dateisystem repariert — Änderun
 Systems	Systeme	Systèmes	Sistemas
 Snapshots	Schnappschüsse	Instantanés	Instantáneas
 Diagnostics	Diagnose	Diagnostics	Diagnóstico
-Logs	Protokolle	Journaux	Registros
+Logs	Logbuch	Journaux	Registros
 Settings	Einstellungen	Paramètres	Ajustes
 File Copy	Dateikopie	Copie de fichiers	Copia de archivos
 File copy	Dateikopie	Copie de fichiers	Copia de archivos
@@ -74,13 +73,7 @@ Repair tool unavailable	Reparaturwerkzeug nicht verfügbar	Outil de réparation 
 &File	&Datei	&Fichier	&Archivo
 &View	&Ansicht	&Affichage	&Ver
 &Help	&Hilfe	&Aide	&Ayuda
-Quit	Beenden	Quitter	Salir
-Clear	Leeren	Effacer	Borrar
-Remove	Entfernen	Supprimer	Quitar
-Delete	Löschen	Supprimer	Eliminar
-Refresh	Aktualisieren	Actualiser	Actualizar
 Run Command	Befehl ausführen	Exécuter la commande	Ejecutar comando
-Run Tool	Werkzeug ausführen	Exécuter l'outil	Ejecutar herramienta
 Run on Host	Auf Host ausführen	Exécuter sur l'hôte	Ejecutar en host
 Send Answer	Antwort senden	Envoyer la réponse	Enviar respuesta
 Reboot Now	Jetzt neu starten	Redémarrer maintenant	Reiniciar ahora
@@ -102,6 +95,7 @@ Host → Repair	Host → Reparatur	Hôte → Réparation	Host → Reparación
 Repair → Host	Reparatur → Host	Réparation → Hôte	Reparación → Host
 About Boot Bitch	Über Boot Bitch	À propos de Boot Bitch	Acerca de Boot Bitch
 Running…	Läuft…	En cours…	Ejecutando…
+Running diagnostics…	Diagnose läuft…	Diagnostics en cours…	Ejecutando diagnóstico…
 Scanning block devices…	Blockgeräte werden gescannt…	Analyse des périphériques bloc…	Escaneando dispositivos de bloque…
 Absolute path inside repaired system (for example /home/user/Recovered)		Chemin absolu à l'intérieur du système réparé (par exemple /home/user/Recovered)	
 Validate	Validieren	Valider	Validar
@@ -221,3 +215,15 @@ Value	Wert	Valeur	Valor
 Refreshing devices...	Geräte werden aktualisiert...	Actualisation des périphériques...	Actualizando dispositivos...
 No stages selected	Keine Phasen ausgewählt	Aucune étape sélectionnée	Ninguna etapa seleccionada
 GUARDED REPAIR	GESCHÜTZTE REPARATUR	RÉPARATION PROTÉGÉE	REPARACIÓN PROTEGIDA
+Remove superseded kernels (keep running/latest/managed)	Alte Kerne entfernen (laufend/letzter/verwaltet)		
+Select an action below:	Aktion unten auswählen:	Sélectionnez une action ci-dessous :	Seleccione una acción a continuación:
+Number of the action (0 = Abort)	Nummer der Aktion (0 = Abbruch)	Numéro de l'action (0 = Abandonner)	Número de la acción (0 = Cancelar)
+Inspect DKMS state	DKMS-Zustand prüfen	Inspecter l'état DKMS	Inspeccionar el estado DKMS
+Record rpm version	rpm-Version aufzeichnen	Enregistrer la version rpm	Registrar la versión rpm
+Record Alpine apk version	Alpine apk-Version aufzeichnen	Enregistrer la version Alpine apk	Registrar la versión Alpine apk
+Record dnf5 version	dnf5-Version aufzeichnen	Enregistrer la version dnf5	Registrar la versión dnf5
+Record grub2-install version	grub2-install-Version aufzeichnen	Enregistrer la version grub2-install	Registrar la versión grub2-install
+Arch pacman full transaction preflight	Arch pacman vollständige Transaktionsprüfung	Arch pacman précontrôle de transaction complète	Arch pacman preflight de transacción completa
+Alpine apk audit --system (missing-file detection)	Alpine apk audit --system (Erkennung fehlender Dateien)	Alpine apk audit --system (détection de fichiers manquants)	Alpine apk audit --system (detección de archivos faltantes)
+Alpine apk info --who-owns (%1 missing files)	Alpine apk info --who-owns (%1 fehlende Dateien)	Alpine apk info --who-owns (%1 fichiers manquants)	Alpine apk info --who-owns (%1 archivos faltantes)
+
