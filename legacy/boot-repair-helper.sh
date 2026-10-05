@@ -10573,6 +10573,7 @@ adaptive_display_manager_repair_modern()
     fi
     DISPLAY_MANAGER_PACKAGE_WORK=false
     preflight_display_manager
+    boot_failure_classification
     if display_manager_already_correct; then
         links_before=true
     fi
@@ -10583,7 +10584,14 @@ adaptive_display_manager_repair_modern()
     # Only the offline links are proven unchanged; a preflight package install
     # is a system change even when the links happened to be correct already.
     if [[ "$links_before" == true && "$links_after" == true && "$DISPLAY_MANAGER_PACKAGE_WORK" != true ]]; then
-        repair_change_status display "unchanged|$(reason display-already-correct)"
+        # The config is a no-op restore either way (nothing is mutated), but a
+        # boot that only reached a text console tells the user the DM was
+        # configured correctly yet did not start: the failure is elsewhere.
+        if [[ "$BOOT_REACHED" == tty ]]; then
+            repair_change_status display "unchanged|$(reason display-already-correct-boot-tty)"
+        else
+            repair_change_status display "unchanged|$(reason display-already-correct)"
+        fi
     else
         repair_change_status display changed
     fi
@@ -17265,6 +17273,17 @@ diagnostic_display_openrc()
     fi
 
     echo
+    # Surface the shared boot classification so a user inspecting the
+    # "Graphical login / display manager" diagnostic can see whether the last
+    # boot reached the login manager/desktop or stopped at a TTY.
+    boot_failure_classification
+    printf 'Boot reached: %s\n' "$BOOT_REACHED"
+    if [[ -n "$BOOT_FAILURE_MARKERS" ]]; then
+        printf 'Boot failure markers: %s\n' "$BOOT_FAILURE_MARKERS"
+    else
+        printf 'Boot failure markers: none\n'
+    fi
+    echo
     echo "Installed display managers and OpenRC services:"
     for service in lightdm slim gdm sddm lxdm greetd; do
         package="$(display_manager_package_for_service "$service.service")"
@@ -17382,6 +17401,18 @@ diagnostic_display()
         echo "Display manager decision: backend=systemd service=$DISPLAY_MANAGER_SERVICE package=$DISPLAY_MANAGER_PACKAGE label=$DISPLAY_MANAGER_LABEL unit=$DISPLAY_MANAGER_UNIT_REL"
     else
         echo "Display manager decision: backend=systemd service=none package=none label=none unit=none"
+    fi
+
+    echo
+    # Surface the shared boot classification so a user inspecting the
+    # "Graphical login / display manager" diagnostic can see whether the last
+    # boot reached the login manager/desktop or stopped at a TTY.
+    boot_failure_classification
+    printf 'Boot reached: %s\n' "$BOOT_REACHED"
+    if [[ -n "$BOOT_FAILURE_MARKERS" ]]; then
+        printf 'Boot failure markers: %s\n' "$BOOT_FAILURE_MARKERS"
+    else
+        printf 'Boot failure markers: none\n'
     fi
 
     echo
@@ -18142,6 +18173,17 @@ diagnostic_gpu()
     fi
     printf 'GPU DKMS build status: %s\n' "$GPU_DKMS_BUILD_STATUS"
     printf 'GPU journal errors: %s actionable lines\n' "$GPU_JOURNAL_ERRORS"
+    # Surface the shared boot classification so the GPU diagnostic carries the
+    # read-only "how far did this boot get" evidence (previously emitted as a
+    # separate per-diagnostic boot-reached line), sourced from
+    # boot_failure_classification rather than a re-derivation.
+    boot_failure_classification
+    printf 'Boot reached: %s\n' "$BOOT_REACHED"
+    if [[ -n "$BOOT_FAILURE_MARKERS" ]]; then
+        printf 'Boot failure markers: %s\n' "$BOOT_FAILURE_MARKERS"
+    else
+        printf 'Boot failure markers: none\n'
+    fi
 }
 
 # Capability gate for the `gpu` repair key.  Fail closed: absent evidence never

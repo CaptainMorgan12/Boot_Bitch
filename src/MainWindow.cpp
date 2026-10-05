@@ -1340,6 +1340,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "cmdline-root-mismatch", QT_TRANSLATE_NOOP("MainWindow", "Embedded cmdline does not reference the live root UUID %1.") },
     { "cmdline-subvol-mismatch", QT_TRANSLATE_NOOP("MainWindow", "Embedded cmdline does not select the live Btrfs subvolume /%1.") },
     { "display-already-correct", QT_TRANSLATE_NOOP("MainWindow", "default.target and display-manager.service were already correct.") },
+    { "display-already-correct-boot-tty", QT_TRANSLATE_NOOP("MainWindow", "The display manager configuration is already correct, but the last boot stopped at a text console (the display manager did not start); the failure is likely elsewhere (driver or service crash).") },
     { "dkms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "DKMS preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
     { "dnf4-unsupported", QT_TRANSLATE_NOOP("MainWindow", "dnf4 is not supported by the guarded rpm backend.") },
     { "dnf5-fixbroken-clean", QT_TRANSLATE_NOOP("MainWindow", "No missing package files were detected; dnf5 check is reported as evidence.") },

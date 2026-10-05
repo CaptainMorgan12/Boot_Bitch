@@ -61,6 +61,23 @@ grep -A8 '^adaptive_display_manager_repair()' "$HELPER" \
     | grep -q 'parse_cached_display_inventory' \
     || fail 'adaptive_display_manager_repair must parse the cached display baseline'
 
+# Both display diagnostics surface the shared boot classification (Boot reached:
+# / Boot failure markers:) so a user inspecting the "Graphical login / display
+# manager" section can see whether the last boot reached the login manager or
+# stopped at a text console.
+for fn in diagnostic_display diagnostic_display_openrc; do
+    body="$(sed -n "/^${fn}()/,/^}/p" "$HELPER")"
+    grep -q 'boot_failure_classification' <<<"$body" \
+        || fail "${fn} must call boot_failure_classification"
+    grep -q "printf 'Boot reached: %s" <<<"$body" \
+        || fail "${fn} must emit a Boot reached: line"
+done
+
+# The display repair distinguishes a boot that only reached a text console: the
+# config restore stays a no-op but the reported reason names the boot-tty state.
+grep -q 'reason display-already-correct-boot-tty' "$HELPER" \
+    || fail 'adaptive_display_manager_repair must emit the display-already-correct-boot-tty reason'
+
 # ---------------------------------------------------------------------------
 # Behavioural harness
 # ---------------------------------------------------------------------------
@@ -267,5 +284,36 @@ adaptive_display_manager_repair
 [[ "$status_line" == "display changed" ]] \
     || fail "the display repair must report changed: $status_line"
 DISPLAY_BASELINE_B64=""
+
+# ---- display repair: correct config but the last boot stopped at a TTY --------
+# The "already correct" decision now distinguishes a boot that only reached a
+# text console: the config restore stays a no-op but the reason tells the user
+# the DM was configured correctly yet did not start at the last boot.
+boot_failure_classification() { BOOT_REACHED='tty'; BOOT_FAILURE_MARKERS='tty-only'; BOOT_FAILURE_CLASSIFIED=1; }
+DISPLAY_BASELINE_B64="$(b64 'Display manager decision: backend=systemd service=sddm.service package=sddm label=SDDM unit=/usr/lib/systemd/system/sddm.service')"
+display_manager_already_correct() { return 0; }
+restore_display_manager() { :; }
+status_line=""
+adaptive_display_manager_repair
+[[ "$status_line" == "display unchanged|reason:display-already-correct-boot-tty" ]] \
+    || fail "the display repair must report display-already-correct-boot-tty for a tty-only boot; got: $status_line"
+
+# A boot that reached the desktop keeps the plain already-correct reason.
+boot_failure_classification() { BOOT_REACHED='desktop'; BOOT_FAILURE_MARKERS=''; BOOT_FAILURE_CLASSIFIED=1; }
+status_line=""
+adaptive_display_manager_repair
+[[ "$status_line" == "display unchanged|reason:display-already-correct" ]] \
+    || fail "the display repair must keep display-already-correct for a desktop boot; got: $status_line"
+DISPLAY_BASELINE_B64=""
+
+# ---- display diagnostic surfaces the shared boot classification --------------
+# The "Graphical login / display manager" diagnostic emits Boot reached: /
+# Boot failure markers: from the shared classifier.
+boot_failure_classification() { BOOT_REACHED='tty'; BOOT_FAILURE_MARKERS='tty-only'; BOOT_FAILURE_CLASSIFIED=1; }
+display_out="$(diagnostic_display)"
+grep -q '^Boot reached: tty$' <<<"$display_out" \
+    || fail "diagnostic_display must emit 'Boot reached: tty'; got: $(grep 'Boot reached' <<<"$display_out")"
+grep -q '^Boot failure markers: tty-only$' <<<"$display_out" \
+    || fail "diagnostic_display must emit 'Boot failure markers: tty-only'; got: $(grep 'Boot failure' <<<"$display_out")"
 
 printf 'All display-baseline contract checks passed.\n'
