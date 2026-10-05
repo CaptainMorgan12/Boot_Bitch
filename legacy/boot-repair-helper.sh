@@ -15855,19 +15855,25 @@ journal_cache_dir()
 
 journal_cache_fetch()
 {
-    local cache_dir window_file err_file boots_file
+    local cache_dir window_file head_file err_file boots_file
     (( JOURNAL_CACHE_FETCHED == 1 )) && return 0
     cache_dir="$(journal_cache_dir)" || return 1
     command -v journalctl >/dev/null 2>&1 || return 1
     target_journal_evidence_present || return 1
     window_file="$cache_dir/window-1600.json"
+    head_file="$cache_dir/boot-head-4000.json"
     err_file="$cache_dir/errors-priority.json"
     boots_file="$cache_dir/list-boots.txt"
     # The window dump is stdout-only (the pre-cache 1600/1200 spawns used
     # 2>/dev/null); the error-priority and boot-ID dumps keep the pre-cache
-    # 2>&1 merge so a journalctl warning is never silently dropped.
+    # 2>&1 merge so a journalctl warning is never silently dropped.  The boot
+    # head captures the earliest 4000 entries of the last boot in journal
+    # order (head exits after 4000 lines and journalctl stops on the broken
+    # pipe, so this stays cheap); it stays on -b 0 and never crosses a boot
+    # boundary.
     journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600 \
         > "$window_file" 2>/dev/null || true
+    journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager 2>/dev/null | head -n 4000 > "$head_file" || true
     journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager \
         > "$err_file" 2>&1 || true
     journalctl --root="$TARGET_ROOT" --list-boots --no-pager \
@@ -15883,6 +15889,18 @@ journal_cached_window_lines()
     local n="${1:-1600}" cache_dir
     if journal_cache_fetch && cache_dir="$(journal_cache_dir)"; then
         tail -n "$n" "$cache_dir/window-1600.json" 2>/dev/null || true
+    fi
+    return 0
+}
+
+# Earliest N entries of the cached boot-head dump (the first N lines of the
+# last boot's journal-order stream, captured separately from the newest-window
+# suffix above).  4000 returns the whole head capture.
+journal_cached_boot_head_lines()
+{
+    local n="${1:-4000}" cache_dir
+    if journal_cache_fetch && cache_dir="$(journal_cache_dir)"; then
+        head -n "$n" "$cache_dir/boot-head-4000.json" 2>/dev/null || true
     fi
     return 0
 }
@@ -17888,7 +17906,11 @@ gpu_driver_mismatch_evidence()
 # evidence, emitted by diagnostic_errors and consumed by the GPU capability
 # gate.  Reads the existing session journal cache (never spawns a fresh
 # journalctl) and sets BOOT_REACHED plus BOOT_FAILURE_MARKERS once per helper
-# session.  Read-only: no target probe mutates anything.
+# session.  It reads the boot HEAD slice, not the newest-entry window: the
+# boot-complete markers (Graphical Interface, Display Manager, Multi-User,
+# Booting Linux/Linux version) all land in the first couple of minutes and fall
+# outside the newest-1600 tail on a long boot.  Read-only: no target probe
+# mutates anything.
 BOOT_REACHED="grub"
 BOOT_FAILURE_MARKERS=""
 BOOT_FAILURE_CLASSIFIED=0
@@ -17901,7 +17923,7 @@ boot_failure_classification()
     local journal=""
     local -a markers=()
     if [[ "$(target_logging_backend)" == journald ]] && command -v journalctl >/dev/null 2>&1; then
-        journal="$(journal_cached_window_lines 1600 | journal_boot_relevant_filter 2>/dev/null || true)"
+        journal="$(journal_cached_boot_head_lines 4000 | journal_boot_relevant_filter 2>/dev/null || true)"
     elif non_journald_log_fallback_ready; then
         journal="$(non_systemd_raw_log_lines 2>/dev/null || true)"
     fi

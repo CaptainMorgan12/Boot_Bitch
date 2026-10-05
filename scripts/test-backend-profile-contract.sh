@@ -1994,13 +1994,15 @@ awk '
 ' "$HELPER" \
     || { echo 'FAIL: journal_boot_relevant_filter/collapse_similar_journal_lines are not wired into all diagnostic_boot_evidence and diagnostic_display cached-journal windows' >&2; exit 1; }
 
-# The three journal cache dumps are the only full-journal journalctl
-# invocations left: the 1600-entry window, the error-priority stream and the
-# boot-ID inventory must each be captured exactly once inside
-# journal_cache_fetch, and no per-section -n 1200/-n 500 window spawn may
-# remain (the -u unit-scoped detection probe is exempt).
+# The four journal cache dumps are the only full-journal journalctl
+# invocations left: the 1600-entry window, the 4000-entry boot head, the
+# error-priority stream and the boot-ID inventory must each be captured exactly
+# once inside journal_cache_fetch, and no per-section -n 1200/-n 500 window
+# spawn may remain (the -u unit-scoped detection probe is exempt).
 [[ "$(grep -c 'journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600' "$HELPER")" -eq 1 ]] \
     || { echo 'FAIL: the 1600-entry journal window is not captured exactly once in the session cache' >&2; exit 1; }
+[[ "$(grep -cF 'journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager 2>/dev/null | head -n 4000' "$HELPER")" -eq 1 ]] \
+    || { echo 'FAIL: the 4000-entry boot-head dump is not captured exactly once in the session cache' >&2; exit 1; }
 [[ "$(grep -c 'journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager' "$HELPER")" -eq 1 ]] \
     || { echo 'FAIL: the error-priority journal stream is not captured exactly once in the session cache' >&2; exit 1; }
 [[ "$(grep -c 'journalctl --root="$TARGET_ROOT" --list-boots --no-pager' "$HELPER")" -eq 1 ]] \
@@ -2058,7 +2060,13 @@ if (( want_err == 1 )); then
     grep -F '"PRIORITY":"3"' "$fixture" | tail -n "${want_n:-200}"
     exit 0
 fi
-tail -n "${want_n:-1600}" "$fixture"
+# -n selects a newest-entry window (the window dump); a missing -n is the
+# boot-head dump, which pipes the full oldest-first stream through head -n.
+if [[ -n "$want_n" ]]; then
+    tail -n "$want_n" "$fixture"
+else
+    cat "$fixture"
+fi
 exit 0
 JCTL
     chmod +x "$journal_bin/journalctl"
@@ -2077,6 +2085,7 @@ JCTL
 
     cached_window_fn="$(declare -f journal_cached_window_lines)"
     cached_error_fn="$(declare -f journal_cached_error_lines)"
+    cached_head_fn="$(declare -f journal_cached_boot_head_lines)"
 
     journal_uncached_window_lines()
     {
@@ -2085,6 +2094,10 @@ JCTL
     journal_uncached_error_lines()
     {
         journalctl --root="$TARGET_ROOT" -b 0 -p err -n 200 -o json --no-pager
+    }
+    journal_uncached_boot_head_lines()
+    {
+        journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager 2>/dev/null | head -n "$1"
     }
 
     # Cached run: fresh session cache, real cache read functions.
@@ -2097,6 +2110,7 @@ JCTL
     # which spawn journalctl per section exactly as the pre-cache code did.
     journal_cached_window_lines() { journal_uncached_window_lines "$@"; }
     journal_cached_error_lines() { journal_uncached_error_lines; }
+    journal_cached_boot_head_lines() { journal_uncached_boot_head_lines "$@"; }
     uncached_out="$(diagnostic_errors || true)"
 
     if [[ "$cached_out" != "$uncached_out" ]]; then
@@ -2111,23 +2125,29 @@ JCTL
     # Restore the real cache read functions for the data-level checks below.
     eval "$cached_window_fn"
     eval "$cached_error_fn"
+    eval "$cached_head_fn"
 
-    # Data-level window equivalence: the cached 1200/1600 windows and the
-    # boot-ID inventory are byte-identical to fresh per-section spawns.
+    # Data-level window equivalence: the cached 1200/1600 windows, the 4000-entry
+    # boot head and the boot-ID inventory are byte-identical to fresh per-section
+    # spawns.
     journal_cached_window_lines 1200 > "$journal_root/cached-1200.txt"
     journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1200 > "$journal_root/ref-1200.txt"
     journal_cached_window_lines 1600 > "$journal_root/cached-1600.txt"
     journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager -n 1600 > "$journal_root/ref-1600.txt"
+    journal_cached_boot_head_lines 4000 > "$journal_root/cached-head.txt"
+    journalctl --root="$TARGET_ROOT" -b 0 -o json --no-pager | head -n 4000 > "$journal_root/ref-head.txt"
     journal_cached_boot_ids > "$journal_root/cached-boots.txt"
     journalctl --root="$TARGET_ROOT" --list-boots --no-pager > "$journal_root/ref-boots.txt"
     for window in 1200 1600; do
         cmp -s "$journal_root/ref-$window.txt" "$journal_root/cached-$window.txt" \
             || { echo "FAIL: cached $window-entry window is not a byte-identical suffix of the full dump" >&2; exit 1; }
     done
+    cmp -s "$journal_root/ref-head.txt" "$journal_root/cached-head.txt" \
+        || { echo 'FAIL: cached boot-head dump differs from a fresh head -n 4000 spawn' >&2; exit 1; }
     cmp -s "$journal_root/ref-boots.txt" "$journal_root/cached-boots.txt" \
         || { echo 'FAIL: cached boot-ID inventory differs from a fresh --list-boots spawn' >&2; exit 1; }
 
-    # The cache is populated once (three dumps) on first use and then reused:
+    # The cache is populated once (four dumps) on first use and then reused:
     # warm cache reads spawn no further journalctl invocations.
     JOURNAL_CACHE_FETCHED=0
     JOURNAL_CACHE_DIR=""
@@ -2138,11 +2158,12 @@ JCTL
     : > "$journal_root/invocations.log"
     journal_cached_window_lines 1200 >/dev/null
     journal_cached_window_lines 500 >/dev/null
+    journal_cached_boot_head_lines 4000 >/dev/null
     journal_cached_error_lines >/dev/null
     journal_cached_boot_ids >/dev/null
     warm_use="$(wc -l < "$journal_root/invocations.log")"
-    [[ "$first_use" -eq 3 ]] \
-        || { echo "FAIL: first cache use spawned $first_use journalctl calls, expected 3" >&2; exit 1; }
+    [[ "$first_use" -eq 4 ]] \
+        || { echo "FAIL: first cache use spawned $first_use journalctl calls, expected 4" >&2; exit 1; }
     [[ "$warm_use" -eq 0 ]] \
         || { echo "FAIL: warm cache reads spawned $warm_use journalctl calls, expected 0" >&2; exit 1; }
 
