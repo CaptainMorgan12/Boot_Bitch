@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora använder rpm/dnf; dpkg konfiguration är inte tillgänglig.</translation>
+        <translation>Fedora använder rpm/dnf; dpkg-konfigurationen är inte tillgänglig.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1082,7 +1082,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>RPM-databasen saknas.</translation>
+        <translation>Målet RPM-databas saknas.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>RPM DKMS-huvudkorrigering (kernel-devel/akmods) implementeras inte.</translation>
+        <translation>rpm DKMS-huvudkorrigering (kernel-devel/akmods) implementeras inte.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3705,7 +3705,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>RPM preflight version: %1</translation>
+        <translation>rpm preflight version: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Rekord rpm version</translation>
+        <translation>Record rpm version</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -9526,7 +9526,7 @@ I väntan på förändringar hölls så att du kan retry. Full helper output fin
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-family system exponerar backend profilering och bevakat paket, initramfs, GRUB och konventionella EFI reparationer när deras transaktionsspecifika preflights passerar. Fedora/RPM-familjesystem exponerar bevakade dnf-pakettransaktioner, dracut initramfs rebuilds, GRUB2-konfiguration och boot-code-reparation, och den systemd GDM-displayvägen från samma sond-bevis; andra RPM-familjssystem förblir endast diagnostik tills deras transaktionsbackend implementeras.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-family system exponerar backend profilering och bevakat paket, initramfs, GRUB och konventionella EFI reparationer när deras transaktionsspecifika preflights passerar. Fedora/RPM-familjesystem exponerar bevakade dnf-pakettransaktioner, dracut initramfs-rebuilds, GRUB2-konfiguration och boot-code-reparation, och den systemd GDM-displayvägen från samma sond-bevis; andra RPM-familjesystem förblir diagnostik endast tills deras transaktionsbackend implementeras.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

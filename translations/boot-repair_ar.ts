@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>Dnf4 لا يُدعمَ مِن قِبل rpm المُحَرَّس.</translation>
+        <translation>Dnf4 is not supported by the guarded rpm backend.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>ويستخدم فيدورا البيرم/dnf؛ ولا توجد تشكيلة من طراز dpkg.</translation>
+        <translation>ويستخدم فيدورا تراي 44X/dnf؛ ولا توجد تشكيلة من طراز dpkg.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,12 +1077,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>لا يتم تركيب البيرم في النظام المستهدف</translation>
+        <translation>لم يتم تركيبها في النظام المستهدف.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>قاعدة بيانات البحث والتطوير مفقودة</translation>
+        <translation>قاعدة بيانات (تي آر 45 إكس) مفقودة</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>ولا يُنفَّذ التصويب الرأسي لجهاز DKMS (Ckernel-devel/akmods).</translation>
+        <translation>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,7 +3695,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</translation>
+        <translation>تراي45X إصلاح الملفات المفقودة: إعادة تركيب حزمة %1 مع الملفات المفقودة: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>نسخة rpm</translation>
+        <translation>Record rpm version</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>التحقق من ملفات حزمة RPM (rpm -Va -nofiledigest, read-only)</translation>
+        <translation>التحقق من ملفات مجموعة RPM (rpm -Va --nofiledigest, read-only)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9512,7 +9512,7 @@ Pending changes were kept so you can retry. Full helper output is available in L
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>وتكشف نظم حفظ الأسرة عن التنميط الداعم وحزمة الحراسة، ومعاهدة تراي 10X، ومعاهدة ترايت 20X، وعمليات التصليح التقليدية من طراز EFI عندما تجتاز أضواءها الأولية الخاصة بالمعاملات. وكشفت نظم إفدورا/آلية الوقاية من مخاطر الكوارث عن صفقات رزمة من طراز dnf الحراسة، وعمليات إعادة بناء من نوع &amp;quot; dracut initramfs &amp;quot; ، وتشكيل &amp;quot; غلوب &amp;quot; وتصليح شفرة الأحذية &amp;quot; ، ومسار العرض النظامي &amp;quot; GDM &amp;quot; من نفس الأدلة المستعرَضة؛ أما النظم الأخرى المتعلقة بالأسرة، فتظل تشخيصاً فقط إلى أن يتم تنفيذها.</translation>
+        <translation>وتكشف نظم حفظ الأسرة عن التنميط الداعم وحزمة الحراسة، والبند 11 من هدف تخصيص الموارد من الأموال الأساسية، والبند 29 من هدف تخصيص الموارد من الأموال الأساسية، وتصليحات الموارد من الأموال الأساسية التقليدية من أجل تحقيق هدف تخصيص الموارد من الأموال. وتكشف نظم الأسرة/الأسرة عن صفقات الرزمة من طراز dnf الحراسة، وعمليات إعادة البناء من طراز dracut initramfs، وتشكيل مجموعة &amp;quot; GUB2 &amp;quot; وتصليح الأحذية، ومسار عرض نظام &amp;quot; GDM &amp;quot; النظامي من نفس الأدلة المحظورة؛ وتظل النظم الأخرى من نظام &amp;quot; RPM-family تشخيصاً فقط إلى أن يتم تنفيذ دعم معاملاتها.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10344,7 +10344,7 @@ Use the view selector above to shift between the UEFI/UKI firmware entries and t
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</translation>
+        <translation>Fedora/RPM res missing or corrupt package files via one simulated dnf reinstall transaction.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

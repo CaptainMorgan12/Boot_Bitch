@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 n&apos;est pas supporté par le moteur rpm protégé.</translation>
+        <translation>dnf4 n&apos;est pas supporté par le moteur rpm gardé.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -3695,7 +3695,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>Réparation de fichier manquant RPM: réinstaller le ou les paquets %1 avec les fichiers manquants: %2</translation>
+        <translation>RPM manquant-fichier réparation: réinstaller le ou les paquets %1 avec les fichiers manquants: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Vérification du fichier de paquet RPM (rpm -Va --nofiledigest, en lecture seule)</translation>
+        <translation>Vérification des fichiers de paquets RPM (rpm -Va --nofiledigest, en lecture seule)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9579,7 +9579,7 @@ Les changements en attente ont été maintenus afin que vous puissiez réessayer
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Les systèmes d&apos;archives familiales exposent le profilage des moteurs et les réparations conventionnelles EFI et initramfs lorsque leurs prévols spécifiques à la transaction passent. Les systèmes famille Fedora/RPM exposent les transactions de paquets dnf gardées, dracut initramfs reconstruits, la configuration GRUB2 et la réparation de code d&apos;amorçage, et le chemin d&apos;affichage GDM systématisé à partir de la même sonde; d&apos;autres systèmes famille RPM restent diagnostics seulement jusqu&apos;à ce que leur moteur de transaction soit mis en œuvre.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Les systèmes archi-familiaux exposent le profilage du moteur et le paquet protégé, initramfs, GRUB et les réparations classiques EFI lorsque leurs prévols spécifiques à la transaction passent. Les systèmes famille Fedora/RPM exposent les transactions de paquets dnf protégées, dracut initramfs reconstruits, la configuration GRUB2 et la réparation de code d&apos;amorçage, et le chemin d&apos;affichage GDM systématisé à partir de la même sonde; d&apos;autres systèmes famille RPM restent diagnostics seulement jusqu&apos;à ce que leur moteur de transaction soit mis en œuvre.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

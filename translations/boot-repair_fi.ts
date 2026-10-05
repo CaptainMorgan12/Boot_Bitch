@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 ei saa tukea vartioidusta rpm-taustasta.</translation>
+        <translation>dnf4 ei ole vartioitu rpm-taustaosa.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 simuloidaan ei pakettimuutoksia ja rpm-tietokanta on identtinen.</translation>
+        <translation>dnf5 simuloi ei pakettimuutoksia, ja rpm-tietokanta on identtinen.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora käyttää rpm/dnf:ää; dpkg:n konfiguraatiota ei ole saatavilla.</translation>
+        <translation>Fedora käyttää rpm/dnf; dpkg-kokoonpanoa ei ole saatavilla.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1082,7 +1082,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>Kohdetta ei ole.</translation>
+        <translation>Kohde RPM-tietokanta puuttuu.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>DKKMS-otsikkokorjausta (kernel-devel/akmods) ei toteuteta.</translation>
+        <translation>rpm DKMS-otsikkokorjausta (kernel-devel/akmods) ei toteuteta.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,17 +3695,17 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM puuttuu-file korjaus: asentaminen %1 paketti(s) puuttuvat tiedostot: %2</translation>
+        <translation>RPM puuttuva-tiedosto korjaus: asentaminen %1 paketti(s) puuttuvat tiedostot: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM puuttuu-tiedoston havaitseminen: ei puuttuvia pakettitiedostoja; tallennetaan vain lukea dnf5 huoltotodisteita.</translation>
+        <translation>RPM:n puuttuva tiedostontunnistus: ei puuttuvia pakettitiedostoja; tallennetaan vain luettavia dnf5-tiedostoja.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>Rpm esilentoversio: %1</translation>
+        <translation>rpm esilentoversio: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Tallenteen rpm-versio</translation>
+        <translation>Tallenna rpm versio</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM-tiedostojen omistuskartoitus (rpm -qf, %1 puuttuvat tiedostot)</translation>
+        <translation>RPM-tiedoston omistuskartoitus (rpm -qf, %1 puuttuvat tiedostot)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>RPM paketti tiedoston verifiointi (rpm - Va -- nofiledigest, vain luku)</translation>
+        <translation>RPM-pakettitiedoston tarkistus (rpm - Va -- nofiledigest, vain luettava)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ Odotettaessa muutoksia pidettiin, jotta voit yrittää uudelleen. Täysi apuri t
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-perhejärjestelmät paljastavat taustaprofiloinnin ja suojatun paketin, initramfs:n, GRUB:n ja tavanomaisten EFI:n korjaukset, kun niiden tapahtumakohtaiset esilennot päättyvät. Fedora/RPM-perhejärjestelmät paljastavat suojatut dnf-pakettitapahtumat, dracut initramfs:n uudelleenrakennukset, GRUB2:n konfiguroinnin ja käynnistyskoodin korjaamisen sekä järjestelmän GDM-näyttöpolun samasta luotainnäytöstä; muut RPM-perhejärjestelmät pysyvät diagnostiikassa vain siihen asti, kunnes niiden tapahtumatausta on toteutettu.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-perhejärjestelmät paljastavat taustaprofiloinnin ja suojatun paketin, initramfs:n, GRUB:n ja tavanomaisten EFI:n korjaukset, kun niiden tapahtumakohtaiset esilennot ovat ohi. Fedora/RPM-perhejärjestelmät paljastavat suojatut dnf-pakettitapahtumat, dracut initramfs rakentaa uudelleen, GRUB2:n konfiguraatio ja käynnistyskoodin korjaus sekä järjestelmän GDM-näyttöpolku samasta luotainnäytöstä; muut RPM-perhejärjestelmät pysyvät diagnostiikkaan vain kunnes niiden tapahtumatausta on toteutettu. &lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

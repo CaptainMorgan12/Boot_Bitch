@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 non è supportato dal backend Rpm sorvegliato.</translation>
+        <translation>dnf4 non è supportato dal backend rpm custodito.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>La correzione dell&apos;intestazione DKMS (kernel-devel/akmods) non viene implementata.</translation>
+        <translation>La correzione dell&apos;intestazione rpm DKMS (kernel-devel/akmods) non viene implementata.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3700,7 +3700,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>Rilevamento file mancante RPM: nessun file di pacchetto mancante; registrazione di prova di controllo di dipendenza di dnf5 di sola lettura.</translation>
+        <translation>Rilevamento del file mancante RPM: nessun file di pacchetto mancante; registrazione delle prove di controllo di dipendenza di dnf5 di sola lettura.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Versione record rpm</translation>
+        <translation>Versione Record rpm</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Verifica del file del pacchetto RPM (rpm -Va --nofiledigest, sola lettura)</translation>
+        <translation>Verifica del file di pacchetto RPM (rpm -Va --nofiledigest, sola lettura)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ In attesa di modifiche sono state mantenute in modo da poter riprovare. L&apos;o
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>I sistemi famigliari &lt;p&gt;Arch espongono la profilazione backend e il pacchetto custodito, initramfs, GRUB e le riparazioni convenzionali EFI quando passano i preflights specifici per le transazioni. I sistemi famigliari Fedora/RPM espongono le transazioni dei pacchetti dnf sorvegliate, dracut initramfs ricostruisce, la configurazione GRUB2 e la riparazione dei codici di avvio, e il percorso di visualizzazione GDM sistemato dalla stessa prova della sonda; altri sistemi famiglia RPM rimangono diagnostici solo fino all&apos;implementazione del backend delle transazioni.</translation>
+        <translation>I sistemi famigliari &lt;p&gt;Arch espongono la profilazione backend e il pacchetto custodito, initramfs, GRUB e le riparazioni convenzionali EFI quando passano i preflights specifici per le transazioni. I sistemi famigliari Fedora/RPM espongono le transazioni dei pacchetti dnf, dracut initramfs ricostruisce, la configurazione GRUB2 e la riparazione dei codici di avvio, e il percorso di visualizzazione GDM sistemato dalla stessa prova della sonda; altri sistemi famiglia RPM rimangono diagnostici solo fino all&apos;implementazione del backend delle transazioni.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 nem támogatja az őrzött rpm backend.</translation>
+        <translation>dnf4 nem támogatja az őrzött rpm háttér.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 szimulált nincs csomag változás, és az rpm adatbázis byte- azonos.</translation>
+        <translation>dnf5 szimulált nincs csomag változás és a rpm adatbázis byte- azonos.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora használ rpm / dnf; dpkg konfiguráció nem áll rendelkezésre.</translation>
+        <translation>A Fedora rpm / dnf-et használ; dpkg konfiguráció nem áll rendelkezésre.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>az rpm nincs beépítve a célrendszerbe.</translation>
+        <translation>A rpm nincs beépítve a célrendszerbe.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>Az rpm DKMS fejléckorrekciót (kernel- devel / akmods) nem hajtják végre.</translation>
+        <translation>A rpm DKMS fejléckorrekciót (kernel- devel / akmods) nem hajtják végre.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM Missing- file repair: %1 csomag (ek) újratelepítése hiányzó fájlokkal: %2</translation>
+        <translation>RPM missing- file repair: %1 csomag (ek) újratelepítése hiányzó fájlokkal: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM hiány- fájl detektálása: nincs hiányzó csomag fájl; felvétel csak dnf5 dependency- check bizonyíték.</translation>
+        <translation>RPM hiányzó fájl detektálása: nincs hiányzó csomagfájl, csak a dnf5-re vonatkozó adatok rögzítése.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Rekord rpm verzió</translation>
+        <translation>Rekord rpm változat</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,7 +4312,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM fájl tulajdonosi feltérképezése (rpm -qf, %1 hiányzó fájlok)</translation>
+        <translation>RPM fájltulajdonosi térképezés (rpm -qf, %1 hiányzó fájlok)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
@@ -9526,7 +9526,7 @@ A változtatásokat megtartották, hogy újra megpróbálhasd. Teljes kimenet el
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt; p &gt; Arch- family systems exposed backend profilaxis és őrzött csomag, initramfs, GRUB és hagyományos EFI javítás, amikor a tranzakció-specifikus preflights pass. Fedora / RPM- család rendszerek tárják fel az őrzött dnf csomagokat, dracut initramfs újjáépítéseket, GRUB2 konfigurációkat és boot- code javításokat, és a rendszer GDM megjelenítési útvonalát ugyanabból a szonda bizonyítékból; más RPM- család rendszerek csak az ügyleti háttér végrehajtásáig maradnak diagnoszták. &lt; / p &gt;</translation>
+        <translation>&lt; p &gt; Arch- family systems exposed backend profilaxis és őrzött csomag, initramfs, GRUB és hagyományos EFI javítás, amikor a tranzakció-specifikus preflights halad. Fedora / RPM- családi rendszerek tárják fel az őrzött dnf csomagot, dracut initramfs újjáépíti, GRUB2 konfiguráció és boot- kód javítás, és a rendszer GDM megjelenítési útvonalát ugyanabból a szondából; más RPM- család rendszerek csak a tranzakciós háttér megvalósításáig maradnak diagnoszták. &lt; / p &gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

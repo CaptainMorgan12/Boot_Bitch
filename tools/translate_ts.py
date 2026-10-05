@@ -160,7 +160,7 @@ PROTECTED_TERMS = tuple(sorted((
     "GRUB", "LUKS", "ESP", "EFI", "UKI", "ZFS", "Shell",
     "BootCurrent", "BootOrder", "BootNext", "menuentry", "os-prober",
     "PARTUUID", "WebFAI", "iPXE", "shim",
-    "apt", "apk", "dnf", "dpkg", "dkms", "akmods", "akms", "AKMS",
+    "apt", "apk", "dnf", "dpkg", "dkms", "rpm", "RPM", "akmods", "akms", "AKMS",
 ), key=len, reverse=True))
 
 # Term token: "TR<n>X" where <n> is the 1-based index in the ordered list above.

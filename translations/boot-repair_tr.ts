@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4, korumalı rpm geri tarafından desteklenmez.</translation>
+        <translation>dnf4 muhafız tarafından desteklenmez rpm backend.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 hiçbir paket değişikliği simüle etmedi ve dnf5 veritabanı aste-identical.</translation>
+        <translation>dnf5 hiçbir paket değişikliğini simüle etmedi ve rpm veritabanı aste-identical.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora 370/dnf kullanıyor; dpkg konfigürasyonu mevcut değil.</translation>
+        <translation>Fedora rpm/dnf kullanıyor; dpkg konfigürasyonu mevcut değil.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>rpm hedef sistemde yüklenmez.</translation>
+        <translation>rpm hedef sistemde kurulmıyor.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>DKMS Başlık düzeltmesi (kernel-devel/akmods) uygulanmaz.</translation>
+        <translation>rpm DKMS başlık düzeltmesi (kernel-devel/akmods) uygulanmaz.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3700,7 +3700,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM eksik dosya algılaması: eksik paket dosyaları; sadece dnf5 bağımlılık kontrol kanıtlarını kaydetmek.</translation>
+        <translation>RPM eksik dosya algılaması: eksik paket dosyaları yok; sadece dnf5 bağımlılık kontrol kanıtı.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Record rpm versiyonu</translation>
+        <translation>Record rpm version</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM dosya sahipliği haritalama (rsa -qf, %1 eksik dosyaları)</translation>
+        <translation>RPM dosya sahipliği haritalama (rpm -qf, %1 eksik dosyaları)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>RPM paketi dosya doğrulama (parlama -Va –nofiledigest, read-only)</translation>
+        <translation>RPM paketi dosya doğrulama (rpm -Va – nofiledigest, read-only)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ Pending değişiklikleri devam etti, böylece yeniden deneme yapabilirsiniz. Tam
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-aile sistemleri arka uç profilleme ve koruma paketi ortaya koyar, initramfs, GRUB ve geleneksel EFI, işlem belirli ön ışıklarının geçtiğinde onarımlar yapar. Fedora/RPM-aile sistemleri dnf paket işlemleri, dracut initramfs yeniden inşaları, GRUB2 konfigürasyonu ve boot-code onarımı ve sistemli GDM ekran yolu aynı kanıtlardan açığa çıkarır; diğer RPM-aile sistemleri sadece işlem sonuna kadar tanımaktadır.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-aile sistemleri arka uç profilleme ve koruma paketi ortaya koyar, initramfs, GRUB ve geleneksel EFI, işlem özel ön ışıklarının geçtiğinde onarımlar. Fedora/RPM-aile sistemleri dnf paketi işlemlerini koruyor, dracut initramfs yeniden inşa ediyor, GRUB2 yapılandırma ve boot-code onarımı ve sistemli GDM ekran yolu aynı kanıtlardan gösteriyor; diğer RPM-aile sistemleri sadece işlem sonuna kadar tanımaktadır.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10359,7 +10359,7 @@ UEFI /UKI Donanım girişleri ve boot menüsü arasında geçiş yapmak için yu
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Fedora/RPM eksik veya yozlaşmış paket dosyaları bir dnf yeniden yükleme işlemi ile geri yükleyin.</translation>
+        <translation>Fedora/RPM eksik veya yozlaşmış paket dosyaları bir dnf yeniden yükleme işlemi ile geri yükler.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 не поддерживается защищенным rpm backend.</translation>
+        <translation>dnf4 не поддерживается защищенным сервером rpm.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 имитирует отсутствие изменений пакета, а база данных rpm является байт-идентичной.</translation>
+        <translation>dnf5 смоделировал отсутствие изменений пакета, а база данных rpm является байт-идентичной.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>rpm не устанавливается в целевой системе.</translation>
+        <translation>rpm не устанавливается в целевую систему.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -3695,7 +3695,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>Восстановление недостающих файлов RPM: переустановка пакета (пакетов) %1 с отсутствующими файлами: %2</translation>
+        <translation>Восстановление недостающих файлов RPM: переустановка пакета (пакетов) %1 с недостающих файлов: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
@@ -3705,7 +3705,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>Предполетная версия: %1</translation>
+        <translation>Предполетная версия rpm: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Проверка файлов пакета RPM (rpm -Va -nofiledigest, только для чтения)</translation>
+        <translation>Проверка пакетных файлов RPM (rpm -Va -nofiledigest, только для чтения)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>

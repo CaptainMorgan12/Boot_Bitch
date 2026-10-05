@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>O dnf4 não é suportado pela infra- estrutura rpm vigiada.</translation>
+        <translation>dnf4 não é suportado pela infraestrutura rpm protegida.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 não simularam alterações de pacotes e o banco de dados rpm é bytes idênticos.</translation>
+        <translation>dnf5 simulado sem alterações de pacotes e o banco de dados rpm é bytes idênticos.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>O Fedora usa rpm/dnf; a configuração dpkg não está disponível.</translation>
+        <translation>O Fedora usa a configuração rpm/dnf; a configuração dpkg não está disponível.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>A correção do cabeçalho rpm DKMS (kernel-devel/akmods) não é implementada.</translation>
+        <translation>A correção de cabeçalho rpm DKMS (kernel-devel/akmods) não é implementada.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,17 +3695,17 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>Reparação de arquivo faltando RPM: reinstalar %1 pacote(s) com arquivos faltando: %2</translation>
+        <translation>Reparação de arquivo faltando RPM: reinstalação de pacotes %1 com arquivos faltando: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>Detecção de arquivos faltando RPM: sem arquivos de pacotes faltando; gravando somente leitura dnf5 dependência-check evidência.</translation>
+        <translation>RPM detecção de arquivos em falta: nenhum arquivo de pacote em falta; gravação somente leitura dnf5 dependência-check evidência.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>rpm versão pré-voo: %1</translation>
+        <translation>Versão pré-voo rpm: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>Mapa de propriedade de arquivos RPM (rpm - qf, arquivos faltando %1)</translation>
+        <translation>mapeamento de propriedade de arquivos RPM (rpm - qf, arquivos faltando %1)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Verificação do arquivo de pacote RPM (rpm -Va --nofiledigest, read- only)</translation>
+        <translation>Verificação de arquivos de pacotes RPM (rpm -Va --nofiledigest, read- only)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ As mudanças pendentes foram mantidas para que você possa tentar novamente. Sa�
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>Os sistemas da família Arch expõem o perfil de backend e o pacote protegido, initramfs, GRUB e reparos convencionais EFI quando os pré-voos específicos da transação passam. Os sistemas da família Fedora/RPM expõem transações de pacotes dnf protegidas, dracut initramfs reconstrui, configuração GRUB2 e reparo de código de inicialização, e o caminho de exibição GDM systemd da mesma evidência de sonda; outros sistemas da família RPM permanecem somente diagnósticos até que sua infraestrutura de transação seja implementada.&lt;/p&gt;</translation>
+        <translation>Os sistemas da família Arch expõem o perfil de backend e o pacote protegido, initramfs, GRUB e reparos convencionais EFI quando os pré-voos específicos da transação passam. Os sistemas da família Fedora/RPM expõem transações de pacotes dnf vigiadas, dracut initramfs reconstrui, configuração GRUB2 e reparo de código de inicialização, e o caminho de exibição GDM systemd da mesma evidência de sonda; outros sistemas da família RPM permanecem somente diagnósticos até sua infraestrutura de transação ser implementada.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10359,7 +10359,7 @@ Use o seletor de visualização acima para alternar entre as entradas de firmwar
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>O Fedora/RPM restaura arquivos de pacotes perdidos ou corrompidos através de uma transação de reinstalação dnf simulada.</translation>
+        <translation>O Fedora/RPM restaura arquivos de pacotes perdidos ou corrompidos através de uma transação simulada de reinstalação dnf.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 はガードされた rpm バックエンドではサポートされていません。</translation>
+        <translation>dnf4 はガードされた rpm のバックエンドではサポートされていません。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 は、パッケージの変更をシミュレートし、 rpm データベースはバイトを識別します。</translation>
+        <translation>dnf5 は、パッケージの変更をシミュレートし、rpm データベースはバイトを識別します。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -1077,12 +1077,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>ターゲットシステムにrpmがインストールされていない。</translation>
+        <translation>ターゲットシステムにrpmをインストールしていません。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>ターゲット RPM データベースが欠落しています。</translation>
+        <translation>ターゲット RPM データベースが不足しています。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>rpm DKMSヘッダ補正(kernel-devel/akmods)は実装されていません。</translation>
+        <translation>rpm DKMS ヘッダ補正(kernel-devel/akmods)は実装していません。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM の不足分のファイル修復: %1 パッケージを再インストールする: %2</translation>
+        <translation>RPM の欠損ファイル修復: %1 パッケージを再インストールする: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM の欠損ファイル検出: 不足しているパッケージファイルはありません。 読み取り専用の dnf5 依存性チェック 証拠を記録します。</translation>
+        <translation>RPM の欠損ファイル検出: 欠落したパッケージファイルはありません。 読み取り専用 dnf5 依存性チェック 証拠を記録します。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>レコード rpm バージョン</translation>
+        <translation>レコードrpmバージョン</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,7 +4312,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPMファイル所有権マッピング(rpm -qf、%1欠落ファイル)</translation>
+        <translation>RPMファイル所有権マッピング(rpm -qf、%1ファイル欠落)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
@@ -9526,7 +9526,7 @@ Pending changes were kept so you can retry. Full helper output is available in L
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-family システムは、バックエンドのプロファイリングとガードされたパッケージ、initramfs、GRUB、従来の EFI をトランザクション固有のプリフライトパス時に修復します。 Fedora/RPM ファミリー システムでは、ガードされた dnf パッケージトランザクション、dracut initramfs 再構築、GRUB2 構成とブートコードの修復、および同じプローブの証拠からシステム化された GDM ディスプレイパスを公開します。他の RPM ファミリー システムは、トランザクションのバックエンドが実装されるまで、診断のみを維持します。&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-family システムは、バックエンドのプロファイリングとガードされたパッケージ、initramfs、GRUB および従来の EFI をトランザクション固有のプリフライトパス時に修復します。 Fedora/RPM ファミリー システムでは、ガードされた dnf パッケージトランザクション、dracut initramfs 再構築、GRUB2 構成とブートコードの修復、および同じプローブの証拠からシステム化された GDM ディスプレイパスを公開します。他の RPM ファミリー システムは、トランザクションのバックエンドが実装されるまで、診断のみを維持します。&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10359,7 +10359,7 @@ Use the view selector above to switch between the UEFI/UKI firmware entries and 
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Fedora/RPM は、トランザクションを再インストールする 1 つのシミュレートされた dnf を介して、不足しているか破損したパッケージファイルを復元します。</translation>
+        <translation>Fedora/RPM は、トランザクションを再インストールする 1 つのシミュレートされた dnf を使用して、不足しているか破損したパッケージファイルを復元します。</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

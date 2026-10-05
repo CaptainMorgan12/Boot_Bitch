@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 nu este suportat de suportul pazit al rpm.</translation>
+        <translation>dnf4 nu este suportat de platforma rpm păzită.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 simulat nici o modificare a pachetului și baza de date rpm este octet-identic.</translation>
+        <translation>dnf5 simulat nici o modificare pachet și baza de date rpm este octet-identic.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora utilizează rpm/dnf; configurația dpkg nu este disponibilă.</translation>
+        <translation>Fedora utilizează rpm/dnf; configurarea dpkg nu este disponibilă.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>În sistemul țintă nu se instalează rpm.</translation>
+        <translation>rpm nu este instalat în sistemul țintă.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>Corecția header DKMS a rpm (kernel-devel/akmods) nu este pusă în aplicare.</translation>
+        <translation>Corecția header rpm DKMS (kernel-devel/akmods) nu este pusă în aplicare.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,17 +3695,17 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>Reparație fișier lipsă RPM: reinstalând pachetul %1 (s) cu fișierele lipsă: %2</translation>
+        <translation>Reparația fișierului lipsă RPM: reinstalând pachetul %1 (s) cu fișierele lipsă: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>Detectarea lipsă a fişierului RPM: fără fişiere lipsă; înregistrarea probelor de dependenţă doar dinf5.</translation>
+        <translation>Detectarea fişierului lipsă RPM: fără fişiere lipsă; înregistrarea probelor de dependenţă doar dinf5.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>Versiunea dinaintea zborului rpm: %1</translation>
+        <translation>rpm preflight version: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>Maparea proprietății fișierelor RPM (rpm-qf, fișierele lipsă %1)</translation>
+        <translation>Cartografiere de proprietate a fișierelor RPM (rpm -qf, fișiere lipsă %1)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Verificarea pachetelor RPM (rpm - Va --nofiledigest, exclusiv citire)</translation>
+        <translation>Verificarea dosarului RPM (rpm -Va --nofiledigest, exclusiv citire)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9523,7 +9523,7 @@ Până la schimbări au fost păstrate astfel încât să puteți încerca din n
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Sistemele familiale prezintă profilul de fundal și pachetul de protecție, initramfs, GRUB și reparațiile convenționale EFI atunci când trec zborurile lor specifice tranzacției. Sistemele Fedora/RPM-family expun tranzacţiile cu pachete dnf păzite, dracut initramfs reconstruieşte, configuraţia GRUB2 şi repararea codului de boot, precum şi calea de afişare GDM din aceleaşi probe de probe; alte sisteme RPM-family rămân diagnostice-doar până când platforma lor de tranzacţie este implementată.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Sistemele de arch-familie expune profilare backend și pachet de paza, initramfs, GRUB și reparațiile convenționale EFI atunci când precursoarele lor specifice tranzacției trec. Sistemele Fedora/RPM-family expun tranzacţiile cu pachete dnf păzite, dracut initramfs reconstruieşte, configuraţia GRUB2 şi repararea codului de boot, şi calea de afişare GDM sistemată din aceleaşi probe; alte sisteme RPM-family rămân diagnostice-doar până când platforma lor de tranzacţie este implementată.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 δεν υποστηρίζεται από το φυλασσόμενο σύστημα υποστήριξης rpm.</translation>
+        <translation>Το dnf4 δεν υποστηρίζεται από το φυλασσόμενο σύστημα υποστήριξης rpm.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 προσομοίωση καμία αλλαγή πακέτου και η βάση δεδομένων rpm είναι byte-identical.</translation>
+        <translation>Το dnf5 δεν προσομοίωσε καμία αλλαγή πακέτου και η βάση δεδομένων rpm είναι byte-identical.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Η Fedora χρησιμοποιεί rpm/dnf· η διαμόρφωση της dpkg δεν είναι διαθέσιμη.</translation>
+        <translation>Η Fedora χρησιμοποιεί rpm/dnf· η διαμόρφωση dpkg δεν είναι διαθέσιμη.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,12 +1077,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>rpm δεν είναι εγκατεστημένο στο σύστημα προορισμού.</translation>
+        <translation>Το rpm δεν είναι εγκατεστημένο στο σύστημα στόχου.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>Η βάση δεδομένων RPM του στόχου λείπει.</translation>
+        <translation>Η βάση δεδομένων RPM λείπει.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>Επισκευή ελλείποντος αρχείου RPM: επαναφορά πακέτου (-ων) %1 με ελλείποντα αρχεία: %2</translation>
+        <translation>Επισκευή ελλειπόντων αρχείων RPM: renealsing %1 πακέτο(-α) με τα ελλείποντα αρχεία: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM ανίχνευση ελλείποντος αρχείου: δεν λείπουν αρχεία πακέτων· καταγραφή μόνο για ανάγνωση στοιχείων εξάρτησης dnf5.</translation>
+        <translation>Ανίχνευση ελλείποντος αρχείου RPM: δεν λείπουν αρχεία πακέτων· καταγραφή μόνο για ανάγνωση στοιχείων εξάρτησης dnf5.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>Χαρτογράφηση ιδιοκτησίας αρχείων RPM (rpm -qf, %1 που λείπουν αρχεία)</translation>
+        <translation>Χαρτογράφηση ιδιοκτησίας αρχείων RPM (rpm -qf, %1 λείπουν αρχεία)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Έλεγχος αρχείου RPM πακέτου (rpm -Va --nofile digest, μόνο ανάγνωση)</translation>
+        <translation>Έλεγχος αρχείου συσκευασίας RPM (rpm -Va --nofile digest, μόνο ανάγνωση)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ Pending changes were kept so you can retry. Full helper output is available in L
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Τα συστήματα Arch-family εκθέτουν το σύστημα υποστήριξης προφίλ και φυλασσόμενο πακέτο, initramfs, GRUB και τις συμβατικές επισκευές EFI όταν οι συγκεκριμένες συναλλαγές τους περνούν. Τα συστήματα Fedora/RPM-οικογένειας εκθέτουν τις φυλασσόμενες συναλλαγές πακέτου dnf, dracut initramfs ανακατασκευές, διαμόρφωση GRUB2 και επισκευή κώδικα εκκίνησης, και τη διαδρομή απεικόνισης των συστηματοποιημένων GDM από τα ίδια αποδεικτικά στοιχεία καθετήρα.</translation>
+        <translation>Τα συστήματα Arch-family εκθέτουν το σύστημα υποστήριξης προφίλ και το φυλασσόμενο πακέτο, το initramfs, το GRUB και τις συμβατικές επισκευές EFI όταν οι συγκεκριμένες συναλλαγές τους περνούν. Τα συστήματα Fedora/RPM-οικογενειακά εκθέτουν τις φυλασσόμενες συναλλαγές πακέτου dnf, τις ανακατασκευές dracut initramfs, τις ρυθμίσεις GRUB2 και την επισκευή κώδικα εκκίνησης, και τη διαδρομή εμφάνισης των συστηματοποιημένων GDM από τα ίδια αποδεικτικά στοιχεία καθετήρα.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10359,7 +10359,7 @@ Use the view selector above to switch between the UEFI/UKI firmware entries and 
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Η Fedora/RPM αποκαθιστά τα ελλείποντα ή διεφθαρμένα αρχεία πακέτων μέσω ενός προσομοιωμένου dnf επαναεγκατάσταση συναλλαγής.</translation>
+        <translation>Η Fedora/RPM αποκαθιστά τα ελλείποντα ή διεφθαρμένα αρχεία πακέτων μέσω μιας προσομοίωσης dnf επαναεγκατάσταση συναλλαγής.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>
