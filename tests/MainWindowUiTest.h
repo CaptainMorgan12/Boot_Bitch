@@ -36,6 +36,8 @@ private slots:
     void capabilityRefreshAfterDiagnosticsAndClear();
     void repairDetailPaneShowsMissingToolGuidance();
     void capabilityUnavailableRowsRenderAsMissing();
+    void capabilityHeaderColumnsFitTranslatedTitles();
+    void capabilityDistributionLabelIsElidedLabel();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
     void unavailablePlanStagesAreDisabledAndUnchecked();

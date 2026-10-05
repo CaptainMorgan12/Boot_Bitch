@@ -9208,7 +9208,12 @@ QWidget *MainWindow::buildSettingsPage()
     auto *capabilityBox = new QGroupBox(tr("Capabilities and dependencies"));
     auto *capabilityLayout = new QVBoxLayout(capabilityBox);
     auto *identityLayout = new QFormLayout;
-    m_distributionLabel = new QLabel;
+    // The distribution value is an ElidedLabel: at the minimum window width a
+    // long pretty name such as "TUXEDO OS (Debian base)" elides right to
+    // "TUXEDO OS…" (its minimum hint is zero-width) instead of overflowing the
+    // Distribution row. The package-manager and KAuth labels keep the wrapping
+    // QLabel form configured below.
+    m_distributionLabel = new ElidedLabel;
     m_packageManagerLabel = new QLabel;
     m_authBuildLabel = new QLabel;
     identityLayout->setLabelAlignment(Qt::AlignLeft | Qt::AlignTop);
@@ -9216,7 +9221,7 @@ QWidget *MainWindow::buildSettingsPage()
     identityLayout->setRowWrapPolicy(QFormLayout::DontWrapRows);
     identityLayout->setHorizontalSpacing(14);
     identityLayout->setVerticalSpacing(6);
-    for (QLabel *value : {m_distributionLabel, m_packageManagerLabel, m_authBuildLabel}) {
+    for (QLabel *value : {m_packageManagerLabel, m_authBuildLabel}) {
         value->setWordWrap(true);
         value->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Minimum);
     }
@@ -9237,7 +9242,12 @@ QWidget *MainWindow::buildSettingsPage()
     distributionField->setContentsMargins(0, 0, 0, 0);
     distributionField->setSpacing(9);
     distributionField->addWidget(m_distributionLabel, 1);
-    distributionField->addWidget(new QLabel(tr("Show capabilities for:")));
+    // The scope caption also elides if the row is squeezed further, but the
+    // scope selector stays visible and right-aligned: the distribution label
+    // absorbs the slack through its stretch factor above.
+    auto *scopeCaption = new ElidedLabel;
+    scopeCaption->setText(tr("Show capabilities for:"));
+    distributionField->addWidget(scopeCaption);
     distributionField->addWidget(m_capabilityScopeSelector);
     identityLayout->addRow(tr("Distribution:"), distributionField);
     identityLayout->addRow(tr("Package manager family:"), m_packageManagerLabel);
@@ -9280,11 +9290,20 @@ QWidget *MainWindow::buildSettingsPage()
     capabilityHeader->setSectionResizeMode(5, QHeaderView::Stretch);
     capabilityHeader->setSectionResizeMode(6, QHeaderView::ResizeToContents);
     const QFontMetrics capabilityMetrics(m_capabilityTable->font());
-    capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Feature")) + 24));
-    capabilityHeader->resizeSection(1, qMax(160, capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version")) + 24));
-    capabilityHeader->resizeSection(2, qMax(90, capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target")) + 24));
-    capabilityHeader->resizeSection(3, qMax(110, capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable")) + 24));
-    capabilityHeader->resizeSection(4, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Suggested package")) + 24));
+    // The non-stretch column floors are measured on the translated header title
+    // rather than the hardcoded English string: a translated title can be wider
+    // (e.g. German "Vorgeschlagenes Paket" for "Suggested package", "Merkmal"
+    // for "Feature") and would otherwise clip its first/last letters. Columns
+    // that also show a representative content cell keep that content width as an
+    // additional floor, so both the title and the typical content fit.
+    capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(tr("Feature")) + 24));
+    capabilityHeader->resizeSection(1, qMax(160, qMax(capabilityMetrics.horizontalAdvance(tr("Command")),
+                                                      capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version"))) + 24));
+    capabilityHeader->resizeSection(2, qMax(90, qMax(capabilityMetrics.horizontalAdvance(tr("Scope")),
+                                                     capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target"))) + 24));
+    capabilityHeader->resizeSection(3, qMax(110, qMax(capabilityMetrics.horizontalAdvance(tr("Status")),
+                                                      capabilityMetrics.horizontalAdvance(QStringLiteral("Unavailable"))) + 24));
+    capabilityHeader->resizeSection(4, qMax(150, capabilityMetrics.horizontalAdvance(tr("Suggested package")) + 24));
     // Keep rows content-sized across desktop styles.  Wrapped rows are
     // explicitly enlarged by resizeCapabilityRows(); all others stay at the
     // compact one-line height.

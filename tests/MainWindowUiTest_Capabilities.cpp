@@ -5,9 +5,64 @@
 #include "MainWindowUiTest.h"
 #include "UiTestHelpers.h"
 
+#include <QFontMetrics>
+#include <QTranslator>
+
 using namespace UiTestDetail;
 
 namespace {
+
+// A translator that renders the five capability header titles as deliberately
+// wider German strings. Installed by capabilityHeaderColumnsFitTranslatedTitles
+// so the column-floor regression (measuring the hardcoded English title instead
+// of the translated one) is exercised even in the English test environment.
+class WidenedHeaderTranslator final : public QTranslator
+{
+public:
+    QString translate(const char *context, const char *sourceText,
+                      const char * /*disambiguation*/, int /*n*/) const override
+    {
+        if (qstrcmp(context, "MainWindow") != 0) {
+            return QString();
+        }
+        const QString source = QString::fromUtf8(sourceText);
+        if (source == QLatin1String("Feature")) {
+            return QStringLiteral("Merkmal");
+        }
+        if (source == QLatin1String("Command")) {
+            return QStringLiteral("Kommando");
+        }
+        if (source == QLatin1String("Scope")) {
+            return QStringLiteral("Anwendungsbereich");
+        }
+        if (source == QLatin1String("Status")) {
+            return QStringLiteral("Statuslage");
+        }
+        if (source == QLatin1String("Suggested package")) {
+            return QStringLiteral("Vorgeschlagenes Paket");
+        }
+        return QString();
+    }
+};
+
+// Installs a translator for the duration of a test function; the destructor
+// removes it even when a QVERIFY/QCOMPARE macro returns early.
+class ScopedTranslator
+{
+public:
+    explicit ScopedTranslator(QTranslator *translator)
+        : m_translator(translator)
+    {
+        QCoreApplication::installTranslator(translator);
+    }
+    ~ScopedTranslator()
+    {
+        QCoreApplication::removeTranslator(m_translator);
+    }
+
+private:
+    QTranslator *m_translator;
+};
 
 // A complete 15-key repair-target capability preamble with matching evidence
 // lines, plus the backend section that names the module-build system.
@@ -445,4 +500,91 @@ void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
     const int mdadmRow = rowForCommand(window, QStringLiteral("mdadm"));
     QVERIFY2(mdadmRow >= 0, "the missing mdadm row must be present in the host table");
     QCOMPARE(cellText(window, mdadmRow, 3), QStringLiteral("Missing"));
+}
+
+// (i) Each non-stretch column's default width is floored on its translated
+// header title, not the hardcoded English string. A widened translator is
+// installed before the window is constructed so the header titles render wider
+// than English (German "Vorgeschlagenes Paket" for "Suggested package",
+// "Merkmal" for "Feature"); the column must be wide enough to fit the title.
+void MainWindowUiTest::capabilityHeaderColumnsFitTranslatedTitles()
+{
+    WidenedHeaderTranslator translator;
+    ScopedTranslator installed(&translator);
+
+    // Sanity: the translator actually widens the titles beyond English.
+    QVERIFY(QCoreApplication::translate("MainWindow", "Suggested package")
+            != QLatin1String("Suggested package"));
+    QVERIFY(QCoreApplication::translate("MainWindow", "Feature")
+            != QLatin1String("Feature"));
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    const QFontMetrics metrics(window.m_capabilityTable->font());
+    const QHeaderView *header = window.m_capabilityTable->horizontalHeader();
+    QVERIFY(header);
+
+    const struct {
+        int column;
+        const char *sourceText;
+    } expectations[] = {
+        {0, "Feature"},
+        {1, "Command"},
+        {2, "Scope"},
+        {3, "Status"},
+        {4, "Suggested package"},
+    };
+
+    for (const auto &expectation : expectations) {
+        const QString title = QCoreApplication::translate("MainWindow", expectation.sourceText);
+        // The column floor reserves 24 px of padding (sort indicator + margins)
+        // on top of the title, so "fits" means the section is at least that wide.
+        // This catches the regression where the floor is measured on the
+        // hardcoded English string (e.g. German "Vorgeschlagenes Paket" + 24 >
+        // the old 150 px floor, so the last letters clipped).
+        const int titleWidth = metrics.horizontalAdvance(title) + 24;
+        QVERIFY2(header->sectionSize(expectation.column) >= titleWidth,
+                 qPrintable(QStringLiteral("column %1 must fit its translated title \"%2\"")
+                                .arg(expectation.column)
+                                .arg(title)));
+    }
+
+    // The Command column also keeps its representative content cell as a floor.
+    const int commandContentWidth =
+        metrics.horizontalAdvance(QStringLiteral("update-grub2 --version")) + 24;
+    QVERIFY2(header->sectionSize(1) >= commandContentWidth,
+             "the Command column must keep its content example as a floor");
+}
+
+// (j) The Distribution value is an ElidedLabel (elides right, zero-width
+// minimum hint) so a long pretty name collapses to "TUXEDO OS…" at the minimum
+// window width instead of overflowing the row, while the package-manager and
+// KAuth labels keep their wrapping QLabel form.
+void MainWindowUiTest::capabilityDistributionLabelIsElidedLabel()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+
+    QVERIFY(window.m_distributionLabel);
+    QVERIFY(window.m_packageManagerLabel);
+    QVERIFY(window.m_authBuildLabel);
+
+    // ElidedLabel reports a 0-width minimum hint; a wrapping QLabel does not.
+    QCOMPARE(window.m_distributionLabel->minimumSizeHint().width(), 0);
+    // The full text stays available in text() (elision is paint-only).
+    QVERIFY(!window.m_distributionLabel->text().isEmpty());
+
+    // The other identity labels keep the word-wrap/size-policy configuration.
+    QVERIFY(window.m_packageManagerLabel->wordWrap());
+    QVERIFY(window.m_authBuildLabel->wordWrap());
+    QVERIFY(!window.m_distributionLabel->wordWrap());
+
+    // The scope selector stays present on the same Distribution row (right-aligned
+    // via the distribution label's stretch factor).
+    QVERIFY(window.m_capabilityScopeSelector);
+    QCOMPARE(window.m_distributionLabel->parentWidget(),
+             window.m_capabilityScopeSelector->parentWidget());
 }
