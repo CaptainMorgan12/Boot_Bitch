@@ -13184,14 +13184,14 @@ void MainWindow::browseFileCopyDestination()
     headingFont.setBold(true);
     headingFont.setPointSize(headingFont.pointSize() + 2);
     heading->setFont(headingFont);
-    configureWrappedDialogBody(heading);
+    heading->setWordWrap(true);
     headingRow->addWidget(heading, 1, Qt::AlignVCenter);
     dialogLayout->addLayout(headingRow);
 
     auto *description = new QLabel(tr(
         "Browse folders from the selected repaired system through temporary read-only mounts. Nothing is written while browsing, and the guarded copy validates the chosen path again before any write."));
     description->setTextFormat(Qt::PlainText);
-    configureWrappedDialogBody(description);
+    description->setWordWrap(true);
     dialogLayout->addWidget(description);
 
     auto *pathRow = new QHBoxLayout;
@@ -13236,14 +13236,14 @@ void MainWindow::browseFileCopyDestination()
         browserHeadingFont.setBold(true);
         browserHeadingFont.setPointSize(browserHeadingFont.pointSize() + 2);
         browserHeading->setFont(browserHeadingFont);
-        configureWrappedDialogBody(browserHeading);
+        browserHeading->setWordWrap(true);
         browserHeadingRow->addWidget(browserHeading, 1, Qt::AlignVCenter);
         browserLayout->addLayout(browserHeadingRow);
 
         auto *browserDescription = new QLabel(tr(
             "The selected repair filesystem is mounted read-only only for the current directory listing. The mount is removed after the request; the host filesystem is never used as the folder tree."));
         browserDescription->setTextFormat(Qt::PlainText);
-        configureWrappedDialogBody(browserDescription);
+        browserDescription->setWordWrap(true);
         browserLayout->addWidget(browserDescription);
 
         auto *currentPathLabel = new QLabel;
@@ -13278,7 +13278,7 @@ void MainWindow::browseFileCopyDestination()
         browserLayout->addWidget(navigationWidget, 0);
 
         auto *browserStatus = new QLabel(tr("Read-only target view; no files are modified."));
-        configureWrappedDialogBody(browserStatus);
+        browserStatus->setWordWrap(true);
         browserLayout->addWidget(browserStatus);
 
         auto *browserButtons = new QDialogButtonBox(QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
