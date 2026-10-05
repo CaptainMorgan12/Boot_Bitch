@@ -38,6 +38,7 @@ boot-repair-kernels-cleanup-contract	fast	5	S	backend	y
 boot-repair-gpu-contract	fast	2	S	backend	y
 boot-repair-gpu-baseline-contract	fast	2	S	backend	y
 boot-repair-display-baseline-contract	fast	2	S	backend	y
+boot-repair-uki-grub-baseline-contract	fast	2	S	backend	y
 boot-repair-boot-errors-contract	fast	2	S	backend	y
 boot-repair-efi-entry-policy-contract	fast	15	M	efi	y
 boot-repair-repair-log-filter-contract	fast	2	S	backend	y

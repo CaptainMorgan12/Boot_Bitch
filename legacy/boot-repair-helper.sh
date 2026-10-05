@@ -10035,6 +10035,127 @@ parse_cached_display_inventory()
         || fail "The cached display baseline is incomplete; run the display diagnostic again."
 }
 
+# Reconstruct the deterministic EFI evidence from the cached `uki` diagnostic
+# section (the exact `Uki decision:` line diagnostic_uki emits), so the EFI
+# repair consumes the single cached source of truth for the loader-layout
+# classification, ESP identity and firmware BootOrder-lead ownership instead of
+# re-deriving them.  The write-time ESP validation and firmware reconcilers
+# always re-verify fresh.  Fails closed when the baseline is absent,
+# undecodable, empty or carries no valid decision line.  Read-only: no target
+# probe is run here.
+parse_cached_uki_inventory()
+{
+    local line rest token
+    local baseline=""
+    local -a fields=()
+    local layout="" esp_source="" esp_fstype="" ownership="" lead=""
+
+    if [[ -z "${UKI_BASELINE_B64:-}" ]]; then
+        fail "Run the EFI diagnostic before starting the EFI repair (no cached uki baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$UKI_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached uki baseline could not be decoded; run the EFI diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached uki baseline is empty; run the EFI diagnostic again."
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        [[ "$line" == "Uki decision:"* ]] || continue
+        rest="${line#Uki decision: }"
+        IFS=' ' read -r -a fields <<<"$rest"
+        for token in "${fields[@]:-}"; do
+            case "$token" in
+                layout=*)         layout="${token#layout=}" ;;
+                esp_source=*)     esp_source="${token#esp_source=}" ;;
+                esp_fstype=*)     esp_fstype="${token#esp_fstype=}" ;;
+                ownership=*)      ownership="${token#ownership=}" ;;
+                bootorder_lead=*) lead="${token#bootorder_lead=}" ;;
+            esac
+        done
+        break
+    done <<<"$baseline"
+
+    [[ -n "$layout" ]] \
+        || fail "The cached uki baseline carries no loader-layout classification; run the EFI diagnostic again."
+    case "$layout" in
+        vendor-uki|generic-grub-efi|alpine-efi-stub|alpine-grub-efi|grub2-bios|syslinux-bios|no-efi-layout) ;;
+        *) fail "The cached uki baseline carries an unrecognised loader layout '$layout'; run the EFI diagnostic again." ;;
+    esac
+
+    EFI_LOADER_LAYOUT="$layout"
+    [[ -n "$esp_source" && "$esp_source" != unresolved ]] && EFI_ESP_SOURCE="$esp_source" || EFI_ESP_SOURCE=""
+    [[ -n "$esp_fstype" && "$esp_fstype" != unresolved ]] && EFI_ESP_FSTYPE="$esp_fstype" || EFI_ESP_FSTYPE=""
+    case "$ownership" in
+        host|target|foreign|unknown) EFI_ENTRY_OWNERSHIP="$ownership" ;;
+        *) EFI_ENTRY_OWNERSHIP="none" ;;
+    esac
+    [[ "$lead" =~ ^[0-9A-Fa-f]{4}$ ]] && EFI_BOOTORDER_LEAD="$(tr '[:lower:]' '[:upper:]' <<<"$lead")" || EFI_BOOTORDER_LEAD="none"
+}
+
+# Reconstruct the deterministic GRUB evidence from the cached `grub` diagnostic
+# section (the exact `Grub decision:` line diagnostic_grub emits), so the GRUB
+# repair consumes the single cached source of truth for the config path, the
+# grub2-vs-grub layout, the generator tool, the grubenv validity and the
+# MBR/bios_grub boot-code verdict instead of re-deriving them.  The mutation-time
+# trial generation, entry-preservation guard, snapshot/rollback and grubenv
+# re-check always read the live filesystem.  Fails closed when the baseline is
+# absent, undecodable, empty or carries no valid decision line.  Read-only.
+parse_cached_grub_inventory()
+{
+    local line rest token
+    local baseline=""
+    local -a fields=()
+    local config="" layout="" generator="" env_valid="" bootcode=""
+
+    if [[ -z "${GRUB_BASELINE_B64:-}" ]]; then
+        fail "Run the GRUB diagnostic before starting the GRUB repair (no cached grub baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$GRUB_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached grub baseline could not be decoded; run the GRUB diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached grub baseline is empty; run the GRUB diagnostic again."
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        [[ "$line" == "Grub decision:"* ]] || continue
+        rest="${line#Grub decision: }"
+        IFS=' ' read -r -a fields <<<"$rest"
+        for token in "${fields[@]:-}"; do
+            case "$token" in
+                config=*)    config="${token#config=}" ;;
+                layout=*)    layout="${token#layout=}" ;;
+                generator=*) generator="${token#generator=}" ;;
+                grubenv=*)   env_valid="${token#grubenv=}" ;;
+                bootcode=*)  bootcode="${token#bootcode=}" ;;
+            esac
+        done
+        break
+    done <<<"$baseline"
+
+    [[ -n "$config" && "$config" == /* ]] \
+        || fail "The cached grub baseline carries no GRUB configuration path; run the GRUB diagnostic again."
+    case "$layout" in
+        grub|grub2) ;;
+        *) fail "The cached grub baseline carries an unrecognised GRUB layout '$layout'; run the GRUB diagnostic again." ;;
+    esac
+    case "$env_valid" in
+        valid|invalid|missing) ;;
+        *) fail "The cached grub baseline carries an unrecognised grubenv verdict '$env_valid'; run the GRUB diagnostic again." ;;
+    esac
+    case "$bootcode" in
+        ok|broken|not-applicable) ;;
+        *) fail "The cached grub baseline carries an unrecognised boot-code verdict '$bootcode'; run the GRUB diagnostic again." ;;
+    esac
+
+    GRUB_CONFIG_PATH="$config"
+    GRUB_LAYOUT="$layout"
+    GRUB_GENERATOR="${generator:-none}"
+    GRUB_ENV_VALID="$env_valid"
+    GRUB_BOOT_CODE="$bootcode"
+}
+
 # Validate that the detected display manager is installed with its unit and
 # graphical.target present, correcting known missing packages through the
 # detected APT backend before the offline systemd link repair is allowed to
@@ -10862,6 +10983,55 @@ grub_install_tool()
     return 1
 }
 
+# Resolve the deterministic GRUB inputs for the repair, preferring the cached
+# `grub` baseline when the GUI supplied one; otherwise derive them fresh from
+# the target.  The mutation-time trial generation, the entry-preservation guard
+# (live grub.cfg), the snapshot/rollback and the grubenv re-check never consume
+# this cache and always re-read the live filesystem.
+grub_resolved_layout()
+{
+    if [[ -n "${GRUB_BASELINE_B64:-}" ]]; then
+        [[ -n "${GRUB_LAYOUT:-}" ]] || parse_cached_grub_inventory
+        [[ -n "${GRUB_LAYOUT:-}" ]] && { printf '%s\n' "$GRUB_LAYOUT"; return 0; }
+    fi
+    if grub2_layout_detected; then printf 'grub2\n'; else printf 'grub\n'; fi
+}
+
+grub_resolved_config_path()
+{
+    if [[ -n "${GRUB_BASELINE_B64:-}" ]]; then
+        [[ -n "${GRUB_CONFIG_PATH:-}" ]] || parse_cached_grub_inventory
+        [[ -n "${GRUB_CONFIG_PATH:-}" ]] && { printf '%s\n' "$GRUB_CONFIG_PATH"; return 0; }
+    fi
+    grub_config_path
+}
+
+grub_resolved_generator()
+{
+    if [[ -n "${GRUB_BASELINE_B64:-}" ]]; then
+        [[ -n "${GRUB_GENERATOR:-}" ]] || parse_cached_grub_inventory
+        [[ -n "${GRUB_GENERATOR:-}" && "$GRUB_GENERATOR" != none ]] \
+            && { printf '%s\n' "$GRUB_GENERATOR"; return 0; }
+    fi
+    grub_generator_tool || return 1
+}
+
+# The evidence-triggered boot-code reinstall decision (returns 0 when the
+# MBR/bios_grub boot code is broken).  Consumed by adaptive_fedora_grub_repair
+# from the cached baseline; the post-install verification always re-probes the
+# live boot code.
+grub_resolved_boot_code_broken()
+{
+    if [[ -n "${GRUB_BASELINE_B64:-}" ]]; then
+        [[ -n "${GRUB_BOOT_CODE:-}" ]] || parse_cached_grub_inventory
+        case "${GRUB_BOOT_CODE:-}" in
+            broken) return 0 ;;
+            ok|not-applicable) return 1 ;;
+        esac
+    fi
+    fedora_grub_boot_code_broken
+}
+
 # Resolve grubenv's editor/reader (Fedora: grub2-editenv, Debian: grub-editenv).
 grub_editenv_tool()
 {
@@ -11095,51 +11265,67 @@ adaptive_grub_repair_modern()
 {
     local old_cfg="$SESSION_DIR/grub-before-update.cfg" generator="update-grub"
     local grub_before="" grub_after=""
+    local config_path gen_tool
 
-    if [[ ! -x "$TARGET_ROOT/usr/sbin/update-grub" && ! -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
-        generator="grub-mkconfig"
+    # Deterministic inputs (config path, generator) come from the cached `grub`
+    # baseline when the GUI supplied one, otherwise from the target.  The trial
+    # generation and the entry-preservation guard below always re-read live
+    # files.
+    config_path="$(grub_resolved_config_path)"
+    if [[ -n "${GRUB_BASELINE_B64:-}" ]]; then
+        if gen_tool="$(grub_resolved_generator)"; then
+            if [[ "$(basename -- "$gen_tool")" == update-grub ]]; then
+                generator="update-grub"
+            else
+                generator="grub-mkconfig"
+            fi
+        fi
+    else
+        if [[ ! -x "$TARGET_ROOT/usr/sbin/update-grub" && ! -x "$TARGET_ROOT/usr/bin/update-grub" ]]; then
+            generator="grub-mkconfig"
+        fi
     fi
 
     if command -v sha256sum >/dev/null 2>&1; then
-        grub_before="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
+        grub_before="$(repair_file_fingerprint "$TARGET_ROOT$config_path")"
     fi
 
     preflight_grub
-    if [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]]; then
-        install -m 0644 "$TARGET_ROOT/boot/grub/grub.cfg" "$old_cfg"
+    if [[ -s "$TARGET_ROOT$config_path" ]]; then
+        install -m 0644 "$TARGET_ROOT$config_path" "$old_cfg"
     else
         rm -f "$old_cfg"
     fi
     if [[ "$generator" == update-grub ]]; then
         run_chroot_try_display "$(msg regenerate-grub-config)" update-grub
     else
-        run_chroot_try_display "$(msg regenerate-grub-config-mkconfig)" grub-mkconfig -o /boot/grub/grub.cfg
+        run_chroot_try_display "$(msg regenerate-grub-config-mkconfig)" grub-mkconfig -o "$config_path"
     fi
     if ((CHROOT_TRY_RC != 0)) && output_suggests_mapper_path_failure "$CHROOT_TRY_OUTPUT"; then
         if repair_stale_mapper_mount_alias; then
-            [[ -s "$old_cfg" ]] && install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
+            [[ -s "$old_cfg" ]] && install -m 0644 "$old_cfg" "$TARGET_ROOT$config_path"
             preflight_grub
             if [[ "$generator" == update-grub ]]; then
                 run_chroot_try_display "$(msg retry-grub-config)" update-grub
             else
-                run_chroot_try_display "$(msg retry-grub-config)" grub-mkconfig -o /boot/grub/grub.cfg
+                run_chroot_try_display "$(msg retry-grub-config)" grub-mkconfig -o "$config_path"
             fi
         fi
     fi
     ((CHROOT_TRY_RC == 0)) || fail "$generator failed after preflight/known correction."
-    [[ -s "$TARGET_ROOT/boot/grub/grub.cfg" ]] \
-        || fail "$generator completed but /boot/grub/grub.cfg is missing or empty."
+    [[ -s "$TARGET_ROOT$config_path" ]] \
+        || fail "$generator completed but $config_path is missing or empty."
     if [[ -s "$old_cfg" ]]; then
-        if ! guard_grub_candidate_preserves_entries "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"; then
+        if ! guard_grub_candidate_preserves_entries "$old_cfg" "$TARGET_ROOT$config_path"; then
             # The candidate has already been generated, but restoring the
             # known-good file keeps a repair failure from silently removing
             # another disk's Linux menu entries.
-            install -m 0644 "$old_cfg" "$TARGET_ROOT/boot/grub/grub.cfg"
+            install -m 0644 "$old_cfg" "$TARGET_ROOT$config_path"
             fail "GRUB regeneration was rolled back because it removed an existing boot entry."
         fi
     fi
     if [[ -x "$TARGET_ROOT/usr/bin/grub-script-check" || -x "$TARGET_ROOT/usr/sbin/grub-script-check" ]]; then
-        run_chroot_try "$(msg verify-installed-grub-config)" grub-script-check /boot/grub/grub.cfg
+        run_chroot_try "$(msg verify-installed-grub-config)" grub-script-check "$config_path"
         ((CHROOT_TRY_RC == 0)) || fail "Installed GRUB configuration failed grub-script-check after regeneration."
     fi
     msg_log grub-regenerated
@@ -11147,7 +11333,7 @@ adaptive_grub_repair_modern()
         repair_change_status grub changed
         return 0
     fi
-    grub_after="$(repair_file_fingerprint "$TARGET_ROOT/boot/grub/grub.cfg")"
+    grub_after="$(repair_file_fingerprint "$TARGET_ROOT$config_path")"
     if [[ "$grub_before" == "$grub_after" ]]; then
         repair_change_status grub "unchanged|$(reason grub-cfg-identical)"
     else
@@ -11163,7 +11349,7 @@ adaptive_grub_repair_modern()
 adaptive_grub_stage_modern()
 {
     local mode="${1:-full}"
-    if grub2_layout_detected; then
+    if [[ "$(grub_resolved_layout)" == grub2 ]]; then
         adaptive_fedora_grub_repair "$mode"
     else
         adaptive_grub_repair
@@ -11940,7 +12126,11 @@ adaptive_fedora_grub_repair()
         msg_log grub2-config-only
     elif ! bios_firmware_mode; then
         msg_log grub2-uefi-not-applicable
-    elif fedora_grub_boot_code_broken; then
+    elif grub_resolved_boot_code_broken; then
+        # Deterministic reinstall trigger: the MBR/bios_grub boot-code verdict
+        # comes from the cached `grub` baseline when the GUI supplied one.  The
+        # post-install verification inside fedora_grub_reinstall_boot_code still
+        # re-probes the live boot code.
         if (( RUNNING_HOST_MODE == 1 )); then
             msg_log grub2-bios-host-config-only
         else
@@ -15798,6 +15988,71 @@ diagnostic_uki_registration_state()
     fi
 }
 
+# Deterministic EFI loader-layout classification from read-only target evidence.
+# Shared by the uki diagnostic's structured decision line and the EFI repair
+# baseline parser so the routing decision and the evidence can never disagree.
+# Values: vendor-uki, generic-grub-efi, alpine-efi-stub, alpine-grub-efi,
+# grub2-bios, syslinux-bios, no-efi-layout.  Read-only; never a write.
+efi_loader_layout_classification()
+{
+    profile_target_backends
+    if is_alpine_family; then
+        case "$(alpine_efi_backend)" in
+            efi-stub)     printf 'alpine-efi-stub\n'; return 0 ;;
+            grub)         printf 'alpine-grub-efi\n'; return 0 ;;
+            syslinux-efi) printf 'syslinux-bios\n'; return 0 ;;
+            *)            printf 'no-efi-layout\n'; return 0 ;;
+        esac
+    fi
+    if is_tuxedo_uki_layout; then
+        printf 'vendor-uki\n'
+        return 0
+    fi
+    if grub2_layout_detected && bios_firmware_mode; then
+        printf 'grub2-bios\n'
+        return 0
+    fi
+    if [[ "${TARGET_BOOTLOADER_BACKEND:-}" == grub ]]; then
+        printf 'generic-grub-efi\n'
+        return 0
+    fi
+    printf 'no-efi-layout\n'
+}
+
+# Read-only ownership classification of the firmware BootOrder lead: prints the
+# leading Boot#### id and its class (host|target|foreign|unknown|none).  The
+# target/foreign split uses the same host-vs-target ESP PARTUUID comparison as
+# the firmware inventory reconciler so the diagnostic and the repair agree.
+efi_bootorder_lead_ownership()
+{
+    local nvram="$1" lead class line
+    [[ -s "$nvram" ]] || { printf 'none none\n'; return 0; }
+    lead="$(sed -n 's/^BootOrder: //p' "$nvram" | head -n1 | cut -d, -f1 | tr '[:lower:]' '[:upper:]' || true)"
+    lead="${lead//[[:space:]]/}"
+    [[ "$lead" =~ ^[0-9A-F]{4}$ ]] || { printf 'none none\n'; return 0; }
+    line="$(grep -E "^Boot${lead}\\*?[[:space:]]" "$nvram" 2>/dev/null | head -n1 || true)"
+    if [[ -n "$line" ]]; then
+        class="$(efi_entry_class_line "$line" "${EFI_HOST_ESP_PARTUUID:-}" "${EFI_TARGET_ESP_PARTUUID:-}")"
+        [[ "$class" == repair ]] && class=target
+    else
+        class=unknown
+    fi
+    printf '%s %s\n' "$lead" "$class"
+}
+
+# Resolve the EFI loader-layout classification for the repair, preferring the
+# cached `uki` baseline when the GUI supplied one; otherwise derive it fresh
+# from target evidence.  The write-time ESP validation and firmware reconcilers
+# never consume this cache and always re-run fresh.
+resolve_efi_loader_layout()
+{
+    if [[ -n "${UKI_BASELINE_B64:-}" ]]; then
+        [[ -n "${EFI_LOADER_LAYOUT:-}" ]] || parse_cached_uki_inventory
+        [[ -n "${EFI_LOADER_LAYOUT:-}" ]] && { printf '%s\n' "$EFI_LOADER_LAYOUT"; return 0; }
+    fi
+    efi_loader_layout_classification
+}
+
 # Describe the detected boot chain (firmware -> loader -> initramfs -> root)
 # and compare the UKI's LUKS declarations with the mounted root so the number
 # of expected unlock prompts is evidence, not a guess.
@@ -16271,6 +16526,7 @@ diagnostic_kernel_inventory()
 diagnostic_grub()
 {
     local cfg extlinux_cfg="" scope_label="target" grubenv_path
+    local grub_layout="" generator="" grubenv_state="" bootcode=""
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     profile_target_backends
     cfg="$TARGET_ROOT$(grub_config_path)"
@@ -16340,12 +16596,45 @@ diagnostic_grub()
         ls -lh "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI" 2>&1 || true
         sha256sum "$TARGET_ROOT/boot/efi/EFI/BOOT/BOOTX64.EFI" 2>&1 || true
     fi
+
+    # The normalized menu-entry key set is the exact identity the
+    # entry-preservation guard compares the generated candidate against.  Emitted
+    # here for evidence only: the guard itself always re-reads the live grub.cfg
+    # at mutation time, never this cached listing.
+    echo
+    echo "Grub menu entry keys (normalized):"
+    if [[ -s "$cfg" ]]; then
+        grub_entry_keys "$cfg"
+    else
+        echo "(no GRUB configuration visible)"
+    fi
+
+    # Machine-parseable decision consumed by the GRUB repair baseline.  Carries
+    # the deterministic config path, grub2-vs-grub layout, generator tool,
+    # grubenv validity and the MBR/bios_grub boot-code verdict so the repair can
+    # plan from the cached section without re-deriving them (the trial
+    # generation, entry guard, snapshot/rollback and grubenv re-check stay fresh).
+    if grub2_layout_detected; then grub_layout=grub2; else grub_layout=grub; fi
+    generator="$(grub_generator_tool 2>/dev/null || true)"
+    if [[ -f "$grubenv_path" ]]; then
+        if grub_env_block_valid; then grubenv_state=valid; else grubenv_state=invalid; fi
+    else
+        grubenv_state=missing
+    fi
+    if grub2_layout_detected && bios_firmware_mode \
+        && [[ -n "${TARGET_DISK:-}" ]] && is_block_device "$TARGET_DISK"; then
+        if fedora_grub_boot_code_broken; then bootcode=broken; else bootcode=ok; fi
+    else
+        bootcode=not-applicable
+    fi
+    echo "Grub decision: config=$(grub_config_path) layout=$grub_layout generator=${generator:-none} grubenv=$grubenv_state bootcode=$bootcode"
 }
 
 diagnostic_uki()
 {
     local uki="" esp_root="" efi_root="" tmp_uname tmp_cmdline partuuid embedded="" efi_nvram_diag scope_label="target"
     local uki_reg_line="" uki_reg_state="" uki_reg_id="" uki_reg_scope="selected target"
+    local esp_source="" esp_fstype="" bootorder_lead="" lead_ownership=""
     (( RUNNING_HOST_MODE == 1 )) && scope_label="running host"
     profile_target_backends
     esp_root="$(profile_esp_root 2>/dev/null || true)"
@@ -16362,6 +16651,10 @@ diagnostic_uki()
     if [[ -n "$TARGET_ESP_MOUNT" && "$TARGET_ESP_MOUNT" != unresolved ]] \
         && mountpoint -q "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null; then
         findmnt -rn -o SOURCE,FSTYPE,OPTIONS --target "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>&1 || true
+        read -r esp_source esp_fstype < <(
+            findmnt -rn -o SOURCE,FSTYPE --target "$TARGET_ROOT$TARGET_ESP_MOUNT" 2>/dev/null \
+                | awk '$1 ~ /^\/dev\// {print $1, $2; exit}'
+        ) || true
     else
         echo "No separately mounted ESP is visible."
     fi
@@ -16468,6 +16761,7 @@ diagnostic_uki()
         efi_nvram_diag="$SESSION_DIR/diag-efi-nvram.txt"
         efibootmgr -v > "$efi_nvram_diag" 2>&1 || true
         efi_print_firmware_inventory "$efi_nvram_diag"
+        read -r bootorder_lead lead_ownership < <(efi_bootorder_lead_ownership "$efi_nvram_diag")
         echo
         echo "Entries referencing the selected ${scope_label} ESP only:"
         partuuid="$(blkid -s PARTUUID -o value "$EFI_ESP_SOURCE" 2>/dev/null || true)"
@@ -16483,6 +16777,13 @@ diagnostic_uki()
     else
         echo "efibootmgr/UEFI variables are unavailable in the recovery host."
     fi
+
+    # Machine-parseable decision consumed by the EFI repair baseline.  Carries
+    # the deterministic ESP identity, loader-layout classification and the
+    # firmware BootOrder-lead ownership so the repair routes and plans from the
+    # cached section without re-deriving them (the write-time ESP validation and
+    # firmware reconcilers stay fresh).
+    echo "Uki decision: layout=$(efi_loader_layout_classification) esp_source=${esp_source:-unresolved} esp_fstype=${esp_fstype:-unresolved} ownership=${lead_ownership:-none} bootorder_lead=${bootorder_lead:-none}"
 }
 
 # Read-only verdict for the GRUB saved entry.  With GRUB_DEFAULT=saved a
@@ -21416,6 +21717,32 @@ DISPLAY_BASELINE_B64=""
 REPORT_BASELINE_B64=""
 # Raw decoded text of REPORT_BASELINE_B64, populated by parse_cached_evidence_section.
 REPORT_BASELINE_TEXT=""
+# Base64-serialized cached `uki` diagnostic section handed in by the GUI via
+# --evidence uki <value>.  It is the single source of truth the EFI repair
+# consumes for the deterministic loader-layout classification and ESP identity
+# instead of re-deriving them; the write-time ESP validation (validate_selected_esp /
+# validate_efi_bootloader_target / validate_tuxedo_uki_target), the efibootmgr -v
+# capture, the ESP backup/rollback and the firmware-entry reconcilers always
+# re-run fresh.  Empty means no baseline was supplied.
+UKI_BASELINE_B64=""
+# Base64-serialized cached `grub` diagnostic section handed in by the GUI via
+# --evidence grub <value>.  It is the single source of truth the GRUB repair
+# consumes for the deterministic config path/layout/generator and the
+# evidence-triggered boot-code verdict instead of re-deriving them; the trial
+# config generation, the entry-preservation guard (live grub.cfg), the
+# snapshot/rollback and the mutation-time grubenv re-check always read the live
+# filesystem.  Empty means no baseline was supplied.
+GRUB_BASELINE_B64=""
+# Reconstructed deterministic evidence, populated by parse_cached_uki_inventory
+# and parse_cached_grub_inventory from their cached sections.
+EFI_LOADER_LAYOUT=""      # vendor-uki|generic-grub-efi|alpine-efi-stub|alpine-grub-efi|grub2-bios|syslinux-bios|no-efi-layout
+EFI_ENTRY_OWNERSHIP=""    # BootOrder lead ownership: host|target|foreign|unknown|none
+EFI_BOOTORDER_LEAD=""     # Boot#### id of the BootOrder lead, or none
+GRUB_CONFIG_PATH=""       # /boot/grub/grub.cfg or /boot/grub2/grub.cfg
+GRUB_LAYOUT=""            # grub|grub2
+GRUB_GENERATOR=""         # generator tool path (grub_generator_tool output) or none
+GRUB_ENV_VALID=""         # valid|invalid|missing
+GRUB_BOOT_CODE=""         # ok|broken|not-applicable
 
 # Map an --evidence section key to its baseline storage variable.  Only the
 # diagnostic sections with a helper-side baseline consumer are accepted; any
@@ -21427,21 +21754,25 @@ store_evidence_baseline()
         kernel)  KERNEL_BASELINE_B64="$2" ;;
         gpu)     GPU_BASELINE_B64="$2" ;;
         display) DISPLAY_BASELINE_B64="$2" ;;
+        uki)     UKI_BASELINE_B64="$2" ;;
+        grub)    GRUB_BASELINE_B64="$2" ;;
         report)  REPORT_BASELINE_B64="$2" ;;
         *) fail "Unknown --evidence diagnostic section key: $1." ;;
     esac
 }
 
-# Route one cached evidence section to its parser.  kernel/gpu/display rebuild
-# their inventory globals from the serialized section; report exposes the raw
-# decoded text via REPORT_BASELINE_TEXT; every other key fails closed because
-# no parser exists for it yet.
+# Route one cached evidence section to its parser.  kernel/gpu/display/uki/grub
+# rebuild their inventory globals from the serialized section; report exposes
+# the raw decoded text via REPORT_BASELINE_TEXT; every other key fails closed
+# because no parser exists for it yet.
 parse_cached_evidence_section()
 {
     case "$1" in
         kernel)  parse_cached_kernel_inventory ;;
         gpu)     parse_cached_gpu_inventory ;;
         display) parse_cached_display_inventory ;;
+        uki)     parse_cached_uki_inventory ;;
+        grub)    parse_cached_grub_inventory ;;
         report)
             if [[ -z "${REPORT_BASELINE_B64:-}" ]]; then
                 fail "No cached full report baseline was supplied."
@@ -21466,8 +21797,18 @@ parse_repair_arguments()
     KERNEL_BASELINE_B64=""
     GPU_BASELINE_B64=""
     DISPLAY_BASELINE_B64=""
+    UKI_BASELINE_B64=""
+    GRUB_BASELINE_B64=""
     REPORT_BASELINE_B64=""
     REPORT_BASELINE_TEXT=""
+    EFI_LOADER_LAYOUT=""
+    EFI_ENTRY_OWNERSHIP=""
+    EFI_BOOTORDER_LEAD=""
+    GRUB_CONFIG_PATH=""
+    GRUB_LAYOUT=""
+    GRUB_GENERATOR=""
+    GRUB_ENV_VALID=""
+    GRUB_BOOT_CODE=""
     local argument
     while (($# > 0)); do
         argument="$1"
@@ -23804,6 +24145,16 @@ rebuild_tuxedo_uki()
     local nvram_pre="" nvram_post="" nvram_map=""
     local root_uuid
 
+    # With a cached `uki` baseline the deterministic loader layout, ESP identity
+    # and firmware BootOrder-lead ownership are already reconstructed globals;
+    # record them as planning evidence before the fresh write-time validation
+    # below re-verifies the ESP (validate_tuxedo_uki_target ->
+    # validate_target_esp) and the reconcilers re-read live NVRAM.
+    if [[ -n "${UKI_BASELINE_B64:-}" ]]; then
+        [[ -n "${EFI_LOADER_LAYOUT:-}" ]] || parse_cached_uki_inventory
+        log "UKI baseline plan: layout=${EFI_LOADER_LAYOUT:-unknown} esp_source=${EFI_ESP_SOURCE:-unresolved} esp_fstype=${EFI_ESP_FSTYPE:-unresolved} ownership=${EFI_ENTRY_OWNERSHIP:-none} bootorder_lead=${EFI_BOOTORDER_LEAD:-none}"
+    fi
+
     validate_tuxedo_uki_target
     # Re-run the writability preflight immediately before the write path; the
     # clear step is idempotent and refuses foreign/unsafe stacks.
@@ -24377,7 +24728,7 @@ conventional_efi_restore_backup()
 # reconcile firmware entries/BootOrder and emit the EFI change status.
 reinstall_efi_bootloader()
 {
-    local nvram_mode efi_dir
+    local nvram_mode efi_dir layout=""
     local nvram_pre="" nvram_map="" efi_before=""
     local -a install_args
 
@@ -24386,12 +24737,33 @@ reinstall_efi_bootloader()
     # or the Alpine path below).
     reassert_target_write_safety
 
+    # Deterministic loader-layout routing: prefer the cached `uki` baseline when
+    # the GUI supplied one, otherwise derive it from target evidence.  The
+    # write-time ESP validation (validate_selected_esp /
+    # validate_efi_bootloader_target / validate_tuxedo_uki_target), the
+    # efibootmgr -v capture, the ESP backup/rollback and the firmware-entry
+    # reconcilers below always re-run fresh.
+    layout="$(resolve_efi_loader_layout)"
+
     # Alpine uses its own guarded path: grub-install --no-nvram plus an ESP
     # file backup/rollback and the shared firmware reconciler, or the
-    # EFI-stub firmware-entry reconciliation when GRUB is not present.
-    if is_alpine_family; then
+    # EFI-stub firmware-entry reconciliation when GRUB is not present.  Its
+    # grub-vs-efi-stub sub-routing stays a fresh runtime preflight inside
+    # adaptive_alpine_efi_repair.
+    if [[ "$layout" == alpine-grub-efi || "$layout" == alpine-efi-stub ]]; then
         adaptive_alpine_efi_repair
         return 0
+    fi
+
+    # A BIOS-only layout (grub2 BIOS, syslinux/extlinux) or a layout with no
+    # recognised EFI path has nothing the EFI stage can repair: fail closed with
+    # the same probe-based reason the capability line emits.  The stage gate
+    # normally prevents this branch from being scheduled.
+    if [[ "$layout" == grub2-bios || "$layout" == syslinux-bios || "$layout" == no-efi-layout ]]; then
+        if ! reason="$(efi_unavailable_reason)"; then
+            fail "EFI repair is not available: $reason."
+        fi
+        fail "EFI repair is not available for the detected EFI backend."
     fi
 
     if command -v sha256sum >/dev/null 2>&1; then
@@ -24402,7 +24774,7 @@ reinstall_efi_bootloader()
     # the vendor-supplied builder, but first run a read-mostly prerequisite
     # pass that can safely correct a missing initramfs before the vendor builder
     # is allowed to touch TUX.EFI or firmware state.
-    if is_tuxedo_uki_layout; then
+    if [[ "$layout" == vendor-uki ]]; then
         msg_log uki-layout-detected
         preflight_tuxedo_uki
         rebuild_tuxedo_uki

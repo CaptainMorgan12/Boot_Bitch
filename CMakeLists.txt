@@ -365,6 +365,8 @@ add_test(NAME boot-repair-gpu-baseline-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-gpu-baseline-contract.sh)
 add_test(NAME boot-repair-display-baseline-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-baseline-contract.sh)
+add_test(NAME boot-repair-uki-grub-baseline-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-uki-grub-baseline-contract.sh)
 add_test(NAME boot-repair-boot-errors-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-boot-errors-contract.sh)
 add_test(NAME boot-repair-efi-entry-policy-contract
@@ -428,6 +430,8 @@ set_tests_properties(boot-repair-gpu-contract
 set_tests_properties(boot-repair-gpu-baseline-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-display-baseline-contract
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-uki-grub-baseline-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-boot-errors-contract
     PROPERTIES LABELS "fast")
