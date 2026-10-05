@@ -170,7 +170,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
     window.show();
     QTest::qWait(50);
     QVERIFY(window.m_diagnosticList);
-    QCOMPARE(window.m_diagnosticList->count(), 18);
+    QCOMPARE(window.m_diagnosticList->count(), 19);
 
     const QHash<QString, QString> expected = {
         {QStringLiteral("environment"), QStringLiteral("Summarize the selected system, protection state and inspection readiness.")},
@@ -190,6 +190,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
         {QStringLiteral("btrfs"), QStringLiteral("Show Btrfs filesystem and subvolume information.")},
         {QStringLiteral("mapper"), QStringLiteral("Show device-mapper ancestry and cryptsetup state.")},
         {QStringLiteral("luks"), QStringLiteral("Show LUKS ancestry plus crypttab and fstab mapper references.")},
+        {QStringLiteral("host-capabilities"), QStringLiteral("Report the recovery-host prerequisites read-only.")},
         {QStringLiteral("report"), QStringLiteral("Combine every read-only diagnostic for the selected scope.")}
     };
 

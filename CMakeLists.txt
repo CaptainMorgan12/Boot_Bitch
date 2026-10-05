@@ -289,6 +289,7 @@ add_executable(boot-repair-ui-tests
     tests/MainWindowUiTest_Plan.cpp
     tests/MainWindowUiTest_Shell.cpp
     tests/MainWindowUiTest_BootEntries.cpp
+    tests/MainWindowUiTest_Capabilities.cpp
     tests/UiTestHelpers.h
     src/MainWindow.cpp
     src/MainWindow.h

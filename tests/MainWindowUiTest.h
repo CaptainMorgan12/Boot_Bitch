@@ -28,6 +28,11 @@ private slots:
     void missingCapabilityEvidenceFailsClosed();
     void filesystemDiagnosticCachedByScopeAutoRegeneration();
     void capabilityGateReadsOnlyCapabilitiesEntry();
+    void capabilityRepairEvidenceParsesFromCache();
+    void capabilityHostEvidenceParsesFromCache();
+    void capabilityTablePopulatesFromCacheWithoutProbe();
+    void capabilityScopeSelectorSwitchesCaches();
+    void repairDetailPaneShowsMissingToolGuidance();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
     void unavailablePlanStagesAreDisabledAndUnchecked();

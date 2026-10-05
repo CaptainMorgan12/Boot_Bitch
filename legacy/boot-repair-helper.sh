@@ -9636,13 +9636,132 @@ repair_kernel_versions()
     esac
 }
 
+# Resolve the guarded package backend that installs a package into the target.
+# The module-build-system packages are unambiguous: akmods belongs to rpm/dnf,
+# akms to apk, and dkms (and any other package) installs through the detected
+# apt/dpkg or pacman backend in native-first order.  Prints one backend token
+# (apt/dpkg|rpm|apk|pacman) and returns nonzero when no detected backend can
+# install the package.  This is an explicit single-step user action
+# (install-target-package), never auto-invoked from a repair preflight.
+install_package_backend_for()
+{
+    local pkg="$1" backend
+    case "$pkg" in
+        akmods)
+            for backend in "${TARGET_PACKAGE_MANAGERS[@]:-}"; do
+                [[ "$backend" == rpm ]] && { printf 'rpm\n'; return 0; }
+            done
+            return 1
+            ;;
+        akms)
+            for backend in "${TARGET_PACKAGE_MANAGERS[@]:-}"; do
+                [[ "$backend" == apk ]] && { printf 'apk\n'; return 0; }
+            done
+            return 1
+            ;;
+        *)
+            for backend in "${TARGET_PACKAGE_MANAGERS[@]:-}"; do
+                case "$backend" in
+                    apt/dpkg|pacman|rpm|apk) printf '%s\n' "$backend"; return 0 ;;
+                esac
+            done
+            return 1
+            ;;
+    esac
+}
+
+# Guarded rpm/dnf install of one or more packages into the target.  Mirrors
+# adaptive_rpm_apply's simulate-then-apply flow; the caller owns the change
+# status line.
+guarded_rpm_install_packages()
+{
+    local fingerprint_before fingerprint_after
+    (($# > 0)) || return 0
+    rpm_preflight
+    fingerprint_before="$(rpm_database_fingerprint)"
+    msg_log simulate-dnf5 "install $*"
+    rpm_transaction_try "dnf5 install simulation" install "$@" --assumeno
+    rpm_simulation_is_safe "$RPM_SIM_OUTPUT" "$RPM_SIM_RC" \
+        || fail "The simulated dnf5 install transaction failed Boot Bitch safety checks."
+    fingerprint_after="$(rpm_database_fingerprint)"
+    [[ "$fingerprint_before" == "$fingerprint_after" ]] \
+        || fail "The dnf5 install simulation modified the rpm database; refusing to continue."
+    run_chroot_try_display "$(msg install-target-package "$*")" "${RPM_DNF_TOOL:-dnf5}" install "$@" -y
+    (( CHROOT_TRY_RC == 0 )) || fail "dnf5 install failed with exit code $CHROOT_TRY_RC."
+}
+
+# Guarded Alpine apk install of one or more packages into the target.  Same
+# simulate-then-apply flow as adaptive_alpine_apk_apply; the caller owns the
+# change status line.
+guarded_apk_install_packages()
+{
+    local fingerprint_before fingerprint_after
+    (($# > 0)) || return 0
+    alpine_apk_preflight
+    fingerprint_before="$(alpine_apk_fingerprint)"
+    msg_log simulate-apk "add $*"
+    alpine_apk_transaction_try "Alpine apk add simulation" add "$@" --simulate
+    (( APK_SIM_RC == 0 )) || fail "apk add simulation failed; no packages were changed."
+    alpine_apk_simulation_is_safe "$APK_SIM_OUTPUT" "$APK_SIM_RC" \
+        || fail "The simulated apk add transaction failed Boot Bitch safety checks."
+    fingerprint_after="$(alpine_apk_fingerprint)"
+    [[ "$fingerprint_before" == "$fingerprint_after" ]] \
+        || fail "The apk add simulation modified the package database; refusing to continue."
+    run_chroot_try_display "$(msg install-target-package "$*")" apk add "$@"
+    (( CHROOT_TRY_RC == 0 )) || fail "apk add failed with exit code $CHROOT_TRY_RC."
+}
+
+# Guarded Arch pacman install of one or more packages into the target.  The
+# sandboxed -Syyuw preflight downloads the transaction into the throwaway DB,
+# then the install applies against the real database.  The caller owns the
+# change status line.
+guarded_pacman_install_packages()
+{
+    (($# > 0)) || return 0
+    preflight_arch_pacman_transaction
+    run_chroot_try_display "$(msg install-target-package "$*")" pacman --noconfirm -S "$@"
+    (( CHROOT_TRY_RC == 0 )) || fail "pacman --noconfirm -S failed with exit code $CHROOT_TRY_RC."
+}
+
+# install-target-package verb: install one or more explicitly requested
+# packages into the selected repair target through the guarded package
+# backends.  Each package is mapped to the backend that provides it (akmods ->
+# rpm/dnf, akms -> apk, dkms/other -> apt/dpkg or pacman in native-first order)
+# and installed simulation-first, fail-closed.  Never auto-invoked: the GUI
+# offers this as an explicit user action from the Boot capabilities table.
+install_target_packages()
+{
+    local pkg backend
+    (($# > 0)) || fail "install-target-package requires at least one package name."
+    CURRENT_STAGE="install target package"
+    prepare_target ro
+    profile_target_backends
+    promote_target_rw
+    need chroot
+    for pkg in "$@"; do
+        [[ -n "$pkg" ]] || continue
+        backend="$(install_package_backend_for "$pkg")" \
+            || fail "No detected guarded package-manager backend can install '$pkg' (detected: ${TARGET_PACKAGE_MANAGERS[*]:-none})."
+        case "$backend" in
+            apt/dpkg) safe_apt_install_packages "Install $pkg into the repair target" no "$pkg" ;;
+            rpm)      guarded_rpm_install_packages "$pkg" ;;
+            apk)      guarded_apk_install_packages "$pkg" ;;
+            pacman)   guarded_pacman_install_packages "$pkg" ;;
+            *)        fail "Unsupported install backend '$backend' for '$pkg'." ;;
+        esac
+    done
+    repair_change_status install-target-package changed
+}
+
 preflight_dkms()
 {
-    case "$(module_build_system)" in
+    local msys
+    msys="$(module_build_system)"
+    case "$msys" in
         akmods) preflight_akmods ;;
         akms)   preflight_akms ;;
         dkms)   preflight_dkms_backend ;;
-        none)   fail "No supported kernel-module build system (dkms, akmods or akms) is installed in the target system." ;;
+        none)   fail "$(dkms_unavailable_reason)." ;;
     esac
 }
 
@@ -9804,11 +9923,13 @@ preflight_dkms_backend()
 
 adaptive_dkms_repair()
 {
-    case "$(module_build_system)" in
+    local msys
+    msys="$(module_build_system)"
+    case "$msys" in
         akmods) adaptive_akmods_repair ;;
         akms)   adaptive_akms_repair ;;
         dkms)   adaptive_dkms_repair_backend ;;
-        none)   fail "No supported kernel-module build system (dkms, akmods or akms) is installed in the target system." ;;
+        none)   fail "$(dkms_unavailable_reason)." ;;
     esac
 }
 
@@ -9832,12 +9953,13 @@ adaptive_akmods_repair()
     repair_change_status dkms changed
 }
 
-# Alpine akms rebuild: `akms rebuild` followed by a read-only `akms status`.
+# Alpine akms rebuild: `akms install -r -k all all` (rebuild + install all
+# modules for all installed kernels) followed by a read-only `akms status`.
 adaptive_akms_repair()
 {
     preflight_akms
-    run_chroot_try_display "$(msg rebuild-akms-modules)" akms rebuild
-    ((CHROOT_TRY_RC == 0)) || fail "akms rebuild failed after preflight."
+    run_chroot_try_display "$(msg rebuild-akms-modules)" akms install -r -k all all
+    ((CHROOT_TRY_RC == 0)) || fail "akms install -r -k all all failed after preflight."
     msg_log akms-pass
     run_chroot_try "$(msg post-repair-akms-status)" akms status
     # akms rebuilds cannot be proven byte-identical without hashing every
@@ -13151,6 +13273,7 @@ diagnostic_title()
         btrfs)       printf '%s\n' "Btrfs status" ;;
         mapper)      printf '%s\n' "Mapper status" ;;
         luks)        printf '%s\n' "LUKS / crypttab" ;;
+        host-capabilities) printf '%s\n' "Host prerequisites and capabilities" ;;
         *)           printf '%s\n' "$1" ;;
     esac
 }
@@ -15750,6 +15873,44 @@ diagnostic_repair_capabilities_modern()
         fi
         host_default_diagnostic_evidence || true
     fi
+}
+
+# Read-only inventory of the recovery-HOST prerequisites Boot Bitch itself
+# needs.  Each command is probed with `command -v` against the running host
+# only (never the repair target) and emitted as a stable machine-readable line:
+#
+#   Host capability: <command> package=<pkg> status=<available|missing> scope=host note=<…>
+#
+# This is the single source of truth for the Boot capabilities table's Host
+# scope; the GUI parses these lines from the cached `host-capabilities`
+# diagnostic section and never re-probes the filesystem.
+diagnostic_host_capabilities()
+{
+    local cmd pkg note status
+    echo "Host capability probes (read-only, recovery host):"
+    for cmd in lsblk blkid findmnt cryptsetup btrfs rsync chroot systemctl efibootmgr objcopy lvs mdadm; do
+        case "$cmd" in
+            lsblk)      pkg=util-linux note="Required for block-device inventory" ;;
+            blkid)      pkg=util-linux note="Used to identify filesystem metadata" ;;
+            findmnt)    pkg=util-linux note="Used to understand active mounts" ;;
+            cryptsetup) pkg=cryptsetup note="Required to unlock encrypted targets" ;;
+            btrfs)      pkg=btrfs-progs note="Required for Btrfs inspection and snapshot rollback" ;;
+            rsync)      pkg=rsync note="Required for verified Host-to-Repair and Repair-to-Host transfer" ;;
+            chroot)     pkg=coreutils note="Required for target-side repair commands" ;;
+            systemctl)  pkg=systemd note="Used to restore graphical.target and the configured display manager without starting the target GUI" ;;
+            efibootmgr) pkg=efibootmgr note="Used to preserve target EFI BootOrder during TUXEDO UKI rebuilds when efivars are available" ;;
+            objcopy)    pkg=binutils note="Used to verify the kernel embedded in a rebuilt unified kernel image" ;;
+            lvs)        pkg=lvm2 note="Optional LVM storage-stack support" ;;
+            mdadm)      pkg=mdadm note="Optional Linux MD RAID support" ;;
+            *)          pkg=unknown note="" ;;
+        esac
+        if command -v "$cmd" >/dev/null 2>&1; then
+            status=available
+        else
+            status=missing
+        fi
+        printf 'Host capability: %s package=%s status=%s scope=host note=%s\n' "$cmd" "$pkg" "$status" "$note"
+    done
 }
 
 diagnostic_boot()
@@ -19146,6 +19307,7 @@ run_one_diagnostic()
         btrfs)       diagnostic_btrfs || rc=$? ;;
         mapper)      diagnostic_mapper || rc=$? ;;
         luks)        diagnostic_luks || rc=$? ;;
+        host-capabilities) diagnostic_host_capabilities || rc=$? ;;
         *) fail "Unknown diagnostic: $key" ;;
     esac
     echo
@@ -19209,7 +19371,9 @@ run_host_diagnostic_modern()
         echo
         # See run_target_diagnostic: the File systems section is last because
         # it releases the helper's read-only mounts for the offline check tools.
-        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
+        # The host-capabilities section is running-host-only and reports the
+        # recovery-host prerequisites (command -v probes, never the target).
+        for key in environment backend package host-capabilities boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
         done
         REPORT_SHARED_PREAMBLE=0
@@ -28929,6 +29093,10 @@ main()
         browse-target)
             [[ $# -eq 1 ]] || fail "browse-target requires exactly one absolute directory path."
             browse_target_directory "$1"
+            ;;
+        install-target-package)
+            (($# >= 1)) || fail "install-target-package requires at least one package name."
+            install_target_packages "$@"
             ;;
         repair)
             run_repair "$@"
