@@ -145,6 +145,8 @@ GPU_MISMATCH="nvidia vs nouveau"
 GPU_MISMATCH_REASON="expected nvidia but the installed driver is nouveau"
 GPU_DKMS_BUILD_STATUS="6.8.0-x=built, 6.5.0-old=absent"
 GPU_JOURNAL_ERRORS="7"
+BOOT_REACHED="desktop"
+BOOT_FAILURE_MARKERS=""
 out="$(diagnostic_gpu)"
 grep -q '^GPU hardware note: target-only$' <<<"$out" || fail 'GPU hardware note line wrong'
 grep -q '^GPU kernel module loaded: none$' <<<"$out" || fail 'loaded-module line wrong'
@@ -156,10 +158,16 @@ grep -q '^GPU driver mismatch: nvidia vs nouveau (reason=expected nvidia but the
     || fail 'mismatch line wrong'
 grep -q '^GPU DKMS build status: 6.8.0-x=built, 6.5.0-old=absent$' <<<"$out" || fail 'DKMS build status line wrong'
 grep -q '^GPU journal errors: 7 actionable lines$' <<<"$out" || fail 'journal-errors line wrong'
-# The diagnostic no longer emits its own boot-reached re-derivation (the shared
-# boot classification is emitted by the errors diagnostic instead).
-if grep -q 'boot reached' <<<"$out"; then
-    fail 'diagnostic_gpu must no longer emit a boot-reached line'
+# The diagnostic now surfaces the shared boot classification (the read-only
+# "how far did this boot get" evidence), sourced from boot_failure_classification
+# rather than a re-derivation; it no longer emits its own removed GPU boot
+# reached: re-derivation.
+grep -q '^Boot reached: desktop$' <<<"$out" \
+    || fail 'diagnostic_gpu must emit the shared Boot reached: line'
+grep -q '^Boot failure markers: none$' <<<"$out" \
+    || fail 'diagnostic_gpu must emit Boot failure markers: none when clean'
+if grep -q 'GPU boot reached:' <<<"$out"; then
+    fail 'diagnostic_gpu must not emit a removed GPU boot reached: re-derivation'
 fi
 # The diagnostic never writes to the target (read-only invariant).
 if [[ -n "$(find "$fake_root/etc/modprobe.d" -type f 2>/dev/null)" ]]; then
