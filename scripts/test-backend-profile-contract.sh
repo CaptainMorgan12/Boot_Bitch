@@ -1147,7 +1147,12 @@ grep -Fq 'APK_MAX_MISSING_FILES=1000' "$HELPER" \
     || { echo 'FAIL: apk missing-file cap is not wired' >&2; exit 1; }
 grep -Fq 'APK_MAX_MISSING_PACKAGES=1000' "$HELPER" \
     || { echo 'FAIL: apk missing-package cap is not wired' >&2; exit 1; }
-if grep -Fq -- '--force' "$HELPER" || grep -Fq -- '--overwrite' "$HELPER" || grep -Fq -- '--allow-untrusted' "$HELPER"; then
+# Scope the flag safety scan to the apk backend so an unrelated backend (for
+# example akmods --force) never trips the apk-specific prohibition.
+apk_backend_body="$(sed -n '/^alpine_apk_audit_missing_paths()/,/^# Fedora\/rpm-dnf5 repair backend/p' "$HELPER")"
+if grep -Fq -- '--force' <<<"$apk_backend_body" \
+    || grep -Fq -- '--overwrite' <<<"$apk_backend_body" \
+    || grep -Fq -- '--allow-untrusted' <<<"$apk_backend_body"; then
     echo 'FAIL: apk backend must never pass force/overwrite/untrusted flags' >&2
     exit 1
 fi
@@ -2435,7 +2440,9 @@ adaptive_fix_broken repair_change_status
 apt_update_allow_release_info_retry repair_change_status
 adaptive_apt_upgrade repair_change_status
 adaptive_arch_pacman_repair repair_change_status
-adaptive_dkms_repair repair_change_status
+adaptive_dkms_repair_backend repair_change_status
+adaptive_akmods_repair repair_change_status
+adaptive_akms_repair repair_change_status
 adaptive_display_manager_repair repair_change_status
 adaptive_initramfs_repair repair_change_status
 reinstall_efi_bootloader efi_repair_emit_change_status
@@ -2535,10 +2542,30 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
     assert_single_change_status "$change_out" fixbroken 'changed'
 
     # DKMS rebuilds stay changed (fail safe).
-    preflight_dkms() { :; }
+    module_build_system() { printf 'dkms\n'; }
+    preflight_dkms_backend() { :; }
     run_chroot_try() { CHROOT_TRY_RC=0; }
     change_out="$(adaptive_dkms_repair)"
     assert_single_change_status "$change_out" dkms 'changed'
+
+    # akmods and akms rebuilds keep the same `dkms` change-status contract.
+    # Each dispatch is scoped in its own subshell so the repair_kernel_versions
+    # stub cannot leak into the initramfs/grub checks below.
+    (
+        module_build_system() { printf 'akmods\n'; }
+        preflight_akmods() { :; }
+        repair_kernel_versions() { printf '6.20.1-300.fc44.x86_64\n'; }
+        run_chroot_try() { CHROOT_TRY_RC=0; }
+        change_out="$(adaptive_dkms_repair)"
+        assert_single_change_status "$change_out" dkms 'changed'
+    )
+    (
+        module_build_system() { printf 'akms\n'; }
+        preflight_akms() { :; }
+        run_chroot_try() { CHROOT_TRY_RC=0; }
+        change_out="$(adaptive_dkms_repair)"
+        assert_single_change_status "$change_out" dkms 'changed'
+    )
 
     # GRUB: byte-identical grub.cfg -> unchanged; a regenerated file -> changed.
     mkdir -p "$fake_root/boot/grub"
@@ -4969,5 +4996,75 @@ if grep -Fq 'unset' "$osprober_root/generated-env"; then
     exit 1
 fi
 rm -rf -- "$osprober_root"
+
+# ---------------------------------------------------------------------------
+# Kernel-module build-system resolver.  module_build_system() detects dkms,
+# akmods (rpm) and akms (apk) from read-only target evidence (never a
+# distribution-ID gate), and dkms_unavailable_reason() gates the dkms
+# capability key on the detected system's executable plus its per-backend
+# build-tree prerequisites.
+# ---------------------------------------------------------------------------
+ms_root="$(mktemp -d)"
+
+# none: no dkms/akmods/akms executable and no rpm/apk database.
+[[ "$(TARGET_ROOT="$ms_root" module_build_system)" == none ]] \
+    || { echo 'FAIL: empty target did not resolve module_build_system=none' >&2; exit 1; }
+
+# dkms: a plain dkms executable with no rpm/apk evidence.
+mkdir -p "$ms_root/usr/bin"
+: > "$ms_root/usr/bin/dkms"; chmod +x "$ms_root/usr/bin/dkms"
+[[ "$(TARGET_ROOT="$ms_root" module_build_system)" == dkms ]] \
+    || { echo 'FAIL: dkms executable did not resolve module_build_system=dkms' >&2; exit 1; }
+
+# akmods wins over dkms on an rpm target.
+mkdir -p "$ms_root/var/lib/rpm"
+: > "$ms_root/usr/bin/akmods"; chmod +x "$ms_root/usr/bin/akmods"
+[[ "$(TARGET_ROOT="$ms_root" module_build_system)" == akmods ]] \
+    || { echo 'FAIL: rpm+akmods did not resolve module_build_system=akmods' >&2; exit 1; }
+
+# akms wins over dkms on an apk target.
+rm -rf "$ms_root/var/lib/rpm" "$ms_root/usr/bin/akmods"
+mkdir -p "$ms_root/lib/apk/db"
+: > "$ms_root/lib/apk/db/installed"
+: > "$ms_root/usr/bin/akms"; chmod +x "$ms_root/usr/bin/akms"
+[[ "$(TARGET_ROOT="$ms_root" module_build_system)" == akms ]] \
+    || { echo 'FAIL: apk+akms did not resolve module_build_system=akms' >&2; exit 1; }
+
+# akmods capability: available only with the per-kernel kernel-devel build tree.
+rm -rf "$ms_root/usr/bin/akms" "$ms_root/lib"
+mkdir -p "$ms_root/var/lib/rpm" "$ms_root/usr/bin" "$ms_root/boot" \
+    "$ms_root/lib/modules/6.20.1-300.fc44.x86_64"
+: > "$ms_root/usr/bin/akmods"; chmod +x "$ms_root/usr/bin/akmods"
+: > "$ms_root/boot/vmlinuz-6.20.1-300.fc44.x86_64"
+if reason_line="$(TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=fedora dkms_unavailable_reason)"; then
+    echo 'FAIL: akmods capability reported available without a build tree' >&2
+    exit 1
+fi
+[[ "$reason_line" == 'reason:akmods-no-build-tree|param:6.20.1-300.fc44.x86_64' ]] \
+    || { echo "FAIL: unexpected akmods missing-build-tree reason: $reason_line" >&2; exit 1; }
+mkdir -p "$ms_root/lib/modules/6.20.1-300.fc44.x86_64/build"
+TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=fedora dkms_unavailable_reason \
+    || { echo 'FAIL: akmods capability stayed unavailable with the build tree present' >&2; exit 1; }
+
+# akms capability: available only with the per-kernel headers/build tree.
+rm -rf "$ms_root/usr/bin/akmods" "$ms_root/var/lib/rpm" \
+    "$ms_root/lib/modules/6.20.1-300.fc44.x86_64" "$ms_root/boot"
+mkdir -p "$ms_root/lib/apk/db" "$ms_root/usr/bin" "$ms_root/boot" \
+    "$ms_root/lib/modules/6.6.55-0-lts"
+: > "$ms_root/lib/apk/db/installed"
+: > "$ms_root/usr/bin/akms"; chmod +x "$ms_root/usr/bin/akms"
+printf '%s\n' '-lts' > "$ms_root/lib/modules/6.6.55-0-lts/kernel-suffix"
+: > "$ms_root/boot/vmlinuz-lts"
+if reason_line="$(TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=alpine dkms_unavailable_reason)"; then
+    echo 'FAIL: akms capability reported available without a build tree' >&2
+    exit 1
+fi
+[[ "$reason_line" == 'reason:akms-no-build-tree|param:6.6.55-0-lts' ]] \
+    || { echo "FAIL: unexpected akms missing-build-tree reason: $reason_line" >&2; exit 1; }
+mkdir -p "$ms_root/lib/modules/6.6.55-0-lts/build"
+TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=alpine dkms_unavailable_reason \
+    || { echo 'FAIL: akms capability stayed unavailable with the build tree present' >&2; exit 1; }
+
+rm -rf -- "$ms_root"
 
 echo "PASS: distribution and boot backend profile contract is wired and read-only."

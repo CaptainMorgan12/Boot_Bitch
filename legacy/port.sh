@@ -735,7 +735,7 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 66
+    check_count 'legacy_readarray' 'legacy_readarray' 68
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
     check_count 'legacy_sed_ext' 'legacy_sed_ext' 109
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 14
