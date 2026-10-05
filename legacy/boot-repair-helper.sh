@@ -17915,6 +17915,21 @@ BOOT_REACHED="grub"
 BOOT_FAILURE_MARKERS=""
 BOOT_FAILURE_CLASSIFIED=0
 
+# Boot-reached levels, from the most complete boot downward.  Every level is a
+# systemd boot marker only (user-session evidence is filtered out upstream):
+#   desktop       = Reached target Graphical Interface
+#                   (graphical.target reached → graphics stack up: driver +
+#                    display manager working)
+#   login-manager = Started … Display Manager
+#                   (display manager started → login screen; graphics card
+#                    working)
+#   tty           = Reached target Multi-User System / Started Login Service
+#                   (TTY/multi-user only → no GUI)
+#   kernel        = Command line: / Booting Linux / Linux version
+#   grub          = default (nothing found)
+# Autologin does not change these markers: the DM still emits
+# "Started … Display Manager" then "Reached target Graphical Interface"; there
+# is just no interactive login dwell.
 boot_failure_classification()
 {
     (( BOOT_FAILURE_CLASSIFIED == 1 )) && return 0
@@ -17930,7 +17945,11 @@ boot_failure_classification()
     [[ -n "$journal" ]] || { BOOT_FAILURE_CLASSIFIED=1; return 0; }
 
     # How far the boot reached (highest marker wins; default grub).
-    if grep -Eiq 'kwin_x11|gnome-shell|plasmashell|Reached target Graphical Interface' <<<"$journal"; then
+    # Levels map to systemd boot markers only (see the block above): the
+    # user-session identifiers kwin_x11/gnome-shell/plasmashell are excluded
+    # by journal_boot_relevant_filter before we ever read $journal, so they
+    # can never match here and must not be listed as desktop evidence.
+    if grep -Eiq 'Reached target Graphical Interface' <<<"$journal"; then
         BOOT_REACHED="desktop"
     elif grep -Eiq 'Started .*Display Manager|Started Simple Desktop Display Manager' <<<"$journal"; then
         BOOT_REACHED="login-manager"
