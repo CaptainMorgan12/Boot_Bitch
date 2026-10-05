@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4不由守护的rpm后端支持.</translation>
+        <translation>dnf4没有被守卫的rpm后端支持.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5模拟不改变软件包,rpm数据库是字节-同义的.</translation>
+        <translation>dnf5模拟无包变化,rpm数据库为字节-同义.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM 缺少文件修复: 重新配置 %1 包, 缺少文件: %2</translation>
+        <translation>RPM 缺少文件修复:重新将 %1 包装入缺少文件: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM 缺少文件检测:没有丢失包文件;录制只读的 dnf5 依赖性检查证据.</translation>
+        <translation>RPM 缺少文件检测:没有丢失包文件;录制只读的dnf5依赖性检查证据.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM 文件所有权映射( rpm - qf, %1 缺少文件)</translation>
+        <translation>RPM 文件所有权映射(rpm - qf, %1 缺少文件)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>RPM 包文件验证( rpm - Va -- nofiledigest, 只读)</translation>
+        <translation>RPM 包文件校验 (rpm - Va -- nofiledigest, 只读)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ Pending changes were kept so you can retry. Full helper output is available in L
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-family系统在交易特定飞行前通过时,暴露出后端剖面图和守护包,initramfs,GRUB和常规EFI修复. Fedora/RPM-family系统暴露出有守护的dnf包交易,dracut initramfs重建,GRUB2配置和靴码修复,系统化的GDM显示路径来自相同的探测证据;其他RPM-family系统在交易后端实施之前,仍然只进行诊断. &lt;/p&gt;.</translation>
+        <translation>&lt;p&gt;Arch-family系统在交易特定飞行前通过时,暴露出后端剖面图和守卫包,initramfs,GRUB和常规EFI修复. Fedora/RPM-family系统暴露出有守护的dnf包交易,dracut initramfs重建,GRUB2配置和靴码修复,系统化的GDM显示路径来自相同的探测证据;其他RPM-family系统在交易后端实施之前,仍然只进行诊断. &lt;/p&gt;.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>
@@ -10359,7 +10359,7 @@ Boot 菜单( 只读) :
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Fedora/RPM通过一个模拟的dnf restall交易恢复丢失或腐败的包文件.</translation>
+        <translation>Fedora/RPM通过一个模拟的dnf restall交易恢复缺失或腐败的包文件.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

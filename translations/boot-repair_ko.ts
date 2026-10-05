@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4는 가드 rpm 백엔드에 의해 지원되지 않습니다.</translation>
+        <translation>dnf4는 감시된 rpm 백엔드에 의해 지원되지 않습니다.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5는 패키지 변경을 시뮬레이션하고 rpm 데이터베이스는 바이트 식별입니다.</translation>
+        <translation>dnf5는 패키지 변경을 시뮬레이션하고 rpm 데이터베이스는 바이트 ID입니다.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>rpm은 대상 시스템에 설치되지 않습니다.</translation>
+        <translation>rpm는 대상 시스템에 설치되지 않습니다.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -3700,7 +3700,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM 누락 파일 탐지: 누락된 포장 파일 없음; 읽기 전용 dnf5 의존성 검사 증거를 기록하십시오.</translation>
+        <translation>RPM 누락 파일 탐지: 누락된 포장 파일 없음; 기록 읽기 전용 dnf5 종속성 검사 증거.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -10359,7 +10359,7 @@ UEFI/UKI 펌웨어 항목과 부팅 메뉴 사이에 전환하려면 위의 보�
     <message>
         <location filename="../src/MainWindow.cpp" line="20458"/>
         <source> Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.</source>
-        <translation>Fedora/RPM는 1개의 가장된 dnf를 통해 누락되거나 손상된 포장 파일을 재설치합니다.</translation>
+        <translation>Fedora/RPM는 1개의 가장된 dnf를 통해 누락되거나 손상된 패키지 파일을 복구합니다.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="20469"/>

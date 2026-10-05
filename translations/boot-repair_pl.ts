@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 symulował brak zmian w pakiecie, a baza danych rpm jest identyczna.</translation>
+        <translation>dnf5 symulował brak zmian pakietów, a baza danych rpm jest identyczna.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -3705,7 +3705,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>wersja przed lotem rpm: %1</translation>
+        <translation>Wersja przed lotem rpm: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Zapis wersji rpm</translation>
+        <translation>Rekordowa wersja rpm</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Weryfikacja pliku pakietu RPM (rpm -Va --nofiledigest, tylko do odczytu)</translation>
+        <translation>Weryfikacja pliku pakietu RPM (rpm -Va -- nofiledigest, tylko read- only)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ Czekając na zmiany, można spróbować ponownie. Pełne wyjście pomocnika jest
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt; p &gt; Systemy Arch- family demaskują profilowanie i strzeżony pakiet, initramfs, GRUB i konwencjonalne naprawy EFI, gdy ich transpozycja-specyficzne przedloty przejść. Systemy z rodziny Fedora / RPM- ujawniają strzeżone transakcje pakietowe dnf, przebudowę dracut initramfs, konfigurację GRUB2 i naprawę kodu boot- kodowego oraz ścieżkę wyświetlania GDM systemd z tych samych dowodów sondy; inne systemy z rodziny RPM- pozostają diagnostykami tylko do momentu wdrożenia ich wsparcia transakcyjnego. &lt; / p &gt;</translation>
+        <translation>&lt; p &gt; Systemy Arch- family demaskują profiling i pakiet strzeżony, initramfs, GRUB i konwencjonalne naprawy EFI, gdy ich transpozycja-specyficzne przedloty przechodzą. Systemy rodziny Fedora / RPM- ujawniają strzeżone transakcje pakietowe dnf, przebudowę dracut initramfs, konfigurację GRUB2 i naprawę kodu boot- kodowego oraz ścieżkę wyświetlania GDM systemd z tych samych dowodów sondy; inne systemy rodziny RPM- pozostają diagnostykami tylko do momentu wdrożenia ich oparcia transakcji. &lt; / p &gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

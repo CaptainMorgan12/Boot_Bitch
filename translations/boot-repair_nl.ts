@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM ontbrekende-bestand reparatie: opnieuw installeren %1 pakket(s) met ontbrekende bestanden: %2</translation>
+        <translation>RPM ontbrekende bestand reparatie: opnieuw installeren %1 pakket(s) met ontbrekende bestanden: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM ontbrekende-bestand detectie: geen ontbrekende pakketbestanden; opname alleen-lezen dnf5 afhankelijkheid-check bewijs.</translation>
+        <translation>RPM ontbrekende bestandsdetectie: geen ontbrekende pakketbestanden; registratie alleen-lezen dnf5 afhankelijkheid-check bewijs.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4317,7 +4317,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>RPM-pakketbestandscontrole (rpm -Va --nofiledigest, alleen-lezen)</translation>
+        <translation>RPM pakketbestandscontrole (rpm -Va --nofiledigest, read-only)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9523,7 +9523,7 @@ In afwachting van veranderingen werden gehouden zodat u kunt opnieuw proberen. V
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-family systemen blootstellen backend profiling en bewaakt pakket, initramfs, GRUB en conventionele EFI reparaties wanneer hun transactie-specifieke pre-flights passeren. Fedora/RPM-familiesystemen onthullen bewaakte dnf pakkettransacties, dracut initramfs herbouwt, GRUB2-configuratie en boot-code reparatie, en het systeem GDM weergave pad van dezelfde sonde bewijs; andere RPM-familie systemen blijven alleen diagnostiek totdat hun transactie backend is geïmplementeerd.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-family systemen blootstellen backend profiling en bewaakt pakket, initramfs, GRUB en conventionele EFI reparaties wanneer hun transactie-specifieke preflights passeren. Fedora/RPM-familiesystemen onthullen bewaakte dnf pakkettransacties, dracut initramfs herbouwt, GRUB2-configuratie en boot-code reparatie, en het systeem GDM weergave pad van dezelfde sonde bewijs; andere RPM-familie systemen blijven alleen diagnostiek totdat hun transactie backend is geïmplementeerd.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

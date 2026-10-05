@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>Rpm DKMS header korrektion (kernel- devel / akmods) er ikke gennemført.</translation>
+        <translation>rpm DKMS-headerkorrektionen (kernel- devel / akmods) er ikke gennemført.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,7 +3695,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM missing- file reparation: geninstallation af %1 pakke (r) med manglende filer: %2</translation>
+        <translation>RPM missing- fil reparation: geninstallation %1 pakke (r) med manglende filer: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
@@ -3705,7 +3705,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>rpm preflight version: %1</translation>
+        <translation>rpm-version før flyvning: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Optag rpm-version</translation>
+        <translation>Record rpm version</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,7 +4312,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM-fil ejerskab mapping (rpm -qf, %1 manglende filer)</translation>
+        <translation>RPM filejerkortlægning (rpm-qf, %1 manglende filer)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
@@ -9526,7 +9526,7 @@ Indtil ændringerne blev holdt, så du kan prøve igen. Fuld hjælp output er ti
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt; p &gt; Arch- familie systemer udsætte backend profilering og bevogtet pakke, initramfs, GRUB og konventionelle EFI reparationer, når deres transaktion- specifikke præ-flyvninger passere. Fedora / RPM- familie systemer afslører bevogtet dnf pakke transaktioner, dracut initramfs genopbygger, GRUB2 konfiguration og boot- kode reparation, og systemd GDM display sti fra samme sonde beviser; andre RPM- familie systemer forbliver diagnostics-kun indtil deres transaktion backend er implementeret. &lt; / p &gt;</translation>
+        <translation>&lt; p &gt; Arch- familie systemer afsløre backend profilering og bevogtet pakke, initramfs, GRUB og konventionelle EFI reparationer, når deres transaktion- specifikke præ-flyvninger passere. Fedora / RPM- familie systemer afslører bevogtet dnf pakke transaktioner, dracut initramfs genopbygninger, GRUB2 konfiguration og boot- kode reparation, og systemd GDM display sti fra samme sonde beviser; andre RPM- familie systemer forbliver diagnostics-kun indtil deres transaktion backend er gennemført. &lt; / p &gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

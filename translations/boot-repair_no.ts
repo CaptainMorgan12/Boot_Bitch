@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 simulerte ingen pakkeendringer og rpm-databasen er byteidentisk.</translation>
+        <translation>dnf5 simulerte ingen pakkeendringer og rpm-databasen er Byte-identifisert.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>RPM DKMS-hodekorreksjon (kernel-devel/akmods) er ikke implementert.</translation>
+        <translation>rpm DKMS-hodekorreksjon (kernel-devel/akmods) er ikke implementert.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3700,12 +3700,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM mangler fildetektering: ingen manglende pakkefiler; opptak av skrivebeskyttet dnf5 avhengighetskontroll bevis.</translation>
+        <translation>RPM manglende fildetektering: Ingen manglende pakkefiler; opptak av lesebeskyttet dnf5 avhengighetskontroll bevis.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>rpm preflight versjon: %1</translation>
+        <translation>rpm forhåndsbelysning versjon: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Opptak rpm versjon</translation>
+        <translation>Record rpm versjon</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM file owner mapping (rpm -qf, %1 manglende filer)</translation>
+        <translation>RPM file eierskap kartlegging (rpm -qf, %1 manglende filer)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>RPM-filbekreftelse (rpm -Va --nofiledigest, skrivebeskyttet)</translation>
+        <translation>RPM pakkefilbekreftelse (rpm -Va --nofiledigest, skrivebeskyttet)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9526,7 +9526,7 @@ I ventetiden ble endringer holdt slik at du kan prøve igjen. Full hjelpeutgang 
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt;p&gt;Arch-familiesystemer eksponerer backend profilering og bevoktet pakke, initramfs, GRUB og konvensjonelle EFI reparasjoner når deres transaksjonsspesifikke forhåndsbelysninger passerer. Fedora/RPM-familiesystemer eksponerer bevoktede dnf pakketransaksjoner, dracut initramfs gjenoppbygger, GRUB2-konfigurasjon og oppstartskodereparasjon, og den systembaserte GDM-displaystien fra samme probe-bevis; andre RPM-familiesystemer forblir bare diagnostiske inntil transaksjonsbakstykket er implementert.&lt;/p&gt;</translation>
+        <translation>&lt;p&gt;Arch-familiesystemer eksponerer backend profilering og bevoktet pakke, initramfs, GRUB og konvensjonelle EFI reparasjoner når deres transaksjonsspesifikke forhåndsbelysninger passerer. Fedora/RPM-family systemer eksponerer vaktede dnf pakketransaksjoner, dracut initramfs gjenoppbygginger, GRUB2-konfigurasjon og boot-code reparasjon, og den systembaserte GDM-skjermveien fra samme probe bevis; andre RPM-family systemer forblir diagnostiske - kun til deres transaksjonsbakstykke er implementert.&lt;/p&gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

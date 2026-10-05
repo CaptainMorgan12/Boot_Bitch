@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 no es compatible con el backend rpm vigilado.</translation>
+        <translation>dnf4 no es compatible con el backend vigilado rpm.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>No se implementa la corrección de cabecera DKMS rpm (devel de canal/akmods).</translation>
+        <translation>No se implementa la corrección de cabecera DKMS rpm (velocidad de canal/akmods).</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3700,7 +3700,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>Detección de archivos perdidos de RPM: no faltan archivos de paquetes; registro de datos sólo dnf5 prueba de dependencia.</translation>
+        <translation>RPM detección de archivos perdidos: no faltan archivos de paquetes; registro de datos solo dnf5 prueba de dependencia.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
@@ -4312,7 +4312,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>RPM mapa de propiedad de archivos (arpm -qf, %1 archivos perdidos)</translation>
+        <translation>Mapa de propiedad de archivos RPM (rpm -qf, archivos perdidos %1)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
@@ -9579,7 +9579,7 @@ Se guardaron cambios pendientes para que puedas volver a entrar. La salida compl
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>Los sistemas de arch-familia exponen la elaboración de perfiles de backend y el paquete vigilado, initramfs, GRUB y EFI convencionales cuando sus preflights de transacción pasan. Los sistemas de la familia Fedora/RPM exponen transacciones guardadas de paquetes dnf, reconstruye dracut initramfs, configuración GRUB2 y reparación de códigos de arranque, y la ruta de visualización GDM sistematizada de la misma prueba de sonda; otros sistemas de RPM-familia siguen siendo diagnósticos sólo hasta que se implemente su backend de transacción.</translation>
+        <translation>Los sistemas de la familia antorcha exponen la elaboración de perfiles de backend y el paquete vigilado, initramfs, GRUB y EFI convencionales cuando pasan sus preflights específicos de transacción. Los sistemas de la familia Fedora/RPM exponen las transacciones guardadas de paquetes dnf, reconstruye dracut initramfs, configuración GRUB2 y reparación de códigos de arranque, y la ruta de visualización GDM sistematizada desde la misma prueba de sonda; otros sistemas de RPM-familia siguen siendo diagnósticos sólo hasta que se implemente su backend de transacción.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

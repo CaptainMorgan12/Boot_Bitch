@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 není podporován střeženým backendem otáček.</translation>
+        <translation>dnf4 není podporován střeženým zálohováním rpm.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 simulovala žádné změny balíku a databáze otáček je byte- identická.</translation>
+        <translation>dnf5 simulovala žádné změny balíku a databáze rpm je byte- identická.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -712,7 +712,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1352"/>
         <source>Fedora uses rpm/dnf; dpkg configuration is not available.</source>
-        <translation>Fedora používá otáčky / dnf; konfigurace dpkg není k dispozici.</translation>
+        <translation>Fedora používá rpm / dnf; konfigurace dpkg není k dispozici.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1353"/>
@@ -1077,12 +1077,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>V cílovém systému není instalována otáčka.</translation>
+        <translation>rpm není instalován v cílovém systému.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
         <source>The target RPM database is missing.</source>
-        <translation>Chybí cílová databáze RPM.</translation>
+        <translation>Cíl RPM databáze chybí.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1427"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>Není implementována korekce hlavičky DKMS (kernel- devel / akmods).</translation>
+        <translation>Oprava záhlaví rpm DKMS (kernel- devel / akmods) není implementována.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3700,12 +3700,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>RPM missing- file detection: no missing package files; záznam read- only dnf5 dependency- check evidence.</translation>
+        <translation>RPM chybná detekce souborů: žádné chybějící soubory balíků; záznam pouze na základě dnf5-kontroly důkazů.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
         <source>rpm preflight version: %1</source>
-        <translation>Předletová verze: %1</translation>
+        <translation>Ter44X předletová verze: %1</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1989"/>
@@ -4191,7 +4191,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2094"/>
         <source>Record rpm version</source>
-        <translation>Verze záznamu ot. / min</translation>
+        <translation>Záznam rpm verze</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2095"/>
@@ -4312,12 +4312,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="2120"/>
         <source>RPM file ownership mapping (rpm -qf, %1 missing files)</source>
-        <translation>Mapování vlastnických souborů RPM (chybí soubory ot. / min -qf, %1)</translation>
+        <translation>Mapování vlastnictví souboru RPM (rpm -qf, chybějící soubory %1)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2121"/>
         <source>RPM package file verification (rpm -Va --nofiledigest, read-only)</source>
-        <translation>Ověření souboru balíčku RPM (ot / min - Va --nofiledigest, pouze pro čtení)</translation>
+        <translation>Ověření souboru balíčků RPM (rpm -Va --nofiledigest, pouze pro čtení)</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="2122"/>
@@ -9524,7 +9524,7 @@ Pending changes were kept so you can retry. Full helper output is available in L
     <message>
         <location filename="../src/MainWindow.cpp" line="19063"/>
         <source>&lt;p&gt;Arch-family systems expose backend profiling and guarded package, initramfs, GRUB and conventional EFI repairs when their transaction-specific preflights pass. Fedora/RPM-family systems expose guarded dnf package transactions, dracut initramfs rebuilds, GRUB2 configuration and boot-code repair, and the systemd GDM display path from the same probe evidence; other RPM-family systems remain diagnostics-only until their transaction backend is implemented.&lt;/p&gt;</source>
-        <translation>&lt; p &gt; Arch- family systémy odhalují backend profilovací a hlídané balíčky, initramfs, GRUB a konvenční EFI opravy, když jejich transakční-specifické předlety projít. Fedora / RPM- rodinné systémy odhalují střežené transakce dnf balíčků, přestavby dracut initramfs, konfiguraci GRUB2 a opravu boot- code a cestu k zobrazení systému GDM ze stejného důkazu sondy; ostatní RPM- rodinné systémy zůstávají diagnostikovány pouze do doby, než dojde k jejich zavedení. &lt; / p &gt;</translation>
+        <translation>&lt; p &gt; Arch- family systémy odhalují backend profilovací a hlídané balíčky, initramfs, GRUB a konvenční EFI opravy, když jejich transakční-specifické předlety projít. Fedora / RPM- rodinné systémy odhalují střežené transakce dnf balíčků, přestavby dracut initramfs, konfiguraci GRUB2 a opravu boot- code a cestu k zobrazení systému GDM ze stejného důkazu sondy; ostatní RPM- rodinné systémy zůstávají diagnostickými až do zavedení jejich záloh transakcí. &lt; / p &gt;</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="19064"/>

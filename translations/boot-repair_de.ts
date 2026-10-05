@@ -677,7 +677,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1345"/>
         <source>dnf4 is not supported by the guarded rpm backend.</source>
-        <translation>dnf4 wird vom geschützten Drehzahl-Backend nicht unterstützt.</translation>
+        <translation>dnf4 wird vom geschützten rpm Backend nicht unterstützt.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1346"/>
@@ -692,7 +692,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1348"/>
         <source>dnf5 simulated no package changes and the rpm database is byte-identical.</source>
-        <translation>dnf5 simuliert keine Paketänderungen und die rpm-Datenbank ist byte-identisch.</translation>
+        <translation>dnf5 simuliert keine Paketänderungen und die rpm-Datenbank ist byteidentisch.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1349"/>
@@ -1077,7 +1077,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1425"/>
         <source>rpm is not installed in the target system.</source>
-        <translation>rpm nicht im Zielsystem installiert ist.</translation>
+        <translation>rpm ist nicht im Zielsystem installiert.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1426"/>
@@ -1412,7 +1412,7 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1492"/>
         <source>The rpm DKMS header correction (kernel-devel/akmods) is not implemented.</source>
-        <translation>Die Drehzahl DKMS-Headerkorrektur (Kernel-Devel/Akmods) ist nicht realisiert.</translation>
+        <translation>Die rpm DKMS Headerkorrektur (Kernel-Devel/akmods) ist nicht implementiert.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1493"/>
@@ -3695,12 +3695,12 @@
     <message>
         <location filename="../src/MainWindow.cpp" line="1986"/>
         <source>RPM missing-file repair: reinstalling %1 package(s) with missing files: %2</source>
-        <translation>RPM-Reparatur von fehlenden Dateien: Neuinstallation von %1-Paketen mit fehlenden Dateien: %2</translation>
+        <translation>RPM Reparatur von fehlenden Dateien: Neuinstallation von %1-Paketen mit fehlenden Dateien: %2</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1987"/>
         <source>RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.</source>
-        <translation>Erkennung fehlender RPM-Dateien: keine fehlenden Paketdateien; Aufzeichnung schreibgeschützter dnf5-Abhängigkeitsüberprüfungsnachweise.</translation>
+        <translation>RPM Fehldateierkennung: keine fehlenden Paketdateien; Aufzeichnung schreibgeschützter dnf5-Abhängigkeitsüberprüfungsnachweise.</translation>
     </message>
     <message>
         <location filename="../src/MainWindow.cpp" line="1988"/>
