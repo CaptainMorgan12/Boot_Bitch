@@ -94,6 +94,17 @@ int rowForCommand(MainWindow &window, const QString &command)
     return -1;
 }
 
+int rowForFeature(MainWindow &window, const QString &feature)
+{
+    for (int row = 0; row < window.m_capabilityTable->rowCount(); ++row) {
+        QTableWidgetItem *item = window.m_capabilityTable->item(row, 0);
+        if (item && item->text() == feature) {
+            return row;
+        }
+    }
+    return -1;
+}
+
 QString cellText(MainWindow &window, int row, int column)
 {
     QTableWidgetItem *item = window.m_capabilityTable->item(row, column);
@@ -391,4 +402,47 @@ void MainWindowUiTest::repairDetailPaneShowsMissingToolGuidance()
     QVERIFY2(status.contains(QStringLiteral("Boot capabilities table")), qPrintable(status));
     QVERIFY2(!window.m_repairToolButton->isEnabled(),
              "the Run action must stay disabled while the build system is missing");
+}
+
+// (h) Non-available capability evidence must surface as "Missing" rows in both
+// scopes rather than being dropped: an `unavailable|reason:missing-update-extlinux`
+// repair-tool line stays in the repair-target table, and a
+// `Host capability: mdadm ... status=missing` line stays in the host table.
+void MainWindowUiTest::capabilityUnavailableRowsRenderAsMissing()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+
+    // Target scope: extlinux is unavailable with a machine-readable reason.
+    window.m_targetDiagnosticCache.insert(
+        QStringLiteral("capabilities"),
+        repairCapabilitiesPreamble(QStringLiteral("available"), QStringLiteral("dkms executable present")));
+    window.m_targetDiagnosticCache.insert(QStringLiteral("backend"), backendSection(QStringLiteral("dkms")));
+
+    // Host scope: mdadm is reported missing (the real host may have it, but the
+    // cache is the single source of truth).
+    QString hostSection = hostCapabilitiesSection();
+    hostSection.replace(
+        QStringLiteral("Host capability: mdadm package=mdadm status=available scope=host note=Optional Linux MD RAID support"),
+        QStringLiteral("Host capability: mdadm package=mdadm status=missing scope=host note=Optional Linux MD RAID support"));
+    window.m_hostDiagnosticCache.insert(QStringLiteral("host-capabilities"), hostSection);
+
+    window.m_capabilityScopeSelector->setCurrentIndex(0); // Repair target
+    window.refreshCapabilities();
+
+    const QString extlinuxFeature = QCoreApplication::translate("CapabilityChecker", "extlinux configuration");
+    const int extlinuxRow = rowForFeature(window, extlinuxFeature);
+    QVERIFY2(extlinuxRow >= 0, "the unavailable extlinux row must be present in the target table");
+    QCOMPARE(cellText(window, extlinuxRow, 3), QStringLiteral("Missing"));
+    QCOMPARE(cellText(window, extlinuxRow, 5), QStringLiteral("reason:missing-update-extlinux"));
+
+    window.m_capabilityScopeSelector->setCurrentIndex(1); // Host
+    window.refreshCapabilities();
+
+    const int mdadmRow = rowForCommand(window, QStringLiteral("mdadm"));
+    QVERIFY2(mdadmRow >= 0, "the missing mdadm row must be present in the host table");
+    QCOMPARE(cellText(window, mdadmRow, 3), QStringLiteral("Missing"));
 }

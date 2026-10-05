@@ -15086,6 +15086,20 @@ static void cacheDiagnosticBundle(QMap<QString, QString> &cache,
     cache.insert(QStringLiteral("report"), bundle.trimmed());
     times.insert(QStringLiteral("report"), capturedAt);
 
+    // The shared capability preamble (the `Repair tool <key>` gating lines and
+    // the running-host `Host ...` evidence lines) is the Boot capabilities
+    // table's single source of truth. Run All and the full-report individual
+    // run capture the whole report in one request, so split the preamble out
+    // here under the dedicated capability key — exactly like the per-section
+    // paths do — or the table would show the placeholder instead of rows.
+    QString ignoredBody;
+    QString capabilityPreamble;
+    MainWindow::splitDiagnosticCapabilityPreamble(bundle, &ignoredBody, &capabilityPreamble);
+    if (!capabilityPreamble.isEmpty()) {
+        cache.insert(QStringLiteral("capabilities"), capabilityPreamble);
+        times.insert(QStringLiteral("capabilities"), capturedAt);
+    }
+
     const QString divider = QStringLiteral("========================================\n");
     for (const DiagnosticSpec &spec : diagnosticSpecs()) {
         const QString key = QString::fromLatin1(spec.key);
@@ -16492,6 +16506,7 @@ void MainWindow::runSelectedDiagnostic()
     // the repair gates immediately instead of leaving the Settings/Full Repair
     // stages stale until the next unrelated summary update.
     updateFullRepairSummary();
+    refreshCapabilities();
     appendDiagnosticLog(key, item->text(),
                        targetScope ? QStringLiteral("Repair Target") : QStringLiteral("Running Host"),
                        diagnosticBody, ok);
@@ -16847,6 +16862,7 @@ void MainWindow::runAllDiagnostics()
     clearProgressDetail();
     scheduleBootEntriesRefresh(QStringLiteral("read-only diagnostics completed"));
     updateShellRunButtonState();
+    refreshCapabilities();
     if (m_runAllDiagnosticsQueued) {
         m_runAllDiagnosticsQueued = false;
         QTimer::singleShot(0, this, &MainWindow::runAllDiagnostics);

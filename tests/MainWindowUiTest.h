@@ -35,6 +35,7 @@ private slots:
     void capabilityGroupBoxTitleIsScopeNeutral();
     void capabilityRefreshAfterDiagnosticsAndClear();
     void repairDetailPaneShowsMissingToolGuidance();
+    void capabilityUnavailableRowsRenderAsMissing();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
     void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
     void unavailablePlanStagesAreDisabledAndUnchecked();
