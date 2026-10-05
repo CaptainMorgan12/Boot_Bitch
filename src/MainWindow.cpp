@@ -12061,6 +12061,11 @@ void MainWindow::updateTargetLabels()
 
     updateFullRepairSummary();
     updateDiagnosticDetails();
+    // The scope selector sync above is signal-blocked (so the sync is not
+    // mistaken for a user gesture), which means refreshCapabilities() is not
+    // triggered by it. Refresh here so the table always reflects the selected
+    // scope's cache after a scope/target change, never a stale other-scope one.
+    refreshCapabilities();
 }
 
 void MainWindow::updateCommittedTargetVisual()
