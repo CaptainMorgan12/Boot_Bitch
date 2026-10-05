@@ -20206,6 +20206,46 @@ shell_command_not_found_hint()
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Shell change detection.  A reviewed shell command may or may not touch
+# diagnostic-relevant files, and the GUI invalidates its cached read-only
+# diagnostics only when it did.  A marker in the session directory (never the
+# target) is touched just before the command runs; afterwards ONE find scan
+# compares each diagnostic-relevant root's ctime against that marker and stops
+# at the first hit (`-quit`), so the check is cheap.  `-cnewer` (ctime, not
+# mtime) catches chmod/chown and mtime-preserving edits, not just content
+# writes.  Missing roots (no separate ESP, no rpm/apk database) are
+# noise-suppressed with `2>/dev/null` and simply do not match.  The chroot
+# shell passes "$TARGET_ROOT" as the prefix; the running-host shell passes an
+# empty prefix so the live /etc, /boot, ... are scanned directly.
+# ---------------------------------------------------------------------------
+shell_change_scan()
+{
+    local root_prefix="$1"
+    find "${root_prefix}/etc" \
+        "${root_prefix}/boot" "${root_prefix}/boot/efi" "${root_prefix}/efi" \
+        "${root_prefix}/usr/lib/modules" "${root_prefix}/lib/modules" \
+        "${root_prefix}/usr/lib/systemd/system" "${root_prefix}/lib/systemd/system" \
+        "${root_prefix}/var/lib/dpkg" "${root_prefix}/var/lib/rpm" \
+        "${root_prefix}/var/lib/pacman" "${root_prefix}/var/lib/apk" "${root_prefix}/lib/apk/db" \
+        -cnewer "$SESSION_DIR/shell-change-marker" -print -quit 2>/dev/null || true
+}
+
+# Emit the stable change verdict for a completed shell command.  `changed` is
+# the fail-safe default in the GUI, so only a proven no-filesystem-change emits
+# `unchanged|reason:shell-no-filesystem-change`.
+shell_change_verdict()
+{
+    local root_prefix="$1"
+    if [[ -n "$(shell_change_scan "$root_prefix")" ]]; then
+        msg_log shell-filesystem-changed
+        repair_change_status shell changed
+    else
+        msg_log shell-filesystem-unchanged
+        repair_change_status shell "unchanged|$(reason shell-no-filesystem-change)"
+    fi
+}
+
 # Execute one reviewed command as root inside a fresh target chroot with a
 # bounded runtime; the command text is logged before it runs.
 run_chroot_shell()
@@ -20221,6 +20261,7 @@ run_chroot_shell()
     # command runs, so dnf/apt/pacman do not fail or wait on missing mounts.
     prepare_target rw
     chroot_shell_guard_snapper
+    touch "$SESSION_DIR/shell-change-marker"
     msg_log begin-chroot-shell
     msg_log command "$command"
     # A command runs in a clean target environment.  Two modes exist:
@@ -20325,6 +20366,7 @@ run_chroot_shell()
         exit 124
     fi
     (( rc == 0 )) || fail "Chroot shell command failed (exit code $rc)."
+    shell_change_verdict "$TARGET_ROOT"
 }
 
 # Execute one reviewed command directly on the running host through the
@@ -20344,6 +20386,7 @@ run_host_shell()
     DIAGNOSTIC_SCOPE="Running Host"
     prepare_host_command_guard
 
+    touch "$SESSION_DIR/shell-change-marker"
     msg_log begin-host-shell
     msg_log command "$command"
     # The command runs directly in the live host root through the private
@@ -20419,6 +20462,7 @@ run_host_shell()
         exit "$rc"
     fi
     msg_log host-shell-pass
+    shell_change_verdict ""
 }
 
 # ---------------------------------------------------------------------------

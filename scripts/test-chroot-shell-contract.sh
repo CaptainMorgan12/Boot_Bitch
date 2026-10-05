@@ -2439,4 +2439,63 @@ cfg_root="$(mktemp -d)"
 ) || { echo 'FAIL: config-write content-file transport contract failed' >&2; exit 1; }
 rm -rf -- "$cfg_root"
 
+# Change-aware shell invalidation: the reviewed shell reports whether the
+# command actually changed diagnostic-relevant files (a single ctime scan
+# against a session marker), so the GUI invalidates only on that verdict.
+# Three behavioural cases prove the contract: (a) a write under /etc ->
+# changed; (b) a write only under /var/lib/apt (apt lists, not a scanned
+# root) -> unchanged; (c) a chmod on a scanned file -> changed (chmod updates
+# ctime, never mtime, so this proves ctime is the signal).
+shell_change_root="$shell_stub_root/change-detect"
+mkdir -p "$shell_change_root"
+run_change_detect_case()
+{
+    local name="$1" mutate="$2"
+    local root="$shell_change_root/$name"
+    mkdir -p "$root/target/etc" "$root/target/var/lib/apt/lists" "$root/target/boot"
+    printf 'base\n' > "$root/target/etc/hostname"
+    (
+        source <(sed '/^main "$@"/d' "$HELPER")
+        trap - EXIT INT TERM HUP
+        SESSION_DIR="$root/session"
+        mkdir -p "$SESSION_DIR"
+        SESSION_LOG="$SESSION_DIR/session.log"
+        TARGET_ROOT="$root/target"
+        prepare_target() { :; }
+        log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
+        timeout()
+        {
+            while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
+                if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
+            done
+            "$@"
+        }
+        chroot() { eval "$mutate"; }
+        ( run_chroot_shell 'change-probe' ) > "$root/output" 2>&1 || true
+    )
+}
+run_change_detect_case etc-write 'printf "changed\\n" >> "$TARGET_ROOT/etc/hostname"'
+grep -Fqx 'Repair change status shell: changed' "$shell_change_root/etc-write/output" \
+    || { echo 'FAIL: a write under /etc was not reported as a filesystem change' >&2; cat "$shell_change_root/etc-write/output" >&2; exit 1; }
+grep -Fq 'msg:shell-filesystem-changed' "$shell_change_root/etc-write/output" \
+    || { echo 'FAIL: the /etc write did not emit the changed message key' >&2; exit 1; }
+
+run_change_detect_case apt-lists-write 'printf "changed\\n" >> "$TARGET_ROOT/var/lib/apt/lists/foo"'
+grep -Fqx 'Repair change status shell: unchanged|reason:shell-no-filesystem-change' \
+    "$shell_change_root/apt-lists-write/output" \
+    || { echo 'FAIL: an apt-lists-only write was not reported as unchanged' >&2; cat "$shell_change_root/apt-lists-write/output" >&2; exit 1; }
+grep -Fq 'msg:shell-filesystem-unchanged' "$shell_change_root/apt-lists-write/output" \
+    || { echo 'FAIL: the apt-lists write did not emit the unchanged message key' >&2; exit 1; }
+
+run_change_detect_case chmod-file 'chmod 600 "$TARGET_ROOT/etc/hostname"'
+grep -Fqx 'Repair change status shell: changed' "$shell_change_root/chmod-file/output" \
+    || { echo 'FAIL: a chmod on a scanned file was not reported as a filesystem change (ctime signal lost)' >&2; cat "$shell_change_root/chmod-file/output" >&2; exit 1; }
+# chmod never updates mtime, so a mtime-based scan (-newer) over the same
+# root must NOT see the chmoded file. The helper reported `changed` anyway,
+# which proves its scan keys on ctime (-cnewer), not mtime.
+[[ -z "$(find "$shell_change_root/chmod-file/target/etc" \
+        -newer "$shell_change_root/chmod-file/session/shell-change-marker" \
+        -print -quit 2>/dev/null || true)" ]] \
+    || { echo 'FAIL: a mtime-based scan found the chmoded file; the change verdict is not ctime-driven' >&2; exit 1; }
+
 echo "PASS: chroot shell helper contract is wired and ordinary commands are accepted."
