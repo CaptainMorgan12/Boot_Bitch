@@ -424,6 +424,10 @@ private:
     void refreshDevices();
     void refreshCapabilities();
     void resizeCapabilityRows();
+    // Boot capabilities table Install action: install a missing suggested
+    // package into the selected repair target (target-scope) or remind the user
+    // to install it on the host (host-scope).
+    void installMissingCapability(const QString &package, bool targetScope);
     void resizeSnapshotRows();
     void populateDeviceTree(const QList<DeviceNode> &devices);
     void updateHostSystemSummary(const QList<DeviceNode> &devices);
@@ -950,6 +954,15 @@ private:
     // is false only on the very first run of a fresh install.
     bool fullRepairStagePreferencePersisted(const QString &key) const;
     bool repairEvidenceReadyForTool(const QString &toolKey, QString *reason = nullptr) const;
+    // Raw `reason:<key>` token for a repair tool's unavailable capability from
+    // the cached scope evidence (empty when available, no evidence, or a legacy
+    // prose reason). Drives the missing-tool install guidance in the detail pane.
+    QString rawCapabilityReasonKey(const QString &toolKey) const;
+    // Concise install-guidance one-liner for a tool that is unavailable because
+    // a required tool/package is missing; empty when the reason does not name a
+    // missing prerequisite. Names the missing tool + suggested package and
+    // points at the Boot capabilities table.
+    QString missingToolGuidance(const QString &toolKey, const QString &reasonKey) const;
     // Human-readable titles of the required diagnostic sections missing from
     // the active scope's cache, in mapping order (deduplicated). Empty when
     // every required section is cached; drives the pre-repair popup alert and
@@ -1495,6 +1508,7 @@ private:
     QLabel *m_distributionLabel = nullptr;
     QLabel *m_packageManagerLabel = nullptr;
     QLabel *m_authBuildLabel = nullptr;
+    QComboBox *m_capabilityScopeSelector = nullptr;
 
     QCheckBox *m_showNonLinux = nullptr;
     QCheckBox *m_showRemovable = nullptr;

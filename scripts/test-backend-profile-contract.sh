@@ -374,6 +374,48 @@ for report_fn in run_target_diagnostic run_host_diagnostic; do
         || { echo "FAIL: $report_fn does not restore per-section capability output" >&2; exit 1; }
 done
 
+# ---- diagnostic_host_capabilities: read-only host-prerequisite section -------
+grep -q '^diagnostic_host_capabilities()' "$HELPER" \
+    || { echo 'FAIL: helper is missing diagnostic_host_capabilities()' >&2; exit 1; }
+# Registered in the running-host dispatch (individual + combined), never the
+# repair-target combined loop.
+host_dispatch_body="$(sed -n '/^run_host_diagnostic()/,/^}/p' "$HELPER")"
+grep -q 'host-capabilities' <<<"$host_dispatch_body" \
+    || { echo 'FAIL: run_host_diagnostic does not emit the host-capabilities section' >&2; exit 1; }
+target_dispatch_body="$(sed -n '/^run_target_diagnostic()/,/^}/p' "$HELPER")"
+! grep -q 'host-capabilities' <<<"$target_dispatch_body" \
+    || { echo 'FAIL: run_target_diagnostic must not emit the host-capabilities section' >&2; exit 1; }
+grep -q 'host-capabilities) diagnostic_host_capabilities || rc=\$? ;;' "$HELPER" \
+    || { echo 'FAIL: run_one_diagnostic does not dispatch host-capabilities' >&2; exit 1; }
+
+# The section probes with `command -v` (running host only) and emits one stable
+# `Host capability:` line per prerequisite. It must never touch the target or
+# invoke a modifying command.
+host_cap_body="$(sed -n '/^diagnostic_host_capabilities()/,/^}/p' "$HELPER")"
+[[ -n "$host_cap_body" ]] || { echo 'FAIL: diagnostic_host_capabilities body is missing' >&2; exit 1; }
+grep -q 'command -v' <<<"$host_cap_body" \
+    || { echo 'FAIL: diagnostic_host_capabilities does not probe with command -v' >&2; exit 1; }
+grep -Fq 'Host capability: %s package=%s status=%s scope=host note=%s' <<<"$host_cap_body" \
+    || { echo 'FAIL: diagnostic_host_capabilities does not emit the stable Host capability line' >&2; exit 1; }
+# Read-only: the section must never invoke a modifying/install/mount command.
+# (The prerequisite names themselves — chroot, systemctl, etc. — are data, not
+# invocations, so the tokens below are chosen to match real command use only.)
+for forbidden in 'install ' 'apk add' 'apt-get ' 'pacman -S' 'dnf ' 'remount ' 'mkfs' 'grub-install'; do
+    grep -Fq "$forbidden" <<<"$host_cap_body" \
+        && { echo "FAIL: diagnostic_host_capabilities invokes a modifying command: $forbidden" >&2; exit 1; }
+done
+
+# Run the section in a controlled environment and assert every prerequisite line.
+host_caps_out="$(RUNNING_HOST_MODE=1 TARGET_ROOT=/ diagnostic_host_capabilities)"
+[[ "$(sed -n '1p' <<<"$host_caps_out")" == 'Host capability probes (read-only, recovery host):' ]] \
+    || { echo 'FAIL: diagnostic_host_capabilities header line changed' >&2; exit 1; }
+[[ "$(grep -c '^Host capability: ' <<<"$host_caps_out")" -eq 12 ]] \
+    || { echo 'FAIL: diagnostic_host_capabilities did not emit exactly 12 host prerequisites' >&2; exit 1; }
+for host_tool in lsblk blkid findmnt cryptsetup btrfs rsync chroot systemctl efibootmgr objcopy lvs mdadm; do
+    grep -Eq "^Host capability: $host_tool package=[^ ]+ status=(available|missing) scope=host note=.*" <<<"$host_caps_out" \
+        || { echo "FAIL: missing stable 'Host capability: $host_tool' line" >&2; exit 1; }
+done
+
 cap_assert_lines()
 {
     local output
@@ -501,11 +543,12 @@ stub_combined_diagnostic_sections()
     diagnostic_btrfs() { printf 'SECTION btrfs\n'; }
     diagnostic_mapper() { printf 'SECTION mapper\n'; }
     diagnostic_luks() { printf 'SECTION luks\n'; }
+    diagnostic_host_capabilities() { printf 'SECTION host-capabilities\n'; }
 }
 
 assert_combined_report()
 {
-    local label="$1" combined_report="$2" cap_key
+    local label="$1" combined_report="$2" section_count="$3" cap_key
     local probes_header_line evidence_header_line first_divider_line
     probes_header_line="$(grep -n '^Repair capability probes (read-only, selected target):$' <<<"$combined_report" | head -n1 | cut -d: -f1 || true)"
     evidence_header_line="$(grep -n '^Repair capability evidence (read-only):$' <<<"$combined_report" | head -n1 | cut -d: -f1 || true)"
@@ -521,9 +564,9 @@ assert_combined_report()
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
         || { echo "FAIL: $label combined report lost capability evidence lines" >&2; exit 1; }
-    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq 17 ]] \
+    [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq "$section_count" ]] \
         || { echo "FAIL: $label combined report did not run every diagnostic section" >&2; exit 1; }
-    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq 17 ]] \
+    [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq "$section_count" ]] \
         || { echo "FAIL: $label combined report diagnostic section headers changed" >&2; exit 1; }
     # The dedicated File systems section is part of the combined report and is
     # generated and cached with every other section.
@@ -547,8 +590,14 @@ combined_reports="$(
 )"
 target_combined="${combined_reports%%=====HOST COMBINED REPORT=====*}"
 host_combined="${combined_reports#*=====HOST COMBINED REPORT=====}"
-assert_combined_report target "$target_combined"
-assert_combined_report host "$host_combined"
+assert_combined_report target "$target_combined" 17
+assert_combined_report host "$host_combined" 18
+# The running-host combined report includes the host-capabilities section, but
+# the repair-target combined report must not.
+grep -Fqx 'Diagnostic: host-capabilities' <<<"$host_combined" \
+    || { echo 'FAIL: host combined report lost the host-capabilities section' >&2; exit 1; }
+! grep -Fqx 'Diagnostic: host-capabilities' <<<"$target_combined" \
+    || { echo 'FAIL: target combined report unexpectedly gained host-capabilities' >&2; exit 1; }
 
 # The `package` diagnostic is read-only: its body must never run a modifying
 # package command or write into the target.  It emits stable evidence lines and
@@ -2661,6 +2710,67 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
     rebuild_tuxedo_uki() { printf 'loader-newer\n' > "$TARGET_ROOT/boot/efi/EFI/testos/grubx64.efi"; }
     change_out="$(repair_boot_stack)"
     assert_change_status "$change_out" bootstack 'changed'
+)
+
+# ---------------------------------------------------------------------------
+# Module-build-system resolution fails closed (never auto-installs).  When
+# module_build_system() resolves none, adaptive_dkms_repair and preflight_dkms
+# refuse with the existing missing-dkms reason and never invoke a package
+# backend; the akms rebuild still emits `akms install -r -k all all` (never the
+# removed `akms rebuild` subcommand); and the dkms change-status contract is
+# unchanged.
+# ---------------------------------------------------------------------------
+(
+    reset_helper_state
+    trap - EXIT INT TERM HUP
+    TARGET_DISTRO_FAMILY=debian
+    TARGET_PACKAGE_MANAGERS=(apt/dpkg)
+    TARGET_ROOT="$fake_root"
+    SESSION_LOG="$fake_root/dkms-install.log"
+    SESSION_DIR="$fake_root/dkms-install-session"
+    mkdir -p "$SESSION_DIR"
+    : > "$SESSION_LOG"
+
+    # none -> fail closed with the missing-dkms reason and no package backend
+    # call (the previous auto-install behaviour is gone).
+    install_log="$fake_root/dkms-install-args"
+    : > "$install_log"
+    module_build_system() { printf 'none\n'; }
+    safe_apt_install_packages() { printf 'installed\n' >> "$install_log"; }
+    if out="$(adaptive_dkms_repair 2>&1)"; then
+        echo 'FAIL: module_build_system=none must fail closed, not dispatch' >&2
+        exit 1
+    fi
+    grep -q 'reason:missing-dkms' <<<"$out" \
+        || { echo 'FAIL: none resolve did not name the missing-dkms reason' >&2; printf '%s\n' "$out" >&2; exit 1; }
+    [[ ! -s "$install_log" ]] \
+        || { echo 'FAIL: module_build_system=none auto-installed through the package backend' >&2; exit 1; }
+
+    # The same fails-closed behaviour holds for the dkms preflight path.
+    module_build_system() { printf 'none\n'; }
+    if out="$(preflight_dkms 2>&1)"; then
+        echo 'FAIL: preflight_dkms with none must fail closed' >&2
+        exit 1
+    fi
+    grep -q 'reason:missing-dkms' <<<"$out" \
+        || { echo 'FAIL: preflight_dkms none did not name the missing-dkms reason' >&2; printf '%s\n' "$out" >&2; exit 1; }
+
+    # akms rebuild emits `akms install -r -k all all`, never `akms rebuild`.
+    module_build_system() { printf 'akms\n'; }
+    preflight_akms() { :; }
+    akms_cmd_file="$fake_root/akms-cmd"
+    : > "$akms_cmd_file"
+    run_chroot_try_display() {
+        local label="$1"; shift
+        printf '%s\n' "$*" >> "$akms_cmd_file"
+        CHROOT_TRY_RC=0
+    }
+    run_chroot_try() { CHROOT_TRY_RC=0; }
+    change_out="$(adaptive_dkms_repair)"
+    [[ "$(cat "$akms_cmd_file")" == "akms install -r -k all all" ]] \
+        || { echo "FAIL: akms rebuild emitted '$(cat "$akms_cmd_file")' not 'akms install -r -k all all'" >&2; exit 1; }
+    grep -Fxq 'Repair change status dkms: changed' <<<"$change_out" \
+        || { echo 'FAIL: akms rebuild lost the dkms change status' >&2; printf '%s\n' "$change_out" >&2; exit 1; }
 )
 
 # ---------------------------------------------------------------------------

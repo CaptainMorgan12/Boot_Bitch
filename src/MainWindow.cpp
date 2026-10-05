@@ -845,6 +845,7 @@ const QList<DiagnosticSpec> &diagnosticSpecs()
         {"btrfs", MainWindow::tr("Btrfs status"), MainWindow::tr("Shows Btrfs filesystem and subvolume information for the running host or selected repair system."), MainWindow::tr("Show Btrfs filesystem and subvolume information."), "drive-harddisk"},
         {"mapper", MainWindow::tr("Mapper status"), MainWindow::tr("Shows selected mapper ancestry, device-mapper state and cryptsetup status when available."), MainWindow::tr("Show device-mapper ancestry and cryptsetup state."), "lock"},
         {"luks", MainWindow::tr("LUKS / crypttab"), MainWindow::tr("Shows LUKS/mapped ancestry plus crypttab and fstab mapper references."), MainWindow::tr("Show LUKS ancestry plus crypttab and fstab mapper references."), "lock"},
+        {"host-capabilities", MainWindow::tr("Host prerequisites and capabilities"), MainWindow::tr("Reports the recovery-host tools Boot Bitch itself needs (block discovery, LUKS, Btrfs, rsync, chroot, EFI/NVRAM and storage-stack tooling) read-only."), MainWindow::tr("Report the recovery-host prerequisites read-only."), "system-software-install"},
         {"report", MainWindow::tr("Full diagnostic report"), MainWindow::tr("Combines all read-only diagnostics for the selected scope in one privileged inspection session."), MainWindow::tr("Combine every read-only diagnostic for the selected scope."), "document-preview"}
     };
     return specs;
@@ -2077,6 +2078,7 @@ const MsgSpec kMsgSpecs[] = {
     { "inspect-akms-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect akms state") },
     { "inspect-dkms-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state") },
     { "inspect-dkms-state-gpu", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state for GPU driver") },
+    { "install-target-package", QT_TRANSLATE_NOOP("MainWindow", "Install package %1 into the repair target") },
     { "post-repair-akmods-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akmods status") },
     { "post-repair-akms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akms status") },
     { "post-repair-dkms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair DKMS status") },
@@ -9223,10 +9225,28 @@ QWidget *MainWindow::buildSettingsPage()
     identityLayout->addRow(tr("KAuth build support:"), m_authBuildLabel);
     capabilityLayout->addLayout(identityLayout);
 
-    m_capabilityTable = new QTableWidget(0, 6);
+    // Scope selector: presents the two cached diagnostic scopes (Repair target
+    // and the running host) without creating a new scope model. It follows the
+    // active scope (host maintenance → Host; otherwise the committed repair
+    // target); switching it only re-reads that scope's cached capability
+    // evidence into the table.
+    m_capabilityScopeSelector = new QComboBox;
+    m_capabilityScopeSelector->addItem(tr("Repair target"), QStringLiteral("target"));
+    m_capabilityScopeSelector->addItem(tr("Host"), QStringLiteral("host"));
+    m_capabilityScopeSelector->setToolTip(tr(
+        "Choose which cached scope's capabilities the table shows."));
+    auto *scopeRow = new QHBoxLayout;
+    scopeRow->addWidget(new QLabel(tr("Show capabilities for:")));
+    scopeRow->addWidget(m_capabilityScopeSelector);
+    scopeRow->addStretch(1);
+    capabilityLayout->addLayout(scopeRow);
+    connect(m_capabilityScopeSelector, qOverload<int>(&QComboBox::currentIndexChanged),
+            this, [this] { refreshCapabilities(); });
+
+    m_capabilityTable = new QTableWidget(0, 7);
     m_capabilityTable->setHorizontalHeaderLabels({
         tr("Feature"), tr("Command"), tr("Scope"),
-        tr("Status"), tr("Suggested package"), tr("Notes")
+        tr("Status"), tr("Suggested package"), tr("Notes"), tr("Action")
     });
     m_capabilityTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
     m_capabilityTable->setMinimumHeight(230);
@@ -9239,18 +9259,23 @@ QWidget *MainWindow::buildSettingsPage()
     m_capabilityTable->setLineWidth(1);
     installCopyAction(m_capabilityTable);
     // Same user-resizable contract as the repair tools table: every section is
-    // Interactive with a sensible default, and the final Notes column fills
-    // the viewport edge so a long capability note has no empty gutter beside
-    // it. Dragging the divider before Notes still widens or narrows the note
-    // column (Notes absorbs the remaining width), and its remembered floor is
-    // reset to the minimum so a narrow pane can shrink it instead of forcing a
-    // horizontal scrollbar.
+    // Interactive with a sensible default, and the Notes column fills the
+    // viewport edge so a long capability note has no empty gutter beside it.
+    // Dragging the divider before Notes still widens or narrows the note column
+    // (Notes absorbs the remaining width), and its remembered floor is reset to
+    // the minimum so a narrow pane can shrink it instead of forcing a
+    // horizontal scrollbar. The trailing Action column stays content-sized so
+    // the per-row Install button is never stretched.
     QHeaderView *capabilityHeader = m_capabilityTable->horizontalHeader();
     for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
         capabilityHeader->setSectionResizeMode(column, QHeaderView::Interactive);
     }
     capabilityHeader->setMinimumSectionSize(72);
-    stretchLastColumnToViewport(capabilityHeader);
+    // Notes absorbs the viewport width; the trailing Action column stays
+    // content-sized so the per-row Install button is never stretched.
+    capabilityHeader->setStretchLastSection(false);
+    capabilityHeader->setSectionResizeMode(5, QHeaderView::Stretch);
+    capabilityHeader->setSectionResizeMode(6, QHeaderView::ResizeToContents);
     const QFontMetrics capabilityMetrics(m_capabilityTable->font());
     capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(QStringLiteral("Feature")) + 24));
     capabilityHeader->resizeSection(1, qMax(160, capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version")) + 24));
@@ -9276,14 +9301,10 @@ QWidget *MainWindow::buildSettingsPage()
 
     auto *capabilityButtons = new QHBoxLayout;
     auto *refresh = new QPushButton(themedIcon(QStringLiteral("view-refresh")), tr("Refresh Capabilities"));
-    auto *install = new QPushButton(themedIcon(QStringLiteral("system-software-install")), tr("Install Missing Support…"));
     refresh->setToolTip(tr("Re-probe the available repair capabilities."));
-    install->setEnabled(false);
-    install->setToolTip(tr("Automatic install requires package mapping and authorization."));
     connect(refresh, &QPushButton::clicked, this, &MainWindow::refreshCapabilities);
     capabilityButtons->addWidget(refresh);
     capabilityButtons->addStretch(1);
-    capabilityButtons->addWidget(install);
     capabilityLayout->addLayout(capabilityButtons);
     layout->addWidget(capabilityBox);
     layout->addStretch(1);
@@ -12021,6 +12042,20 @@ void MainWindow::updateTargetLabels()
     updateChrootShellMode();
     updateShellRunButtonState();
 
+    // The Boot capabilities scope selector follows the active scope (host
+    // maintenance → Host; otherwise the committed repair target). It never
+    // creates a scope model of its own; it only selects which cached scope the
+    // table reads. Signals are blocked so the sync is not mistaken for a user
+    // gesture that re-reads the cache.
+    if (m_capabilityScopeSelector) {
+        const QString scopeData = m_hostMaintenanceMode ? QStringLiteral("host") : QStringLiteral("target");
+        const int index = m_capabilityScopeSelector->findData(scopeData);
+        if (index >= 0 && m_capabilityScopeSelector->currentData().toString() != scopeData) {
+            const QSignalBlocker blocker(m_capabilityScopeSelector);
+            m_capabilityScopeSelector->setCurrentIndex(index);
+        }
+    }
+
     updateFullRepairSummary();
     updateDiagnosticDetails();
 }
@@ -14063,7 +14098,9 @@ void MainWindow::runFileCopy()
 
 void MainWindow::refreshCapabilities()
 {
-    const QList<Capability> capabilities = CapabilityChecker::scanHost();
+    if (!m_capabilityTable) {
+        return;
+    }
     m_distributionLabel->setText(CapabilityChecker::distributionLabel());
     m_packageManagerLabel->setText(CapabilityChecker::packageManagerLabel());
 #ifdef BOOT_REPAIR_HAVE_KAUTH
@@ -14072,43 +14109,96 @@ void MainWindow::refreshCapabilities()
     m_authBuildLabel->setText(tr("Not compiled — optional integration unavailable"));
 #endif
 
+    // The Boot capabilities table is 100% sourced from the cached diagnostic
+    // log. The scope selector picks which cached scope is displayed; neither
+    // scope ever re-probes the filesystem.
+    const bool hostScope = m_capabilityScopeSelector
+        && m_capabilityScopeSelector->currentData().toString() == QStringLiteral("host");
+
+    QList<Capability> capabilities;
+    bool haveEvidence = false;
+    QString placeholderNote;
+
+    if (hostScope) {
+        capabilities = CapabilityChecker::capabilitiesFromHostEvidence(
+            m_hostDiagnosticCache.value(QStringLiteral("host-capabilities")));
+        haveEvidence = !capabilities.isEmpty();
+        if (!haveEvidence) {
+            placeholderNote = tr("Run running-host diagnostics in Host Maintenance to populate this table.");
+        }
+    } else {
+        if (m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+            placeholderNote = tr("No cached diagnostics belong to the selected target. Run target diagnostics first.");
+        } else {
+            capabilities = CapabilityChecker::capabilitiesFromRepairEvidence(
+                m_targetDiagnosticCache.value(QStringLiteral("capabilities")),
+                m_targetDiagnosticCache.value(QStringLiteral("backend")));
+            haveEvidence = !capabilities.isEmpty();
+            if (!haveEvidence) {
+                placeholderNote = tr("Run read-only target diagnostics to populate this table.");
+            }
+        }
+    }
+
     // Populate with sorting disabled so a mid-fill sort can never reorder or
     // lose rows, then re-enable and re-apply the active (or default) sort.
     m_capabilityTable->setSortingEnabled(false);
-    m_capabilityTable->setRowCount(capabilities.size());
-    for (int row = 0; row < capabilities.size(); ++row) {
-        const Capability &capability = capabilities.at(row);
+    if (!haveEvidence) {
+        m_capabilityTable->setRowCount(1);
+        QTableWidgetItem *placeholder = readOnlyItem(tr("No capability evidence cached"));
+        placeholder->setToolTip(placeholderNote);
+        m_capabilityTable->setItem(0, 0, placeholder);
+        m_capabilityTable->setItem(0, 5, readOnlyItem(placeholderNote));
+    } else {
+        m_capabilityTable->setRowCount(capabilities.size());
+        for (int row = 0; row < capabilities.size(); ++row) {
+            const Capability &capability = capabilities.at(row);
 
-        // First column (Feature) carries a verbatim summary of every column in
-        // the row; the remaining columns keep their own exact-value tooltips.
-        QTableWidgetItem *featureItem = readOnlyItem(capability.feature);
-        QString summary = capability.feature.simplified();
-        if (!capability.command.simplified().isEmpty()) {
-            summary += QStringLiteral(" · ") + capability.command.simplified();
-        }
-        if (!capability.scope.simplified().isEmpty()) {
-            summary += QStringLiteral(" · ") + capability.scope.simplified();
-        }
-        summary += QStringLiteral(" · ") + (capability.available ? tr("Available") : tr("Missing"));
-        if (!capability.packageName.simplified().isEmpty()) {
-            summary += QStringLiteral(" · ") + capability.packageName.simplified();
-        }
-        if (!capability.note.simplified().isEmpty()) {
-            summary += QStringLiteral(" · ") + capability.note.simplified();
-        }
-        featureItem->setToolTip(summary);
-        m_capabilityTable->setItem(row, 0, featureItem);
+            // First column (Feature) carries a verbatim summary of every column in
+            // the row; the remaining columns keep their own exact-value tooltips.
+            QTableWidgetItem *featureItem = readOnlyItem(capability.feature);
+            QString summary = capability.feature.simplified();
+            if (!capability.command.simplified().isEmpty()) {
+                summary += QStringLiteral(" · ") + capability.command.simplified();
+            }
+            if (!capability.scope.simplified().isEmpty()) {
+                summary += QStringLiteral(" · ") + capability.scope.simplified();
+            }
+            summary += QStringLiteral(" · ") + (capability.available ? tr("Available") : tr("Missing"));
+            if (!capability.packageName.simplified().isEmpty()) {
+                summary += QStringLiteral(" · ") + capability.packageName.simplified();
+            }
+            if (!capability.note.simplified().isEmpty()) {
+                summary += QStringLiteral(" · ") + capability.note.simplified();
+            }
+            featureItem->setToolTip(summary);
+            m_capabilityTable->setItem(row, 0, featureItem);
 
-        m_capabilityTable->setItem(row, 1, readOnlyItem(capability.command));
-        m_capabilityTable->setItem(row, 2, readOnlyItem(capability.scope));
-        m_capabilityTable->setItem(row, 3, readOnlyItem(capability.available ? tr("Available") : tr("Missing")));
-        m_capabilityTable->setItem(row, 4, readOnlyItem(capability.packageName));
-        m_capabilityTable->setItem(row, 5, readOnlyItem(capability.note));
-        if (!capability.available) {
-            for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
-                QTableWidgetItem *item = m_capabilityTable->item(row, column);
-                if (item) {
-                    item->setIcon(column == 3 ? themedIcon(QStringLiteral("dialog-warning")) : QIcon());
+            m_capabilityTable->setItem(row, 1, readOnlyItem(capability.command));
+            m_capabilityTable->setItem(row, 2, readOnlyItem(capability.scope));
+            m_capabilityTable->setItem(row, 3, readOnlyItem(capability.available ? tr("Available") : tr("Missing")));
+            m_capabilityTable->setItem(row, 4, readOnlyItem(capability.packageName));
+            m_capabilityTable->setItem(row, 5, readOnlyItem(capability.note));
+            // Action column: an explicit user-triggered Install affordance only for
+            // rows that are missing and have a concrete suggested package.
+            const QString suggestedPackage = capability.packageName.simplified();
+            if (!capability.available && capability.installable && !suggestedPackage.isEmpty()) {
+                auto *installButton = new QPushButton(themedIcon(QStringLiteral("system-software-install")), tr("Install"));
+                installButton->setToolTip(capability.targetScope
+                    ? tr("Install %1 into the selected repair target.").arg(suggestedPackage)
+                    : tr("Install %1 on the recovery host with your package manager.").arg(suggestedPackage));
+                const bool targetScope = capability.targetScope;
+                connect(installButton, &QPushButton::clicked, this, [this, suggestedPackage, targetScope] {
+                    installMissingCapability(suggestedPackage, targetScope);
+                });
+                m_capabilityTable->setCellWidget(row, 6, installButton);
+            }
+            if (!capability.available) {
+                for (int column = 0; column < m_capabilityTable->columnCount(); ++column) {
+                    QTableWidgetItem *item = m_capabilityTable->item(row, column);
+                    if (item) {
+                        item->setIcon(column == 3 ? themedIcon(QStringLiteral("dialog-warning")) : QIcon());
+                    }
                 }
             }
         }
@@ -14119,7 +14209,59 @@ void MainWindow::refreshCapabilities()
     QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
 
     appendStatusLog(statusEntryIdentity(QStringLiteral("capability-scan")),
-                    QStringLiteral("Host capability scan refreshed. Missing optional tools disable only the related future feature."));
+                    hostScope
+                        ? QStringLiteral("Host capability evidence refreshed from the cached running-host diagnostics.")
+                        : QStringLiteral("Repair-target capability evidence refreshed from the cached target diagnostics."));
+}
+
+// Boot capabilities table Install action. Target-scope rows install the
+// suggested package into the selected repair target through the guarded
+// install-target-package helper verb (simulation-first, fail-closed); a missing
+// repair target refuses the request. Host-scope rows are never installed on the
+// running host (host installs are the user's job) and instead surface a clear
+// reminder naming the package.
+void MainWindow::installMissingCapability(const QString &package, bool targetScope)
+{
+    if (!targetScope) {
+        QMessageBox::information(this, tr("Install on the recovery host"),
+            tr("Boot Bitch does not install packages on the running host. Install the package '%1' on the recovery host with your package manager, then refresh capabilities.").arg(package));
+        return;
+    }
+
+    QString reason;
+    if (!repairTargetReady(&reason)) {
+        QMessageBox::warning(this, tr("Repair target required"), reason);
+        return;
+    }
+
+    if (QMessageBox::question(this, tr("Install into repair target"),
+            tr("Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.").arg(package),
+            QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+        return;
+    }
+
+    BusyOperationScope busy(this, tr("Install %1").arg(package));
+    bool installed = false;
+    const QString output = runPrivilegedRequest(
+        tr("Install %1 into the repair target").arg(package),
+        {QStringLiteral("install-target-package"), m_previewTargetPath, m_previewTargetComponentPath, package},
+        QByteArray(), &installed, true, LogEntryKind::Repair);
+    if (!installed) {
+        appendLog(tr("Install output\nPackage: %1\n%2").arg(package, localizeHelperLogLines(output.trimmed())),
+                  QStringLiteral("ERROR"), LogEntryKind::Repair);
+        QMessageBox::critical(this, tr("Install failed"),
+            tr("The guarded package install failed. Review the captured helper output in Logs."));
+        return;
+    }
+
+    appendLog(tr("Install output\nPackage: %1\n%2").arg(package, localizeHelperLogLines(output.trimmed())),
+              QStringLiteral("INFO"), LogEntryKind::Repair);
+    // A package install changes the target's capability evidence: invalidate the
+    // cached target diagnostics, then refresh the Boot capabilities scan so the
+    // row reflects the new state.
+    invalidateDiagnosticsForRepair({QStringLiteral("install-target-package")}, /*failed=*/false,
+                                   QStringLiteral("package installed into the repair target"), LogEntryKind::Repair);
+    refreshCapabilities();
 }
 
 void MainWindow::resizeCapabilityRows()
@@ -14538,6 +14680,8 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         walk(walk, disk);
         if (!found) stream << "No Btrfs filesystem is currently visible in this device tree.\n";
         if (targetScope) stream << "Subvolume inspection becomes available after read-only target mounting.\n";
+    } else if (key == QStringLiteral("host-capabilities")) {
+        stream << "Running-host prerequisite inventory is collected by the privileged read-only host diagnostic backend.\n";
     } else if (key == QStringLiteral("mapper") || key == QStringLiteral("luks")) {
         bool found = false;
         auto walk = [&](auto &&self, const DeviceNode &node) -> void {
@@ -15319,6 +15463,80 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
     }
     setReason(tr("Required read-only diagnostic evidence is cached for this repair tool."));
     return true;
+}
+
+// Raw `reason:<key>` token for a repair tool's unavailable capability from the
+// cached scope evidence. Empty when the tool is available, has no capability
+// line, or carries a legacy English-prose reason (which has no key to map).
+QString MainWindow::rawCapabilityReasonKey(const QString &toolKey) const
+{
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    QString evidence = cache.value(QStringLiteral("capabilities"));
+    if (evidence.isEmpty()) {
+        QString ignoredBody;
+        QString preamble;
+        splitDiagnosticCapabilityPreamble(cache.value(QStringLiteral("report")),
+                                          &ignoredBody, &preamble);
+        evidence = preamble;
+    }
+    const QString prefix = QStringLiteral("Repair tool %1: ").arg(toolKey);
+    for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+        if (!line.startsWith(prefix)) {
+            continue;
+        }
+        const QString state = line.mid(prefix.size()).trimmed();
+        if (!state.startsWith(QStringLiteral("unavailable|"))) {
+            return QString();
+        }
+        const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+        if (!detail.startsWith(QStringLiteral("reason:"))) {
+            return QString(); // legacy prose reason: no key to map
+        }
+        return detail.mid(QStringLiteral("reason:").size()).split(QLatin1Char('|')).first();
+    }
+    return QString();
+}
+
+// Concise install-guidance one-liner for a tool that is unavailable because a
+// required tool/package is missing. The module-build (dkms) tool names the
+// distro-native package (dkms/akmods/akms); the other reasons name a concrete
+// missing prerequisite with its package. Returns empty when the reason does not
+// name a missing prerequisite.
+QString MainWindow::missingToolGuidance(const QString &toolKey, const QString &reasonKey) const
+{
+    if (reasonKey.isEmpty()) {
+        return QString();
+    }
+
+    const bool dkmsTool = toolKey == QStringLiteral("dkms");
+    const bool dkmsMissing = reasonKey == QStringLiteral("missing-dkms")
+        || reasonKey == QStringLiteral("missing-dkms-arch")
+        || reasonKey == QStringLiteral("missing-dkms-alpine");
+    if (dkmsTool && dkmsMissing) {
+        const QString family = detectedDistributionFamily().trimmed().toLower();
+        QString package = QStringLiteral("dkms");
+        QString label = QStringLiteral("DKMS");
+        if (family.contains(QStringLiteral("alpine"))) {
+            package = QStringLiteral("akms");
+            label = QStringLiteral("AKMS");
+        } else if (family.contains(QStringLiteral("fedora"))
+                   || family.contains(QStringLiteral("rhel"))) {
+            package = QStringLiteral("akmods");
+            label = QStringLiteral("akmods");
+        }
+        return tr("Missing module-build system (%1): install the %2 package from the Boot capabilities table.").arg(label, package);
+    }
+
+    static const QHash<QString, QPair<QString, QString>> guidance = {
+        {QStringLiteral("missing-update-extlinux"), {QStringLiteral("update-extlinux"), QStringLiteral("syslinux")}},
+        {QStringLiteral("missing-update-extlinux-host"), {QStringLiteral("update-extlinux"), QStringLiteral("syslinux")}},
+        {QStringLiteral("missing-graphical-target"), {QStringLiteral("graphical.target"), QStringLiteral("systemd")}},
+    };
+    const auto it = guidance.constFind(reasonKey);
+    if (it == guidance.constEnd()) {
+        return QString();
+    }
+    return tr("Missing %1: install the %2 package from the Boot capabilities table.").arg(it->first, it->second);
 }
 
 // Human-readable titles of the required diagnostic sections still missing from
@@ -20663,6 +20881,13 @@ void MainWindow::updateRepairToolDetails()
             // target diagnostic identity is missing/stale). The reason is
             // already specific, so surface it under the clearer status prefix.
             displayedPlanStatus += tr("\nStatus: unavailable — %1").arg(diagnosticReason);
+            // When the reason names a missing tool/package, add a one-liner
+            // pointing at the Boot capabilities table so the user knows what to
+            // install (never auto-installed).
+            const QString guidance = missingToolGuidance(key, rawCapabilityReasonKey(key));
+            if (!guidance.isEmpty()) {
+                displayedPlanStatus += QLatin1Char('\n') + guidance;
+            }
         }
     }
     m_repairToolPlanStatus->setText(displayedPlanStatus);
