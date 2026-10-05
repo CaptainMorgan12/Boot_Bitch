@@ -1494,6 +1494,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "running-kernel-not-identified", QT_TRANSLATE_NOOP("MainWindow", "The running kernel release could not be determined (uname -r is empty).") },
     { "secure-boot-needs-signed-loader", QT_TRANSLATE_NOOP("MainWindow", "Secure Boot requires a signed loader.") },
     { "separate-boot", QT_TRANSLATE_NOOP("MainWindow", "The running host has a separate /boot filesystem outside the root snapshot.") },
+    { "shell-no-filesystem-change", QT_TRANSLATE_NOOP("MainWindow", "The shell command made no diagnostic-relevant filesystem change.") },
     { "snapper-running", QT_TRANSLATE_NOOP("MainWindow", "Another snapper command is running.") },
     { "syslinux-bios-no-efi", QT_TRANSLATE_NOOP("MainWindow", "syslinux/extlinux (BIOS) boot detected; no EFI boot path is available.") },
     { "sysvinit-display-unsupported", QT_TRANSLATE_NOOP("MainWindow", "A sysvinit display-manager script was detected; offline repair is not implemented for sysvinit.") },
@@ -1991,6 +1992,8 @@ const MsgSpec kMsgSpecs[] = {
     { "selinux-unavailable", QT_TRANSLATE_NOOP("MainWindow", "SELinux status: sestatus/getenforce are not installed in the target; recorded as unavailable.") },
     { "separator", QT_TRANSLATE_NOOP("MainWindow", "========================================") },
     { "session-log-not-appended", QT_TRANSLATE_NOOP("MainWindow", "Session log was NOT appended into the target: unsafe target log path.") },
+    { "shell-filesystem-changed", QT_TRANSLATE_NOOP("MainWindow", "Shell command changed diagnostic-relevant files.") },
+    { "shell-filesystem-unchanged", QT_TRANSLATE_NOOP("MainWindow", "Shell command made no diagnostic-relevant filesystem change; cached diagnostics remain valid.") },
     { "simulate-apk", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE: apk %1 --simulate (no packages will be changed)") },
     { "simulate-apt", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE: apt-get %1 (no packages will be changed)") },
     { "simulate-correction", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE CORRECTION: %1") },
@@ -13921,22 +13924,21 @@ void MainWindow::runChrootShellCommand()
             tr("The privileged helper did not return a complete response for this command. The request was treated as failed; review the output and Logs before retrying."));
     }
 
-    // Most shell commands are arbitrary and therefore conservatively stale
-    // the active scope's evidence. An apt update that only reports failed
-    // fetches did not receive repository data; keep the prior evidence in that
-    // one explicitly recognized no-change case. The check uses the command the
-    // user asked for, not the retry form with the injected option.
-    const QString foldedOutput = output.toCaseFolded();
-    const QString foldedCommand = command.toCaseFolded();
-    const bool aptRefreshNoChange = QRegularExpression(QStringLiteral("^(sudo\\s+)?apt(-get)?\\s+update$")).match(foldedCommand).hasMatch()
-        && (foldedOutput.contains(QStringLiteral("some index files failed"))
-            || foldedOutput.contains(QStringLiteral("failed to fetch"))
-            || foldedOutput.contains(QStringLiteral("temporary failure resolving")));
-    if (aptRefreshNoChange) {
+    // The helper reports whether the command actually changed diagnostic-relevant
+    // files (a ctime scan against a session marker) as the stable
+    // `Repair change status shell: changed|unchanged` verdict. That verdict is
+    // the single source of truth here: invalidate the cached evidence only when
+    // the helper reported a filesystem change. A missing verdict (a failed
+    // command, or a helper older than the change-aware contract) invalidates
+    // conservatively, matching the fail-safe "no line emitted" rule.
+    const QMap<QString, QString> shellStatuses = parseRepairChangeStatuses(output);
+    const bool shellProvenUnchanged = shellStatuses.contains(QStringLiteral("shell"))
+        && repairChangeStatusIsUnchanged(shellStatuses.value(QStringLiteral("shell")));
+    if (shellProvenUnchanged) {
         appendLog(hostMode
-                      ? QStringLiteral("Host shell apt update received no repository data; cached host diagnostics remain usable.")
-                      : QStringLiteral("Chroot shell apt update received no repository data; cached diagnostics remain usable."),
-                  QStringLiteral("WARNING"), shellKind);
+                      ? QStringLiteral("Host shell command made no diagnostic-relevant filesystem change; cached host diagnostics remain usable.")
+                      : QStringLiteral("Chroot shell command made no diagnostic-relevant filesystem change; cached diagnostics remain usable."),
+                  QStringLiteral("INFO"), shellKind);
     } else {
         // Arbitrary shell commands are deliberately broad: the invalidation
         // mapping sends the shell key to the complete diagnostic set.
