@@ -225,7 +225,7 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   probe reason.
 - **Logs** streams the merged helper output with the modern 1:1 kind filter
   (**All entries** / **Diagnostics** / **Repairs** / **File system repair** /
-  **Package repair** / **File copy** / the 16 diagnostic section titles), a
+  **Package repair** / **File copy** / the 17 diagnostic section titles), a
   **Search log:** substring filter (case-insensitive) and a **Session logs**
   list: the live session is the first entry, earlier files in the log
   directory are listed read-only and selectable. Every register entry is
@@ -249,21 +249,23 @@ no kdelibs, no Qt4/5/6 APIs, no QtSvg (PNG icons only).
   refused), and **Refresh** re-lists the directory. A framed **Viewing a prior
   session log (read-only)** banner is shown only while a prior file is
   displayed.
-- **Settings** shows the functional **Device discovery** filters (modern
-  wording, default on: non-Linux drives, removable/USB storage and
-  encrypted-before-unlock), the functional **Diagnostics** auto-refresh toggle
-  (default on), the **Wrap long log lines** toggle, the mandatory safety
-  controls, and the read-only **Host capabilities and dependencies** group
-  (Distribution, Package manager family and **Privileged authorization
-  support: sudo / gksu (no KAuth on this frontend)** summary labels, the
-  6-column **Feature | Command | Scope | Status | Suggested package |
-  Notes** table mirroring the modern 23 probe rows plus the legacy
-  `Process namespace isolation / unshare` row, a **Refresh Capabilities**
-  button that re-runs the read-only PATH probes (nothing is executed) and
+- **Settings** shows the functional **Device discovery** filters and the
+  **Diagnostics** auto-refresh toggle side-by-side (modern parity), the
+  **Full Repair plan** checkboxes in two columns (6 left, 5 right), the
+  **Wrap long log lines** toggle, the read-only **Capabilities and
+  dependencies** group (Distribution with the right-aligned
+  **Repair target / Host** scope selector, Package manager family and
+  **KAuth build support: Not compiled - optional integration unavailable**
+  summary labels, the 7-column **Feature | Command | Scope | Status |
+  Suggested package | Notes | Action** table mirroring the modern 23 probe
+  rows plus the legacy `Process namespace isolation / unshare` row — the
+  trailing Action column is a read-only placeholder because Qt3 QTable
+  cannot host a per-row Install button — a **Refresh Capabilities** button
+  that re-reads the cached evidence (host PATH probes, nothing executed) and
   the modern-tooltip **Install Missing Support...** button, present but
-  disabled because host installs are forbidden) and the legacy-only
-  read-only **Application configuration**
-  group. The three filters, the wrap toggle (Settings checkbox and the View
+  disabled because host installs are forbidden) and the mandatory safety
+  controls below it. The legacy-only **Application configuration** group is
+  gone (the version is available via `--print-config` / Help → About). The three filters, the wrap toggle (Settings checkbox and the View
   menu item) and the auto-refresh toggle persist through Qt3 `QSettings`
   under the modern-compatible key names (`devices/showNonLinux`,
   `devices/showRemovable`, `devices/showEncrypted`, `logs/wrapLines`,
@@ -317,7 +319,7 @@ The Qt6 Boot Bitch tabs map onto this frontend where Qt3 allows it:
 | Chroot Shell / Host Shell | Chroot Shell / Host Shell | wired to the helper's `shell`/`host-shell` behind the scope probe + session; heading/tab/button switch with Host Maintenance |
 | File Copy | File Copy (greyed) | helper exposes file copy; greyed with the `Legacy feature file-copy:` probe reason |
 | Logs (Save As…, Clear Register in the top row, session list with New/Clear/Delete/Refresh/Add Note, prior-log banner, search + the kind filter) | Logs (Save As.../Clear Register right of the Application log title, session list with New Session Log/Add Note/Delete/Refresh, prior-log banner, search + the 1:1 kind filter) | entries are tagged at capture time (Diagnostic sections from the stream's `Diagnostic: <key>` markers; Repair stages from the requested stage set); the File copy filter has no lines; prior files are read-only plain text under All entries; the stable session file naming is `yyyyMMdd-hhmmss.log` |
-| Settings (device filters, plan, diagnostics auto-refresh, safety list, host capabilities, persistence) | Settings (functional device filters, the six legacy Full Repair plan checkboxes, functional auto-refresh, safety list, host-capability summary labels + 6-column probe table + Refresh Capabilities + disabled Install Missing Support..., read-only application configuration) | the capability table mirrors the modern 23 probe rows read-only (a PATH search, nothing executed; `QTable::SingleRow` full-row selection with the first row selected — the selected missing capability is the conceptual guard the disabled Install Missing Support... documents) plus the legacy unshare row; the plan lists only the legacy-supported stages; Install Missing Support... is present but disabled (host installs are forbidden); filters/wrap/auto-refresh/plan persist through Qt3 `QSettings` (no geometry/tab/splitter persistence) |
+| Settings (device filters + diagnostics side-by-side, plan, capabilities + scope selector, safety list, persistence) | Settings (functional device filters, the six legacy Full Repair plan checkboxes in two columns, functional auto-refresh, capability summary labels + 7-column probe table + Repair target/Host scope selector + Refresh Capabilities + disabled Install Missing Support..., safety list) | the capability table mirrors the modern 23 probe rows read-only (a PATH search, nothing executed; `QTable::SingleRow` full-row selection with the first row selected) plus the legacy unshare row; the trailing Action column is a read-only placeholder (Qt3 QTable cannot host a per-row Install button); the plan lists only the legacy-supported stages; Install Missing Support... is present but disabled (host installs are forbidden); filters/wrap/auto-refresh/plan persist through Qt3 `QSettings` (no geometry/tab/splitter persistence) |
 
 Deliberate omissions (documented, not hidden): snapshots,
 host default/reboot and EFI/UKI/extlinux repair. They never appear as enabled
@@ -347,7 +349,7 @@ helper cannot express the modern behavior.
 | Chroot Shell | heading + scope label + notice + command row + output, **Run Command** / **Run on Host**, tab label **Host Shell** in host mode | the tab lights up per scope: the offline shell runs through the guarded plain chroot (`legacy_chroot`, no unshare) and the host shell through the legacy direct path on BIOS-only hosts (both probes available on Etch; the timeout/kill containment is not expressible on Etch's timeout and is documented); the notice carries the `Legacy feature` probe state/reason |
 | File Copy | heading + source list, destination, add/remove/copy controls | the tab matches the modern page: heading row (File copy title | live scope label | Preview Changes | Copy and Verify), direction row (Host → Repair / Repair → Host), group 1 "1. Select source files or folders from this host" (title adapts per direction) with the staged-source list and the Add Files.../Add Folder.../Remove/Clear button row, group 2 "2. Choose destination in repaired system" with the destination edit and Browse Target Folders... (the helper's read-only browse-target records, raw percent-encoded names because Qt 3.3.7 has no QByteArray::fromBase64), and group 3 "3. Ownership and copy policy" with the Smart destination ownership (recommended) / Preserve source numeric UID/GID combo; transfers run through the legacy backend (cp -a + chown --reference ownership preservation + per-file cmp verification; no rsync on Etch) |
 | Logs | page heading, **Application log** title with **Save As…** / **Clear Register** right of it above the search row, session list with **New Session Log** / **Add Note** / **Delete** / **Refresh**, prior-log banner, **Search log:** + the 1:1 kind filter | the kind filter tags entries at capture time (stream markers, requested stages); the File copy filter has no lines; prior sessions are read-only plain text shown under All entries |
-| Settings | page heading, device discovery, Full Repair plan, diagnostics and mandatory-safety groups in the modern order, then the host capabilities group (summary labels + 6-column probe table + Refresh Capabilities + disabled Install Missing Support…); the page scrolls like modern | the plan lists only the six legacy stages; the capability table adds the legacy unshare row, uses `QTable::SingleRow` full-row selection (first row selected; the selected missing capability is the conceptual guard the disabled Install Missing Support... documents) and the status probes are read-only PATH searches; Install Missing Support... stays disabled (host installs are forbidden); the filters/wrap/auto-refresh/plan persist (Qt3 `QSettings`, no geometry/tab/splitter state); the legacy-only read-only **Application configuration** group closes the page |
+| Settings | page heading, device discovery + diagnostics side-by-side, Full Repair plan (two columns), Capabilities and dependencies (Distribution + scope selector, Package manager family, KAuth build support, 7-column table + Refresh Capabilities + disabled Install Missing Support…) and mandatory-safety groups in the modern order; the page scrolls like modern | the plan lists only the six legacy stages; the capability table adds the legacy unshare row and the read-only Action placeholder column, uses `QTable::SingleRow` full-row selection (first row selected) and the host status probes are read-only PATH searches (the Repair target scope re-reads cached target diagnostics only); Install Missing Support... stays disabled (host installs are forbidden); the filters/wrap/auto-refresh/plan persist (Qt3 `QSettings`, no geometry/tab/splitter state); the legacy-only read-only **Application configuration** group is removed |
 
 Frame titles, section headings, buttons, list columns and combos are still
 covered by the programmatic 1024x768 layout assertion in `--smoke-test`
@@ -477,14 +479,14 @@ Built natively on the Etch guest (g++ 4.1.2, qmake-qt3 1.07a/Qt 3.3.7) and
 installed from the `.deb`; under Xvfb `--print-config` resolved the running
 host (`/dev/hda` + `/dev/mapper/root`) and `--smoke-test` ran
 `host-diagnose all` + `host-validate` through the helper
-(`SMOKE OK: 13 capability lines parsed; host-validate: ok`), with the GUI
+(`SMOKE OK: 15 capability lines parsed; host-validate: ok`), with the GUI
 process at 12 460 KiB RSS. Etch's udev exposes `/dev/mapper/<name>` as block
 device nodes (no symlinks), so the inventory resolves dm targets via
 `/sys/block/dm-N/dev`; evidence lives in the private
 `Development/release-0.2.25/etch-legacy/gui-*.log` capture.
 
 GUI polish pass (same day): the extended smoke at 1024x768 reports
-`SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+`SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
 controls: ok; layout: ok (29 widgets checked)` (app rc 0). The layout checker
 failed on the pre-compaction layout (panes/buttons below the page bottom) and
 passes after the compaction, so the assertion is not vacuous; the Unlock
@@ -497,7 +499,7 @@ installed (`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256
 `02f14b296ca3c4af056fd906c387897bb083b878788aa6e747cd8c2320ef87ab`; installed
 GUI `ffbeafda…`). `--print-config` is clean (no sudo usage noise) and names the
 IDE transport plus the ext3 UUIDs; the smoke reports
-`SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+`SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
 controls: ok; layout: ok (51 widgets checked)` (rc 0) both as root and through
 the default elevation probe. Etch's sudo 1.6.8 has no `-n`, so the modal
 `sudo -S -v` authorization falls back to a timestamp-validated plain `sudo`;
@@ -513,7 +515,7 @@ the launcher removal were built and installed
 `cd61e6d2…`, helper `d4d842d7…`). `dpkg -r` removed the previous package
 (launcher, desktop entry and man page included); the new `.deb` installs only
 the GUI/helper/desktop/icons/docs. The Xvfb smoke reports
-`SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+`SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
 controls: ok; layout: ok (60 widgets checked)` (rc 0), and the session log
 carries all six `Legacy feature` lines (including `host-maintenance:
 unavailable|unshare is not installed in the recovery environment`). Evidence:
@@ -555,7 +557,7 @@ modern group order. Built natively and installed with
 boot-repair-legacy 0.2.25-etch1`, modes gui=755 desktop=644, installed
 GUI/helper hashes equal to the artifact payload); artifact sha256
 `789acac4…`, installed GUI `47c7e2e0…` / helper `9e80ed46…`; the Xvfb smoke
-reports `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate:
+reports `SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate:
 ok; controls: ok; layout: ok (53 widgets checked)` (rc 0); the in-guest Qt3
 `test-auth-pipe.sh` harness passes (`AUTH-PIPE OK` / `legacy auth-pipe test:
 PASS`); host-scope diagnostics carry the six `Legacy feature` lines and no
@@ -577,7 +579,7 @@ text change did not re-apply the font-metric minimum width) and a Qt3 layout
 double-parent crash (`QLayout::addChildLayout` + `free(): invalid pointer` at
 exit) — both fixed and re-validated; the exact failure transcript is kept in
 `Development/release-0.2.25/etch-legacy/gui-parity2-first-smoke-failure-20260922.txt`.
-The final Xvfb smoke reports `SMOKE OK: host-diagnose: 13 capability lines parsed;
+The final Xvfb smoke reports `SMOKE OK: host-diagnose: 15 capability lines parsed;
 host-validate: ok; controls: ok; layout: ok (54 widgets checked)` (rc 0); the
 extended Qt3 harness now also proves the D5 session fix (`AUTH-PIPE OK` plus
 `SESSION-EXPIRY OK: expired cached sudo detected without blocking;

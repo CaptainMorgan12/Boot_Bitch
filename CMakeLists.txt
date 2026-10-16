@@ -148,6 +148,14 @@ install(DIRECTORY translations/
     FILES_MATCHING PATTERN "*.qm"
 )
 
+# Polkit authorization action for the privileged helper. The
+# org.freedesktop.policykit.exec.path annotation inside the file maps the
+# installed helper path to a dedicated action whose <message> is shown in the
+# pkexec/Polkit prompt instead of the raw command line.
+install(FILES data/org.bootrepair.BootRepair.policy
+    DESTINATION ${CMAKE_INSTALL_DATADIR}/polkit-1/actions
+)
+
 # -----------------------------------------------------------------------------
 # Compressed documentation
 # -----------------------------------------------------------------------------
@@ -290,6 +298,7 @@ add_executable(boot-repair-ui-tests
     tests/MainWindowUiTest_Shell.cpp
     tests/MainWindowUiTest_BootEntries.cpp
     tests/MainWindowUiTest_Capabilities.cpp
+    tests/MainWindowUiTest_Tabs.cpp
     tests/UiTestHelpers.h
     src/MainWindow.cpp
     src/MainWindow.h
@@ -331,17 +340,11 @@ if(CMAKE_CXX_COMPILER_ID MATCHES "GNU|Clang")
 endif()
 
 add_test(NAME boot-repair-ui-read-only COMMAND boot-repair-ui-tests)
-# Fast-tier unit test for the efi-list protocol parser: runs only the parser
-# slot of the shared UI-test binary (no window, no privileged helper).
-add_test(NAME boot-repair-boot-entries-parser
-    COMMAND boot-repair-ui-tests bootEntriesParserParsesProtocol)
-# Fast-tier unit test for the grub-list protocol parser (read-only GRUB menu).
-add_test(NAME boot-repair-grub-menu-parser
-    COMMAND boot-repair-ui-tests grubMenuParserParsesProtocol)
-# Fast-tier unit test for the grub-legacy-list protocol parser (read-only GRUB
-# legacy /boot/grub/menu.lst menu).
-add_test(NAME boot-repair-grub-legacy-parser
-    COMMAND boot-repair-ui-tests grubLegacyParserParsesProtocol)
+# Fast-tier unit tests for the three boot-menu protocol parsers (efi-list,
+# grub-list and grub-legacy-list): run the parser slots of the shared UI-test
+# binary in one ctest case (no window, no privileged helper).
+add_test(NAME boot-repair-boot-menu-parsers
+    COMMAND boot-repair-ui-tests bootEntriesParserParsesProtocol grubMenuParserParsesProtocol grubLegacyParserParsesProtocol)
 add_test(NAME boot-repair-chroot-shell-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-chroot-shell-contract.sh)
 add_test(NAME boot-repair-display-manager-contract
@@ -362,14 +365,8 @@ add_test(NAME boot-repair-kernels-cleanup-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-kernels-cleanup-contract.sh)
 add_test(NAME boot-repair-gpu-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-gpu-contract.sh)
-add_test(NAME boot-repair-gpu-baseline-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-gpu-baseline-contract.sh)
-add_test(NAME boot-repair-display-baseline-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-display-baseline-contract.sh)
-add_test(NAME boot-repair-uki-grub-baseline-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-uki-grub-baseline-contract.sh)
-add_test(NAME boot-repair-extlinux-bootstack-baseline-contract
-    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-extlinux-bootstack-baseline-contract.sh)
+add_test(NAME boot-repair-baseline-contract
+    COMMAND bash ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-baseline-contract.sh)
 add_test(NAME boot-repair-boot-errors-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-boot-errors-contract.sh)
 add_test(NAME boot-repair-efi-entry-policy-contract
@@ -430,13 +427,7 @@ set_tests_properties(boot-repair-kernels-cleanup-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-gpu-contract
     PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-gpu-baseline-contract
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-display-baseline-contract
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-uki-grub-baseline-contract
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-extlinux-bootstack-baseline-contract
+set_tests_properties(boot-repair-baseline-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-boot-errors-contract
     PROPERTIES LABELS "fast")
@@ -462,11 +453,7 @@ set_tests_properties(boot-repair-backend-profile-contract
     PROPERTIES LABELS "slow")
 set_tests_properties(boot-repair-ui-read-only
     PROPERTIES LABELS "ui")
-set_tests_properties(boot-repair-boot-entries-parser
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-grub-menu-parser
-    PROPERTIES LABELS "fast")
-set_tests_properties(boot-repair-grub-legacy-parser
+set_tests_properties(boot-repair-boot-menu-parsers
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-packaging-profile-contract
     PROPERTIES LABELS "packaging")

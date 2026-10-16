@@ -601,7 +601,7 @@
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Stornierung</translation>
+        <translation>Abbrechen</translation>
     </message>
     <message>
         <source>OK</source>
@@ -648,7 +648,7 @@
     </message>
     <message>
         <source>Repair</source>
-        <translation>Reparieren</translation>
+        <translation>Reparatur</translation>
     </message>
     <message>
         <source>Chroot Shell</source>
@@ -660,7 +660,7 @@
     </message>
     <message>
         <source>Logs</source>
-        <translation>Protokolle</translation>
+        <translation>Logbuch</translation>
     </message>
     <message>
         <source>Settings</source>
@@ -1020,7 +1020,7 @@
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Werkzeug ausführen</translation>
+        <translation>Ausführen</translation>
     </message>
     <message>
         <source>Select a tool to review its repair action.</source>
@@ -1200,7 +1200,7 @@
     </message>
     <message>
         <source>Add Note</source>
-        <translation>Anmerkungen hinzufügen</translation>
+        <translation>Notiz hinzufügen</translation>
     </message>
     <message>
         <source>Append a NOTE entry to the live session register.</source>
@@ -1251,8 +1251,8 @@
         <translation>Filtern Sie das sichtbare Protokoll nach Eintragsart. Das Auswählen eines Diagnoseabschnitts zeigt die für diesen Abschnitt erfassten Zeilen an; ein Workflowfilter wie Dateisystemreparatur oder Paketreparatur zeigt die zugeordneten Reparaturlinien an (Dateikopie hat keine Zeilen in diesem Frontend). Sparen Wie immer schreibt jeder Eintrag.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Die Einstellungen werden pro Benutzer unter ~/.qt/, einer Datei pro Einstellungsgruppe (devicesrc, logsrc, diagnosticsrc, repairrc) gespeichert und bei jeder Änderung und beim Schließen sofort gespeichert. Starten Sie die GUI als derselbe Benutzer, um Ihre Überschreibungen beizubehalten; eine GUI, die als root gestartet wurde, behält ihre eigenen Kopien.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Die Einstellungen werden pro Benutzer unter ~/.qt/, einer Datei pro Einstellungsgruppe (devicesrc, logsrc, diagnosticsrc, repairrc) gespeichert und bei jeder Änderung und beim Schließen sofort gespeichert. Der gleiche Standort pro Benutzer wird verwendet, unabhängig davon, ob die GUI als angemeldeter Benutzer oder als root läuft (sudo bewahrt das Heimatverzeichnis).</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -1472,7 +1472,7 @@ Der Helfer überprüft /boot/grub/menu.lst, setzt die `default &lt;N&gt;`-Direkt
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Stornierung</translation>
+        <translation>Abbrechen</translation>
     </message>
     <message>
         <source>Save Target File</source>

@@ -81,13 +81,13 @@ grep -q 'Legacy feature ' "$PARSER" \
     || fail "parser lost the 'Legacy feature' prefix"
 grep -q 'Legacy config ' "$PARSER" \
     || fail "parser lost the 'Legacy config' prefix"
-for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux bootstack; do
+for key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
     grep -q "\"$key\"" "$PARSER" || fail "capability key missing from the parser: $key"
 done
 for feature in file-copy shell host-shell host-maintenance snapshots host-default; do
     grep -q "\"$feature\"" "$PARSER" || fail "legacy feature key missing from the parser: $feature"
 done
-for key in environment backend boot boot-evidence kernel grub uki display errors usage filesystem fstab btrfs mapper luks report; do
+for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage filesystem fstab btrfs mapper luks report; do
     grep -q "\"$key\"" "$PARSER" || fail "diagnostic key missing from the parser: $key"
 done
 grep -q 'legacyFeatureAvailable' "$PARSER" || fail "parser lost the fail-closed legacy feature gate"
@@ -97,7 +97,7 @@ for key in fstab inittab menu-lst crypttab modules interfaces sources-list apt-c
 done
 grep -q 'configFileAvailable' "$PARSER" || fail "parser lost the fail-closed configuration probe gate"
 grep -q 'configFileState' "$PARSER" || fail "parser lost the configuration state helper"
-pass "13-key evidence contract + 6 legacy feature probes + 8 Etch config keys + 16 diagnostic keys"
+pass "15-key evidence contract + 6 legacy feature probes + 8 Etch config keys + 18 diagnostic keys"
 
 # --- Qt3 widget/toolkit usage ------------------------------------------------
 for symbol in QMainWindow QListView QTextEdit QTabWidget QProcess; do
@@ -303,6 +303,43 @@ grep -q 'legacyPercentDecode' "$WINDOW" \
     || fail "browse-result decoder missing"
 grep -q '"%09"' "$WINDOW" \
     || fail "browse-result decoder lost the %09 TAB decode"
+# --- 0.2.28 interactive-shell regression guards (legacy/overlay.sh) ----------
+# The shell prompt/pump fixes from 0.2.28 each shipped past the static contract
+# suite once already; these guards pin the guardable traps.  See
+# Development/docs/etch-lessons-learned.md §6.
+SHELL_READY_BLOCK="$(sed -n '/^function shell_interactive_ready {/,/^}/p' "$OVERLAY")"
+[[ -n "$SHELL_READY_BLOCK" ]] || fail "legacy shell_interactive_ready override not found"
+grep -q 'legacy_b64_available' <<<"$SHELL_READY_BLOCK" \
+    || fail "legacy shell readiness gate lost legacy_b64_available (base64 -> openssl -> python)"
+grep -q 'command -v base64' <<<"$SHELL_READY_BLOCK" \
+    && fail "legacy shell readiness gate re-added a live 'command -v base64' gate (coreutils 5.97 has no base64)"
+MENU_PROMPT_BLOCK="$(sed -n '/^function helper_menu_prompt {/,/^}/p' "$OVERLAY")"
+[[ -n "$MENU_PROMPT_BLOCK" ]] || fail "legacy helper_menu_prompt override not found"
+grep -q 'legacy_b64_available' <<<"$MENU_PROMPT_BLOCK" \
+    || fail "legacy menu prompt gate lost legacy_b64_available (base64 -> openssl -> python)"
+grep -q 'command -v base64' <<<"$MENU_PROMPT_BLOCK" \
+    && fail "legacy menu prompt gate re-added a live 'command -v base64' gate (coreutils 5.97 has no base64)"
+RC_WRITE_LINE="$(grep -F '_brc=\$?; printf' "$OVERLAY")"
+[[ -n "$RC_WRITE_LINE" ]] || fail "legacy shell runner lost the exit-code capture (_brc=\$?; printf ...)"
+grep -qF "printf '%s\\n'" <<<"$RC_WRITE_LINE" \
+    || fail "legacy shell runner rc write lost the trailing-newline printf '%s\\n'"
+grep -qF 'IFS= read -r rc <"$runner_rc_file" 2>/dev/null || true' "$OVERLAY" \
+    || fail "legacy shell runner rc read lost the '|| true' guard"
+grep -qF 'read -r rc <"$runner_rc_file" 2>/dev/null || rc=1' "$OVERLAY" \
+    && fail "legacy shell runner rc read clobbers the value with '|| rc=1'"
+grep -qF 'if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then' "$OVERLAY" \
+    || fail "legacy shell pump read-EOF branch lost the runner-liveness check (kill -0 / zombie)"
+grep -q 'shell_pump_drain_dead' "$OVERLAY" \
+    || fail "legacy shell pump lost the bounded drain-dead path"
+pass "0.2.28 interactive-shell regression guards (base64 gate, rc newline + '|| true' read, read-EOF liveness)"
+# 0.2.28 interactive-session handoff: HelperRunner converts the session into
+# --session-request/--menu-answer-file helper options (never an env-based
+# handoff that sudo env_reset would strip).
+grep -q '"--session-request"' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner lost the --session-request helper option"
+grep -q '"--menu-answer-file"' "$GUI_DIR/src/HelperRunner.cpp" \
+    || fail "HelperRunner lost the --menu-answer-file helper option"
+pass "0.2.28 interactive-session handoff is option-based (--session-request/--menu-answer-file)"
 # Cycle 4b: the display tool is the legacy host-scope SysV stage (runnable
 # with the helper's display capability line; offline stays disabled).
 grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
@@ -329,17 +366,18 @@ done
 # Plan-list key-set parity fix: the Settings plan row set is the modern plan's
 # capability key set (filesystem, dpkg, fixbroken, aptupdate, upgrade, dkms,
 # display, initramfs, efi, grub, extlinux); no row is ever hidden. The
-# filesystem row carries no helper stage (the documented read-only-check
-# frontend gap) and the new dkms/display-manager/efi/extlinux rows map to the
-# helper stages the legacy helper validates.
+# filesystem row maps to the inspect-first `filesystem` plan stage (the helper
+# runs fs-inspect/fs-repair as separate verbs, so the stage is split out of the
+# `repair` command by runFullRepair), and the new dkms/display-manager/efi/
+# extlinux rows map to the helper stages the legacy helper validates.
 for key in filesystem dpkg fixbroken aptupdate upgrade dkms display initramfs efi grub extlinux; do
     grep -q "\"$key\"" <<<"$PLAN_BLOCK" || fail "plan capability key missing from the GUI: $key"
 done
-for stage in dkms display-manager efi extlinux; do
+for stage in filesystem dkms display-manager efi extlinux; do
     grep -q "{ \"$stage\"" <<<"$PLAN_BLOCK" || fail "plan stage missing from the GUI: $stage"
 done
-grep -qF '{ "", "filesystem",' <<<"$PLAN_BLOCK" \
-    || fail "the filesystem plan row must stay stage-less (frontend gap)"
+grep -qF '{ "filesystem", "filesystem",' <<<"$PLAN_BLOCK" \
+    || fail "the filesystem plan row must map to the inspect-first filesystem stage"
 grep -q '"display-manager", "display"' "$WINDOW" \
     || fail "plan row does not map the display capability to display-manager"
 grep -q 'repair/dpkgConfigure' "$WINDOW" || fail "plan settings key missing: repair/dpkgConfigure"
@@ -353,7 +391,7 @@ done
 # survives the forced-off presentation pass.
 for marker in 'updatePlanChecks' 'm_planPreferences' 'planIndexForCapability' \
     'Unavailable: %1' 'never checkable' \
-    'per-device repair is not wired on this frontend'; do
+    'runFilesystemRepairFlow' 'finishFullRepairPlan'; do
     grep -q "$marker" "$WINDOW" || fail "plan availability-semantics marker missing: $marker"
 done
 grep -q 'planCheckboxChanged' "$WINDOW" || fail "plan checkbox handler missing"
@@ -363,18 +401,21 @@ grep -q 'planCheckboxChanged' "$WINDOW" || fail "plan checkbox handler missing"
 # without a later manual toggle. The GUI now keys the cached evidence by the
 # physical drive only (the root-component spelling legitimately drifts after an
 # unlock/topology refresh, e.g. /dev/mapper/name vs /dev/dm-N, and must not
-# discard valid evidence), and the presentation uses the three-way capability
-# state so a persisted selection survives the no-evidence window.
+# discard valid evidence). The plan checkboxes are plain user settings that
+# stay checkable while evidence is absent: only an explicit unavailable
+# (capability `unavailable|<reason>`, a frontend gap, or a host-only stage
+# outside Host Maintenance) disables a row, never the diagnostic-cache warmth.
 IDENTITY_BLOCK="$(sed -n '/^QString LegacyMainWindow::identity() const$/,/^}/p' "$WINDOW")"
 [[ -n "$IDENTITY_BLOCK" ]] || fail "identity() definition not found"
 grep -q 'selectedDisk' <<<"$IDENTITY_BLOCK" \
     || fail "identity() no longer scopes the cache by the physical drive"
 grep -q 'selectedRoot' <<<"$IDENTITY_BLOCK" \
     && fail "identity() still keys the cache by the transient root component"
-for marker in 'planStageState' 'PlanStageAvailable' 'PlanStageNoEvidence' \
-    'm_planPreferencesPersisted' 'capabilityState'; do
-    grep -q "$marker" "$WINDOW" || fail "three-way plan-presentation marker missing: $marker"
+for marker in 'planStageState' 'PlanStageAvailable' 'capabilityState'; do
+    grep -q "$marker" "$WINDOW" || fail "plan-presentation marker missing: $marker"
 done
+grep -q 'm_planPreferencesPersisted' "$WINDOW" \
+    && fail "first-run-disabled persistence register still present"
 grep -q 'CapabilityNoEvidence' "$PARSER" \
     || fail "parser lost the three-way NoEvidence classification"
 grep -q 'readBoolEntry' "$WINDOW" || fail "plan preference persistence probe missing"
@@ -395,7 +436,7 @@ grep -q 'Privilege elevation' "$WINDOW" \
 grep -q 'm_settingsElevationLabel' "$WINDOW" \
     || fail "Settings lost the privileged-authorization support label"
 # Modern 1:1 Logs filter combo: All entries / Diagnostics / Repairs / the
-# three workflows / the 16 diagnostic section titles.
+# three workflows / the 18 diagnostic section titles.
 for filter in 'All entries' 'Diagnostics' 'Repairs' 'File system repair' \
     'Package repair' 'File copy'; do
     grep -q "$filter" "$WINDOW" || fail "GUI lost a log filter option: $filter"
@@ -418,7 +459,7 @@ done
 # button grid, the unsupported-features list is gone, and the individual tools
 # are a list + Selected tool pane with the modern result popup.
 for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
-    'm_planStageList' 'm_configurePlanButton' 'm_runFullRepairButton' \
+    'm_planStageLabels' 'm_configurePlanButton' 'm_runFullRepairButton' \
     'Configure Plan...' 'Run Full Repair' 'configurePlan' 'runFullRepair' \
     'updatePlanView' 'planRunReady' 'selectedPlanStages' \
     'm_toolList' 'm_toolTitle' 'm_toolDescription' 'm_toolPlanStatus' \
@@ -428,7 +469,7 @@ for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
     'setWordWrap(m_logWrapEnabled' \
     'Choose Full Repair stages in Settings' \
     'Always preflight' 'Manual recovery tool' \
-    'Full Repair plan: unavailable on this frontend - read-only check only' \
+    'then repair only the devices that report errors' \
     'Enabled in Settings' 'Disabled in Settings - enable it to include this stage' \
     'Privileged operation completed successfully'; do
     grep -q "$marker" "$WINDOW" || fail "Repair parity marker missing: $marker"
@@ -471,8 +512,10 @@ done
 # "Working..." text must be gone.
 for marker in 'busyRow->addStretch(1)' \
     'busyRow->addWidget(m_busyLabel, 0, Qt::AlignRight)' \
-    '"Running all diagnostics"' '"Running diagnostic: %1"' \
-    '"Regenerating diagnostics automatically"' \
+    '"Running all Host diagnostics"' '"Running all Target diagnostics"' \
+    '"Running %1 diagnostic: %2"' \
+    '"Regenerating Host diagnostics automatically"' \
+    '"Regenerating Target diagnostics automatically"' \
     'kBusyAnimationIntervalMs' 'kBusyBadgeEdgeTolerance' \
     'is not below the guarded-repair badge' \
     'is not right-aligned with the guarded-repair badge' \
@@ -603,7 +646,7 @@ done
 for marker in 'Search log:' 'm_logSearchEdit' 'Session logs' 'm_sessionLogList' 'refreshSessionLogList' 'sessionLogSelectionChanged'; do
     grep -q "$marker" "$WINDOW" || fail "Logs session/search marker missing: $marker"
 done
-for marker in 'Application configuration' 'm_logWrapCheck' 'Mandatory safety controls'; do
+for marker in 'Capabilities and dependencies' 'm_logWrapCheck' 'Mandatory safety controls'; do
     grep -q "$marker" "$WINDOW" || fail "Settings tab marker missing: $marker"
 done
 for marker in 'm_targetCommitted' 'm_hostMaintenance' 'diagnosticsScopeReady' 'scopeReadyReason' 'Select Target' 'Host Maintenance'; do
@@ -625,7 +668,7 @@ done
 # insertion-order lists disable the default sort).
 grep -q 'm_wrapLogsMenuId >= 0\|m_wrapLogsMenuId < 0' "$WINDOW" \
     && fail "menu validity still keys on the Qt3 negative auto-id sign"
-for list in m_diagnosticList m_detailList m_planStageList m_toolList; do
+for list in m_diagnosticList m_detailList m_toolList; do
     grep -q "$list->setSorting(-1)" "$WINDOW" \
         || fail "$list does not disable Qt3's default first-column sorting"
 done
@@ -656,10 +699,11 @@ grep -q 'Save log\.\.\.' "$WINDOW" && fail "Logs still shows the removed Save lo
 grep -q '"Clear log"' "$WINDOW" && fail "Logs still shows the removed Clear log button"
 for marker in 'm_showNonLinuxCheck' 'm_showRemovableCheck' 'm_showEncryptedCheck' \
     'm_autoRefreshCheck' 'deviceFilterChanged' 'autoRefreshToggled' \
-    'Host capabilities and dependencies' 'm_capDistributionLabel' \
+    'Capabilities and dependencies' 'm_capDistributionLabel' \
     'm_refreshCapabilitiesButton' 'Refresh Capabilities' 'refreshCapabilities' \
     'm_capabilityTable' 'm_installSupportButton' 'Install Missing Support...' \
-    'Privileged authorization support' 'no KAuth' 'capabilitySpecs' \
+    'm_capabilityScopeSelector' 'Repair target' 'Action' \
+    'KAuth build support' 'Not compiled - optional integration unavailable' 'capabilitySpecs' \
     'Process namespace isolation' '"unshare"' \
     'Automatic installation will require explicit package mapping' \
     'QSettings' 'devices/showNonLinux' 'devices/showRemovable' \
@@ -687,10 +731,20 @@ grep -q 'QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS support"), "cryptsetup"' "$
 # flushes again. Qt 3.3.7 stores each settings group in its own per-user file
 # under ~/.qt/ named after the group (devicesrc, logsrc, diagnosticsrc,
 # repairrc); the GUI must document those actual file names.
-grep -q 'setPath(QString::fromLatin1("boot-bitch"),' "$WINDOW" \
-    || fail "settings do not use the canonical boot-bitch path"
-grep -q '"boot-repair"), QSettings::User' "$WINDOW" \
-    || fail "settings do not use the boot-repair application"
+# Bug B follow-up (0.2.28 persistence fix): the DEFAULT QSettings is GLOBAL
+# scope, so setPath(..., QSettings::User) is now REQUIRED to force the per-user
+# ~/.qt/ location for both root and the desktop user (the VM's Qt3 ignores the
+# domain/product arguments).  removeSearchPath must stay unused.
+grep -q 'QSettings::User' "$WINDOW" \
+    || fail "settings no longer force QSettings::User scope via setPath"
+grep -q '/.qt/repairrc' "$WINDOW" \
+    || fail "settings diagnostic no longer reports the real ~/.qt/repairrc location"
+grep -q 'removeSearchPath' "$WINDOW" \
+    && fail "settings still call removeSearchPath"
+grep -q 'Settings save: repairrc written to' "$WINDOW" \
+    || fail "saveLegacySettings lost its per-save resolved-path diagnostic"
+grep -q 'Settings load: repairrc read from' "$WINDOW" \
+    || fail "loadLegacySettings lost its resolved-location diagnostic"
 for file in devicesrc logsrc diagnosticsrc repairrc; do
     grep -q "$file" "$WINDOW" \
         || fail "settings do not document the per-group $file location"
@@ -1051,5 +1105,32 @@ grep -q '32 \* 1024' "$TESTS_DIR/auth-pipe-test.cpp" \
 bash -n "$TESTS_DIR/test-auth-pipe.sh" || fail "test-auth-pipe.sh failed bash -n"
 "$TESTS_DIR/test-auth-pipe.sh"
 pass "Qt3 auth-pipe harness present (Etch-runnable, host-skipped)"
+
+# --- UI parity drift check (runs on every GUI-contract invocation) -----------
+# test-ui-parity.sh compares the modern and legacy user-visible string
+# surfaces and exits nonzero while the PORT backlog is non-empty.  The backlog
+# is triaged in Development/docs/legacy-ui-parity-audit.md and ported in
+# follow-up batches, so the contract records the result without failing on it;
+# a missing/broken summary line is still a hard failure.
+bash -n "$TESTS_DIR/test-ui-parity.sh" || fail "test-ui-parity.sh failed bash -n"
+PARITY_OUT="$(bash "$TESTS_DIR/test-ui-parity.sh" 2>&1 || true)"
+printf '%s\n' "$PARITY_OUT" | grep -q '^LEGACY UI PARITY:' \
+    || fail "UI parity check produced no summary line"
+printf '%s\n' "$PARITY_OUT" \
+    | grep -E '^(modern unique|legacy unique|modern-only|legacy-only|allowlisted|PORT backlog|LEGACY UI PARITY)' \
+    | sed 's/^/  /'
+pass "UI parity check executed (see Development/docs/legacy-ui-parity-audit.md)"
+
+# --- Qt3-API compatibility check (the UI/UX port contract) -------------------
+# test-ui-parity-qt3.sh scans legacy/gui/src/*.cpp + *.h for Qt4+/Qt5+/Qt6-only
+# API usage (QProcess::setEnvironment, QByteArray::constData()/operator+=/
+# (const char*), QTableWidget, QHeaderView, QStyleHints, qRegisterMetaType,
+# qOverload, PMF connect, ...).  Unlike the string-parity drift above, an API
+# hit is a HARD failure: the legacy GUI must stay Qt 3.3.7-compilable for the
+# Etch toolchain.
+bash -n "$TESTS_DIR/test-ui-parity-qt3.sh" || fail "test-ui-parity-qt3.sh failed bash -n"
+bash "$TESTS_DIR/test-ui-parity-qt3.sh" \
+    || fail "legacy GUI uses Qt4+/Qt5+/Qt6-only API (see test-ui-parity-qt3.sh)"
+pass "Qt3-API compatibility check (no Qt4+/Qt5+/Qt6-only API usage)"
 
 echo "legacy GUI contract: PASS"

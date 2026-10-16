@@ -164,7 +164,8 @@ std::vector<std::string> capabilityKeys()
 {
     static const char *const keys[] = {
         "validate", "filesystem", "dpkg", "fixbroken", "aptupdate", "upgrade",
-        "dkms", "display", "initramfs", "efi", "grub", "extlinux", "bootstack"
+        "dkms", "display", "gpu", "initramfs", "efi", "grub", "extlinux",
+        "bootstack", "kernels"
     };
     std::vector<std::string> result;
     for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -176,9 +177,9 @@ std::vector<std::string> capabilityKeys()
 std::vector<std::string> diagnosticKeys()
 {
     static const char *const keys[] = {
-        "environment", "backend", "boot", "boot-evidence", "kernel", "grub",
-        "uki", "display", "errors", "usage", "filesystem", "fstab", "btrfs",
-        "mapper", "luks", "report"
+        "environment", "backend", "package", "boot", "boot-evidence", "kernel",
+        "grub", "uki", "display", "gpu", "errors", "usage", "filesystem",
+        "fstab", "btrfs", "mapper", "luks", "report"
     };
     std::vector<std::string> result;
     for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {

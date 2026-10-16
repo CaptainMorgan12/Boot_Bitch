@@ -38,10 +38,13 @@ grep -q '^host_snapshot_resolve_target()' "$HELPER"
 grep -q '^host_snapshot_rollback_unavailable_reason()' "$HELPER"
 grep -q '^host_reboot_unavailable_reason()' "$HELPER"
 
-# Capability lines are host-scope only and never become a Repair tool key.
+# Host-only capability lines never become a Repair tool key; the storage-stack
+# markers are scope-neutral and must be present for every scope.
 grep -Fq 'Host snapshot rollback: available' "$HELPER"
 grep -Fq 'Host snapshot rollback: unavailable|%s' "$HELPER"
 grep -Fq 'Host reboot: available' "$HELPER"
+grep -Fq 'Storage lvm inspection: available' "$HELPER"
+grep -Fq 'Storage software raid: available' "$HELPER"
 grep -Fq 'if (( RUNNING_HOST_MODE == 1 )); then' "$HELPER"
 grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER"
 
@@ -269,7 +272,7 @@ expect_refusal 'separate /boot' 'FAKE_BOOT_RC=0; run_host_snapshots plan 1' \
     'separate /boot'
 expect_refusal 'Timeshift inventory' 'FAKE_TIMESHIFT_RC=0; run_host_snapshots plan 1' \
     'Timeshift'
-expect_refusal 'other nested child' 'FAKE_NESTED_CHILD="@/var/lib/machines"; run_host_snapshots plan 1' \
+expect_refusal 'other nested child' 'FAKE_NESTED_CHILD="@/data"; run_host_snapshots plan 1' \
     'nested subvolume'
 expect_refusal 'read-only root' 'FAKE_RW_RC=1; run_host_snapshots plan 1' \
     'read-only'
@@ -762,5 +765,762 @@ zc_no_pool="$(ZFS_FIXTURE_ROOT="$sandbox/zfs-root" run_zfs_harness '
 ' 2>&1)"
 grep -Fqx 'Repair tool grub: unavailable|reason:unresolvable-zfs-root' <<<"$zc_no_pool" \
     || { echo 'FAIL: an unresolvable ZFS root pool did not fail closed with the exact reason' >&2; grep '^Repair tool grub' <<<"$zc_no_pool" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 9. Nested-child safe set: the empty systemd-managed @/var/lib/portables and
+#    @/var/lib/machines placeholders are tolerated and no longer produce
+#    nested-subvolumes; an unknown nested child — including one nested *beneath*
+#    the safe placeholders, i.e. an actual machine/portable image — still
+#    refuses.  This drives the REAL host_snapshot_nested_child_paths walk
+#    through a mocked `btrfs subvolume list -o /` (full record lines, so the
+#    helper's own `path ` sed extraction runs).
+# ---------------------------------------------------------------------------
+cat > "$sandbox/safe-set-harness.sh" <<'SAFESET'
+#!/usr/bin/env bash
+set -euo pipefail
+source <(sed '/^main "$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+
+btrfs() {
+    case "${1:-}" in
+        subvolume)
+            case "${2:-}" in
+                list) [[ -n "${FAKE_SUBVOLUME_LIST:-}" ]] && printf '%s\n' "$FAKE_SUBVOLUME_LIST" ;;
+            esac
+            ;;
+    esac
+    return 0
+}
+lsblk() { printf '%s\n' "${FAKE_HOST_FSTYPE:-btrfs}"; }
+snapper() { [[ "${1:-}" == --version ]] && printf 'snapper 0.10.6\n'; return 0; }
+pgrep() { return 1; }
+host_snapshot_snapper_config_ok() { return 0; }
+host_snapshot_running_path() { printf '@\n'; }
+host_snapshot_subvolid_pinned() { return 1; }
+host_snapshot_has_separate_boot() { return 1; }
+host_snapshot_timeshift_managed() { return 1; }
+target_path_is_mounted_rw() { return 0; }
+host_snapshot_free_space_ok() { return 0; }
+host_package_manager_gate() { return 0; }
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+SAFESET
+chmod +x "$sandbox/safe-set-harness.sh"
+
+run_safe_set_harness() {
+    HELPER="$HELPER" BOOT_REPAIR_STATE_ROOT="$sandbox/state" HARNESS_CODE="$1" \
+        bash --noprofile --norc "$sandbox/safe-set-harness.sh"
+}
+
+# 9a. Exactly the documented safe nested children: available, no reason.
+if ! safe_out="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots\nID 259 gen 1 top level 5 path @/var/lib/portables\nID 260 gen 1 top level 5 path @/var/lib/machines' \
+        run_safe_set_harness 'host_snapshot_rollback_unavailable_reason' 2>&1)"; then
+    echo 'FAIL: the systemd-managed nested children were not tolerated' >&2
+    printf '%s\n' "$safe_out" >&2
+    exit 1
+fi
+[[ -z "$safe_out" ]] \
+    || { echo 'FAIL: the systemd-managed nested children still produced a refusal reason' >&2; printf '%s\n' "$safe_out" >&2; exit 1; }
+
+# 9b. An unknown nested child (@/data) still refuses with nested-subvolumes.
+unknown_out="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots\nID 259 gen 1 top level 5 path @/data' \
+    run_safe_set_harness 'host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
+grep -Fq 'reason:nested-subvolumes' <<<"$unknown_out" \
+    || { echo 'FAIL: an unknown nested child did not produce nested-subvolumes' >&2; printf '%s\n' "$unknown_out" >&2; exit 1; }
+grep -Fq '@/data' <<<"$unknown_out" \
+    || { echo 'FAIL: the unknown nested child path is missing from the refusal' >&2; printf '%s\n' "$unknown_out" >&2; exit 1; }
+
+# 9c. A nested child *beneath* a safe placeholder (a real machine image) is not
+#     tolerated: only the exact empty placeholder path is exempt.
+machine_image_out="$(FAKE_SUBVOLUME_LIST=$'ID 258 gen 1 top level 5 path @/.snapshots\nID 259 gen 1 top level 5 path @/var/lib/machines\nID 260 gen 1 top level 5 path @/var/lib/machines/debian-test' \
+    run_safe_set_harness 'host_snapshot_rollback_unavailable_reason' 2>&1 || true)"
+grep -Fq 'reason:nested-subvolumes' <<<"$machine_image_out" \
+    || { echo 'FAIL: a nested child beneath a safe placeholder was tolerated' >&2; printf '%s\n' "$machine_image_out" >&2; exit 1; }
+grep -Fq '@/var/lib/machines/debian-test' <<<"$machine_image_out" \
+    || { echo 'FAIL: the machine-image path is missing from the refusal' >&2; printf '%s\n' "$machine_image_out" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 10. Damaged-target snapshot rollback: a Btrfs repair target whose root @ is
+#     missing /etc/os-release (the damaged-target symptom a prior mount-release
+#     bug can leave) must still list/plan/rollback through its intact
+#     @.snapshots store.  run_snapshots uses the lightweight
+#     prepare_target_snapshots_only (no OS detection), so the "does not contain
+#     /etc/os-release" hard failure never fires, while the running-host
+#     protection and same-disk assertion still apply.
+# ---------------------------------------------------------------------------
+grep -q '^prepare_target_snapshots_only()' "$HELPER" \
+    || { echo 'FAIL: the lightweight snapshot-only prepare function is missing' >&2; exit 1; }
+snapshot_body="$(sed -n '/^run_snapshots()/,/^}/p' "$HELPER")"
+grep -q 'prepare_target_snapshots_only' <<<"$snapshot_body" \
+    || { echo 'FAIL: run_snapshots does not use the lightweight snapshot-only prepare' >&2; exit 1; }
+if grep -q 'prepare_target ro' <<<"$snapshot_body"; then
+    echo 'FAIL: run_snapshots still runs the full OS-detection prepare_target' >&2
+    exit 1
+fi
+# The damaged-target recovery probe must call the snapshot-only prepare in its
+# quiet mode so the safety preamble (protected-host-check-pass / target-disk /
+# root-component) is not emitted twice on the healthy Btrfs path (the probe,
+# then prepare_target ro).
+recovery_probe_body="$(sed -n '/^target_root_needs_snapshot_recovery()/,/^}/p' "$HELPER")"
+grep -Fq 'prepare_target_snapshots_only quiet' <<<"$recovery_probe_body" \
+    || { echo 'FAIL: target_root_needs_snapshot_recovery does not call prepare_target_snapshots_only quiet' >&2; exit 1; }
+
+cat > "$sandbox/target-snapshot-harness.sh" <<'TARGETSNAP'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source <(sed '/^main "\$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+PATH="$SANDBOX/mockbin:$PATH"; export PATH
+
+# --- prepare_target_snapshots_only low-level plumbing -----------------------
+is_block_device() { [[ "$1" == /dev/test-* ]]; }
+canonical_block() { is_block_device "$1" && printf '%s\n' "$1"; }
+top_disks_for() { printf '%s\n' /dev/test-disk; }
+mapper_aliases_for_device() { return 0; }
+need() { :; }
+mountpoint() { return 1; }
+mount() { printf 'mount %s\n' "$*" >> "$FAKE_COMMAND_LOG"; return 0; }
+umount() { :; }
+findmnt() { return 1; }
+sweep_stale_target_mounts() { :; }
+mktemp() { printf '%s\n' "$SANDBOX/session-dir"; }
+sync() { :; }
+
+lsblk() {
+    case "$*" in
+        *'-ndo FSTYPE'*) printf '%s\n' "${FAKE_FSTYPE:-btrfs}" ;;
+        *) return 0 ;;
+    esac
+}
+
+# The fixture lives under $SANDBOX/top; mount_snapshot_top is exercised
+# behaviourally elsewhere, so this stub binds SNAPSHOT_TOP to the fixture.
+mount_snapshot_top() {
+    SNAPSHOT_TOP="$SANDBOX/top"
+    mkdir -p "$SNAPSHOT_TOP"
+    return 0
+}
+
+# --- snapshot rollback helpers (validated elsewhere) ------------------------
+validate_snapshot_fstab_for_rollback() { return "${FAKE_FSTAB_RC:-0}"; }
+validate_snapshot_crypttab_for_rollback() { return 0; }
+snapshot_free_space_ok() { return "${FAKE_SPACE_RC:-0}"; }
+snapshot_kernel_pair_audit() { return 0; }
+snapshot_separate_subvolumes() { :; }
+snapshot_mount_promoted_root_rw() { printf 'mount-promoted\n' >> "$FAKE_COMMAND_LOG"; return 0; }
+snapshot_post_switch_reconcile() { return "${FAKE_RECONCILE_RC:-0}"; }
+snapshot_restore_preserved_root() { return 1; }
+prepare_mapper_compatibility_aliases() { :; }
+read_target_os() { :; }
+
+STATE_ROOT="$SANDBOX/state"
+export FAKE_COMMAND_LOG="$SANDBOX/commands.log"
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+TARGETSNAP
+chmod +x "$sandbox/target-snapshot-harness.sh"
+
+run_target_snapshot_harness() {
+    SANDBOX="$sandbox" HELPER="$HELPER" HARNESS_CODE="$1" \
+        bash --noprofile --norc "$sandbox/target-snapshot-harness.sh"
+}
+
+# Build a damaged target: the top-level @ root has no /etc/os-release, but the
+# @.snapshots store holds an intact Linux root snapshot (os-release + fstab).
+build_damaged_target_fixture() {
+    local top="$sandbox/top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@/etc" "$top/@.snapshots/1/snapshot/etc"
+    # The damaged @ root: an /etc exists but os-release was deleted.
+    : > "$top/@/etc/fstab"
+    printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$top/@.snapshots/1/snapshot/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@.snapshots/1/snapshot/etc/fstab"
+    cat > "$top/@.snapshots/1/info.xml" <<'XML'
+<?xml version="1.0"?>
+<snapshot>
+  <type>single</type>
+  <description>contract damaged-target snapshot</description>
+</snapshot>
+XML
+    mkdir -p "$sandbox/session-dir/mount"
+}
+
+target_code='TARGET_DISK=/dev/test-disk
+ROOT_DEVICE=/dev/test-root'
+
+# 10a. list succeeds and reports the intact snapshot without the hard failure.
+build_damaged_target_fixture
+damaged_list="$(run_target_snapshot_harness "$target_code
+run_snapshots list")"
+grep -Fq $'SNAPSHOT\t1\t' <<<"$damaged_list" \
+    || { echo 'FAIL: damaged-target snapshot list did not report snapshot 1' >&2; printf '%s\n' "$damaged_list" >&2; exit 1; }
+if grep -Fq 'does not contain /etc/os-release' <<<"$damaged_list"; then
+    echo 'FAIL: damaged-target snapshot list hit the /etc/os-release hard failure' >&2
+    printf '%s\n' "$damaged_list" >&2
+    exit 1
+fi
+
+# 10b. plan succeeds and emits PLAN_OK=1.
+build_damaged_target_fixture
+damaged_plan="$(run_target_snapshot_harness "$target_code
+run_snapshots plan 1")"
+grep -Fq 'PLAN_OK=1' <<<"$damaged_plan" \
+    || { echo 'FAIL: damaged-target snapshot plan did not emit PLAN_OK=1' >&2; printf '%s\n' "$damaged_plan" >&2; exit 1; }
+if grep -Fq 'does not contain /etc/os-release' <<<"$damaged_plan"; then
+    echo 'FAIL: damaged-target snapshot plan hit the /etc/os-release hard failure' >&2
+    exit 1
+fi
+
+# 10c. rollback succeeds and promotes the intact snapshot to @.
+build_damaged_target_fixture
+: > "$sandbox/commands.log"
+damaged_rollback="$(run_target_snapshot_harness "$target_code
+run_snapshots rollback 1")"
+grep -Fq 'ROLLBACK_RESULT=SUCCESS' <<<"$damaged_rollback" \
+    || { echo 'FAIL: damaged-target snapshot rollback did not succeed' >&2; printf '%s\n' "$damaged_rollback" >&2; exit 1; }
+if grep -Fq 'does not contain /etc/os-release' <<<"$damaged_rollback"; then
+    echo 'FAIL: damaged-target snapshot rollback hit the /etc/os-release hard failure' >&2
+    exit 1
+fi
+[[ -f "$sandbox/top/@/etc/os-release" ]] \
+    || { echo 'FAIL: the promoted @ was not populated from the intact snapshot' >&2; exit 1; }
+backup_count="$(find "$sandbox/top" -mindepth 1 -maxdepth 1 -type d -name '@rollback-before-*' | wc -l)"
+[[ "$backup_count" == 1 ]] \
+    || { echo 'FAIL: the damaged @ was not preserved as one @rollback-before-* root' >&2; exit 1; }
+
+# 10d. prepare_target_snapshots_only honours an optional quiet mode: quiet
+#     suppresses ONLY the three safety-preamble msg_log lines, while the default
+#     (run_snapshots) call keeps them.  The recovery probe runs it quiet so a
+#     healthy Btrfs target's diagnostic emits the preamble exactly once (from
+#     prepare_target ro) instead of twice.
+quiet_probe="$(run_target_snapshot_harness "$target_code
+prepare_target_snapshots_only quiet
+printf 'QUIET_DONE\n'")"
+grep -Fq 'QUIET_DONE' <<<"$quiet_probe" \
+    || { echo 'FAIL: quiet prepare_target_snapshots_only did not complete' >&2; printf '%s\n' "$quiet_probe" >&2; exit 1; }
+if grep -Fq 'msg:protected-host-check-pass' <<<"$quiet_probe"; then
+    echo 'FAIL: prepare_target_snapshots_only quiet still emitted the safety preamble' >&2
+    printf '%s\n' "$quiet_probe" >&2
+    exit 1
+fi
+default_probe="$(run_target_snapshot_harness "$target_code
+prepare_target_snapshots_only
+printf 'DEFAULT_DONE\n'")"
+grep -Fq 'DEFAULT_DONE' <<<"$default_probe" \
+    || { echo 'FAIL: default prepare_target_snapshots_only did not complete' >&2; printf '%s\n' "$default_probe" >&2; exit 1; }
+grep -Fq 'msg:protected-host-check-pass' <<<"$default_probe" \
+    || { echo 'FAIL: prepare_target_snapshots_only default lost the safety preamble' >&2; printf '%s\n' "$default_probe" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 11. Damaged-target reduced recovery report.  run_target_diagnostic must
+#     detect the damaged-but-recoverable Btrfs target (no /etc/os-release
+#     anywhere in the top-level tree, but an intact @.snapshots store) and emit
+#     a reduced report the GUI caches as `Snapshot rollback: available` instead
+#     of the /etc/os-release hard refusal.  A HEALTHY Btrfs target must NOT take
+#     the recovery path: it still runs the normal prepare_target ro flow.
+# ---------------------------------------------------------------------------
+
+# Healthy fixture: the top-level @ root still carries /etc/os-release, so
+# find_btrfs_root resolves the installed root and prepare_target ro handles it.
+build_healthy_target_fixture() {
+    local top="$sandbox/top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@/etc" "$top/@.snapshots/1/snapshot/etc"
+    printf 'ID=test\nPRETTY_NAME="Healthy Contract Test"\n' > "$top/@/etc/os-release"
+    : > "$top/@/etc/fstab"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$top/@.snapshots/1/snapshot/etc/fstab"
+    mkdir -p "$sandbox/session-dir/mount"
+}
+
+# 11a. Damaged target: the REAL run_target_diagnostic report emits the reduced
+#      recovery report (Snapshot rollback: available + the damaged message),
+#      never the /etc/os-release hard refusal, and exits 0.
+build_damaged_target_fixture
+damaged_diag="$(run_target_snapshot_harness "$target_code
+run_target_diagnostic report")"
+grep -Fqx 'Snapshot rollback: available' <<<"$damaged_diag" \
+    || { echo 'FAIL: damaged-target diagnostic did not emit Snapshot rollback: available' >&2; printf '%s\n' "$damaged_diag" >&2; exit 1; }
+grep -Fq 'Snapshot rollback evidence: ' <<<"$damaged_diag" \
+    || { echo 'FAIL: damaged-target recovery report is missing Snapshot rollback evidence' >&2; printf '%s\n' "$damaged_diag" >&2; exit 1; }
+grep -Fqx 'Repair capability probes (read-only, selected target):' <<<"$damaged_diag" \
+    || { echo 'FAIL: damaged-target recovery report is missing the capability-preamble header' >&2; printf '%s\n' "$damaged_diag" >&2; exit 1; }
+grep -Fqx 'Diagnostic: report' <<<"$damaged_diag" \
+    || { echo 'FAIL: damaged-target recovery report is missing the Diagnostic: report frame' >&2; printf '%s\n' "$damaged_diag" >&2; exit 1; }
+grep -Fq 'msg:root-damaged-snapshot-rollback' <<<"$damaged_diag" \
+    || { echo 'FAIL: damaged-target diagnostic did not emit the damaged-target message' >&2; printf '%s\n' "$damaged_diag" >&2; exit 1; }
+if grep -Fq 'does not contain /etc/os-release' <<<"$damaged_diag"; then
+    echo 'FAIL: damaged-target diagnostic hit the /etc/os-release hard refusal' >&2
+    printf '%s\n' "$damaged_diag" >&2
+    exit 1
+fi
+
+# 11b. Healthy target: run_target_diagnostic must NOT take the recovery path.
+#      The normal prepare_target ro flow is reached (proven by the stub markers)
+#      and the reduced recovery report is never emitted.
+build_healthy_target_fixture
+healthy_diag="$(run_target_snapshot_harness "$target_code
+prepare_target() { printf 'PREPARE_TARGET_RO_REACHED\n'; return 0; }
+mount_target_boot_entry() { return 0; }
+diagnostic_repair_capabilities() {
+    echo 'Repair capability probes (read-only, selected target):'
+    echo 'Repair tool validate: available'
+}
+run_one_target_diagnostic() { echo 'Diagnostic: stub-section'; }
+run_target_diagnostic report")"
+grep -Fqx 'PREPARE_TARGET_RO_REACHED' <<<"$healthy_diag" \
+    || { echo 'FAIL: healthy-target diagnostic did not reach prepare_target ro' >&2; printf '%s\n' "$healthy_diag" >&2; exit 1; }
+grep -Fqx 'Repair tool validate: available' <<<"$healthy_diag" \
+    || { echo 'FAIL: healthy-target diagnostic did not emit the normal capability preamble' >&2; printf '%s\n' "$healthy_diag" >&2; exit 1; }
+grep -Fqx 'Diagnostic: stub-section' <<<"$healthy_diag" \
+    || { echo 'FAIL: healthy-target diagnostic did not run the diagnostic sections' >&2; printf '%s\n' "$healthy_diag" >&2; exit 1; }
+if grep -Fq 'msg:root-damaged-snapshot-rollback' <<<"$healthy_diag"; then
+    echo 'FAIL: healthy-target diagnostic took the damaged recovery path' >&2
+    printf '%s\n' "$healthy_diag" >&2
+    exit 1
+fi
+if grep -Fq 'Damaged target snapshot recovery' <<<"$healthy_diag"; then
+    echo 'FAIL: healthy-target diagnostic emitted the reduced recovery report' >&2
+    printf '%s\n' "$healthy_diag" >&2
+    exit 1
+fi
+
+# ---------------------------------------------------------------------------
+# 12. Regression: target snapshot rollback re-profiles the promoted root's
+#     backends.  snapshot_mount_promoted_root_rw must re-detect the initramfs
+#     backend against the rolled-back @ (the running-host path already does)
+#     BEFORE snapshot_post_switch_reconcile dispatches adaptive_initramfs_repair.
+#     A stale/empty TARGET_INITRAMFS_BACKEND otherwise reaches the guarded
+#     initramfs repair and fails closed with "unknown has no guarded repair
+#     implementation", which in turn drives the recovery path into a damaged
+#     preserved @.  This drives the REAL snapshot_mount_promoted_root_rw (mount
+#     plumbing is stubbed; the backend probes, read_target_os and the fstab
+#     subvolume walk run for real) against a valid Debian-family @ fixture and
+#     asserts the backend globals are re-detected, never left at their stale
+#     pre-rollback values.
+# ---------------------------------------------------------------------------
+# Static wiring: the call must exist inside the real mount function.
+promoted_body="$(sed -n '/^snapshot_mount_promoted_root_rw()/,/^}/p' "$HELPER")"
+grep -Eq '^[[:space:]]*profile_target_backends([[:space:]]|$)' <<<"$promoted_body" \
+    || { echo 'FAIL: snapshot_mount_promoted_root_rw does not call profile_target_backends' >&2; exit 1; }
+
+# Build a valid Debian-family @ snapshot root: os-release identifies Debian,
+# the dpkg database records initramfs-tools, and the update-initramfs/
+# mkinitramfs executables plus /etc/apt and /boot/grub evidence are present so
+# every backend probe can resolve the native profile.
+build_debian_snapshot_fixture() {
+    local root="$sandbox/debian-snapshot-root"
+    rm -rf -- "$root"
+    mkdir -p "$root/etc" "$root/etc/apt" "$root/usr/sbin" "$root/usr/bin" \
+        "$root/var/lib/dpkg" "$root/boot/grub" "$root/usr/share/initramfs-tools"
+    printf 'ID=debian\nID_LIKE=debian\nPRETTY_NAME="Debian Contract Test"\n' > "$root/etc/os-release"
+    printf '/dev/test-root / btrfs subvol=@ 0 1\n' > "$root/etc/fstab"
+    printf 'deb http://deb.example.invalid/ stable main\n' > "$root/etc/apt/sources.list"
+    for tool in dpkg apt-get; do : > "$root/usr/bin/$tool"; chmod +x "$root/usr/bin/$tool"; done
+    for tool in update-initramfs mkinitramfs grub-mkconfig; do : > "$root/usr/sbin/$tool"; chmod +x "$root/usr/sbin/$tool"; done
+    : > "$root/boot/grub/grub.cfg"
+    cat > "$root/var/lib/dpkg/status" <<'STATUS'
+Package: base-files
+Status: install ok installed
+Version: 1
+
+Package: initramfs-tools
+Status: install ok installed
+Version: 1
+
+STATUS
+}
+
+cat > "$sandbox/promoted-root-harness.sh" <<'PROMOTED'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source <(sed '/^main "$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+
+# Mount/topology plumbing is stubbed (no real device, mount, subvolume or
+# chroot is touched).  read_target_os, profile_target_backends and
+# mount_target_btrfs_subvolumes run for real against the @ fixture.
+mount() { printf 'mount %s\n' "$*" >> "${FAKE_COMMAND_LOG:?}"; return 0; }
+umount() { :; }
+mountpoint() { return 1; }
+findmnt() { return 1; }
+lsblk() { [[ "$*" == *'-ndo FSTYPE'* ]] && printf 'btrfs\n'; return 0; }
+mapper_aliases_for_device() { return 0; }
+mount_special() { :; }
+mount_target_boot_entry() { :; }
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+PROMOTED
+chmod +x "$sandbox/promoted-root-harness.sh"
+
+run_promoted_root_harness() {
+    HELPER="$HELPER" SANDBOX="$sandbox" FAKE_COMMAND_LOG="$sandbox/promoted-commands.log" \
+        HARNESS_CODE="$1" bash --noprofile --norc "$sandbox/promoted-root-harness.sh"
+}
+
+build_debian_snapshot_fixture
+: > "$sandbox/promoted-commands.log"
+promoted_out="$(run_promoted_root_harness '
+    ROOT_DEVICE=/dev/test-root
+    ROOT_CANONICAL=/dev/test-root
+    TARGET_DISK=/dev/test-disk
+    MOUNT_BASE="$SANDBOX/debian-snapshot-root"
+    SESSION_DIR="$SANDBOX/session"
+    SESSION_LOG="$SANDBOX/session/session.log"
+    mkdir -p "$SESSION_DIR"
+    : > "$SESSION_LOG"
+    # Stale pre-rollback state: prepare_target_snapshots_only never profiles
+    # backends, so these globals are empty/unknown when the rollback promotes
+    # @.  The re-profile must overwrite them.  TARGET_DISTRO_FAMILY is left
+    # unset (the real pre-rollback state) so profile_target_backends recomputes
+    # it from the freshly read os-release.
+    TARGET_INITRAMFS_BACKEND=unknown
+    TARGET_BOOTLOADER_BACKEND=unknown
+    TARGET_PACKAGE_MANAGER=unknown
+    snapshot_mount_promoted_root_rw
+    printf "TARGET_INITRAMFS_BACKEND=%s\n" "${TARGET_INITRAMFS_BACKEND:-EMPTY}"
+    printf "TARGET_BOOTLOADER_BACKEND=%s\n" "${TARGET_BOOTLOADER_BACKEND:-EMPTY}"
+    printf "TARGET_PACKAGE_MANAGER=%s\n" "${TARGET_PACKAGE_MANAGER:-EMPTY}"
+    printf "TARGET_DISTRO_FAMILY=%s\n" "${TARGET_DISTRO_FAMILY:-EMPTY}"
+    printf "PROMOTED_ROOT_PROBE_DONE\n"
+' 2>&1)"
+
+grep -Fqx 'TARGET_INITRAMFS_BACKEND=initramfs-tools' <<<"$promoted_out" \
+    || { echo 'FAIL: promoted-root probe did not re-detect initramfs-tools' >&2; printf '%s\n' "$promoted_out" >&2; exit 1; }
+grep -Fqx 'TARGET_BOOTLOADER_BACKEND=grub' <<<"$promoted_out" \
+    || { echo 'FAIL: promoted-root probe did not re-detect grub' >&2; printf '%s\n' "$promoted_out" >&2; exit 1; }
+grep -Fqx 'TARGET_PACKAGE_MANAGER=apt/dpkg' <<<"$promoted_out" \
+    || { echo 'FAIL: promoted-root probe did not re-detect apt/dpkg' >&2; printf '%s\n' "$promoted_out" >&2; exit 1; }
+grep -Fqx 'TARGET_DISTRO_FAMILY=debian' <<<"$promoted_out" \
+    || { echo 'FAIL: promoted-root probe did not re-detect the Debian family' >&2; printf '%s\n' "$promoted_out" >&2; exit 1; }
+grep -Fqx 'PROMOTED_ROOT_PROBE_DONE' <<<"$promoted_out" \
+    || { echo 'FAIL: promoted-root probe did not complete' >&2; printf '%s\n' "$promoted_out" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 13. Regression: find_btrfs_root must never adopt a rollback-staging
+#     subvolume (@rollback-new-*, @rollback-before-*, @rollback-failed-*) as
+#     the installed root.  When the real @ is damaged (no /etc/os-release) but
+#     a leftover top-level staging subvolume still carries one, the resolver
+#     must return nothing so the damaged-target recovery report fires instead
+#     of silently adopting the staging copy.  A healthy, non-rollback @ root
+#     keeps the existing adoption behaviour.
+# ---------------------------------------------------------------------------
+build_staging_fixture() {
+    local top="$sandbox/top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@/etc" \
+        "$top/@rollback-failed-20261008-120000/etc" \
+        "$top/@rollback-new-20261008-120001/etc" \
+        "$top/@rollback-before-20261008-120002/etc"
+    : > "$top/@/etc/fstab"
+    printf 'ID=test\nPRETTY_NAME="Staging"\n' > "$top/@rollback-failed-20261008-120000/etc/os-release"
+    printf 'ID=test\nPRETTY_NAME="Staging"\n' > "$top/@rollback-new-20261008-120001/etc/os-release"
+    printf 'ID=test\nPRETTY_NAME="Staging"\n' > "$top/@rollback-before-20261008-120002/etc/os-release"
+}
+
+# 13a. A damaged @ plus leftover staging subvolumes resolves to nothing.
+build_staging_fixture
+staging_root="$(run_target_snapshot_harness "$target_code
+find_btrfs_root '$sandbox/top' || true
+printf 'FBR_STAGING_DONE\n'")"
+[[ "$staging_root" == "FBR_STAGING_DONE" ]] \
+    || { echo 'FAIL: find_btrfs_root adopted a @rollback-* staging subvolume as the root' >&2; printf '%s\n' "$staging_root" >&2; exit 1; }
+
+# 13b. A healthy non-rollback @ root is still adopted (existing behaviour).
+build_healthy_target_fixture
+healthy_root="$(run_target_snapshot_harness "$target_code
+find_btrfs_root '$sandbox/top' || true
+printf 'FBR_HEALTHY_DONE\n'")"
+grep -Fq "$sandbox/top/@" <<<"$healthy_root" \
+    || { echo 'FAIL: find_btrfs_root no longer adopts a healthy top-level @ root' >&2; printf '%s\n' "$healthy_root" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 14. Regression: the TUXEDO UKI vendor builder's LUKS detection is host-tainted
+#     inside the target chroot (the host-bound /proc names the recovery host's
+#     mapper and the filtered private /dev lacks it), so a rollback whose
+#     promoted root is LUKS-backed could rebuild TUX.EFI without rd.luks.uuid.
+#     The helper must resolve the target LUKS UUID and hand it to a
+#     request-scoped findmnt guard: run_tuxedo_uki_builder exports HOST_LUKS_UUID
+#     and the generated guard redirects only the LUKS-detection probe
+#     `findmnt -n -o SOURCE /` to the target's unlocked mapper, leaving every
+#     other findmnt invocation untouched.
+# ---------------------------------------------------------------------------
+mkdir -p "$sandbox/uki-root/usr/bin" "$sandbox/uki-root/usr/local/libexec"
+printf '#!/bin/sh\necho REAL-FINDMNT\n' > "$sandbox/uki-root/usr/bin/findmnt"
+chmod +x "$sandbox/uki-root/usr/bin/findmnt"
+
+cat > "$sandbox/uki-builder-harness.sh" <<'UKIHARNESS'
+#!/usr/bin/env bash
+set -euo pipefail
+source <(sed '/^main "$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+
+# Mount/topology and transcript mocks: run_tuxedo_uki_builder is exercised
+# down to the (mocked) chroot boundary.  No real mount, chroot or write runs.
+reassert_target_write_safety() { :; }
+esp_writable_preflight() { :; }
+display_locale_env() { :; }
+msg_log() { :; }
+log() { :; }
+fail() { echo "FAIL-CALLED: $*" >&2; exit 99; }
+realpath_existing() { printf '%s\n' "${@: -1}"; }
+realpath() { printf '%s\n' "${@: -1}"; }
+path_within() { return 0; }
+repair_log_filter() { cat; }
+run_selected_chroot() {
+    # Capture the builder env and copy the generated guard for later checks.
+    { printf 'ARGS\n'; printf '<%s>\n' "$@"; } > "$CAPTURE_ARGS"
+    local w
+    for w in "$TARGET_ROOT"/usr/local/libexec/boot-repair-efi-guard.*/findmnt; do
+        [[ -f "$w" ]] && cp -- "$w" "$CAPTURE_WRAPPER"
+    done
+    return 0
+}
+
+RUNNING_HOST_MODE=0
+TARGET_ROOT="$SANDBOX/uki-root"
+SESSION_DIR="$SANDBOX/session.uki"
+mkdir -p "$SESSION_DIR"
+SESSION_LOG="$SANDBOX/uki-session.log"
+: > "$SESSION_LOG"
+TUXEDO_UKI_ROOT_UUID="11111111-2222-3333-4444-555555555555"
+TUXEDO_UKI_LUKS_UUID="66666666-7777-8888-9999-aaaaaaaaaaaa"
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+UKIHARNESS
+chmod +x "$sandbox/uki-builder-harness.sh"
+
+run_uki_harness() {
+    HELPER="$HELPER" SANDBOX="$sandbox" \
+        CAPTURE_ARGS="$sandbox/uki-capture-args" CAPTURE_WRAPPER="$sandbox/uki-capture-wrapper" \
+        HARNESS_CODE="$1" bash --noprofile --norc "$sandbox/uki-builder-harness.sh"
+}
+
+rm -f "$sandbox/uki-capture-args" "$sandbox/uki-capture-wrapper"
+uki_out="$(run_uki_harness 'run_tuxedo_uki_builder "Rebuild TUXEDO UKI for 7.1.13.1-tuxedo-amd64" /usr/sbin/create_boot_uki_base.sh 7.1.13.1-tuxedo-amd64')"
+[[ -z "$uki_out" ]] \
+    || { echo 'FAIL: UKI builder harness produced unexpected output' >&2; printf '%s\n' "$uki_out" >&2; exit 1; }
+
+# 14a. The chroot environment must carry both the root and LUKS UUIDs.
+grep -Fq '<HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555>' "$sandbox/uki-capture-args" \
+    || { echo 'FAIL: UKI builder did not export HOST_ROOT_UUID' >&2; cat "$sandbox/uki-capture-args" >&2; exit 1; }
+grep -Fq '<HOST_LUKS_UUID=66666666-7777-8888-9999-aaaaaaaaaaaa>' "$sandbox/uki-capture-args" \
+    || { echo 'FAIL: UKI builder did not export HOST_LUKS_UUID' >&2; cat "$sandbox/uki-capture-args" >&2; exit 1; }
+
+# 14b. The request-scoped findmnt guard must have been generated.
+[[ -s "$sandbox/uki-capture-wrapper" ]] \
+    || { echo 'FAIL: UKI builder did not generate the findmnt guard' >&2; exit 1; }
+chmod +x "$sandbox/uki-capture-wrapper"
+
+# 14c. The LUKS-detection probe is redirected to the target's unlocked mapper.
+redirect="$(HOST_LUKS_UUID=66666666-7777-8888-9999-aaaaaaaaaaaa "$sandbox/uki-capture-wrapper" -n -o SOURCE /)"
+[[ "$redirect" == "/dev/mapper/luks-66666666-7777-8888-9999-aaaaaaaaaaaa" ]] \
+    || { echo 'FAIL: findmnt guard did not redirect the LUKS probe to the target mapper' >&2; printf '%s\n' "$redirect" >&2; exit 1; }
+
+# 14d. Every other findmnt invocation passes through without the redirect.
+passthrough="$(HOST_LUKS_UUID=66666666-7777-8888-9999-aaaaaaaaaaaa "$sandbox/uki-capture-wrapper" -n -o FSTYPE / 2>&1 || true)"
+[[ "$passthrough" != *228aa9a3* ]] \
+    || { echo 'FAIL: findmnt guard redirected a non-LUKS findmnt invocation' >&2; printf '%s\n' "$passthrough" >&2; exit 1; }
+
+# 14e. No target LUKS identity means no redirect (the guard falls through).
+nogate="$( "$sandbox/uki-capture-wrapper" -n -o SOURCE / 2>&1 || true)"
+[[ "$nogate" != *228aa9a3* ]] \
+    || { echo 'FAIL: findmnt guard redirected with no target LUKS UUID' >&2; printf '%s\n' "$nogate" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 15. Regression: stale-UKI direct build fallback.  When the vendor builder
+#     no-ops (leaves TUX.EFI embedding an older kernel), rebuild_tuxedo_uki must
+#     rebuild the UKI directly with ukify under the request-scoped EFI guard
+#     (reusing the stale image's already-correct cmdline) and re-verify the
+#     embedded kernel instead of failing.  The vendor command is stubbed as a
+#     no-op; the objcopy section reads and the ukify-equivalent chroot
+#     invocation exercise the real direct-build path with only the tool
+#     boundary stubbed.
+# ---------------------------------------------------------------------------
+mkdir -p "$sandbox/rebuild-uki-root/boot/efi/EFI/BOOT" \
+         "$sandbox/rebuild-uki-root/usr/local/libexec" \
+         "$sandbox/rebuild-uki-root/usr/bin"
+printf 'FAKE-TUX-EFI\n' > "$sandbox/rebuild-uki-root/boot/efi/EFI/BOOT/TUX.EFI"
+printf '#!/bin/sh\nexit 0\n' > "$sandbox/mockbin/objcopy"
+chmod +x "$sandbox/mockbin/objcopy"
+
+cat > "$sandbox/rebuild-uki-harness.sh" <<'REBUILDUKI'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source <(sed '/^main "$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+PATH="$SANDBOX/mockbin:$PATH"; export PATH
+
+# Tool boundary stubs: the vendor builder no-ops (leaves TUX.EFI stale); the
+# ukify-equivalent run_selected_chroot captures its argv and simulates the
+# freshly built image now embedding the newest kernel.
+validate_tuxedo_uki_target() { :; }
+esp_writable_preflight() { :; }
+newest_tuxedo_kernel() { printf '%s\n' "$FAKE_NEWEST_KERNEL"; }
+uefi_nvram_writable() { return 1; }
+run_tuxedo_uki_builder() { :; }   # vendor no-op -> stale TUX.EFI remains
+blkid() { printf '%s\n' "$FAKE_ROOT_UUID"; }
+target_luks_uuid() { printf '%s\n' "$FAKE_LUKS_UUID"; }
+reassert_target_write_safety() { :; }
+display_locale_env() { :; }
+repair_log_filter() { cat; }
+realpath_existing() { printf '%s\n' "${@: -1}"; }
+realpath() { printf '%s\n' "${@: -1}"; }
+path_within() { return 0; }
+log() { :; }
+fail() { echo "FAIL-CALLED: $*" >&2; exit 99; }
+msg_log() { printf 'MSGLOG:%s\n' "$*"; }
+objcopy_dump_section() {
+    local section="$1" name dest
+    name="${section%%=*}"; dest="${section#*=}"
+    case "$name" in
+        .uname)   printf '%s\0' "$(cat "$SANDBOX/embedded-kernel")"  > "$dest" ;;
+        .cmdline) printf '%s\0' "$(cat "$SANDBOX/embedded-cmdline")" > "$dest" ;;
+    esac
+    return 0
+}
+run_selected_chroot() {
+    { printf 'ARGS\n'; printf '<%s>\n' "$@"; } > "$CAPTURE_UKIFY"
+    printf '%s\n' "$FAKE_NEWEST_KERNEL" > "$SANDBOX/embedded-kernel"
+    return 0
+}
+
+TARGET_ROOT="$SANDBOX/rebuild-uki-root"
+ROOT_CANONICAL=/dev/test-root
+RUNNING_HOST_MODE=0
+EFI_ESP_SOURCE=""
+SESSION_DIR="$SANDBOX/session.rebuild"
+mkdir -p "$SESSION_DIR"
+SESSION_LOG="$SANDBOX/rebuild-session.log"
+: > "$SESSION_LOG"
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+REBUILDUKI
+chmod +x "$sandbox/rebuild-uki-harness.sh"
+
+# The stale image embeds an older kernel and already carries the correct cmdline.
+printf '7.2.7.1-tuxedo-amd64\n' > "$sandbox/embedded-kernel"
+printf '%s\n' 'root=UUID=11111111-2222-3333-4444-555555555555 rd.luks.uuid=66666666-7777-8888-9999-aaaaaaaaaaaa rd.luks.name=66666666-7777-8888-9999-aaaaaaaaaaaa=luks-66666666-7777-8888-9999-aaaaaaaaaaaa subvol=@ rootflags=subvol=@' \
+    > "$sandbox/embedded-cmdline"
+
+rm -f "$sandbox/rebuild-uki-capture-args"
+rebuild_out="$(HELPER="$HELPER" SANDBOX="$sandbox" \
+    CAPTURE_UKIFY="$sandbox/rebuild-uki-capture-args" \
+    FAKE_NEWEST_KERNEL=7.1.13.1-tuxedo-amd64 \
+    FAKE_ROOT_UUID=11111111-2222-3333-4444-555555555555 \
+    FAKE_LUKS_UUID=66666666-7777-8888-9999-aaaaaaaaaaaa \
+    HARNESS_CODE='rebuild_tuxedo_uki' \
+    bash --noprofile --norc "$sandbox/rebuild-uki-harness.sh")"
+
+# 15a. The fallback must fire and the post-build check must pass (no fail).
+if grep -Fq 'FAIL-CALLED' <<<"$rebuild_out"; then
+    echo 'FAIL: stale-UKI rebuild_tuxedo_uki failed instead of falling back' >&2
+    printf '%s\n' "$rebuild_out" >&2
+    exit 1
+fi
+grep -Fq 'MSGLOG:uki-vendor-stale' <<<"$rebuild_out" \
+    || { echo 'FAIL: stale-UKI fallback did not emit uki-vendor-stale' >&2; printf '%s\n' "$rebuild_out" >&2; exit 1; }
+
+# 15b. The direct ukify-equivalent invocation must use the newest kernel and the
+#      extracted (already-correct) cmdline.
+[[ -s "$sandbox/rebuild-uki-capture-args" ]] \
+    || { echo 'FAIL: direct ukify-equivalent path did not run' >&2; exit 1; }
+grep -Fq '<--linux=/boot/vmlinuz-7.1.13.1-tuxedo-amd64>' "$sandbox/rebuild-uki-capture-args" \
+    || { echo 'FAIL: direct ukify path used the wrong kernel' >&2; cat "$sandbox/rebuild-uki-capture-args" >&2; exit 1; }
+grep -Fq -- '--cmdline=root=UUID=11111111-2222-3333-4444-555555555555 rd.luks.uuid=66666666-7777-8888-9999-aaaaaaaaaaaa rd.luks.name=66666666-7777-8888-9999-aaaaaaaaaaaa=luks-66666666-7777-8888-9999-aaaaaaaaaaaa subvol=@ rootflags=subvol=@' "$sandbox/rebuild-uki-capture-args" \
+    || { echo 'FAIL: direct ukify path did not reuse the stale image correct cmdline' >&2; cat "$sandbox/rebuild-uki-capture-args" >&2; exit 1; }
+
+# 15c. The post-build embedded-kernel check reports the newest kernel.
+grep -Fq 'MSGLOG:uki-embedded-kernel 7.1.13.1-tuxedo-amd64' <<<"$rebuild_out" \
+    || { echo 'FAIL: post-build embedded-kernel check did not report the newest kernel' >&2; printf '%s\n' "$rebuild_out" >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# 16. Regression: damaged preserved-root recovery must not hard-fail.  A
+#     preserved @rollback-before-* root whose /etc/os-release is missing still
+#     restores the @ name and default subvolume; the recovery reports the
+#     damaged root, skips boot-stack reconciliation and returns 0 so the caller
+#     reports the preserved root as restored.  A healthy preserved root still
+#     reconciles.
+# ---------------------------------------------------------------------------
+cat > "$sandbox/preserved-root-harness.sh" <<'PRESERVED'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+source <(sed '/^main "$@"/d' "${HELPER:?}")
+trap - EXIT INT TERM HUP
+
+mount() { printf 'mount %s\n' "$*" >> "$FAKE_COMMAND_LOG"; return 0; }
+umount() { :; }
+mountpoint() { return 1; }
+snapshot_unmount_target_keep_top() { printf 'unmount-keep-top\n' >> "$FAKE_COMMAND_LOG"; return 0; }
+btrfs() { printf 'btrfs %s\n' "$*" >> "$FAKE_COMMAND_LOG"; return 0; }
+btrfs_subvol_id() { printf '200\n'; }
+snapshot_mount_promoted_root_rw() { printf 'mount-promoted\n' >> "$FAKE_COMMAND_LOG"; return 0; }
+snapshot_post_switch_reconcile() { printf 'reconcile\n' >> "$FAKE_COMMAND_LOG"; return 0; }
+msg_log() { printf 'MSGLOG:%s\n' "$*"; }
+log() { :; }
+
+SESSION_LOG="$SANDBOX/session-preserved.log"
+: > "$SESSION_LOG"
+
+eval "${HARNESS_CODE:?missing HARNESS_CODE}"
+PRESERVED
+chmod +x "$sandbox/preserved-root-harness.sh"
+
+run_preserved_root_harness() {
+    HELPER="$HELPER" SANDBOX="$sandbox" \
+        FAKE_COMMAND_LOG="$sandbox/preserved-commands.log" \
+        HARNESS_CODE="$1" bash --noprofile --norc "$sandbox/preserved-root-harness.sh"
+}
+
+build_preserved_root_damaged_fixture() {
+    local top="$sandbox/preserved-top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@rollback-before-test/etc" "$top/@/etc"
+    : > "$top/@rollback-before-test/etc/fstab"
+    printf 'ID=test\nPRETTY_NAME="Failed Candidate"\n' > "$top/@/etc/os-release"
+}
+build_preserved_root_healthy_fixture() {
+    local top="$sandbox/preserved-top"
+    rm -rf -- "$top"
+    mkdir -p "$top/@rollback-before-test/etc" "$top/@/etc"
+    printf 'ID=test\nPRETTY_NAME="Preserved Root"\n' > "$top/@rollback-before-test/etc/os-release"
+    : > "$top/@rollback-before-test/etc/fstab"
+    printf 'ID=test\nPRETTY_NAME="Failed Candidate"\n' > "$top/@/etc/os-release"
+}
+
+# 16a. Damaged preserved root: return 0, emit the skipped-reconcile message, and
+#      never mount/reconcile the promoted root.
+build_preserved_root_damaged_fixture
+: > "$sandbox/preserved-commands.log"
+damaged_preserved="$(run_preserved_root_harness 'snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
+printf "RESTORE_RC=%s\n" "$?"')"
+grep -Fqx 'RESTORE_RC=0' <<<"$damaged_preserved" \
+    || { echo 'FAIL: damaged preserved-root recovery did not return 0' >&2; printf '%s\n' "$damaged_preserved" >&2; exit 1; }
+grep -Fq 'MSGLOG:rollback-preserved-root-damaged' <<<"$damaged_preserved" \
+    || { echo 'FAIL: damaged preserved-root recovery did not emit the skipped-reconcile message' >&2; printf '%s\n' "$damaged_preserved" >&2; exit 1; }
+if grep -Fq 'mount-promoted' "$sandbox/preserved-commands.log" || grep -Fq 'reconcile' "$sandbox/preserved-commands.log"; then
+    echo 'FAIL: damaged preserved-root recovery still mounted/reconciled the promoted root' >&2
+    cat "$sandbox/preserved-commands.log" >&2
+    exit 1
+fi
+[[ -d "$sandbox/preserved-top/@/etc" && ! -f "$sandbox/preserved-top/@/etc/os-release" ]] \
+    || { echo 'FAIL: damaged preserved root was not restored to @ (name restore)' >&2; exit 1; }
+[[ -f "$sandbox/preserved-top/@rollback-failed-test/etc/os-release" ]] \
+    || { echo 'FAIL: failed candidate was not moved out of @' >&2; exit 1; }
+
+# 16b. Healthy preserved root: still proceeds to mount + reconcile and returns 0.
+build_preserved_root_healthy_fixture
+: > "$sandbox/preserved-commands.log"
+healthy_preserved="$(run_preserved_root_harness 'snapshot_restore_preserved_root "$SANDBOX/preserved-top" "@rollback-before-test" "@rollback-failed-test" "375"
+printf "RESTORE_RC=%s\n" "$?"')"
+grep -Fqx 'RESTORE_RC=0' <<<"$healthy_preserved" \
+    || { echo 'FAIL: healthy preserved-root recovery did not return 0' >&2; printf '%s\n' "$healthy_preserved" >&2; exit 1; }
+grep -Fq 'mount-promoted' "$sandbox/preserved-commands.log" \
+    || { echo 'FAIL: healthy preserved-root recovery did not mount the promoted root' >&2; exit 1; }
+grep -Fq 'reconcile' "$sandbox/preserved-commands.log" \
+    || { echo 'FAIL: healthy preserved-root recovery did not reconcile the boot stack' >&2; exit 1; }
+if grep -Fq 'MSGLOG:rollback-preserved-root-damaged' <<<"$healthy_preserved"; then
+    echo 'FAIL: healthy preserved-root recovery took the damaged skip path' >&2
+    printf '%s\n' "$healthy_preserved" >&2
+    exit 1
+fi
 
 echo "PASS: host snapshot rollback helper contract is wired, fail-closed and transactional."

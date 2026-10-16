@@ -197,16 +197,133 @@ bool isSuseLike(const QString &id, const QMap<QString, QString> &values)
     return like.contains(QStringLiteral("suse"));
 }
 
-// A package name that cannot actually be installed (empty or a placeholder)
-// must never be offered as an installable "Suggested package" in the Boot
-// capabilities table.
-bool isPlaceholderPackage(const QString &package)
+// The `reason:<key>` token from a capability state such as
+// `unavailable|reason:akmods-no-build-tree|param:6.20.1-300.fc44.x86_64`.
+// Empty when the state is `available`, carries legacy English prose, or has no
+// machine-readable reason key (mirrors MainWindow::rawCapabilityReasonKey).
+QString capabilityReasonKey(const QString &state)
 {
-    return package.isEmpty()
-        || package == QStringLiteral("Unknown")
-        || package == QStringLiteral("Distribution-specific")
-        || package == QStringLiteral("Not available on Alpine")
-        || package == QStringLiteral("Check distribution documentation");
+    if (!state.startsWith(QStringLiteral("unavailable|"))) {
+        return QString();
+    }
+    const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+    if (!detail.startsWith(QStringLiteral("reason:"))) {
+        return QString();
+    }
+    return detail.mid(QStringLiteral("reason:").size()).split(QLatin1Char('|')).first();
+}
+
+// Builds one storage-stack Capability row from the cached capability
+// preamble's `Storage <marker>:` and `Storage <marker> evidence:` lines.
+// These markers are scope-neutral (emitted for both the repair target and the
+// running host), so both scopes surface the row. A `reason:missing-*` row names
+// the providing package and is installable, mirroring the dkms
+// missing->installable flow; availability is read verbatim from the cache
+// (never a filesystem probe).
+Capability storageCapability(const QString &preamble,
+                             const QString &marker,
+                             const QString &featureTitle,
+                             const QString &fallbackCommand,
+                             const QString &missingReasonKey,
+                             const QString &suggestedPackage,
+                             const QString &scopeLabel,
+                             bool targetScope)
+{
+    QString state;
+    QString evidenceText;
+    const QString markerColon = marker + QLatin1Char(':');
+    const QString markerEvidence = marker + QStringLiteral(" evidence:");
+    for (const QString &rawLine : preamble.split(QLatin1Char('\n'))) {
+        const QString line = rawLine.trimmed();
+        if (line.startsWith(markerEvidence)) {
+            evidenceText = line.mid(markerEvidence.size()).trimmed();
+        } else if (line.startsWith(markerColon)) {
+            state = line.mid(markerColon.size()).trimmed();
+        }
+    }
+    if (state.isEmpty()) {
+        return {};
+    }
+    Capability capability;
+    capability.feature = featureTitle;
+    capability.scope = scopeLabel.isEmpty()
+        ? QCoreApplication::translate("CapabilityChecker", "Repair target")
+        : scopeLabel;
+    capability.targetScope = targetScope;
+    capability.optional = true;
+    capability.available = state == QStringLiteral("available");
+    capability.command = evidenceText.isEmpty() ? fallbackCommand : evidenceText;
+    capability.packageName.clear();
+    capability.installable = false;
+    if (!capability.available && capabilityReasonKey(state) == missingReasonKey) {
+        capability.packageName = suggestedPackage;
+        capability.installable = true;
+    }
+    if (!capability.available) {
+        capability.note = state.startsWith(QStringLiteral("unavailable|"))
+            ? state.mid(QStringLiteral("unavailable|").size())
+            : state;
+    }
+    return capability;
+}
+
+// Builds the snapshot-rollback Capability row from the cached capability
+// preamble's scope-specific marker. The running host surfaces
+// `Host snapshot rollback:`; the repair target surfaces the scope-neutral
+// `Snapshot rollback:`. Both scopes surface the row whenever the marker is
+// present — available OR unavailable — exactly like the storage-stack rows.
+// A `reason:missing-*` line names the providing package (host `missing-snapper`
+// -> snapper; `missing-btrfs-progs` -> btrfs-progs in both scopes) and is
+// installable; availability is read verbatim from the cache, never a probe.
+Capability snapshotRollbackCapability(const QString &preamble,
+                                      const QString &scopeLabel,
+                                      bool targetScope)
+{
+    const QString marker = targetScope
+        ? QStringLiteral("Snapshot rollback")
+        : QStringLiteral("Host snapshot rollback");
+    const QString markerColon = marker + QLatin1Char(':');
+    const QString markerEvidence = marker + QStringLiteral(" evidence:");
+    QString state;
+    QString evidenceText;
+    for (const QString &rawLine : preamble.split(QLatin1Char('\n'))) {
+        const QString line = rawLine.trimmed();
+        if (line.startsWith(markerEvidence)) {
+            evidenceText = line.mid(markerEvidence.size()).trimmed();
+        } else if (line.startsWith(markerColon)) {
+            state = line.mid(markerColon.size()).trimmed();
+        }
+    }
+    if (state.isEmpty()) {
+        return {};
+    }
+    Capability capability;
+    capability.feature = QCoreApplication::translate("CapabilityChecker", "Snapshot rollback");
+    capability.scope = scopeLabel.isEmpty()
+        ? QCoreApplication::translate("CapabilityChecker", "Repair target")
+        : scopeLabel;
+    capability.targetScope = targetScope;
+    capability.optional = true;
+    capability.available = state == QStringLiteral("available");
+    capability.command = evidenceText.isEmpty()
+        ? (targetScope ? QStringLiteral("btrfs") : QStringLiteral("snapper"))
+        : evidenceText;
+    capability.packageName.clear();
+    capability.installable = false;
+    if (!capability.available) {
+        const QString reasonKey = capabilityReasonKey(state);
+        if (reasonKey == QStringLiteral("missing-snapper") && !targetScope) {
+            capability.packageName = QStringLiteral("snapper");
+            capability.installable = true;
+        } else if (reasonKey == QStringLiteral("missing-btrfs-progs")) {
+            capability.packageName = QStringLiteral("btrfs-progs");
+            capability.installable = true;
+        }
+        capability.note = state.startsWith(QStringLiteral("unavailable|"))
+            ? state.mid(QStringLiteral("unavailable|").size())
+            : state;
+    }
+    return capability;
 }
 } // namespace
 
@@ -232,22 +349,20 @@ static QString repairToolFeatureTitle(const QString &key)
     return key;
 }
 
-// Human-readable title for a recovery-host prerequisite command.
-static QString hostCommandFeatureTitle(const QString &command)
+// Feature title for the module-build (dkms) row, derived from the detected
+// module build system rather than a hardcoded "DKMS" label. The token comes
+// from the cached backend section's `Module build system:` line
+// (dkms|akmods|akms); an absent or unrecognised token falls back to "DKMS
+// rebuild".
+static QString moduleBuildFeatureTitle(const QString &moduleBuild)
 {
-    if (command == QStringLiteral("lsblk")) return QCoreApplication::translate("CapabilityChecker", "Device discovery");
-    if (command == QStringLiteral("blkid")) return QCoreApplication::translate("CapabilityChecker", "Filesystem identification");
-    if (command == QStringLiteral("findmnt")) return QCoreApplication::translate("CapabilityChecker", "Mount inspection");
-    if (command == QStringLiteral("cryptsetup")) return QCoreApplication::translate("CapabilityChecker", "LUKS support");
-    if (command == QStringLiteral("btrfs")) return QCoreApplication::translate("CapabilityChecker", "Btrfs support");
-    if (command == QStringLiteral("rsync")) return QCoreApplication::translate("CapabilityChecker", "Bidirectional file copy");
-    if (command == QStringLiteral("chroot")) return QCoreApplication::translate("CapabilityChecker", "Chroot repair");
-    if (command == QStringLiteral("systemctl")) return QCoreApplication::translate("CapabilityChecker", "Offline systemd repair");
-    if (command == QStringLiteral("efibootmgr")) return QCoreApplication::translate("CapabilityChecker", "UEFI NVRAM inspection");
-    if (command == QStringLiteral("objcopy")) return QCoreApplication::translate("CapabilityChecker", "UKI verification");
-    if (command == QStringLiteral("lvs")) return QCoreApplication::translate("CapabilityChecker", "LVM inspection");
-    if (command == QStringLiteral("mdadm")) return QCoreApplication::translate("CapabilityChecker", "Software RAID");
-    return command;
+    if (moduleBuild == QStringLiteral("akms")) {
+        return QCoreApplication::translate("CapabilityChecker", "AKMS rebuild");
+    }
+    if (moduleBuild == QStringLiteral("akmods")) {
+        return QCoreApplication::translate("CapabilityChecker", "AKMODS rebuild");
+    }
+    return QCoreApplication::translate("CapabilityChecker", "DKMS rebuild");
 }
 
 // The stable repair-tool key order emitted by the helper's
@@ -271,14 +386,18 @@ static const QStringList &repairToolKeyOrder()
 // section's `Module build system:` line names the module-build row's backend
 // (dkms/akmods/akms). No filesystem probing happens here.
 QList<Capability> CapabilityChecker::capabilitiesFromRepairEvidence(const QString &capabilitiesPreamble,
-                                                                    const QString &backendSection)
+                                                                    const QString &backendSection,
+                                                                    const QString &scopeLabel,
+                                                                    bool targetScope)
 {
     QString moduleBuild = QStringLiteral("none");
+    QString distributionFamily = QStringLiteral("unknown");
     for (const QString &rawLine : backendSection.split(QLatin1Char('\n'))) {
         const QString line = rawLine.trimmed();
         if (line.startsWith(QStringLiteral("Module build system:"), Qt::CaseInsensitive)) {
             moduleBuild = line.section(QLatin1Char(':'), 1).trimmed();
-            break;
+        } else if (line.startsWith(QStringLiteral("Distribution family:"), Qt::CaseInsensitive)) {
+            distributionFamily = line.section(QLatin1Char(':'), 1).trimmed();
         }
     }
 
@@ -314,19 +433,58 @@ QList<Capability> CapabilityChecker::capabilitiesFromRepairEvidence(const QStrin
         }
         const QString state = states.value(key);
         Capability capability;
-        capability.feature = repairToolFeatureTitle(key);
-        capability.scope = QCoreApplication::translate("CapabilityChecker", "Repair target");
-        capability.targetScope = true;
+        // The module-build row's Feature label reflects the detected build
+        // system (DKMS/AKMS/AKMODS), not a hardcoded "DKMS"; every other key
+        // keeps its static title.
+        capability.feature = (key == QStringLiteral("dkms"))
+            ? moduleBuildFeatureTitle(moduleBuild)
+            : repairToolFeatureTitle(key);
+        capability.scope = scopeLabel.isEmpty()
+            ? QCoreApplication::translate("CapabilityChecker", "Repair target")
+            : scopeLabel;
+        capability.targetScope = targetScope;
         capability.optional = true;
         capability.available = state == QStringLiteral("available");
         const bool unavailable = !capability.available;
         if (key == QStringLiteral("dkms")) {
             // The module-build row reflects the target's detected build system
             // (dkms/akmods/akms) and names the matching package, never the host
-            // distribution's package.
+            // distribution's package.  The suggested package and installability
+            // are derived from the row's reason key, not just the build system:
+            // - a `missing-*` reason means the build system itself is absent, so
+            //   the suggested package is the build-system package (akmods on
+            //   Fedora/RHEL, akms on Alpine, dkms elsewhere) and it is
+            //   installable ONLY when the helper proved (read-only, against the
+            //   TARGET's own repositories) that the package is present; the
+            //   helper reports that with `Repair capability evidence
+            //   dkms-installable: available` and the row fails closed without
+            //   it (no repo evidence -> no Install);
+            // - a `*-no-build-tree` reason means the build system is present but
+            //   the matching kernel headers/devel build tree is missing; the
+            //   correct package is version-specific, so no one-click install is
+            //   offered (the headers package is surfaced as guidance instead);
+            // - an `available` row (or a legacy/unknown reason) has nothing to
+            //   install.
             capability.command = moduleBuild;
-            capability.packageName = moduleBuildSystemPackageForBackend(moduleBuild);
-            capability.installable = true;
+            const QString reasonKey = capabilityReasonKey(state);
+            // Only the exact missing-build-system reason keys are installable
+            // (the helper probes the target repo before emitting the matching
+            // `dkms-installable` side-channel); any other reason fails closed.
+            const bool installableMissingReason = reasonKey == QStringLiteral("missing-akmods")
+                || reasonKey == QStringLiteral("missing-dkms-alpine")
+                || reasonKey == QStringLiteral("missing-dkms-arch")
+                || reasonKey == QStringLiteral("missing-dkms");
+            const bool packageInTargetRepo =
+                evidence.value(QStringLiteral("dkms-installable")).trimmed() == QStringLiteral("available");
+            if (capability.available || !installableMissingReason || !packageInTargetRepo) {
+                capability.packageName.clear();
+                capability.installable = false;
+            } else {
+                capability.packageName = moduleBuild == QStringLiteral("none")
+                    ? moduleBuildSystemPackageForFamily(distributionFamily)
+                    : moduleBuildSystemPackageForBackend(moduleBuild);
+                capability.installable = true;
+            }
         } else {
             capability.command = evidence.value(key);
             capability.packageName.clear();
@@ -344,33 +502,35 @@ QList<Capability> CapabilityChecker::capabilitiesFromRepairEvidence(const QStrin
         }
         capabilities.append(capability);
     }
-    return capabilities;
-}
 
-// Parses the cached running-host `host-capabilities` diagnostic section into one
-// Capability per `Host capability:` line.
-QList<Capability> CapabilityChecker::capabilitiesFromHostEvidence(const QString &hostCapabilitiesSection)
-{
-    static const QRegularExpression lineRe(
-        QStringLiteral("^Host capability: (\\S+) package=(\\S+) status=(available|missing) scope=(\\S+) note=(.*)$"));
-    QList<Capability> capabilities;
-    for (const QString &rawLine : hostCapabilitiesSection.split(QLatin1Char('\n'))) {
-        const QString line = rawLine.trimmed();
-        const QRegularExpressionMatch match = lineRe.match(line);
-        if (!match.hasMatch()) {
-            continue;
-        }
-        Capability capability;
-        capability.command = match.captured(1);
-        capability.feature = hostCommandFeatureTitle(capability.command);
-        capability.packageName = match.captured(2);
-        capability.available = match.captured(3) == QStringLiteral("available");
-        capability.scope = QCoreApplication::translate("CapabilityChecker", "Host");
-        capability.note = match.captured(5);
-        capability.targetScope = false;
-        capability.optional = true;
-        capability.installable = !isPlaceholderPackage(capability.packageName);
-        capabilities.append(capability);
+    // Storage-stack markers.  LVM and software-RAID are scope-neutral: the
+    // helper emits them for both the repair target and the running host, so
+    // both scopes surface the same two rows with the caller's scope label and
+    // targetScope routing.
+    const Capability lvm = storageCapability(
+        capabilitiesPreamble, QStringLiteral("Storage lvm inspection"),
+        QCoreApplication::translate("CapabilityChecker", "LVM inspection"),
+        QStringLiteral("lvs"), QStringLiteral("missing-lvm2"),
+        QStringLiteral("lvm2"), scopeLabel, targetScope);
+    if (!lvm.feature.isEmpty()) {
+        capabilities.append(lvm);
+    }
+    const Capability raid = storageCapability(
+        capabilitiesPreamble, QStringLiteral("Storage software raid"),
+        QCoreApplication::translate("CapabilityChecker", "Software RAID"),
+        QStringLiteral("mdadm"), QStringLiteral("missing-mdadm"),
+        QStringLiteral("mdadm"), scopeLabel, targetScope);
+    if (!raid.feature.isEmpty()) {
+        capabilities.append(raid);
+    }
+
+    // Snapshot rollback.  The host scope surfaces `Host snapshot rollback:` and
+    // the repair-target scope `Snapshot rollback:`; the row appears in BOTH
+    // available and unavailable states (never filtered out when available) so
+    // the user always sees whether snapshots are usable and why.
+    const Capability snapshot = snapshotRollbackCapability(capabilitiesPreamble, scopeLabel, targetScope);
+    if (!snapshot.feature.isEmpty()) {
+        capabilities.append(snapshot);
     }
     return capabilities;
 }
@@ -381,6 +541,22 @@ QString CapabilityChecker::moduleBuildSystemPackageForBackend(const QString &bac
         return QStringLiteral("akmods");
     }
     if (backend == QStringLiteral("akms")) {
+        return QStringLiteral("akms");
+    }
+    return QStringLiteral("dkms");
+}
+
+// Names the native module-build system package for a target distribution
+// family (fedora/rhel -> akmods, alpine -> akms, anything else -> dkms).  Used
+// only when no build system binary was actually detected, so the Suggested
+// package column names the target's native package instead of a generic dkms.
+QString CapabilityChecker::moduleBuildSystemPackageForFamily(const QString &family)
+{
+    const QString normalized = family.trimmed().toLower();
+    if (normalized == QStringLiteral("fedora") || normalized == QStringLiteral("rhel")) {
+        return QStringLiteral("akmods");
+    }
+    if (normalized == QStringLiteral("alpine")) {
         return QStringLiteral("akms");
     }
     return QStringLiteral("dkms");

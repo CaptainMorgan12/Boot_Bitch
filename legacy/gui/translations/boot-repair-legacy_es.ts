@@ -573,7 +573,7 @@
     </message>
     <message>
         <source>LVM inspection</source>
-        <translation>Inspección de vehículos pesados</translation>
+        <translation>Inspección LVM</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -581,7 +581,7 @@
     </message>
     <message>
         <source>Software RAID</source>
-        <translation>Software RAID</translation>
+        <translation>RAID por software</translation>
     </message>
     <message>
         <source>Optional Linux MD RAID support</source>
@@ -648,7 +648,7 @@
     </message>
     <message>
         <source>Repair</source>
-        <translation>Reparar</translation>
+        <translation>Reparación</translation>
     </message>
     <message>
         <source>Chroot Shell</source>
@@ -676,7 +676,7 @@
     </message>
     <message>
         <source>Close</source>
-        <translation>Cerca</translation>
+        <translation>Cerrar</translation>
     </message>
     <message>
         <source>&amp;File</source>
@@ -1020,7 +1020,7 @@
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Ejecutar herramienta</translation>
+        <translation>Ejecutar</translation>
     </message>
     <message>
         <source>Select a tool to review its repair action.</source>
@@ -1200,7 +1200,7 @@
     </message>
     <message>
         <source>Add Note</source>
-        <translation>Nota</translation>
+        <translation>Añadir nota</translation>
     </message>
     <message>
         <source>Append a NOTE entry to the live session register.</source>
@@ -1251,8 +1251,8 @@
         <translation>Filtrar el registro visible por tipo de entrada. Selección de una sección de diagnóstico muestra las líneas capturadas para esa sección; un filtro de flujo de trabajo como reparación del sistema de archivos o reparación del paquete muestra sus líneas de reparación mapeadas (La copia de archivo no tiene líneas en este frontend). Guardar Como siempre escribe cada entrada.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Los ajustes se almacenan por usuario bajo ~/.qt/, un archivo por grupo de configuración (devicesrc, logsrc, diagnosticsrc, repairrc), y se guardan inmediatamente en cada cambio y de cerca. Inicie el GUI como el mismo usuario para mantener sus anulaciones; un GUI comenzó como root mantiene sus propias copias.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Los ajustes se almacenan por usuario bajo ~/.qt/, un archivo por grupo de configuración (devicesrc, logsrc, diagnosticsrc, repairrc), y se guardan inmediatamente en cada cambio y de cerca. La misma ubicación por usuario se utiliza si el GUI funciona como usuario conectado o como root (sudo preserva el directorio de inicio).</translation>
     </message>
     <message>
         <source>Device discovery</source>

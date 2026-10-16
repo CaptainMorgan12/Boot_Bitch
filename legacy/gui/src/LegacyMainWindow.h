@@ -32,8 +32,10 @@
 // dialog when Host Maintenance is entered or a repair target is committed
 // (never on Run All); the cached session is reused afterwards and an explicit
 // Authorize control re-establishes it when the cached timestamp expired or was
-// refused. The LUKS passphrase travels only over the helper's standard input.
-// Neither secret is ever logged or placed in command arguments.
+// refused. The LUKS passphrase travels only through a mode-600 keyfile
+// (--key-file) written into the GUI's private .keys directory, never stdin or
+// command arguments. Neither secret is ever logged or placed in command
+// arguments.
 //
 // Qt3 note: the Q3* class names of Qt4's Qt3-support module do not exist in
 // Qt3 itself; the native Qt3 classes are QMainWindow/QListView/QTextEdit/
@@ -46,6 +48,7 @@
 #include <qmap.h>
 #include <qstring.h>
 #include <qstringlist.h>
+#include <qvaluevector.h>
 
 #include <cstddef>
 #include <vector>
@@ -65,6 +68,9 @@ class QListViewItem;
 class QPopupMenu;
 class QPushButton;
 class QResizeEvent;
+class QScrollView;
+class PlanScrollView;
+class CapabilityTable;
 class QSplitter;
 class QTabWidget;
 class QTable;
@@ -75,6 +81,27 @@ class QSignalMapper;
 namespace legacy {
 
 class HelperRunner;
+// The modal repair-result dialog (defined in LegacyMainWindow.cpp): its Close
+// button and dismissal are gated until the helper request completes, matching
+// the modern RepairProgressDialog (no silent mid-operation close).
+class RepairResultDialog;
+
+// One parsed `File system check <device>: ...` helper evidence line (modern
+// MainWindow::FilesystemCheckResult parity). `result == "issues"` is the only
+// positive evidence that the device needs repair; skipped/unsupported/tool-
+// missing/clean devices never become repair candidates. Declared in the header
+// (not the .cpp) so the single-popup repair-plan driver can hold a candidate
+// list in member state across its asynchronous steps.
+struct LegacyFsCheckResult {
+    QString device;
+    QString fstype;
+    QString uuid;
+    QString mount;
+    QString tool;
+    QString result;
+    QString detail;
+    LegacyFsCheckResult() {}
+};
 
 // Cycle 9 loop 2: --smoke-test runs with settings isolation so a user's
 // persisted ~/.qt/*rc overrides can never flip a smoke assertion, and the
@@ -122,11 +149,21 @@ public:
     // screenshots).
     void startSmokeTest();
 
+    // Item #3 (modern parity): session-only Up/Down command-history navigation
+    // for the Shell tab command field. +1 steps Up (toward older entries), -1
+    // steps Down (toward newer entries, then back to the saved draft). Called
+    // by the ShellCommandLineEdit keyPressEvent subclass defined in the .cpp.
+    void stepShellHistory(int direction);
+
 signals:
     void smokeFinished(bool ok, const QString &summary);
 
 protected:
     virtual void closeEvent(QCloseEvent *event);
+    // Settings-splitter drag evidence (etch-agent-guide.md §6): fires on
+    // the lower pane's Resize - every handle move resizes it (Qt 3.3.7's
+    // QSplitter has no splitterMoved signal; the connect failed silently).
+    virtual bool eventFilter(QObject *watched, QEvent *event);
 
 private slots:
     void scanDevices();
@@ -148,14 +185,39 @@ private slots:
     void runChrootShell();
     void clearChrootOutput();
     void runUnlock();
+    // Builds (without showing) the "Unlock LUKS repair target" dialog.
+    // The passphrase QLineEdit is returned via editOut (may be null).
+    QDialog *buildUnlockDialog(const QString &luks, QLineEdit **editOut);
     void logFilterChanged();
     void logSearchChanged();
-    void sessionLogSelectionChanged();
+    // Connected to QListView::selectionChanged(QListViewItem*) so the handler
+    // reads the item the signal reports instead of QListView::currentItem(),
+    // which Qt 3.3.x can leave stale (still pointing at the previous item)
+    // while the selection-change signal is being delivered. That stale read
+    // left the Delete button disabled for the first prior session selected
+    // after launch (the most recent prior session), so it could not be deleted.
+    void sessionLogSelectionChanged(QListViewItem *item);
     void refreshSessionLogs();
     void toggleLogWrap(bool enabled);
     void refreshCapabilities();
+    // Item 2: installs the SELECTED capability row's suggested package through
+    // the helper's guarded install verb — install-host-package for the Host
+    // scope and install-target-package for the committed repair-target scope
+    // (simulation-first, fail-closed; never a bare apt-get). Enabled only for a
+    // missing, installable row (Action cell shows "Install"); the target scope
+    // offers no install affordance while no target is committed.
+    void installSelectedCapabilityPackage();
+    // Item 2: QTable currentChanged; re-applies the Install button's enabled
+    // state to the newly selected row.
+    void capabilitySelectionChanged(int row, int col);
     void helperLine(const QString &line);
     void helperFinished(bool ok, int exitCode);
+    // Emits the RAW answer for a waiting interactive repair menu: the input
+    // line's text (verbatim, plus a single newline) is written to the
+    // menu-answer file the helper polls; an empty input fails the prompt
+    // closed.  Only fires while a PROMPT record is pending (the input line is
+    // disabled otherwise).
+    void sendPromptAnswer();
     void saveLog();
     void clearLog();
     void showAbout();
@@ -170,7 +232,7 @@ private slots:
     void startNewSessionLog();
     void addSessionNote();
     void deleteSelectedSessionLog();
-    void deviceFilterChanged();
+    void deviceFilterChanged(bool checked);
     void autoRefreshToggled(bool enabled);
     void makeDefault();
     void showHostDetails();
@@ -187,6 +249,11 @@ private slots:
     int toolIndexForTitle(const QString &title) const;
     void runScheduledAutoRefresh();
     void runSmokeStep();
+    // Re-entrant single-popup repair-plan step driver, scheduled from
+    // helperFinished()/sendPromptAnswer() so a new command never starts inside
+    // the finished signal's call stack. Starts the next plan command (or the
+    // remaining Full Repair stages) inside the one repair result popup.
+    void advanceRepairPlan();
     // Advances the busy-indicator ellipsis animation (0..3 trailing dots
     // behind the base working text) while a helper command runs.
     void advanceBusyAnimation();
@@ -228,6 +295,12 @@ private:
     QString selectedDisk() const;
     QString selectedComponent() const;
     QString selectedRoot() const;
+    // Item #4: the highlighted (not yet committed) Systems tree row that the
+    // Select Target, Unlock and details panes act on. While Host Maintenance
+    // is active this is the highlighted preview row (kept apart from the
+    // active-scope selection), otherwise it is the ordinary selection.
+    QString previewDisk() const;
+    QString previewComponent() const;
     QString autoResolvedRoot(const QString &disk) const;
     QString autoResolvedLuks(const QString &disk) const;
     QString resolvedUnlockedRoot(const QString &disk,
@@ -261,7 +334,7 @@ private:
     void saveLegacySettings();
     void updateStatus();
     void updateActionStates();
-    // B7-4: the structured repair summary block (──────── REPAIR ────────
+    // B7-4: the structured repair summary block (-------- REPAIR --------
     // bracketed, Repair-tagged) appended after every repair command, built
     // from the parsed `Repair change status` lines.
     void appendRepairSummaryBlock(const ParsedTranscript &parsed, bool commandOk);
@@ -274,29 +347,91 @@ private:
     // for the equivalent in-flight operation (no helper command = empty).
     QString busyIndicatorText() const;
     void updateScopeLabel();
+    // Modern updateTargetLabels() parity: the Settings "Show capabilities
+    // for:" selector follows the active scope (Host Maintenance -> Host,
+    // otherwise the committed repair target). It only picks which cached
+    // scope the table reads and never creates a scope model of its own.
+    void syncCapabilityScopeSelector();
+    // Modern invalidateAllActiveScopeDiagnostics()/clearHostDiagnosticCache()
+    // parity: the legacy frontend keeps ONE cached capability/evidence model
+    // (identity-keyed, not two per-scope maps), so a scope switch clears the
+    // model plus the diagnostic display cache so a target-scope run never
+    // carries host-scope evidence (and vice-versa).
+    void invalidateScopeDiagnostics();
     void updateElevationLabel();
     void updatePlanView();
     // Modern availability semantics for the Settings plan checkboxes: shown
     // rows only; available = checkable with the saved preference, unavailable
     // = disabled and unchecked with the exact reason (never hidden).
     void updatePlanChecks();
+    // Re-applies the device-discovery filter checkboxes from their register
+    // (m_showNonLinux/m_showRemovable/m_showEncrypted), mirroring how
+    // updatePlanChecks() re-applies the plan register.
+    void updateDeviceFilterChecks();
     void updateToolDetails();
+    // Item 2: enables the Install Missing Support... button exactly when the
+    // selected capability row is missing, installable and has a package.
+    void updateInstallSupportButton();
     int selectedToolIndex() const;
     bool toolRunReady(int toolIndex, QString *reason) const;
+    // Missing required diagnostic sections for a repair tool (empty when every
+    // required section is cached in m_diagnosticSections). The fail-closed
+    // repair gate uses this list, mirroring MainWindow::missingRequiredDiagnosticTitles.
+    QStringList missingRequiredDiagnosticSections(const QString &toolKey) const;
+    // Ported from MainWindow::kernelsRemovalPreview(): parses the cached
+    // `kernel` diagnostic section into the concise superseded/orphaned/
+    // incomplete/missing-headers kernel-inventory summary shown in the kernels
+    // tool detail pane. Fail-closed: an empty/absent cached section returns an
+    // empty string and the pane keeps its static description only.
+    QString kernelsRemovalPreview() const;
     bool planStageSelected(int planIndex) const;
     bool planStageAvailable(int planIndex, QString *reason) const;
-    // Three-way presentation state for the Settings -> Full Repair checkboxes
-    // (mirrors MainWindow::CapabilityState). The fail-closed gate
+    // Presentation state for the Settings -> Full Repair checkboxes. The
+    // checkboxes are plain user settings that stay checkable unless the stage
+    // is EXPLICITLY unavailable (a cached `unavailable|<reason>` capability
+    // line in the current scope, a frontend gap, or a host-only stage outside
+    // Host Maintenance). Absent capability evidence keeps a stage checkable
+    // with its saved preference, so the presentation never depends on
+    // diagnostic-cache warmth. The fail-closed run gate
     // planStageAvailable() is planStageState() == PlanStageAvailable.
     enum PlanStageState {
         PlanStageUnavailable = 0,
-        PlanStageAvailable = 1,
-        PlanStageNoEvidence = 2
+        PlanStageAvailable = 1
     };
     PlanStageState planStageState(int planIndex, QString *reason) const;
     QStringList selectedPlanStages() const;
     QStringList selectedPlanTitles() const;
     bool planRunReady(QString *reason) const;
+    // The file system repair flow (modern runFilesystemRepairFlow parity): runs
+    // the read-only fs-inspect and the per-device repair inside the single
+    // repair result popup, with the per-device decision surfaced inline through
+    // the popup's prompt input line (no separate modal). Returns true when at
+    // least one repair completed successfully.
+    bool runFilesystemRepairFlow();
+    // Begins the single-popup repair-plan driver (Full Repair plan or the
+    // standalone file system flow): captures the scope, starts the first
+    // command and leaves the rest to advanceRepairPlan(). runFilesystem is
+    // false when a Full Repair plan has no file system stage selected.
+    bool beginRepairPlan(bool fullRepair, const QStringList &remainingStages,
+                         bool runFilesystem);
+    // Starts the remaining Full Repair stages as one helper request; returns
+    // false when there are none or the command could not start.
+    bool startRemainingRepairStages();
+    // Presents the numbered per-device repair decision through the popup's
+    // prompt input line and waits for sendPromptAnswer().
+    void poseRepairPlanInlineDecision();
+    // Applies the typed inline answer (a numbered device list) and starts the
+    // first chosen per-device repair.
+    void processRepairPlanInlineAnswer(const QString &answer);
+    // Starts the next chosen per-device fs-repair; returns false when none
+    // remain (the caller then moves on to the remaining plan stages).
+    bool startNextRepairPlanDevice();
+    // Continues to the remaining Full Repair stages, or finalizes the plan.
+    void continueOrFinishRepairPlan();
+    // Finalizes the plan: enables the popup's Close, invalidates the cached
+    // diagnostics (Full Repair) or schedules the stale-based refresh
+    // (standalone), and clears the plan state.
+    void finishRepairPlan();
     void showRepairResultDialog(const QString &title);
     QWidget *layoutBoundFor(QWidget *widget, QWidget *pageWidget) const;
     void updateConfigView();
@@ -325,6 +460,16 @@ private:
     bool writeConfigContentFile(const QByteArray &content, QString *path);
     void discardConfigContentFile();
     void discardUnlockKeyfile();
+    // Interactive repair menu-answer channel (Qt 3.3.7 QProcess cannot deliver
+    // stdin): a mode-600 file the helper polls via
+    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.  ensureMenuAnswerFile reserves the
+    // empty path before the interactive helper starts; writeMenuAnswerRecord
+    // writes the RAW answer plus a single newline (an empty answer = a lone
+    // newline = cancel/fail-closed) on Send; discardMenuAnswerFile unlinks it
+    // on every completion path.
+    bool ensureMenuAnswerFile(QString *path);
+    bool writeMenuAnswerRecord(const QString &answer);
+    void discardMenuAnswerFile();
     void injectUnlockedMapperRows(const QString &disk, const QString &mapper,
                                   const QString &root, const QString &fstype,
                                   const QString &uuid = QString::null);
@@ -338,10 +483,16 @@ private:
     void updateDriveDetails();
     void updateUnlockStatus();
     void updateDiagnosticDetails();
+    void refreshDiagnosticResultsView();
     void updateAuthorizationAffordance();
     void mergeHelperDevices(const ParsedTranscript &parsed);
     void refreshSessionLogList();
     void refreshLogView();
+    // Flushes the diagnostic stream buffered during a run into the register and
+    // the session file, preserving each line's captured kind/section tag
+    // (modern hide-until-complete parity: the buffered transcript is revealed
+    // only once the run completes).
+    void flushBufferedDiagnosticEntries();
     bool logLinePassesFilter(const LogEntry &entry) const;
     QStringList sessionLogFiles() const;
     QString visibleMapperForDisk(const QString &disk) const;
@@ -355,7 +506,8 @@ private:
                       bool quiet = false,
                       const QString &logSection = QString::null,
                       const QString &logStages = QString::null,
-                      bool browse = false);
+                      bool browse = false,
+                      bool interactive = false);
     void runDiagnosticsInternal(bool quiet);
     void maybeAutoRefreshDiagnostics(const QString &reason);
     void reportChangeStatuses(const ParsedTranscript &parsed);
@@ -379,7 +531,17 @@ private:
     QListView *m_deviceList;
     QListView *m_detailList;
     QListView *m_diagnosticList;
-    QListView *m_planStageList;
+    // Item 1 (two-column plan): the Repair-tab Full Repair plan renders the
+    // numbered stage titles as read-only QLabels in a single two-column
+    // QGridLayout (ceil(planSpecCount/2) rows x 2 columns, matching the
+    // Settings plan's two-column QGridLayout), left column first so the plan
+    // order reads top-to-bottom down the left column then the right. The grid
+    // lives inside a QScrollView so the stages scroll when the vertical
+    // splitter is dragged up to hide them (the count/readiness/buttons stay
+    // outside the scroll view). updatePlanView() fills the labels in a
+    // BALANCED split (ceil(N/2) left / floor(N/2) right) and hides the unused
+    // ones, keeping one "Full Repair plan" header with no per-column titles.
+    QValueVector<QLabel *> m_planStageLabels;
     QListView *m_toolList;
     QListView *m_sessionLogList;
     QTextEdit *m_rawView;
@@ -425,6 +587,20 @@ private:
     QLabel *m_planParagraph;
     QLabel *m_planCountLabel;
     QLabel *m_planReadinessLabel;
+    // The Full Repair plan's scroll view. It is a PlanScrollView whose
+    // minimumSizeHint() reports a small two-row floor (not AutoOneFit's
+    // inflated minimum), so the vertical splitter can actually shrink the plan
+    // frame instead of locking. See etch-lessons-learned.md §6.
+    PlanScrollView *m_planScroll;
+    // The Full Repair plan and Individual repair tools group frames, kept so
+    // the smoke test can report their actual displayed heights (QWidget::height()
+    // after the Repair page is laid out; see etch-agent-guide.md §6).
+    QGroupBox *m_planGroup;
+    QGroupBox *m_toolsGroup;
+    // The plan stage grid's real content height (rows x rowHint + spacing +
+    // padding), set by updatePlanView() so the smoke test can report the plan
+    // frame's tight content height (see etch-agent-guide.md §6).
+    int m_planGridContentHeight;
     QLabel *m_toolTitle;
     QLabel *m_toolDescription;
     QLabel *m_toolPlanStatus;
@@ -434,15 +610,14 @@ private:
     QLabel *m_configReasonLabel;
     QLabel *m_chrootReasonLabel;
     QLabel *m_authStatusLabel;
-    QLabel *m_settingsHelperLabel;
     QLabel *m_settingsElevationLabel;
-    QLabel *m_settingsLogDirLabel;
-    QLabel *m_settingsSessionLabel;
-    QLabel *m_settingsVersionLabel;
     QLabel *m_capDistributionLabel;
     QLabel *m_capPackageManagerLabel;
     QLabel *m_capAuthLabel;
-    QTable *m_capabilityTable;
+    CapabilityTable *m_capabilityTable;
+    // Settings -> Capabilities scope selector (Repair target / Host): picks
+    // which cached scope's capability evidence the table shows. Item 5 parity.
+    QComboBox *m_capabilityScopeSelector;
     QPushButton *m_scanButton;
     QPushButton *m_diagnosticsButton;
     QPushButton *m_runDiagnosticButton;
@@ -491,9 +666,51 @@ private:
     QGroupBox *m_fileCopyOptionsGroup;
     QWidget *m_chrootTab;
     QWidget *m_settingsContent;
+    // Settings tab section frames the drag controller's event filter walks
+    // (the pane and splitter parents; see etch-agent-guide.md §6).
+    QGroupBox *m_settingsPlanGroup;
+    QGroupBox *m_settingsCapabilityGroup;
+    QGroupBox *m_settingsSafetyGroup;
+    // Live Settings-splitter drag control: Qt 3.3.7's own opaque drag path
+    // decays the panes' sum by the handle size on every incremental mouse
+    // move (logged in the user's real drag: 815 -> 773 across six moves,
+    // with the mandatory box sliding 92px below the splitter's bottom edge
+    // where it is clipped). The handle is intercepted by an event filter
+    // and the drag is driven through setSizes() instead - the distribution
+    // path that preserves the panes' sum and keeps every box inside.
+    QWidget *m_settingsSplitterHandle;
+    bool m_settingsDragActive;
+    int m_settingsDragBaseY;
+    int m_settingsDragBaseUpper;
     QWidget *m_repairContent;
-    QDialog *m_resultDialog;
+    RepairResultDialog *m_resultDialog;
     QTextEdit *m_resultView;
+    // Interactive repair prompt surface (modern parity): the persistent input
+    // line + Send button in the Repair result dialog, enabled only while a
+    // PROMPT record is waiting.  The answer travels to the helper through the
+    // mode-600 menu-answer file (m_promptAnswerFile) the helper polls, because
+    // Qt 3.3.7 QProcess cannot deliver stdin.
+    QLineEdit *m_promptInput;
+    QPushButton *m_promptSend;
+    QLabel *m_promptHint;
+    bool m_promptActive;
+    // The BOOT_REPAIR_SESSION_REQUEST id of the running interactive repair,
+    // and the GUI's mode-600 menu-answer file the helper polls via
+    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.
+    QString m_promptRequestId;
+    QString m_promptAnswerFile;
+    // Monotonic counter for per-request interactive session ids (never reused
+    // across commands, so a stale PROMPT record can never match a later one).
+    unsigned int m_interactiveRequestCounter;
+    // Prompt-flow contract (L1/L2 + D5): the Shell tab's own persistent prompt
+    // surface (hint label + input line + Send), enabled and focused only while
+    // a shell PROMPT record is waiting.  A shell command's question is answered
+    // inline in the Shell tab's output pane (m_shellOutput), never a separate
+    // popup; the answer travels over the same mode-600 menu-answer file
+    // (m_promptAnswerFile) as the repair menus.
+    QLabel *m_shellPromptHint;
+    QLineEdit *m_shellPromptInput;
+    QPushButton *m_shellPromptSend;
     QLabel *m_chrootCommandHeading;
     std::vector<QCheckBox *> m_planChecks;
     // The saved per-stage plan preference, kept separately from the checkbox
@@ -501,12 +718,17 @@ private:
     // disabled, unchecked) without clobbering the user's choice, exactly like
     // MainWindow::m_fullRepairStagePreferences.
     std::vector<bool> m_planPreferences;
-    // Whether the per-stage preference above was actually read from QSettings
-    // (not the in-code default). A NoEvidence row keeps a persisted selection
-    // checkable (modern "absent evidence never greys out a saved selection"),
-    // while a first-run row with no persisted choice stays disabled until
-    // evidence arrives.
-    std::vector<bool> m_planPreferencesPersisted;
+    // True once loadLegacySettings() has filled the preference register (and
+    // the device-filter/auto-refresh/wrap state) from the persisted keys, or
+    // from their defaults for absent keys.  Until then nothing may persist or
+    // present the register: saveLegacySettings() and updatePlanChecks() refuse,
+    // so the in-code defaults can never overwrite the saved Full Repair selection.
+    bool m_settingsLoaded;
+    // One-line diagnostic recorded by loadLegacySettings() (the resolved read
+    // location plus the loaded repair/grub value), emitted by the constructor
+    // once the session log directory exists (appendLog inside loadLegacySettings
+    // would bypass a pre-set --log-dir).
+    QString m_settingsLoadDiagnostic;
     // Last tooltip text applied per plan checkbox, so the availability pass
     // re-registers a tooltip only when the text changes (Qt3's QTipManager
     // reallocates the per-widget Tip record on every add).
@@ -522,6 +744,15 @@ private:
     QMap<QString, QString> m_factMap;
     QMap<QString, QString> m_unlockStatusCache;
     QMap<QString, QString> m_diagKeyByTitle;
+
+    // Per-section diagnostic results cache: a combined `diagnose all` run is
+    // parsed into its per-key sections (title + body, exactly as the helper
+    // framed them) so selecting a check shows only that check's own result.
+    // The `report` aggregate shows the full combined report held in
+    // m_fullDiagnosticReport. Cleared alongside m_model.reset() so the display
+    // cache never outlives the capability cache of record.
+    QMap<QString, QString> m_diagnosticSections;
+    QString m_fullDiagnosticReport;
 
     QString m_transcript;
     QString m_logDirectory;
@@ -539,12 +770,24 @@ private:
     QString m_hostDetectedRoot;
     QString m_selectedDisk;
     QString m_selectedComponent;
+    // Item #4: the highlighted (preview) Systems tree row, separate from the
+    // active-scope selection above. Merely highlighting a row (including an
+    // unlocked target row while Host Maintenance is active) records the preview
+    // here and never changes the scope or disables host-scope diagnostics/
+    // repairs; only Select Target (commit) switches the scope.
+    QString m_previewDisk;
+    QString m_previewComponent;
     QString m_rootOverrideDisk;
     QString m_rootOverrideRoot;
     QString m_committedDisk;
     QString m_committedRoot;
     QString m_priorLogPath;
     std::vector<LogEntry> m_logEntries;
+    // Item 4: the diagnostic stream buffered during a run in progress. The
+    // lines are buffered (not appended live) so partial per-section results
+    // stay out of the register until helperFinished() flushes the complete run
+    // (modern hide-until-complete parity).
+    std::vector<LogEntry> m_bufferedDiagnosticEntries;
     QStringList m_priorLogLines;
     QStringList m_fileCopySources;
     QString m_fileCopyBrowsePath;
@@ -583,6 +826,43 @@ private:
 
     bool m_updatingSelection;
     bool m_running;
+    // True while the file system repair flow (fs-inspect + per-device
+    // fs-repair) owns the session; the per-command diagnostics auto-refresh is
+    // suppressed while it is set and re-scheduled once at the end of the flow.
+    bool m_filesystemRepairFlowActive;
+    // The exit status of the most recently finished helper command, set by
+    // helperFinished(); the file system repair flow reads it to decide whether
+    // a repair completed. Reset at the start of every startCommand().
+    bool m_lastCommandOk;
+    // Single-popup repair-plan driver: the Full Repair plan (and the standalone
+    // Check File Systems flow) runs the fs-inspect -> inline per-device
+    // decision -> per-device repair -> remaining stages sequence inside ONE
+    // showRepairResultDialog popup, streaming continuously; the popup's Close
+    // stays disabled until the whole sequence finishes. The driver is
+    // re-entered from helperFinished()/sendPromptAnswer() through
+    // advanceRepairPlan().
+    enum RepairPlanPhase {
+        RepairPlanIdle = 0,
+        RepairPlanFsInspect,   // the read-only fs-inspect command is running
+        RepairPlanFsDecision,  // the inline per-device decision is pending
+        RepairPlanFsRepair,    // one per-device fs-repair command is running
+        RepairPlanRemaining,   // the remaining Full Repair stages are running
+        RepairPlanDone
+    };
+    bool m_repairPlanActive;          // the plan driver owns the session
+    bool m_repairPlanFullRepair;      // Full Repair plan (else standalone fs flow)
+    bool m_repairPlanHost;            // host-scope snapshot for the plan
+    QString m_repairPlanDisk;
+    QString m_repairPlanRoot;
+    QString m_repairPlanScopeLabel;
+    QStringList m_repairPlanRemainingStages; // helper stages after the fs stage
+    QValueList<LegacyFsCheckResult> m_repairPlanCandidates;
+    QValueList<QStringList> m_repairPlanCandidateModes;
+    QStringList m_repairPlanChosenModes; // per candidate: chosen mode or ""
+    int m_repairPlanRepairIndex;       // next candidate to repair, or -1
+    bool m_repairPlanAnyRepairCompleted;
+    bool m_repairPlanInlineQuestion;   // the inline decision is being asked
+    RepairPlanPhase m_repairPlanPhase;
     bool m_pendingDiagnostic;
     // Quiet diagnostic runs are the scheduled auto-regeneration; the busy
     // indicator names them like the modern GUI does.
@@ -596,6 +876,12 @@ private:
     bool m_targetCommitted;
     bool m_hostMaintenance;
     bool m_viewingPriorLog;
+    // Device-discovery filter register (the plan path's m_planPreferences
+    // mirror): loadLegacySettings() fills these, saveLegacySettings() writes
+    // them, and updateDeviceFilterChecks() re-applies them to the checkboxes.
+    bool m_showNonLinux;
+    bool m_showRemovable;
+    bool m_showEncrypted;
     bool m_logWrapEnabled;
     bool m_autoRefreshEnabled;
     QString m_pendingIdentity;
@@ -603,11 +889,39 @@ private:
     QString m_pendingConfigKey;
     QString m_pendingConfigPath;
     bool m_pendingConfigWrite;
+    // Set when Host Maintenance is selected (or left) while a read-only
+    // diagnostic is in flight: the diagnostic is cancelled and the scope
+    // switch is deferred until helperFinished unwinds the cancelled run.
+    // A mutating repair never sets this flag (never cancelled).
+    bool m_scopeSwitchPending;
+    // Set when Select Target commits a repair target while a read-only
+    // diagnostic is in flight: the diagnostic is cancelled and the commit is
+    // deferred until helperFinished unwinds the cancelled run (modern
+    // setPreviewTarget() cancel parity). A mutating repair never sets it.
+    // Mutually exclusive with m_scopeSwitchPending (the later action wins).
+    bool m_commitPending;
 
     bool m_smokeMode;
     int m_smokeStep;
     bool m_smokeDiagnoseOk;
     bool m_smokeValidateOk;
+    // Item #4: per-scope shell transcript. The Host Shell and Chroot Shell
+    // keep separate command-history/transcript buffers so switching between
+    // Host Maintenance and a committed repair target never shows the other
+    // scope's output. The widget (m_shellOutput) always displays the ACTIVE
+    // scope's buffer; updateChrootShellMode() parks the outgoing text and
+    // restores the incoming one on the scope flip. Session-only (modern
+    // parity: the shell history is not persisted to QSettings).
+    QString m_shellTranscriptHost;
+    QString m_shellTranscriptTarget;
+    bool m_shellScopeHost;
+    // Item #3 (modern parity): the Shell tab command history, session-only
+    // (never persisted). Oldest -> newest; the index is -1 while editing a
+    // fresh line and the draft holds the in-progress text saved when the user
+    // steps Up away from that line.
+    QStringList m_shellHistory;
+    int m_shellHistoryIndex;
+    QString m_shellHistoryDraft;
 };
 
 } // namespace legacy

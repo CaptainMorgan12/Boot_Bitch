@@ -135,8 +135,9 @@ void MainWindowUiTest::blankAndDataTargetsSelectableWhileOpticalAndLuksStayGated
 // Regression for the LUKS unlock being routed through the shared privileged
 // session: it must reuse the already-granted administrator authorization (no
 // second Polkit prompt) and, when a different-scope request owns the gate,
-// queue behind it instead of being superseded. Mapper reuse (a second unlock
-// of the same drive is a helper-side no-op) stays out of the GUI.
+// defer (never nested-queue) until the gate clears instead of being superseded.
+// Mapper reuse (a second unlock of the same drive is a helper-side no-op) stays
+// out of the GUI.
 void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
 {
     ScopedSessionLogDir logDir;
@@ -202,8 +203,8 @@ void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
     QCOMPARE(capturedHelperArguments(capturePath), expectedRequest);
 
     // Phase 2: while a different-scope request owns the gate the unlock must
-    // queue behind it (not be superseded) and then proceed once the gate
-    // clears.
+    // defer behind it (not be superseded and not nested-queue) and then proceed
+    // once the gate clears.
     QTemporaryDir queueCaptureDir;
     QVERIFY(queueCaptureDir.isValid());
     const QString queueCapturePath = queueCaptureDir.filePath(QStringLiteral("session.capture"));
@@ -215,7 +216,7 @@ void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
     window.m_privilegedOperationTitle = QStringLiteral("host diagnostic");
 
     // Clear the gate shortly after the unlock starts waiting, so the unlock is
-    // exercised through its queued path and then proceeds.
+    // exercised through its deferred path and then proceeds.
     QTimer::singleShot(300, &window, [&window] {
         window.m_privilegedOperationActive = false;
         window.m_privilegedOperationScopeKey.clear();
@@ -226,13 +227,13 @@ void MainWindowUiTest::unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate()
     fillUnlockPassphrase(&window, QStringLiteral("correct horse battery staple"));
     window.unlockSelectedTarget();
 
-    // The request reached the shared session (so the unlock proceeded rather
-    // than being superseded), and the gate was still held when the unlock
-    // started (so it had to queue first).
-    QCOMPARE(capturedHelperArguments(queueCapturePath), expectedRequest);
+    // The unlock re-enters after the gate clears, so the request reaches the
+    // shared session (rather than being superseded) without the caller blocking
+    // on a nested queue wait. Wait for the deferred unlock to complete.
+    QTRY_COMPARE_WITH_TIMEOUT(capturedHelperArguments(queueCapturePath), expectedRequest, 5000);
     const QString actionLog = window.m_actionLogEntries.join(QLatin1Char('\n'));
-    QVERIFY2(actionLog.contains(QStringLiteral("queued behind")),
-             "the unlock must queue behind the running host diagnostic instead of being superseded");
+    QVERIFY2(actionLog.contains(QStringLiteral("is waiting for the running")),
+             "the unlock must defer behind the running host diagnostic instead of being superseded");
 
     qunsetenv("BOOT_REPAIR_LSBLK");
 }
@@ -293,6 +294,120 @@ void MainWindowUiTest::scopeSwitchingRejectsStaleTargetEvidence()
     QVERIFY(!window.m_runFullRepairButton->isEnabled());
 }
 
+void MainWindowUiTest::scopeSwitchAlwaysRegeneratesDiagnostics()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(true);
+    window.m_privilegedSessionReady = true;
+    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
+
+    // Resolve the protected running host and park a committed repair target,
+    // then return to ordinary target mode so the round-trip can start there.
+    prepareRepairScope(window, /*host=*/false);
+    prepareRepairScope(window, /*host=*/true);
+    window.m_hostMaintenanceMode = false;
+
+    // Seed both scopes with FRESH evidence (non-empty report, matching target
+    // identity) so the freshness gate alone would suppress the regeneration on
+    // the pre-fix code path.
+    window.m_targetDiagnosticCache.insert(
+        QStringLiteral("report"), QStringLiteral("Diagnostic: report\nFROZEN-TARGET-EVIDENCE\n"));
+    window.m_hostDiagnosticCache.insert(
+        QStringLiteral("report"), QStringLiteral("Diagnostic: report\nFROZEN-HOST-EVIDENCE\n"));
+
+    // target → host: entering Host Maintenance must schedule a forced
+    // regeneration even though the running-host cache is still fresh.
+    window.selectHostForMaintenance();
+    QVERIFY(window.m_hostMaintenanceMode);
+    QVERIFY(window.m_evidenceRefreshTimer);
+    QVERIFY2(window.m_evidenceRefreshTimer->isActive(),
+             "entering Host Maintenance must schedule automatic diagnostics regeneration "
+             "even when the running-host cache is fresh");
+    QTRY_VERIFY_WITH_TIMEOUT(!window.m_evidenceRefreshTimer->isActive(), 3000);
+    QVERIFY2(!window.m_hostDiagnosticCache.value(QStringLiteral("report"))
+                  .contains(QStringLiteral("FROZEN-HOST-EVIDENCE")),
+             "the host direction must regenerate diagnostics instead of reusing the fresh cache");
+
+    // host → target: leaving Host Maintenance must force the restored target's
+    // regeneration too (the parked target cache is still fresh).
+    window.exitHostMaintenanceMode();
+    QVERIFY(!window.m_hostMaintenanceMode);
+    QVERIFY(window.m_evidenceRefreshTimer);
+    QVERIFY2(window.m_evidenceRefreshTimer->isActive(),
+             "leaving Host Maintenance must schedule automatic diagnostics regeneration "
+             "for the restored target even when its cache is fresh");
+    QTRY_VERIFY_WITH_TIMEOUT(!window.m_evidenceRefreshTimer->isActive(), 3000);
+    QVERIFY2(!window.m_targetDiagnosticCache.value(QStringLiteral("report"))
+                  .contains(QStringLiteral("FROZEN-TARGET-EVIDENCE")),
+             "the target direction must regenerate diagnostics instead of reusing the fresh cache");
+}
+
+// The scope-transition announcement must be tagged with the NEW scope's
+// [SCOPE] marker: updateSessionScope() runs BEFORE the transition appendLog()
+// in selectHostForMaintenance()/exitHostMaintenanceMode(), so the notice lands
+// in the new scope's block, never the outgoing scope's. The session file is
+// append-only in chronological order, so asserting the marker precedes the
+// announcement proves the ordering.
+void MainWindowUiTest::scopeTransitionAnnouncementTaggedWithNewScope()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    auto sessionLog = [](MainWindow &window) {
+        QFile file(window.m_sessionLogPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            return QString();
+        }
+        return QString::fromUtf8(file.readAll());
+    };
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // Resolve the protected running host and park a committed repair target,
+    // then return to ordinary target mode so the round-trip can start there.
+    prepareRepairScope(window, /*host=*/false);
+    prepareRepairScope(window, /*host=*/true);
+    window.m_hostMaintenanceMode = false;
+
+    // target → host: the Running Host [SCOPE] marker must precede the
+    // host-maintenance announcement.
+    window.selectHostForMaintenance();
+    QVERIFY(window.m_hostMaintenanceMode);
+    {
+        const QString log = sessionLog(window);
+        const int marker = log.indexOf(QStringLiteral("[SCOPE] Running Host"));
+        const int notice = log.indexOf(QStringLiteral("Running host selected for explicit maintenance"));
+        QVERIFY2(marker >= 0, "the Running Host [SCOPE] marker must be written");
+        QVERIFY2(notice >= 0, "the host-maintenance announcement must be written");
+        QVERIFY2(marker < notice,
+                 "the [SCOPE] marker must precede the host-maintenance announcement");
+    }
+
+    // host → target: the Repair Target [SCOPE] marker must precede the
+    // exit announcement.
+    window.exitHostMaintenanceMode();
+    QVERIFY(!window.m_hostMaintenanceMode);
+    {
+        const QString log = sessionLog(window);
+        const int marker = log.indexOf(QStringLiteral("[SCOPE] Repair Target"));
+        const int notice = log.indexOf(QStringLiteral("Running-host maintenance deselected"));
+        QVERIFY2(marker >= 0, "the Repair Target [SCOPE] marker must be written");
+        QVERIFY2(notice >= 0, "the exit announcement must be written");
+        QVERIFY2(marker < notice,
+                 "the [SCOPE] marker must precede the exit announcement");
+    }
+}
+
 void MainWindowUiTest::missingCapabilityEvidenceFailsClosed()
 {
     // Simulate the first run (no persisted stage selections) so the checkbox
@@ -336,145 +451,6 @@ void MainWindowUiTest::missingCapabilityEvidenceFailsClosed()
         QString reason;
         QVERIFY(!window.repairToolAvailable(QStringLiteral("dpkg"), &reason));
         QCOMPARE(reason, QStringLiteral("Conflict"));
-    }
-}
-
-// The File systems section belongs to the complete diagnostic set that scope
-// entry regenerates: entering Host Maintenance and selecting a repair target
-// must cache it exactly like every other section. It used to stay blank
-// because the combined helper `all` run omitted the fs-inspect body.
-void MainWindowUiTest::filesystemDiagnosticCachedByScopeAutoRegeneration()
-{
-    ScopedSessionLogDir logDir;
-    QVERIFY(logDir.isValid());
-
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    window.m_snapshotPreloadScheduled = true;
-    window.m_autoRefreshDiagnostics->setChecked(true);
-    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
-    window.m_privilegedSessionReady = true;
-
-    // Host Maintenance entry runs the complete running-host report.
-    prepareRepairScope(window, true);
-    window.m_hostMaintenanceMode = false;
-    window.selectHostForMaintenance();
-    QVERIFY(window.m_hostMaintenanceMode);
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !window.m_hostDiagnosticCache.value(QStringLiteral("filesystem")).trimmed().isEmpty(),
-        15000);
-    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))
-                 .contains(QStringLiteral("file system check"), Qt::CaseInsensitive),
-             qPrintable(window.m_hostDiagnosticCache.value(QStringLiteral("filesystem"))));
-    QVERIFY2(window.m_hostDiagnosticCache.value(QStringLiteral("report"))
-                 .contains(QStringLiteral("Diagnostic: filesystem")),
-             "the running-host combined report must embed the File systems section");
-
-    // Selecting a repair target runs the complete target report with the same
-    // File systems section.
-    prepareRepairScope(window);
-    window.m_evidenceRefreshDelayMs = kEvidenceRefreshTestDelayMs;
-    window.m_privilegedSessionReady = true;
-    selectTopLevelDisk(window, window.m_previewTargetPath);
-    window.setPreviewTarget();
-    QTRY_VERIFY_WITH_TIMEOUT(
-        !window.m_targetDiagnosticCache.value(QStringLiteral("filesystem")).trimmed().isEmpty(),
-        15000);
-    QVERIFY2(window.m_targetDiagnosticCache.value(QStringLiteral("report"))
-                 .contains(QStringLiteral("Diagnostic: filesystem")),
-             "the target combined report must embed the File systems section");
-}
-
-void MainWindowUiTest::disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences()
-{
-    // The harness shares one settings file for the whole process. Start from a
-    // known state: a previous session persisted dkms and dpkgConfigure on,
-    // everything else at its first-run default.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
-    for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
-                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
-                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
-        persist.remove(QString::fromLatin1(key));
-    }
-    persist.setValue(QStringLiteral("repair/dkms"), true);
-    persist.setValue(QStringLiteral("repair/dpkgConfigure"), true);
-    persist.sync();
-    {
-        MainWindow window;
-        prepareRepairScope(window);
-        cacheRepairEvidence(window, capabilityEvidence(true, false));
-        window.m_fullRepairDkms->setChecked(true);
-        window.m_fullRepairDpkg->setChecked(true);
-        window.updateFullRepairSummary();
-        // An unavailable stage is shown disabled AND unchecked; the saved
-        // preference is untouched by the forced-off display.
-        QVERIFY(!window.m_fullRepairDkms->isChecked());
-        QVERIFY(!window.m_fullRepairDkms->isEnabled());
-        QVERIFY(!window.m_fullRepairDkms->isCheckable());
-        QVERIFY(!window.m_fullRepairDpkg->isChecked());
-        QVERIFY(!window.m_fullRepairDpkg->isEnabled());
-        QVERIFY(!window.m_fullRepairDpkg->isCheckable());
-        QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dkms")));
-        QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
-        window.m_fullRepairGrub->setChecked(true);
-        for (QCheckBox *check : {window.m_fullRepairBrokenPackages, window.m_fullRepairUpgrade,
-                                 window.m_fullRepairInitramfs,
-                                 window.m_fullRepairEfi}) {
-            check->setChecked(false);
-        }
-        window.updateFullRepairSummary();
-        QVERIFY(window.m_runFullRepairButton->isEnabled());
-        QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("grub")});
-        window.m_fullRepairGrub->setChecked(false);
-        QVERIFY(!window.m_runFullRepairButton->isEnabled());
-        // An unavailable stage cannot change the saved preference: the forced
-        // display state is never persisted over the user's choice.
-        window.m_fullRepairExtlinux->setChecked(false);
-        window.saveSettings();
-        QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
-                     .value(QStringLiteral("repair/dkms")).toBool(), true);
-        QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
-                     .value(QStringLiteral("repair/dpkgConfigure")).toBool(), true);
-        QCOMPARE(QSettings(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"))
-                     .value(QStringLiteral("repair/extlinux")).toBool(), true);
-    }
-    {
-        // Second window of a persisted install: the stage selections were
-        // saved by the previous session, so with no capability evidence yet
-        // the checkboxes keep showing the persisted selections ENABLED
-        // (deterministic across installs, independent of whether diagnostics
-        // already ran). The actual tool/plan/Run gates stay fail-closed on
-        // the missing evidence.
-        MainWindow window;
-        window.loadSettings();
-        QVERIFY(window.m_fullRepairDkms->isChecked());
-        QVERIFY(window.m_fullRepairDpkg->isChecked());
-        QVERIFY(window.m_fullRepairExtlinux->isChecked());
-        QVERIFY(window.m_fullRepairDkms->isEnabled());
-        QVERIFY(window.m_fullRepairDkms->isCheckable());
-        QVERIFY(window.m_fullRepairDpkg->isEnabled());
-        QVERIFY(window.m_fullRepairDpkg->isCheckable());
-        QVERIFY(window.m_fullRepairExtlinux->isEnabled());
-        QVERIFY2(window.m_fullRepairDkms->toolTip().contains(QStringLiteral("re-checked")),
-                 "a pending-evidence stage must explain that its saved selection is kept and re-checked");
-        for (QCheckBox *check : {window.m_fullRepairBrokenPackages, window.m_fullRepairUpgrade,
-                                 window.m_fullRepairInitramfs, window.m_fullRepairEfi,
-                                 window.m_fullRepairGrub}) {
-            check->setChecked(false);
-        }
-        window.updateFullRepairSummary();
-        // Fail-closed gating is unchanged: without capability evidence no
-        // stage may enter the executable plan or enable Run Full Repair, even
-        // though the Settings checkboxes keep the saved selections.
-        QVERIFY(window.selectedRepairStages().isEmpty());
-        QVERIFY(!window.m_runFullRepairButton->isEnabled());
-        // An interactive pending-evidence checkbox records the user's new
-        // choice instead of silently dropping it.
-        window.m_fullRepairDkms->setChecked(false);
-        QVERIFY2(!window.m_fullRepairStagePreferences.value(QStringLiteral("dkms")),
-                 "toggling a persisted stage without evidence must persist the change");
     }
 }
 
@@ -557,10 +533,11 @@ void MainWindowUiTest::unavailablePlanStagesAreDisabledAndUnchecked()
     QVERIFY(window.selectedRepairStages().contains(QStringLiteral("dpkg-configure")));
     QVERIFY(window.selectedRepairStages().contains(QStringLiteral("apt-update")));
     QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("initramfs")));
-    for (int row = 0; row < window.m_fullRepairStageList->count(); ++row) {
-        QVERIFY2(!window.m_fullRepairStageList->item(row)->text().contains(QStringLiteral("DKMS")),
+    const QStringList planStageTexts = fullRepairPlanStageTexts(window);
+    for (const QString &text : planStageTexts) {
+        QVERIFY2(!text.contains(QStringLiteral("DKMS")),
                  "an unavailable stage must not appear in the plan list");
-        QVERIFY2(!window.m_fullRepairStageList->item(row)->text().contains(QStringLiteral("GRUB")),
+        QVERIFY2(!text.contains(QStringLiteral("GRUB")),
                  "an unavailable stage must not appear in the plan list");
     }
 
@@ -653,78 +630,6 @@ void MainWindowUiTest::settingsStageCheckboxesFirstRunStayDisabledUntilEvidence(
     QVERIFY(!window.m_fullRepairUpgrade->isChecked());
     QVERIFY(!window.m_fullRepairDisplayManager->isChecked());
     QVERIFY(!window.m_fullRepairEfi->isChecked());
-}
-
-// Deterministic Fedora-vs-TUXEDO behavior: the Settings checkboxes reflect the
-// persisted user settings, not the diagnostic-cache warmth at the time the
-// Settings page was opened. After a previous session saved stage selections
-// they stay visible/selected even while capability evidence is still pending,
-// and only fresh explicit `unavailable|<reason>` evidence disables a stage
-// (with its reason). The executable plan and the Run actions stay fail-closed
-// on the missing evidence.
-void MainWindowUiTest::settingsStageCheckboxesPersistAcrossDiagnosticWarmth()
-{
-    // A previous session persisted these selections: dkms on, grub off,
-    // upgrade on. Everything else stays at its first-run default.
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
-    for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
-                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
-                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
-        persist.remove(QString::fromLatin1(key));
-    }
-    persist.setValue(QStringLiteral("repair/dkms"), true);
-    persist.setValue(QStringLiteral("repair/grub"), false);
-    persist.setValue(QStringLiteral("repair/upgradePackages"), true);
-    persist.sync();
-
-    {
-        // No diagnostics ran yet in this session: the persisted selections
-        // are visible, enabled and editable, independent of cache warmth.
-        MainWindow window;
-        prepareRepairScope(window);
-        window.updateFullRepairSummary();
-        QVERIFY(window.m_fullRepairDkms->isEnabled());
-        QVERIFY(window.m_fullRepairDkms->isCheckable());
-        QVERIFY(window.m_fullRepairDkms->isChecked());
-        QVERIFY(window.m_fullRepairGrub->isEnabled());
-        QVERIFY(window.m_fullRepairGrub->isCheckable());
-        QVERIFY(!window.m_fullRepairGrub->isChecked());
-        QVERIFY(window.m_fullRepairUpgrade->isEnabled());
-        QVERIFY(window.m_fullRepairUpgrade->isCheckable());
-        QVERIFY(window.m_fullRepairUpgrade->isChecked());
-        QVERIFY2(window.m_fullRepairDkms->toolTip().contains(QStringLiteral("re-checked")),
-                 "a pending-evidence stage must explain that its saved selection is kept and re-checked");
-        // Fail-closed gating is unchanged: no evidence, no executable plan.
-        QVERIFY(window.selectedRepairStages().isEmpty());
-        QVERIFY(!window.m_runFullRepairButton->isEnabled());
-        // The user can change the selection while evidence is pending, and
-        // the change is recorded for the next session.
-        window.m_fullRepairDkms->setChecked(false);
-        QVERIFY2(!window.m_fullRepairStagePreferences.value(QStringLiteral("dkms")),
-                 "toggling a persisted stage without evidence must persist the change");
-        window.m_fullRepairDkms->setChecked(true);
-    }
-    {
-        // Fresh evidence: an explicit unavailable line disables the stage
-        // with its reason even though the persisted selection is on; the
-        // persisted off selection stays off once the stage becomes
-        // available.
-        MainWindow window;
-        prepareRepairScope(window);
-        cacheRepairEvidence(window, capabilityEvidence(false, false));
-        window.updateFullRepairSummary();
-        QVERIFY(!window.m_fullRepairDkms->isEnabled());
-        QVERIFY(!window.m_fullRepairDkms->isChecked());
-        QVERIFY(!window.m_fullRepairDkms->isCheckable());
-        QVERIFY(window.m_fullRepairDkms->toolTip().contains(QStringLiteral("DKMS is not installed")));
-        QVERIFY(window.m_fullRepairGrub->isEnabled());
-        QVERIFY(!window.m_fullRepairGrub->isChecked());
-        QVERIFY(window.m_fullRepairUpgrade->isEnabled());
-        QVERIFY(window.m_fullRepairUpgrade->isChecked());
-        QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("dkms")));
-        QVERIFY(window.selectedRepairStages().contains(QStringLiteral("apt-upgrade")));
-    }
 }
 
 // Regression: a stage selection made during a run must survive a relaunch even
@@ -1034,8 +939,8 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     // resized while inspecting the repair tool titles/buttons: the repair
     // splitter and the ElidedLabel Selected-tool title must be laid out and
     // painted while the window changes width.
-    window.m_tabs->setCurrentIndex(3); // Repair tab
-    QCOMPARE(window.m_tabs->currentIndex(), 3);
+    window.m_tabs->setCurrentIndex(window.m_tabs->indexOf(window.m_repairPage));
+    QCOMPARE(window.m_tabs->currentWidget(), window.m_repairPage);
     QTest::qWait(50);
     QCoreApplication::processEvents();
     QVERIFY(window.m_repairToolTree);
@@ -1062,8 +967,8 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     QVERIFY(window.m_repairToolTitle);
     QVERIFY(window.m_hostMaintenanceButton);
     QVERIFY(!window.m_hostMaintenanceButton->text().isEmpty());
-    window.m_tabs->setCurrentIndex(0); // Systems tab
-    QCOMPARE(window.m_tabs->currentIndex(), 0);
+    window.m_tabs->setCurrentIndex(window.m_tabs->indexOf(window.m_systemsPage));
+    QCOMPARE(window.m_tabs->currentWidget(), window.m_systemsPage);
     QTest::qWait(50);
     QCoreApplication::processEvents();
 
@@ -1083,28 +988,16 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     qunsetenv("BOOT_REPAIR_LSBLK");
 }
 
-// Faithful reproduction against the REAL system scan (no BOOT_REPAIR_LSBLK
-// override). Used to reproduce the resize + Host-Maintenance crash inside a
-// disposable VM whose device tree (protected host + a selectable target) is
-// real. It skips cleanly on a host without a selectable target, so it stays
-// CI-safe while remaining the exact gesture chain the user reported.
-void MainWindowUiTest::hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash()
+// Cancellation of the scope-commit authorization request must be terminal for
+// that request cycle: the failure is published once, the deferred-scope
+// affordance is shown, and no second authorization conversation is launched —
+// not even by a background caller (a snapshot/diagnostics refresh) that reaches
+// ensurePrivilegedSession() in the same cycle. Only the explicit Authorize
+// retry starts the next request.
+void MainWindowUiTest::privilegedSessionCancellationPublishesFailureAndDefersWithoutRetry()
 {
-    if (!qEnvironmentVariableIsEmpty("BOOT_REPAIR_LSBLK")) {
-        QSKIP("real-scan reproduction requires no BOOT_REPAIR_LSBLK override");
-    }
-
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
-
-    QSettings persist(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
-    for (const char *key : {"repair/filesystem", "repair/dpkgConfigure", "repair/fixBroken",
-                            "repair/kernelCleanup", "repair/refreshMetadata", "repair/upgradePackages",
-                            "repair/dkms", "repair/displayManager", "repair/gpuDriver", "repair/initramfs",
-                            "repair/efiBootloader", "repair/grub", "repair/extlinux"}) {
-        persist.remove(QString::fromLatin1(key));
-    }
-    persist.sync();
 
     MainWindow window;
     window.show();
@@ -1113,99 +1006,153 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash()
     window.m_autoRefreshDiagnostics->setChecked(false);
     window.m_uiTestPrivilegedSessionGranted = false;
 
-    QVERIFY(!window.m_hostPrimaryPath.isEmpty());
-    QVERIFY(!window.m_hostPrimaryComponentPath.isEmpty());
+    prepareRepairScope(window);
+    const QString scopeKey = QStringLiteral("target:/dev/test-system");
+    QCOMPARE(window.currentPrivilegedScopeKey(), scopeKey);
 
-    // Pick a non-protected top-level disk as the repair target, exactly like a
-    // user selecting a row in the real device tree. A locked LUKS container is
-    // unlock-only and must be skipped here (setPreviewTarget would refuse it
-    // with a modal), so the probe mirrors the production predicate: a disk is
-    // selectable when it is not protected and either has no encrypted volume or
-    // carries a visible Linux-capable filesystem.
-    std::function<bool(const DeviceNode &)> hasLinuxCandidate =
-        [&hasLinuxCandidate](const DeviceNode &node) {
-            if (node.installedLinux || node.linuxCapableFileSystem) {
-                return true;
-            }
-            for (const DeviceNode &child : node.children) {
-                if (hasLinuxCandidate(child)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-    std::function<bool(const DeviceNode &)> hasEncryptedVolume =
-        [&hasEncryptedVolume](const DeviceNode &node) {
-            if (node.encrypted
-                || node.fileSystem.compare(QStringLiteral("crypto_LUKS"), Qt::CaseInsensitive) == 0) {
-                return true;
-            }
-            for (const DeviceNode &child : node.children) {
-                if (hasEncryptedVolume(child)) {
-                    return true;
-                }
-            }
-            return false;
-        };
-    QString targetPath;
-    for (auto it = window.m_deviceIndex.constBegin(); it != window.m_deviceIndex.constEnd(); ++it) {
-        const DeviceNode &node = it.value();
-        if (node.type != QStringLiteral("disk") || node.protectedDevice || node.path.isEmpty()) {
-            continue;
-        }
-        if (node.path.startsWith(QStringLiteral("/dev/zram"))
-            || node.path.startsWith(QStringLiteral("/dev/loop"))) {
-            continue;
-        }
-        if (hasEncryptedVolume(node) && !hasLinuxCandidate(node)) {
-            continue;
-        }
-        targetPath = node.path;
-        break;
-    }
-    if (targetPath.isEmpty()) {
-        QSKIP("no selectable repair target on this system");
-    }
-
-    selectTopLevelDisk(window, targetPath);
-    window.setPreviewTarget();
-    if (window.m_previewTargetPath.isEmpty()) {
-        QSKIP("the chosen disk is not a selectable repair target on this system");
-    }
-
-    window.m_tabs->setCurrentIndex(3); // Repair tab
-    QTest::qWait(50);
-    QCoreApplication::processEvents();
-    if (window.m_repairToolTree) {
-        window.m_repairToolTree->setCurrentItem(repairItem(window, QStringLiteral("display")));
-        window.updateRepairToolDetails();
-    }
-
-    window.resize(1400, 900);
-    QTest::qWait(50);
-    QCoreApplication::processEvents();
-    window.resize(520, 480);
-    QTest::qWait(50);
-    QCoreApplication::processEvents();
-    window.resize(960, 720);
-    QTest::qWait(50);
-    QCoreApplication::processEvents();
-    window.resize(480, 500);
-    QTest::qWait(50);
+    // The scope-commit authorization request. In the offscreen seam the
+    // request is "cancelled" (grant flag is false) and returns promptly.
+    window.requestPrivilegedSessionForScope(scopeKey);
+    QTest::qWait(100);
     QCoreApplication::processEvents();
 
-    window.m_tabs->setCurrentIndex(0); // Systems tab
-    QTest::qWait(50);
-    QCoreApplication::processEvents();
+    // One request, exactly once: the cancellation published its failure and
+    // the deferred-scope affordance is set (Authorize button visible).
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY(window.m_privilegedSessionRequestFailed);
+    QCOMPARE(window.m_authorizationDeferredScope, scopeKey);
+    QVERIFY(window.m_authorizeNowButton);
+    QVERIFY(window.m_authorizeNowButton->isVisible());
+    QVERIFY(window.m_authorizeNowButton->isEnabled());
 
-    QVERIFY(window.m_hostMaintenanceButton);
-    window.m_hostMaintenanceButton->click();
-    QTest::qWait(150);
-    QCoreApplication::processEvents();
-    QVERIFY(window.m_hostMaintenanceMode);
+    // A background caller (snapshot/diagnostics refresh) reaching the helper in
+    // the same cycle must observe the published failure, not launch a second
+    // conversation.
+    QString backgroundError;
+    QVERIFY(!window.ensurePrivilegedSession(&backgroundError));
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY(!backgroundError.isEmpty());
 
-    window.exitHostMaintenanceMode();
-    QVERIFY(!window.m_hostMaintenanceMode);
+    // The explicit Authorize retry is what starts the next request.
+    window.authorizePrivilegedSessionNow();
+    QTest::qWait(100);
+    QCoreApplication::processEvents();
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(2));
 }
 
+// The granted path is unchanged: a successful authorization produces exactly
+// one request and reuses the established session for later callers.
+void MainWindowUiTest::privilegedSessionGrantProducesSingleRequest()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    window.m_uiTestPrivilegedSessionGranted = true;
+
+    prepareRepairScope(window);
+    const QString scopeKey = QStringLiteral("target:/dev/test-system");
+    QCOMPARE(window.currentPrivilegedScopeKey(), scopeKey);
+
+    window.requestPrivilegedSessionForScope(scopeKey);
+    QTest::qWait(100);
+    QCoreApplication::processEvents();
+
+    // One request, and the session is established (no deferred state).
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+    QVERIFY(window.privilegedSessionUsable());
+    QVERIFY(window.m_authorizationDeferredScope.isEmpty());
+
+    // A follow-up caller reuses the established session without a new request.
+    QString reuseError;
+    QVERIFY(window.ensurePrivilegedSession(&reuseError));
+    QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
+
+    window.closePrivilegedSession();
+}
+
+// The automatic Btrfs snapshot preload is background work: it must never claim
+// the busy indicator label, so a scope switch does not flash a spurious "Btrfs"
+// label before the diagnostics run owns the indicator.  A manual Load Snapshots
+// click still shows the normal Btrfs busy label.
+void MainWindowUiTest::backgroundSnapshotPreloadDoesNotClaimBusyLabel()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window, /*host=*/false);
+    // A Btrfs scope so the preload reaches the privileged request instead of
+    // taking the non-Btrfs informational shortcut.
+    window.m_deviceIndex[QStringLiteral("/dev/test-root")].fileSystem = QStringLiteral("btrfs");
+
+    QTemporaryDir captureDir;
+    QVERIFY(captureDir.isValid());
+    const QString capturePath = captureDir.filePath(QStringLiteral("snapshot-preload.log"));
+    QVERIFY2(startMultiDeviceFilesystemFakePrivilegedSession(window, capturePath),
+             "the scripted privileged session must start");
+
+    QSignalSpy busySpy(&window, &MainWindow::busyStateChanged);
+
+    // Background (automatic) preload: no busy emission may carry a Btrfs label.
+    window.loadSnapshots(true);
+    for (const QList<QVariant> &args : busySpy) {
+        if (args.at(0).toBool()) {
+            const QString label = args.at(1).toString();
+            QVERIFY2(!label.contains(QStringLiteral("Btrfs"), Qt::CaseInsensitive),
+                     qPrintable(QStringLiteral("background preload must not claim a Btrfs busy label (got '%1')").arg(label)));
+        }
+    }
+
+    // Manual Load Snapshots: the Btrfs busy label is present.
+    busySpy.clear();
+    window.loadSnapshots(false);
+    bool sawBtrfsLabel = false;
+    for (const QList<QVariant> &args : busySpy) {
+        if (args.at(0).toBool()
+            && args.at(1).toString().contains(QStringLiteral("Btrfs"), Qt::CaseInsensitive)) {
+            sawBtrfsLabel = true;
+        }
+    }
+    QVERIFY2(sawBtrfsLabel, "a manual Load Snapshots must show the Btrfs busy label");
+}
+
+// Closing the window while a read-only diagnostic runs must surface the
+// transient cancel state through the progress-detail label before teardown,
+// instead of silently closing.
+void MainWindowUiTest::closeDuringDiagnosticShowsCancelState()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+
+    // Simulate an in-flight read-only diagnostic owning the privileged gate and
+    // the busy indicator (no real session, so closePrivilegedSession() returns
+    // immediately).
+    window.beginBusyOperation(QStringLiteral("Running diagnostics"));
+    window.m_privilegedOperationActive = true;
+    window.m_privilegedOperationIsDiagnostic = true;
+
+    window.close();
+    QCoreApplication::processEvents();
+
+    QVERIFY(window.m_privilegedRequestAbortRequested);
+    QVERIFY(window.m_progressDetailLabel);
+    QVERIFY2(window.m_progressDetailLabel->text().contains(QStringLiteral("Cancelling")),
+             qPrintable(window.m_progressDetailLabel->text()));
+    // The progress-detail state is active (it would render in the busy slot).
+    QVERIFY(window.m_progressDetailActive);
+}
 

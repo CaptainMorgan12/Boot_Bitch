@@ -26,11 +26,11 @@
 
 namespace legacy {
 
-// The 13 capability keys emitted by the shared helper (and gated by
+// The 15 capability keys emitted by the shared helper (and gated by
 // MainWindow::repairToolAvailable). Kept here as the single legacy-side list.
 std::vector<std::string> capabilityKeys();
 
-// The 16 read-only diagnostic keys accepted by `diagnose <key>` and
+// The 18 read-only diagnostic keys accepted by `diagnose <key>` and
 // `host-diagnose <key>` (the `report` key is the combined report).
 std::vector<std::string> diagnosticKeys();
 

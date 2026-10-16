@@ -1251,8 +1251,8 @@
         <translation>Szűrjük át a látható logot belépési típusonként. A diagnosztikai szakasz kiválasztása az adott szakaszhoz rögzített sorokat mutatja; a munkafolyamat szűrője, mint például a fájlrendszer javítása vagy a csomagjavítás, a feltérképezett javítóvonalakat mutatja (a fájlmásolatnak nincs vonala ezen a fronton). Mentés Ahogy mindig ír minden bejegyzést.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>A beállítások felhasználónként a ~ / .qt /, egy fájl beállítási csoportonként (devicesrc, logsrc, diagnosticsrc, repairc) kerülnek tárolásra, és azonnal elmentésre kerülnek minden változásra és zárásra. Indítsa el a GUI, mint ugyanaz a felhasználó, hogy tartsa a felülírás; egy GUI indult root megtartja a saját másolatait.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>A beállítások felhasználónként a ~ / .qt /, egy fájl beállítási csoportonként (devicesrc, logsrc, diagnosticsrc, repairc) kerülnek tárolásra, és azonnal elmentésre kerülnek minden változásra és zárásra. Ugyanaz a felhasználó helye, hogy a GUI fut, mint a logged- a felhasználó vagy a gyökér (sudo megőrzi a hazai könyvtár).</translation>
     </message>
     <message>
         <source>Device discovery</source>

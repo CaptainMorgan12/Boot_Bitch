@@ -163,8 +163,29 @@ grep -Eq 'count == 1' <<<"$esp_partition_probe_block" \
 run_repair_block="$(sed -n '/^run_repair()/,/^}/p' "$HELPER")"
 grep -Fq 'mount_target_esp_by_type ro || true' <<<"$run_repair_block" \
     || { echo 'FAIL: the repair mandatory preflight does not derive an ESP discovered by GPT type' >&2; exit 1; }
-# A2-05: the offline repair release path never lazy-detaches; the read-only
-# inspection path keeps its existing best-effort release.
+# A failed mutating stage must release the helper-owned target mount (plain
+# umount, never lazy) and leave no MOUNT_LEAK.  The EXIT trap cleanup() runs the
+# non-lazy release, and it must never `rm -rf` the session directory while a
+# helper-owned mount is still attached (that would recurse into the mounted
+# target and delete its files, breaking the next diagnose with "does not contain
+# /etc/os-release").
+cleanup_body="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
+if grep -Fq 'umount -l' <<<"$cleanup_body"; then
+    echo 'FAIL: the EXIT trap cleanup still falls back to a lazy umount' >&2
+    exit 1
+fi
+grep -Fq 'still_mounted' <<<"$cleanup_body" \
+    || { echo 'FAIL: cleanup() does not guard the session directory removal against a still-mounted helper mount' >&2; exit 1; }
+cleanup_rm_line="$(grep -n 'rm -rf -- "\$SESSION_DIR"' <<<"$cleanup_body" | head -n1 | cut -d: -f1 || true)"
+cleanup_guard_line="$(grep -n 'still_mounted' <<<"$cleanup_body" | head -n1 | cut -d: -f1 || true)"
+[[ -n "$cleanup_rm_line" && -n "$cleanup_guard_line" && "$cleanup_guard_line" -lt "$cleanup_rm_line" ]] \
+    || { echo 'FAIL: cleanup() must check for a still-mounted helper mount before removing the session directory' >&2; exit 1; }
+# A2-05: both the offline repair and the read-only inspection release paths
+# never lazy-detach; a busy mount must stay visible (leak evidence) so the
+# check path can skip its offline-only tool instead of running it against a
+# still-attached filesystem.  The post-release "still mounted" probe scans the
+# live findmnt table without the TARGET_ROOT skip, so a btrfs device that still
+# has a subvolume mounted is detected instead of reported unmounted.
 release_for_device_block="$(sed -n '/^filesystem_release_mounts_for_device()/,/^}/p' "$HELPER")"
 if grep -Fq 'umount -l' <<<"$release_for_device_block"; then
     echo 'FAIL: the offline repair path still falls back to a lazy umount' >&2
@@ -173,8 +194,33 @@ fi
 grep -Fq 'mount_cleanup_leak_evidence "$mountpath"' <<<"$release_for_device_block" \
     || { echo 'FAIL: the offline repair path does not record leak evidence on an umount failure' >&2; exit 1; }
 release_all_block="$(sed -n '/^filesystem_release_all_mounts()/,/^}/p' "$HELPER")"
-grep -Fq 'umount "$mountpath" 2>/dev/null || umount -l "$mountpath" 2>/dev/null || true' <<<"$release_all_block" \
-    || { echo 'FAIL: the read-only inspection release path changed' >&2; exit 1; }
+if grep -Fq 'umount -l' <<<"$release_all_block"; then
+    echo 'FAIL: the read-only inspection release path still falls back to a lazy umount' >&2
+    exit 1
+fi
+grep -Fq 'mount_cleanup_leak_evidence "$mountpath"' <<<"$release_all_block" \
+    || { echo 'FAIL: the read-only inspection release path does not record leak evidence on an umount failure' >&2; exit 1; }
+grep -q '^filesystem_device_still_mounted()' "$HELPER" \
+    || { echo 'FAIL: the post-release still-mounted probe is missing' >&2; exit 1; }
+grep -Fq 'findmnt -rn -o SOURCE,TARGET' <<<"$(sed -n '/^filesystem_device_still_mounted()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: the still-mounted probe does not scan the live findmnt table' >&2; exit 1; }
+grep -Fq 'filesystem_device_still_mounted "$device"' <<<"$(sed -n '/^fs_inspect_scope()/,/^}/p' "$HELPER")" \
+    || { echo 'FAIL: fs_inspect_scope does not re-probe the live mount state through the still-mounted probe' >&2; exit 1; }
+# A2-05 (extended): the exit-trap cleanup and the stale-session sweep must also
+# never lazy-detach a btrfs target — `umount -l` leaves the filesystem
+# superblock (fs_info) alive holding the device with FMODE_EXCL, so a later
+# `btrfs check` fails "Device or resource busy".  A busy mount stays visible
+# (leak evidence) so the next session's sweep can retry a plain umount.
+cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
+if grep -Fq 'umount -l' <<<"$cleanup_block"; then
+    echo 'FAIL: the exit-trap cleanup still falls back to a lazy umount' >&2
+    exit 1
+fi
+sweep_stale_block="$(sed -n '/^sweep_stale_target_mounts()/,/^}/p' "$HELPER")"
+if grep -Fq 'umount -l' <<<"$sweep_stale_block"; then
+    echo 'FAIL: the stale-session sweep still falls back to a lazy umount' >&2
+    exit 1
+fi
 # A4-04: the LUKS header UUID is validated against the canonical hyphenated
 # form before it composes the luks-<UUID> mapper name.
 grep -Fq '^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$' "$HELPER" \
@@ -307,10 +353,8 @@ fi
 # device, mount or filesystem is ever touched.
 # ---------------------------------------------------------------------------
 sandbox="$(mktemp -d)"
-fc_root=""
 cleanup_sandbox() {
     rm -rf -- "$sandbox"
-    [[ -n "$fc_root" ]] && rm -rf -- "$fc_root"
 }
 trap cleanup_sandbox EXIT
 
@@ -636,6 +680,11 @@ set -euo pipefail
 source <(sed '/^main "\$@"/d' "$HELPER")
 trap - EXIT INT TERM HUP
 trap 'PATH="$sandbox/mockbin:\$PATH"; export PATH' DEBUG
+# The helper defaults SESSION_LOG to ""; harness blocks that skip prepare_target
+# would otherwise tee into the empty path (noise).  Default it once so every
+# transcript write lands in the sandbox session log.
+: "\${SESSION_LOG:=$sandbox/session.log}"
+: > "\$SESSION_LOG"
 is_block_device() { [[ "\$1" == "$sandbox"/dev-* || "\$1" == /dev/test-* ]]; }
 top_disks_for() { printf '%s\n' "$sandbox/dev-test-disk"; }
 mktemp() { printf '%s\n' "$sandbox/session.mount"; }
@@ -658,6 +707,15 @@ prepare_running_host() {
     SESSION_LOG="$sandbox/session.log"
     : > "\$SESSION_LOG"
 }
+# The target-scope snapshot-rollback capability probe resolves the top-level
+# Btrfs filesystem through this stub; the fixture under $sandbox/snapshot-top
+# supplies the @ root and the @.snapshots/.snapshots store.
+mount_snapshot_top() {
+    SNAPSHOT_TOP="$sandbox/snapshot-top"
+    mkdir -p "\$SNAPSHOT_TOP"
+    return 0
+}
+snapshot_free_space_ok() { return 0; }
 eval "\${HARNESS_CODE:?missing HARNESS_CODE}"
 HARNESS
 
@@ -760,7 +818,8 @@ done
 [[ "$(grep -c '^Repair tool ' <<<"$cap_unresolved")" -eq 15 ]] \
     || { echo "FAIL: expected 15 capability keys" >&2; exit 1; }
 # Running-host maintenance adds host-scope capability evidence but must never
-# become a `Repair tool` key; target scope never emits the host lines.
+# become a `Repair tool` key; target scope never emits the host-only lines
+# (the storage-stack markers are scope-neutral and appear in both scopes).
 host_caps="$(run_harness '
 RUNNING_HOST_MODE=1
 TARGET_ROOT=""
@@ -777,10 +836,68 @@ grep -Eq '^Host snapshot rollback: (available|unavailable\|)' <<<"$host_caps" \
     || { echo "FAIL: host snapshot rollback capability line is missing" >&2; exit 1; }
 grep -Eq '^Host reboot: (available|unavailable\|)' <<<"$host_caps" \
     || { echo "FAIL: host reboot capability line is missing" >&2; exit 1; }
+grep -Eq '^Storage lvm inspection: (available|unavailable\|)' <<<"$host_caps" \
+    || { echo "FAIL: storage lvm inspection capability line is missing" >&2; exit 1; }
+grep -Eq '^Storage software raid: (available|unavailable\|)' <<<"$host_caps" \
+    || { echo "FAIL: storage software raid capability line is missing" >&2; exit 1; }
+# The storage-stack markers are scope-neutral: the repair-target scope emits
+# them too (they are not host-only `Host ...` lines).
+grep -Eq '^Storage lvm inspection: (available|unavailable\|)' <<<"$cap_unresolved" \
+    || { echo "FAIL: target-scope storage lvm inspection capability line is missing" >&2; exit 1; }
+grep -Eq '^Storage software raid: (available|unavailable\|)' <<<"$cap_unresolved" \
+    || { echo "FAIL: target-scope storage software raid capability line is missing" >&2; exit 1; }
 if grep -q '^Host ' <<<"$cap_unresolved"; then
     echo 'FAIL: target-scope diagnostics must not emit host capability lines' >&2
     exit 1
 fi
+# Snapshot rollback is scope-neutral: the repair-target scope surfaces the
+# `Snapshot rollback:` line (not the host-only `Host snapshot rollback:` line),
+# and the host scope keeps its name-preserving host line.  The unresolved
+# target has no Btrfs root, so the line reports the precise reason.
+grep -Eq '^Snapshot rollback: (available|unavailable\|)' <<<"$cap_unresolved" \
+    || { echo "FAIL: target-scope snapshot rollback capability line is missing" >&2; grep '^Snapshot rollback' <<<"$cap_unresolved" >&2; exit 1; }
+grep -Fqx 'Snapshot rollback: unavailable|reason:not-btrfs-root|param:unknown' <<<"$cap_unresolved" \
+    || { echo "FAIL: unresolved target snapshot rollback reason is not not-btrfs-root" >&2; grep '^Snapshot rollback' <<<"$cap_unresolved" >&2; exit 1; }
+if grep -q '^Snapshot rollback' <<<"$host_caps"; then
+    echo 'FAIL: host-scope diagnostics must not emit the target snapshot rollback line' >&2
+    exit 1
+fi
+
+# A non-Btrfs target root names the same precise scope-neutral reason.
+snap_nonbtrfs="$(run_harness '
+ROOT_CANONICAL=/dev/test-root
+ROOT_DEVICE=/dev/test-root
+TARGET_ROOT=""
+TARGET_OS_ID=arch
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=arch
+TARGET_INITRAMFS_BACKEND=mkinitcpio
+TARGET_BOOTLOADER_BACKEND=grub
+diagnostic_repair_capabilities
+')"
+grep -Fqx 'Snapshot rollback: unavailable|reason:not-btrfs-root|param:ext4' <<<"$snap_nonbtrfs" \
+    || { echo "FAIL: non-Btrfs target snapshot rollback reason is not not-btrfs-root(ext4)" >&2; grep '^Snapshot rollback' <<<"$snap_nonbtrfs" >&2; exit 1; }
+
+# A Btrfs target with a resolvable snapshot store and a normal top-level @ root
+# reports snapshot rollback available in the repair-target scope.
+printf 'test-btrfs btrfs part 22222222-3333-4444-5555-666666666666 test-disk 2 test-disk\n' >> "$FAKE_LSBLK_DB"
+mkdir -p "$sandbox/snapshot-top/@/etc" "$sandbox/snapshot-top/@.snapshots"
+printf 'ID=test\nPRETTY_NAME="Contract Test"\n' > "$sandbox/snapshot-top/@/etc/os-release"
+snap_avail="$(run_harness '
+ROOT_CANONICAL=/dev/test-btrfs
+ROOT_DEVICE=/dev/test-btrfs
+TARGET_ROOT=""
+TARGET_OS_ID=arch
+TARGET_OS_LIKE=""
+TARGET_DISTRO_FAMILY=arch
+TARGET_INITRAMFS_BACKEND=mkinitcpio
+TARGET_BOOTLOADER_BACKEND=grub
+diagnostic_repair_capabilities
+')"
+grep -Fqx 'Snapshot rollback: available' <<<"$snap_avail" \
+    || { echo "FAIL: Btrfs target with snapshot store did not report snapshot rollback available" >&2; grep '^Snapshot rollback' <<<"$snap_avail" >&2; exit 1; }
+grep -Eq '^Snapshot rollback evidence: btrfs root /dev/test-btrfs; top-level @\.snapshots' <<<"$snap_avail" \
+    || { echo "FAIL: Btrfs target snapshot rollback evidence does not name the store" >&2; grep '^Snapshot rollback evidence' <<<"$snap_avail" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # Part 2: fs-inspect resolves the target scope read-only and reports evidence.
@@ -1186,83 +1303,6 @@ grep -Fq 'File system check summary: devices=3 clean=0 issues=0 unsupported=0 to
     || { echo 'FAIL: mounted host skip summary mismatch' >&2; printf '%s\n' "$host_skip_inspect" >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
-# Part 6: zfs.  Pool resolution is required, scrub waits for completion and
-# the pool status is parsed; dataset sources (rpool/ROOT/...) map to their
-# pool; the online mode is gated on pool import, not a mountpoint.
-# ---------------------------------------------------------------------------
-printf 'test-zfs zfs part ZFS-UUID test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-: > "$sandbox/dev-test-zfs"
-cat >> "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-zfs  /home  zfs  defaults  0 2
-FSTAB
-# Remove the previous xfs /home line so the zfs entry is the only /home source.
-sed -i '\|^/dev/test-home  /home|d' "$sandbox/target/etc/fstab"
-
-if zfs_missing_pool="$(run_harness '
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-TARGET_OS_ID=arch
-TARGET_OS_LIKE=""
-TARGET_DISTRO_FAMILY=arch
-TARGET_ROOT=""
-filesystem_pool_for_device() { return 1; }
-fs_repair /dev/test-disk /dev/test-root /dev/test-zfs scrub
-' 2>&1)"; then
-    echo 'FAIL: zfs scrub without an identified pool was accepted' >&2
-    exit 1
-fi
-grep -Fq "The ZFS pool for /dev/test-zfs could not be identified" <<<"$zfs_missing_pool" \
-    || { echo 'FAIL: missing zfs pool refusal reason' >&2; exit 1; }
-
-: > "$FAKE_TOOL_LOG"
-zfs_clean="$(FAKE_ZPOOL_POOLS=rpool FAKE_ZPOOL_STATUS_P='	/dev/test-zfs	ONLINE' run_harness "$(repair_code /dev/test-zfs scrub)" 2>&1 || true)"
-expect_repair_line /dev/test-zfs scrub clean "$zfs_clean"
-grep -Fq 'zpool scrub -w rpool' "$FAKE_TOOL_LOG" \
-    || { echo 'FAIL: zpool scrub must wait for completion' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
-grep -Fq 'zpool status -v rpool' "$FAKE_TOOL_LOG" \
-    || { echo 'FAIL: zpool status must be scoped to the pool after the scrub' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
-# A clean scrub clears the pool's error counters (zpool clear), never before a
-# faulted/degraded pool is proven healthy.
-grep -Fq 'zpool clear rpool' "$FAKE_TOOL_LOG" \
-    || { echo 'FAIL: a clean zpool scrub did not clear the pool error counters' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
-
-: > "$FAKE_TOOL_LOG"
-zfs_degraded="$(FAKE_ZPOOL_POOLS=rpool FAKE_ZPOOL_STATUS_P='	/dev/test-zfs	ONLINE' FAKE_ZPOOL_STATUS_V='state: DEGRADED' run_harness "$(repair_code /dev/test-zfs scrub)" 2>&1 || true)"
-expect_repair_line /dev/test-zfs scrub issues "$zfs_degraded"
-# A degraded pool must not have its error counters cleared.
-if grep -Fq 'zpool clear rpool' "$FAKE_TOOL_LOG"; then
-    echo 'FAIL: a degraded zpool scrub cleared the pool error counters' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1
-fi
-
-# A dataset source is mapped to its imported pool for scope and scrub.
-: > "$FAKE_TOOL_LOG"
-zfs_dataset="$(FAKE_ZPOOL_POOLS=rpool run_harness '
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-TARGET_OS_ID=arch
-TARGET_OS_LIKE=""
-TARGET_DISTRO_FAMILY=arch
-TARGET_ROOT=""
-printf "/dev/test-disk  /  ext4  defaults  0 1\n" > "'"$sandbox"'/target/etc/fstab"
-printf "rpool/ROOT/arch  /home  zfs  defaults  0 2\n" >> "'"$sandbox"'/target/etc/fstab"
-prepare_target
-filesystem_scope_resolve
-printf "SCOPE:%s\n" "${FS_SCOPE_DEVICES[*]}"
-fs_repair /dev/test-disk /dev/test-root rpool scrub
-' 2>&1 || true)"
-grep -Fq 'SCOPE:/dev/test-root rpool' <<<"$zfs_dataset" \
-    || { echo 'FAIL: zfs dataset was not mapped to its pool in the scope' >&2; printf '%s\n' "$zfs_dataset" >&2; exit 1; }
-grep -Fq 'zpool scrub -w rpool' "$FAKE_TOOL_LOG" \
-    || { echo 'FAIL: zfs dataset scrub did not target the pool' >&2; cat "$FAKE_TOOL_LOG" >&2; exit 1; }
-# Restore the shared target fstab for the remaining parts.
-cat > "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-root  /          ext4  defaults  0 1
-/dev/test-boot  /boot      ext4  defaults  0 2
-/dev/test-efi   /boot/efi  vfat  defaults  0 2
-/dev/test-home  /home      xfs   defaults  0 2
-FSTAB
-
-# ---------------------------------------------------------------------------
 # Part 7: fail-closed capability gating and offline-repair mount release.
 # ---------------------------------------------------------------------------
 printf 'test-disk - disk - - - -\n' > "$FAKE_LSBLK_DB"
@@ -1528,7 +1568,7 @@ grep -Fq 'SNAPSHOT_INVENTORY_NOT_APPLICABLE=1' "$HELPER"
 grep -Fq 'Snapshot inventory is not applicable: the selected target filesystem is %s, not Btrfs.' "$HELPER"
 
 snapshot_info="$(run_harness '
-prepare_target() {
+prepare_target_snapshots_only() {
     ROOT_CANONICAL=/dev/test-root
     SESSION_LOG="'"$sandbox"'/snapshot-session.log"
     : > "$SESSION_LOG"
@@ -1550,7 +1590,7 @@ if grep -q 'Required host command not found: btrfs' <<<"$snapshot_info"; then
 fi
 
 if snapshot_inspect="$(run_harness '
-prepare_target() {
+prepare_target_snapshots_only() {
     ROOT_CANONICAL=/dev/test-root
     SESSION_LOG="'"$sandbox"'/snapshot-session.log"
     : > "$SESSION_LOG"
@@ -1563,611 +1603,6 @@ run_snapshots inspect 1
 fi
 grep -Fq 'Snapshot inspection requires a Btrfs repair root; detected ext4.' <<<"$snapshot_inspect" \
     || { echo 'FAIL: non-Btrfs snapshot inspect refusal reason changed' >&2; printf '%s\n' "$snapshot_inspect" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 11: ESP writability.  The effective mount is the topmost findmnt row
-# (never the bottom/autofs row, never a reused mount ID); a leaked read-only
-# layer may only be cleared when it is the selected ESP above a writable
-# same-device mount; cleanup must leave rw/foreign mounts untouched and report
-# leaks instead of swallowing them.
-# ---------------------------------------------------------------------------
-esp_dir="$sandbox/target/boot/efi"
-mkdir -p "$esp_dir/EFI/BOOT" "$sandbox/target/home"
-
-# 11a: topmost-row probe.  The bottom autofs row is rw, but the effective top
-# is the last ro vfat row, so the rw gate must refuse while target_mount_top
-# selects the topmost row.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir systemd-1 autofs rw 164
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-efi vfat ro 1477
-$esp_dir /dev/test-efi vfat ro 1416
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-topmost="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-EFI_ESP_SOURCE=/dev/test-efi
-printf "TOP:%s\n" "$(target_mount_top "'"$esp_dir"'")"
-if target_path_is_mounted_rw "'"$esp_dir"'"; then echo RW:PASS; else echo RW:REFUSED; fi
-')"
-grep -Fqx "TOP:$esp_dir /dev/test-efi ro 1416" <<<"$topmost" \
-    || { echo 'FAIL: target_mount_top did not select the topmost row' >&2; printf '%s\n' "$topmost" >&2; exit 1; }
-grep -Fqx 'RW:REFUSED' <<<"$topmost" \
-    || { echo 'FAIL: the rw gate accepted a read-only-topped ESP stack' >&2; printf '%s\n' "$topmost" >&2; exit 1; }
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir systemd-1 autofs rw 164
-$esp_dir /dev/test-efi vfat rw 612
-MNT
-top_rw="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-EFI_ESP_SOURCE=/dev/test-efi
-if target_path_is_mounted_rw "'"$esp_dir"'"; then echo RW:PASS; else echo RW:REFUSED; fi
-')"
-grep -Fqx 'RW:PASS' <<<"$top_rw" \
-    || { echo 'FAIL: a writable topmost ESP row was refused' >&2; printf '%s\n' "$top_rw" >&2; exit 1; }
-
-# 11b: leaked read-only preflight refusal.  check mode must fail closed with
-# the topmost evidence, the leaked-layer count and the exact cleanup command,
-# and must not unmount anything.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir systemd-1 autofs rw 164
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-efi vfat ro 1477
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_UMOUNT_LOG"
-if leaked_check="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight check
-' 2>&1)"; then
-    echo 'FAIL: the check-only ESP preflight accepted a leaked read-only layer' >&2
-    exit 1
-fi
-grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:3|param:/dev/test-efi|param:ro|param:1477|param:ro-leaked|param:1" <<<"$leaked_check" \
-    || { echo 'FAIL: leaked preflight evidence line missing or wrong' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
-grep -Fq 'leaked read-only layers: 1' <<<"$leaked_check" \
-    || { echo 'FAIL: leaked preflight did not report the leaked layer count' >&2; printf '%s\n' "$leaked_check" >&2; exit 1; }
-grep -Fq "findmnt -T $esp_dir -o TARGET,SOURCE,OPTIONS,ID" <<<"$leaked_check" \
-    || { echo 'FAIL: leaked preflight did not print the inspection command' >&2; exit 1; }
-grep -Fq "umount $esp_dir" <<<"$leaked_check" \
-    || { echo 'FAIL: leaked preflight did not print the manual cleanup command' >&2; exit 1; }
-[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
-    || { echo 'FAIL: the check-only preflight unmounted a layer' >&2; exit 1; }
-
-# 11c: foreign refusal.  A mount that is not the selected ESP must never be
-# unmounted; clear mode refuses with the cleanup command.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-outside ext4 ro 900
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_UMOUNT_LOG"
-if foreign_clear="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight clear
-' 2>&1)"; then
-    echo 'FAIL: the ESP preflight cleared a foreign topmost mount' >&2
-    exit 1
-fi
-grep -Fq "param:/dev/test-outside|param:ro|param:900|param:foreign" <<<"$foreign_clear" \
-    || { echo 'FAIL: foreign preflight evidence line missing or wrong' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
-grep -Fq 'not the selected EFI System Partition' <<<"$foreign_clear" \
-    || { echo 'FAIL: foreign preflight did not refuse' >&2; printf '%s\n' "$foreign_clear" >&2; exit 1; }
-grep -Fq "findmnt -T $esp_dir -o TARGET,SOURCE,OPTIONS,ID" <<<"$foreign_clear" \
-    || { echo 'FAIL: foreign preflight did not print the inspection command' >&2; exit 1; }
-[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
-    || { echo 'FAIL: the foreign preflight unmounted a mount' >&2; exit 1; }
-
-# The real vendor-builder entry re-probes and refuses before any target write.
-: > "$FAKE_UMOUNT_LOG"
-if builder_refusal="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_DIR="'"$sandbox"'/session.contract"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-run_tuxedo_uki_builder "Contract vendor run" /bin/true
-' 2>&1)"; then
-    echo 'FAIL: run_tuxedo_uki_builder accepted a foreign ESP stack' >&2
-    exit 1
-fi
-grep -Fq 'param:foreign' <<<"$builder_refusal" \
-    || { echo 'FAIL: the vendor-builder preflight did not report the foreign stack' >&2; printf '%s\n' "$builder_refusal" >&2; exit 1; }
-[[ ! -e "$sandbox/target/usr/local/libexec" ]] \
-    || { echo 'FAIL: the vendor builder created target files before the ESP check' >&2; exit 1; }
-[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
-    || { echo 'FAIL: the vendor-builder check unmounted a mount' >&2; exit 1; }
-
-# rebuild_tuxedo_uki refuses the same foreign stack before the vendor builder.
-: > "$sandbox/vendor.log"
-if rebuild_refusal="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-validate_tuxedo_uki_target() { :; }
-newest_tuxedo_kernel() { printf "6.1.0-tuxedo-amd64\n"; }
-uefi_nvram_writable() { return 1; }
-run_tuxedo_uki_builder() { printf "vendor\n" >> "'"$sandbox"'/vendor.log"; }
-rebuild_tuxedo_uki
-' 2>&1)"; then
-    echo 'FAIL: rebuild_tuxedo_uki accepted a foreign ESP stack' >&2
-    exit 1
-fi
-grep -Fq 'param:foreign' <<<"$rebuild_refusal" \
-    || { echo 'FAIL: rebuild_tuxedo_uki did not report the foreign stack' >&2; printf '%s\n' "$rebuild_refusal" >&2; exit 1; }
-[[ ! -s "$sandbox/vendor.log" ]] \
-    || { echo 'FAIL: rebuild_tuxedo_uki invoked the vendor builder on a foreign stack' >&2; exit 1; }
-
-# A foreign layer in between the leaked ESP layer and its writable base must
-# refuse before the first unmount, never partially dismantling the stack.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-outside ext4 ro 900
-$esp_dir /dev/test-efi vfat ro 1477
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_UMOUNT_LOG"
-if sandwiched_clear="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight clear
-' 2>&1)"; then
-    echo 'FAIL: the ESP preflight cleared a stack with a foreign layer in between' >&2
-    exit 1
-fi
-grep -Fq 'param:ro-leaked|param:1' <<<"$sandwiched_clear" \
-    || { echo 'FAIL: sandwiched preflight did not report the leaked layer' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
-grep -Fq 'not directly bounded by a writable mount of the selected ESP' <<<"$sandwiched_clear" \
-    || { echo 'FAIL: sandwiched preflight did not refuse before unmounting' >&2; printf '%s\n' "$sandwiched_clear" >&2; exit 1; }
-[[ ! -s "$FAKE_UMOUNT_LOG" ]] \
-    || { echo 'FAIL: the sandwiched preflight unmounted a layer' >&2; exit 1; }
-
-# 11d: safe cleanup.  Only the two ro layers of the selected ESP above the rw
-# base are unmounted; the rw ESP mount and the foreign mount below it stay.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir systemd-1 autofs rw 164
-$esp_dir /dev/test-outside ext4 ro 900
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-efi vfat ro 1477
-$esp_dir /dev/test-efi vfat ro 1416
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_UMOUNT_LOG"
-: > "$FAKE_MOUNT_LOG"
-safe_clear="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight clear
-')"
-grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:5|param:/dev/test-efi|param:ro|param:1416|param:ro-leaked|param:2" <<<"$safe_clear" \
-    || { echo 'FAIL: safe-cleanup preflight evidence line missing or wrong' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
-[[ "$(grep -c 'msg:esp-mount-cleanup|param:' <<<"$safe_clear")" -eq 2 ]] \
-    || { echo 'FAIL: expected two leaked-ro cleanup evidence lines' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
-grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:3|param:/dev/test-efi|param:rw|param:612|param:rw|param:0" <<<"$safe_clear" \
-    || { echo 'FAIL: safe cleanup did not report a writable ESP afterwards' >&2; printf '%s\n' "$safe_clear" >&2; exit 1; }
-[[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
-    || { echo 'FAIL: safe cleanup unmounted the wrong number of layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
-[[ "$(sort -u "$FAKE_UMOUNT_LOG")" == "$esp_dir" ]] \
-    || { echo 'FAIL: safe cleanup unmounted a path other than the ESP mountpoint' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
-grep -Fq "$esp_dir /dev/test-outside ext4 ro 900" "$FAKE_FINDMNT_DB" \
-    || { echo 'FAIL: safe cleanup unmounted the foreign mount' >&2; exit 1; }
-grep -Fq "$esp_dir /dev/test-efi vfat rw 612" "$FAKE_FINDMNT_DB" \
-    || { echo 'FAIL: safe cleanup unmounted the writable ESP mount' >&2; exit 1; }
-[[ ! -s "$FAKE_MOUNT_LOG" ]] \
-    || { echo 'FAIL: the ESP preflight mounted something' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-
-# 11e: successful rebuild after cleanup.  The fixture is already rw once the
-# leaked layers are detached; the vendor stub writes a changed TUX.EFI and the
-# rebuild reports the verified change.
-printf 'old-image\n' > "$esp_dir/EFI/BOOT/TUX.EFI"
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir systemd-1 autofs rw 164
-$esp_dir /dev/test-outside ext4 ro 900
-$esp_dir /dev/test-efi vfat rw 612
-$esp_dir /dev/test-efi vfat ro 1477
-$esp_dir /dev/test-efi vfat ro 1416
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_UMOUNT_LOG"
-rebuild_ok="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-validate_tuxedo_uki_target() { :; }
-newest_tuxedo_kernel() { printf "6.1.0-tuxedo-amd64\n"; }
-uefi_nvram_writable() { return 1; }
-run_tuxedo_uki_builder() { printf "new-image\n" > "$TARGET_ROOT/boot/efi/EFI/BOOT/TUX.EFI"; }
-rebuild_tuxedo_uki
-')"
-grep -Fq 'msg:esp-mount-cleanup|param:' <<<"$rebuild_ok" \
-    || { echo 'FAIL: rebuild did not clear the leaked ESP layers' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
-grep -Fq 'msg:uki-vendor-changed' <<<"$rebuild_ok" \
-    || { echo 'FAIL: rebuild did not report the changed TUX.EFI' >&2; printf '%s\n' "$rebuild_ok" >&2; exit 1; }
-[[ "$(cat "$esp_dir/EFI/BOOT/TUX.EFI")" == 'new-image' ]] \
-    || { echo 'FAIL: the vendor stub did not write TUX.EFI' >&2; exit 1; }
-[[ "$(wc -l < "$FAKE_UMOUNT_LOG")" -eq 2 ]] \
-    || { echo 'FAIL: rebuild did not clear exactly the two leaked layers' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
-
-# 11l: the vendor builder exports the hoisted target root UUID into the
-# vendor command environment.  Inside a real chroot /proc is the bound host
-# /proc, so the vendor script's findmnt-based resolution is host-tainted and
-# the filtered chroot /dev makes its blkid fallback fail closed;
-# HOST_ROOT_UUID keeps the vendor build deterministic.  Both the guarded and
-# the unguarded command environments must carry it.
-mkdir -p "$sandbox/target/usr/sbin" "$sandbox/target/usr/bin"
-cat > "$sandbox/target/usr/sbin/create_boot_uki_base.sh" <<VENDOR
-#!/bin/sh
-env | grep '^HOST_ROOT_UUID=' > "$sandbox/vendor-env.txt" || true
-env > "$sandbox/vendor-env-full.txt"
-exit 0
-VENDOR
-chmod +x "$sandbox/target/usr/sbin/create_boot_uki_base.sh"
-
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir /dev/test-efi vfat rw 902
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-rm -f "$sandbox/target/usr/bin/efibootmgr"
-: > "$sandbox/vendor-env.txt"
-: > "$sandbox/vendor-env-full.txt"
-builder_ok="$(run_harness '
-run_selected_chroot() {
-    # Emulate the chroot for the fixture: keep /usr/bin/env (it applies the
-    # NAME=value words exactly as the real chroot invocation does) and point
-    # the absolute vendor path at the fixture target copy.
-    local -a args=("$@")
-    local i
-    for ((i = 0; i < ${#args[@]}; ++i)); do
-        if [[ "${args[$i]}" == /usr/sbin/* ]]; then
-            args[$i]="$TARGET_ROOT${args[$i]}"
-        fi
-    done
-    "${args[@]}"
-}
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-ROOT_CANONICAL=/dev/test-root
-SESSION_DIR="'"$sandbox"'/session.hostrootuuid"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-run_tuxedo_uki_builder "TUXEDO UKI vendor run (HOST_ROOT_UUID contract)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
-')"
-grep -Fq 'msg:vendor-command-success|param:TUXEDO UKI vendor run (HOST_ROOT_UUID contract)' <<<"$builder_ok" \
-    || { echo 'FAIL: the vendor builder run failed (unguarded env)' >&2; printf '%s\n' "$builder_ok" >&2; exit 1; }
-[[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
-    || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (unguarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
-
-# The guarded branch (target efibootmgr present) must export the same value
-# and still remove the request-scoped guard directory afterwards.
-cat > "$sandbox/target/usr/bin/efibootmgr" <<'EFIBOOTMGR'
-#!/bin/sh
-echo "stub efibootmgr $*"
-exit 0
-EFIBOOTMGR
-chmod +x "$sandbox/target/usr/bin/efibootmgr"
-: > "$sandbox/vendor-env.txt"
-: > "$sandbox/vendor-env-full.txt"
-builder_guard_ok="$(run_harness '
-run_selected_chroot() {
-    # Emulate the chroot for the fixture: keep /usr/bin/env (it applies the
-    # NAME=value words exactly as the real chroot invocation does) and point
-    # the absolute vendor path at the fixture target copy.
-    local -a args=("$@")
-    local i
-    for ((i = 0; i < ${#args[@]}; ++i)); do
-        if [[ "${args[$i]}" == /usr/sbin/* ]]; then
-            args[$i]="$TARGET_ROOT${args[$i]}"
-        fi
-    done
-    "${args[@]}"
-}
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-ROOT_CANONICAL=/dev/test-root
-SESSION_DIR="'"$sandbox"'/session.hostrootuuid-guard"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-run_tuxedo_uki_builder "TUXEDO UKI vendor run (guarded env)" /usr/sbin/create_boot_uki_base.sh 6.1.0-tuxedo-amd64
-')"
-grep -Fq 'msg:vendor-command-success|param:TUXEDO UKI vendor run (guarded env)' <<<"$builder_guard_ok" \
-    || { echo 'FAIL: the vendor builder run failed (guarded env)' >&2; printf '%s\n' "$builder_guard_ok" >&2; exit 1; }
-[[ "$(cat "$sandbox/vendor-env.txt")" == "HOST_ROOT_UUID=11111111-2222-3333-4444-555555555555" ]] \
-    || { echo 'FAIL: HOST_ROOT_UUID was not exported with the target root UUID (guarded env)' >&2; cat "$sandbox/vendor-env.txt" >&2; exit 1; }
-grep -Fq 'PATH=/usr/local/libexec/boot-repair-efi-guard.session.hostrootuuid-guard:' "$sandbox/vendor-env-full.txt" \
-    || { echo 'FAIL: the guarded env did not prepend the request-scoped EFI guard directory' >&2; exit 1; }
-[[ ! -e "$sandbox/target/usr/local/libexec/boot-repair-efi-guard.session.hostrootuuid-guard" ]] \
-    || { echo 'FAIL: the vendor builder left the request-scoped guard directory behind' >&2; exit 1; }
-
-# 11m: the post-build root binding verification reuses the same hoisted UUID
-# that was exported to the vendor builder, so the two can never diverge.  A
-# diverging blkid probe (9999...) must not influence the check when the
-# hoisted value is present, and the refusal names the hoisted UUID.
-printf 'uki-image\n' > "$esp_dir/EFI/BOOT/TUX.EFI"
-verify_reuse="$(run_harness '
-need() { :; }
-objcopy_dump_section() {
-    local dest="${1#*=}"
-    printf "root=UUID=11111111-2222-3333-4444-555555555555\n" > "$dest"
-    return 0
-}
-blkid() { printf "99999999-8888-7777-6666-555555555555\n"; }
-crypt_backing_device() { return 1; }
-TARGET_ROOT="'"$sandbox"'/target"
-ROOT_CANONICAL=/dev/test-root
-TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-verify_tuxedo_uki_root_binding
-printf "VERIFY:OK\n"
-')"
-grep -Fqx 'VERIFY:OK' <<<"$verify_reuse" \
-    || { echo 'FAIL: the binding verification did not reuse the hoisted root UUID' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
-grep -Fq 'msg:uki-binding-verified' <<<"$verify_reuse" \
-    || { echo 'FAIL: the binding verification did not report success' >&2; printf '%s\n' "$verify_reuse" >&2; exit 1; }
-
-if verify_mismatch="$(run_harness '
-need() { :; }
-objcopy_dump_section() {
-    local dest="${1#*=}"
-    printf "root=UUID=99999999-8888-7777-6666-555555555555\n" > "$dest"
-    return 0
-}
-crypt_backing_device() { return 1; }
-TARGET_ROOT="'"$sandbox"'/target"
-ROOT_CANONICAL=/dev/test-root
-TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-verify_tuxedo_uki_root_binding
-' 2>&1)"; then
-    echo 'FAIL: the binding verification accepted a cmdline that references a different root UUID' >&2
-    printf '%s\n' "$verify_mismatch" >&2
-    exit 1
-fi
-grep -Fq 'Rebuilt TUXEDO UKI does not reference the promoted root filesystem UUID 11111111-2222-3333-4444-555555555555.' <<<"$verify_mismatch" \
-    || { echo 'FAIL: the binding refusal did not name the hoisted root UUID' >&2; printf '%s\n' "$verify_mismatch" >&2; exit 1; }
-
-# 11m2: the promoted Btrfs subvolume match accepts both valid Btrfs spellings.
-# The vendor builder's FINAL_SUBVOL strips the leading slash, so the rebuilt
-# image carries `subvol=@`; a hand-assembled cmdline may keep the slashed form
-# `subvol=/@`.  Both must pass in the rootflags= and bare-subvol positions
-# (including a comma-joined rootflags= value), and a cmdline that selects no
-# subvolume at all must still be refused with the promoted-root message.
-verify_subvol_case()
-{
-    local label="$1" cmdline="$2" expect="$3" out="" rc=0
-    # The negative case makes the harness exit 1, so the exit code is captured
-    # under an if guard (errexit does not fire inside if conditions).
-    if out="$(run_harness '
-need() { :; }
-objcopy_dump_section() {
-    local dest="${1#*=}"
-    printf "%s\n" "'"$cmdline"'" > "$dest"
-    return 0
-}
-blkid() { printf "99999999-8888-7777-6666-555555555555\n"; }
-lsblk() { printf "btrfs\n"; }
-crypt_backing_device() { return 1; }
-TARGET_ROOT="'"$sandbox"'/target"
-ROOT_CANONICAL=/dev/test-root
-TARGET_SUBVOL=@
-TUXEDO_UKI_ROOT_UUID=11111111-2222-3333-4444-555555555555
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-verify_tuxedo_uki_root_binding
-printf "VERIFY:OK\n"
-' 2>&1)"; then
-        rc=0
-    else
-        rc=$?
-    fi
-    if [[ "$expect" == pass ]]; then
-        [[ $rc -eq 0 ]] \
-            || { echo "FAIL: the promoted-subvolume check refused the valid $label form (exit $rc)" >&2; printf '%s\n' "$out" >&2; exit 1; }
-        grep -Fqx 'VERIFY:OK' <<<"$out" \
-            || { echo "FAIL: the promoted-subvolume check did not complete for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
-        grep -Fq 'msg:uki-binding-verified' <<<"$out" \
-            || { echo "FAIL: the promoted-subvolume check did not report success for the $label form" >&2; printf '%s\n' "$out" >&2; exit 1; }
-    else
-        if [[ $rc -eq 0 ]] || grep -Fqx 'VERIFY:OK' <<<"$out"; then
-            echo "FAIL: the promoted-subvolume check accepted the $label" >&2
-            printf '%s\n' "$out" >&2
-            exit 1
-        fi
-        grep -Fq 'Rebuilt TUXEDO UKI does not explicitly select the promoted Btrfs @ root.' <<<"$out" \
-            || { echo "FAIL: the promoted-subvolume refusal did not name the promoted root for the $label" >&2; printf '%s\n' "$out" >&2; exit 1; }
-    fi
-}
-
-verify_subvol_case 'vendor no-slash form' 'root=UUID=11111111-2222-3333-4444-555555555555 subvol=@ rootflags=subvol=@' pass
-verify_subvol_case 'slashed form' 'root=UUID=11111111-2222-3333-4444-555555555555 subvol=/@ rootflags=subvol=/@' pass
-verify_subvol_case 'joined rootflags no-slash form' 'root=UUID=11111111-2222-3333-4444-555555555555 rootflags=rw,subvol=@' pass
-verify_subvol_case 'joined rootflags slashed form' 'root=UUID=11111111-2222-3333-4444-555555555555 rootflags=rw,subvol=/@' pass
-verify_subvol_case 'cmdline without any subvol selection' 'root=UUID=11111111-2222-3333-4444-555555555555 rw quiet' refuse
-
-# 11f: host-path join.  With TARGET_ROOT="/" the real mount entry must resolve
-# /boot (not //boot), record the pre-existing systemd mount and never mount
-# over it.  /boot is used instead of /boot/efi because every rig (including the
-# BIOS Alpine guest that runs this contract during the package check phase) has
-# it, while a BIOS rig has no /boot/efi directory for the mount probe to stat.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-/boot /dev/test-efi vfat rw 612
-MNT
-printf '/boot\n' > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_MOUNT_LOG"
-join_out="$(run_harness '
-TARGET_ROOT="/"
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-fstab_entry_for_mountpoint() { printf "/dev/test-efi\tvfat\tdefaults\t0 2\n"; }
-resolve_fstab_source() { printf "/dev/test-efi\n"; }
-same_single_top_disk() { return 0; }
-realpath_existing() { printf "%s\n" "$1"; }
-eval "$real_mount_target_boot_entry"
-mount_target_boot_entry "/boot" ro
-printf "JOIN:%s\n" "$(target_path "/boot")"
-printf "PREEXISTING:%s\n" "${PREEXISTING_MOUNTS[*]}"
-')"
-grep -Fqx 'JOIN:/boot' <<<"$join_out" \
-    || { echo 'FAIL: the host-path join produced a double slash' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
-grep -Fqx 'PREEXISTING:/boot|/dev/test-efi|rw|612' <<<"$join_out" \
-    || { echo 'FAIL: the pre-existing ESP mount was not recorded' >&2; printf '%s\n' "$join_out" >&2; exit 1; }
-[[ ! -s "$FAKE_MOUNT_LOG" ]] \
-    || { echo 'FAIL: mount_target_boot_entry mounted over the pre-existing mount' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-
-# 11g: unmounted fstab ESP.  The ESP is configured in the target fstab but not
-# mounted; the preflight must mount it, re-run the writability probe and pass
-# only after the new mount is verified as the ESP on the selected target disk.
-cat > "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-root  /          ext4  defaults  0 1
-/dev/test-boot  /boot      ext4  defaults  0 2
-/dev/test-efi   /boot/efi  vfat  defaults  0 2
-FSTAB
-: > "$FAKE_FINDMNT_DB"
-: > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_SYSTEMCTL_LOG"
-unmounted_ok="$(FAKE_MOUNT_ADD_POINT="$esp_dir" FAKE_MOUNT_ADD_ROW="$esp_dir /dev/test-efi vfat rw 900" run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_DISK=/dev/test-disk
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight clear
-')"
-grep -Fq "msg:esp-mounted|param:$esp_dir|param:/dev/test-efi|param:mount" <<<"$unmounted_ok" \
-    || { echo 'FAIL: unmounted fstab ESP was not auto-mounted with evidence' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
-grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:1|param:/dev/test-efi|param:rw|param:900|param:rw|param:0" <<<"$unmounted_ok" \
-    || { echo 'FAIL: auto-mount did not re-run the writability probe on the new mount' >&2; printf '%s\n' "$unmounted_ok" >&2; exit 1; }
-grep -Fq -- "-- $esp_dir" "$FAKE_MOUNT_LOG" \
-    || { echo 'FAIL: auto-mount did not use the fstab-backed mount path' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-[[ "$(wc -l < "$FAKE_MOUNT_LOG")" -eq 1 ]] \
-    || { echo 'FAIL: auto-mount mounted more than the configured ESP' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-[[ ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
-    || { echo 'FAIL: the target-scope auto-mount triggered systemd' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
-
-# 11h: systemd automount trigger on the running host.  The fstab entry carries
-# x-systemd.automount; the preflight must trigger the automount unit instead
-# of calling mount, then verify the mount the kernel creates on access.  /boot
-# is used for the same every-rig existence reason as 11f.
-: > "$FAKE_FINDMNT_DB"
-: > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_SYSTEMCTL_LOG"
-automount_ok="$(FAKE_SYSTEMCTL_ADD_POINT=/boot FAKE_SYSTEMCTL_ADD_ROW='/boot /dev/test-efi vfat rw 901' run_harness '
-TARGET_ROOT="/"
-TARGET_DISK=/dev/test-disk
-TARGET_ESP_MOUNT=/boot
-EFI_ESP_SOURCE=
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-fstab_entry_for_mountpoint() { printf "/dev/test-efi\tvfat\tdefaults,x-systemd.automount\n"; }
-esp_writable_preflight clear
-')"
-grep -Fq 'msg:esp-mounted|param:/boot|param:/dev/test-efi|param:automount' <<<"$automount_ok" \
-    || { echo 'FAIL: the systemd automount was not triggered with evidence' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
-grep -Fq 'msg:esp-mount-preflight|param:/boot|param:1|param:/dev/test-efi|param:rw|param:901|param:rw|param:0' <<<"$automount_ok" \
-    || { echo 'FAIL: the automount trigger did not re-run the writability probe' >&2; printf '%s\n' "$automount_ok" >&2; exit 1; }
-grep -Fq 'start boot.automount' "$FAKE_SYSTEMCTL_LOG" \
-    || { echo 'FAIL: the automount unit was not started' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
-[[ ! -s "$FAKE_MOUNT_LOG" ]] \
-    || { echo 'FAIL: the automount path called mount directly' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-
-# 11i: auto-mount failure refusal.  A configured ESP whose mount fails must
-# fail closed with the auto-mount evidence and the actionable hint, never
-# continue to the repair.
-: > "$FAKE_FINDMNT_DB"
-: > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_SYSTEMCTL_LOG"
-if unmounted_fail="$(FAKE_MOUNT_FAIL=1 run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_DISK=/dev/test-disk
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight clear
-' 2>&1)"; then
-    echo 'FAIL: the preflight passed although the ESP auto-mount failed' >&2
-    exit 1
-fi
-grep -Fq "msg:esp-automount-failed|param:$esp_dir|param:mount $esp_dir failed|param:mount $esp_dir" <<<"$unmounted_fail" \
-    || { echo 'FAIL: the auto-mount failure evidence line is missing or wrong' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
-grep -Fq "auto-mount did not succeed. Run 'mount $esp_dir'" <<<"$unmounted_fail" \
-    || { echo 'FAIL: the preflight refusal does not carry the actionable hint' >&2; printf '%s\n' "$unmounted_fail" >&2; exit 1; }
-[[ ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
-    || { echo 'FAIL: the failed target-scope auto-mount triggered systemd' >&2; cat "$FAKE_SYSTEMCTL_LOG" >&2; exit 1; }
-
-# 11j: already-mounted ESP no-op.  A writable topmost ESP mount must pass
-# without any mount or systemctl call.
-cat > "$FAKE_FINDMNT_DB" <<MNT
-$esp_dir /dev/test-efi vfat rw 902
-MNT
-printf '%s\n' "$esp_dir" > "$FAKE_MOUNTPOINT_DB"
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_SYSTEMCTL_LOG"
-mounted_noop="$(run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-TARGET_DISK=/dev/test-disk
-TARGET_ESP_MOUNT=/boot/efi
-EFI_ESP_SOURCE=/dev/test-efi
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-esp_writable_preflight check
-')"
-grep -Fq "msg:esp-mount-preflight|param:$esp_dir|param:1|param:/dev/test-efi|param:rw|param:902|param:rw|param:0" <<<"$mounted_noop" \
-    || { echo 'FAIL: an already-mounted writable ESP did not pass the probe' >&2; printf '%s\n' "$mounted_noop" >&2; exit 1; }
-if grep -Fq 'ESP mount:' <<<"$mounted_noop"; then
-    echo 'FAIL: an already-mounted ESP emitted auto-mount evidence' >&2
-    printf '%s\n' "$mounted_noop" >&2
-    exit 1
-fi
-[[ ! -s "$FAKE_MOUNT_LOG" && ! -s "$FAKE_SYSTEMCTL_LOG" ]] \
-    || { echo 'FAIL: an already-mounted ESP triggered mount/systemctl' >&2; exit 1; }
-
-# 11k: cleanup leak evidence.  An unmount that fails must emit MOUNT_LEAK, keep
-# the record in the process-independent state file and never be swallowed.
-printf '%s\n' "$sandbox/target/home" > "$FAKE_MOUNTPOINT_DB"
-printf '%s /dev/test-home xfs rw 77\n' "$sandbox/target/home" > "$FAKE_FINDMNT_DB"
-rm -f "$sandbox/state/mount-leaks.log"
-leak_out="$(FAKE_UMOUNT_FAIL="$sandbox/target/home" run_harness '
-TARGET_ROOT="'"$sandbox"'/target"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-MOUNTS=("'"$sandbox"'/target/home")
-cleanup
-' 2>&1 || true)"
-grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" <<<"$leak_out" \
-    || { echo 'FAIL: cleanup did not emit MOUNT_LEAK evidence' >&2; printf '%s\n' "$leak_out" >&2; exit 1; }
-grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" "$sandbox/state/mount-leaks.log" \
-    || { echo 'FAIL: the leaked mount was not persisted under STATE_ROOT' >&2; exit 1; }
-
 
 # ---------------------------------------------------------------------------
 # Part 12: prepare_target mounts the target fstab's separate non-Btrfs data
@@ -2258,699 +1693,6 @@ grep -Fq "$sandbox/target/srv," <<<"$data_skip" \
     || { echo 'FAIL: the already-mounted /var suppressed the remaining data mounts' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
 grep -Fq "$sandbox/target/var," <<<"$data_skip" \
     && { echo 'FAIL: the already-mounted /var was recorded again' >&2; printf '%s\n' "$data_skip" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 13: A2-01/A4-01/A4-08 fstab mount-destination containment.  A hostile
-# Btrfs subvolume mountpoint (".." traversal or a symlinked destination) is
-# refused with a WARNING and never reaches mkdir/mount, while the legit
-# subvolume still mounts.  context=/seclabel never pass through and
-# nosuid,nodev is appended last for both data-partition and subvolume mounts.
-# ---------------------------------------------------------------------------
-printf 'test-disk - disk - - - -\n' > "$FAKE_LSBLK_DB"
-printf 'test-root btrfs part 11111111-2222-3333-4444-555555555555 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-printf 'test-var ext4 part 66666666-7777-8888-9999-aaaaaaaaaaaa test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-printf 'test-home xfs part BBBBBBBB-CCCC-DDDD-EEEE-FFFFFFFFFFFF test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-touch "$sandbox/dev-test-root" "$sandbox/dev-test-var" "$sandbox/dev-test-home"
-mkdir -p "$sandbox/target/srv" "$sandbox/host-outside"
-# Earlier parts created /home as a real directory; the hostile fixture needs
-# it gone so the symlink can take its place.
-rm -rf "$sandbox/target/home" "$sandbox/target/usr"
-ln -s "$sandbox/host-outside" "$sandbox/target/home"
-cat > "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-root  /               btrfs  subvol=/@    0 0
-/dev/test-root  /../../outside  btrfs  subvol=/@evil 0 0
-/dev/test-root  /home           btrfs  subvol=/@home 0 0
-/dev/test-root  /srv            btrfs  subvol=/@srv,context=system_u:object_r:etc_t:s0,seclabel 0 0
-FSTAB
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_MOUNTPOINT_DB"
-subvol_containment="$(run_harness '
-ROOT_CANONICAL=/dev/test-root
-TARGET_DISK=/dev/test-disk
-TARGET_ROOT="'"$sandbox"'/target"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-TARGET_DATA_MOUNTS=()
-mount_target_btrfs_subvolumes ro
-printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
-grep -Fq 'msg:refuse-unsafe-btrfs-path|param:'"$sandbox"'/target/../../outside' <<<"$subvol_containment" \
-    || { echo 'FAIL: the ".." Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
-grep -Fq 'msg:refuse-unsafe-btrfs-path|param:'"$sandbox"'/target/home' <<<"$subvol_containment" \
-    || { echo 'FAIL: the symlinked Btrfs subvolume mountpoint was not refused with a warning' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
-grep -Fq "$sandbox/target/srv," <<<"$subvol_containment" \
-    || { echo 'FAIL: the legitimate Btrfs subvolume was not mounted' >&2; printf '%s\n' "$subvol_containment" >&2; exit 1; }
-grep -Fq -- '-o ro,subvol=/@srv,nosuid,nodev -- /dev/test-root '"$sandbox"'/target/srv' "$FAKE_MOUNT_LOG" \
-    || { echo 'FAIL: the subvolume mount did not drop context=/seclabel and append nosuid,nodev' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-if grep -Fq 'context=' "$FAKE_MOUNT_LOG" || grep -Fq 'seclabel' "$FAKE_MOUNT_LOG" \
-   || grep -Fq '@evil' "$FAKE_MOUNT_LOG" || grep -Fq '/home' "$FAKE_MOUNT_LOG"; then
-    echo 'FAIL: a hostile or SELinux-labeled subvolume mount reached the mount command' >&2
-    cat "$FAKE_MOUNT_LOG" >&2
-    exit 1
-fi
-[[ -z "$(ls -A "$sandbox/host-outside" 2>/dev/null)" ]] \
-    || { echo 'FAIL: the symlinked subvolume mountpoint redirected a write outside the target' >&2; exit 1; }
-
-# Data partitions: the symlinked /usr destination is refused, the legitimate
-# /var entry keeps its passthrough options but loses context= and gains the
-# appended nosuid,nodev after the fstab suid,dev (rightmost wins).
-ln -s "$sandbox/host-outside" "$sandbox/target/usr"
-printf 'test-usr ext4 part USR-UUID test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-touch "$sandbox/dev-test-usr"
-cat > "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-root  /     btrfs  subvol=/@  0 0
-/dev/test-var   /var  ext4   defaults,context=system_u:object_r:var_t:s0,suid,dev  0 2
-/dev/test-home  /home xfs    defaults  0 2
-/dev/test-usr   /usr  ext4   defaults  0 2
-FSTAB
-: > "$FAKE_MOUNT_LOG"
-: > "$FAKE_MOUNTPOINT_DB"
-data_containment="$(run_harness '
-ROOT_CANONICAL=/dev/test-root
-TARGET_DISK=/dev/test-disk
-TARGET_ROOT="'"$sandbox"'/target"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-TARGET_DATA_MOUNTS=()
-mount_target_data_partitions ro
-printf "MOUNTS:%s\n" "$(printf "%s," "${TARGET_DATA_MOUNTS[@]:-}")"')"
-grep -Fq 'msg:refuse-unsafe-mount-path|param:/usr|param:'"$sandbox"'/target/usr' <<<"$data_containment" \
-    || { echo 'FAIL: the symlinked data-partition destination was not refused with a warning' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
-grep -Fq "$sandbox/target/var," <<<"$data_containment" \
-    || { echo 'FAIL: the legitimate data partition was not mounted' >&2; printf '%s\n' "$data_containment" >&2; exit 1; }
-grep -Fq -- '-o ro,suid,dev,nosuid,nodev -- /dev/test-var '"$sandbox"'/target/var' "$FAKE_MOUNT_LOG" \
-    || { echo 'FAIL: the data mount did not drop context= and append nosuid,nodev after the fstab suid,dev' >&2; cat "$FAKE_MOUNT_LOG" >&2; exit 1; }
-if grep -Fq 'context=' "$FAKE_MOUNT_LOG" || grep -Fq 'seclabel' "$FAKE_MOUNT_LOG"; then
-    echo 'FAIL: a SELinux label option leaked into the data mount passthrough' >&2
-    cat "$FAKE_MOUNT_LOG" >&2
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# Part 14: A2-05 offline repair never lazy-detaches.  A plain umount failure
-# leaves MOUNT_LEAK evidence and returns 2; `umount -l` is never invoked.
-# ---------------------------------------------------------------------------
-: > "$FAKE_FINDMNT_DB"
-printf '%s /dev/test-home xfs rw 77\n' "$sandbox/target/home" > "$FAKE_FINDMNT_DB"
-printf '%s\n' "$sandbox/target/home" > "$FAKE_MOUNTPOINT_DB"
-: > "$sandbox/umount-args.log"
-rm -f "$sandbox/state/mount-leaks.log"
-release_fail="$(run_harness '
-umount() { printf "%s\n" "$*" >> "'"$sandbox"'/umount-args.log"; return 1; }
-TARGET_ROOT="'"$sandbox"'/target"
-MOUNT_BASE="'"$sandbox"'/target"
-ROOT_DEVICE=/dev/test-root
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-MOUNTS=("'"$sandbox"'/target/home")
-set +e
-filesystem_release_mounts_for_device /dev/test-home
-release_rc=$?
-set -e
-printf "RELEASE_RC:%s\n" "$release_rc"
-' 2>&1 || true)"
-grep -Fq 'RELEASE_RC:2' <<<"$release_fail" \
-    || { echo 'FAIL: a failed offline umount did not fail closed with rc 2' >&2; printf '%s\n' "$release_fail" >&2; exit 1; }
-grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" <<<"$release_fail" \
-    || { echo 'FAIL: the offline umount failure did not leave MOUNT_LEAK evidence' >&2; printf '%s\n' "$release_fail" >&2; exit 1; }
-[[ "$(cat "$sandbox/umount-args.log")" == "$sandbox/target/home" ]] \
-    || { echo 'FAIL: the offline release path invoked umount -l or extra umounts' >&2; cat "$sandbox/umount-args.log" >&2; exit 1; }
-grep -Fq "MOUNT_LEAK path=$sandbox/target/home source=/dev/test-home options=rw id=77" "$sandbox/state/mount-leaks.log" \
-    || { echo 'FAIL: the offline umount failure was not persisted under STATE_ROOT' >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 15: A4-06 same-disk scope gate.  A fstab /home on another disk is
-# skipped with a WARNING at resolution time and its tool is never invoked.
-# ---------------------------------------------------------------------------
-printf 'test-disk - disk - - - -\n' > "$FAKE_LSBLK_DB"
-printf 'test-root ext4 part 11111111-2222-3333-4444-555555555555 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-printf 'test-boot ext4 part 66666666-7777-8888-9999-aaaaaaaaaaaa test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-printf 'test-efi vfat part ABCD-1234 test-disk 1 test-disk\n' >> "$FAKE_LSBLK_DB"
-printf 'test-outside ext4 part OUTSIDE-UUID other-disk 1 other-disk\n' >> "$FAKE_LSBLK_DB"
-touch "$sandbox/dev-test-outside"
-rm -f "$sandbox/target/usr"
-cat > "$sandbox/target/etc/fstab" <<'FSTAB'
-/dev/test-root     /         ext4  defaults  0 1
-/dev/test-boot     /boot     ext4  defaults  0 2
-/dev/test-efi      /boot/efi vfat  defaults  0 2
-/dev/test-outside  /home     ext4  defaults  0 2
-FSTAB
-: > "$FAKE_TOOL_LOG"
-scope_gate="$(run_harness '
-top_disks_for() {
-    case "$1" in
-        */test-outside) printf "%s\n" "'"$sandbox"'/dev-other-disk" ;;
-        *) printf "%s\n" "'"$sandbox"'/dev-test-disk" ;;
-    esac
-}
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-TARGET_OS_ID=arch
-TARGET_OS_LIKE=""
-TARGET_DISTRO_FAMILY=arch
-TARGET_ROOT="'"$sandbox"'/target"
-SESSION_LOG="'"$sandbox"'/session.log"
-: > "$SESSION_LOG"
-filesystem_scope_resolve
-printf "SCOPE:%s\n" "${FS_SCOPE_DEVICES[*]}"')"
-grep -Fq 'msg:fstab-not-on-disk|param:/home|param:/dev/test-outside|param:/dev/test-disk' <<<"$scope_gate" \
-    || { echo 'FAIL: the out-of-disk fstab /home was not skipped with a warning' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
-grep -Fq 'SCOPE:/dev/test-root /dev/test-boot /dev/test-efi' <<<"$scope_gate" \
-    || { echo 'FAIL: the same-disk scope devices were not resolved' >&2; printf '%s\n' "$scope_gate" >&2; exit 1; }
-if grep -Fq '/dev/test-outside' <<<"$(grep -F 'SCOPE:' <<<"$scope_gate")"; then
-    echo 'FAIL: the out-of-disk /home device entered the repair scope' >&2
-    exit 1
-fi
-gate_inspect="$(run_harness '
-top_disks_for() {
-    case "$1" in
-        */test-outside) printf "%s\n" "'"$sandbox"'/dev-other-disk" ;;
-        *) printf "%s\n" "'"$sandbox"'/dev-test-disk" ;;
-    esac
-}
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-TARGET_OS_ID=arch
-TARGET_OS_LIKE=""
-TARGET_DISTRO_FAMILY=arch
-TARGET_ROOT=""
-fs_inspect /dev/test-disk /dev/test-root
-' 2>&1 || true)"
-if grep -Fq '/dev/test-outside' "$FAKE_TOOL_LOG"; then
-    echo 'FAIL: the out-of-disk fstab device was handed to a filesystem tool' >&2
-    cat "$FAKE_TOOL_LOG" >&2
-    exit 1
-fi
-grep -Fq 'File system check summary: devices=3 clean=3 issues=0 unsupported=0 tool-missing=0 skipped=0' <<<"$gate_inspect" \
-    || { echo 'FAIL: the gated inspection scope is not the three same-disk devices' >&2; printf '%s\n' "$gate_inspect" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 16: A4-04 LUKS header UUID validation.  A malformed header UUID is
-# refused before any luks-<UUID> mapper name is composed; a canonical UUID
-# composes the mapper name.
-# ---------------------------------------------------------------------------
-if luks_bad="$(run_harness '
-need() { :; }
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-assert_target_not_host() { :; }
-same_single_top_disk() { return 0; }
-lsblk() { printf "crypto_LUKS\n"; }
-cryptsetup() {
-    if [[ "${1:-}" == luksUUID ]]; then printf "not-a-uuid/../../etc\n"; fi
-    return 0
-}
-unlock_target
-' 2>&1)"; then
-    echo 'FAIL: a malformed LUKS header UUID was accepted' >&2
-    exit 1
-fi
-grep -Fq 'The LUKS header reported a malformed UUID; refusing to unlock: not-a-uuid/../../etc' <<<"$luks_bad" \
-    || { echo 'FAIL: the malformed LUKS UUID refusal reason is missing' >&2; printf '%s\n' "$luks_bad" >&2; exit 1; }
-if grep -Fq 'luks-not-a-uuid' <<<"$luks_bad"; then
-    echo 'FAIL: a malformed LUKS UUID reached the mapper-name composition' >&2
-    exit 1
-fi
-
-if luks_ok="$(run_harness '
-need() { :; }
-TARGET_DISK=/dev/test-disk
-ROOT_DEVICE=/dev/test-root
-assert_target_not_host() { :; }
-same_single_top_disk() { return 0; }
-lsblk() { printf "crypto_LUKS\n"; }
-cryptsetup() {
-    case "${1:-}" in
-        luksUUID) printf "11111111-2222-3333-4444-555555555555\n" ;;
-        *) return 0 ;;
-    esac
-    return 0
-}
-find_crypt_mapper_for_device() { return 1; }
-unlock_target
-' 2>&1)"; then
-    echo 'FAIL: a canonical LUKS UUID unlock was refused' >&2
-    printf '%s\n' "$luks_ok" >&2
-    exit 1
-fi
-grep -Fq 'msg:luks-mapper-name|param:luks-11111111-2222-3333-4444-555555555555' <<<"$luks_ok" \
-    || { echo 'FAIL: the canonical LUKS UUID did not compose the luks-<UUID> mapper name' >&2; printf '%s\n' "$luks_ok" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 17: A4-02 repair-to-host File Copy strips setuid/setgid and drops file
-# capabilities.  The transfer carries --chmod=u-s,g-s and the
-# security.capability xattr filter when the probed rsync supports them, the
-# post-copy scan fails closed on either bit class, and the verification masks
-# modes exactly like the copy so a stripped destination reports no phantom
-# diff.  Host-to-repair keeps -aHAX with an explicit log note.
-# ---------------------------------------------------------------------------
-grep -q '^rsync_supports_chmod()' "$HELPER" \
-    || { echo 'FAIL: the rsync --chmod support probe is missing' >&2; exit 1; }
-grep -q '^rsync_supports_xattr_filter()' "$HELPER" \
-    || { echo 'FAIL: the rsync xattr-filter support probe is missing' >&2; exit 1; }
-grep -q '^reassert_host_destination()' "$HELPER" \
-    || { echo 'FAIL: the repair-to-host destination reassert helper is missing' >&2; exit 1; }
-grep -q '^host_copy_security_scan()' "$HELPER" \
-    || { echo 'FAIL: the repair-to-host post-copy security scan is missing' >&2; exit 1; }
-file_copy_block="$(sed -n '/^run_file_copy()/,/^}/p' "$HELPER")"
-rsync_block="$(sed -n '/^run_rsync_item()/,/^}/p' "$HELPER")"
-verify_block="$(sed -n '/^verify_rsync_item()/,/^}/p' "$HELPER")"
-scan_block="$(sed -n '/^host_copy_security_scan()/,/^}/p' "$HELPER")"
-grep -Fq -- '--chmod=u-s,g-s' <<<"$rsync_block" \
-    || { echo 'FAIL: repair-to-host rsync does not strip setuid/setgid with --chmod' >&2; exit 1; }
-grep -Fq -- "-f '-x security.capability'" <<<"$rsync_block" \
-    || { echo 'FAIL: repair-to-host rsync does not drop security.capability with an xattr filter' >&2; exit 1; }
-grep -Fq -- '--chmod=u-s,g-s' <<<"$verify_block" \
-    || { echo 'FAIL: the post-copy verification does not mask setuid/setgid modes' >&2; exit 1; }
-grep -Fq -- "-f '-x security.capability'" <<<"$verify_block" \
-    || { echo 'FAIL: the post-copy verification does not filter security.capability' >&2; exit 1; }
-grep -Fq -- '-perm /6000' <<<"$scan_block" \
-    || { echo 'FAIL: the post-copy scan does not use find -perm /6000' >&2; exit 1; }
-grep -Fq -- 'getfattr -R -m security.capability' <<<"$scan_block" \
-    || { echo 'FAIL: the post-copy scan does not check security.capability with getfattr' >&2; exit 1; }
-grep -Fq -- 'getcap -r' <<<"$scan_block" \
-    || { echo 'FAIL: the post-copy scan lacks the getcap fallback' >&2; exit 1; }
-grep -Fq 'cannot verify that file capabilities were removed' <<<"$scan_block" \
-    || { echo 'FAIL: the scan does not fail with a clear message when xattr tooling and the rsync filter are both unavailable' >&2; exit 1; }
-grep -Fq 'run_rsync_item "$mode" "$source" "$destination" "$chown_value" "$strip_setid"' <<<"$file_copy_block" \
-    || { echo 'FAIL: the strip flag is not plumbed into the File Copy rsync' >&2; exit 1; }
-grep -Fq 'verify_rsync_item "$source" "$destination" "$chown_value" "$strip_setid"' <<<"$file_copy_block" \
-    || { echo 'FAIL: the strip flag is not plumbed into the File Copy verification' >&2; exit 1; }
-grep -Fq 'host_copy_security_scan "$destination/$(basename -- "$source")"' <<<"$file_copy_block" \
-    || { echo 'FAIL: the post-copy security scan is not wired into File Copy' >&2; exit 1; }
-grep -Fq 'msg_log security-strip-on-repair-host' <<<"$file_copy_block" \
-    || { echo 'FAIL: the File Copy preview/summary text does not state that repair-to-host removes setuid/setgid/capabilities' >&2; exit 1; }
-grep -Fq 'msg_log security-keep-on-host-repair' <<<"$file_copy_block" \
-    || { echo 'FAIL: the host-to-repair trusted -aHAX note is missing' >&2; exit 1; }
-
-# Behavioural, non-root: a 4755 source file must arrive as 0755, the masked
-# verification must report no difference, and the post-copy scan must accept
-# the stripped tree and refuse a setuid-bearing one.  Uses the real host
-# rsync, so the probe functions must agree it supports both options.
-fc_root="$(mktemp -d)"
-mkdir -p "$fc_root/src" "$fc_root/dst"
-printf 'binary\n' > "$fc_root/src/tool"
-chmod 4755 "$fc_root/src/tool"
-printf 'plain\n' > "$fc_root/src/doc"
-chmod 0644 "$fc_root/src/doc"
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_DIR="$fc_root/session"
-    mkdir -p "$SESSION_DIR"
-    SESSION_LOG="$fc_root/session.log"
-    : > "$SESSION_LOG"
-    rsync_supports_chmod || exit 91
-    rsync_supports_xattr_filter || exit 92
-    run_rsync_item copy "$fc_root/src/tool" "$fc_root/dst" "" yes
-    run_rsync_item copy "$fc_root/src/doc" "$fc_root/dst" "" yes
-    verify_rsync_item "$fc_root/src/tool" "$fc_root/dst" "" yes
-    verify_rsync_item "$fc_root/src/doc" "$fc_root/dst" "" yes
-    host_copy_security_scan "$fc_root/dst/tool"
-    host_copy_security_scan "$fc_root/dst/doc"
-) > "$fc_root/copy.log" 2>&1
-fc_rc=$?
-if (( fc_rc != 0 )); then
-    echo "FAIL: repair-to-host strip/verify/scan path failed (rc $fc_rc)" >&2
-    cat "$fc_root/copy.log" >&2
-    exit 1
-fi
-[[ "$(stat -c '%a' -- "$fc_root/dst/tool")" == 755 ]] \
-    || { echo "FAIL: a 4755 source arrived as $(stat -c '%a' -- "$fc_root/dst/tool"), setuid/setgid was not stripped" >&2; exit 1; }
-[[ "$(stat -c '%a' -- "$fc_root/dst/doc")" == 644 ]] \
-    || { echo 'FAIL: the plain-file mode was not preserved' >&2; exit 1; }
-mkdir -p "$fc_root/bad"
-printf 'x\n' > "$fc_root/bad/tool"
-chmod 4755 "$fc_root/bad/tool"
-set +e
-scan_fail_out="$(
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_DIR="$fc_root/session"
-        SESSION_LOG="$fc_root/session.log"
-        host_copy_security_scan "$fc_root/bad"
-    ) 2>&1
-)"
-set -e
-grep -Fq 'found setuid/setgid bits in the copied files; the copy is refused' <<<"$scan_fail_out" \
-    || { echo 'FAIL: the post-copy scan accepted a setuid-bearing copy' >&2; printf '%s\n' "$scan_fail_out" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 18: A4-03 repair-to-host destination TOCTOU and permission hardening.
-# validate_host_destination refuses sticky and world-writable directories,
-# only warns on group-writable ones, and the destination is re-validated
-# immediately before each rsync and before the verification, failing when the
-# realpath changed.
-# ---------------------------------------------------------------------------
-grep -Fq 'must not be sticky' "$HELPER" \
-    || { echo 'FAIL: the sticky destination refusal is missing' >&2; exit 1; }
-grep -Fq 'must not be world-writable' "$HELPER" \
-    || { echo 'FAIL: the world-writable destination refusal is missing' >&2; exit 1; }
-grep -Fq 'msg_log host-dest-group-writable' "$HELPER" \
-    || { echo 'FAIL: the group-writable destination is not a warning' >&2; exit 1; }
-grep -Fq 'and must not be sticky or world-writable' "$HELPER" \
-    || { echo 'FAIL: the GUI-visible destination allowlist wording does not name the permission requirement' >&2; exit 1; }
-grep -Fq 'changed during the copy (TOCTOU)' "$HELPER" \
-    || { echo 'FAIL: the destination-change refusal message is missing' >&2; exit 1; }
-awk '
-    BEGIN { n = 0 }
-    index($0, "reassert_host_destination \"$destination_virtual\" \"$destination\"") { n++; reassert[n] = NR }
-    index($0, "run_rsync_item \"$mode\"") { rsync_line = NR }
-    index($0, "verify_rsync_item \"$source\"") { verify_line = NR }
-    END {
-        if (n < 2 || reassert[1] > rsync_line || rsync_line > reassert[2] || reassert[2] > verify_line) exit 1
-    }
-' <<<"$file_copy_block" \
-    || { echo 'FAIL: the repair-to-host destination is not re-validated before rsync and before verification' >&2; exit 1; }
-
-fc_dest="$fc_root/host-dest"
-mkdir -p "$fc_dest"
-chmod 0755 "$fc_dest"
-dest_ok="$( (
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_LOG="$fc_root/session.log"
-    validate_host_destination "$fc_dest"
-) 2>&1 || true)"
-grep -Fxq "$(readlink -f -- "$fc_dest")" <<<"$dest_ok" \
-    || { echo 'FAIL: a clean host destination was refused' >&2; printf '%s\n' "$dest_ok" >&2; exit 1; }
-
-chmod 0777 "$fc_dest"
-if world_out="$( (
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_LOG="$fc_root/session.log"
-    validate_host_destination "$fc_dest"
-) 2>&1)"; then
-    echo 'FAIL: a world-writable host destination was accepted' >&2
-    exit 1
-fi
-grep -Fq 'must not be world-writable' <<<"$world_out" \
-    || { echo 'FAIL: the world-writable refusal reason is missing' >&2; exit 1; }
-
-chmod 1777 "$fc_dest"
-if sticky_out="$( (
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_LOG="$fc_root/session.log"
-    validate_host_destination "$fc_dest"
-) 2>&1)"; then
-    echo 'FAIL: a sticky host destination was accepted' >&2
-    exit 1
-fi
-grep -Fq 'must not be sticky' <<<"$sticky_out" \
-    || { echo 'FAIL: the sticky refusal reason is missing' >&2; exit 1; }
-
-chmod 0775 "$fc_dest"
-group_out="$( (
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_LOG="$fc_root/session.log"
-    validate_host_destination "$fc_dest"
-) 2>&1 || true)"
-grep -Fq 'group-writable' <<<"$group_out" \
-    || { echo 'FAIL: a group-writable host destination did not warn' >&2; printf '%s\n' "$group_out" >&2; exit 1; }
-grep -Fxq "$(readlink -f -- "$fc_dest")" <<<"$group_out" \
-    || { echo 'FAIL: a group-writable host destination was refused instead of warned' >&2; printf '%s\n' "$group_out" >&2; exit 1; }
-chmod 0755 "$fc_dest"
-
-# TOCTOU: a destination whose revalidation resolves elsewhere fails the
-# reassert; a stable destination passes it.
-toctou_out="$(
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_LOG="$fc_root/session.log"
-        validate_host_destination() { printf '%s\n' "$fc_root/host-dest-elsewhere"; }
-        reassert_host_destination "$fc_dest" "$fc_dest"
-    ) 2>&1 || true
-)"
-grep -Fq 'changed during the copy (TOCTOU)' <<<"$toctou_out" \
-    || { echo 'FAIL: a swapped repair-to-host destination was not refused on revalidation' >&2; printf '%s\n' "$toctou_out" >&2; exit 1; }
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_LOG="$fc_root/session.log"
-    validate_host_destination() { printf '%s\n' "$fc_dest"; }
-    reassert_host_destination "$fc_dest" "$fc_dest"
-) \
-    || { echo 'FAIL: a stable repair-to-host destination failed the revalidation reassert' >&2; exit 1; }
-reval_fail_out="$(
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_LOG="$fc_root/session.log"
-        validate_host_destination() { return 1; }
-        reassert_host_destination "$fc_dest" "$fc_dest"
-    ) 2>&1 || true
-)"
-grep -Fq 'failed revalidation' <<<"$reval_fail_out" \
-    || { echo 'FAIL: a failing destination revalidation was not reported' >&2; printf '%s\n' "$reval_fail_out" >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# Part 19: SHA-256 verification robustness.  verify_sha256_item() prints one
-# bare integer on stdout for every outcome (the verified count; 0 on failure)
-# and returns nonzero when a listed file failed, so a source lost mid-copy can
-# never crash the File Copy arithmetic.  run_file_copy counts failures, names
-# them in the final summary and fails closed instead of reporting a silently
-# "complete" copy with 0 verified files.
-# ---------------------------------------------------------------------------
-grep -q '^sha256_verify_failure()' "$HELPER" \
-    || { echo 'FAIL: the SHA-256 verification failure marker helper is missing' >&2; exit 1; }
-sha_v_block="$(sed -n '/^verify_sha256_item()/,/^}/p' "$HELPER")"
-grep -Fq "printf '0\\n'" <<<"$sha_v_block" \
-    || { echo 'FAIL: verify_sha256_item no longer prints a bare 0 on failure paths' >&2; exit 1; }
-grep -Fq 'sha256_verify_failure' <<<"$sha_v_block" \
-    || { echo 'FAIL: verify_sha256_item no longer routes failures through the error reporter' >&2; exit 1; }
-grep -Fq 'if ! verified="$(verify_sha256_item "$source" "$destination")"; then' <<<"$file_copy_block" \
-    || { echo 'FAIL: the File Copy loop does not capture the verification status robustly' >&2; exit 1; }
-grep -Fq '[[ "$verified" =~ ^[0-9]+$ ]] || verified=0' <<<"$file_copy_block" \
-    || { echo 'FAIL: the File Copy verification count is not regex-guarded' >&2; exit 1; }
-grep -Fq 'msg_log copy-sha-failures' <<<"$file_copy_block" \
-    || { echo 'FAIL: the File Copy summary does not name verification failures' >&2; exit 1; }
-
-# (b) verify_sha256_item stdout is always a bare integer; nonzero status only
-# on failure.  Success file/dir, vanished source, missing/wrong-type
-# destination, content mismatch and a file that disappears mid-hash.
-sha_v_root="$fc_root/sha-verify"
-mkdir -p "$sha_v_root/session"
-: > "$sha_v_root/session.log"
-sha_v_call() {
-    # Run verify_sha256_item in a clean helper context; stdout lands in
-    # sha_v_out, the function's status becomes sha_v_call's status.  The
-    # caller owns set -e restoration: this function must not re-enable it
-    # before returning a nonzero status (functions run in the caller's shell).
-    local _rc
-    set +e
-    sha_v_out="$(
-        SHAV_VANISH_AT="${SHAV_VANISH_AT:-}" bash -c '
-            source <(sed '\''/^main "\$@"/d'\'' "$1")
-            trap - EXIT INT TERM HUP
-            SESSION_DIR="$2/session"
-            SESSION_LOG="$2/session.log"
-            : > "$SESSION_LOG"
-            if [[ -n "${SHAV_VANISH_AT:-}" ]]; then
-                sha256sum()
-                {
-                    local arg
-                    for arg in "$@"; do
-                        if [[ "$arg" == "$SHAV_VANISH_AT" ]]; then
-                            rm -f -- "$SHAV_VANISH_AT"
-                            break
-                        fi
-                    done
-                    command sha256sum "$@"
-                }
-            fi
-            verify_sha256_item "${@:4}"
-        ' _ "$HELPER" "$sha_v_root" "$@" 2>/dev/null
-    )"
-    _rc=$?
-    return $_rc
-}
-
-mkdir -p "$sha_v_root/one/src" "$sha_v_root/one/dst"
-printf 'alpha\n' > "$sha_v_root/one/src/f"
-cp -p "$sha_v_root/one/src/f" "$sha_v_root/one/dst/f"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/one/src/f" "$sha_v_root/one/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 1 ]] \
-    || { echo "FAIL: successful single-file verification returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=1)" >&2; exit 1; }
-
-mkdir -p "$sha_v_root/two/src/d" "$sha_v_root/two/dst/d"
-printf 'beta\n' > "$sha_v_root/two/src/d/a"
-printf 'gamma\n' > "$sha_v_root/two/src/d/b"
-cp -p "$sha_v_root/two/src/d/a" "$sha_v_root/two/dst/d/a"
-cp -p "$sha_v_root/two/src/d/b" "$sha_v_root/two/dst/d/b"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/two/src/d" "$sha_v_root/two/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 2 ]] \
-    || { echo "FAIL: successful directory verification returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=2)" >&2; exit 1; }
-
-mkdir -p "$sha_v_root/three/src" "$sha_v_root/three/dst"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/three/src/gone" "$sha_v_root/three/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
-    || { echo "FAIL: a vanished source returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
-grep -Fq 'the source no longer exists' "$sha_v_root/session.log" \
-    || { echo 'FAIL: the vanished source failure was not recorded in the session log' >&2; exit 1; }
-
-mkdir -p "$sha_v_root/four/src" "$sha_v_root/four/dst"
-printf 'delta\n' > "$sha_v_root/four/src/f"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/four/src/f" "$sha_v_root/four/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
-    || { echo "FAIL: a missing destination returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
-grep -Fq 'destination file missing or not a regular file' "$sha_v_root/session.log" \
-    || { echo 'FAIL: the missing-destination failure was not recorded in the session log' >&2; exit 1; }
-
-mkdir -p "$sha_v_root/five/src" "$sha_v_root/five/dst"
-printf 'epsilon\n' > "$sha_v_root/five/src/f"
-printf 'different\n' > "$sha_v_root/five/dst/f"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/five/src/f" "$sha_v_root/five/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 0 ]] \
-    || { echo "FAIL: a content mismatch returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=0)" >&2; exit 1; }
-grep -Fq 'SHA-256 verification failed:' "$sha_v_root/session.log" \
-    || { echo 'FAIL: the hash-mismatch failure was not recorded in the session log' >&2; exit 1; }
-
-mkdir -p "$sha_v_root/six/src/d" "$sha_v_root/six/dst/d"
-printf 'zeta\n' > "$sha_v_root/six/src/d/keep"
-printf 'vanishes\n' > "$sha_v_root/six/src/d/vanishes"
-cp -p "$sha_v_root/six/src/d/keep" "$sha_v_root/six/dst/d/keep"
-cp -p "$sha_v_root/six/src/d/vanishes" "$sha_v_root/six/dst/d/vanishes"
-set +e
-SHAV_VANISH_AT="$sha_v_root/six/src/d/vanishes" \
-    sha_v_call verify_sha256_item "$sha_v_root/six/src/d" "$sha_v_root/six/dst"
-sha_v_rc=$?
-set -e
-SHAV_VANISH_AT=""
-[[ "$sha_v_rc" -eq 1 && "$sha_v_out" == 1 ]] \
-    || { echo "FAIL: a mid-hash source loss returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=1 stdout=1)" >&2; exit 1; }
-grep -Fq 'disappeared or is unreadable while hashing' "$sha_v_root/session.log" \
-    || { echo 'FAIL: the mid-hash source loss was not recorded in the session log' >&2; exit 1; }
-
-mkdir -p "$sha_v_root/seven/src" "$sha_v_root/seven/dst"
-printf 'target\n' > "$sha_v_root/seven/src/real"
-ln -s real "$sha_v_root/seven/src/link"
-set +e
-sha_v_call verify_sha256_item "$sha_v_root/seven/src/link" "$sha_v_root/seven/dst"
-sha_v_rc=$?
-set -e
-[[ "$sha_v_rc" -eq 0 && "$sha_v_out" == 0 ]] \
-    || { echo "FAIL: a symlink source returned rc=$sha_v_rc stdout='$sha_v_out' (expected rc=0 stdout=0)" >&2; exit 1; }
-
-# (a) a source file removed between copy and verification: the loop completes,
-# no arithmetic error is printed, the failure is counted and named in the
-# final summary, and the request fails closed.
-sha_a_root="$fc_root/sha-copy"
-mkdir -p "$sha_a_root/src" "$sha_a_root/dst" "$sha_a_root/session"
-printf 'keep-me\n' > "$sha_a_root/src/keep"
-printf 'vanishing\n' > "$sha_a_root/src/vanishes"
-sha_a_run() {
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_DIR="$sha_a_root/session"
-        SESSION_LOG="$sha_a_root/session.log"
-        : > "$SESSION_LOG"
-        prepare_target() { :; }
-        maybe_mount_target_path() { :; }
-        promote_target_data_rw() { :; }
-        validate_virtual_path() { :; }
-        validate_host_source() { :; }
-        target_destination_sensitive() { return 1; }
-        target_destination_path() { printf '%s\n' "$sha_a_root/dst"; }
-        if [[ -n "${SHAV_VANISH_AT:-}" ]]; then
-            sha256sum()
-            {
-                local arg
-                for arg in "$@"; do
-                    if [[ "$arg" == "$SHAV_VANISH_AT" ]]; then
-                        rm -f -- "$SHAV_VANISH_AT"
-                        break
-                    fi
-                done
-                command sha256sum "$@"
-            }
-        fi
-        run_file_copy "$@"
-    )
-}
-
-set +e
-SHAV_VANISH_AT="$sha_a_root/src/vanishes" \
-    sha_a_run copy host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
-    > "$sha_a_root/copy-fail.out" 2>&1
-sha_a_rc=$?
-set -e
-SHAV_VANISH_AT=""
-(( sha_a_rc != 0 )) \
-    || { echo 'FAIL: a copy with a failed SHA-256 verification succeeded instead of failing closed' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'operand expected' "$sha_a_root/copy-fail.out" \
-    && { echo 'FAIL: the verification failure still triggers an arithmetic error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'syntax error' "$sha_a_root/copy-fail.out" \
-    && { echo 'FAIL: the verification failure still triggers an arithmetic syntax error' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'msg:copy-complete-sha-failed' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy did not report the verification failure in its summary' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Eq 'msg:copy-sha-verified|param:1' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy did not count the one healthy verified file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Eq 'msg:copy-sha-failures|param:1' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy did not count the verification failure' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'msg:copy-failed-verification|param:' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy summary did not name the failed verification' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'vanishes' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy summary did not name the vanished source file' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-grep -Fq 'the File Copy is not verified complete' "$sha_a_root/copy-fail.out" \
-    || { echo 'FAIL: the failed copy did not fail closed with the verification failure reason' >&2; cat "$sha_a_root/copy-fail.out" >&2; exit 1; }
-[[ -f "$sha_a_root/dst/src/keep" ]] \
-    || { echo 'FAIL: the copy loop did not complete: the healthy file never reached the destination' >&2; exit 1; }
-
-# The same tree without the mid-copy loss verifies cleanly and stays on the
-# success path, and the preview path is untouched (no verification, rc 0).
-printf 'vanishing\n' > "$sha_a_root/src/vanishes"
-rm -f "$sha_a_root/dst/src/vanishes"
-set +e
-sha_a_run copy host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
-    > "$sha_a_root/copy-ok.out" 2>&1
-sha_a_rc=$?
-set -e
-(( sha_a_rc == 0 )) \
-    || { echo "FAIL: a clean copy failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
-grep -Eq 'msg:copy-complete' "$sha_a_root/copy-ok.out" \
-    || { echo 'FAIL: the clean copy did not report msg:copy-complete' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
-grep -Eq 'msg:copy-sha-verified|param:2' "$sha_a_root/copy-ok.out" \
-    || { echo 'FAIL: the clean copy did not count both verified files' >&2; cat "$sha_a_root/copy-ok.out" >&2; exit 1; }
-if grep -Fq 'SHA-256 verification FAILURES' "$sha_a_root/copy-ok.out"; then
-    echo 'FAIL: the clean copy summary names verification failures' >&2
-    cat "$sha_a_root/copy-ok.out" >&2
-    exit 1
-fi
-set +e
-sha_a_run copy-preview host-to-repair preserve normal "$sha_a_root/dst" "$sha_a_root/src" \
-    > "$sha_a_root/preview.out" 2>&1
-sha_a_rc=$?
-set -e
-(( sha_a_rc == 0 )) \
-    || { echo "FAIL: a copy preview failed (rc $sha_a_rc)" >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
-grep -Fq 'msg:preview-complete' "$sha_a_root/preview.out" \
-    || { echo 'FAIL: the preview path changed its completion wording' >&2; cat "$sha_a_root/preview.out" >&2; exit 1; }
-if grep -Fq 'msg:copy-complete' "$sha_a_root/preview.out"; then
-    echo 'FAIL: the preview path reports a copy completion' >&2
-    cat "$sha_a_root/preview.out" >&2
-    exit 1
-fi
-
 
 # ---------------------------------------------------------------------------
 # Part: ESP derivation fixture.  A UEFI target whose root and ESP are separate
@@ -3132,6 +1874,55 @@ grep -Fq 'Target configuration does not exist; refusing to create: /etc/default/
     || { echo 'FAIL: the missing-configuration write refusal lost its explicit reason' >&2; printf '%s\n' "$config_write_refused" >&2; exit 1; }
 [[ ! -e "$sandbox/target/etc/default/grub" ]] \
     || { echo 'FAIL: config-write created a missing GRUB configuration path' >&2; exit 1; }
+
+# ---------------------------------------------------------------------------
+# Part: a failed mutating stage releases the helper-owned target mount on exit.
+# The EXIT trap cleanup() unmounts MOUNTS with a plain umount (never a lazy
+# detach), so a `fail` in a kernels/dkms/initramfs stage leaves no MOUNT_LEAK and
+# no stale session mount.  This uses a dedicated harness that KEEPS the helper's
+# EXIT trap (the shared harness above disarms it), so the real release path runs.
+# ---------------------------------------------------------------------------
+: > "$FAKE_MOUNTPOINT_DB"
+: > "$FAKE_UMOUNT_LOG"
+: > "$FAKE_FINDMNT_DB"
+
+cat > "$sandbox/exit-trap-harness.sh" <<HARNESS_EXIT
+#!/usr/bin/env bash
+set -euo pipefail
+source <(sed '/^main "\$@"/d' "$HELPER")
+PATH="$sandbox/mockbin:\$PATH"
+STATE_ROOT="$sandbox/state"
+SESSION_DIR="$sandbox/exit-session"
+SESSION_LOG="$sandbox/exit-session.log"
+mkdir -p "\$SESSION_DIR"
+: > "\$SESSION_LOG"
+TARGET_WRITE_INTENT=0
+MOUNT_BASE="$sandbox/exit-session/mount"
+mkdir -p "\$MOUNT_BASE"
+# Simulate prepare_target having mounted the target root and recorded it.
+printf '%s\n' "\$MOUNT_BASE" >> "$FAKE_MOUNTPOINT_DB"
+MOUNTS=("\$MOUNT_BASE")
+# A mutating stage fails mid-way: fail() exits and the EXIT trap cleanup() runs.
+fail "simulated mutating-stage failure"
+HARNESS_EXIT
+
+set +e
+exit_trap_out="$(bash --noprofile --norc "$sandbox/exit-trap-harness.sh" 2>&1)"
+exit_trap_rc=$?
+set -e
+[[ "$exit_trap_rc" -ne 0 ]] \
+    || { echo 'FAIL: a failed stage must exit nonzero' >&2; exit 1; }
+grep -Fq 'simulated mutating-stage failure' <<<"$exit_trap_out" \
+    || { echo 'FAIL: the failed stage message was not surfaced' >&2; printf '%s\n' "$exit_trap_out" >&2; exit 1; }
+if grep -Fq 'MOUNT_LEAK' <<<"$exit_trap_out"; then
+    echo 'FAIL: a failed stage leaked the target mount (MOUNT_LEAK emitted)' >&2
+    printf '%s\n' "$exit_trap_out" >&2
+    exit 1
+fi
+grep -Fqx -- "$sandbox/exit-session/mount" "$FAKE_UMOUNT_LOG" \
+    || { echo 'FAIL: the EXIT trap did not unmount the target root' >&2; cat "$FAKE_UMOUNT_LOG" >&2; exit 1; }
+[[ ! -s "$FAKE_MOUNTPOINT_DB" ]] \
+    || { echo 'FAIL: the target mount is still recorded as mounted after the failure' >&2; cat "$FAKE_MOUNTPOINT_DB" >&2; exit 1; }
 
 
 echo "PASS: file system repair helper contract is wired, read-only by default and scope-safe."

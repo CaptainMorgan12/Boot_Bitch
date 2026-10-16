@@ -51,10 +51,10 @@ bool contains(const std::string &text, const std::string &needle)
 void testTranscriptParsing(const std::string &fixture)
 {
     const legacy::ParsedTranscript parsed = legacy::parseTranscript(fixture);
-    check(parsed.capabilityLineCount == 13, "13 Repair tool lines parsed");
+    check(parsed.capabilityLineCount == 15, "15 Repair tool lines parsed");
     check(parsed.unknownCapabilityLineCount == 0, "no unknown capability keys");
-    check(parsed.capabilities.size() == 13, "all capability lines retained");
-    check(parsed.capabilityEvidence.size() == 13, "all evidence lines retained");
+    check(parsed.capabilities.size() == 15, "all capability lines retained");
+    check(parsed.capabilityEvidence.size() == 15, "all evidence lines retained");
     check(parsed.legacyFeatureLineCount == 6, "6 Legacy feature lines parsed");
     check(parsed.unknownLegacyFeatureLineCount == 0, "no unknown legacy feature keys");
     check(parsed.legacyFeatures.size() == 6, "all legacy feature lines retained");
@@ -83,7 +83,7 @@ void testTranscriptParsing(const std::string &fixture)
     check(!legacy::legacyFeatureIsAvailable("", &reason),
           "missing legacy feature state rejected (fail closed)");
 
-    check(legacy::diagnosticKeys().size() == 16, "16 diagnostic keys");
+    check(legacy::diagnosticKeys().size() == 18, "18 diagnostic keys");
     check(legacy::legacyFeatureKeys().size() == 6, "6 legacy feature keys");
 
     check(legacy::changeStatusIsUnchanged("unchanged"), "unchanged status");
@@ -797,7 +797,7 @@ void testStageMapping()
           "initramfs maps to initramfs");
     check(legacy::repairToolKeyForStage("fs-inspect") == "fs-inspect",
           "unknown stages pass through");
-    check(legacy::capabilityKeys().size() == 13, "13 capability keys");
+    check(legacy::capabilityKeys().size() == 15, "15 capability keys");
 }
 
 } // namespace

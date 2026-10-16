@@ -1251,8 +1251,8 @@
         <translation>Filtruj widoczny dziennik według rodzaju wpisu. Wybór sekcji diagnostycznej pokazuje linie uchwycone dla tej sekcji; filtr przepływu pracy, taki jak naprawa systemu plików lub naprawa pakietu, pokazuje swoje mapowane linie naprawcze (kopia pliku nie ma linii w tym froncie). Zapisz Jak zawsze pisze każdy wpis.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Ustawienia są zapisywane na użytkownika w pozycji ~ / .qt /, jeden plik na grupę ustawień (devicesrc, logsrc, diagnosticsrc, naprawa) i są zapisywane natychmiast przy każdej zmianie i w pobliżu. Uruchom GUI jako tego samego użytkownika, aby utrzymać swoje nadjazdy; GUI zaczął jako root zachowuje własne kopie.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Ustawienia są zapisywane na użytkownika w pozycji ~ / .qt /, jeden plik na grupę ustawień (devicesrc, logsrc, diagnosticsrc, naprawa) i są zapisywane natychmiast przy każdej zmianie i w pobliżu. To samo miejsce dla użytkownika jest używane, czy GUI działa jako logged- in użytkownika lub jako root (sudo zachowuje katalog domowy).</translation>
     </message>
     <message>
         <source>Device discovery</source>

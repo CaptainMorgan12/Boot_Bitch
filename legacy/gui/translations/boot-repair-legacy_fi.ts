@@ -1251,8 +1251,8 @@
         <translation>Suodata näkyvissä oleva loki kirjoitustavan mukaan. Diagnostisen osion valitseminen näyttää kyseiselle osiolle tallennetut linjat; työnkulkusuodatin, kuten Tiedostojärjestelmän korjaus tai Paketin korjaus, näyttää sen kartoitetut korjauslinjat (Tietokopiossa ei ole viivoja tässä rintamassa). Tallenna Kuten aina, kirjoittaa jokainen merkintä.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Asetukset tallennetaan käyttäjää kohti ~/.qt/, yksi tiedosto kutakin asetusryhmää kohden (laite, logrc, diagnosticsrc, korjausrc) ja tallennetaan välittömästi jokaisen muutoksen yhteydessä ja läheltä. Käynnistä käyttöliittymä saman käyttäjänä pitääksesi ohituksesi; juurina alkanut käyttöliittymä pitää omat kopionsa.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Asetukset tallennetaan käyttäjää kohti ~/.qt/, yksi tiedosto kutakin asetusryhmää kohden (laite, logrc, diagnosticsrc, korjausrc) ja tallennetaan välittömästi jokaisen muutoksen yhteydessä ja läheltä. Sama käyttäjäkohtainen sijainti käytetään riippumatta siitä, toimiiko käyttöliittymä kirjautuneena käyttäjänä vai juurina (sudo säilyttää kotihakemiston).</translation>
     </message>
     <message>
         <source>Device discovery</source>

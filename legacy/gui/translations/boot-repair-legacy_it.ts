@@ -1251,8 +1251,8 @@
         <translation>Filtra il registro visibile per tipo di entrata. La selezione di una sezione diagnostica mostra le linee catturate per quella sezione; un filtro del flusso di lavoro come la riparazione del file system o la riparazione del pacchetto mostra le sue linee di riparazione mappate (la copia del file non ha linee in questo frontend). Salva Come sempre scrive ogni voce.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Le impostazioni vengono memorizzate per utente sotto ~/.qt/, un file per gruppo di impostazioni (devicesrc, logsrc, diagnosticasrc, Repairrc), e vengono salvate immediatamente su ogni cambiamento e in prossimità. Avviare la GUI come lo stesso utente per mantenere i tuoi overrides; una GUI ha iniziato come radice mantiene le proprie copie.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Le impostazioni vengono memorizzate per utente sotto ~/.qt/, un file per gruppo di impostazioni (devicesrc, logsrc, diagnosticasrc, Repairrc), e vengono salvate immediatamente su ogni cambiamento e in prossimità. La stessa posizione per utente viene utilizzata se la GUI viene eseguita come utente registrato o come root (sudo conserva la home directory).</translation>
     </message>
     <message>
         <source>Device discovery</source>

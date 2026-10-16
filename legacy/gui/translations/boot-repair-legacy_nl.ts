@@ -1251,8 +1251,8 @@
         <translation>Filter het zichtbare logboek op invoertype. Het selecteren van een kenmerkende sectie toont de lijnen gevangen voor dat gedeelte; een workflow filter zoals Bestandssysteem reparatie of Pakket reparatie toont de in kaart gebrachte reparatie lijnen (Bestand kopie heeft geen lijnen in deze frontend). Opslaan Zoals altijd schrijft elke vermelding.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Instellingen worden opgeslagen per gebruiker onder ~/.qt/, een bestand per instelling groep (devicesrc, logsrc, diagnosticsrc, repairrc), en worden onmiddellijk opgeslagen bij elke wijziging en bij sluiten. Start de GUI als dezelfde gebruiker om uw overrides te behouden; een GUI gestart als root bewaart zijn eigen kopieën.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Instellingen worden opgeslagen per gebruiker onder ~/.qt/, een bestand per instelling groep (devicesrc, logsrc, diagnosticsrc, repairrc), en worden onmiddellijk opgeslagen bij elke wijziging en bij sluiten. Dezelfde locatie per gebruiker wordt gebruikt of de GUI draait als de ingelogde gebruiker of als root (sudo bewaart de home directory).</translation>
     </message>
     <message>
         <source>Device discovery</source>

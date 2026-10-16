@@ -1251,8 +1251,8 @@
         <translation>Giriş türü ile görünür log filtreleyin. Bir teşhis bölümü bu bölüm için yakalanan hatları gösterir; File sistemi onarım veya Paket onarımı gibi bir iş akışı filtresi haritalı onarım hatları (File kopyası bu ön uçta hiçbir çizgiye sahiptir). Kaydet Kaydet Kaydet Her zaman her giriş yazarken.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Ayarlar kullanıcı başına ~ /.qt/, ayarlar grubu başına bir dosya (devicesrc, logsrc, tanısrc, onarımrc), ve hemen her değişiklik ve yakın zamanda kaydedilir. GUI&apos;yi overrides&apos;i tutmak için aynı kullanıcı olarak başlatın; bir GUI kendi kopyalarını tutar.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Ayarlar kullanıcı başına ~ /.qt/, ayarlar grubu başına bir dosya (devicesrc, logsrc, tanısrc, onarımrc), ve hemen her değişiklik ve yakın zamanda kaydedilir. Aynı per-user lokasyonu, GUI&apos;nin giriş kullanıcı veya kök olarak çalıştığından kullanılır (sudo ev dizinini korur).</translation>
     </message>
     <message>
         <source>Device discovery</source>

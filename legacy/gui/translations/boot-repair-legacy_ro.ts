@@ -1251,8 +1251,8 @@
         <translation>Filtrați jurnalul vizibil prin tipul de intrare. Selectarea unei secțiuni de diagnosticare arată liniile capturate pentru acea secțiune; un filtru de flux de lucru, cum ar fi repararea sistemului de fișiere sau repararea pachetelor arată liniile sale de reparații cartografiate (Copia de file nu are linii în acest frontend). Salvează Ca întotdeauna scrie fiecare intrare.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Configurările sunt stocate pentru fiecare utilizator sub ~/.qt/, un fișier pentru fiecare grup de setări (dispozitivsrc, logsrc, diagnosticsrc, reparator), și sunt salvate imediat pe fiecare schimbare și pe aproape. Lansați GUI ca același utilizator pentru a păstra suprascrie; un GUI a început ca rădăcină păstrează propriile copii.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Configurările sunt stocate pentru fiecare utilizator sub ~/.qt/, un fișier pentru fiecare grup de setări (dispozitivsrc, logsrc, diagnosticsrc, reparator), și sunt salvate imediat pe fiecare schimbare și pe aproape. Aceeaşi locaţie per-utilizator este utilizată dacă GUI funcţionează ca utilizator conectat sau ca rădăcină (sudo păstrează directorul de origine).</translation>
     </message>
     <message>
         <source>Device discovery</source>

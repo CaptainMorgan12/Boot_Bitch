@@ -119,6 +119,19 @@ public:
     // is never placed in command arguments or logs. Cleared after use.
     void setInputData(const QByteArray &data);
 
+    // Extra NAME=VALUE entries for the next run().  The interactive session
+    // arrives as the three known entries (BOOT_REPAIR_SESSION_PROTOCOL=1,
+    // BOOT_REPAIR_SESSION_REQUEST=<id> and
+    // BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE=<path>); run() converts them into the
+    // helper's --session-request and --menu-answer-file options placed before
+    // the command verb (the helper validates both and exports the session
+    // variables itself, so the session never depends on the elevation tool's
+    // environment policy).  Any other entry, a repeated entry or a partial
+    // session refuses the run.  The list persists until replaced (pass an empty
+    // list to clear it); a non-interactive run passes an empty list and its
+    // argument vector is unchanged.
+    void setExtraEnvironment(const QStringList &env);
+
     bool isRunning() const;
 
     // Starts the helper with `helperArgs`. Returns false (and emits an error
@@ -158,6 +171,9 @@ private:
     QString m_description;
     QString m_buffer;
     QByteArray m_input;
+    // Extra NAME=VALUE environment entries for the next run() (interactive
+    // session protocol + the legacy menu-answer file path).
+    QStringList m_extraEnvironment;
     bool m_reported;
     // A10-03: verified absolute elevation tool paths (empty when no fixed
     // system location verifies).

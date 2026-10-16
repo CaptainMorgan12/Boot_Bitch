@@ -324,6 +324,11 @@ void HelperRunner::setInputData(const QByteArray &data)
     m_input = data;
 }
 
+void HelperRunner::setExtraEnvironment(const QStringList &env)
+{
+    m_extraEnvironment = env;
+}
+
 // A10-03: verify one elevation tool candidate.  lstat (so a symlink never
 // passes), regular file, uid 0, not group/world-writable, and the containing
 // directory root-owned and not group/world-writable (a writable directory
@@ -908,6 +913,54 @@ bool HelperRunner::run(const QStringList &helperArgs)
         }
     }
 
+    // Interactive session (Qt3 GUI): the three known entries travel to the helper
+    // as its --session-request and --menu-answer-file options, placed before the
+    // command verb.  The helper validates both and exports the session variables
+    // itself, so the session never depends on what an elevation tool lets
+    // through.  Any other entry, a repeated entry or a partial session refuses
+    // the run before a helper starts (fail closed).
+    QString sessionRequest;
+    QString sessionAnswer;
+    bool sessionProtocol = false;
+    bool sessionRequestSet = false;
+    bool sessionAnswerSet = false;
+    QString refusal;
+    for (QStringList::ConstIterator it = m_extraEnvironment.begin();
+         it != m_extraEnvironment.end() && refusal.isEmpty(); ++it) {
+        const int eq = (*it).find(QChar('='));
+        const QString name = eq > 0 ? (*it).left(eq) : QString::null;
+        const QString value = eq > 0 ? (*it).mid(eq + 1) : QString::null;
+        if (name == QString::fromLatin1("BOOT_REPAIR_SESSION_PROTOCOL")
+            && value == QString::fromLatin1("1") && !sessionProtocol) {
+            sessionProtocol = true;
+        } else if (name == QString::fromLatin1("BOOT_REPAIR_SESSION_REQUEST")
+                   && !sessionRequestSet) {
+            sessionRequestSet = true;
+            sessionRequest = value;
+        } else if (name == QString::fromLatin1("BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE")
+                   && !sessionAnswerSet) {
+            sessionAnswerSet = true;
+            sessionAnswer = value;
+        } else if (eq > 0) {
+            refusal = QString::fromLatin1("unsupported or repeated environment entry %1")
+                          .arg(name);
+        } else {
+            refusal = QString::fromLatin1("malformed environment entry");
+        }
+    }
+    if (refusal.isEmpty() && (sessionProtocol || sessionRequestSet || sessionAnswerSet)
+        && !(sessionProtocol && sessionRequestSet && sessionAnswerSet)) {
+        refusal = QString::fromLatin1("the interactive session needs all three entries");
+    }
+    if (!refusal.isEmpty()) {
+        m_input.fill('\0');
+        m_input = QByteArray();
+        emitErrorLine(QString::fromLatin1("ERROR: refusing to start the helper: %1.")
+                      .arg(refusal));
+        emit finished(false, -1);
+        return false;
+    }
+
     m_buffer = QString::null;
     m_reported = false;
     m_process = new QProcess(this);
@@ -933,6 +986,13 @@ bool HelperRunner::run(const QStringList &helperArgs)
         // ticks; cancel() touches the file before the direct kill.
         m_process->addArgument(QString::fromLatin1("--cancel-file"));
         m_process->addArgument(m_cancelFile);
+    }
+    if (sessionRequestSet) {
+        // The helper validates both options and exports the session itself.
+        m_process->addArgument(QString::fromLatin1("--session-request"));
+        m_process->addArgument(sessionRequest);
+        m_process->addArgument(QString::fromLatin1("--menu-answer-file"));
+        m_process->addArgument(sessionAnswer);
     }
     for (QStringList::ConstIterator it = helperArgs.begin(); it != helperArgs.end(); ++it) {
         m_process->addArgument(*it);

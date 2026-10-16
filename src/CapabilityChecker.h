@@ -20,9 +20,9 @@ struct Capability
     bool available = false;
     bool optional = true;
     // True when the scope involves the repair target (any scope other than the
-    // host-only "Host"), which decides whether the Boot capabilities table
-    // offers a guarded install into the selected target rather than a
-    // host-install reminder.
+    // host-only "Host"), which routes the Boot capabilities table Install
+    // action to the guarded install-target-package helper verb; false routes
+    // it to the guarded install-host-package verb (Host Maintenance only).
     bool targetScope = false;
     // True when the "Suggested package" column names a concrete package that
     // can actually be installed (false for "Unknown" / "Distribution-specific"
@@ -37,18 +37,20 @@ struct Capability
 class CapabilityChecker
 {
 public:
-    // Parses the cached repair-target capability preamble (the `Repair tool
-    // <key>` gating lines plus the `Repair capability evidence <key>` lines)
-    // and the cached backend section's `Module build system:` line into one
-    // Capability per repair tool. Availability comes from the cache; the
-    // module-build row's suggested package maps to dkms/akmods/akms per the
-    // target's detected backend (never the host distro).
+    // Parses the cached capability preamble (the `Repair tool <key>` gating
+    // lines plus the `Repair capability evidence <key>` lines) and the cached
+    // backend section's `Module build system:` line into one Capability per
+    // repair tool. Availability comes from the cache; the module-build row's
+    // suggested package maps to dkms/akmods/akms per the detected backend
+    // (never the host distro). Both the repair-target and the running-host
+    // scopes derive from the same preamble: scopeLabel overrides the "Repair
+    // target" scope text (e.g. "Host") and targetScope selects the install
+    // routing (guarded install into the selected target vs. guarded install
+    // on the running host).
     static QList<Capability> capabilitiesFromRepairEvidence(const QString &capabilitiesPreamble,
-                                                            const QString &backendSection);
-    // Parses the cached running-host `host-capabilities` diagnostic section
-    // (`Host capability: <command> package=<pkg> status=<available|missing>
-    // scope=host note=<…>`) into one Capability per host prerequisite.
-    static QList<Capability> capabilitiesFromHostEvidence(const QString &hostCapabilitiesSection);
+                                                            const QString &backendSection,
+                                                            const QString &scopeLabel = QString(),
+                                                            bool targetScope = true);
     static QString distributionLabel();
     static QString packageManagerLabel();
 
@@ -56,4 +58,7 @@ private:
     // Names the package providing the module-build system for a detected
     // backend token (dkms/akmods/akms), defaulting to dkms.
     static QString moduleBuildSystemPackageForBackend(const QString &backend);
+    // Names the native module-build system package for a target distribution
+    // family (fedora/rhel -> akmods, alpine -> akms, else dkms).
+    static QString moduleBuildSystemPackageForFamily(const QString &family);
 };

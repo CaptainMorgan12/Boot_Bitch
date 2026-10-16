@@ -213,6 +213,11 @@ transform_syntax()
         -e 's/^\([[:space:]]*\)local -A order_index=() seen=()$/\1local -a order_index=() order_index_keys=() seen=() seen_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A current_by_id=() current_by_key=() current_by_partition_label=()$/\1local -a current_by_id=() current_by_id_keys=() current_by_key=() current_by_key_keys=() current_by_partition_label=() current_by_partition_label_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A emitted=()$/\1local -a emitted=() emitted_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A bdf_hw=()$/\1local -a bdf_hw=() bdf_hw_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A bdf_drv=()$/\1local -a bdf_drv=() bdf_drv_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A nodisplay_bdf=()$/\1local -a nodisplay_bdf=() nodisplay_bdf_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A seen_drv=()$/\1local -a seen_drv=() seen_drv_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A modeset=()$/\1local -a modeset=() modeset_keys=()/' \
         -e 's/^\([[:space:]]*\)FS_SCOPE_DEVICE_INDEX=()$/\1FS_SCOPE_DEVICE_INDEX=() FS_SCOPE_DEVICE_INDEX_keys=()/' \
         -e 's/^\([[:space:]]*\)current_by_id=()$/\1current_by_id=() current_by_id_keys=()/' \
         -e 's/^\([[:space:]]*\)current_by_key=()$/\1current_by_key=() current_by_key_keys=()/' \
@@ -253,7 +258,8 @@ transform_syntax()
     # the longer name is gone; the \< anchor in rewrite_assoc is the second,
     # independent guard (A9-07).
     local name
-    for name in current_by_partition_label final_destination_count \
+    for name in bdf_hw bdf_drv nodisplay_bdf modeset seen_drv \
+        current_by_partition_label final_destination_count \
         seen_destination_names FS_SCOPE_DEVICE_INDEX destination_priority \
         destination_id current_by_key removed_seen current_by_id order_index \
         reasons seen emitted essential_by_dev allowed_nodes; do
@@ -270,10 +276,13 @@ transform_syntax()
         '        if [[ -n "$current_order" && -z "$(legacy_assoc_has order_index "$id" && printf present)" ]]; then' \
         || return 1
 
-    note "case conversion ,," "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*,,|\$\{[0-9]+,,' "$file")"
-    note "case conversion ^^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\^|\$\{[0-9]+\^\^' "$file")"
-    note "case conversion ^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\}|\$\{[0-9]+\^\}' "$file")"
+    note "case conversion ,," "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*,,|\$\{[0-9]+,,|\$\{[A-Za-z_][A-Za-z0-9_]*\[[^]]*\],,' "$file")"
+    note "case conversion ^^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\^|\$\{[0-9]+\^\^|\$\{[A-Za-z_][A-Za-z0-9_]*\[[^]]*\]\^\^' "$file")"
+    note "case conversion ^" "$(count_regex '\$\{[A-Za-z_][A-Za-z0-9_]*\^\}|\$\{[0-9]+\^\}|\$\{[A-Za-z_][A-Za-z0-9_]*\[[^]]*\]\^\}' "$file")"
     apply_sed "$file" \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([^]]*\)\],,}/$(legacy_lc "$\1[\2]")/g' \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([^]]*\)\]\^\^}/$(legacy_uc "$\1[\2]")/g' \
+        -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\)\[\([^]]*\)\]\^}/$(legacy_ucfirst "$\1[\2]")/g' \
         -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\),,}/$(legacy_lc "$\1")/g' \
         -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\)\^\^}/$(legacy_uc "$\1")/g' \
         -e 's/\${\([A-Za-z_][A-Za-z0-9_]*\|[0-9][0-9]*\)\^}/$(legacy_ucfirst "$\1")/g' \
@@ -521,6 +530,26 @@ transform_regex_compat()
         '        __legacy_re='"'"'^[[:space:]][[:space:]]+replacing[[:space:]]+([^[:space:]]+)'"'"'
         if [[ "$line" =~ $__legacy_re ]]; then'
 
+    # gpu_target_primary_from_boot_log parses the target's PCI class-03
+    # enumeration and driver-binding lines; both regexes carry unquoted `(`/
+    # `|`, which bash 3.1 rejects in an in-place =~ operand.
+    regex_replacement \
+        '        [[ "$line" =~ pci[[:space:]]+([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]):[[:space:]]*\[([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\] ]] || continue' \
+        '        __legacy_re='"'"'pci[[:space:]]+([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]):[[:space:]]*\[([0-9a-fA-F]{4}):([0-9a-fA-F]{4})\]'"'"'
+        [[ "$line" =~ $__legacy_re ]] || continue'
+
+    regex_replacement \
+        '        [[ "$line" =~ (nvidia|amdgpu|nouveau|i915|radeon|xe)[[:space:]]+([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]) ]] || continue' \
+        '        __legacy_re='"'"'(nvidia|amdgpu|nouveau|i915|radeon|xe)[[:space:]]+([0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F])'"'"'
+        [[ "$line" =~ $__legacy_re ]] || continue'
+
+    # apt_kernel_version_from_package strips the concrete kernel-version token
+    # with a capture group; bash 3.1 rejects the unquoted `(` in-place.
+    regex_replacement \
+        '    if [[ "$rest" =~ ([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then' \
+        '    __legacy_re='"'"'([0-9]+\.[0-9]+\.[0-9]+.*)'"'"'
+    if [[ "$rest" =~ $__legacy_re ]]; then'
+
     (( count >= 0 )) || return 1
     note "=~ regex literal hoists" "$count"
 }
@@ -605,7 +634,9 @@ transform_legacy_behaviour()
     # A10-05: optional leading cancel-token options, accepted before the
     # command verb (the Qt3 GUI passes --cancel-file <path>; the documented
     # token form is CANCEL_TOKEN=<value> in the environment or
-    # --cancel-token <value> on the command line).
+    # --cancel-token <value> on the command line).  The Qt3 GUI interactive
+    # session uses the same position: --session-request <id> and
+    # --menu-answer-file <path>, validated and exported by legacy_session_apply.
     while (($# > 0)); do
         case "$1" in
             --cancel-file)
@@ -618,11 +649,26 @@ transform_legacy_behaviour()
                 CANCEL_TOKEN="$2"
                 shift 2
                 ;;
+            --session-request)
+                [[ $# -ge 2 ]] || fail "--session-request requires an id."
+                [[ -z "$LEGACY_SESSION_REQUEST_SEEN" ]] || fail "--session-request is given more than once."
+                LEGACY_SESSION_REQUEST_SEEN=1
+                LEGACY_SESSION_REQUEST="$2"
+                shift 2
+                ;;
+            --menu-answer-file)
+                [[ $# -ge 2 ]] || fail "--menu-answer-file requires a path."
+                [[ -z "$LEGACY_MENU_ANSWER_FILE_SEEN" ]] || fail "--menu-answer-file is given more than once."
+                LEGACY_MENU_ANSWER_FILE_SEEN=1
+                LEGACY_MENU_ANSWER_FILE="$2"
+                shift 2
+                ;;
             *)
                 break
                 ;;
         esac
     done
+    legacy_session_apply
 
     (($# >= 1)) || { usage; exit 2; }
     local command="$1"; shift' \
@@ -653,6 +699,10 @@ Cancellation:
   --cancel-token <value>  Token form: the helper aborts when
                    $SESSION_DIR/cancel appears and carries exactly this value.
   CANCEL_TOKEN=<value>    Environment form of --cancel-token.
+
+Interactive session (Qt3 GUI; both options or neither):
+  --session-request <id>      Prompt request id (letters, digits, dot, underscore, dash; 64 max).
+  --menu-answer-file <path>   Absolute path of the GUI answer file (regular file, not a symlink).
 
 Shell:' \
         || return 1
@@ -733,21 +783,21 @@ verify_transform_counts()
     check_zero 'sed -E' 'sed -E'
     check_zero 'sort -V' 'sort -V'
     check_zero 'date --iso-8601' 'date --iso-8601'
-    check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\^\^|\^|,,)[}]'
+    check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 68
+    check_count 'legacy_readarray' 'legacy_readarray' 89
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 109
-    check_count 'legacy_sort_versions' 'legacy_sort_versions' 14
-    check_count 'legacy_date_iso' 'legacy_date_iso' 4
-    check_count 'legacy_lc' 'legacy_lc ' 66
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 116
+    check_count 'legacy_sort_versions' 'legacy_sort_versions' 16
+    check_count 'legacy_date_iso' 'legacy_date_iso' 5
+    check_count 'legacy_lc' 'legacy_lc ' 75
     check_count 'legacy_uc' 'legacy_uc ' 20
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 24
-    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 31
+    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 37
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
-    check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 1
+    check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 4
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 63
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 69
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }
@@ -901,10 +951,77 @@ R~local -n~(^|[^_[:alnum:]])local[[:space:]]+-n([^_[:alnum:]]|$)
 R~negative array subscript~[$][{][A-Za-z_][A-Za-z0-9_]*\[-[0-9]+\][}]
 R~${var@Q} transform~[$][{][A-Za-z_][A-Za-z0-9_]*@[QAEPaK][}]
 R~indirect ${!prefix@}~[$][{][!][A-Za-z_][A-Za-z0-9_]*[@*]([^]]|$)
-R~case conversion ,,~[$][{][0-9A-Za-z_][0-9A-Za-z_]*,,[}]
-R~case conversion ^^~[$][{][0-9A-Za-z_][0-9A-Za-z_]*\^\^[}]
-R~case conversion ^~[$][{][0-9A-Za-z_][0-9A-Za-z_]*\^[}]
+R~case conversion ,,~[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?,,[}]
+R~case conversion ^^~[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?\^\^[}]
+R~case conversion ^~[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?\^[}]
 VERIFY_NO_BASH4_BLACKLIST
+    return "$rc"
+}
+
+# A13-01: post-hoist guard for `[[ =~ ]]` operands.  transform_regex_compat
+# hoists the reviewed regex literals that carry an unquoted `(`/`|`, but a
+# newly added modern `=~` regex with no hoist entry would otherwise drift into
+# a helper that bash 3.1 refuses to parse (`unexpected argument '(' ...`).
+# This guard runs on the transformed body and fails loudly when an in-place
+# `=~` operand still holds an unquoted `(` or a single unquoted `|`.  It must
+# not flag: escaped `\(`/`\|`, the shell operators `||`/`|&`, and `(`/`|`
+# inside a `[...]` bracket class (including POSIX `[:class:]`) or inside
+# single/double quotes.  Self-contained (grep + awk fed by here-strings) so the
+# contract test can extract and source it against fixtures (A13-01), and
+# POSIX-awk-only (no gensub, no POSIX character classes) so it runs on Etch's
+# mawk 1.3.3.
+verify_regex_operands()
+{
+    local file="$1" rc=0 program=""
+    program="$(cat <<'VERIFY_REGEX_AWK'
+function operand_bad(s,    i, c, n, ins, ind, inb, inpc, esc, nxt) {
+    n = length(s)
+    ins = 0; ind = 0; inb = 0; inpc = 0; esc = 0
+    for (i = 1; i <= n; i++) {
+        c = substr(s, i, 1)
+        if (esc) { esc = 0; continue }
+        if (c == "\\") { esc = 1; continue }
+        if (ins) { if (c == "'") ins = 0; continue }
+        if (ind) { if (c == "\"") ind = 0; continue }
+        if (c == "'") { ins = 1; continue }
+        if (c == "\"") { ind = 1; continue }
+        if (inpc) { if (c == "]") inpc = 0; continue }
+        if (inb) {
+            if (c == "]") { inb = 0; continue }
+            if (c == "[") {
+                nxt = substr(s, i + 1, 1)
+                if (nxt == ":" || nxt == "." || nxt == "=") { inpc = 1; i++; continue } }
+            continue }
+        if (c == "[") { inb = 1; continue }
+        if (c == "(") return 1
+        if (c == "|") {
+            nxt = substr(s, i + 1, 1)
+            if (nxt == "|" || nxt == "&") { i++; continue }
+            return 1 }
+        if (c == " " || c == "\t") break }
+    return 0 }
+
+{
+    line = $0
+    k = 1
+    ln = length(line)
+    while (k <= ln && (substr(line, k, 1) == " " || substr(line, k, 1) == "\t")) k++
+    if (k <= ln && substr(line, k, 1) == "#") next
+    rest = line
+    pos = index(rest, "=~")
+    while (pos > 0) {
+        j = pos + 2
+        c = substr(rest, j, 1)
+        if (c == " " || c == "\t") {
+            while (substr(rest, j, 1) == " " || substr(rest, j, 1) == "\t") j++
+            if (operand_bad(substr(rest, j))) {
+                printf "ERROR: unhoisted =~ regex operand remains: %d: %s\n", NR, line > "/dev/stderr"
+                exit 1 } }
+        rest = substr(rest, j)
+        pos = index(rest, "=~") } }
+VERIFY_REGEX_AWK
+)"
+    awk "$program" "$file" || rc=$?
     return "$rc"
 }
 
@@ -918,6 +1035,7 @@ generate()
         || ! transform_legacy_remount_promotion "$work" \
         || ! verify_transform_counts "$work" \
         || ! transform_regex_compat "$work" \
+        || ! verify_regex_operands "$work" \
         || ! transform_legacy_behaviour "$work" \
         || ! transform_renames "$work"; then
         rm -f -- "$work"

@@ -228,7 +228,7 @@ reset_fixture()
     EFI_TEST_MODEL=TestModel
     EFI_TEST_EDITENV_CALLS="$WORK_ROOT/fedora-editenv.calls"
     : > "$EFI_TEST_EDITENV_CALLS"
-    unset EFI_TEST_OBJCOPY_FAIL EFI_TEST_CREATE_LOADER_OVERRIDE EFI_TEST_UKI_UNAME EFI_TEST_UKI_CMDLINE
+    unset EFI_TEST_OBJCOPY_FAIL EFI_TEST_CREATE_LOADER_OVERRIDE EFI_TEST_UKI_UNAME EFI_TEST_UKI_CMDLINE EFI_TEST_TARGET_PARTUUID
     ROOT_CANONICAL="/dev/fakeroot"
     TARGET_ROOT="$EFI_TEST_ROOT"
     TARGET_ESP_MOUNT="/esp"
@@ -390,8 +390,13 @@ efi_set_inventory_esp_ids()
     EFI_HOST_ESP_SOURCE="/dev/fakehostesp"
     EFI_HOST_ESP_PARTUUID="$HOST_PARTUUID"
     EFI_HOST_ESP_MOUNT="$EFI_TEST_ESP_MOUNT"
-    EFI_TARGET_ESP_PARTUUID="$HOST_PARTUUID"
-    EFI_ESP_SOURCE="/dev/fakehostesp"
+    if [[ -n "${EFI_TEST_TARGET_PARTUUID:-}" ]]; then
+        EFI_TARGET_ESP_PARTUUID="$EFI_TEST_TARGET_PARTUUID"
+        EFI_ESP_SOURCE="/dev/faketargetesp"
+    else
+        EFI_TARGET_ESP_PARTUUID="$HOST_PARTUUID"
+        EFI_ESP_SOURCE="/dev/fakehostesp"
+    fi
 }
 blkid()
 {
@@ -678,6 +683,96 @@ fi
 grep -Fq 'ambiguous host UKI entries: 0005 0006' "$WORK_ROOT/t4b.out" \
     || fail_test 'T4b did not name the ambiguous entries'
 assert_no_mutation_calls 'T4b'
+
+# ---------------------------------------------------------------------------
+# TS1: a repair of a selected target disk never reaches the host-UKI restore.
+# With two host UKI entries on the running-host ESP and a single UKI on the
+# selected target ESP, restore_missing_host_tuxedo_uki_entry is a hard no-op
+# outside running-host scope: it returns success without scanning the host
+# entries, creating anything, or emitting the multi-entry refusal.
+# ---------------------------------------------------------------------------
+reset_fixture
+RUNNING_HOST_MODE=0
+EFI_TEST_TARGET_PARTUUID="11111111-0000-0000-0000-000000000000"
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0001
+BootOrder: 0001,0002,0009
+Boot0001* TUXEDO UKI TargetModel HD(1,GPT,$EFI_TEST_TARGET_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0002* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0009* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+EOF
+if ! ( restore_missing_host_tuxedo_uki_entry 0 ) > "$WORK_ROOT/ts1.out" 2>&1; then
+    cat "$WORK_ROOT/ts1.out" >&2
+    fail_test 'TS1 target-scope host-UKI restore did not no-op'
+fi
+grep -Fq 'more than one host TUXEDO UKI entry' "$WORK_ROOT/ts1.out" \
+    && fail_test 'TS1 target-scope refused on the host UKI entries'
+assert_no_mutation_calls 'TS1'
+grep -Eq '^Boot0002\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS1 lost host UKI Boot0002'
+grep -Eq '^Boot0009\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS1 lost host UKI Boot0009'
+grep -Eq '^Boot0001\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS1 lost target UKI Boot0001'
+
+# ---------------------------------------------------------------------------
+# TS2: in running-host scope with the host ESP selected, two host TUXEDO UKI
+# entries must not abort the restore.  restore_missing_host_tuxedo_uki_entry
+# defers to the shared selected-destination de-dup pass (which runs immediately
+# after in every caller): it returns success, logs the efi-multiple-uki
+# deferral, never emits the "more than one host TUXEDO UKI entry" refusal and
+# performs no NVRAM mutation.
+# ---------------------------------------------------------------------------
+reset_fixture
+RUNNING_HOST_MODE=1
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0002
+BootOrder: 0002,0009,0001
+Boot0001* tuxedo HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\tuxedo\\shimx64.efi
+Boot0002* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0009* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+EOF
+if ! ( restore_missing_host_tuxedo_uki_entry 1 ) > "$WORK_ROOT/ts2.out" 2>&1; then
+    cat "$WORK_ROOT/ts2.out" >&2
+    fail_test 'TS2 host-scope duplicated UKI restore did not defer to de-dup'
+fi
+grep -Fq 'more than one host TUXEDO UKI entry' "$WORK_ROOT/ts2.out" \
+    && fail_test 'TS2 emitted the multi-entry refusal instead of deferring'
+grep -Fq 'msg:efi-multiple-uki|param:0002 0009' "$WORK_ROOT/ts2.out" \
+    || fail_test 'TS2 did not log the efi-multiple-uki deferral'
+assert_no_mutation_calls 'TS2'
+grep -Eq '^Boot0002\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS2 lost host UKI Boot0002'
+grep -Eq '^Boot0009\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS2 lost host UKI Boot0009'
+
+# ---------------------------------------------------------------------------
+# TS3: ensure_target_tuxedo_uki_entry returns a clean Boot#### ID under a
+# command substitution.  With two selected-ESP TUXEDO UKI entries (host ESP ==
+# selected ESP) the >1 branch logs efi-multiple-uki and keeps the first
+# verified ID.  The caller captures the stdout as extra_id for
+# efi_restore_reconciled_order, so only the printf '%s\n' "${ids[0]}" value may
+# reach the capture: the efi-multiple-uki msg_log line must go to stderr, never
+# stdout, or the uppercased BootOrder write corrupts NVRAM.
+# ---------------------------------------------------------------------------
+reset_fixture
+EFI_ESP_SOURCE="/dev/fakehostesp"
+cat > "$EFI_TEST_STATE" <<EOF
+BootCurrent: 0005
+BootOrder: 0005,0006,0001
+Boot0001* tuxedo HD(1,GPT,$FOREIGN_PARTUUID,0x1000,0x200000)/\\EFI\\tuxedo\\shimx64.efi
+Boot0005* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+Boot0006* TUXEDO UKI TestModel HD(1,GPT,$HOST_PARTUUID,0x1000,0x200000)/\\EFI\\BOOT\\TUX.EFI
+EOF
+captured="$(ensure_target_tuxedo_uki_entry 2> "$WORK_ROOT/ts3.stderr" || true)"
+[[ "$captured" =~ ^[0-9A-Fa-f]{4}$ ]] \
+    || fail_test "TS3 captured value is not one clean Boot#### ID: '$captured'"
+[[ "$captured" != *'msg:'* && "$captured" != *'MSG:'* ]] \
+    || fail_test "TS3 captured value carries msg text: '$captured'"
+[[ "$captured" != *$'\n'* ]] \
+    || fail_test "TS3 captured value contains a newline: '$captured'"
+[[ "$captured" == 0005 ]] \
+    || fail_test "TS3 did not keep the first verified UKI ID: '$captured'"
+grep -Fq 'msg:efi-multiple-uki|param:0005 0006' "$WORK_ROOT/ts3.stderr" \
+    || fail_test 'TS3 efi-multiple-uki was not logged to stderr'
+assert_no_mutation_calls 'TS3'
+grep -Eq '^Boot0005\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS3 lost host UKI Boot0005'
+grep -Eq '^Boot0006\*?[[:space:]]' "$EFI_TEST_STATE" || fail_test 'TS3 lost host UKI Boot0006'
 
 # ---------------------------------------------------------------------------
 # T5: read-only NVRAM -> fail closed before any mutation.

@@ -1251,8 +1251,8 @@
         <translation>Фільтрувати видимий журнал за типом входу. Вибір діагностичного розділу показує лінії, які зафіксовані для цього розділу; рефлектор робочої системи, такі як відновлення файлової системи або ремонт пакетів показує її намальовані ремонтні лінії (Файл-копія не має ліній на цьому фронті). Зберегти Як завжди записується кожен запис.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Налаштування зберігаються для користувача під ~ / .qt /, один файл для групи налаштувань (devicesrc, logsrc, діагностична дуга, ремонт дуги), і зберігаються відразу на кожній зміні і в безпосередній близькості. Запустіть графічний інтерфейс, як і той самий користувач, щоб зберегти ваші перенависті; графічний інтерфейс почав як корінь зберігає свої копії.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Налаштування зберігаються для користувача під ~ / .qt /, один файл для групи налаштувань (devicesrc, logsrc, діагностична дуга, ремонт дуги), і зберігаються відразу на кожній зміні і в безпосередній близькості. Те ж саме розташування користувача використовується, чи працює графічний інтерфейс як зареєстрований користувач або як корінь (sudo зберігає домашній каталог).</translation>
     </message>
     <message>
         <source>Device discovery</source>

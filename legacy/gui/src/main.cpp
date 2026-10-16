@@ -386,6 +386,10 @@ int main(int argc, char **argv)
     if (!hostDisk.isEmpty() || !hostRoot.isEmpty()) {
         window.setTarget(hostDisk, hostRoot);
     }
+    // Qt3 exits the event loop when the MAIN widget closes - without this
+    // registration closing the window leaves the process alive (the stale
+    // GUI instances the rig found: the window closed, exec() kept running).
+    application.setMainWidget(&window);
     window.show();
 
     if (smokeTest) {

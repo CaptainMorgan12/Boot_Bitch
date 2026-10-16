@@ -84,7 +84,12 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
 for rule in \
-    'assoc declarations \(declare/local -A\) +12' \
+    'assoc declarations \(declare/local -A\) +17' \
+    'assoc accesses: bdf_hw +2' \
+    'assoc accesses: bdf_drv +5' \
+    'assoc accesses: nodisplay_bdf +2' \
+    'assoc accesses: modeset +3' \
+    'assoc accesses: seen_drv +3' \
     'assoc accesses: current_by_partition_label +6' \
     'assoc accesses: final_destination_count +3' \
     'assoc accesses: seen_destination_names +2' \
@@ -100,17 +105,17 @@ for rule in \
     'assoc accesses: emitted +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
-    'case conversion ,, +66' \
+    'case conversion ,, +75' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +510' \
-    'mapfile call sites +68' \
+    'array \[@\] expansions \(all forms\) +724' \
+    'mapfile call sites +89' \
     'sed -i -E +1' \
-    'sed -nE +90' \
+    'sed -nE +97' \
     'sed -E +18' \
-    'sort -V +14' \
-    'date --iso-8601 +4' \
-    '=~ regex literal hoists +11' \
+    'sort -V +16' \
+    'date --iso-8601 +5' \
+    '=~ regex literal hoists +14' \
     'os-release gates +1' \
     'dpkg db:Status sites +6' \
     'wrapped/replaced modern functions +43' \
@@ -124,19 +129,19 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +68' \
+    'shim calls: legacy_readarray +89' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +109' \
-    'shim calls: legacy_sort_versions +14' \
-    'shim calls: legacy_date_iso +4' \
-    'shim calls: legacy_lc +66' \
+    'shim calls: legacy_sed_ext +116' \
+    'shim calls: legacy_sort_versions +16' \
+    'shim calls: legacy_date_iso +5' \
+    'shim calls: legacy_lc +75' \
     'shim calls: legacy_uc +20' \
     'shim calls: legacy_ucfirst +24' \
-    'shim calls: legacy_assoc_get +31' \
+    'shim calls: legacy_assoc_get +37' \
     'shim calls: legacy_assoc_get_num +2' \
-    'shim calls: legacy_assoc_keys +1' \
+    'shim calls: legacy_assoc_keys +4' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +63' \
+    'shim calls: legacy_assoc_set +69' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \
@@ -157,7 +162,7 @@ grep -q '&>>' "$helper_code" && fail "generated helper still uses &>>"
 grep -qE 'wait +-n' "$helper_code" && fail "generated helper still uses wait -n"
 grep -qE '(^|[^_[:alnum:]])readarray([^_[:alnum:]]|$)' "$helper_code" \
     && fail "generated helper still uses the readarray builtin"
-grep -qE '\$\{[A-Za-z_][A-Za-z0-9_]*,,|\$\{[A-Za-z_][A-Za-z0-9_]*\^\^|\$\{[A-Za-z_][A-Za-z0-9_]*\^\}' "$helper_code" \
+grep -qE '\$\{[A-Za-z_][A-Za-z0-9_]*(\[[^]]*\])?(,,|\^\^|\^)\}' "$helper_code" \
     && fail "generated helper still uses bash-4 case conversion"
 grep -q 'legacy_readarray' "$helper_code" || fail "generated helper does not use legacy_readarray"
 grep -q 'legacy_lc' "$helper_code" || fail "generated helper does not use legacy_lc"
@@ -169,6 +174,53 @@ grep -qE '&>|\|&|\[\[[^]]*[[:space:]]-v[[:space:]]|declare[[:space:]]+-g|local[[
 rm -f -- "$helper_code"
 pass "generated helper is bash-3.1 syntax clean"
 
+# --- regex-operand guard (A13-01): no unhoisted =~ group/alternation ---------
+# The post-hoist guard aborts generation when a modern `=~` operand still
+# carries an unquoted `(` or a single unquoted `|`.  It must pass the current
+# helper and the safe operand shapes (shell `||`, escaped `\(`, bracket
+# classes, variable and partially-quoted operands) and fail loudly on a
+# planted unhoisted operand.  Extracted and unit-tested like verify_no_bash4.
+regex_guard_src="$(mktemp "${TMPDIR:-/tmp}/legacy-regex-guard.XXXXXX")"
+awk '/^verify_regex_operands\(\)$/{f=1} f{print} f&&/^}$/{exit}' "$PORT" > "$regex_guard_src"
+[[ -s "$regex_guard_src" ]] || fail "could not extract verify_regex_operands from port.sh"
+# shellcheck source=/dev/null  # temp-extracted guard, resolved at runtime
+( source "$regex_guard_src"; verify_regex_operands "$HELPER" ) \
+    || fail "verify_regex_operands flagged the generated helper"
+# A planted unhoisted operand (the apt_kernel_version_from_package shape) must
+# fail loudly and name the offending line.
+regex_bad_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-regex-bad.XXXXXX")"
+cat > "$regex_bad_fixture" <<'REGEXBAD'
+    if [[ "$rest" =~ ([0-9]+\.[0-9]+\.[0-9]+.*) ]]; then
+        printf '%s\n' "${BASH_REMATCH[1]}"
+    fi
+REGEXBAD
+set +e
+# shellcheck source=/dev/null  # temp-extracted guard, resolved at runtime
+regex_guard_out="$( ( source "$regex_guard_src"; verify_regex_operands "$regex_bad_fixture" ) 2>&1 )"
+regex_guard_rc=$?
+set -e
+[[ "$regex_guard_rc" -ne 0 ]] || fail "verify_regex_operands accepted an unhoisted =~ operand"
+printf '%s\n' "$regex_guard_out" | grep -qF 'unhoisted =~ regex operand remains' \
+    || fail "verify_regex_operands failure is unclear: $regex_guard_out"
+# Safe operand shapes must pass: shell `||`, escaped `\(`/`\)`, bracket
+# classes (POSIX class included), a variable operand, a partially-quoted
+# operand and a case-glob `[=~]` that is not the operator.
+regex_clean_fixture="$(mktemp "${TMPDIR:-/tmp}/legacy-regex-clean.XXXXXX")"
+cat > "$regex_clean_fixture" <<'REGEXCLEAN'
+    if [[ "$line" =~ class[[:space:]]+0x0300 || "$line" == *VGA*compatible*controller* ]]; then
+    [[ "$trail" =~ \([YyNn]/[YyNn]\) ]] && return 0
+    [[ "$trail" =~ \([YyINOSDZ]/[YyINOSDZ] ]] && return 0
+    if [[ "$line" =~ ^[[:space:]]*default[[:space:]] ]] && (( default_index < 0 )); then
+    if [[ "$rest" =~ $__legacy_re ]]; then
+    [[ "$pkg" =~ ^"$i"-[0-9] ]] && { name="$i"; break; }
+    *[=~]*|*'<'*|*'>'*) ;;
+REGEXCLEAN
+# shellcheck source=/dev/null  # temp-extracted guard, resolved at runtime
+( source "$regex_guard_src"; verify_regex_operands "$regex_clean_fixture" ) \
+    || fail "verify_regex_operands rejected a clean fixture"
+rm -f -- "$regex_guard_src" "$regex_bad_fixture" "$regex_clean_fixture"
+pass "verify_regex_operands guard flags unhoisted operands and passes safe input"
+
 # --- port pipeline invariants (A9-07/A11-08) --------------------------------
 # The assoc rewrite must never corrupt a name that shares a tail with another
 # array (seen inside removed_seen); and every legacy_assoc_* first argument
@@ -176,7 +228,7 @@ pass "generated helper is bash-3.1 syntax clean"
 if grep -qE 'removed_legacy_assoc_set|removed_seen_legacy' "$HELPER"; then
     fail "generated helper contains a corrupted assoc-set rewrite"
 fi
-assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes emitted'
+assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes emitted bdf_hw bdf_drv nodisplay_bdf modeset seen_drv'
 assoc_unknown="$(grep -oE 'legacy_assoc_(get|get_num|keys|has|set|unset)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$HELPER" \
     | awk '{print $2}' | sort -u \
     | while IFS= read -r n; do
@@ -567,7 +619,7 @@ grep -q '[[ -n "$SESSION_DIR" ]] || SESSION_DIR="$(mktemp -d "$STATE_ROOT/sessio
 # unlocked-root probe.
 host_shell_body="$(awk '/^legacy_host_shell\(\)$/{f=1} f{print} f&&/^}$/{exit}' "$HELPER")"
 [[ -n "$host_shell_body" ]] || fail "could not extract legacy_host_shell from the generated helper"
-printf '%s\n' "$host_shell_body" | grep -q 'timeout --foreground 300 --kill-after=10 /usr/bin/env' \
+printf '%s\n' "$host_shell_body" | grep -q 'timeout --foreground --kill-after=10 300 /usr/bin/env' \
     || fail "generated helper lost the B6/A9-03 host-shell timeout wrap"
 printf '%s\n' "$host_shell_body" | grep -q 'rc=${PIPESTATUS\[0\]}' \
     || fail "generated helper lost the B6/A9-03 host-shell PIPESTATUS rc"

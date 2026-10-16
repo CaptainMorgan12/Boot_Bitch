@@ -91,6 +91,7 @@
 #include <QVBoxLayout>
 #include <QVector>
 
+#include <memory>
 #include <utility>
 
 #ifdef BOOT_REPAIR_HAVE_DBUS
@@ -103,6 +104,7 @@
 #ifdef Q_OS_UNIX
 #include <unistd.h>
 #include <fcntl.h>
+#include <signal.h>
 #endif
 
 // ---- File-local helpers -----------------------------------------------------
@@ -138,6 +140,12 @@ struct DiagnosticSpec {
 // response was truncated). Callers use it to distinguish a transport/protocol
 // failure from an ordinary non-zero command exit.
 const char kHelperProtocolIncompleteMarker[] = "did not return a protocol DONE record";
+
+// Stable raw helper token emitted by run_target_diagnostic/run_host_diagnostic
+// when a diagnostic `all` run is cancelled (SIGUSR1) mid-stream.  Callers use
+// it to distinguish a cancelled read-only run from a completed one so the
+// partial output is never cached as successful evidence.
+const char kDiagnosticCancelledMarker[] = "msg:diagnostic-cancelled";
 
 // Upper bound for a queued privileged request waiting for the single-request
 // gate to clear. The unlock request waits behind an in-flight host diagnostic/
@@ -538,6 +546,379 @@ private:
     int m_vSpace;
 };
 
+// A check box whose label wraps across multiple lines instead of clipping when
+// the widget is narrower than the full text. QCheckBox paints a single-line
+// label and reports that full single-line width as its preferred size, so long
+// Settings labels (the device-discovery filters, the automatic-diagnostics
+// toggle and the mandatory-safety list) clipped at the minimum window width.
+// This subclass draws the indicator through the active style and the text
+// wrapped into the remaining width; text() still returns the complete label
+// for accessibility, tooltips and tests.
+class WrappingCheckBox final : public QCheckBox
+{
+public:
+    explicit WrappingCheckBox(QWidget *parent = nullptr)
+        : QCheckBox(parent)
+    {
+        configure();
+    }
+
+    explicit WrappingCheckBox(const QString &text, QWidget *parent = nullptr)
+        : QCheckBox(text, parent)
+    {
+        configure();
+    }
+
+    bool hasHeightForWidth() const override
+    {
+        return true;
+    }
+
+    int heightForWidth(int width) const override
+    {
+        return qMax(QCheckBox::heightForWidth(width), wrappedHeight(width));
+    }
+
+    QSize sizeHint() const override
+    {
+        QSize hint = QCheckBox::sizeHint();
+        // A wrapped label's preferred width is the single-line text width, but
+        // reporting that full width stretches enclosing layouts (see
+        // configureWrappedDialogBody). Cap it at a comfortable column width and
+        // raise the height for the wrapped form instead.
+        const int capped = qMin(hint.width(), 420);
+        hint.setWidth(capped);
+        hint.setHeight(qMax(hint.height(), wrappedHeight(capped)));
+        return hint;
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QCheckBox::minimumSizeHint();
+        // Allow the widget to shrink below the single-line label width so a
+        // wrapping label never forces a horizontal scrollbar.
+        hint.setWidth(qMin(hint.width(), 24));
+        return hint;
+    }
+
+protected:
+    void paintEvent(QPaintEvent *event) override
+    {
+        Q_UNUSED(event);
+        QStylePainter painter(this);
+        QStyleOptionButton option;
+        initStyleOption(&option);
+
+        const QString text = option.text;
+        const QStyle *style = this->style();
+        QRect indicator = style->subElementRect(QStyle::SE_CheckBoxIndicator, &option, this);
+        // Align the indicator with the first (top) text line instead of
+        // vertically centering it across the wrapped lines.
+        const int lineHeight = fontMetrics().height();
+        indicator.moveTop(contentsRect().top() + qMax(0, (lineHeight - indicator.height()) / 2));
+
+        QStyleOptionButton indicatorOption = option;
+        indicatorOption.text.clear();
+        indicatorOption.rect = indicator;
+        painter.drawPrimitive(QStyle::PE_IndicatorCheckBox, indicatorOption);
+
+        if (!text.isEmpty()) {
+            const int spacing = style->pixelMetric(QStyle::PM_CheckBoxLabelSpacing, &option, this);
+            QRect textRect = contentsRect();
+            textRect.setLeft(indicator.right() + spacing);
+            painter.setFont(font());
+            const QPalette::ColorGroup group = (option.state & QStyle::State_Enabled)
+                ? QPalette::Normal : QPalette::Disabled;
+            painter.setPen(option.palette.color(group, QPalette::WindowText));
+            painter.drawText(textRect, Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, text);
+        }
+    }
+
+private:
+    void configure()
+    {
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+        setMinimumWidth(0);
+    }
+
+    int wrappedHeight(int width) const
+    {
+        QStyleOptionButton option;
+        initStyleOption(&option);
+        const QStyle *style = this->style();
+        const QRect indicator = style->subElementRect(QStyle::SE_CheckBoxIndicator, &option, this);
+        const int spacing = style->pixelMetric(QStyle::PM_CheckBoxLabelSpacing, &option, this);
+        const int textWidth = qMax(1, width - indicator.width() - spacing);
+        const QRect textBounds = fontMetrics().boundingRect(
+            QRect(0, 0, textWidth, 1000000),
+            Qt::AlignLeft | Qt::AlignTop | Qt::TextWordWrap, option.text);
+        const int contentHeight = qMax(indicator.height(), textBounds.height());
+        const QMargins margins = contentsMargins();
+        return contentHeight + margins.top() + margins.bottom();
+    }
+};
+
+// One read-only Full Repair plan stage for the Repair tab: a leading themed
+// icon and a word-wrapping label. Implements heightForWidth so
+// ResponsiveColumnsLayout can flow the stages into side-by-side columns of
+// equal width and reflow them into a single column as the window narrows
+// (mirroring the Settings page's Full Repair checkboxes, which use the same
+// layout).
+class PlanStageRow final : public QWidget
+{
+public:
+    PlanStageRow(const QIcon &icon, const QString &text, QWidget *parent = nullptr)
+        : QWidget(parent)
+    {
+        auto *rowLayout = new QHBoxLayout(this);
+        rowLayout->setContentsMargins(0, 0, 0, 0);
+        rowLayout->setSpacing(6);
+        m_icon = new QLabel;
+        m_icon->setPixmap(icon.pixmap(16, 16));
+        m_icon->setSizePolicy(QSizePolicy::Fixed, QSizePolicy::Fixed);
+        m_label = new QLabel(text);
+        m_label->setWordWrap(true);
+        m_label->setAlignment(Qt::AlignLeft | Qt::AlignTop);
+        m_label->setTextInteractionFlags(Qt::TextSelectableByMouse | Qt::TextSelectableByKeyboard);
+        m_label->setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+        m_label->setMinimumWidth(0);
+        rowLayout->addWidget(m_icon, 0, Qt::AlignTop);
+        rowLayout->addWidget(m_label, 1, Qt::AlignTop);
+        setSizePolicy(QSizePolicy::Preferred, QSizePolicy::Minimum);
+        setMinimumWidth(0);
+    }
+
+    QString text() const { return m_label->text(); }
+
+    bool hasHeightForWidth() const override { return true; }
+
+    int heightForWidth(int width) const override
+    {
+        const auto *rowLayout = qobject_cast<QHBoxLayout *>(layout());
+        const QMargins margins = rowLayout ? rowLayout->contentsMargins() : QMargins();
+        const int iconWidth = m_icon->sizeHint().width() + (rowLayout ? rowLayout->spacing() : 0);
+        const int labelWidth = qMax(0, width - margins.left() - margins.right() - iconWidth);
+        const int iconHeight = m_icon->sizeHint().height();
+        const int labelHeight = m_label->heightForWidth(labelWidth);
+        return qMax(iconHeight, labelHeight) + margins.top() + margins.bottom();
+    }
+
+    QSize minimumSizeHint() const override
+    {
+        QSize hint = QWidget::minimumSizeHint();
+        hint.setWidth(0);
+        return hint;
+    }
+
+private:
+    QLabel *m_icon;
+    QLabel *m_label;
+};
+
+// Lays a list of items into responsive columns: items flow left-to-right and
+// wrap to a new row when the current width cannot fit another column at a
+// comfortable target width, so the Full Repair stage list shows several
+// side-by-side columns on a wide window and reflows to a single column (the
+// right-hand columns moving under the left) as the window narrows. Unlike a
+// fixed QGridLayout the column count is recomputed from the available width on
+// every layout pass, and every column shares one uniform width so the rows stay
+// aligned; each row's height tracks its tallest (most-wrapped) item.
+class ResponsiveColumnsLayout final : public QLayout
+{
+public:
+    explicit ResponsiveColumnsLayout(int hSpacing = -1, int vSpacing = -1)
+        : m_hSpace(hSpacing)
+        , m_vSpace(vSpacing)
+    {
+    }
+
+    explicit ResponsiveColumnsLayout(QWidget *parent, int hSpacing = -1, int vSpacing = -1)
+        : QLayout(parent)
+        , m_hSpace(hSpacing)
+        , m_vSpace(vSpacing)
+    {
+    }
+
+    ~ResponsiveColumnsLayout() override
+    {
+        QLayoutItem *item;
+        while ((item = takeAt(0))) {
+            delete item;
+        }
+    }
+
+    void addItem(QLayoutItem *item) override
+    {
+        m_items.append(item);
+    }
+
+    int count() const override
+    {
+        return m_items.size();
+    }
+
+    QLayoutItem *itemAt(int index) const override
+    {
+        return m_items.value(index);
+    }
+
+    QLayoutItem *takeAt(int index) override
+    {
+        if (index >= 0 && index < m_items.size()) {
+            return m_items.takeAt(index);
+        }
+        return nullptr;
+    }
+
+    Qt::Orientations expandingDirections() const override
+    {
+        return { };
+    }
+
+    bool hasHeightForWidth() const override
+    {
+        return true;
+    }
+
+    int heightForWidth(int width) const override
+    {
+        return doLayout(QRect(0, 0, width, 0), true);
+    }
+
+    void setGeometry(const QRect &rect) override
+    {
+        QLayout::setGeometry(rect);
+        doLayout(rect, false);
+    }
+
+    QSize sizeHint() const override
+    {
+        return minimumSize();
+    }
+
+    QSize minimumSize() const override
+    {
+        QSize size;
+        for (const QLayoutItem *item : m_items) {
+            size = size.expandedTo(item->minimumSize());
+        }
+        const QMargins margins = contentsMargins();
+        size += QSize(margins.left() + margins.right(), margins.top() + margins.bottom());
+        return size;
+    }
+
+private:
+    int doLayout(const QRect &rect, bool testOnly) const
+    {
+        int left, top, right, bottom;
+        getContentsMargins(&left, &top, &right, &bottom);
+        const QRect effective = rect.adjusted(left, top, -right, -bottom);
+        const int hSpace = horizontalSpacing();
+        const int vSpace = verticalSpacing();
+        const int count = m_items.size();
+        if (count == 0) {
+            return top + bottom;
+        }
+
+        int columns = qMax(1, (effective.width() + hSpace) / (kTargetColumnWidth + hSpace));
+        columns = qMin(columns, count);
+        const int columnWidth = qMax(0, (effective.width() - (columns - 1) * hSpace) / columns);
+
+        const int rows = (count + columns - 1) / columns;
+        QList<int> itemHeights;
+        QList<int> rowHeights;
+        itemHeights.reserve(count);
+        rowHeights.reserve(rows);
+        for (int i = 0; i < count; ++i) {
+            const QLayoutItem *item = m_items.at(i);
+            // A widget's height for the column width is its own wrapped content
+            // height.  QWidgetItem must NOT be used here: for a widget that has
+            // its own internal layout (PlanStageRow) QWidgetItem::heightForWidth
+            // returns that layout's totalHeightForWidth (not the widget's
+            // heightForWidth) and QWidgetItem::minimumSize() carries the wrapped
+            // minimum-height hint, which together inflate every row to its
+            // wrapped-at-minimum-width height and leave uneven blank lines.
+            // Read the widget's heightForWidth directly so each row is exactly
+            // its content height.
+            int height;
+            if (QWidget *widget = item->widget()) {
+                height = widget->hasHeightForWidth()
+                    ? widget->heightForWidth(columnWidth)
+                    : widget->sizeHint().height();
+            } else if (item->hasHeightForWidth()) {
+                height = item->heightForWidth(columnWidth);
+            } else {
+                height = item->sizeHint().height();
+            }
+            itemHeights.append(qMax(1, height));
+        }
+        for (int row = 0; row < rows; ++row) {
+            int rowHeight = 0;
+            for (int column = 0; column < columns; ++column) {
+                const int index = row * columns + column;
+                if (index < count) {
+                    rowHeight = qMax(rowHeight, itemHeights.at(index));
+                }
+            }
+            rowHeights.append(rowHeight);
+        }
+
+        int y = effective.y();
+        for (int row = 0; row < rows; ++row) {
+            for (int column = 0; column < columns; ++column) {
+                const int index = row * columns + column;
+                if (index >= count) {
+                    break;
+                }
+                const int x = effective.x() + column * (columnWidth + hSpace);
+                if (!testOnly) {
+                    m_items.at(index)->setGeometry(QRect(x, y, columnWidth, itemHeights.at(index)));
+                }
+            }
+            y += rowHeights.at(row) + vSpace;
+        }
+        return y - vSpace + bottom;
+    }
+
+    int horizontalSpacing() const
+    {
+        if (m_hSpace >= 0) {
+            return m_hSpace;
+        }
+        return smartSpacing(QStyle::PM_LayoutHorizontalSpacing);
+    }
+
+    int verticalSpacing() const
+    {
+        if (m_vSpace >= 0) {
+            return m_vSpace;
+        }
+        return smartSpacing(QStyle::PM_LayoutVerticalSpacing);
+    }
+
+    int smartSpacing(QStyle::PixelMetric pm) const
+    {
+        QObject *parent = this->parent();
+        if (!parent) {
+            return -1;
+        }
+        if (parent->isWidgetType()) {
+            auto *widget = static_cast<QWidget *>(parent);
+            return widget->style()->pixelMetric(pm, nullptr, widget);
+        }
+        return static_cast<QLayout *>(parent)->spacing();
+    }
+
+    QList<QLayoutItem *> m_items;
+    int m_hSpace;
+    int m_vSpace;
+
+    // Comfortable wrapped-label column width: wide enough that most stage
+    // labels fit on one line, narrow enough that two columns fit at the
+    // default window width and exactly one remains at the minimum width.
+    static constexpr int kTargetColumnWidth = 420;
+};
+
 // File Copy and Diagnostics share a responsive page-title header. The title
 // and help button keep the first row. The wrapping scope label and the primary
 // action buttons share one row (scope left of the buttons, buttons
@@ -845,7 +1226,6 @@ const QList<DiagnosticSpec> &diagnosticSpecs()
         {"btrfs", MainWindow::tr("Btrfs status"), MainWindow::tr("Shows Btrfs filesystem and subvolume information for the running host or selected repair system."), MainWindow::tr("Show Btrfs filesystem and subvolume information."), "drive-harddisk"},
         {"mapper", MainWindow::tr("Mapper status"), MainWindow::tr("Shows selected mapper ancestry, device-mapper state and cryptsetup status when available."), MainWindow::tr("Show device-mapper ancestry and cryptsetup state."), "lock"},
         {"luks", MainWindow::tr("LUKS / crypttab"), MainWindow::tr("Shows LUKS/mapped ancestry plus crypttab and fstab mapper references."), MainWindow::tr("Show LUKS ancestry plus crypttab and fstab mapper references."), "lock"},
-        {"host-capabilities", MainWindow::tr("Host prerequisites and capabilities"), MainWindow::tr("Reports the recovery-host tools Boot Bitch itself needs (block discovery, LUKS, Btrfs, rsync, chroot, EFI/NVRAM and storage-stack tooling) read-only."), MainWindow::tr("Report the recovery-host prerequisites read-only."), "system-software-install"},
         {"report", MainWindow::tr("Full diagnostic report"), MainWindow::tr("Combines all read-only diagnostics for the selected scope in one privileged inspection session."), MainWindow::tr("Combine every read-only diagnostic for the selected scope."), "document-preview"}
     };
     return specs;
@@ -1316,7 +1696,9 @@ struct ReasonSpec
 
 const ReasonSpec kReasonSpecs[] = {
     { "akmods-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "akmods preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
-    { "akms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "akms preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
+    { "akmods-no-changes", QT_TRANSLATE_NOOP("MainWindow", "akmods found no packages to rebuild; the kernel module state is unchanged.") },
+    { "akms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "akms preflight found no build tree for installed kernel %1; install the matching %2 headers package (or boot a kernel that matches the installed headers) and retry.") },
+    { "akms-headers-newer", QT_TRANSLATE_NOOP("MainWindow", "akms preflight found no build tree for kernel %1: the installed %2 headers are newer (version %3). Reboot into the kernel matching the installed headers, or install headers matching %1 if they are still available.") },
     { "alpine-bootstack-extlinux-disabled", QT_TRANSLATE_NOOP("MainWindow", "Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).") },
     { "alpine-bootstack-grub-disabled", QT_TRANSLATE_NOOP("MainWindow", "Alpine boot-stack reconciliation is not enabled (run the initramfs and GRUB stages separately).") },
     { "alpine-dkms-no-build-tree", QT_TRANSLATE_NOOP("MainWindow", "Alpine DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
@@ -1370,24 +1752,32 @@ const ReasonSpec kReasonSpecs[] = {
     { "grub-cfg-grubenv-identical", QT_TRANSLATE_NOOP("MainWindow", "grub.cfg and grubenv are byte-identical.") },
     { "grub-cfg-identical", QT_TRANSLATE_NOOP("MainWindow", "grub.cfg is byte-identical.") },
     { "grub-default-not-saved", QT_TRANSLATE_NOOP("MainWindow", "GRUB_DEFAULT is not set to saved; grubenv does not select the default entry.") },
+    { "gpu-aborted", QT_TRANSLATE_NOOP("MainWindow", "The GPU driver repair was cancelled; no changes were made.") },
     { "gpu-blacklist-identical", QT_TRANSLATE_NOOP("MainWindow", "The conflicting module blacklist is already byte-identical.") },
     { "gpu-driver-unknown", QT_TRANSLATE_NOOP("MainWindow", "No expected GPU driver could be derived from hardware, package recommendations or the OEM flavour.") },
     { "gpu-hybrid-ambiguous", QT_TRANSLATE_NOOP("MainWindow", "Multiple GPU devices were detected with no explicit choice; the GPU driver swap is refused rather than guessing the primary GPU.") },
+    { "gpu-install-already-correct", QT_TRANSLATE_NOOP("MainWindow", "The correct GPU driver is already installed; there was nothing to change.") },
     { "gpu-no-blacklist-needed", QT_TRANSLATE_NOOP("MainWindow", "No conflicting module needs to be blacklisted for the chosen driver stack.") },
     { "gpu-no-older-kernel", QT_TRANSLATE_NOOP("MainWindow", "No older kernel is pinned to the GPU driver; nothing to remove.") },
     { "gpu-no-wrong-driver", QT_TRANSLATE_NOOP("MainWindow", "No wrong driver package is installed; nothing to purge.") },
     { "gpu-package-set-unknown", QT_TRANSLATE_NOOP("MainWindow", "No concrete package set for the expected GPU driver could be derived from the detected package backend and installed-package evidence; the driver swap is refused rather than guessing.") },
     { "gpu-purge-no-changes", QT_TRANSLATE_NOOP("MainWindow", "The simulated driver purge proposed no package changes.") },
     { "gpu-verified", QT_TRANSLATE_NOOP("MainWindow", "The graphics driver stack is consistent: no driver mismatch and no failed or absent DKMS build were found, so the running driver was left untouched.") },
+    { "headers-package-unavailable", QT_TRANSLATE_NOOP("MainWindow", "The matching header package for kernel %1 is not available from any enabled repository (the kernel's source repository may be disabled).") },
     { "host-default-already-correct", QT_TRANSLATE_NOOP("MainWindow", "BootOrder, labels and registrations already correct.") },
     { "host-esp-unresolved", QT_TRANSLATE_NOOP("MainWindow", "The running host EFI System Partition could not be resolved.") },
     { "incomplete-dpkg", QT_TRANSLATE_NOOP("MainWindow", "The target dpkg database or executable is incomplete.") },
     { "initramfs-identical", QT_TRANSLATE_NOOP("MainWindow", "Rebuilt initramfs images are byte-identical.") },
+    { "install-package-no-op", QT_TRANSLATE_NOOP("MainWindow", "The package is already installed; no changes were made.") },
     { "insufficient-btrfs-space", QT_TRANSLATE_NOOP("MainWindow", "Less than 1 GiB of free Btrfs space is available.") },
     { "invalid-grubenv", QT_TRANSLATE_NOOP("MainWindow", "The grubenv file is missing or not a valid GRUB environment block.") },
+    { "kernel-components-remain", QT_TRANSLATE_NOOP("MainWindow", "The running and newest kernels are intact, but incomplete or orphaned kernel components still need to be reinstalled or cleaned up.") },
     { "kernel-removal-no-changes", QT_TRANSLATE_NOOP("MainWindow", "The simulated kernel-removal transaction proposed no package changes.") },
     { "kernel-verified", QT_TRANSLATE_NOOP("MainWindow", "The current kernel is intact; no removable, incomplete or orphaned kernel components were found.") },
+    { "kernels-aborted", QT_TRANSLATE_NOOP("MainWindow", "The kernel repair was cancelled; no changes were made.") },
     { "legacy-bios-no-efi", QT_TRANSLATE_NOOP("MainWindow", "legacy BIOS target; no EFI boot path is available.") },
+    { "managed-default-metapackage-cascade", QT_TRANSLATE_NOOP("MainWindow", "Removing the newest kernel would also remove the managed metapackage(s) %1 (they depend on it), and re-pointing them to the surviving kernel %2 could not be resolved; no kernel was removed.") },
+    { "missing-akmods", QT_TRANSLATE_NOOP("MainWindow", "akmods is not installed in the target system.") },
     { "missing-apk", QT_TRANSLATE_NOOP("MainWindow", "apk is not installed in the target.") },
     { "missing-apk-installed-db", QT_TRANSLATE_NOOP("MainWindow", "The target apk installed database is missing.") },
     { "missing-apk-world", QT_TRANSLATE_NOOP("MainWindow", "The target apk world file is missing.") },
@@ -1416,6 +1806,8 @@ const ReasonSpec kReasonSpecs[] = {
     { "missing-grub-zfs-module", QT_TRANSLATE_NOOP("MainWindow", "The GRUB ZFS module (zfs.mod) is not installed in the target.") },
     { "missing-initramfs-tools", QT_TRANSLATE_NOOP("MainWindow", "update-initramfs/mkinitramfs are not installed in the target.") },
     { "missing-lsinitrd", QT_TRANSLATE_NOOP("MainWindow", "lsinitrd is not installed in the target system; dracut image verification is unavailable.") },
+    { "missing-lvm2", QT_TRANSLATE_NOOP("MainWindow", "The LVM userspace tool (lvs) is not installed; LVM volume inspection is unavailable.") },
+    { "missing-mdadm", QT_TRANSLATE_NOOP("MainWindow", "mdadm is not installed; software-RAID assembly/inspection is unavailable.") },
     { "missing-mkinitcpio", QT_TRANSLATE_NOOP("MainWindow", "mkinitcpio is not installed in the target system.") },
     { "missing-mkinitfs", QT_TRANSLATE_NOOP("MainWindow", "mkinitfs is not installed in the target system.") },
     { "missing-mkinitfs-conf", QT_TRANSLATE_NOOP("MainWindow", "The target has no mkinitfs configuration.") },
@@ -1432,6 +1824,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "missing-update-extlinux-conf", QT_TRANSLATE_NOOP("MainWindow", "The running host has no /etc/update-extlinux.conf.") },
     { "missing-update-extlinux-host", QT_TRANSLATE_NOOP("MainWindow", "update-extlinux is not installed in the running host.") },
     { "missing-zfs-initramfs-hook", QT_TRANSLATE_NOOP("MainWindow", "The zfs-initramfs hook is not installed in the target (no /usr/share/initramfs-tools/hooks/zfs).") },
+    { "module-build-no-modules", QT_TRANSLATE_NOOP("MainWindow", "No out-of-tree kernel modules are installed to rebuild; nothing changed.") },
     { "multiple-extlinux-kernel-entries", QT_TRANSLATE_NOOP("MainWindow", "Multiple extlinux entries reference the running kernel %1 (%2).") },
     { "nested-subvolumes", QT_TRANSLATE_NOOP("MainWindow", "The running @ root contains nested subvolumes that this release does not migrate: %1.") },
     { "nvidia-dkms-requires-network", QT_TRANSLATE_NOOP("MainWindow", "The proprietary NVIDIA driver needs network access to fetch the package set; this offline target has no usable APT sources.") },
@@ -1465,7 +1858,6 @@ const ReasonSpec kReasonSpecs[] = {
     { "no-fedora-grub2-layout", QT_TRANSLATE_NOOP("MainWindow", "The detected GRUB layout is not a grub2 layout.") },
     { "no-filesystem-check-tool", QT_TRANSLATE_NOOP("MainWindow", "No supported file system check tool is installed in the recovery environment.") },
     { "no-gpu-hardware", QT_TRANSLATE_NOOP("MainWindow", "No class-03 GPU device and no target journal/module evidence were found; there is no GPU driver stack to repair.") },
-    { "no-gpu-mismatch", QT_TRANSLATE_NOOP("MainWindow", "The GPU driver stack looks healthy; no mismatch was proven, so the driver is not touched.") },
     { "no-initramfs-backend", QT_TRANSLATE_NOOP("MainWindow", "No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected.") },
     { "no-live-root-uuid", QT_TRANSLATE_NOOP("MainWindow", "Unable to determine the live root filesystem UUID.") },
     { "no-mkinitcpio-kernels", QT_TRANSLATE_NOOP("MainWindow", "No installed kernel module directories were found for mkinitcpio.") },
@@ -1477,8 +1869,10 @@ const ReasonSpec kReasonSpecs[] = {
     { "no-resolvable-scope-filesystems", QT_TRANSLATE_NOOP("MainWindow", "The selected scope's root, /boot, ESP and /home filesystems could not be resolved.") },
     { "no-service-manager", QT_TRANSLATE_NOOP("MainWindow", "No supported service manager (systemd or OpenRC) was detected in the target.") },
     { "no-snapper-root-config", QT_TRANSLATE_NOOP("MainWindow", "No Snapper root configuration manages / with FSTYPE=btrfs.") },
+    { "no-snapshot-store", QT_TRANSLATE_NOOP("MainWindow", "The selected Btrfs filesystem has no resolvable snapshot store (@.snapshots/.snapshots).") },
     { "no-supported-filesystem-type", QT_TRANSLATE_NOOP("MainWindow", "The selected scope has no supported file system type for a read-only check.") },
-    { "not-btrfs-root", QT_TRANSLATE_NOOP("MainWindow", "The running host root filesystem is %1, not Btrfs.") },
+    { "no-top-level-root", QT_TRANSLATE_NOOP("MainWindow", "The selected Btrfs filesystem has no top-level @ root subvolume; transactional rollback is limited to @-root layouts.") },
+    { "not-btrfs-root", QT_TRANSLATE_NOOP("MainWindow", "The selected root filesystem is %1, not Btrfs.") },
     { "not-grub-bootloader", QT_TRANSLATE_NOOP("MainWindow", "The detected bootloader is %1; GRUB is not the selected bootloader.") },
     { "not-top-level-subvol", QT_TRANSLATE_NOOP("MainWindow", "The running root subvolume is %1, not the top-level @.") },
     { "no-uki-candidate", QT_TRANSLATE_NOOP("MainWindow", "Unable to derive a running host UKI candidate.") },
@@ -1487,8 +1881,10 @@ const ReasonSpec kReasonSpecs[] = {
     { "nomodeset-uki-only", QT_TRANSLATE_NOOP("MainWindow", "The nomodeset one-boot fallback is refused for UKI/EFI-stub layouts that cannot produce a one-shot artifact.") },
     { "openrc-runlevel-enabled", QT_TRANSLATE_NOOP("MainWindow", "The OpenRC default runlevel already enabled %1.") },
     { "package-lock-active", QT_TRANSLATE_NOOP("MainWindow", "A package manager or package-manager lock is active.") },
+    { "package-manager-timeout", QT_TRANSLATE_NOOP("MainWindow", "The package manager did not respond within the safety limit while %1 and was stopped; no package change was applied.") },
     { "pacman-no-changes", QT_TRANSLATE_NOOP("MainWindow", "The pacman transaction reported no packages to install, upgrade or remove.") },
     { "pinned-subvolid", QT_TRANSLATE_NOOP("MainWindow", "The running host pins subvolid= in fstab or the kernel command line.") },
+    { "remove-partial-unsupported", QT_TRANSLATE_NOOP("MainWindow", "Removing an incomplete kernel is not supported on the %1 package backend; reinstall the kernel to complete it instead.") },
     { "root-read-only", QT_TRANSLATE_NOOP("MainWindow", "The running host root filesystem is read-only.") },
     { "rpm-dkms-header-correction-unimplemented", QT_TRANSLATE_NOOP("MainWindow", "The rpm DKMS header correction (kernel-devel/akmods) is not implemented.") },
     { "running-kernel-no-bls-entry", QT_TRANSLATE_NOOP("MainWindow", "The running kernel %1 has no installed BLS entry.") },
@@ -1514,6 +1910,7 @@ const ReasonSpec kReasonSpecs[] = {
     { "unsafe-extlinux-label", QT_TRANSLATE_NOOP("MainWindow", "The extlinux label %1 cannot be written to /etc/update-extlinux.conf safely.") },
     { "upgrade-simulated-no-changes", QT_TRANSLATE_NOOP("MainWindow", "The simulated upgrade transaction proposed no package changes.") },
     { "validation-read-only", QT_TRANSLATE_NOOP("MainWindow", "Validation is read-only.") },
+    { "virtual-gpu-no-discrete-driver", QT_TRANSLATE_NOOP("MainWindow", "The detected GPU is a virtual/para-virtual display device (Virtio, QEMU/Bochs, Cirrus, VirtualBox, VMware, QXL or Hyper-V) with no discrete driver to swap or rebuild; the GPU driver swap is not available.") },
 };
 
 const char *reasonSourceForKey(const QString &key)
@@ -1571,6 +1968,7 @@ const MsgSpec kMsgSpecs[] = {
     { "apk-refused-downgrade", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation proposes a package downgrade.") },
     { "apk-refused-locked", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation reported a locked package database.") },
     { "apk-refused-metadata", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation reported incomplete repository metadata.") },
+    { "apk-refused-kernel-removal", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation would remove '%1', which is not an approved removable kernel package.") },
     { "apk-refused-remove", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation would remove '%1' without replacing it in the same transaction.") },
     { "apk-refused-signature", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation reported an untrusted package signature.") },
     { "apk-refused-unrecognized", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: apk simulation reported an error Boot Bitch does not recognize as safe.") },
@@ -1642,6 +2040,7 @@ const MsgSpec kMsgSpecs[] = {
     { "detected-target-os", QT_TRANSLATE_NOOP("MainWindow", "Detected target OS: %1") },
     { "dev-filter-no-identity", QT_TRANSLATE_NOOP("MainWindow", "WARNING: private /dev filter: the selected target disk identity is unavailable; no block device or mapper will be exposed to the target chroot.") },
     { "dev-filter-summary", QT_TRANSLATE_NOOP("MainWindow", "Private /dev filter: %1 allowed block devices/mappers copied; %2 non-essential device-tree entries refused (plain files, sockets, fifos, and devices outside the selected target disk).") },
+    { "diagnostic-cancelled", QT_TRANSLATE_NOOP("MainWindow", "Diagnostic cancelled at the request of the application.") },
     { "dkms-correction", QT_TRANSLATE_NOOP("MainWindow", "DKMS preflight correction: build tree now present for %1") },
     { "dkms-dracut-simulate", QT_TRANSLATE_NOOP("MainWindow", "SIMULATE/PREFLIGHT: dracut DKMS rebuild (headers must already be installed; no package guessing is performed)") },
     { "dkms-headers-present", QT_TRANSLATE_NOOP("MainWindow", "DKMS preflight: headers/build tree present for %1") },
@@ -1878,9 +2277,11 @@ const MsgSpec kMsgSpecs[] = {
     { "kernel-headers-install", QT_TRANSLATE_NOOP("MainWindow", "Installing the missing headers for the newest kernel: %1") },
     { "kernel-install-repo-latest", QT_TRANSLATE_NOOP("MainWindow", "Installing the repository-latest kernel image: %1") },
     { "kernel-orphaned-plan", QT_TRANSLATE_NOOP("MainWindow", "Orphaned kernel cleanup plan: removing the leftover on-disk components of kernel %1.") },
+    { "kernel-partial-removal-plan", QT_TRANSLATE_NOOP("MainWindow", "Incomplete kernel removal plan: removing %2 versioned package(s) of kernel %1: %3") },
     { "kernel-protected-removed", QT_TRANSLATE_NOOP("MainWindow", "FAIL: a protected kernel package was removed by the transaction; restoring protected package(s): %1") },
     { "kernel-reinstall-plan", QT_TRANSLATE_NOOP("MainWindow", "Kernel reinstall plan: reinstalling %1 incomplete kernel package(s): %2") },
-    { "kernel-removal-failed", QT_TRANSLATE_NOOP("MainWindow", "FAIL: kernel removal exited %1; cleaning leftover on-disk components of the removed kernels") },
+    { "kernel-removal-complete-failure", QT_TRANSLATE_NOOP("MainWindow", "Kernel %1 is still fully installed (the removal removed nothing); leaving it intact for a clean reinstall or removal.") },
+    { "kernel-removal-failed", QT_TRANSLATE_NOOP("MainWindow", "FAIL: kernel removal exited %1") },
     { "kernel-zombie-cleanup", QT_TRANSLATE_NOOP("MainWindow", "Cleaning leftover on-disk components of removed kernel %1 (zombie cleanup)") },
     { "lives-on-root", QT_TRANSLATE_NOOP("MainWindow", "%1 lives on the root filesystem; no separate mount required") },
     { "lsinitcpio-verified", QT_TRANSLATE_NOOP("MainWindow", "PASS: lsinitcpio verified %1 Arch initramfs image(s)") },
@@ -1890,6 +2291,8 @@ const MsgSpec kMsgSpecs[] = {
     { "luks-mapper-name", QT_TRANSLATE_NOOP("MainWindow", "Mapper name: %1") },
     { "luks-unlock-complete", QT_TRANSLATE_NOOP("MainWindow", "LUKS unlock complete. The mapper remains open for this recovery session.") },
     { "luks-unlocking", QT_TRANSLATE_NOOP("MainWindow", "Unlocking LUKS target %1") },
+    { "managed-metapackage-downgrade", QT_TRANSLATE_NOOP("MainWindow", "Downgrade the managed kernel metapackage(s) %1 to pin the surviving kernel") },
+    { "managed-metapackage-downgrade-refused", QT_TRANSLATE_NOOP("MainWindow", "REFUSED: the managed metapackage %1 was not downgraded to pin the surviving kernel %2.") },
     { "mandatory-safety-preflight-pass", QT_TRANSLATE_NOOP("MainWindow", "Mandatory safety preflight: PASS") },
     { "mapper-compat-already", QT_TRANSLATE_NOOP("MainWindow", "Mapper compatibility: %1 already resolves to %2") },
     { "mapper-compat-temporary", QT_TRANSLATE_NOOP("MainWindow", "Mapper compatibility: temporary %1 -> %2") },
@@ -1978,12 +2381,14 @@ const MsgSpec kMsgSpecs[] = {
     { "rollback-preflight-wrong-root", QT_TRANSLATE_NOOP("MainWindow", "Rollback preflight: snapshot / fstab source resolves to %1 rather than selected root %2.") },
     { "rollback-preserved-missing", QT_TRANSLATE_NOOP("MainWindow", "CRITICAL: preserved root %1 is missing; refusing to move the active rollback candidate.") },
     { "rollback-preserved-name", QT_TRANSLATE_NOOP("MainWindow", "Preserved root name: %1") },
+    { "rollback-preserved-root-damaged", QT_TRANSLATE_NOOP("MainWindow", "WARNING: the restored @ preserved root is damaged (missing /etc/os-release); the @ name and default subvolume were restored, but boot-stack reconciliation was skipped. Failed rollback candidate retained as %1.") },
     { "rollback-promoted-validated", QT_TRANSLATE_NOOP("MainWindow", "PASS: promoted rollback root and boot stack validated.") },
     { "rollback-recovery", QT_TRANSLATE_NOOP("MainWindow", "ROLLBACK RECOVERY: restoring preserved pre-rollback @.") },
     { "rollback-selected", QT_TRANSLATE_NOOP("MainWindow", "Transactional rollback selected: snapshot %1 (%2).") },
     { "rollback-source-unchanged", QT_TRANSLATE_NOOP("MainWindow", "Rollback source snapshot will remain unchanged.") },
     { "root-component", QT_TRANSLATE_NOOP("MainWindow", "Root component: %1 (%2)") },
     { "root-component-fallback", QT_TRANSLATE_NOOP("MainWindow", "Root component fallback: selected component %1 (%2) lacks /etc/os-release; resolved %3 (%4) from %5.") },
+    { "root-damaged-snapshot-rollback", QT_TRANSLATE_NOOP("MainWindow", "The selected repair target root (%1) is damaged or missing /etc/os-release. A snapshot rollback is required — open the Snapshots tab and roll back to a recent snapshot.") },
     { "rpm-missing-file-repair", QT_TRANSLATE_NOOP("MainWindow", "RPM missing-file repair: reinstalling %1 package(s) with missing files: %2") },
     { "rpm-no-missing-files", QT_TRANSLATE_NOOP("MainWindow", "RPM missing-file detection: no missing package files; recording read-only dnf5 dependency-check evidence.") },
     { "rpm-version", QT_TRANSLATE_NOOP("MainWindow", "rpm preflight version: %1") },
@@ -2031,6 +2436,11 @@ const MsgSpec kMsgSpecs[] = {
     { "uki-existing-validated", QT_TRANSLATE_NOOP("MainWindow", "PASS: existing TUXEDO UKI validated for %1 on selected ESP %2; no replacement image was needed.") },
     { "uki-kernel-stale", QT_TRANSLATE_NOOP("MainWindow", "KNOWN ISSUE: UKI kernel is stale; vendor UKI rebuild will correct it.") },
     { "uki-layout-detected", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI layout detected; simulating/prereflighting the vendor boot path before rebuild.") },
+    { "uki-luks-guard", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI LUKS guard preflight: luks_uuid=%1 findmnt=%2") },
+    { "uki-luks-guard-installed", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI LUKS findmnt guard installed; redirects the vendor LUKS-detection probe to the selected target's unlocked mapper.") },
+    { "uki-luks-guard-skipped", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI LUKS findmnt guard skipped: %1") },
+    { "uki-luks-resolved", QT_TRANSLATE_NOOP("MainWindow", "Resolved target LUKS UUID %2 from backing device %1.") },
+    { "uki-luks-unresolved", QT_TRANSLATE_NOOP("MainWindow", "Target LUKS UUID unresolved: %1") },
     { "uki-no-initramfs", QT_TRANSLATE_NOOP("MainWindow", "KNOWN ISSUE: newest TUXEDO kernel %1 has no matching initramfs; rebuilding initramfs before UKI.") },
     { "uki-nvram-unavailable", QT_TRANSLATE_NOOP("MainWindow", "Writable UEFI variables/efibootmgr are unavailable; UKI file rebuild will proceed without BootOrder restoration.") },
     { "uki-objcopy-failed", QT_TRANSLATE_NOOP("MainWindow", "WARNING: objcopy could not inspect the rebuilt UKI .uname section.") },
@@ -2039,6 +2449,11 @@ const MsgSpec kMsgSpecs[] = {
     { "uki-rebuilt", QT_TRANSLATE_NOOP("MainWindow", "PASS: TUXEDO UKI rebuilt for %1 on selected ESP %2") },
     { "uki-repair-preflight-pass", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI repair read-only preflight: PASS (%1, %2)") },
     { "uki-vendor-changed", QT_TRANSLATE_NOOP("MainWindow", "PASS: vendor UKI command produced a changed TUX.EFI image.") },
+    { "uki-vendor-raw-tail", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI vendor builder raw output (exit code %1), last 15 lines:") },
+    { "uki-vendor-script-luks-block", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI vendor script LUKS-detection block (lines 54-73):") },
+    { "uki-vendor-script-missing", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI vendor script not found: %1") },
+    { "uki-vendor-script-sha", QT_TRANSLATE_NOOP("MainWindow", "TUXEDO UKI vendor script identity: %1") },
+    { "uki-vendor-stale", QT_TRANSLATE_NOOP("MainWindow", "KNOWN ISSUE: vendor UKI command left TUX.EFI stale (embedded %1, newest %2); rebuilding directly with ukify.") },
     { "uki-vendor-unchanged", QT_TRANSLATE_NOOP("MainWindow", "WARNING: vendor UKI command completed without changing TUX.EFI; the existing image will be validated against the selected target before this repair is reported successful.") },
     { "validation-boot", QT_TRANSLATE_NOOP("MainWindow", "/boot: %1") },
     { "validation-boot-efi", QT_TRANSLATE_NOOP("MainWindow", "/boot/efi: %1") },
@@ -2079,6 +2494,7 @@ const MsgSpec kMsgSpecs[] = {
     { "inspect-dkms-state", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state") },
     { "inspect-dkms-state-gpu", QT_TRANSLATE_NOOP("MainWindow", "Inspect DKMS state for GPU driver") },
     { "install-target-package", QT_TRANSLATE_NOOP("MainWindow", "Install package %1 into the repair target") },
+    { "install-host-package", QT_TRANSLATE_NOOP("MainWindow", "Install package %1 on the running host") },
     { "post-repair-akmods-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akmods status") },
     { "post-repair-akms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair akms status") },
     { "post-repair-dkms-status", QT_TRANSLATE_NOOP("MainWindow", "Post-repair DKMS status") },
@@ -2108,6 +2524,7 @@ const MsgSpec kMsgSpecs[] = {
     { "reinstall-grub-efi-files", QT_TRANSLATE_NOOP("MainWindow", "Reinstall GRUB EFI bootloader files") },
     { "reinstall-grub2-bios", QT_TRANSLATE_NOOP("MainWindow", "Reinstall GRUB2 BIOS boot code") },
     { "reinstall-protected-kernels", QT_TRANSLATE_NOOP("MainWindow", "Reinstall protected kernel packages (rollback)") },
+    { "remove-incomplete-kernel", QT_TRANSLATE_NOOP("MainWindow", "Remove the incomplete kernel") },
     { "remove-orphaned-kernel-build-support", QT_TRANSLATE_NOOP("MainWindow", "Remove orphaned kernel build support") },
     { "remove-orphaned-kernel-headers", QT_TRANSLATE_NOOP("MainWindow", "Remove orphaned kernel headers") },
     { "remove-superseded-kernels", QT_TRANSLATE_NOOP("MainWindow", "Remove superseded kernel packages") },
@@ -2246,9 +2663,10 @@ static QString localizedMessage(const QString &raw)
 // Transforms one helper log line for display: a `msg:<key>[|param:...]` token
 // (optionally preceded by the helper's [HH:MM:SS] timestamp) is localized,
 // while every machine-parsed line (`Repair tool <key>:`, `Repair change
-// status <key>:`, `ERROR: ...`, `Host default:`/`Host snapshot rollback:`
-// evidence, backend-profile labels, `[SCOPE]`/`Disk:`/`Root:` markers and any
-// `reason:<key>` payload) passes through byte-identical.
+// status <key>:`, `ERROR: ...`, `Host default:`/`Host snapshot rollback:` and
+// `Snapshot rollback:` evidence, backend-profile labels,
+// `[SCOPE]`/`Disk:`/`Root:` markers and any `reason:<key>` payload) passes
+// through byte-identical.
 static QString localizeHelperLogLine(const QString &line)
 {
     int msgPos = -1;
@@ -2281,6 +2699,28 @@ static QString localizeHelperLogLines(const QString &text)
         out.append(localizeHelperLogLine(line));
     }
     return out.join(QLatin1Char('\n'));
+}
+
+// The module-build capability/change-status KEY is the stable `dkms` token the
+// GUI parses (`Repair tool dkms:` / `Repair capability evidence dkms:` /
+// `Repair change status dkms:`). For DISPLAY ONLY the key token is rewritten to
+// the detected build-system name (AKMS / AKMODS / DKMS) so the log names the
+// actual backend; the cached evidence and every parser keep the `dkms` key.
+// Only the three keyed prefixes are rewritten: the reason payloads
+// (`reason:missing-dkms`, `reason:module-build-no-modules`, ...) stay verbatim.
+static QString rewriteModuleBuildKeyForDisplay(const QString &text, const QString &label)
+{
+    if (label.isEmpty()) {
+        return text;
+    }
+    QString rewritten = text;
+    rewritten.replace(QStringLiteral("Repair tool dkms:"),
+                      QStringLiteral("Repair tool %1:").arg(label));
+    rewritten.replace(QStringLiteral("Repair capability evidence dkms:"),
+                      QStringLiteral("Repair capability evidence %1:").arg(label));
+    rewritten.replace(QStringLiteral("Repair change status dkms:"),
+                      QStringLiteral("Repair change status %1:").arg(label));
+    return rewritten;
 }
 
 // Single truth log reader: every action gate parses the cached diagnostic
@@ -5108,6 +5548,21 @@ RepairProgressDialog::RepairProgressDialog(const QString &title, QWidget *parent
     m_output->setFont(mono);
     layout->addWidget(m_output, 1);
 
+    // Persistent prompt input line for the interactive repair menus: enabled
+    // and focused only while a PROMPT record is waiting; Enter (or the Send
+    // button) submits the answer.
+    auto *inputRow = new QHBoxLayout;
+    m_promptInput = new QLineEdit;
+    m_promptInput->setObjectName(QStringLiteral("repairProgressPromptInput"));
+    m_promptInput->setPlaceholderText(MainWindow::tr("Number of the action (0 = Abort)"));
+    m_promptInput->setEnabled(false);
+    m_promptSend = new QPushButton(MainWindow::tr("Send"));
+    m_promptSend->setObjectName(QStringLiteral("repairProgressPromptSend"));
+    m_promptSend->setEnabled(false);
+    inputRow->addWidget(m_promptInput, 1);
+    inputRow->addWidget(m_promptSend);
+    layout->addLayout(inputRow);
+
     auto *buttons = new QDialogButtonBox(QDialogButtonBox::Close);
     m_closeButton = buttons->button(QDialogButtonBox::Close);
     m_closeButton->setObjectName(QStringLiteral("repairProgressCloseButton"));
@@ -5736,15 +6191,24 @@ MainWindow::MainWindow(QWidget *parent)
         if (!m_tabs || m_tabs->count() == 0) return;
         m_tabs->setCurrentIndex(qMin(m_tabs->count() - 1, m_tabs->currentIndex() + 1));
     });
-    m_tabs->addTab(buildSystemsPage(), themedIcon(QStringLiteral("drive-harddisk")), tr("Systems"));
-    m_tabs->addTab(buildDiagnosticsPage(), themedIcon(QStringLiteral("tools-report-bug")), tr("Diagnostics"));
-    m_tabs->addTab(buildBootEntriesPage(), themedIcon(QStringLiteral("view-list-details")), tr("EFI boot entries"));
-    m_tabs->addTab(buildRepairPage(), themedIcon(QStringLiteral("tools-wizard")), tr("Repair", "tab noun"));
-    m_tabs->addTab(buildSnapshotsPage(), themedIcon(QStringLiteral("document-revert")), tr("Snapshots"));
-    m_tabs->addTab(buildChrootShellPage(), themedIcon(QStringLiteral("utilities-terminal")), tr("Chroot Shell"));
-    m_tabs->addTab(buildFileCopyPage(), themedIcon(QStringLiteral("edit-copy")), tr("File Copy"));
-    m_tabs->addTab(buildLogsPage(), themedIcon(QStringLiteral("text-x-log")), tr("Logs"));
-    m_tabs->addTab(buildSettingsPage(), themedIcon(QStringLiteral("settings-configure")), tr("Settings"));
+    m_systemsPage = buildSystemsPage();
+    m_diagnosticsPage = buildDiagnosticsPage();
+    m_bootEntriesPage = buildBootEntriesPage();
+    m_repairPage = buildRepairPage();
+    m_snapshotsPage = buildSnapshotsPage();
+    m_chrootShellPage = buildChrootShellPage();
+    m_fileCopyPage = buildFileCopyPage();
+    m_logsPage = buildLogsPage();
+    m_settingsPage = buildSettingsPage();
+    m_tabs->addTab(m_systemsPage, themedIcon(QStringLiteral("drive-harddisk")), tr("Systems"));
+    m_tabs->addTab(m_diagnosticsPage, themedIcon(QStringLiteral("tools-report-bug")), tr("Diagnostics"));
+    m_tabs->addTab(m_bootEntriesPage, themedIcon(QStringLiteral("view-list-details")), tr("EFI boot entries"));
+    m_tabs->addTab(m_repairPage, themedIcon(QStringLiteral("tools-wizard")), tr("Repair", "tab noun"));
+    m_tabs->addTab(m_snapshotsPage, themedIcon(QStringLiteral("document-revert")), tr("Snapshots"));
+    m_tabs->addTab(m_chrootShellPage, themedIcon(QStringLiteral("utilities-terminal")), tr("Chroot Shell"));
+    m_tabs->addTab(m_fileCopyPage, themedIcon(QStringLiteral("edit-copy")), tr("File Copy"));
+    m_tabs->addTab(m_logsPage, themedIcon(QStringLiteral("text-x-log")), tr("Logs"));
+    m_tabs->addTab(m_settingsPage, themedIcon(QStringLiteral("settings-configure")), tr("Settings"));
     // Brief per-tab hover descriptions (kept to one short sentence each,
     // mirroring the Chroot Shell tab's action hint instead of the bare title).
     const QStringList tabTooltips = {
@@ -5766,29 +6230,22 @@ MainWindow::MainWindow(QWidget *parent)
     // row heights when the user first opens the tab so measurements use the
     // final visible column widths instead of the hidden page's tiny geometry.
     connect(m_tabs, &QTabWidget::currentChanged, this, [this](int index) {
-        if (index == SnapshotsTab) {
+        QWidget *page = m_tabs->widget(index);
+        if (page == m_snapshotsPage) {
             QTimer::singleShot(0, this, [this] { resizeSnapshotRows(); });
-        } else if (index == BootEntriesTab) {
-            // Always show the current scope's firmware state when the user
-            // opens the Boot entries tab (after Make Default, an EFI/GRUB/
-            // boot-stack repair or diagnostics). Deferred to the next
-            // event-loop turn so the tab switch itself never blocks, and gated
-            // exactly like the automatic refresh contract: an established
-            // administrator session in an active scope (Host Maintenance or a
-            // selected repair target), and never while a privileged operation
-            // is in flight. When those preconditions are unmet the reload is
-            // skipped silently — it must never raise its own authorization
-            // prompt, and the page already shows the greyed-out state.
-            QTimer::singleShot(0, this, [this] {
-                if ((!m_hostMaintenanceMode
-                     && (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()))
-                    || !m_privilegedSessionReady
-                    || m_privilegedOperationActive) {
-                    return;
-                }
-                refreshBootEntries();
-            });
         }
+        // The Settings page's upper pane wraps against its final viewport width,
+        // which is only known once the page becomes visible in the tab stack;
+        // re-apply the splitter default sizing on the next event-loop turn so a
+        // transient narrow width can never pin the preferences row taller than
+        // its content.
+        if (page == m_settingsPage) {
+            QTimer::singleShot(0, this, &MainWindow::updateSettingsSplitterDefaults);
+        }
+        // The Boot entries tab shows whatever was last loaded by the explicit
+        // Load Entries action or the post-diagnostics boot-entries refresh; it
+        // must not re-run "List firmware boot entries"/"List boot menu" just
+        // because the user opened the tab.
     });
 
     setCentralWidget(central);
@@ -5860,6 +6317,21 @@ MainWindow::~MainWindow()
 
 void MainWindow::closeEvent(QCloseEvent *event)
 {
+    // A read-only diagnostic is the one request kind that is safe to abort on
+    // close. Signal it now so the helper terminates cleanly (QUIT → cleanup
+    // unmounts request-owned mounts and closes only Boot Bitch-owned mappers)
+    // and its non-modal wait loop stops waiting promptly, instead of being
+    // left orphaned mid-flight. Mutating requests (repairs, file copy, unlock,
+    // snapshots, shells) never reach this branch: they keep their existing
+    // close gates and are not silently aborted by a plain close.
+    if (m_privilegedOperationActive && m_privilegedOperationIsDiagnostic) {
+        abortInFlightDiagnostic();
+        // Paint the transient "Cancelling diagnostic run…" state before the
+        // teardown below (closePrivilegedSession waits for the helper) blocks
+        // the event loop, so the user sees the cancel state instead of a silent
+        // close.  Exclude user input so the paint cannot re-enter close.
+        QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    }
     closePrivilegedSession();
     cleanupStagedHelpers();
     saveSettings();
@@ -6009,13 +6481,13 @@ void MainWindow::buildMenuBar()
 
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
     QAction *systemsAction = viewMenu->addAction(tr("Systems"));
-    connect(systemsAction, &QAction::triggered, this, [this] { m_tabs->setCurrentIndex(SystemsTab); });
+    connect(systemsAction, &QAction::triggered, this, [this] { showLogicalTab(SystemsTab); });
     QAction *diagnosticsAction = viewMenu->addAction(tr("Diagnostics"));
-    connect(diagnosticsAction, &QAction::triggered, this, [this] { m_tabs->setCurrentIndex(DiagnosticsTab); });
+    connect(diagnosticsAction, &QAction::triggered, this, [this] { showLogicalTab(DiagnosticsTab); });
     QAction *logsAction = viewMenu->addAction(tr("Logs"));
-    connect(logsAction, &QAction::triggered, this, [this] { m_tabs->setCurrentIndex(LogsTab); });
+    connect(logsAction, &QAction::triggered, this, [this] { showLogicalTab(LogsTab); });
     QAction *settingsAction = viewMenu->addAction(tr("Settings"));
-    connect(settingsAction, &QAction::triggered, this, [this] { m_tabs->setCurrentIndex(SettingsTab); });
+    connect(settingsAction, &QAction::triggered, this, [this] { showLogicalTab(SettingsTab); });
 
     viewMenu->addSeparator();
     QAction *autoSizeAction = viewMenu->addAction(tr("Auto-size Device Columns"));
@@ -6609,9 +7081,7 @@ QWidget *MainWindow::buildRepairPage()
     configurePlan->setToolTip(tr("Open Settings to choose which Full Repair stages are part of the plan."));
     makeButtonShrinkable(configurePlan, 96);
     connect(configurePlan, &QPushButton::clicked, this, [this] {
-        if (m_tabs) {
-            m_tabs->setCurrentIndex(SettingsTab);
-        }
+        showLogicalTab(SettingsTab);
     });
     planHeader->addWidget(configurePlan);
 
@@ -6628,22 +7098,25 @@ QWidget *MainWindow::buildRepairPage()
     planLayout->setAlignment(planHeader, Qt::AlignTop);
     planLayout->addWidget(m_fullRepairReadinessLabel, 0, Qt::AlignTop);
 
-    m_fullRepairStageList = new QListWidget;
-    m_fullRepairStageList->setSelectionMode(QAbstractItemView::NoSelection);
-    m_fullRepairStageList->setFocusPolicy(Qt::NoFocus);
-    m_fullRepairStageList->setAlternatingRowColors(true);
-    m_fullRepairStageList->setWordWrap(true);
-    m_fullRepairStageList->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
-    // The Full Repair plan has at most ten configured rows. Height is
-    // recomputed from the visible row count by updateFullRepairPlanHeight():
-    // the list grows with its content up to a small row cap and scrolls past
-    // it instead of reserving a fixed oversized frame.
-    m_fullRepairStageList->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    // The plan stages live in a ResponsiveColumnsLayout inside a scroll area:
+    // at wide widths the stages flow into side-by-side columns (the right
+    // column moving under the left as the window narrows), and the scroll area
+    // preserves the vertical-splitter shrink behavior — the plan pane still
+    // scrolls past whatever does not fit instead of reserving a fixed frame.
+    m_fullRepairStageList = new QWidget;
+    auto *stageColumns = new ResponsiveColumnsLayout(m_fullRepairStageList, 8, 8);
+    stageColumns->setContentsMargins(0, 0, 0, 0);
+    m_fullRepairStageScroll = new QScrollArea;
+    m_fullRepairStageScroll->setWidgetResizable(true);
+    m_fullRepairStageScroll->setHorizontalScrollBarPolicy(Qt::ScrollBarAlwaysOff);
+    m_fullRepairStageScroll->setVerticalScrollBarPolicy(Qt::ScrollBarAsNeeded);
+    m_fullRepairStageScroll->setFrameShape(QFrame::NoFrame);
+    m_fullRepairStageScroll->setWidget(m_fullRepairStageList);
     // Expanding vertically lets the splitter grow the list when the user
     // drags the divider; the default and minimum heights come from
     // updateFullRepairPlanHeight().
-    m_fullRepairStageList->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
-    planLayout->addWidget(m_fullRepairStageList, 0, Qt::AlignTop);
+    m_fullRepairStageScroll->setSizePolicy(QSizePolicy::Expanding, QSizePolicy::Expanding);
+    planLayout->addWidget(m_fullRepairStageScroll, 0, Qt::AlignTop);
     planLayout->setAlignment(Qt::AlignTop);
 
     // The handle between the Full Repair plan and the tools panes is
@@ -6713,7 +7186,7 @@ QWidget *MainWindow::buildRepairPage()
         {"fixbroken", tr("Repair broken dependencies"), "dialog-ok-apply"},
         {"aptupdate", tr("Refresh package metadata"), "view-refresh"},
         {"upgrade", tr("Upgrade installed packages"), "system-software-update"},
-        {"dkms", tr("DKMS"), "applications-development"},
+        {"dkms", detectedModuleBuildSystemLabel(), "applications-development"},
         {"display", tr("Graphical login / display manager"), "video-display"},
         {"gpu", tr("GPU driver repair"), "video-display"},
         {"initramfs", tr("Initramfs"), "initramfs"},
@@ -6969,7 +7442,7 @@ QWidget *MainWindow::buildSnapshotsPage()
     m_snapshotInspectButton->setToolTip(tr("Inspect the selected snapshot read-only."));
     m_snapshotRollbackButton->setToolTip(tr("Run a read-only rollback preflight, then promote a writable copy to @."));
 
-    connect(m_snapshotLoadButton, &QPushButton::clicked, this, &MainWindow::loadSnapshots);
+    connect(m_snapshotLoadButton, &QPushButton::clicked, this, [this] { loadSnapshots(false); });
     connect(m_snapshotInspectButton, &QPushButton::clicked, this, &MainWindow::inspectSelectedSnapshot);
     connect(m_snapshotRollbackButton, &QPushButton::clicked, this, &MainWindow::rollbackSelectedSnapshot);
     connect(m_snapshotTable, &QTableWidget::itemSelectionChanged, this, [this] { updateSnapshotControls(); });
@@ -7486,12 +7959,12 @@ QWidget *MainWindow::buildBootEntriesPage()
                                               ? tr("Boot menu")
                                               : tr("EFI boot entries"));
         }
-        // Switching to the GRUB view loads the menu read-only, gated exactly
-        // like the automatic EFI refresh: an established administrator session
-        // in an active scope and never while a privileged operation is in
-        // flight. When those preconditions are unmet the load is skipped
-        // silently — it must never raise its own authorization prompt.
-        if (index == kBootEntriesGrubView) {
+        // The view selector only swaps which already-loaded model is shown; it
+        // never re-fetches the boot menu.  Only a stale/never-loaded menu may
+        // load once, and only while an established administrator session is
+        // present and no privileged operation is in flight — it must never
+        // raise its own authorization prompt.
+        if (index == kBootEntriesGrubView && !m_grubMenuLoaded) {
             QTimer::singleShot(0, this, [this] {
                 if ((!m_hostMaintenanceMode
                      && (m_previewTargetPath.isEmpty() || m_previewTargetComponentPath.isEmpty()))
@@ -7548,6 +8021,17 @@ void MainWindow::bootEntriesScopeIdentity(bool *isHost, QString *disk, QString *
     }
 }
 
+QString MainWindow::bootEntriesScopeCacheKey() const
+{
+    bool scopeIsHost = false;
+    QString scopeDisk;
+    bootEntriesScopeIdentity(&scopeIsHost, &scopeDisk, nullptr);
+    return scopeDisk.isEmpty()
+        ? QString()
+        : QStringLiteral("%1:%2").arg(scopeIsHost ? QStringLiteral("host") : QStringLiteral("target"),
+                                      scopeDisk);
+}
+
 void MainWindow::refreshBootEntries()
 {
     if (!m_bootEntriesTable) {
@@ -7561,6 +8045,24 @@ void MainWindow::refreshBootEntries()
         updateBootEntriesControls();
         return;
     }
+
+    // Synchronize the scope key (parking the outgoing scope's inventory and
+    // restoring/resetting the incoming scope's) BEFORE issuing the efi-list
+    // request. The trailing updateBootEntriesControls() below re-reads the
+    // scope key and would otherwise treat the just-loaded rows as belonging to
+    // the previous (or empty) scope and reset them — which is exactly why the
+    // firmware entries never appeared on the first visit to a scope (the boot
+    // menu only survived because refreshGrubMenu() runs after this reset).
+    updateBootEntriesControls();
+
+    // Capture the scope identity BEFORE issuing the request. The
+    // runPrivilegedRequest wait runs a nested event loop that processes user
+    // input, so the user can switch Host↔Target while the request is in
+    // flight; a result from the outgoing scope must then be discarded rather
+    // than written into the incoming scope's live members (and parked under
+    // the incoming key on the next scope switch, permanently contaminating the
+    // cache).
+    const QString requestScopeKey = bootEntriesScopeCacheKey();
 
     bool isHost = false;
     QString disk;
@@ -7577,6 +8079,15 @@ void MainWindow::refreshBootEntries()
         tr("List firmware boot entries"),
         {QStringLiteral("efi-list"), disk, root},
         QByteArray(), &succeeded, false, LogEntryKind::Repair);
+
+    if (bootEntriesScopeCacheKey() != requestScopeKey) {
+        // The scope changed while the request was in flight: this result
+        // belongs to the outgoing scope. Discard it and re-render the incoming
+        // scope from its own cache (the scope switch already parked/restored
+        // through updateBootEntriesControls()); never touch the live members.
+        updateBootEntriesControls();
+        return;
+    }
 
     if (!succeeded) {
         m_bootEntriesLoaded = false;
@@ -7638,6 +8149,17 @@ void MainWindow::refreshGrubMenu()
         return;
     }
 
+    // Mirror refreshBootEntries(): establish the scope key before the request
+    // so the trailing updateBootEntriesControls() cannot reset the just-loaded
+    // menu as a stale-scope change (defensive; the menu refresh normally runs
+    // after the entries refresh has already established the key).
+    updateBootEntriesControls();
+
+    // Capture the scope identity BEFORE issuing the request; the nested-event-
+    // loop wait lets the user switch Host↔Target mid-flight, so a stale result
+    // must be discarded and the incoming scope re-rendered from its own cache.
+    const QString requestScopeKey = bootEntriesScopeCacheKey();
+
     bool isHost = false;
     QString disk;
     QString root;
@@ -7653,6 +8175,11 @@ void MainWindow::refreshGrubMenu()
         tr("List boot menu"),
         {QStringLiteral("grub-list"), disk, root},
         QByteArray(), &succeeded, false, LogEntryKind::Repair);
+
+    if (bootEntriesScopeCacheKey() != requestScopeKey) {
+        updateBootEntriesControls();
+        return;
+    }
 
     if (!succeeded) {
         m_grubMenuLoaded = false;
@@ -7695,6 +8222,10 @@ void MainWindow::refreshGrubMenu()
             tr("List boot menu"),
             {QStringLiteral("extlinux-list"), disk, root},
             QByteArray(), &extSucceeded, false, LogEntryKind::Repair);
+        if (bootEntriesScopeCacheKey() != requestScopeKey) {
+            updateBootEntriesControls();
+            return;
+        }
         m_extlinuxInventory = extSucceeded ? parseExtlinuxOutput(extOutput)
                                            : ExtlinuxInventory();
         if (!extSucceeded) {
@@ -7723,6 +8254,10 @@ void MainWindow::refreshGrubMenu()
             tr("List boot menu"),
             {QStringLiteral("grub-legacy-list"), disk, root},
             QByteArray(), &legacySucceeded, false, LogEntryKind::Repair);
+        if (bootEntriesScopeCacheKey() != requestScopeKey) {
+            updateBootEntriesControls();
+            return;
+        }
         m_grubLegacyInventory = legacySucceeded ? parseGrubLegacyOutput(legacyOutput)
                                                 : GrubLegacyInventory();
         if (!legacySucceeded) {
@@ -8041,43 +8576,113 @@ void MainWindow::updateBootEntriesControls()
     }
 
     // Scope-identity guard: a scope change (host vs target, or leaving both)
-    // drops the previous scope's inventory so rows can never leak across
-    // scopes. The key distinguishes the scope ("host:<disk>" vs "target:<disk>").
+    // parks the previous scope's inventories + staged mutation state in the
+    // per-scope cache and restores the incoming scope's cached state, so rows
+    // never leak across scopes yet a host↔target round-trip re-renders the
+    // previously loaded entries from cache instead of a blank table (mirroring
+    // the per-scope diagnostic/capability cache). The key distinguishes the
+    // scope ("host:<disk>" vs "target:<disk>"); a cache miss resets to empty,
+    // ready for a fresh Load Entries / Load Menu / post-diagnostics refresh.
     bool scopeIsHost = false;
     QString scopeDisk;
     QString scopeRoot;
     bootEntriesScopeIdentity(&scopeIsHost, &scopeDisk, &scopeRoot);
-    const QString scopeKey = scopeDisk.isEmpty()
-        ? QString()
-        : QStringLiteral("%1:%2").arg(scopeIsHost ? QStringLiteral("host") : QStringLiteral("target"),
-                                      scopeDisk);
+    const QString scopeKey = bootEntriesScopeCacheKey();
     if (m_bootEntriesScopeKey != scopeKey) {
+        // Park the outgoing scope's live state (a real scope only; the empty
+        // initial key is never cached).
+        if (!m_bootEntriesScopeKey.isEmpty()) {
+            BootEntriesScopeCache &parked = m_bootEntriesCache[m_bootEntriesScopeKey];
+            parked.entries = m_bootEntriesInventory;
+            parked.pendingDelete = m_bootEntriesPendingDelete;
+            parked.pendingRename = m_bootEntriesPendingRename;
+            parked.savedOrder = m_bootEntriesSavedOrder;
+            parked.entriesLoaded = m_bootEntriesLoaded;
+            parked.grubMenu = m_grubMenuInventory;
+            parked.extlinux = m_extlinuxInventory;
+            parked.grubLegacy = m_grubLegacyInventory;
+            parked.menuShowingExtlinux = m_bootMenuShowingExtlinux;
+            parked.menuShowingGrubLegacy = m_bootMenuShowingGrubLegacy;
+            parked.menuLoaded = m_grubMenuLoaded;
+        }
         m_bootEntriesScopeKey = scopeKey;
-        m_bootEntriesLoaded = false;
-        m_bootEntriesInventory = BootEntriesInventory();
-        m_bootEntriesPendingDelete.clear();
-        m_bootEntriesPendingRename.clear();
-        m_bootEntriesSavedOrder.clear();
-        m_bootEntriesUpdating = true;
-        m_bootEntriesTable->setRowCount(0);
-        m_bootEntriesUpdating = false;
-        if (m_bootEntriesDetails) {
-            m_bootEntriesDetails->clear();
-        }
-    }
-    if (m_grubMenuScopeKey != scopeKey) {
-        m_grubMenuScopeKey = scopeKey;
-        m_grubMenuLoaded = false;
-        m_bootMenuShowingExtlinux = false;
-        m_bootMenuShowingGrubLegacy = false;
-        m_grubMenuInventory = GrubMenuInventory();
-        m_extlinuxInventory = ExtlinuxInventory();
-        m_grubLegacyInventory = GrubLegacyInventory();
-        if (m_grubMenuTree) {
-            m_grubMenuTree->clear();
-        }
-        if (m_grubMenuDetails) {
-            m_grubMenuDetails->clear();
+
+        // Only re-render cached entries when the incoming scope is still
+        // genuinely ready; a stale/unready scope (for example a removed target
+        // whose path lingers) must fall through to the empty reset below.
+        QString readyReason;
+        const bool scopeReady = !scopeKey.isEmpty() && bootEntriesReady(&readyReason);
+
+        if (scopeReady && m_bootEntriesCache.contains(scopeKey)) {
+            // Restore the incoming scope's cached inventories and re-render
+            // them without issuing any privileged request. The cached entry is
+            // taken as an explicit VALUE copy: BootEntriesScopeCache owns plain
+            // value members (inventories of QString/QList rows, QSet/QHash of
+            // strings, flags) and never QTableWidgetItem/QTreeWidgetItem or raw
+            // widget pointers, so a scope switch can park/restore it after the
+            // table/tree has been cleared without dangling on deleted items.
+            const BootEntriesScopeCache restored = m_bootEntriesCache.value(scopeKey);
+            m_bootEntriesInventory = restored.entries;
+            m_bootEntriesPendingDelete = restored.pendingDelete;
+            m_bootEntriesPendingRename = restored.pendingRename;
+            m_bootEntriesSavedOrder = restored.savedOrder;
+            m_bootEntriesLoaded = restored.entriesLoaded;
+            m_grubMenuInventory = restored.grubMenu;
+            m_extlinuxInventory = restored.extlinux;
+            m_grubLegacyInventory = restored.grubLegacy;
+            m_bootMenuShowingExtlinux = restored.menuShowingExtlinux;
+            m_bootMenuShowingGrubLegacy = restored.menuShowingGrubLegacy;
+            m_grubMenuLoaded = restored.menuLoaded;
+
+            m_bootEntriesUpdating = true;
+            m_bootEntriesTable->setRowCount(0);
+            m_bootEntriesUpdating = false;
+            if (m_bootEntriesLoaded) {
+                populateBootEntriesTable();
+            } else if (m_bootEntriesDetails) {
+                m_bootEntriesDetails->clear();
+            }
+            if (m_grubMenuLoaded) {
+                if (m_bootMenuShowingExtlinux) {
+                    populateExtlinuxMenuTable();
+                } else if (m_bootMenuShowingGrubLegacy) {
+                    populateGrubLegacyMenuTable();
+                } else {
+                    populateGrubMenuTable();
+                }
+            } else {
+                if (m_grubMenuTree) {
+                    m_grubMenuTree->clear();
+                }
+                if (m_grubMenuDetails) {
+                    m_grubMenuDetails->clear();
+                }
+            }
+        } else {
+            // No cached state for the incoming scope: reset to empty.
+            m_bootEntriesLoaded = false;
+            m_bootEntriesInventory = BootEntriesInventory();
+            m_bootEntriesPendingDelete.clear();
+            m_bootEntriesPendingRename.clear();
+            m_bootEntriesSavedOrder.clear();
+            m_bootEntriesUpdating = true;
+            m_bootEntriesTable->setRowCount(0);
+            m_bootEntriesUpdating = false;
+            if (m_bootEntriesDetails) {
+                m_bootEntriesDetails->clear();
+            }
+            m_grubMenuLoaded = false;
+            m_bootMenuShowingExtlinux = false;
+            m_bootMenuShowingGrubLegacy = false;
+            m_grubMenuInventory = GrubMenuInventory();
+            m_extlinuxInventory = ExtlinuxInventory();
+            m_grubLegacyInventory = GrubLegacyInventory();
+            if (m_grubMenuTree) {
+                m_grubMenuTree->clear();
+            }
+            if (m_grubMenuDetails) {
+                m_grubMenuDetails->clear();
+            }
         }
     }
 
@@ -8663,7 +9268,7 @@ QWidget *MainWindow::buildChrootShellPage()
     m_chrootShellHeading->setFont(titleFont);
     heading->addWidget(m_chrootShellHeading);
     m_chrootShellHelpButton = contextHelpButton(page, tr("Chroot Shell"),
-        tr("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log."));
+        tr("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, it appears inline in the output window and you answer it in the answer line below the output; cancelling (or leaving the answer empty) stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log."));
     heading->addWidget(m_chrootShellHelpButton);
     heading->addStretch();
     m_chrootShellTargetLabel = new WrappedScopeLabel(tr("Target: none selected"));
@@ -8700,6 +9305,23 @@ QWidget *MainWindow::buildChrootShellPage()
     mono.setStyleHint(QFont::Monospace);
     m_chrootShellOutput->setFont(mono);
     layout->addWidget(m_chrootShellOutput, 1);
+
+    // Persistent prompt input line for shell commands that ask a question
+    // (ChrootShell/HostShell): enabled and focused only while a PROMPT record
+    // is waiting; Enter (or the Send button) submits the answer. Mirrors the
+    // repair progress dialog's prompt surface so the shell prompt is inline in
+    // this pane instead of a separate popup.
+    auto *promptRow = new QHBoxLayout;
+    m_shellPromptInput = new QLineEdit;
+    m_shellPromptInput->setObjectName(QStringLiteral("shellPromptInput"));
+    m_shellPromptInput->setPlaceholderText(tr("Answer (for example: y, n, Y, I, N, Z, or a word)"));
+    m_shellPromptInput->setEnabled(false);
+    m_shellPromptSend = new QPushButton(tr("Send"));
+    m_shellPromptSend->setObjectName(QStringLiteral("shellPromptSend"));
+    m_shellPromptSend->setEnabled(false);
+    promptRow->addWidget(m_shellPromptInput, 1);
+    promptRow->addWidget(m_shellPromptSend);
+    layout->addLayout(promptRow);
 
     auto *footer = new QHBoxLayout;
     m_chrootShellWarning = new QLabel(tr("Commands can modify the target system. Review each command before running it."));
@@ -9142,31 +9764,63 @@ QWidget *MainWindow::buildSettingsPage()
     layout->setContentsMargins(0, 0, 8, 0);
     layout->setSpacing(9);
 
+    // The two lightweight preference controls (the device-discovery filters and
+    // the automatic-diagnostics toggle) share one side-by-side row so the
+    // heavier Full Repair plan and the Boot capabilities table below gain
+    // vertical room. Every long label wraps instead of clipping at the minimum
+    // window width.
     auto *deviceBox = new QGroupBox(tr("Device discovery"));
     auto *deviceLayout = new QVBoxLayout(deviceBox);
-    m_showNonLinux = new QCheckBox(tr("Show devices without an identified Linux installation"));
-    m_showRemovable = new QCheckBox(tr("Show removable and USB storage"));
-    m_showEncrypted = new QCheckBox(tr("Show encrypted devices before unlocking"));
+    m_showNonLinux = new WrappingCheckBox(tr("Show devices without an identified Linux installation"));
+    m_showRemovable = new WrappingCheckBox(tr("Show removable and USB storage"));
+    m_showEncrypted = new WrappingCheckBox(tr("Show encrypted devices before unlocking"));
     deviceLayout->addWidget(m_showNonLinux);
     deviceLayout->addWidget(m_showRemovable);
     deviceLayout->addWidget(m_showEncrypted);
-    layout->addWidget(deviceBox);
+    // The device-discovery filters keep their tight, uniform, content-height
+    // rows: the trailing stretch absorbs any extra height the side-by-side row
+    // (or the splitter) hands this group box, so the three checkboxes never
+    // stretch apart into growing inter-row gaps. Mirrors the Diagnostics box.
+    deviceLayout->addStretch(1);
+
+    auto *diagnosticsBox = new QGroupBox(tr("Diagnostics"));
+    auto *diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
+    m_autoRefreshDiagnostics = new WrappingCheckBox(tr("Automatically regenerate read-only diagnostics after repairs or target changes"));
+    m_autoRefreshDiagnostics->setToolTip(tr(
+        "Regenerate cached diagnostics after repairs or target changes."));
+    diagnosticsLayout->addWidget(m_autoRefreshDiagnostics);
+    diagnosticsLayout->addStretch(1);
+
+    auto *preferencesRow = new QHBoxLayout;
+    preferencesRow->setContentsMargins(0, 0, 0, 0);
+    preferencesRow->setSpacing(9);
+    preferencesRow->addWidget(deviceBox, 1);
+    preferencesRow->addWidget(diagnosticsBox, 1);
+    // The upper region of the Settings splitter: the lightweight preferences
+    // row and the Full Repair plan selections share one pane above the
+    // draggable splitter boundary.
+    auto *upperPane = new QWidget;
+    auto *upperLayout = new QVBoxLayout(upperPane);
+    upperLayout->setContentsMargins(0, 0, 0, 0);
+    upperLayout->setSpacing(9);
+    upperLayout->addLayout(preferencesRow);
 
     auto *repairBox = new QGroupBox(tr("Full Repair plan"));
-    auto *repairLayout = new QVBoxLayout(repairBox);
-    m_fullRepairFilesystem = new QCheckBox(tr("Repair file system errors (read-only check first)"));
+    auto *repairLayout = new ResponsiveColumnsLayout(repairBox, 8, 8);
+    repairLayout->setContentsMargins(9, 9, 9, 9);
+    m_fullRepairFilesystem = new WrappingCheckBox(tr("Repair file system errors (read-only check first)"));
     m_fullRepairFilesystem->setToolTip(tr(
         "Read-only check of root, /boot, ESP and /home, then per-device repair."));
-    m_fullRepairDpkg = new QCheckBox(tr("Complete interrupted package configuration"));
-    m_fullRepairBrokenPackages = new QCheckBox(tr("Repair broken package dependencies"));
-    m_fullRepairAptUpdate = new QCheckBox(tr("Refresh package metadata"));
-    m_fullRepairUpgrade = new QCheckBox(tr("Upgrade installed packages (adaptive APT simulation)"));
-    m_fullRepairDkms = new QCheckBox(tr("Rebuild DKMS modules"));
-    m_fullRepairDisplayManager = new QCheckBox(tr("Restore detected graphical login manager and graphical.target"));
-    m_fullRepairInitramfs = new QCheckBox(tr("Rebuild initramfs after mapper/crypttab validation"));
-    m_fullRepairEfi = new QCheckBox(tr("Repair EFI / UKI boot path (explicit target ESP repair)"));
-    m_fullRepairGrub = new QCheckBox(tr("Update GRUB configuration"));
-    m_fullRepairExtlinux = new QCheckBox(tr("Update extlinux configuration"));
+    m_fullRepairDpkg = new WrappingCheckBox(tr("Complete interrupted package configuration"));
+    m_fullRepairBrokenPackages = new WrappingCheckBox(tr("Repair broken package dependencies"));
+    m_fullRepairAptUpdate = new WrappingCheckBox(tr("Refresh package metadata"));
+    m_fullRepairUpgrade = new WrappingCheckBox(tr("Upgrade installed packages (adaptive APT simulation)"));
+    m_fullRepairDkms = new WrappingCheckBox(rebuildModuleStageText());
+    m_fullRepairDisplayManager = new WrappingCheckBox(tr("Restore detected graphical login manager and graphical.target"));
+    m_fullRepairInitramfs = new WrappingCheckBox(tr("Rebuild initramfs after mapper/crypttab validation"));
+    m_fullRepairEfi = new WrappingCheckBox(tr("Repair EFI / UKI boot path (explicit target ESP repair)"));
+    m_fullRepairGrub = new WrappingCheckBox(tr("Update GRUB configuration"));
+    m_fullRepairExtlinux = new WrappingCheckBox(tr("Update extlinux configuration"));
     repairLayout->addWidget(m_fullRepairFilesystem);
     repairLayout->addWidget(m_fullRepairDpkg);
     repairLayout->addWidget(m_fullRepairBrokenPackages);
@@ -9178,32 +9832,13 @@ QWidget *MainWindow::buildSettingsPage()
     repairLayout->addWidget(m_fullRepairEfi);
     repairLayout->addWidget(m_fullRepairGrub);
     repairLayout->addWidget(m_fullRepairExtlinux);
-    layout->addWidget(repairBox);
-
-    auto *diagnosticsBox = new QGroupBox(tr("Diagnostics"));
-    auto *diagnosticsLayout = new QVBoxLayout(diagnosticsBox);
-    m_autoRefreshDiagnostics = new QCheckBox(tr("Automatically regenerate read-only diagnostics after repairs or target changes"));
-    m_autoRefreshDiagnostics->setToolTip(tr(
-        "Regenerate cached diagnostics after repairs or target changes."));
-    diagnosticsLayout->addWidget(m_autoRefreshDiagnostics);
-    layout->addWidget(diagnosticsBox);
-
-    auto *safetyBox = new QGroupBox(tr("Mandatory safety controls"));
-    auto *safetyLayout = new QVBoxLayout(safetyBox);
-    const QStringList safetyItems = {
-        tr("Protect every physical device backing /, /boot and /boot/efi"),
-        tr("Require explicit confirmation before package installation or repair actions"),
-        tr("Require mapper/crypttab consistency before initramfs rebuild"),
-        tr("Preserve pre-rollback Btrfs root and auto-restore it on validation failure"),
-        tr("Never log LUKS passphrases or authentication secrets")
-    };
-    for (const QString &text : safetyItems) {
-        auto *check = new QCheckBox(text);
-        check->setChecked(true);
-        check->setEnabled(false);
-        safetyLayout->addWidget(check);
-    }
-    layout->addWidget(safetyBox);
+    upperLayout->addWidget(repairBox);
+    // A trailing stretch below the Full Repair plan absorbs any extra vertical
+    // height the splitter hands the upper pane (a user drag or a taller window)
+    // instead of that slack growing the preferences row's group boxes. The
+    // device-discovery/diagnostics group boxes stay at their content height and
+    // the Full Repair plan keeps its own wrapped height.
+    upperLayout->addStretch(1);
 
     auto *capabilityBox = new QGroupBox(tr("Capabilities and dependencies"));
     auto *capabilityLayout = new QVBoxLayout(capabilityBox);
@@ -9262,7 +9897,17 @@ QWidget *MainWindow::buildSettingsPage()
         tr("Status"), tr("Suggested package"), tr("Notes"), tr("Action")
     });
     m_capabilityTable->setEditTriggers(QAbstractItemView::NoEditTriggers);
-    m_capabilityTable->setMinimumHeight(230);
+    // Default height is a FIXED ~16 capability rows (measured with the same
+    // one-line row height resizeCapabilityRows() uses), independent of the
+    // current row count. On first open the table is empty (only the header
+    // line), so QAbstractScrollArea's content-derived minimumSizeHint() is tiny
+    // and would collapse the table to ~1 line; the fixed pixel minimum below is
+    // the floor every layout pass must honour, so the table always shows a
+    // useful number of entries without pushing the refresh button and the
+    // mandatory safety controls out of the lower pane.
+    const QFontMetrics capabilityRowMetrics(m_capabilityTable->font());
+    const int capabilityOneLineHeight = capabilityRowMetrics.lineSpacing() + 10;
+    m_capabilityTable->setMinimumHeight(16 * capabilityOneLineHeight);
     m_capabilityTable->setSelectionBehavior(QAbstractItemView::SelectRows);
     m_capabilityTable->setAlternatingRowColors(true);
     m_capabilityTable->setWordWrap(true);
@@ -9297,7 +9942,12 @@ QWidget *MainWindow::buildSettingsPage()
     // that also show a representative content cell keep that content width as an
     // additional floor, so both the title and the typical content fit.
     capabilityHeader->resizeSection(0, qMax(150, capabilityMetrics.horizontalAdvance(tr("Feature")) + 24));
-    capabilityHeader->resizeSection(1, qMax(160, qMax(capabilityMetrics.horizontalAdvance(tr("Command")),
+    // The Command/evidence column is widened (the previous 160 px floor
+    // wrapped most evidence strings onto several lines and inflated the row
+    // height).  The ~270 px floor is roughly 70% wider, so the longer evidence
+    // text stays on one line; the Notes stretch column absorbs the reclaimed
+    // width at the default window width.
+    capabilityHeader->resizeSection(1, qMax(270, qMax(capabilityMetrics.horizontalAdvance(tr("Command")),
                                                       capabilityMetrics.horizontalAdvance(QStringLiteral("update-grub2 --version"))) + 24));
     capabilityHeader->resizeSection(2, qMax(90, qMax(capabilityMetrics.horizontalAdvance(tr("Scope")),
                                                      capabilityMetrics.horizontalAdvance(QStringLiteral("Repair target"))) + 24));
@@ -9313,23 +9963,82 @@ QWidget *MainWindow::buildSettingsPage()
     connect(m_capabilityTable->horizontalHeader(), &QHeaderView::sectionResized, this, [this] {
         QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
     });
-    // Header-click sorting, defaulting to Feature ascending. The population
-    // pass below disables sorting while it inserts rows and re-enables it
-    // afterwards; QTableWidgetItem insertion must never happen while a sort is
-    // active.
-    m_capabilityTable->setSortingEnabled(true);
-    m_capabilityTable->sortByColumn(0, Qt::AscendingOrder);
+    // Sorting stays disabled on this table: rows are populated in the curated
+    // repairToolKeyOrder() order, and the Action column holds a per-row Install
+    // cell widget which QTableWidget's sort does not move together with its
+    // items (the button would land on a different row after a sort).
+    m_capabilityTable->setSortingEnabled(false);
     capabilityLayout->addWidget(m_capabilityTable);
 
+    // Lower region of the Settings splitter: the capabilities group box, the
+    // capabilities refresh action and the mandatory safety controls share one
+    // pane below the draggable boundary. The refresh button is a child of the
+    // lower pane (not the group box) so it sits below the capabilities table
+    // and above the safety controls.
+    auto *lowerPane = new QWidget;
+    auto *lowerLayout = new QVBoxLayout(lowerPane);
+    lowerLayout->setContentsMargins(0, 0, 0, 0);
+    lowerLayout->setSpacing(9);
+    lowerLayout->addWidget(capabilityBox);
+
+    // Refresh Capabilities: re-probes the cached capability evidence and
+    // repopulates the table above. It sits between the capabilities table and
+    // the mandatory safety controls (visual order: table, refresh, safety).
     auto *capabilityButtons = new QHBoxLayout;
-    auto *refresh = new QPushButton(themedIcon(QStringLiteral("view-refresh")), tr("Refresh Capabilities"));
-    refresh->setToolTip(tr("Re-probe the available repair capabilities."));
-    connect(refresh, &QPushButton::clicked, this, &MainWindow::refreshCapabilities);
-    capabilityButtons->addWidget(refresh);
+    m_capabilityRefreshButton =
+        new QPushButton(themedIcon(QStringLiteral("view-refresh")), tr("Refresh Capabilities"));
+    m_capabilityRefreshButton->setObjectName(QStringLiteral("settingsRefreshCapabilities"));
+    m_capabilityRefreshButton->setToolTip(tr("Re-probe the available repair capabilities."));
+    connect(m_capabilityRefreshButton, &QPushButton::clicked, this, &MainWindow::refreshCapabilities);
+    capabilityButtons->addWidget(m_capabilityRefreshButton);
     capabilityButtons->addStretch(1);
-    capabilityLayout->addLayout(capabilityButtons);
-    layout->addWidget(capabilityBox);
-    layout->addStretch(1);
+    lowerLayout->addLayout(capabilityButtons);
+
+    // The mandatory safety controls are informational (always enforced, never
+    // user-configurable), so they are de-prioritized below the capabilities
+    // table instead of consuming a stacked section above it. They use the same
+    // two-column dynamic wrapping as the Full Repair plan so the five items
+    // sit side-by-side at wide widths and reflow to one column as the window
+    // narrows.
+    auto *safetyBox = new QGroupBox(tr("Mandatory safety controls"));
+    m_safetyControlsBox = safetyBox;
+    auto *safetyLayout = new ResponsiveColumnsLayout(safetyBox, 8, 8);
+    const QStringList safetyItems = {
+        tr("Protect every physical device backing /, /boot and /boot/efi"),
+        tr("Require explicit confirmation before package installation or repair actions"),
+        tr("Require mapper/crypttab consistency before initramfs rebuild"),
+        tr("Preserve pre-rollback Btrfs root and auto-restore it on validation failure"),
+        tr("Never log LUKS passphrases or authentication secrets")
+    };
+    for (const QString &text : safetyItems) {
+        auto *check = new WrappingCheckBox(text);
+        check->setChecked(true);
+        check->setEnabled(false);
+        safetyLayout->addWidget(check);
+    }
+    lowerLayout->addWidget(safetyBox);
+
+    // Vertical-splitting (horizontal) splitter boundary between the upper
+    // sections (preferences row + Full Repair plan) and the capabilities
+    // region. Mirrors the Boot entries / GRUB menu / Repair vertical splitter
+    // pattern: non-collapsible children, a grabbable handle, an explicit
+    // default size (upper pane at its content height, lower pane taking the
+    // slack) and relative pane minimums re-applied by applyFractionalPaneMinimum
+    // so neither pane can be dragged out of view. updateSettingsSplitterDefaults()
+    // re-applies the upper-pane content-height default until the user drags.
+    m_settingsSplitter = new QSplitter(Qt::Vertical);
+    m_settingsSplitter->setObjectName(QStringLiteral("settingsSplitter"));
+    m_settingsSplitter->setChildrenCollapsible(false);
+    m_settingsSplitter->setHandleWidth(6);
+    m_settingsSplitter->addWidget(upperPane);
+    m_settingsSplitter->addWidget(lowerPane);
+    m_settingsSplitter->setStretchFactor(0, 0);
+    m_settingsSplitter->setStretchFactor(1, 1);
+    m_settingsSplitter->setSizes({upperPane->minimumSizeHint().height(), 100000});
+    connect(m_settingsSplitter, &QSplitter::splitterMoved, this, [this] {
+        m_settingsSplitterUserAdjusted = true;
+    });
+    layout->addWidget(m_settingsSplitter, 1);
 
     auto refilterDevices = [this] {
         if (!m_lastDevices.isEmpty()) {
@@ -9399,7 +10108,7 @@ void MainWindow::loadSettings()
 
     // Always begin in Systems so the selected/protected drive context is
     // visible before any diagnostic or repair action is considered.
-    m_tabs->setCurrentIndex(SystemsTab);
+    showLogicalTab(SystemsTab);
 
     m_showNonLinux->setChecked(m_settings->value(QStringLiteral("devices/showNonLinux"), true).toBool());
     m_showRemovable->setChecked(m_settings->value(QStringLiteral("devices/showRemovable"), true).toBool());
@@ -9463,7 +10172,13 @@ void MainWindow::loadSettings()
     if (!repairSplitterState.isEmpty() && m_repairSplitter) {
         m_repairSplitter->restoreState(repairSplitterState);
     }
-    const QByteArray repairVerticalSplitterState = m_settings->value(QStringLiteral("repair/verticalSplitterStateV2")).toByteArray();
+    // V3: the plan frame now flows its stages into side-by-side columns, so the
+    // pre-two-column V2 state carried a much taller plan pane (roughly the
+    // single-column height) that left the bottom half of the frame empty.
+    // Bump the key so that stale height is discarded and the plan frame
+    // re-adopts its shrink-to-content default (the splitter gives the freed
+    // vertical space to the individual-tools/details pane below).
+    const QByteArray repairVerticalSplitterState = m_settings->value(QStringLiteral("repair/verticalSplitterStateV3")).toByteArray();
     if (!repairVerticalSplitterState.isEmpty() && m_repairVerticalSplitter) {
         m_repairVerticalSplitter->restoreState(repairVerticalSplitterState);
         // A restored position is the user's own choice: keep it instead of
@@ -9522,7 +10237,7 @@ void MainWindow::saveSettings()
         m_settings->setValue(QStringLiteral("repair/splitterStateV3"), m_repairSplitter->saveState());
     }
     if (m_repairVerticalSplitter) {
-        m_settings->setValue(QStringLiteral("repair/verticalSplitterStateV2"), m_repairVerticalSplitter->saveState());
+        m_settings->setValue(QStringLiteral("repair/verticalSplitterStateV3"), m_repairVerticalSplitter->saveState());
     }
     if (m_diagnosticSplitter) {
         m_settings->setValue(QStringLiteral("diagnostics/splitterStateV1"), m_diagnosticSplitter->saveState());
@@ -9901,6 +10616,16 @@ void MainWindow::showHostDetails()
 // Returns true when maintenance was active and has now been deselected.
 bool MainWindow::exitHostMaintenanceMode()
 {
+    // Leaving the running-host scope while a read-only diagnostic is in flight
+    // is a scope change: signal the helper to stop early (SIGUSR1, keep-session)
+    // so the restored repair-target scope's diagnostic can start sooner.
+    // Mutating requests (m_privilegedOperationIsDiagnostic is false) are never
+    // cancelled here; the stale result is still discarded and re-armed by the
+    // scope-change guard if the diagnostic happened to finish first.
+    if (m_privilegedOperationActive && m_privilegedOperationIsDiagnostic) {
+        cancelInFlightDiagnostic();
+    }
+
     if (!m_hostMaintenanceMode) {
         return false;
     }
@@ -9911,12 +10636,25 @@ bool MainWindow::exitHostMaintenanceMode()
         m_hostMaintenanceButton->setToolTip(tr(
             "Host Maintenance — run guarded repair stages against the running system."));
     }
+    // Restore the committed repair target that was parked when Host Maintenance
+    // was entered. Its diagnostic cache was preserved across the round-trip, so
+    // restoring the paths makes the target's cached capability rows and
+    // diagnostics re-render without a re-diagnosis. The remembered paths are
+    // cleared so a later selectHostForMaintenance() parks the then-current
+    // target fresh.
+    m_previewTargetPath = m_rememberedTargetPath;
+    m_previewTargetComponentPath = m_rememberedTargetComponentPath;
+    m_rememberedTargetPath.clear();
+    m_rememberedTargetComponentPath.clear();
     // Leaving host maintenance also leaves the running-host diagnostics scope;
     // cached host evidence stays cached but is no longer displayed or offered.
     // updateTargetLabels() refreshes the standard Diagnostics scope line.
-    appendLog(QStringLiteral("Running-host maintenance deselected; ordinary repair-target mode restored. Diagnostics scope returned to Repair Target."));
+    // The session scope is updated BEFORE the transition announcement so the
+    // notice is tagged with the NEW (restored repair-target) scope marker
+    // rather than the outgoing running-host block.
     updateTargetLabels();
     updateSessionScope();
+    appendLog(QStringLiteral("Running-host maintenance deselected; ordinary repair-target mode restored. Diagnostics scope returned to Repair Target."));
     updateAuthorizationAffordance();
     // The reboot-required banner is host-scope only; the persisted flag stays
     // and re-entering Host Maintenance shows the banner again.
@@ -9926,14 +10664,31 @@ bool MainWindow::exitHostMaintenanceMode()
     // cannot mistake the target preload for the completed host one.
     updateSnapshotControls();
     scheduleSnapshotPreload();
-    // The firmware-entry page is host-scope only; leaving maintenance clears
-    // its inventory and disables its actions through the same scope guard.
+    // The firmware-entry page re-renders the restored target's cached
+    // inventories (or resets when none are cached) through the scope guard.
     updateBootEntriesControls();
+    // Symmetric with selectHostForMaintenance(): schedule automatic diagnostic
+    // regeneration for the restored target. The scope switch is forced, so the
+    // regeneration runs even though the preserved target evidence is still
+    // fresh — the re-entered scope must re-render from a freshly-regenerated
+    // cache, never from a possibly-stale one.
+    scheduleEvidenceRefresh(QStringLiteral("running-host maintenance deselected"), /*force=*/true);
     return true;
 }
 
 void MainWindow::selectHostForMaintenance()
 {
+    // Both directions of this toggle are scope changes (target→host here,
+    // host→target through exitHostMaintenanceMode() below). A read-only
+    // diagnostic running against the scope being left should stop early
+    // (SIGUSR1, keep-session) so the new scope's diagnostic can start sooner;
+    // mutating requests are never cancelled here. Double-invocation through
+    // selectHostForMaintenance → exitHostMaintenanceMode is harmless
+    // (cancelInFlightDiagnostic() is idempotent).
+    if (m_privilegedOperationActive && m_privilegedOperationIsDiagnostic) {
+        cancelInFlightDiagnostic();
+    }
+
     if (m_hostMaintenanceMode) {
         exitHostMaintenanceMode();
         // Put the committed repair target back in the details panel, or clear
@@ -9955,10 +10710,14 @@ void MainWindow::selectHostForMaintenance()
     // Keep the protected host out of the ordinary repair-target state. This
     // prevents snapshots, file copy and chroot controls from inheriting a
     // live-root selection while the explicit host-maintenance mode is active.
+    // The committed target is parked (remembered) rather than discarded, and
+    // its diagnostic cache is preserved, so returning from Host Maintenance
+    // restores the target and re-renders its cached capability rows without a
+    // re-diagnosis.
+    m_rememberedTargetPath = m_previewTargetPath;
+    m_rememberedTargetComponentPath = m_previewTargetComponentPath;
     m_previewTargetPath.clear();
     m_previewTargetComponentPath.clear();
-    clearTargetDiagnosticCache();
-    m_targetDiagnosticsNeedRegeneration = false;
     m_hostMaintenanceMode = true;
     m_hostRebootBannerDismissed = false;
     if (m_hostMaintenanceButton) {
@@ -9968,12 +10727,14 @@ void MainWindow::selectHostForMaintenance()
     }
     // Entering maintenance is the only way to enable the Running Host
     // diagnostics scope; the standard scope line follows through
-    // updateTargetLabels() below.
+    // updateTargetLabels() below.  The session scope is updated BEFORE the
+    // transition announcement so the notice is tagged with the NEW (running-
+    // host) scope marker rather than the outgoing repair-target block.
+    updateTargetLabels();
+    updateSessionScope();
     appendLog(QStringLiteral(
         "Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; running-host Snapper @ snapshots are available in the Snapshots tab, while the chroot shell and file-copy workflows remain separate target tools.")
                   .arg(m_hostPrimaryPath, m_hostPrimaryComponentPath));
-    updateTargetLabels();
-    updateSessionScope();
     // Show a previously staged rollback reminder again and load the
     // running-host snapshot inventory. The scope identity change must be
     // observed before scheduling so the generation guard serves host scope.
@@ -9991,8 +10752,10 @@ void MainWindow::selectHostForMaintenance()
     // scope is committed. The run itself waits for administrator
     // authorization and then executes asynchronously (no modal dialog); a
     // privileged request started while it is running is refused with a clear
-    // message instead of queueing behind it.
-    scheduleEvidenceRefresh(QStringLiteral("running-host maintenance selected"));
+    // message instead of queueing behind it. The scope switch is forced, so
+    // the run happens even when the running-host cache is still fresh from a
+    // previous Host Maintenance visit.
+    scheduleEvidenceRefresh(QStringLiteral("running-host maintenance selected"), /*force=*/true);
     // Ask for the privileged session as soon as the host scope is committed so
     // diagnostics and repairs reuse one Polkit prompt. The request is deferred
     // to the next event-loop turn, never blocks the scope switch, and is never
@@ -10167,17 +10930,25 @@ void MainWindow::showDeviceDetails(const DeviceNode &disk, bool allowRepairTarge
     // step.
     const bool hasTargetCandidate = treeContainsLinuxCandidateNode(disk);
     const bool opticalMedia = treeContainsOpticalMedia(disk);
-    const bool canTarget = allowRepairTarget && diskIsSelectableRepairTarget(disk);
+    // Item #1: the already-committed repair target keeps its row highlighted,
+    // but Select Target is disabled for that one row (other rows stay
+    // selectable, and the running-host card in Host Maintenance is never the
+    // committed target, so it stays commit-eligible there).
+    const bool alreadyCommitted = !m_hostMaintenanceMode && !m_previewTargetPath.isEmpty()
+        && disk.path == m_previewTargetPath;
+    const bool canTarget = allowRepairTarget && diskIsSelectableRepairTarget(disk) && !alreadyCommitted;
     m_setTargetButton->setEnabled(canTarget);
-    m_setTargetButton->setToolTip(canTarget
-        ? tr("Commit this physical drive as the repair target.")
-        : (allowRepairTarget && !disk.protectedDevice
-            ? (opticalMedia
-                ? tr("Live / installer media is read-only boot media and cannot be selected as a repair target.")
-                : (treeContainsEncryptedNode(disk) && !hasTargetCandidate
-                    ? tr("Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.")
-                    : tr("No selectable repair target was detected on this drive.")))
-            : tr("The protected running host cannot be selected as a repair target.")));
+    m_setTargetButton->setToolTip(alreadyCommitted
+        ? tr("Committed repair target. Repair, Diagnostics, Snapshots and File Copy target this drive until Select Target picks another.")
+        : (canTarget
+            ? tr("Commit this physical drive as the repair target.")
+            : (allowRepairTarget && !disk.protectedDevice
+                ? (opticalMedia
+                    ? tr("Live / installer media is read-only boot media and cannot be selected as a repair target.")
+                    : (treeContainsEncryptedNode(disk) && !hasTargetCandidate
+                        ? tr("Unlock the encrypted volume first; Select Target becomes available after a Linux filesystem is detected.")
+                        : tr("No selectable repair target was detected on this drive.")))
+                : tr("The protected running host cannot be selected as a repair target."))));
 
     const DeviceNode *unlockCandidate = nullptr;
     if (inspectedNode && inspectedNode->encrypted && !encryptedNodeHasUnlockedLinuxChild(*inspectedNode)) {
@@ -10276,6 +11047,17 @@ void MainWindow::setPreviewTarget()
                                  tr("This drive has no resolvable target component. Refresh devices and select it again."));
         return;
     }
+    // Selecting a repair drive (or re-selecting one) is a scope change while a
+    // read-only diagnostic is in flight: interrupt it early (SIGUSR1,
+    // keep-session) so the new target's diagnostic can start sooner instead of
+    // the stale run finishing all its sections before its result is discarded.
+    // This runs only once the selection above is accepted, so a refused
+    // selection never interrupts a still-current diagnostic. Mirrors
+    // selectHostForMaintenance()/exitHostMaintenanceMode(); mutating requests
+    // are never cancelled here.
+    if (m_privilegedOperationActive && m_privilegedOperationIsDiagnostic) {
+        cancelInFlightDiagnostic();
+    }
     m_previewTargetPath = disk.path;
     // preferred is guaranteed non-null and non-empty by the gate above.
     m_previewTargetComponentPath = preferred->path;
@@ -10290,11 +11072,14 @@ void MainWindow::setPreviewTarget()
         message += QStringLiteral("; best detected system component: %1").arg(m_previewTargetComponentPath);
     }
     message += QStringLiteral(". No mount or repair action was performed.");
+    // Update the session scope BEFORE the transition announcement so the notice
+    // is tagged with the NEW repair-target [SCOPE] marker rather than the
+    // outgoing scope's block.
+    updateSessionScope();
     appendLog(message);
     statusBar()->showMessage(tr("Repair drive selected: %1").arg(disk.path), 4000);
-    updateSessionScope();
     scheduleSnapshotPreload();
-    scheduleEvidenceRefresh(QStringLiteral("repair target selection changed"));
+    scheduleEvidenceRefresh(QStringLiteral("repair target selection changed"), /*force=*/true);
     // The committed component is either an unlocked Linux filesystem or the
     // physical disk itself (blank/data target). A locked LUKS container can
     // never reach this point because the checks above reject it. Request the
@@ -10304,6 +11089,10 @@ void MainWindow::setPreviewTarget()
         && preferred->fileSystem.compare(QStringLiteral("crypto_LUKS"), Qt::CaseInsensitive) != 0) {
         requestPrivilegedSessionForScope(QStringLiteral("target:%1").arg(m_previewTargetPath));
     }
+    // Item #1: re-render the Systems details/actions for the now-committed row
+    // so Select Target is disabled (and its committed tooltip shown) for this
+    // row immediately, exactly like the legacy commit path.
+    updateDeviceDetails();
 }
 
 // ---- MainWindow: privileged helper session ----------------------------------
@@ -10388,6 +11177,22 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         updateAuthorizationAffordance();
         setError(QString());
         return true;
+    }
+
+    // A previous authorization request for the current scope was cancelled and
+    // published its failure, and the scope's authorization is now deferred
+    // (the Systems tab shows the Authorize affordance). A caller that reaches
+    // the helper again in the same request cycle — a background snapshot or
+    // diagnostics refresh dispatched while the first prompt was on screen, for
+    // example — must observe that published failure instead of launching a
+    // second Polkit conversation. The explicit Authorize retry clears
+    // m_authorizationDeferredScope before re-entering here, so it stays the
+    // only path that starts a fresh conversation.
+    if (m_privilegedSessionRequestFailed
+        && !m_authorizationDeferredScope.isEmpty()
+        && m_authorizationDeferredScope == currentPrivilegedScopeKey()) {
+        setError(authorizationFailureMessage(QString()));
+        return false;
     }
 
     // At most one authorization conversation may exist at a time. A deferred
@@ -10508,6 +11313,11 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
         // pkexec detail stays available even though the dialog is concise.
         appendLog(QStringLiteral("Authorization session: %1").arg(failureDetail));
     }
+    // Mirror the production path's finished/error handlers: a cancelled or
+    // failed authorization publishes its outcome so coalescing callers (and a
+    // later re-request in the same cycle) observe the failure instead of
+    // launching a second prompt.
+    m_privilegedSessionRequestFailed = true;
     setError(authorizationFailureMessage(failureDetail));
     return false;
 #else
@@ -10537,11 +11347,23 @@ bool MainWindow::ensurePrivilegedSession(QString *errorMessage)
     QString program = helper;
     QStringList processArguments = {QStringLiteral("session")};
     const QFileInfo helperInfo(helper);
-    // The AppImage may be mounted with a noexec /tmp policy.  The helper is a
-    // shell script even though installation preserves its executable bit, so
-    // invoke it through bash explicitly to avoid an EACCES from the mount.
-    const bool invokeThroughShell = helperInfo.fileName() == QStringLiteral("boot-repair-helper")
-        || helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0;
+    // The installed helper (/usr/libexec/ or /usr/lib/, protected by the
+    // package manager) is an executable script with a valid shebang. Invoke it
+    // directly so pkexec selects the dedicated org.bootrepair.BootRepair.helper
+    // Polkit action (matched via its org.freedesktop.policykit.exec.path
+    // annotation) and the authorization prompt shows the friendly message
+    // instead of the raw command line.
+    //
+    // A staged/portable/source-tree helper keeps the /bin/bash indirection:
+    // the AppImage may be mounted noexec or the source tree may have lost the
+    // executable bit, and /bin/bash reads the script rather than execve()ing
+    // it. Those helpers keep the generic prompt (their paths cannot match the
+    // static annotation anyway).
+    const bool installedHelper = helper.startsWith(QStringLiteral("/usr/libexec/"))
+        || helper.startsWith(QStringLiteral("/usr/lib/"));
+    const bool invokeThroughShell = !installedHelper
+        && (helperInfo.fileName() == QStringLiteral("boot-repair-helper")
+            || helperInfo.suffix().compare(QStringLiteral("sh"), Qt::CaseInsensitive) == 0);
     if (invokeThroughShell) {
         program = QStringLiteral("/bin/bash");
         processArguments.prepend(helper);
@@ -10865,6 +11687,66 @@ void MainWindow::updateAuthorizationAffordance()
     m_authorizeNowButton->setVisible(false);
 }
 
+void MainWindow::abortInFlightDiagnostic()
+{
+    // Mark the request aborted first so its non-modal wait loop stops waiting
+    // on the next poll tick, then send the helper the QUIT/close signal it
+    // already understands. The helper processes QUIT at the top of its request
+    // loop: once the current (read-only) request finishes it exits cleanly
+    // through its cleanup trap (unmounting request-owned mounts and closing
+    // only Boot Bitch-owned mappers) instead of being orphaned. The existing
+    // closePrivilegedSession() graceful-wait → terminate → kill escalation
+    // still applies afterward for a helper that never finishes.
+    m_privilegedRequestAbortRequested = true;
+    setProgressDetail(tr("Cancelling diagnostic run…"));
+    if (m_privilegedSession && m_privilegedSession->state() != QProcess::NotRunning) {
+        m_privilegedSession->write("QUIT\n");
+        m_privilegedSession->closeWriteChannel();
+        // Bounded SIGTERM fallback: the helper reads QUIT only at the top of
+        // its request loop, so a single `all` diagnostic (every section in one
+        // dispatch) keeps it busy well past the abort. Give it a short grace
+        // to finish and read QUIT, then SIGTERM it (its `trap 'exit 143' TERM`
+        // runs the same EXIT cleanup) so the session is released promptly.
+        // This escalation is read-only-diagnostic-only and never reaches
+        // SIGKILL (the request-timeout path owns the terminate→kill ladder).
+        // The grace stays below the 1200 ms evidence-refresh coalescing delay
+        // so the helper has exited — and m_privilegedSessionReady cleared —
+        // before the re-armed refresh fires, letting the pending-authorization
+        // path defer instead of writing into the already-closed session.
+        QPointer<QProcess> session = m_privilegedSession;
+        QTimer::singleShot(800, this, [this, session] {
+            if (session && m_privilegedSession == session
+                && session->state() != QProcess::NotRunning) {
+                session->terminate();
+            }
+        });
+    }
+}
+
+void MainWindow::cancelInFlightDiagnostic()
+{
+    // A scope switch must stop the in-flight read-only diagnostic early but
+    // KEEP the authorized session alive. Signal the helper with SIGUSR1: its
+    // session request loop traps it into SESSION_CANCEL_REQUESTED=1, relays it
+    // to the diagnostic child's process group so the running section's chroot
+    // sub-process is interrupted mid-stream, and the running combined-diagnostic
+    // loop breaks without running further sections. The helper returns the
+    // partial output plus a normal DONE record, and the broker continues
+    // reading the next request. No QUIT is written and the request is not
+    // marked aborted, so runPrivilegedRequest() completes normally with the
+    // truncated output and the scope-change guard discards it;
+    // m_privilegedRequestAbortRequested stays false (this is not a window-close).
+    setProgressDetail(tr("Cancelling diagnostic run…"));
+    // Paint the transient cancel state now, before the still-running privileged
+    // request returns, so the user sees "Cancelling diagnostic run…" rather than
+    // the stale running label.  Exclude user input so the flush cannot re-enter
+    // the cancel/scope path while the request gate is still held.
+    QCoreApplication::processEvents(QEventLoop::ExcludeUserInputEvents);
+    if (m_privilegedSession && m_privilegedSession->state() != QProcess::NotRunning) {
+        ::kill(m_privilegedSession->processId(), SIGUSR1);
+    }
+}
+
 void MainWindow::closePrivilegedSession()
 {
     QProcess *session = m_privilegedSession;
@@ -11054,12 +11936,28 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                                          LogEntryKind kind,
                                          const QString &statusIdentity,
                                          RepairProgressDialog *sharedProgressDialog,
-                                         bool queueWhenBusy)
+                                         bool quiet)
 {
     if (succeeded) {
         *succeeded = false;
     }
+    // Chroot/Host shell requests render their transcript inline in the Shell
+    // tab pane (m_chrootShellOutput) and answer prompts through that pane's
+    // persistent input line, instead of a hidden progress dialog + a separate
+    // modal prompt popup. Every other request kind keeps the progress dialog.
+    const bool shellStreaming = kind == LogEntryKind::ChrootShell
+        || kind == LogEntryKind::HostShell;
+    // Shell-request text that does not arrive as an OUT record — a pre-request
+    // refusal or a post-request transport error — is written directly to the
+    // Shell tab pane so the inline transcript stays complete; the return value
+    // still carries it for the application log.
+    const auto appendShellTranscript = [this, shellStreaming](const QString &text) {
+        if (shellStreaming) {
+            appendShellOutput(text);
+        }
+    };
     if (arguments.isEmpty()) {
+        appendShellTranscript(QStringLiteral("ERROR: No privileged helper command was supplied."));
         return QStringLiteral("ERROR: No privileged helper command was supplied.\n");
     }
     // A7-03: every argument is validated against its request-kind/position
@@ -11068,6 +11966,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     for (int index = 0; index < arguments.size(); ++index) {
         QString argumentRefusal;
         if (!safeHelperArgument(arguments, index, &argumentRefusal)) {
+            appendShellTranscript(QStringLiteral("ERROR: %1").arg(argumentRefusal));
             return QStringLiteral("ERROR: %1\n").arg(argumentRefusal);
         }
     }
@@ -11081,59 +11980,14 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     // re-entrant: the active request's event loop is on this stack, so the
     // active request cannot clear the gate until this nested handler returns.
     // Blocking here used to deadlock exactly that way (the "Waiting for the
-    // running operation" hang). Such a request is never queued: a request for
-    // a different disk is dropped as superseded, and a same-scope request is
-    // refused with a clear log line. Background work (snapshot preload,
-    // automatic regeneration) defers itself at its own call sites instead.
-    //
-    // A request that opts into queueing (queueWhenBusy) is the one exception:
-    // it is dispatched as a separate event while the active request's non-modal
-    // wait loop runs below it (for example the LUKS unlock arriving during a
-    // host diagnostic), so the active request CAN still finish and clear the
-    // gate while this call waits. It queues behind the in-flight request with
-    // an event-driven poll (a QEventLoop quit the moment the gate clears),
-    // never a busy processEvents spin, and a single-shot safety bound so the
-    // wait can never hang the UI forever.
-    if (m_privilegedOperationActive && queueWhenBusy) {
-        const QString activeTitle = m_privilegedOperationTitle.isEmpty()
-            ? tr("another privileged operation") : m_privilegedOperationTitle;
-        appendLog(tr("Privileged request '%1' is queued behind the running '%2' and will start when it finishes.")
-                      .arg(title, activeTitle),
-                  QStringLiteral("INFO"), kind);
-        QEventLoop queueWaitLoop;
-        QTimer queuePollTimer;
-        queuePollTimer.setInterval(20);
-        connect(&queuePollTimer, &QTimer::timeout, &queueWaitLoop, [&queueWaitLoop, this] {
-            if (!m_privilegedOperationActive) {
-                queueWaitLoop.quit();
-            }
-        });
-        QTimer queueSafetyTimer;
-        queueSafetyTimer.setSingleShot(true);
-        queueSafetyTimer.setInterval(kPrivilegedQueueWaitTimeoutMs);
-        connect(&queueSafetyTimer, &QTimer::timeout, &queueWaitLoop, &QEventLoop::quit);
-        queuePollTimer.start();
-        queueSafetyTimer.start();
-        while (m_privilegedOperationActive) {
-            queueWaitLoop.exec();
-            if (m_privilegedOperationActive) {
-                // exec() returned with the gate still held: the safety bound
-                // fired (the poll quits only once the gate clears). Stop
-                // waiting rather than proceeding into a busy session.
-                break;
-            }
-        }
-        queuePollTimer.stop();
-        queueSafetyTimer.stop();
-        if (m_privilegedOperationActive) {
-            appendLog(tr("Privileged request '%1' waited for the running '%2' but it did not finish in time; the request was refused.")
-                          .arg(title, activeTitle),
-                      QStringLiteral("WARNING"), kind);
-            return tr("ERROR: Privileged request '%1' was refused because '%2' is still running after the queue wait limit; wait for it to finish and retry, or cancel it.\n")
-                .arg(title, activeTitle);
-        }
-    }
-
+    // running operation" hang). Such a request is never queued or waited on
+    // inside this frame: a request for a different disk is dropped as
+    // superseded, and a same-scope request is refused with a clear log line.
+    // Background work (snapshot preload, automatic regeneration) defers itself
+    // at its own call sites instead, and the LUKS unlock — the one request that
+    // must run while a read-only diagnostic owns the gate — cancels the
+    // diagnostic and re-enters from a later event-loop turn in
+    // unlockSelectedTarget(), never through a nested wait here.
     if (m_privilegedOperationActive) {
         const bool superseded = !requestScope.isEmpty()
             && !m_privilegedOperationScopeKey.isEmpty()
@@ -11147,10 +12001,18 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             : tr("refused because '%1' is still running and was not queued. Wait for it to finish and retry, or cancel it").arg(activeTitle);
         appendLog(tr("Privileged request '%1' was %2.").arg(title, detail),
                   superseded ? QStringLiteral("INFO") : QStringLiteral("WARNING"), kind);
+        appendShellTranscript(tr("ERROR: Privileged request '%1' was %2.").arg(title, detail));
         return tr("ERROR: Privileged request '%1' was %2.\n").arg(title, detail);
     }
 
-    BusyOperationScope busy(this, title);
+    // Background (quiet) requests — the automatic Btrfs snapshot preload —
+    // never claim the busy indicator, so a scope switch does not flash a
+    // spurious "Btrfs" label over the diagnostics run that owns it.  The
+    // unique_ptr unwinds endBusyOperation on every early return below.
+    std::unique_ptr<BusyOperationScope> busy;
+    if (!quiet) {
+        busy = std::make_unique<BusyOperationScope>(this, title);
+    }
 
     // Own the single-request gate for exactly this request. The local guard
     // clears the busy state on every exit path (success, failure, timeout,
@@ -11167,6 +12029,8 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 window->m_privilegedOperationActive = false;
                 window->m_privilegedOperationScopeKey.clear();
                 window->m_privilegedOperationTitle.clear();
+                window->m_privilegedOperationIsDiagnostic = false;
+                window->m_privilegedRequestAbortRequested = false;
                 window->updateShellRunButtonState();
             }
         }
@@ -11174,6 +12038,8 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     m_privilegedOperationActive = true;
     m_privilegedOperationScopeKey = requestScope;
     m_privilegedOperationTitle = title;
+    m_privilegedOperationIsDiagnostic = (kind == LogEntryKind::Diagnostic);
+    m_privilegedRequestAbortRequested = false;
     gate.armed = true;
     updateShellRunButtonState();
 
@@ -11210,6 +12076,19 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     QLabel *status = renderDialog->statusLabel();
     QPlainTextEdit *output = renderDialog->outputPane();
     QPushButton *closeButton = renderDialog->closeButton();
+    QLineEdit *promptInput = renderDialog->promptInputLine();
+    QPushButton *promptSend = renderDialog->promptSendButton();
+
+    // Shell requests stream their OUT records live into the Shell tab pane and
+    // answer PROMPT records through that pane's persistent input line, so the
+    // hidden progress dialog's own pane/input are replaced with the shell
+    // surfaces. The dialog still owns the status/close plumbing (hidden for
+    // shell requests), so the request lifecycle is unchanged.
+    if (shellStreaming) {
+        output = m_chrootShellOutput;
+        promptInput = m_shellPromptInput;
+        promptSend = m_shellPromptSend;
+    }
 
     if (showProgressDialog && !sharedDialogMode) {
         // Immediate feedback for repairs and other dialog-backed actions:
@@ -11241,6 +12120,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         }
         secret.fill('\0');
         secret.clear();
+        appendShellTranscript(QStringLiteral("ERROR: %1").arg(authorizationError));
         return QStringLiteral("ERROR: %1\n").arg(authorizationError);
     }
 
@@ -11254,6 +12134,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         }
         secret.fill('\0');
         secret.clear();
+        appendShellTranscript(QStringLiteral("ERROR: Privileged helper session is not running."));
         return QStringLiteral("ERROR: Privileged helper session is not running.\n");
     }
 
@@ -11268,11 +12149,11 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     bool requestSucceeded = false;
     bool requestTimedOut = false;
     int requestExitCode = -1;
-    // A6-03/A6-04: at most one prompt dialog is open at a time, at most 8
-    // prompts are answered per request, and prompts arriving after the DONE
-    // record are ignored.  A dropped prompt is answered with an empty ANSWER
-    // record so the helper fails closed instead of hanging.
-    bool promptDialogOpen = false;
+    // A6-03/A6-04: at most one prompt is active at a time, at most 8 prompts
+    // are answered per request, and prompts arriving after the DONE record are
+    // ignored.  A dropped prompt is answered with an empty ANSWER record so the
+    // helper fails closed instead of hanging.
+    bool promptActive = false;
     int promptCount = 0;
     // A6-07: bound the per-request transcript and the raw wire buffer so a
     // runaway helper can never exhaust memory.  Protocol records (PROMPT,
@@ -11294,6 +12175,14 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             : QStringLiteral("%1 ms").arg(m_privilegedRequestTimeoutMs);
     };
     QEventLoop nonModalWaitLoop;
+    // The prompt wait must be a SEPARATE QEventLoop from the outer request
+    // wait: QEventLoop::exec() refuses to re-enter an already-running loop
+    // ("has already called exec()", returns -1), so re-using nonModalWaitLoop
+    // for the prompt wait would make the prompt return immediately with an
+    // empty answer. This is exactly what broke the inline shell prompt for
+    // ChrootShell/HostShell (whose outer wait runs nonModalWaitLoop), while the
+    // Repair kind's prompt nested inside renderDialog->exec() stayed fine.
+    QEventLoop promptWaitLoop;
     QTimer requestWatchdog;
     requestWatchdog.setSingleShot(true);
     if (m_privilegedRequestTimeoutMs > 0) {
@@ -11346,6 +12235,28 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         if (wireBuffer.size() > kWireBufferCap) {
             wireBuffer = wireBuffer.right(kWireBufferCap);
         }
+        // Streams one transcript line to the active pane.  The Shell tab pane
+        // follows its own scroll policy (appendShellOutput keeps the user's
+        // place while they are scrolled back to read earlier output); the
+        // repair progress dialog always follows the end.
+        auto streamLine = [&](const QString &text) {
+            if (shellStreaming) {
+                appendShellOutput(text);
+            } else {
+                output->moveCursor(QTextCursor::End);
+                output->insertPlainText(text + QLatin1Char('\n'));
+                output->moveCursor(QTextCursor::End);
+            }
+        };
+        // Streams a protocol note/error paragraph (SESSION_ERROR, dropped
+        // prompt and budget notes) to the active pane.
+        auto streamNote = [&](const QString &text) {
+            if (shellStreaming) {
+                appendShellOutput(text);
+            } else {
+                output->appendPlainText(text);
+            }
+        };
         // A6-07: appends one transcript line, switching to the one-shot
         // truncation marker once the captured-output cap is hit.  Returns
         // false when the line was dropped so callers skip the pane insert.
@@ -11359,9 +12270,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 captured += QLatin1Char('\n');
                 if (!paneTruncated) {
                     paneTruncated = true;
-                    output->moveCursor(QTextCursor::End);
-                    output->insertPlainText(truncatedMarker + QLatin1Char('\n'));
-                    output->moveCursor(QTextCursor::End);
+                    streamLine(truncatedMarker);
                 }
                 return false;
             }
@@ -11395,9 +12304,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             if (tag == QByteArrayLiteral("OUT")) {
                 const QString text = QString::fromUtf8(payload);
                 if (appendCapturedLine(text)) {
-                    output->moveCursor(QTextCursor::End);
-                    output->insertPlainText(text + QLatin1Char('\n'));
-                    output->moveCursor(QTextCursor::End);
+                    streamLine(text);
                 }
                 continue;
             }
@@ -11405,23 +12312,26 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 const QString text = QString::fromUtf8(payload);
                 const QString errorLine = QStringLiteral("ERROR: %1").arg(text);
                 if (appendCapturedLine(errorLine)) {
-                    output->appendPlainText(errorLine);
+                    streamNote(errorLine);
                 }
                 continue;
             }
             if (tag == QByteArrayLiteral("PROMPT") && interactiveShellRequest) {
-                ++promptCount;
                 // A2-06: bound the decoded prompt payload. A PROMPT record
-                // whose base64 payload exceeds 1024 bytes is dropped with a
+                // whose base64 payload exceeds 16384 bytes is dropped with a
                 // protocol note and answered with an empty ANSWER record, so
                 // the helper fails closed instead of waiting forever and a
                 // runaway helper can never make the GUI allocate an unbounded
-                // base64 buffer.
-                if (payload.size() > 1024) {
+                // base64 buffer.  The bound is generous enough for legitimate
+                // repair menus (kernel/GPU) — a real menu is a few hundred
+                // base64 bytes even with many kernels — while 16384 x the
+                // 8-prompt budget is ~128 KB, so a runaway helper still cannot
+                // make the GUI allocate unbounded memory.
+                if (payload.size() > 16384) {
                     const QString oversizedNote = tr(
-                        "Protocol note: a PROMPT record exceeded the 1024-byte payload bound and was dropped; the helper was answered with an empty ANSWER record.");
+                        "Protocol note: a PROMPT record exceeded the 16384-byte payload bound and was dropped; the helper was answered with an empty ANSWER record.");
                     if (appendCapturedLine(oversizedNote)) {
-                        output->appendPlainText(oversizedNote);
+                        streamNote(oversizedNote);
                     }
                     if (session && session->state() == QProcess::Running) {
                         session->write("ANSWER\t" + requestId + "\t\n");
@@ -11436,89 +12346,73 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 if (requestDone) {
                     continue;
                 }
-                if (promptDialogOpen) {
-                    if (session && session->state() == QProcess::Running) {
-                        session->write("ANSWER\t" + requestId + "\t\n");
+                if (promptActive) {
+                    // A6-10: a re-emitted PROMPT is a refresh of the trailing
+                    // output, not a new question.  The refreshed trailing
+                    // output is appended to the active pane (the repair menu
+                    // text, or a shell command's late question line) so it
+                    // reaches the user without opening another prompt.  Never
+                    // answer the record with an empty ANSWER, which would
+                    // wrongly cancel the command.
+                    const QString refreshed = QString::fromUtf8(QByteArray::fromBase64(payload));
+                    if (appendCapturedLine(refreshed)) {
+                        streamLine(refreshed);
                     }
                     continue;
                 }
+                ++promptCount;
                 if (promptCount > 8) {
                     const QString budgetError = tr(
                         "ERROR: The privileged request exceeded the interactive prompt budget; treating the request as a protocol failure.");
                     if (appendCapturedLine(budgetError)) {
-                        output->appendPlainText(budgetError);
+                        streamNote(budgetError);
                     }
                     if (session && session->state() == QProcess::Running) {
                         session->write("ANSWER\t" + requestId + "\t\n");
                     }
                     continue;
                 }
-                // The shell command is waiting for input.  Show its trailing
-                // output in a modal dialog, send the typed answer back as an
-                // ANSWER record and keep the transcript readable.  Cancel (or
-                // an empty answer) sends an empty ANSWER payload, which makes
-                // the helper fail the command closed with its non-interactive
-                // message.  The prompt text is only ever displayed, never
-                // interpreted.
+                // The helper is waiting for input.  The prompt (an
+                // evidence-driven repair menu, or a shell command's trailing
+                // output) is shown inline in the active output pane and
+                // answered through that pane's persistent input line — the
+                // repair progress dialog for the Repair kind, the Shell tab
+                // pane for ChrootShell/HostShell.  Cancel (or an empty answer)
+                // sends an empty ANSWER payload, which makes the helper fail
+                // closed with its non-interactive message.  The prompt text is
+                // only ever displayed, never interpreted.
                 const QString promptText = QString::fromUtf8(QByteArray::fromBase64(payload));
-                const bool shellRequest = kind == LogEntryKind::ChrootShell
-                    || kind == LogEntryKind::HostShell;
-                QDialog promptDialog(renderDialog);
-                promptDialog.setObjectName(QStringLiteral("shellPromptDialog"));
-                promptDialog.setWindowTitle(shellRequest
-                    ? tr("Shell command is asking for input")
-                    : tr("Choose an action"));
-                promptDialog.setMinimumWidth(560);
-                auto *promptLayout = new QVBoxLayout(&promptDialog);
-                auto *promptHint = new QLabel(shellRequest
-                    ? tr("The shell command is waiting for input. Review its output below, type the "
-                         "answer and press OK. Cancel — or an empty answer — stops the command.")
-                    : tr("Select an action below:"));
-                configureWrappedDialogBody(promptHint);
-                promptLayout->addWidget(promptHint);
-                auto *promptView = new QPlainTextEdit;
-                promptView->setObjectName(QStringLiteral("shellPromptTextView"));
-                promptView->setReadOnly(true);
-                promptView->setLineWrapMode(QPlainTextEdit::WidgetWidth);
-                promptView->setWordWrapMode(QTextOption::WrapAtWordBoundaryOrAnywhere);
-                promptView->setPlainText(promptText);
-                promptLayout->addWidget(promptView, 1);
-                auto *answerEdit = new QLineEdit;
-                answerEdit->setObjectName(QStringLiteral("shellPromptAnswerEdit"));
-                answerEdit->setPlaceholderText(shellRequest
-                    ? tr("Answer (for example: y, n, Y, I, N, Z, or a word)")
-                    : tr("Number of the action (0 = Abort)"));
-                promptLayout->addWidget(answerEdit);
-                auto *promptButtons = new QDialogButtonBox(
-                    QDialogButtonBox::Ok | QDialogButtonBox::Cancel);
-                promptButtons->button(QDialogButtonBox::Ok)->setText(tr("Send Answer"));
-                QObject::connect(promptButtons, &QDialogButtonBox::accepted,
-                                 &promptDialog, &QDialog::accept);
-                QObject::connect(promptButtons, &QDialogButtonBox::rejected,
-                                 &promptDialog, &QDialog::reject);
-                promptLayout->addWidget(promptButtons);
 
-                promptDialogOpen = true;
-                // A5-13: pause the request watchdog while the prompt dialog
-                // is open so the safety limit can never fire mid-popup; the
-                // remaining budget is restored after the dialog closes.
+                if (appendCapturedLine(promptText)) {
+                    streamLine(promptText);
+                }
+                promptActive = true;
+                // A5-13: pause the request watchdog while the prompt is
+                // waiting so the safety limit can never fire mid-prompt.
                 const bool watchdogWasActive = requestWatchdog.isActive();
                 const int watchdogRemaining = requestWatchdog.isActive()
                     ? requestWatchdog.remainingTime() : 0;
                 requestWatchdog.stop();
-                const bool accepted = promptDialog.exec() == QDialog::Accepted;
-                promptDialogOpen = false;
+                promptInput->setEnabled(true);
+                promptSend->setEnabled(true);
+                promptInput->clear();
+                promptInput->setFocus();
+                promptWaitLoop.exec();
+                promptActive = false;
+                promptInput->setEnabled(false);
+                promptSend->setEnabled(false);
                 if (watchdogWasActive && !requestDone && !requestTimedOut) {
                     requestWatchdog.start(watchdogRemaining > 0 ? watchdogRemaining : 1);
                 }
                 if (requestDone) {
-                    // The request finished while the dialog was open (the
+                    // The request finished while the prompt was waiting (the
                     // helper aborted its own answer window): never send a
                     // stray ANSWER record for a request that is already done.
                     continue;
                 }
-                const QString answer = accepted ? answerEdit->text() : QString();
-                if (accepted && !answer.isEmpty()) {
+                const QString answer = promptInput->text();
+                promptInput->clear();
+                if (!answer.isEmpty()) {
                     if (session && session->state() == QProcess::Running) {
                         session->write("ANSWER\t" + requestId + "\t" + answer.toUtf8().toBase64()
                                        + "\n");
@@ -11529,12 +12423,15 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                     if (promptLooksSecret(promptText)) {
                         const QString masked = QStringLiteral(">> [answer hidden]");
                         if (appendCapturedLine(masked)) {
-                            output->appendPlainText(masked);
+                            streamLine(masked);
                         }
                     } else {
                         const QString echoLine = QStringLiteral(">> %1").arg(answer);
                         if (appendCapturedLine(echoLine)) {
-                            output->appendPlainText(echoLine);
+                            // The answer echo ends with a newline so the
+                            // next prompt text (appended below) can never
+                            // concatenate onto the same line.
+                            streamLine(echoLine);
                         }
                     }
                 } else {
@@ -11543,7 +12440,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                     }
                     const QString cancelledLine = QStringLiteral(">> [prompt cancelled]");
                     if (appendCapturedLine(cancelledLine)) {
-                        output->appendPlainText(cancelledLine);
+                        streamLine(cancelledLine);
                     }
                 }
                 continue;
@@ -11557,6 +12454,13 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
                 requestDone = true;
                 requestWatchdog.stop();
                 requestSucceeded = requestExitCode == 0;
+                // If a prompt was waiting (the helper aborted its own answer
+                // window), unblock the prompt wait so the handler can observe
+                // requestDone and skip sending a stray ANSWER record. Quit the
+                // prompt loop (a pending prompt is blocked there) and the outer
+                // request loop (this request is finished).
+                promptWaitLoop.quit();
+                nonModalWaitLoop.quit();
                 status->setText(requestSucceeded
                     ? tr("Privileged operation completed successfully. Administrator authorization remains active for this Boot Bitch window.")
                     : tr("Privileged operation stopped with an error. Administrator authorization remains active; review the output before closing."));
@@ -11580,10 +12484,24 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
     QObject requestContext;
     connect(session, &QProcess::readyReadStandardOutput, &requestContext, consumeSessionOutput);
 
+    // Submitting the persistent prompt input line (Enter or Send) unblocks the
+    // prompt wait. The input line is disabled outside a waiting prompt, so this
+    // can only fire while the handler is waiting for an answer.
+    connect(promptInput, &QLineEdit::returnPressed, &requestContext, [&promptWaitLoop] {
+        promptWaitLoop.quit();
+    });
+    connect(promptSend, &QAbstractButton::clicked, &requestContext, [&promptWaitLoop] {
+        promptWaitLoop.quit();
+    });
+
     connect(session, qOverload<int, QProcess::ExitStatus>(&QProcess::finished), &requestContext,
-            [status, closeButton, renderDialog, sharedDialogMode, &requestDone](int, QProcess::ExitStatus) {
+            [status, closeButton, renderDialog, sharedDialogMode, &requestDone, &nonModalWaitLoop, &promptWaitLoop](int, QProcess::ExitStatus) {
         if (!requestDone) {
             status->setText(tr("The privileged helper session ended unexpectedly. The next root action will require authorization again."));
+            // Unblock a pending prompt wait (a prompt whose helper died while
+            // waiting for the answer) and the outer request wait.
+            promptWaitLoop.quit();
+            nonModalWaitLoop.quit();
             if (!sharedDialogMode) {
                 closeButton->setEnabled(true);
                 renderDialog->setCloseAllowed(true);
@@ -11638,12 +12556,16 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         QTimer pollTimer;
         pollTimer.setInterval(20);
         connect(&pollTimer, &QTimer::timeout, &nonModalWaitLoop, [&] {
-            if (requestDone || requestTimedOut || !session || session->state() == QProcess::NotRunning) {
+            if (requestDone || requestTimedOut || m_privilegedRequestAbortRequested
+                || !session || session->state() == QProcess::NotRunning) {
+                // Unblock a pending prompt wait and the outer request wait.
+                promptWaitLoop.quit();
                 nonModalWaitLoop.quit();
             }
         });
         pollTimer.start();
-        if (!requestDone && !requestTimedOut && session && session->state() != QProcess::NotRunning) {
+        if (!requestDone && !requestTimedOut && !m_privilegedRequestAbortRequested
+            && session && session->state() != QProcess::NotRunning) {
             nonModalWaitLoop.exec();
         }
         pollTimer.stop();
@@ -11690,6 +12612,22 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
         }
         captured += timeoutError;
         captured += QLatin1Char('\n');
+        appendShellTranscript(timeoutError);
+    } else if (m_privilegedRequestAbortRequested) {
+        // The application is closing and aborted this read-only diagnostic.
+        // This is an expected stop, not a protocol failure: the helper was
+        // sent QUIT and the request ends here without a DONE record.
+        const QString abortNotice = tr(
+            "The read-only diagnostic '%1' was stopped because the application is closing.")
+            .arg(title);
+        if (!captured.isEmpty() && !captured.endsWith(QLatin1Char('\n'))) {
+            captured += QLatin1Char('\n');
+        }
+        captured += abortNotice;
+        captured += QLatin1Char('\n');
+        appendShellTranscript(abortNotice);
+        appendLog(QStringLiteral("%1: aborted because the application is closing.").arg(title),
+                  QStringLiteral("INFO"), kind);
     } else if (!requestDone) {
         // The helper rejected the request, exited early, or the response was
         // truncated. Never assume a DONE record: report a clear transport
@@ -11702,6 +12640,7 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
             }
             captured += protocolError;
             captured += QLatin1Char('\n');
+            appendShellTranscript(protocolError);
         }
         appendLog(QStringLiteral("%1: the privileged helper did not return a protocol DONE record; treating the request as failed.").arg(title),
                   QStringLiteral("ERROR"), kind);
@@ -11745,6 +12684,43 @@ QString MainWindow::runPrivilegedRequest(const QString &title,
 // re-authorizing the session.
 void MainWindow::unlockSelectedTarget()
 {
+    // The unlock runs through the shared single-request privileged session, so
+    // it must wait for any in-flight request to release the gate first. It can
+    // never wait for that with a nested event loop: this slot is dispatched by
+    // the active request's own wait loop (for example a running host
+    // diagnostic's non-modal loop), so the active request's frame sits below
+    // this call and cannot return — and release the gate — until any nested
+    // wait here returns first. That used to deadlock as a stuck "Unlocking …"
+    // indicator. A read-only diagnostic is cancelled first (SIGUSR1,
+    // keep-session) so it releases the gate promptly, then this slot re-enters
+    // on a later event-loop turn (after the active request's frame has unwound)
+    // under the same 300 s safety bound the old queue wait used. Mutating
+    // requests are never cancelled here; they are simply waited for (bounded).
+    if (m_privilegedOperationActive) {
+        if (m_privilegedOperationIsDiagnostic) {
+            cancelInFlightDiagnostic();
+        }
+        const QString activeTitle = m_privilegedOperationTitle.isEmpty()
+            ? tr("another privileged operation") : m_privilegedOperationTitle;
+        if (!m_unlockDeferralStarted.isValid()) {
+            m_unlockDeferralStarted.start();
+            appendLog(tr("Privileged request 'Unlock LUKS target' is waiting for the running '%1' to finish and will start as soon as it does.")
+                          .arg(activeTitle),
+                      QStringLiteral("INFO"), LogEntryKind::Unlock);
+        }
+        if (m_unlockDeferralStarted.elapsed() > kPrivilegedQueueWaitTimeoutMs) {
+            m_unlockDeferralStarted.invalidate();
+            appendLog(tr("Privileged request 'Unlock LUKS target' waited for the running '%1' but it did not finish in time; the request was refused.")
+                          .arg(activeTitle),
+                      QStringLiteral("WARNING"), LogEntryKind::Unlock);
+            statusBar()->showMessage(tr("Unlock refused: another privileged operation is still running."), 6000);
+            return;
+        }
+        QTimer::singleShot(20, this, &MainWindow::unlockSelectedTarget);
+        return;
+    }
+    m_unlockDeferralStarted.invalidate();
+
     const QList<QTreeWidgetItem *> selected = m_deviceTree ? m_deviceTree->selectedItems() : QList<QTreeWidgetItem *>();
     if (selected.isEmpty()) {
         return;
@@ -11794,7 +12770,8 @@ void MainWindow::unlockSelectedTarget()
 
     // The unlock runs through the shared privileged session, so the
     // already-granted administrator authorization carries forward (no second
-    // Polkit prompt). It queues behind any in-flight request instead of being
+    // Polkit prompt). Any in-flight diagnostic was already cancelled above and
+    // the gate is now free, so this request runs immediately rather than being
     // superseded by the scope-change gate.
     QString authorizationError;
     if (!ensurePrivilegedSession(&authorizationError)) {
@@ -11916,8 +12893,7 @@ void MainWindow::unlockSelectedTarget()
                                                           false,
                                                           LogEntryKind::Unlock,
                                                           QString(),
-                                                          nullptr,
-                                                          true);
+                                                          nullptr);
         secret.fill('\0');
         secret.clear();
 
@@ -12191,11 +13167,13 @@ void MainWindow::updateSnapshotControls()
         rollbackCandidate = statusItem && statusItem->text().startsWith(QStringLiteral("Linux root snapshot"));
         if (!rollbackCandidate) {
             rollbackReason = tr("Select a valid Linux root snapshot first.");
-        } else if (hostScope) {
-            // Host rollback is enabled only from cached running-host capability
-            // evidence and fails closed when the evidence is missing.
+        } else {
+            // Rollback is enabled in BOTH scopes only from the cached scope's
+            // capability evidence (host `Host snapshot rollback:`, target
+            // `Snapshot rollback:`) and fails closed when the evidence is
+            // missing.
             QString capabilityReason;
-            if (!hostSnapshotRollbackAvailable(&capabilityReason)) {
+            if (!snapshotRollbackAvailable(&capabilityReason)) {
                 rollbackCandidate = false;
                 rollbackReason = capabilityReason;
             }
@@ -12326,7 +13304,7 @@ void MainWindow::scheduleSnapshotPreload()
         QString reason;
         const bool ready = m_hostMaintenanceMode ? hostMaintenanceReady(&reason) : repairTargetReady(&reason);
         if (ready) {
-            loadSnapshots();
+            loadSnapshots(true);
         }
     });
 }
@@ -12360,7 +13338,7 @@ void MainWindow::showSnapshotInventoryNotApplicable(const QString &fileSystem)
               QStringLiteral("INFO"), LogEntryKind::Snapshot);
 }
 
-void MainWindow::loadSnapshots()
+void MainWindow::loadSnapshots(bool background)
 {
     const bool hostScope = m_hostMaintenanceMode;
     QString reason;
@@ -12405,9 +13383,17 @@ void MainWindow::loadSnapshots()
         return;
     }
 
-    BusyOperationScope busy(this, hostScope
+    // The automatic preload is background work: it must not claim the busy
+    // indicator label (which would flash "Loading Btrfs snapshots" during a
+    // scope switch and hide the diagnostics run that owns the label).  A
+    // manual Load Snapshots click still shows the normal busy state.
+    const QString busyLabel = hostScope
         ? tr("Loading running-host Btrfs snapshots")
-        : tr("Loading Btrfs snapshots"));
+        : tr("Loading Btrfs snapshots");
+    std::unique_ptr<BusyOperationScope> busy;
+    if (!background) {
+        busy = std::make_unique<BusyOperationScope>(this, busyLabel);
+    }
 
     const QString requestTargetPath = snapshotDiskPath();
     const QString requestComponentPath = snapshotComponentPath();
@@ -12428,7 +13414,10 @@ void MainWindow::loadSnapshots()
         QByteArray(),
         &succeeded,
         false,
-        LogEntryKind::Snapshot);
+        LogEntryKind::Snapshot,
+        QString(),
+        nullptr,
+        /* quiet = */ background);
 
     // The request has completed: the in-flight identity no longer blocks a
     // later scope change, and the result below decides whether this scope is
@@ -12827,6 +13816,179 @@ bool MainWindow::hostSnapshotRollbackAvailable(QString *reason) const
         *reason = tr("Running-host snapshot rollback is available.");
     }
     return true;
+}
+
+// Scope-neutral snapshot-rollback capability from the cached capability
+// preamble. Host scope consumes `Host snapshot rollback:`; the repair-target
+// scope consumes the scope-neutral `Snapshot rollback:` line (Btrfs/snapper
+// snapshots exist on the target's own Btrfs filesystem, so rollback is offered
+// for both scopes). Missing evidence fails closed exactly like the host path.
+bool MainWindow::snapshotRollbackAvailable(QString *reason) const
+{
+    if (m_hostMaintenanceMode) {
+        return hostSnapshotRollbackAvailable(reason);
+    }
+
+    auto reject = [reason](const QString &text) {
+        if (reason) {
+            *reason = text;
+        }
+        return false;
+    };
+    if (m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+        return reject(tr("Diagnostic evidence belongs to a different target. Run diagnostics for the selected target."));
+    }
+    const QString prefix = QStringLiteral("Snapshot rollback: ");
+    bool hadEvidence = false;
+    bool available = false;
+    for (const QString &evidence : m_targetDiagnosticCache) {
+        for (const QString &line : evidence.split(QLatin1Char('\n'))) {
+            if (!line.startsWith(prefix)) {
+                continue;
+            }
+            hadEvidence = true;
+            const QString state = line.mid(prefix.size()).trimmed();
+            if (state == QStringLiteral("available")) {
+                available = true;
+            } else if (state.startsWith(QStringLiteral("unavailable|"))) {
+                const QString detail = state.mid(QStringLiteral("unavailable|").size()).trimmed();
+                return reject(detail.isEmpty()
+                    ? tr("Snapshot rollback is unavailable for the selected target.")
+                    : detail);
+            } else {
+                return reject(tr("Snapshot rollback has unknown capability evidence."));
+            }
+        }
+    }
+    if (!available) {
+        return reject(hadEvidence
+            ? tr("Snapshot rollback is unavailable for the selected target.")
+            : tr("Run read-only diagnostics for the selected target first."));
+    }
+    if (reason) {
+        *reason = tr("Snapshot rollback is available for the selected target.");
+    }
+    return true;
+}
+
+// The Snapshots tab is reachable only when rollback is actually available for
+// the active scope. Every other state — non-Btrfs, no store, no top-level root,
+// missing evidence AND a missing producer tool (snapper / btrfs-progs) — hides
+// the tab entirely: the install affordance lives in the Boot capabilities
+// table, and a hidden tab must never show an empty snapshot list that implies
+// availability.
+bool MainWindow::snapshotsTabVisible() const
+{
+    return snapshotRollbackAvailable();
+}
+
+// The EFI boot entries tab has something to display only when the cached
+// capability evidence names a UEFI firmware boot path (`efi`), a GRUB boot menu
+// (`grub`) or an extlinux boot menu (`extlinux`). Absent or stale evidence
+// hides the tab (fail closed) — nothing is ever guessed.
+bool MainWindow::bootEntriesTabVisible() const
+{
+    if (!m_hostMaintenanceMode
+        && m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+        return false;
+    }
+    const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
+    for (const char *key : {"efi", "grub", "extlinux"}) {
+        if (cachedRepairToolAvailable(cache, QString::fromLatin1(key), nullptr)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether the stable logical tab identity is currently present. The always-
+// shown tabs return true; the two dynamic tabs report their logical visibility
+// (see snapshotsTabVisible()/bootEntriesTabVisible()).
+bool MainWindow::logicalTabPresent(int logicalIndex) const
+{
+    if (logicalIndex == BootEntriesTab) {
+        return bootEntriesTabVisible();
+    }
+    if (logicalIndex == SnapshotsTab) {
+        return snapshotsTabVisible();
+    }
+    return true;
+}
+
+// Removes or inserts one dynamic tab at its fixed logical position. The AppTab
+// enum value stays the stable logical identity; the actual tab-bar index is
+// recomputed from the logical tabs that precede it, so removing the Boot
+// entries tab never shifts the Snapshots/Chroot Shell insertion points.
+void MainWindow::applyTabVisibility(int logicalIndex, bool visible, QWidget *page,
+                                    const QString &iconName, const QString &title,
+                                    const QString &tooltip)
+{
+    if (!m_tabs || !page) {
+        return;
+    }
+    const int current = m_tabs->indexOf(page);
+    if (visible && current < 0) {
+        int insertIndex = 0;
+        for (int i = 0; i < logicalIndex; ++i) {
+            if (logicalTabPresent(i)) {
+                ++insertIndex;
+            }
+        }
+        m_tabs->insertTab(insertIndex, page, themedIcon(iconName), title);
+        m_tabs->setTabToolTip(insertIndex, tooltip);
+    } else if (!visible && current >= 0) {
+        m_tabs->removeTab(current);
+    }
+}
+
+// Selects a logical tab through its page widget so the AppTab enum never needs
+// to match the tab-bar's actual (shifting) index.
+void MainWindow::showLogicalTab(int logicalIndex)
+{
+    if (!m_tabs) {
+        return;
+    }
+    QWidget *page = nullptr;
+    switch (logicalIndex) {
+        case SystemsTab: page = m_systemsPage; break;
+        case DiagnosticsTab: page = m_diagnosticsPage; break;
+        case BootEntriesTab: page = m_bootEntriesPage; break;
+        case RepairTab: page = m_repairPage; break;
+        case SnapshotsTab: page = m_snapshotsPage; break;
+        case ChrootShellTab: page = m_chrootShellPage; break;
+        case FileCopyTab: page = m_fileCopyPage; break;
+        case LogsTab: page = m_logsPage; break;
+        case SettingsTab: page = m_settingsPage; break;
+        default: return;
+    }
+    const int index = m_tabs->indexOf(page);
+    if (index >= 0) {
+        m_tabs->setCurrentIndex(index);
+    }
+}
+
+// Applies the dynamic tab visibility for the Snapshots and EFI boot entries
+// tabs. A hidden tab is REMOVED from the tab bar (never merely greyed out with
+// setTabEnabled), so it is not visible at all; the AppTab enum stays the stable
+// logical identity and every tab-bar reference resolves through the page widget
+// (logicalTabPresent/applyTabVisibility/showLogicalTab), so removing a tab can
+// never desynchronize the logical indices.
+void MainWindow::updateTabVisibility()
+{
+    if (!m_tabs) {
+        return;
+    }
+    applyTabVisibility(BootEntriesTab, bootEntriesTabVisible(), m_bootEntriesPage,
+                       QStringLiteral("view-list-details"), tr("EFI boot entries"),
+                       tr("Manage UEFI firmware boot entries and view the boot menu."));
+    applyTabVisibility(SnapshotsTab, snapshotsTabVisible(), m_snapshotsPage,
+                       QStringLiteral("document-revert"), tr("Snapshots"),
+                       tr("Inspect and roll back Btrfs root snapshots."));
+    // Never leave the user stranded on a tab that just became hidden.
+    QWidget *currentPage = m_tabs->currentWidget();
+    if (!currentPage || m_tabs->indexOf(currentPage) < 0) {
+        showLogicalTab(SystemsTab);
+    }
 }
 
 void MainWindow::rollbackHostSnapshot(const QString &snapshotId)
@@ -13709,8 +14871,8 @@ void MainWindow::updateChrootShellMode()
         QWidget *page = m_chrootShellHelpButton->parentWidget();
         QObject::disconnect(m_chrootShellHelpButton, &QToolButton::clicked, page, nullptr);
         const QString helpText = hostMode
-            ? tr("Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.")
-            : tr("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, Boot Bitch shows it in a popup and sends your answer back to the command; cancelling stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.");
+            ? tr("Run a command on the running host as root (sudo is not needed). Commands are executed directly on the active system. When a command asks a question, it appears inline in the output window and you answer it in the answer line below the output; cancelling (or leaving the answer empty) stops the command. Non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.")
+            : tr("Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot. When a command asks a question, it appears inline in the output window and you answer it in the answer line below the output; cancelling (or leaving the answer empty) stops the command. Non-interactive flags such as dnf update -y or apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log.");
         QObject::connect(m_chrootShellHelpButton, &QToolButton::clicked, page,
                          [page, helpText] { showCompactHelp(page, MainWindow::tr("Chroot Shell"), helpText); });
     }
@@ -13736,15 +14898,16 @@ void MainWindow::updateChrootShellMode()
     // every mode switch.
     updateShellRunButtonState();
 
-    if (m_tabs && m_tabs->count() > ChrootShellTab) {
+    const int shellTabIndex = m_tabs ? m_tabs->indexOf(m_chrootShellPage) : -1;
+    if (shellTabIndex >= 0) {
         // Keep the tab label consistent with the responsive layout: the full
         // label only fits at the wide breakpoint used by updateResponsiveLayout.
         const int availableWidth = centralWidget() ? centralWidget()->width() : width();
         const QString label = availableWidth < 820
             ? tr("Shell")
             : (hostMode ? tr("Host Shell") : tr("Chroot Shell"));
-        m_tabs->setTabText(ChrootShellTab, label);
-        m_tabs->setTabToolTip(ChrootShellTab, hostMode
+        m_tabs->setTabText(shellTabIndex, label);
+        m_tabs->setTabToolTip(shellTabIndex, hostMode
             ? tr("Execute a command on the running host as root.")
             : tr("Execute a command inside the selected repair system as root."));
     }
@@ -13911,13 +15074,16 @@ void MainWindow::runChrootShellCommand()
         appendShellOutput(QStringLiteral("$ %1").arg(attemptCommand));
         appendShellOutput(QStringLiteral("[running…]"));
         bool attemptOk = false;
+        // The command output streams live into the Shell tab pane inside
+        // runPrivilegedRequest (showProgressDialog=false + ChrootShell/HostShell
+        // kind), so the pane already holds the full transcript when this
+        // returns; only the completion marker is appended here. The returned
+        // string still carries the complete transcript for the application log
+        // and the release-info-change detection below.
         const QString attemptOutput = runPrivilegedRequest(
             shellTitle,
             {helperCommand, diskPath, componentPath, attemptCommand},
             QByteArray(), &attemptOk, false, shellKind);
-        if (!attemptOutput.isEmpty()) {
-            appendShellOutput(attemptOutput.trimmed());
-        }
         appendShellOutput(attemptOk ? QStringLiteral("[exit 0]") : QStringLiteral("[command failed]"));
         const QString shellDetail = attemptOutput.trimmed().isEmpty()
             ? QStringLiteral("(no command output)")
@@ -14147,8 +15313,11 @@ void MainWindow::refreshCapabilities()
     QString placeholderNote;
 
     if (hostScope) {
-        capabilities = CapabilityChecker::capabilitiesFromHostEvidence(
-            m_hostDiagnosticCache.value(QStringLiteral("host-capabilities")));
+        capabilities = CapabilityChecker::capabilitiesFromRepairEvidence(
+            m_hostDiagnosticCache.value(QStringLiteral("capabilities")),
+            m_hostDiagnosticCache.value(QStringLiteral("backend")),
+            QCoreApplication::translate("CapabilityChecker", "Host"),
+            /*targetScope=*/false);
         haveEvidence = !capabilities.isEmpty();
         if (!haveEvidence) {
             placeholderNote = tr("Run running-host diagnostics in Host Maintenance to populate this table.");
@@ -14167,9 +15336,15 @@ void MainWindow::refreshCapabilities()
         }
     }
 
-    // Populate with sorting disabled so a mid-fill sort can never reorder or
-    // lose rows, then re-enable and re-apply the active (or default) sort.
+    // Populate with sorting disabled (this table stays unsorted so the curated
+    // repairToolKeyOrder() row order and the per-row Action-cell widgets stay
+    // aligned). Clear any Action-column Install button left over from the
+    // previous render first: the widget is placed per scope/row and must never
+    // leak onto a different row when the scope switches.
     m_capabilityTable->setSortingEnabled(false);
+    for (int row = 0; row < m_capabilityTable->rowCount(); ++row) {
+        m_capabilityTable->setCellWidget(row, 6, nullptr);
+    }
     if (!haveEvidence) {
         m_capabilityTable->setRowCount(1);
         QTableWidgetItem *placeholder = readOnlyItem(tr("No capability evidence cached"));
@@ -14213,7 +15388,7 @@ void MainWindow::refreshCapabilities()
                 auto *installButton = new QPushButton(themedIcon(QStringLiteral("system-software-install")), tr("Install"));
                 installButton->setToolTip(capability.targetScope
                     ? tr("Install %1 into the selected repair target.").arg(suggestedPackage)
-                    : tr("Install %1 on the recovery host with your package manager.").arg(suggestedPackage));
+                    : tr("Install %1 on the running host.").arg(suggestedPackage));
                 const bool targetScope = capability.targetScope;
                 connect(installButton, &QPushButton::clicked, this, [this, suggestedPackage, targetScope] {
                     installMissingCapability(suggestedPackage, targetScope);
@@ -14230,8 +15405,9 @@ void MainWindow::refreshCapabilities()
             }
         }
     }
-    m_capabilityTable->setSortingEnabled(true);
-    applyActiveSort(m_capabilityTable, 0, Qt::AscendingOrder);
+    // Sorting is intentionally left disabled (see the table setup note): the
+    // curated repairToolKeyOrder() order is meaningful and the Action-column
+    // cell widgets must stay on the rows their items belong to.
 
     QTimer::singleShot(0, this, [this] { resizeCapabilityRows(); });
 
@@ -14239,19 +15415,68 @@ void MainWindow::refreshCapabilities()
                     hostScope
                         ? QStringLiteral("Host capability evidence refreshed from the cached running-host diagnostics.")
                         : QStringLiteral("Repair-target capability evidence refreshed from the cached target diagnostics."));
+
+    // The cached capability preamble is the single source of truth for the
+    // Snapshots and EFI boot entries tab visibility too, so re-apply it here.
+    updateTabVisibility();
+    // The snapshot rollback + install gating reads the same cached evidence;
+    // refresh it so a diagnostics run or an install flips the affordances.
+    updateSnapshotControls();
 }
 
 // Boot capabilities table Install action. Target-scope rows install the
 // suggested package into the selected repair target through the guarded
 // install-target-package helper verb (simulation-first, fail-closed); a missing
-// repair target refuses the request. Host-scope rows are never installed on the
-// running host (host installs are the user's job) and instead surface a clear
-// reminder naming the package.
+// repair target refuses the request. Host-scope rows install the package on the
+// running host through the guarded install-host-package verb (Host Maintenance
+// required), never a passive reminder.
 void MainWindow::installMissingCapability(const QString &package, bool targetScope)
 {
     if (!targetScope) {
-        QMessageBox::information(this, tr("Install on the recovery host"),
-            tr("Boot Bitch does not install packages on the running host. Install the package '%1' on the recovery host with your package manager, then refresh capabilities.").arg(package));
+        QString reason;
+        if (!hostMaintenanceReady(&reason)) {
+            QMessageBox::warning(this, tr("Host Maintenance required"), reason);
+            return;
+        }
+
+        if (QMessageBox::question(this, tr("Install on the running host"),
+                tr("Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.").arg(package),
+                QMessageBox::Yes | QMessageBox::Cancel, QMessageBox::Cancel) != QMessageBox::Yes) {
+            return;
+        }
+
+        BusyOperationScope busy(this, tr("Install %1").arg(package));
+        bool installed = false;
+        const QString output = runPrivilegedRequest(
+            tr("Install %1 on the running host").arg(package),
+            {QStringLiteral("install-host-package"), m_hostPrimaryPath, m_hostPrimaryComponentPath, package},
+            QByteArray(), &installed, true, LogEntryKind::Repair);
+        if (!installed) {
+            appendLog(tr("Install output\nPackage: %1\n%2").arg(package, localizeHelperLogLines(output.trimmed())),
+                      QStringLiteral("ERROR"), LogEntryKind::Repair);
+            QMessageBox::critical(this, tr("Install failed"),
+                tr("The guarded package install failed. Review the captured helper output in Logs."));
+            return;
+        }
+
+        appendLog(tr("Install output\nPackage: %1\n%2").arg(package, localizeHelperLogLines(output.trimmed())),
+                  QStringLiteral("INFO"), LogEntryKind::Repair);
+        // The helper reports whether the install actually changed the host (an
+        // already-installed package is a no-op) as the stable
+        // `Repair change status install-host-package: changed|unchanged` verdict.
+        const QMap<QString, QString> installStatuses = parseRepairChangeStatuses(output);
+        const bool installProvenUnchanged = installStatuses.contains(QStringLiteral("install-host-package"))
+            && repairChangeStatusIsUnchanged(installStatuses.value(QStringLiteral("install-host-package")));
+        if (installProvenUnchanged) {
+            appendLog(tr("Package '%1' was already installed on the running host; no changes were made, so cached diagnostics remain usable.").arg(package),
+                      QStringLiteral("INFO"), LogEntryKind::Repair);
+        } else {
+            // A package install changes the host's capability evidence:
+            // invalidate the cached running-host diagnostics.
+            invalidateDiagnosticsForRepair({QStringLiteral("install-host-package")}, /*failed=*/false,
+                                           QStringLiteral("package installed on the running host"), LogEntryKind::Repair);
+        }
+        refreshCapabilities();
         return;
     }
 
@@ -14283,11 +15508,25 @@ void MainWindow::installMissingCapability(const QString &package, bool targetSco
 
     appendLog(tr("Install output\nPackage: %1\n%2").arg(package, localizeHelperLogLines(output.trimmed())),
               QStringLiteral("INFO"), LogEntryKind::Repair);
-    // A package install changes the target's capability evidence: invalidate the
-    // cached target diagnostics, then refresh the Boot capabilities scan so the
-    // row reflects the new state.
-    invalidateDiagnosticsForRepair({QStringLiteral("install-target-package")}, /*failed=*/false,
-                                   QStringLiteral("package installed into the repair target"), LogEntryKind::Repair);
+    // The helper reports whether the install actually changed the target (an
+    // already-installed package is a no-op) as the stable
+    // `Repair change status install-target-package: changed|unchanged` verdict.
+    // That verdict is the single source of truth here: invalidate the cached
+    // evidence only when the helper reported a change. A missing verdict keeps
+    // the fail-safe changed behavior.
+    const QMap<QString, QString> installStatuses = parseRepairChangeStatuses(output);
+    const bool installProvenUnchanged = installStatuses.contains(QStringLiteral("install-target-package"))
+        && repairChangeStatusIsUnchanged(installStatuses.value(QStringLiteral("install-target-package")));
+    if (installProvenUnchanged) {
+        appendLog(tr("Package '%1' was already installed in the repair target; no changes were made, so cached diagnostics remain usable.").arg(package),
+                  QStringLiteral("INFO"), LogEntryKind::Repair);
+    } else {
+        // A package install changes the target's capability evidence: invalidate
+        // the cached target diagnostics.
+        invalidateDiagnosticsForRepair({QStringLiteral("install-target-package")}, /*failed=*/false,
+                                       QStringLiteral("package installed into the repair target"), LogEntryKind::Repair);
+    }
+    // Refresh the Boot capabilities scan so the row reflects the new state.
     refreshCapabilities();
 }
 
@@ -14447,7 +15686,7 @@ void MainWindow::updateDiagnosticDetails()
         // hint after a repair lives in the availability label above, so the
         // results pane stays a plain placeholder instead of a repair-gating
         // message.
-        m_diagnosticResults->setPlainText(localizeHelperLogLines(display));
+        m_diagnosticResults->setPlainText(displayLocalizedHelperOutput(display));
     }
     if (m_copyDiagnosticButton) {
         m_copyDiagnosticButton->setEnabled(!cached.isEmpty());
@@ -14707,8 +15946,6 @@ QString MainWindow::diagnosticResultForKey(const QString &key) const
         walk(walk, disk);
         if (!found) stream << "No Btrfs filesystem is currently visible in this device tree.\n";
         if (targetScope) stream << "Subvolume inspection becomes available after read-only target mounting.\n";
-    } else if (key == QStringLiteral("host-capabilities")) {
-        stream << "Running-host prerequisite inventory is collected by the privileged read-only host diagnostic backend.\n";
     } else if (key == QStringLiteral("mapper") || key == QStringLiteral("luks")) {
         bool found = false;
         auto walk = [&](auto &&self, const DeviceNode &node) -> void {
@@ -14756,12 +15993,12 @@ QString MainWindow::diagnosticRequestTitle(bool hostScope, const QString &key) c
 {
     if (hostScope) {
         return key == QStringLiteral("all") || key == QStringLiteral("report")
-            ? tr("Run running-host diagnostics")
-            : tr("Read-only running-host diagnostic");
+            ? tr("Running Host diagnostics")
+            : tr("Running Host diagnostic");
     }
     return key == QStringLiteral("all")
-        ? tr("Run All target diagnostics")
-        : tr("Read-only target diagnostic");
+        ? tr("Running Target diagnostics")
+        : tr("Running Target diagnostic");
 }
 
 QString MainWindow::diagnosticRequestIdentity(bool hostScope, const QString &key) const
@@ -15025,6 +16262,16 @@ QString MainWindow::currentTargetDiagnosticCacheIdentity() const
     // /dev/dm-N); using that transient alias would discard valid evidence
     // immediately after a harmless validation refresh. Mutating repairs and
     // explicit target changes still invalidate this cache explicitly.
+    //
+    // While Host Maintenance is active the committed repair target is parked in
+    // m_rememberedTargetPath and m_previewTargetPath is cleared; the target
+    // diagnostic cache still belongs to that parked target, so the identity
+    // must keep naming it (never the empty preview path) or the capability
+    // table's scope selector would report the untouched cache as "belongs to a
+    // different target" and drop the rows after a host-maintenance round-trip.
+    if (m_hostMaintenanceMode && m_previewTargetPath.isEmpty()) {
+        return m_rememberedTargetPath;
+    }
     return m_previewTargetPath;
 }
 
@@ -15039,12 +16286,14 @@ void MainWindow::clearTargetDiagnosticCache()
 // Splits the helper's shared capability preamble out of one individual
 // diagnostic result. The preamble starts with the stable
 // "Repair capability probes (read-only..." header and is a contiguous block of
-// `Repair ...` lines plus the running-host `Host ...` evidence lines (snapshot
-// rollback, reboot and the default-entry capability/probe evidence); everything
-// after it is the diagnostic's own output. The preamble is never dropped:
+// `Repair ...` lines plus the scope-neutral `Storage ...` inspection lines, the
+// repair-target `Snapshot rollback:`/`Snapshot rollback evidence:` lines and
+// the running-host `Host ...` evidence lines (snapshot rollback, reboot and the
+// default-entry capability/probe evidence); everything after it is the
+// diagnostic's own output. The preamble is never dropped:
 // callers cache it under the dedicated capability key so
 // MainWindow::repairToolAvailable() keeps its single source of truth and the
-// host-scope accessors can fail closed.
+// host/target-scope snapshot accessors can fail closed.
 void MainWindow::splitDiagnosticCapabilityPreamble(const QString &captured,
                                                    QString *body,
                                                    QString *preamble)
@@ -15072,14 +16321,20 @@ void MainWindow::splitDiagnosticCapabilityPreamble(const QString &captured,
         return;
     }
 
-    // The preamble is the contiguous run of `Repair ...` lines (plus the
-    // running-host `Host ...` evidence lines) that starts at the header and
-    // ends at the first blank or unrelated line.
+    // The preamble is the contiguous run of `Repair ...` lines plus the
+    // scope-neutral `Storage ...` inspection lines, the repair-target
+    // `Snapshot rollback:`/`Snapshot rollback evidence:` lines and the
+    // running-host `Host ...` evidence lines that starts at the header and ends
+    // at the first blank or unrelated line.
     int end = start;
     while (end < lines.size()) {
         const QString line = lines.at(end).trimmed();
         if (line.isEmpty()
-            || (!line.startsWith(QStringLiteral("Repair ")) && !line.startsWith(QStringLiteral("Host ")))) {
+            || (!line.startsWith(QStringLiteral("Repair "))
+                && !line.startsWith(QStringLiteral("Host "))
+                && !line.startsWith(QStringLiteral("Snapshot rollback"))
+                && !line.startsWith(QStringLiteral("Storage lvm inspection"))
+                && !line.startsWith(QStringLiteral("Storage software raid")))) {
             break;
         }
         ++end;
@@ -15257,7 +16512,7 @@ bool MainWindow::currentScopeEvidenceStale(QString *reason) const
     return false;
 }
 
-bool MainWindow::shouldScheduleEvidenceRefresh(QString *reason) const
+bool MainWindow::shouldScheduleEvidenceRefresh(QString *reason, bool force) const
 {
     auto reject = [reason](const QString &text) {
         if (reason) {
@@ -15278,12 +16533,20 @@ bool MainWindow::shouldScheduleEvidenceRefresh(QString *reason) const
         return reject(scopeReason);
     }
 
-    QString evidenceReason;
-    if (!currentScopeEvidenceStale(&evidenceReason)) {
-        return reject(tr("Current-scope diagnostic evidence is fresh."));
-    }
-    if (reason) {
-        *reason = evidenceReason;
+    // The freshness gate only exists to avoid a redundant regeneration after an
+    // invalidation-triggered refresh (a repair, a target change). A scope switch
+    // is not that case: it must re-run diagnostics even when the cached evidence
+    // for the scope being re-entered is still fresh, so the forced path skips
+    // this check entirely. The freshness decision stays authoritative for every
+    // non-forced caller.
+    if (!force) {
+        QString evidenceReason;
+        if (!currentScopeEvidenceStale(&evidenceReason)) {
+            return reject(tr("Current-scope diagnostic evidence is fresh."));
+        }
+        if (reason) {
+            *reason = evidenceReason;
+        }
     }
     return true;
 }
@@ -15511,6 +16774,13 @@ bool MainWindow::repairEvidenceReadyForTool(const QString &toolKey, QString *rea
 // line, or carries a legacy English-prose reason (which has no key to map).
 QString MainWindow::rawCapabilityReasonKey(const QString &toolKey) const
 {
+    if (!m_hostMaintenanceMode
+        && m_targetDiagnosticCacheIdentity != currentTargetDiagnosticCacheIdentity()) {
+        // Evidence cached for another target never describes this scope; fail
+        // closed exactly like repairToolAvailable()/capabilityState() so a
+        // stale/foreign target cache cannot yield a reason key.
+        return QString();
+    }
     const auto &cache = m_hostMaintenanceMode ? m_hostDiagnosticCache : m_targetDiagnosticCache;
     QString evidence = cache.value(QStringLiteral("capabilities"));
     if (evidence.isEmpty()) {
@@ -15552,20 +16822,59 @@ QString MainWindow::missingToolGuidance(const QString &toolKey, const QString &r
     const bool dkmsTool = toolKey == QStringLiteral("dkms");
     const bool dkmsMissing = reasonKey == QStringLiteral("missing-dkms")
         || reasonKey == QStringLiteral("missing-dkms-arch")
-        || reasonKey == QStringLiteral("missing-dkms-alpine");
+        || reasonKey == QStringLiteral("missing-dkms-alpine")
+        || reasonKey == QStringLiteral("missing-akmods");
     if (dkmsTool && dkmsMissing) {
-        const QString family = detectedDistributionFamily().trimmed().toLower();
         QString package = QStringLiteral("dkms");
         QString label = QStringLiteral("DKMS");
-        if (family.contains(QStringLiteral("alpine"))) {
-            package = QStringLiteral("akms");
-            label = QStringLiteral("AKMS");
-        } else if (family.contains(QStringLiteral("fedora"))
-                   || family.contains(QStringLiteral("rhel"))) {
+        if (reasonKey == QStringLiteral("missing-akmods")) {
+            // The reason key itself already names the Fedora/RHEL native build
+            // system; do not re-derive it from the (host) distribution family.
             package = QStringLiteral("akmods");
             label = QStringLiteral("akmods");
+        } else {
+            const QString family = detectedDistributionFamily().trimmed().toLower();
+            if (family.contains(QStringLiteral("alpine"))) {
+                package = QStringLiteral("akms");
+                label = QStringLiteral("AKMS");
+            } else if (family.contains(QStringLiteral("fedora"))
+                       || family.contains(QStringLiteral("rhel"))) {
+                package = QStringLiteral("akmods");
+                label = QStringLiteral("akmods");
+            }
         }
         return tr("Missing module-build system (%1): install the %2 package from the Boot capabilities table.").arg(label, package);
+    }
+
+    // A `*-no-build-tree` reason means the module-build system is present but
+    // the matching kernel headers/devel build tree is missing.  The correct
+    // package is version-specific (kernel-devel on Fedora/RHEL, linux-headers
+    // elsewhere), so it is named here rather than offered as a one-click
+    // install whose exact version the guarded backend would have to guess.
+    const bool dkmsNoBuildTree = reasonKey == QStringLiteral("akmods-no-build-tree")
+        || reasonKey == QStringLiteral("dkms-no-build-tree")
+        || reasonKey == QStringLiteral("akms-no-build-tree")
+        || reasonKey == QStringLiteral("akms-headers-newer")
+        || reasonKey == QStringLiteral("arch-dkms-no-build-tree")
+        || reasonKey == QStringLiteral("alpine-dkms-no-build-tree");
+    if (dkmsTool && dkmsNoBuildTree) {
+        // Alpine's akms backend emits the exact version-specific dev package as
+        // the reason's second param (e.g. linux-lts-dev) plus the "boot a
+        // kernel that matches the installed headers" guidance. The localized
+        // reason already renders both fully and nothing is installable (the
+        // unversioned dev package tracks the newest kernel, so apk cannot
+        // install the older headers), so no additional install hint is added —
+        // it would only name a wrong package such as linux-headers.
+        if (reasonKey == QStringLiteral("akms-no-build-tree")
+            || reasonKey == QStringLiteral("akms-headers-newer")) {
+            return QString();
+        }
+        const QString family = detectedDistributionFamily().trimmed().toLower();
+        const QString package = (family.contains(QStringLiteral("fedora"))
+                                 || family.contains(QStringLiteral("rhel")))
+            ? QStringLiteral("kernel-devel")
+            : QStringLiteral("linux-headers");
+        return tr("Missing kernel build tree: install the matching %1 package for this kernel.").arg(package);
     }
 
     static const QHash<QString, QPair<QString, QString>> guidance = {
@@ -15965,6 +17274,21 @@ RepairResultPhrases repairResultPhrases(const QString &toolKey)
     return vocabulary.value(toolKey, vocabulary.value(QString()));
 }
 
+// Per-result vocabulary for the module-build (dkms) stage, worded from the
+// detected module build system (DKMS/AKMS/akmods) instead of a hardcoded
+// "DKMS".  This mirrors repairResultPhrases() for the dkms key; every other
+// stage keeps its static vocabulary.
+RepairResultPhrases moduleBuildResultPhrases(const QString &label)
+{
+    RepairResultPhrases phrases;
+    phrases.changed = MainWindow::tr("%1 modules rebuilt — changes were applied").arg(label);
+    phrases.unchanged = MainWindow::tr("%1 modules already current — no changes").arg(label);
+    phrases.failed = MainWindow::tr("%1 rebuild failed").arg(label);
+    phrases.skipped = MainWindow::tr("%1 rebuild not checked").arg(label);
+    phrases.notRun = MainWindow::tr("%1 rebuild did not run").arg(label);
+    return phrases;
+}
+
 // The helper's proven-unchanged status is "unchanged|<reason>"; the reason is
 // the audit evidence that explains why the stage could safely skip its write.
 QString repairChangeStatusReason(const QString &status)
@@ -15995,7 +17319,10 @@ QString MainWindow::repairResultSymbol(RepairResultCategory category)
 QString MainWindow::repairResultSummary(RepairResultCategory category, const QString &toolKey,
                                         const QString &reason, const QString &detail)
 {
-    const RepairResultPhrases phrases = repairResultPhrases(toolKey);
+    const bool moduleBuild = toolKey == QStringLiteral("dkms");
+    const RepairResultPhrases phrases = moduleBuild
+        ? moduleBuildResultPhrases(detectedModuleBuildSystemLabel())
+        : repairResultPhrases(toolKey);
     QString phrase;
     switch (category) {
     case RepairResultCategory::Success:
@@ -16029,8 +17356,13 @@ QString MainWindow::repairResultSummary(RepairResultCategory category, const QSt
 
 QString MainWindow::repairResultStageLine(const RepairStageResult &stage)
 {
-    const QString name = stage.toolKey.isEmpty() ? QStringLiteral("unknown") : stage.toolKey;
-    const RepairResultPhrases phrases = repairResultPhrases(stage.toolKey);
+    const bool moduleBuild = stage.toolKey == QStringLiteral("dkms");
+    const QString name = moduleBuild
+        ? detectedModuleBuildSystemLabel()
+        : (stage.toolKey.isEmpty() ? QStringLiteral("unknown") : stage.toolKey);
+    const RepairResultPhrases phrases = moduleBuild
+        ? moduleBuildResultPhrases(detectedModuleBuildSystemLabel())
+        : repairResultPhrases(stage.toolKey);
     QString phrase;
     switch (stage.category) {
     case RepairResultCategory::Success:
@@ -16282,6 +17614,11 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
         return;
     }
     const bool targetScope = !diagnosticHostScope();
+    // Capture the scope identity for the whole run so a scope change while a
+    // section is in flight can be detected and its result discarded instead of
+    // being cached under the new scope.
+    const bool startHostScope = diagnosticHostScope();
+    const QString startTargetIdentity = currentTargetDiagnosticCacheIdentity();
     if (!targetScope && !m_hostMaintenanceMode) {
         // Failsafe: automatic regeneration must never run host diagnostics
         // outside the explicit maintenance scope (shouldScheduleEvidenceRefresh
@@ -16304,7 +17641,7 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
     if (m_runAllDiagnosticsButton) {
         m_runAllDiagnosticsButton->setText(tr("Running…"));
     }
-    setProgressDetail(tr("Running diagnostics…"));
+    setProgressDetail(targetScope ? tr("Running Target diagnostics…") : tr("Running Host diagnostics…"));
 
     for (int sectionIndex = 0; sectionIndex < ordered.size(); ++sectionIndex) {
         const QString key = ordered.at(sectionIndex);
@@ -16312,6 +17649,28 @@ void MainWindow::runDiagnosticSections(const QStringList &sections)
         const QString captured = targetScope
             ? runTargetDiagnosticHelper(key, &ok)
             : runHostDiagnosticHelper(key, &ok);
+
+        // A scope change while the request was in flight makes this section
+        // belong to a scope that is no longer selected. Never cache one
+        // scope's diagnostics as another's: drop the stale result and re-arm
+        // regeneration for the now-current scope.
+        if (diagnosticHostScope() != startHostScope
+            || currentTargetDiagnosticCacheIdentity() != startTargetIdentity) {
+            appendLog(tr("Discarded %1 diagnostics because the active scope changed while the request was running.")
+                          .arg(startHostScope ? tr("Host") : tr("Target")),
+                      QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+            invalidateAllActiveScopeDiagnostics();
+            m_scopeChangeRefreshPending = true;
+            m_scopeChangeRefreshReason = tr("scope changed during diagnostics");
+            QTimer::singleShot(0, this, &MainWindow::runDeferredPrivilegedWork);
+            if (m_runAllDiagnosticsButton) {
+                m_runAllDiagnosticsButton->setText(tr("Run All"));
+            }
+            m_diagnosticsRunInProgress = false;
+            clearProgressDetail();
+            updateShellRunButtonState();
+            return;
+        }
         if (!ok || captured.trimmed().isEmpty()) {
             // A failed section stays stale and keeps its repair tool gated
             // until a later regeneration succeeds.
@@ -16402,6 +17761,11 @@ void MainWindow::runSelectedDiagnostic()
 
     const QString key = item->data(Qt::UserRole).toString();
     const bool targetScope = !diagnosticHostScope();
+    // Capture the scope identity before the privileged request so a scope
+    // change while the diagnostic is in flight can be detected and the stale
+    // result discarded instead of cached under the new scope.
+    const bool startHostScope = diagnosticHostScope();
+    const QString startTargetIdentity = currentTargetDiagnosticCacheIdentity();
     if (!targetScope) {
         // Host-scope diagnostics are a deliberate maintenance mode; refuse
         // before any cache is touched or a helper request is sent.
@@ -16442,12 +17806,32 @@ void MainWindow::runSelectedDiagnostic()
     m_copyDiagnosticButton->setEnabled(false);
     m_saveDiagnosticButton->setEnabled(false);
 
-    BusyOperationScope busy(this, tr("Running diagnostic: %1").arg(item->text()));
+    const QString scopeWord = targetScope ? tr("Target") : tr("Host");
+    BusyOperationScope busy(this, tr("Running %1 diagnostic: %2").arg(scopeWord, item->text()));
 
     bool ok = true;
     const QString result = targetScope
         ? runTargetDiagnosticHelper(key, &ok)
         : runHostDiagnosticHelper(key, &ok);
+
+    // A scope change while the request was in flight makes this result belong
+    // to a scope that is no longer selected. Never cache one scope's
+    // diagnostics as another's: drop the stale result and re-arm regeneration
+    // for the now-current scope.
+    if (diagnosticHostScope() != startHostScope
+        || currentTargetDiagnosticCacheIdentity() != startTargetIdentity) {
+        appendLog(tr("Discarded %1 diagnostics because the active scope changed while the request was running.")
+                      .arg(startHostScope ? tr("Host") : tr("Target")),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+        invalidateAllActiveScopeDiagnostics();
+        m_scopeChangeRefreshPending = true;
+        m_scopeChangeRefreshReason = tr("scope changed during diagnostics");
+        QTimer::singleShot(0, this, &MainWindow::runDeferredPrivilegedWork);
+        updateDiagnosticDetails();
+        updateFullRepairSummary();
+        refreshCapabilities();
+        return;
+    }
 
     // An individual diagnostic must stay purely its own subject. The helper
     // includes the shared capability preamble in every individual run so the
@@ -16789,11 +18173,20 @@ void MainWindow::runAllDiagnostics()
     }
 
     BusyOperationScope busy(this, m_evidenceRefreshInProgress
-        ? tr("Regenerating diagnostics automatically")
-        : tr("Running all diagnostics"));
+        ? (hostScope
+            ? tr("Regenerating Host diagnostics automatically")
+            : tr("Regenerating Target diagnostics automatically"))
+        : (hostScope
+            ? tr("Running all Host diagnostics")
+            : tr("Running all Target diagnostics")));
 
     m_diagnosticsRunInProgress = true;
     const bool targetScope = !diagnosticHostScope();
+    // Capture the scope identity before the cache reset and the privileged
+    // request so a scope change while the report is in flight can be detected
+    // and the stale result discarded instead of cached under the new scope.
+    const bool startHostScope = diagnosticHostScope();
+    const QString startTargetIdentity = currentTargetDiagnosticCacheIdentity();
     QString combined;
     bool ok = true;
 
@@ -16832,20 +18225,50 @@ void MainWindow::runAllDiagnostics()
         // Keep the combined report in the Diagnostics pane and application log.
         // A modal output window obscures the report users need to review, and
         // individual diagnostics already use the persistent results pane.
-        setProgressDetail(tr("Running diagnostics…"));
+        setProgressDetail(targetScope ? tr("Running Target diagnostics…") : tr("Running Host diagnostics…"));
         combined = runTargetDiagnosticHelper(QStringLiteral("all"), &ok, false);
-        if (ok && !combined.isEmpty()) {
+        const bool cancelled = combined.contains(QString::fromLatin1(kDiagnosticCancelledMarker));
+        if (cancelled) {
+            // A cancelled run must never cache partial evidence: clear the
+            // register so repair tools stay disabled until regeneration.
+            invalidateAllTargetDiagnostics();
+        } else if (ok && !combined.isEmpty()) {
             cacheTargetDiagnosticBundle(combined);
             m_targetDiagnosticsNeedRegeneration = false;
         }
     } else {
         combined = runHostDiagnosticHelper(QStringLiteral("all"), &ok, false);
-        if (ok && !combined.isEmpty()) {
+        const bool cancelled = combined.contains(QString::fromLatin1(kDiagnosticCancelledMarker));
+        if (cancelled) {
+            clearHostDiagnosticCache();
+        } else if (ok && !combined.isEmpty()) {
             cacheHostDiagnosticBundle(combined);
         }
     }
 
-    m_diagnosticResults->setPlainText(localizeHelperLogLines(combined));
+    // A scope change while the request was in flight makes this report belong
+    // to a scope that is no longer selected. Never cache one scope's
+    // diagnostics as another's: drop the stale result and re-arm regeneration
+    // for the now-current scope.
+    if (diagnosticHostScope() != startHostScope
+        || currentTargetDiagnosticCacheIdentity() != startTargetIdentity) {
+        appendLog(tr("Discarded %1 diagnostics because the active scope changed while the request was running.")
+                      .arg(startHostScope ? tr("Host") : tr("Target")),
+                  QStringLiteral("INFO"), LogEntryKind::Diagnostic);
+        invalidateAllActiveScopeDiagnostics();
+        m_scopeChangeRefreshPending = true;
+        m_scopeChangeRefreshReason = tr("scope changed during diagnostics");
+        QTimer::singleShot(0, this, &MainWindow::runDeferredPrivilegedWork);
+        if (m_runAllDiagnosticsButton) {
+            m_runAllDiagnosticsButton->setText(tr("Run All"));
+        }
+        m_diagnosticsRunInProgress = false;
+        clearProgressDetail();
+        updateShellRunButtonState();
+        return;
+    }
+
+    m_diagnosticResults->setPlainText(displayLocalizedHelperOutput(combined));
     m_copyDiagnosticButton->setEnabled(!combined.isEmpty());
     m_saveDiagnosticButton->setEnabled(!combined.isEmpty());
     // The repair page has its own readiness controls. Refresh them immediately
@@ -16893,10 +18316,19 @@ void MainWindow::runAllDiagnostics()
     }
 }
 
-void MainWindow::scheduleEvidenceRefresh(const QString &reason)
+void MainWindow::scheduleEvidenceRefresh(const QString &reason, bool force)
 {
     if (!m_autoRefreshDiagnostics || !m_autoRefreshDiagnostics->isChecked()) {
         return;
+    }
+
+    // A scope switch forces the regeneration through every scheduler path: it
+    // latches the intent so the deferred (privileged-op-owned gate), pending
+    // (session-not-ready) and coalesced (timer) paths all observe it, and it
+    // survives a re-schedule from runDeferredPrivilegedWork() /
+    // handlePrivilegedSessionEstablished() that calls back without the flag.
+    if (force) {
+        m_forceScopeEvidenceRefresh = true;
     }
 
     if (m_privilegedOperationActive) {
@@ -16917,7 +18349,7 @@ void MainWindow::scheduleEvidenceRefresh(const QString &reason)
         return;
     }
 
-    if (!shouldScheduleEvidenceRefresh()) {
+    if (!shouldScheduleEvidenceRefresh(nullptr, m_forceScopeEvidenceRefresh)) {
         return;
     }
 
@@ -16978,7 +18410,12 @@ void MainWindow::runScheduledEvidenceRefresh()
         }
         return;
     }
-    if (!shouldScheduleEvidenceRefresh()) {
+    if (!shouldScheduleEvidenceRefresh(nullptr, m_forceScopeEvidenceRefresh)) {
+        // The refresh was refused (auto-refresh disabled or no ready scope).
+        // Consume any latched forced-scope-switch intent so a later unrelated
+        // invalidation-triggered refresh is not silently promoted to a forced
+        // full report.
+        m_forceScopeEvidenceRefresh = false;
         m_evidenceRefreshReason.clear();
         return;
     }
@@ -16988,7 +18425,9 @@ void MainWindow::runScheduledEvidenceRefresh()
         return;
     }
 
-    BusyOperationScope busy(this, tr("Regenerating diagnostics"));
+    BusyOperationScope busy(this, diagnosticHostScope()
+        ? tr("Regenerating Host diagnostics")
+        : tr("Regenerating Target diagnostics"));
 
     m_evidenceRefreshInProgress = true;
     const QString reason = m_evidenceRefreshReason;
@@ -17005,10 +18444,14 @@ void MainWindow::runScheduledEvidenceRefresh()
     // the same privileged session. The mapping table decides which case
     // applies; the executor never invents its own section list.
     const bool targetScope = !diagnosticHostScope();
-    const bool fullRefresh = targetScope
-        ? (m_targetDiagnosticsNeedRegeneration
-            || m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty())
-        : m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty();
+    // A forced scope-switch refresh always regenerates the complete report
+    // (the cache for the re-entered scope is fresh, so the scoped-invalidation
+    // path would otherwise find no stale sections and do nothing).
+    const bool fullRefresh = m_forceScopeEvidenceRefresh
+        || (targetScope
+            ? (m_targetDiagnosticsNeedRegeneration
+                || m_targetDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty())
+            : m_hostDiagnosticCache.value(QStringLiteral("report")).trimmed().isEmpty());
     if (fullRefresh) {
         runAllDiagnostics();
     } else {
@@ -17030,6 +18473,10 @@ void MainWindow::runScheduledEvidenceRefresh()
                     regenerated ? QStringLiteral("INFO") : QStringLiteral("WARNING"),
                     LogEntryKind::Diagnostic);
     m_evidenceRefreshInProgress = false;
+    // The forced scope-switch regeneration has now run (or failed to produce
+    // evidence). Consume the latched intent so the next refresh is only forced
+    // by a fresh scope switch, not by this one.
+    m_forceScopeEvidenceRefresh = false;
     updateShellRunButtonState();
 }
 
@@ -17472,6 +18919,20 @@ QString MainWindow::detectedModuleBuildSystemLabel() const
         return QStringLiteral("DKMS");
     }
     return QStringLiteral("DKMS");
+}
+
+// Display-localizes one helper transcript: first the helper's own `msg:` lines
+// are localized, then the stable `dkms` module-build key token is rewritten to
+// the detected build-system name (AKMS / AKMODS / DKMS) so the rendered log
+// names the real backend. The cached evidence and every parser keep the
+// machine-read `dkms` key untouched; this is the display layer only.
+QString MainWindow::displayLocalizedHelperOutput(const QString &raw) const
+{
+    QString label = detectedModuleBuildSystemLabel();
+    if (label.compare(QStringLiteral("akmods"), Qt::CaseInsensitive) == 0) {
+        label = QStringLiteral("AKMODS");
+    }
+    return rewriteModuleBuildKeyForDisplay(localizeHelperLogLines(raw), label);
 }
 
 QString MainWindow::rebuildModuleStageText() const
@@ -19122,8 +20583,9 @@ void MainWindow::appendDiagnosticLog(const QString &key, const QString &title,
         output = QStringLiteral("(diagnostic produced no output)");
     } else {
         // Phase 2: localize the helper's own `msg:` log lines for display
-        // while keeping the machine-parsed contract lines byte-identical.
-        output = localizeHelperLogLines(output);
+        // while keeping the machine-parsed contract lines byte-identical, then
+        // rewrite the module-build key token to the detected build-system name.
+        output = displayLocalizedHelperOutput(output);
     }
 
     // Keep a self-contained section in the application log for every
@@ -19331,23 +20793,22 @@ void MainWindow::showAboutDialog()
 
 // ---- MainWindow: responsive layout ------------------------------------------
 
-// Every splitter pane keeps at least a fifth of the splitter's current size so
-// dragging left/right or up/down can never hide a pane behind its neighbour.
-// The pixel minimum scales with the window instead of a fixed row count; each
-// pane's original minimum stays as its floor.
-static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1)
+// Every splitter pane keeps at least the requested fraction of the splitter's
+// current size (a fifth by default) so dragging left/right or up/down can never
+// hide a pane behind its neighbour. The pixel minimum scales with the window
+// instead of a fixed row count; each pane's original minimum stays as its floor.
+static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1, int minimumPercent = 20)
 {
     if (!splitter) {
         return;
     }
     static QHash<const QWidget *, QSize> baseMinimums;
-    constexpr int kMinimumPercent = 20;
     const bool horizontal = splitter->orientation() == Qt::Horizontal;
     const int total = horizontal ? splitter->width() : splitter->height();
     if (total <= 0) {
         return;
     }
-    const int minimum = qMax(48, total * kMinimumPercent / 100);
+    const int minimum = qMax(48, total * minimumPercent / 100);
     for (int index = 0; index < splitter->count(); ++index) {
         if (index == skipIndex) {
             continue;
@@ -19360,13 +20821,17 @@ static void applyFractionalPaneMinimum(QSplitter *splitter, int skipIndex = -1)
             baseMinimums.insert(pane, QSize(pane->minimumWidth(), pane->minimumHeight()));
         }
         const QSize base = baseMinimums.value(pane);
+        // The pane also keeps its own content minimum: a pane whose child layout
+        // needs more than the fractional floor (e.g. the Settings capabilities
+        // pane with its 8-row table) must never be squeezed below that, or its
+        // trailing controls would be clipped out of the scroll range.
         if (horizontal) {
-            const int wanted = qMax(base.width(), minimum);
+            const int wanted = qMax(qMax(base.width(), minimum), pane->minimumSizeHint().width());
             if (pane->minimumWidth() != wanted) {
                 pane->setMinimumWidth(wanted);
             }
         } else {
-            const int wanted = qMax(base.height(), minimum);
+            const int wanted = qMax(qMax(base.height(), minimum), pane->minimumSizeHint().height());
             if (pane->minimumHeight() != wanted) {
                 pane->setMinimumHeight(wanted);
             }
@@ -19882,24 +21347,29 @@ void MainWindow::updateResponsiveLayout()
     const bool narrowSnapshots = availableWidth < 700;
     const bool narrowLogs = availableWidth < 820;
 
-    if (m_tabs && m_tabs->count() >= 9) {
-        QStringList labels;
-        if (availableWidth < 620) {
-            labels = {QStringLiteral("Sys"), QStringLiteral("Diag"), QStringLiteral("Boot"),
-                      QStringLiteral("Repair"), QStringLiteral("Snaps"), QStringLiteral("Shell"),
-                      QStringLiteral("Files"), QStringLiteral("Logs"), QStringLiteral("Set")};
-        } else if (availableWidth < 820) {
-            labels = {QStringLiteral("Systems"), QStringLiteral("Diag"), QStringLiteral("Boot"),
-                      QStringLiteral("Repair"), QStringLiteral("Snaps"), QStringLiteral("Shell"),
-                      QStringLiteral("File Copy"), QStringLiteral("Logs"), QStringLiteral("Settings")};
-        } else {
-            labels = {QStringLiteral("Systems"), QStringLiteral("Diagnostics"), QStringLiteral("EFI boot entries"),
-                      QStringLiteral("Repair"), QStringLiteral("Snapshots"), QStringLiteral("Chroot Shell"),
-                      QStringLiteral("File Copy"), QStringLiteral("Logs"), QStringLiteral("Settings")};
-        }
-        for (int i = 0; i < labels.size() && i < m_tabs->count(); ++i) {
-            m_tabs->setTabText(i, labels.at(i));
-        }
+    if (m_tabs) {
+        // Relabel the logical tabs through their page widgets (never positional
+        // indices, which shift when a dynamic tab is removed).
+        auto setLabel = [this](QWidget *page, const QString &label) {
+            if (!page) {
+                return;
+            }
+            const int index = m_tabs->indexOf(page);
+            if (index >= 0) {
+                m_tabs->setTabText(index, label);
+            }
+        };
+        const bool tiny = availableWidth < 620;
+        const bool mid = availableWidth < 820;
+        setLabel(m_systemsPage, tiny ? QStringLiteral("Sys") : QStringLiteral("Systems"));
+        setLabel(m_diagnosticsPage, mid ? QStringLiteral("Diag") : QStringLiteral("Diagnostics"));
+        setLabel(m_bootEntriesPage, mid ? QStringLiteral("Boot") : QStringLiteral("EFI boot entries"));
+        setLabel(m_repairPage, QStringLiteral("Repair"));
+        setLabel(m_snapshotsPage, tiny ? QStringLiteral("Snaps") : QStringLiteral("Snapshots"));
+        setLabel(m_chrootShellPage, mid ? QStringLiteral("Shell") : QStringLiteral("Chroot Shell"));
+        setLabel(m_fileCopyPage, tiny ? QStringLiteral("Files") : QStringLiteral("File Copy"));
+        setLabel(m_logsPage, QStringLiteral("Logs"));
+        setLabel(m_settingsPage, tiny ? QStringLiteral("Set") : QStringLiteral("Settings"));
         // The Shell tab follows the active scope (Host Shell vs Chroot Shell)
         // at the wide breakpoint; re-apply it after the responsive labels.
         updateChrootShellMode();
@@ -20074,36 +21544,52 @@ void MainWindow::updateResponsiveLayout()
     // Relative pane minimums for every splitter: each pane keeps at least a
     // fifth of the current splitter size, so dragging in any direction never
     // hides a pane. The tools pane of the Repair splitter keeps its explicit
-    // minimum height instead.
+    // minimum height instead. The Settings splitter uses a quarter so both the
+    // preferences/plan region and the capabilities region stay visible.
     applyFractionalPaneMinimum(m_systemSplitter);
     applyFractionalPaneMinimum(m_diagnosticSplitter);
     applyFractionalPaneMinimum(m_repairSplitter);
     applyFractionalPaneMinimum(m_snapshotSplitter);
     applyFractionalPaneMinimum(m_sessionLogSplitter);
     applyFractionalPaneMinimum(m_repairVerticalSplitter, 1);
+    applyFractionalPaneMinimum(m_settingsSplitter, -1, 25);
+    // The upper pane's natural (wrapped) height depends on the final viewport
+    // width, which is only known once the layout has settled; re-apply the
+    // default splitter sizing on the next event-loop turn so a transient narrow
+    // width can never pin the preferences row taller than its content. Mirrors
+    // updateFullRepairPlanHeight() and the resizeCapabilityRows() deferral.
+    QTimer::singleShot(0, this, &MainWindow::updateSettingsSplitterDefaults);
 }
 
 void MainWindow::updateFullRepairPlanHeight()
 {
-    if (!m_fullRepairStageList) {
+    if (!m_fullRepairStageScroll) {
         return;
     }
 
-    // The plan list keeps a few stage rows visible at minimum; the vertical
-    // splitter owns the current height, so the divider can grow the list up to
-    // its content or shrink it back to this minimum and the list scrolls past
-    // whatever does not fit.
-    constexpr int kMinVisibleRows = 3;
+    // Hug the stage rows: the plan frame's bottom content margin would pad the
+    // last stage row away from the vertical splitter handle below it.  Drop it
+    // once the group box has applied its style-derived margins so a short plan
+    // leaves no dead padding under its last row.  Idempotent: the style only
+    // re-applies margins on a style/font change, which the next pass trims.
+    if (m_fullRepairPlanBox && m_fullRepairPlanBox->layout()) {
+        QMargins planMargins = m_fullRepairPlanBox->layout()->contentsMargins();
+        if (planMargins.bottom() != 0) {
+            planMargins.setBottom(0);
+            m_fullRepairPlanBox->layout()->setContentsMargins(planMargins);
+        }
+    }
 
-    const int rowCount = m_fullRepairStageList->count();
-    const int fallbackRowHeight = qMax(28, m_fullRepairStageList->fontMetrics().lineSpacing() + 12);
-    int rowHeight = 0;
-    for (int row = 0; row < rowCount; ++row) {
-        rowHeight = qMax(rowHeight, m_fullRepairStageList->sizeHintForRow(row));
-    }
-    if (rowHeight <= 0) {
-        rowHeight = fallbackRowHeight;
-    }
+    // The plan pane sizes to its ACTUAL stage content: a few stages (e.g.
+    // Alpine's ~6, two columns) shrink the pane to ~2-3 rows so the
+    // individual-repair details pane below reclaims the freed space, while a
+    // full plan keeps a sensible maximum and the scroll area scrolls past
+    // whatever does not fit. One row remains the floor so the pane never
+    // collapses to zero.
+    constexpr int kMinVisibleRows = 1;
+    constexpr int kMaxVisibleRows = 4;
+
+    const int fallbackRowHeight = qMax(28, m_fullRepairStageScroll->fontMetrics().lineSpacing() + 12);
 
     // A word-wrapped QLabel reports a size hint measured at a much narrower
     // width than it is actually given, which would keep the plan frame taller
@@ -20117,10 +21603,29 @@ void MainWindow::updateFullRepairPlanHeight()
         }
     }
 
-    const int frame = m_fullRepairStageList->frameWidth() * 2;
-    const QMargins margins = m_fullRepairStageList->contentsMargins();
-    const int minimumHeight = kMinVisibleRows * rowHeight + frame + margins.top() + margins.bottom();
-    if (m_fullRepairStageList->minimumHeight() != minimumHeight) {
+    // The default/minimum plan-list height is the list's own wrapped content
+    // height (ResponsiveColumnsLayout::heightForWidth at the current width),
+    // clamped between the one-row floor and the many-stage maximum. This makes
+    // a short plan (Alpine) drop its dead rows so the details pane below grows,
+    // instead of reserving a fixed four-row frame.
+    int contentHeight = 0;
+    if (m_fullRepairStageList && m_fullRepairStageList->width() > 0) {
+        QLayout *stageLayout = m_fullRepairStageList->layout();
+        if (stageLayout && stageLayout->hasHeightForWidth()) {
+            contentHeight = stageLayout->heightForWidth(m_fullRepairStageList->width());
+        }
+    }
+    const int minimumHeight = qBound(kMinVisibleRows * fallbackRowHeight,
+                                     contentHeight,
+                                     kMaxVisibleRows * fallbackRowHeight);
+    if (m_fullRepairStageScroll->minimumHeight() != minimumHeight) {
+        m_fullRepairStageScroll->setMinimumHeight(minimumHeight);
+    }
+    // Keep the stage list's own minimum in step with the clamped content so the
+    // scroll area's content-derived minimumSizeHint() shrinks with a short plan
+    // instead of pinning the plan frame to the wrapped-at-minimum-width hint.
+    if (m_fullRepairStageList
+        && m_fullRepairStageList->minimumHeight() != minimumHeight) {
         m_fullRepairStageList->setMinimumHeight(minimumHeight);
     }
 
@@ -20128,10 +21633,79 @@ void MainWindow::updateFullRepairPlanHeight()
     // the tools panes keep the slack; afterwards the splitter position wins
     // and no height is forced on the list.
     if (!m_repairPlanSplitterUserAdjusted && m_repairVerticalSplitter && m_fullRepairPlanBox) {
-        const int planMinimum = m_fullRepairPlanBox->minimumSizeHint().height();
-        if (planMinimum > 0) {
-            m_repairVerticalSplitter->setSizes({planMinimum, 100000});
-        }
+        // Size the plan frame from its fixed chrome plus the stage list's
+        // ACTUAL wrapped content.  minimumSizeHint() is the wrong source here:
+        // it inherits the scroll area's content-derived minimum and the stage
+        // list's wrapped-at-minimum-width hint (ResponsiveColumnsLayout::
+        // minimumSize), which together reserve dead rows below a short plan.
+        // The scroll area's own hint cancels out of the sizeHint() difference,
+        // leaving only the header/readiness/spacing/frame chrome, so the frame
+        // tracks the clamped content height exactly.
+        const int chromeHeight = m_fullRepairPlanBox->sizeHint().height()
+                               - m_fullRepairStageScroll->sizeHint().height();
+        const int planHeight = qMax(kMinVisibleRows * fallbackRowHeight,
+                                    chromeHeight + minimumHeight);
+        m_repairVerticalSplitter->setSizes({planHeight, 100000});
+    }
+}
+
+// Keeps the Settings splitter's upper pane (preferences row + Full Repair plan)
+// at its natural content height until the user drags the divider, mirroring
+// updateFullRepairPlanHeight() for the Repair vertical splitter. The lower
+// capabilities pane absorbs the remaining space. Re-applied on every responsive
+// layout pass (construction and resize), so the pre-splitter default heights
+// are restored instead of the two-column plan being crushed to its one-row
+// minimum size hint.
+void MainWindow::updateSettingsSplitterDefaults()
+{
+    if (!m_settingsSplitter) {
+        return;
+    }
+    QWidget *upper = m_settingsSplitter->widget(0);
+    QWidget *lower = m_settingsSplitter->widget(1);
+    if (!upper || !lower || upper->width() <= 0) {
+        return;
+    }
+
+    // Keep the whole splitter at least as tall as both panes' content, so the
+    // outer Settings scroll area scrolls past the capabilities region instead
+    // of squeezing it (which clipped the mandatory safety controls to zero
+    // height when the window was short). The upper pane contributes its natural
+    // wrapped height; the lower pane contributes its minimum content height.
+    // The lower minimum is NOT taken from lower->minimumSizeHint() alone:
+    // while the capabilities table is empty (first open) QAbstractScrollArea's
+    // content-derived minimumSizeHint() collapses to ~1 line, so the floor is
+    // computed explicitly from the table's fixed 16-row minimum plus the refresh
+    // button and the safety controls. This is a floor on the splitter itself,
+    // orthogonal to the per-pane 25% drag minimums
+    // applyFractionalPaneMinimum() re-applies.
+    const int naturalUpper = upper->heightForWidth(upper->width());
+    const int tableMinimum = m_capabilityTable ? m_capabilityTable->minimumHeight() : 0;
+    const int refreshMinimum = m_capabilityRefreshButton
+        ? m_capabilityRefreshButton->minimumSizeHint().height() : 0;
+    const int safetyMinimum = m_safetyControlsBox
+        ? m_safetyControlsBox->minimumSizeHint().height() : 0;
+    const int lowerFloor = tableMinimum + refreshMinimum + safetyMinimum;
+    const int lowerMinimum = qMax(lower->minimumSizeHint().height(), lowerFloor);
+    const int fullContent = naturalUpper + lowerMinimum + m_settingsSplitter->handleWidth();
+    if (fullContent > 0 && m_settingsSplitter->minimumHeight() != fullContent) {
+        m_settingsSplitter->setMinimumHeight(fullContent);
+        // The splitter's own minimum changed (not the window), so the pane
+        // minimum pass ran against the previous height. Re-apply it once the
+        // layout has grown the splitter to its new minimum, so each pane keeps
+        // at least ~25% of the enlarged splitter instead of a stale fraction.
+        QTimer::singleShot(0, this, [this] {
+            applyFractionalPaneMinimum(m_settingsSplitter, -1, 25);
+        });
+    }
+
+    if (m_settingsSplitterUserAdjusted) {
+        return;
+    }
+    // The huge lower size simply hands the rest of the splitter to the
+    // capabilities pane (the upper pane keeps its natural wrapped height).
+    if (naturalUpper > 0) {
+        m_settingsSplitter->setSizes({naturalUpper, 100000});
     }
 }
 
@@ -20203,7 +21777,17 @@ void MainWindow::updateFullRepairSummary()
         }
     }
 
-    m_fullRepairStageList->clear();
+    // Clear the previous plan rows (the ResponsiveColumnsLayout owns each row's
+    // QLayoutItem; the widgets are reparented children and are deleted here).
+    if (QLayout *stageLayout = m_fullRepairStageList->layout()) {
+        QLayoutItem *staleItem;
+        while ((staleItem = stageLayout->takeAt(0))) {
+            if (QWidget *staleWidget = staleItem->widget()) {
+                staleWidget->deleteLater();
+            }
+            delete staleItem;
+        }
+    }
     int selectedCount = 0;
     QString excludedReason;
 
@@ -20227,16 +21811,18 @@ void MainWindow::updateFullRepairSummary()
         }
         ++selectedCount;
         const QString orderedTitle = tr("%1. %2").arg(selectedCount).arg(entry.title);
-        auto *item = new QListWidgetItem(themedIcon(entry.icon), orderedTitle, m_fullRepairStageList);
-        item->setToolTip(tr("Execution order %1: %2").arg(selectedCount).arg(entry.title));
+        auto *row = new PlanStageRow(themedIcon(entry.icon), orderedTitle, m_fullRepairStageList);
+        row->setToolTip(tr("Execution order %1: %2").arg(selectedCount).arg(entry.title));
+        m_fullRepairStageList->layout()->addWidget(row);
     }
 
     if (selectedCount == 0) {
         m_fullRepairCountLabel->setText(tr("No stages selected"));
-        auto *item = new QListWidgetItem(themedIcon(QStringLiteral("dialog-information")),
-                                         tr("No Full Repair stages selected — use Configure Plan… or Settings."),
-                                         m_fullRepairStageList);
-        item->setToolTip(item->text());
+        auto *row = new PlanStageRow(themedIcon(QStringLiteral("dialog-information")),
+                                     tr("No Full Repair stages selected — use Configure Plan… or Settings."),
+                                     m_fullRepairStageList);
+        row->setToolTip(row->text());
+        m_fullRepairStageList->layout()->addWidget(row);
     } else {
         m_fullRepairCountLabel->setText(selectedCount == 1
             ? tr("1 stage selected")
@@ -20475,7 +22061,9 @@ QString MainWindow::kernelsRemovalPreview() const
 
     QStringList out;
     // Current kernel state (running / installed-latest / repository-latest).
-    if (!running.isEmpty()) {
+    // A repair target has no running kernel ("none" or empty), so no running
+    // line is emitted for it; a real host kernel is always shown.
+    if (!running.isEmpty() && running != QStringLiteral("none")) {
         out << tr("Running kernel: %1.").arg(running);
     }
     if (!latest.isEmpty()) {
@@ -20596,8 +22184,14 @@ QList<QPair<QString, QString>> MainWindow::kernelRepairActionsFor(const QString 
         }
     }
 
-    // The running kernel is always protected/locked: it is never a candidate.
-    const bool newestRemovable = !latest.isEmpty() && !running.isEmpty() && latest != running;
+    // The running kernel is only meaningful on the running host; a repair
+    // target diagnostic reports "Kernel running: none" (or an empty value), so
+    // on a target "remove newest" is offered only when an older kernel exists
+    // to fall back to (hasRemovable).  The running kernel is always protected:
+    // it is never a candidate.
+    const bool runningIsReal = !running.isEmpty() && running != QStringLiteral("none");
+    const bool newestRemovable = !latest.isEmpty()
+        && (runningIsReal ? (latest != running) : hasRemovable);
 
     if (hasRemovable) {
         actions.append(qMakePair(tr("Remove oldest/superseded kernel(s)"),
@@ -21956,7 +23550,8 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
         helperArguments[2] = m_hostPrimaryComponentPath;
     }
     if (kind == LogEntryKind::Repair) {
-        setProgressDetail(tr("Repair: %1…").arg(title));
+        setProgressDetail(hostMode ? tr("Running Host repair: %1…").arg(title)
+                                   : tr("Running Target repair: %1…").arg(title));
     }
     const QString helperOutput = runPrivilegedRequest(title, helperArguments, QByteArray(), &processSucceeded,
                                                       true, kind, QString(), sharedProgressDialog);
@@ -21969,7 +23564,7 @@ void MainWindow::runRepairHelper(const QString &title, const QStringList &argume
     // for both successful and failed repairs and allow it to be searched.
     const QString detail = helperOutput.trimmed().isEmpty()
         ? QStringLiteral("The privileged helper returned no diagnostic output.")
-        : localizeHelperLogLines(helperOutput.trimmed());
+        : displayLocalizedHelperOutput(helperOutput.trimmed());
     appendLog(QStringLiteral("Repair output\nDiagnostic: %1\n%2").arg(title, detail),
               processSucceeded ? QStringLiteral("INFO") : QStringLiteral("ERROR"), kind);
     // Categorize the action and record the summary inside the replaceable

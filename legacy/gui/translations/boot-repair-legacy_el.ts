@@ -1251,8 +1251,8 @@
         <translation>Φιλτράρισμα της ορατής καταγραφής κατά είδος εισόδου. Η επιλογή ενός διαγνωστικού τμήματος δείχνει τις γραμμές που συλλαμβάνονται για το τμήμα αυτό· ένα φίλτρο ροής εργασίας όπως η επισκευή συστήματος αρχείων ή η επισκευή πακέτων δείχνει τις χαρτογραφημένες γραμμές επισκευής του (το αντίγραφο του αρχείου δεν έχει γραμμές σε αυτό το frontend). Αποθήκευση Όπως πάντα γράφει κάθε καταχώρηση.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Οι ρυθμίσεις αποθηκεύονται ανά χρήστη υπό ~/.qt/, ένα αρχείο ανά ομάδα ρυθμίσεων (devicesrc, logsrc, diagnosticsrc, repairrc), και αποθηκεύονται αμέσως σε κάθε αλλαγή και στο κλείσιμο. Εκκίνηση του GUI με τον ίδιο χρήστη για να κρατήσει τις παρακάμψεις σας; ένα GUI ξεκίνησε ως ρίζα κρατά τα δικά του αντίγραφα.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Οι ρυθμίσεις αποθηκεύονται ανά χρήστη υπό ~/.qt/, ένα αρχείο ανά ομάδα ρυθμίσεων (devicesrc, logsrc, diagnosticsrc, repairrc), και αποθηκεύονται αμέσως σε κάθε αλλαγή και στο κλείσιμο. Η ίδια θέση ανά χρήστη χρησιμοποιείται είτε το GUI τρέχει ως συνδεδεμένος χρήστης είτε ως ρίζα (sudo διατηρεί τον οικιακό κατάλογο).</translation>
     </message>
     <message>
         <source>Device discovery</source>

@@ -35,6 +35,14 @@ fi
 CANCEL_FILE="${CANCEL_FILE:-}"
 CANCEL_TOKEN="${CANCEL_TOKEN:-}"
 
+# Interactive session handoff (Qt3 GUI, see legacy_session_apply).  Filled only
+# from the --session-request / --menu-answer-file options, never from the
+# caller's environment.
+LEGACY_SESSION_REQUEST=""
+LEGACY_SESSION_REQUEST_SEEN=""
+LEGACY_MENU_ANSWER_FILE=""
+LEGACY_MENU_ANSWER_FILE_SEEN=""
+
 # Set by read_target_os when the root was confirmed through legacy release
 # evidence instead of /etc/os-release.  Evidence wording only; never a gate.
 TARGET_OS_LEGACY=0
@@ -995,6 +1003,59 @@ legacy_require_feature()
 }
 
 # ---------------------------------------------------------------------------
+# Interactive session handoff (Qt3 GUI)
+# ---------------------------------------------------------------------------
+# The Qt3 GUI cannot write the helper's standard input, and granting env(1) in
+# sudoers would be a root shell, so an interactive run is announced by two
+# options placed before the command verb (the same position as --cancel-file):
+#   --session-request <id>       the GUI prompt request id
+#   --menu-answer-file <path>    the GUI mode-600 raw-answer file
+# main() records them; legacy_session_apply validates both and only then
+# exports the three variables the rest of the helper reads
+# (BOOT_REPAIR_SESSION_PROTOCOL, BOOT_REPAIR_SESSION_REQUEST and
+# BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE).  A run without either option is
+# unchanged.  A malformed, half-given or repeated session option refuses before
+# any command runs; nothing here is interpreted or executed.
+legacy_session_apply()
+{
+    local request="" answer="" len=0
+
+    if [[ -z "$LEGACY_SESSION_REQUEST_SEEN" && -z "$LEGACY_MENU_ANSWER_FILE_SEEN" ]]; then
+        return 0
+    fi
+    [[ -n "$LEGACY_SESSION_REQUEST_SEEN" && -n "$LEGACY_MENU_ANSWER_FILE_SEEN" ]] \
+        || fail "--session-request and --menu-answer-file must be given together."
+
+    request="$LEGACY_SESSION_REQUEST"
+    len="${#request}"
+    (( len >= 1 && len <= 64 )) \
+        || fail "--session-request id must be 1 to 64 characters."
+    case "$request" in
+        *[!A-Za-z0-9._-]*)
+            fail "--session-request id may contain only letters, digits, dot, underscore and dash."
+            ;;
+    esac
+
+    answer="$LEGACY_MENU_ANSWER_FILE"
+    len="${#answer}"
+    (( len >= 2 && len <= 1024 )) \
+        || fail "--menu-answer-file path must be 2 to 1024 characters."
+    case "$answer" in
+        /*) ;;
+        *) fail "--menu-answer-file path must be absolute." ;;
+    esac
+    case "$answer" in
+        *$'\n'*|*$'\r'*) fail "--menu-answer-file path must not contain a newline." ;;
+    esac
+    [[ ! -L "$answer" ]] || fail "--menu-answer-file must not be a symbolic link."
+    [[ -f "$answer" ]] || fail "--menu-answer-file must name an existing regular file."
+
+    export BOOT_REPAIR_SESSION_PROTOCOL=1
+    export BOOT_REPAIR_SESSION_REQUEST="$request"
+    export BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE="$answer"
+}
+
+# ---------------------------------------------------------------------------
 # Cancel token (A10-05)
 # ---------------------------------------------------------------------------
 # The helper-side cancel surface: the Qt3 GUI passes --cancel-file <path>
@@ -1409,8 +1470,8 @@ prepare_host_command_guard()
     prepare_host_command_guard_modern
 }
 
-# The 13-key gating contract is emitted by the modern function; the legacy
-# reports are appended so the 13 keys and their evidence lines stay untouched.
+# The 15-key gating contract is emitted by the modern function; the legacy
+# reports are appended so the 15 keys and their evidence lines stay untouched.
 # The configuration probe only runs for a mounted repair target (never for the
 # running host), matching the GUI's target-only Edit Target File control.
 diagnostic_repair_capabilities()
@@ -2498,7 +2559,7 @@ legacy_apt_intent_translate()
 legacy_chroot_shell()
 {
     local command="${1:-}" rc=0 transcript run_command retry_command="" retried=0
-    local run_pid=0 watcher_pid=0
+    local run_pid=0 watcher_pid=0 interactive_run=0
     [[ $# -eq 1 ]] || fail "shell requires exactly one command string."
     [[ -n "$command" ]] || fail "shell command cannot be empty."
     need chroot
@@ -2511,29 +2572,48 @@ legacy_chroot_shell()
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
+    # A12-14: when the interactive channel is ready (session protocol + the
+    # GUI's menu-answer file), run the command through the generic interactive
+    # pump so an interactive question reaches the popup instead of aborting on
+    # stdin /dev/null; the backgrounded non-interactive pipeline below stays
+    # the fallback for scripted/unattended runs.
+    shell_interactive_ready && interactive_run=1
     while :; do
         set +e
-        # A10-05: the pipeline runs in a background subshell whose exit status
-        # is the command's own (PIPESTATUS captured inside the subshell), and
-        # the cancel watcher ticks alongside it: a cancel token (or a helper
-        # that died) terminates the pipeline with the bounded TERM -> KILL
-        # escalation.
-        ( set +e
-          chroot "$TARGET_ROOT" /usr/bin/env \
-              HOME=/root \
-              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-              DEBIAN_FRONTEND=noninteractive \
-              APT_LISTCHANGES_FRONTEND=none \
-              /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-          rc=${PIPESTATUS[0]}
-          exit "$rc" ) &
-        run_pid=$!
-        legacy_cancel_watcher "$run_pid" &
-        watcher_pid=$!
-        rc=0
-        wait "$run_pid" 2>/dev/null || rc=$?
-        kill "$watcher_pid" 2>/dev/null || true
-        wait "$watcher_pid" 2>/dev/null || true
+        if (( interactive_run == 1 )); then
+            # Drop the non-interactive frontend switches so debconf/dpkg
+            # questions reach the popup; TERM=dumb keeps apt from emitting
+            # color/control sequences.
+            shell_run_interactive "$transcript" "$CHROOT_SHELL_TIMEOUT_SECONDS" \
+                "$(shell_command_string chroot "$TARGET_ROOT" /usr/bin/env \
+                    HOME=/root \
+                    TERM=dumb \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    /bin/sh -c "$run_command")"
+            rc=$?
+        else
+            # A10-05: the pipeline runs in a background subshell whose exit
+            # status is the command's own (PIPESTATUS captured inside the
+            # subshell), and the cancel watcher ticks alongside it: a cancel
+            # token (or a helper that died) terminates the pipeline with the
+            # bounded TERM -> KILL escalation.
+            ( set +e
+              chroot "$TARGET_ROOT" /usr/bin/env \
+                  HOME=/root \
+                  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                  DEBIAN_FRONTEND=noninteractive \
+                  APT_LISTCHANGES_FRONTEND=none \
+                  /bin/sh -c "$run_command" < /dev/null 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+              rc=${PIPESTATUS[0]}
+              exit "$rc" ) &
+            run_pid=$!
+            legacy_cancel_watcher "$run_pid" &
+            watcher_pid=$!
+            rc=0
+            wait "$run_pid" 2>/dev/null || rc=$?
+            kill "$watcher_pid" 2>/dev/null || true
+            wait "$watcher_pid" 2>/dev/null || true
+        fi
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -2548,7 +2628,16 @@ legacy_chroot_shell()
         retried=1
     done
     log "Chroot shell exit code: $rc" | tee -a "$SESSION_LOG"
-    if (( rc != 0 )) && grep -Eq "$CHROOT_SHELL_PROMPT_REGEX" "$transcript" 2>/dev/null; then
+    if (( rc == 125 )); then
+        log "ERROR: Chroot shell command was cancelled at an interactive prompt." >&2
+        exit 125
+    fi
+    if (( rc == 124 || rc == 137 )); then
+        printf '%s\n' "Boot Bitch: the command was aborted after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds. If it was waiting for input, re-run it with the non-interactive flag (for example 'apt-get -y upgrade')." | tee -a "$SESSION_LOG"
+        log "ERROR: Chroot shell command timed out after ${CHROOT_SHELL_TIMEOUT_SECONDS} seconds." >&2
+        exit 124
+    fi
+    if (( rc != 0 )) && (( interactive_run == 0 )) && grep -Eq "$CHROOT_SHELL_PROMPT_REGEX" "$transcript" 2>/dev/null; then
         printf '%s\n' "Boot Bitch: the command asked an interactive question, which the Chroot Shell cannot answer (stdin is /dev/null). Re-run it with the non-interactive flag, for example 'apt-get -y upgrade'." | tee -a "$SESSION_LOG"
     fi
     (( rc == 0 )) || fail "Chroot shell command failed (exit code $rc)."
@@ -2570,7 +2659,11 @@ run_host_shell()
 # command-string guard as the modern host shell, executed directly (no
 # firmware namespace exists on this BIOS-only host, so prepare_host_command_guard
 # skipped the guard; no chroot).  B6/A9-03: the exec runs under
-# `timeout --foreground 300 --kill-after=10` - the compat.sh timeout shim
+# `timeout --foreground --kill-after=10 300` - the compat.sh timeout shim
+# (the duration must come AFTER the options: the watchdog stops its option
+# parse at the first non-option token, so a leading duration leaves
+# --kill-after as the command and `setsid` execvp's it - "execvp: No such
+# file or directory"; Bug #5 re-fix).  The shim
 # prefers a real coreutils timeout that supports --foreground and falls back
 # to the pure-bash watchdog on Etch (whose timeout binary predates
 # --foreground/--kill-after).  The watchdog now spawns the command under
@@ -2597,31 +2690,50 @@ legacy_host_shell()
     log "BEGIN: Running-host shell command (legacy direct path)" | tee -a "$SESSION_LOG"
     log "Command: $command" | tee -a "$SESSION_LOG"
     local transcript="$SESSION_DIR/host-shell-output" rc=0
-    local run_command="$command" retry_command="" retried=0 run_pid=0 watcher_pid=0
+    local run_command="$command" retry_command="" retried=0 run_pid=0 watcher_pid=0 interactive_run=0
     : > "$transcript"
     run_command="$(legacy_apt_intent_translate "$command")"
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
+    # A12-14: when the interactive channel is ready (session protocol + the
+    # GUI's menu-answer file), run the command through the generic interactive
+    # pump so an interactive question reaches the popup instead of aborting on
+    # stdin /dev/null; the timeout-wrapped pipeline below stays the fallback
+    # for scripted/unattended runs.
+    shell_interactive_ready && interactive_run=1
     while :; do
         set +e
-        # A10-05: same backgrounded-pipeline + cancel-watcher shape as the
-        # chroot shell; the subshell exit status is the command's own.
-        ( set +e
-          timeout --foreground 300 --kill-after=10 /usr/bin/env \
-              HOME=/root \
-              PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-              DEBIAN_FRONTEND=noninteractive \
-              /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
-          rc=${PIPESTATUS[0]}
-          exit "$rc" ) &
-        run_pid=$!
-        legacy_cancel_watcher "$run_pid" &
-        watcher_pid=$!
-        rc=0
-        wait "$run_pid" 2>/dev/null || rc=$?
-        kill "$watcher_pid" 2>/dev/null || true
-        wait "$watcher_pid" 2>/dev/null || true
+        if (( interactive_run == 1 )); then
+            # Drop the non-interactive frontend switch so debconf/dpkg
+            # questions reach the popup; TERM=dumb keeps apt from emitting
+            # color/control sequences.
+            shell_run_interactive "$transcript" 300 \
+                "$(shell_command_string /usr/bin/env \
+                    HOME=/root \
+                    TERM=dumb \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    /bin/bash -lc "$run_command")"
+            rc=$?
+        else
+            # A10-05: same backgrounded-pipeline + cancel-watcher shape as the
+            # chroot shell; the subshell exit status is the command's own.
+            ( set +e
+              timeout --foreground --kill-after=10 300 /usr/bin/env \
+                  HOME=/root \
+                  PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                  DEBIAN_FRONTEND=noninteractive \
+                  /bin/bash -lc "$run_command" 2>&1 | tee -a "$SESSION_LOG" "$transcript"
+              rc=${PIPESTATUS[0]}
+              exit "$rc" ) &
+            run_pid=$!
+            legacy_cancel_watcher "$run_pid" &
+            watcher_pid=$!
+            rc=0
+            wait "$run_pid" 2>/dev/null || rc=$?
+            kill "$watcher_pid" 2>/dev/null || true
+            wait "$watcher_pid" 2>/dev/null || true
+        fi
         set -e
         if (( rc == 0 || retried == 1 )); then
             break
@@ -2636,6 +2748,10 @@ legacy_host_shell()
         retried=1
     done
     log "Running-host shell exit code: $rc" | tee -a "$SESSION_LOG"
+    if (( rc == 125 )); then
+        log "ERROR: Running-host shell command was cancelled at an interactive prompt." >&2
+        exit 125
+    fi
     if (( rc != 0 )); then
         log "FAIL: Running-host shell command (exit code $rc)" | tee -a "$SESSION_LOG"
         exit "$rc"
@@ -3007,4 +3123,858 @@ populate_writable_dev_filtered()
         chmod --reference="$source/$name" "$destination/$name" 2>/dev/null || true
     done
     log "Private /dev filter: $copied_nodes block devices/mappers copied for the selected target disk (bounded sysfs enumeration; the static /dev tree was not walked)." | tee -a "$SESSION_LOG"
+}
+
+
+# ---------------------------------------------------------------------------
+# Interactive repair menu answer channel (file-based, Qt3 GUI).
+# ---------------------------------------------------------------------------
+# The modern helper_menu_prompt reads the menu ANSWER from the session protocol
+# pipe (stdin).  Qt 3.3.7's QProcess cannot deliver stdin (the unlock --key-file
+# override exists for the same reason), so the legacy override emits ONE
+# PROMPT<TAB><id><TAB><base64> control line and reads the RAW answer text (no
+# ANSWER<TAB><id><TAB><base64> framing, no PUMP token) from a mode-600 file the
+# GUI writes, whose path arrives in BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE.  The
+# MENU_ANSWER_WINDOW_SECONDS window and the fail-closed empty answer stay
+# unchanged: an empty input (cancel) is a lone newline and fails closed.
+#
+# The override uses the `function name {` form rather than `name() {` so the
+# port's duplicate-function gate (verify_function_definitions) does not treat
+# this deliberate redefinition as an accidental one (the rename-list mechanism
+# the other overrides use is not available for helper_menu_prompt); the last
+# definition still wins at runtime.  The menu text is only ever displayed,
+# never interpreted or executed.
+#
+# The modern helper's 600 s menu-answer window (MENU_ANSWER_WINDOW_SECONDS=600)
+# is too long for the maintainer's testing loop: a wedged prompt holds the
+# session for ten minutes.  The legacy build shortens the default to 120 s and
+# honors BOOT_REPAIR_LEGACY_MENU_ANSWER_WINDOW_SECONDS so a test can drive it
+# lower without editing the helper.  The window semantics are unchanged: read
+# exactly one raw answer line, fail closed on an empty or absent answer.
+MENU_ANSWER_WINDOW_SECONDS="${BOOT_REPAIR_LEGACY_MENU_ANSWER_WINDOW_SECONDS:-120}"
+
+# Read one complete RAW answer line from the GUI's menu-answer file.  Returns 0
+# (with the raw answer in LEGACY_ANSWER_RAW) when a complete newline-terminated
+# line was read; returns 1 when no complete record is available yet (no file, an
+# empty file, or a still-in-progress write).  A complete record is a non-empty
+# file whose last byte is LF -- the GUI writes the raw answer plus a single
+# newline in one go, so command substitution strips the LF and `tail -c 1`
+# reports an EMPTY string for a complete record (any non-LF last byte survives
+# the substitution).  The file is truncated after each read so the next prompt
+# starts from an empty file.  An empty raw line (a lone newline = cancel) is
+# still returned as a complete record and fails closed in the caller.
+legacy_answer_file_read_record()
+{
+    local answer_file="${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}" last="" line=""
+    LEGACY_ANSWER_RAW=""
+    [[ -n "$answer_file" && -f "$answer_file" ]] || return 1
+    last="$(tail -c 1 "$answer_file" 2>/dev/null || true)"
+    if [[ -s "$answer_file" && -z "$last" ]]; then
+        IFS= read -r line < "$answer_file" || line=""
+        : > "$answer_file" 2>/dev/null || true
+        LEGACY_ANSWER_RAW="$line"
+        return 0
+    fi
+    return 1
+}
+
+function helper_menu_prompt {
+    local prompt_text="$1"
+    local encoded="" answer_file="" deadline=0 now=0
+    HELPER_MENU_ANSWER=""
+    legacy_b64_available || return 1
+    command -v tr >/dev/null 2>&1 || return 1
+    encoded="$(printf '%s' "$prompt_text" | legacy_b64e | tr -d '\n')"
+    printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
+
+    # Read the RAW answer from the GUI's answer file instead of the protocol
+    # pipe.  The GUI writes the raw answer text plus a single newline on Send
+    # (an empty input is the cancel signal = a lone newline); the poll waits up
+    # to MENU_ANSWER_WINDOW_SECONDS and truncates the file after each read so
+    # the two-level kernel menu's next prompt starts from an empty file.  The
+    # record reader is shared with the shell pump
+    # (legacy_answer_file_read_record below).
+    answer_file="${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}"
+    if [[ -n "$answer_file" ]]; then
+        deadline=$(( $(shell_now_epoch) + MENU_ANSWER_WINDOW_SECONDS ))
+        while :; do
+            if legacy_answer_file_read_record; then
+                HELPER_MENU_ANSWER="$LEGACY_ANSWER_RAW"
+                break
+            fi
+            now="$(shell_now_epoch)"
+            (( now >= deadline )) && break
+            sleep 1
+        done
+    fi
+    [[ -n "$HELPER_MENU_ANSWER" ]]
+}
+
+
+# ---------------------------------------------------------------------------
+# Interactive shell answer channel (file-based, Qt3 GUI).
+# ---------------------------------------------------------------------------
+# The modern shell_run_interactive reads the shell ANSWER record from the
+# session-protocol pipe (stdin).  Qt 3.3.7's QProcess cannot deliver stdin (the
+# unlock --key-file and menu-answer overrides exist for the same reason), so the
+# legacy override consumes the RAW answer from the GUI's mode-600 menu-answer
+# file (BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE) instead -- the same
+# legacy_answer_file_read_record helper the menu override uses.  There is no
+# PUMP registration and no ANSWER<TAB><id><TAB><base64> framing: the pump emits
+# ONE PROMPT<TAB><id><TAB><base64> control line per detected question and the
+# GUI writes the raw answer plus a single newline back.  The 1-second tick loop
+# and the fail-closed empty or absent answer stay unchanged; when no answer file
+# is configured the pump keeps the modern stdin read (a real broker pipe keeps
+# working, a direct invocation with stdin at EOF fails closed).
+#
+# The override uses the `function name {` form rather than `name() {` so the
+# port's duplicate-function gate (verify_function_definitions) does not treat
+# this deliberate redefinition as an accidental one (the same mechanism as
+# helper_menu_prompt); the last definition still wins at runtime.
+function shell_run_interactive {
+    local transcript="$1" deadline="$2" command_string="$3"
+    local in_fifo="$SESSION_DIR/shell-in" out_fifo="$SESSION_DIR/shell-out"
+    local runner_pid=0 rc=124 begin=0 now=0 quiet_ticks=0 paused_at=0
+    local tail_buf="" ch="" clean="" bytes="" encoded="" answer=""
+    local script_bin="" python_bin="" setsid_bin="" newline_done=1 wait_rc=0
+    local read_rc=0 old_pipe_trap="" spurious_eof_reported=0
+    local answer_deadline=0
+    local redact_active=0 redact_pos=0 echo_expected="" suppress_until_nl=0
+    local script_returns=0 script_flags="-qefc" runner_rc_file=""
+
+    script_bin="$(legacy_real_tool_path script || true)"
+    python_bin="$(legacy_b64_python_bin)"
+    setsid_bin="$(legacy_real_tool_path setsid || true)"
+    # Etch's util-linux 2.12r script(1) does NOT forward its own stdin to the
+    # pty slave (a piped answer never reaches the command), and it predates
+    # --return/-e (added in util-linux 2.31): `script -e` is rejected and
+    # script(1) always exits 0.  The PTY is therefore provided by a python pty
+    # loop (Python 2.4-compatible, self-contained; see the spawn block below)
+    # whose stdin forwarding is deterministic; script stays only as a fallback
+    # when python is absent, and its -e probe still decides whether the
+    # command's exit status can be read back from it.
+    if [[ -n "$script_bin" ]] && "$script_bin" -qec ':' /dev/null >/dev/null 2>&1; then
+        script_returns=1
+    fi
+    if [[ -n "$script_bin" && "$script_returns" == 0 ]]; then
+        script_flags="-qfc"
+    fi
+
+    # A1-09: a dead runner must not SIGPIPE-kill the pump mid-write; with the
+    # signal ignored the fd 9 writes fail with EPIPE instead and are checked
+    # below.  The runner's exit code still comes from wait.
+    old_pipe_trap="$(trap -p PIPE 2>/dev/null || true)"
+    trap '' PIPE
+
+    rm -f -- "$in_fifo" "$out_fifo"
+    if ! mkfifo -- "$in_fifo" "$out_fifo"; then
+        if [[ -n "$old_pipe_trap" ]]; then
+            eval "$old_pipe_trap"
+        else
+            trap - PIPE
+        fi
+        return 2
+    fi
+
+    # The runner inherits the pump's ignored SIGPIPE (set below), so a broken
+    # output FIFO would make the command loop on EPIPE instead of dying.  Reset
+    # SIGPIPE to default inside the runner's own context so a closed pipe kills
+    # the writer (exit 141) while the pump keeps its own SIGPIPE ignore.
+    local runner_command="trap - PIPE; $command_string"
+    # The python pty loop exits after reaping the child (its own status is not
+    # the command's), and Etch script(1) without -e always exits 0, so both
+    # record the command's exit status in a file the pump reads back after the
+    # run; the /bin/sh -c fallback and modern `script -e` propagate it directly.
+    if [[ -n "$python_bin" || ( -n "$script_bin" && "$script_returns" == 0 ) ]]; then
+        runner_rc_file="$SESSION_DIR/shell-runner-rc"
+        : > "$runner_rc_file"
+        runner_command="trap - PIPE; $command_string; _brc=\$?; printf '%s\n' \"\$_brc\" >'$runner_rc_file'; exit \"\$_brc\""
+    fi
+
+    # Spawn the runner first: its redirections block until the matching FIFO
+    # ends are opened below (writer for its stdin, reader for its stdout).  The
+    # PTY runner is a self-contained python loop (Python 2.4-compatible) rather
+    # than pty.spawn: pty.spawn's _copy lifecycle exits as soon as one side
+    # reaches EOF, which on Etch (python 2.4.4) kills the runner while the
+    # command is still blocked on its answer prompt (stdin is the open-but-empty
+    # shell-in FIFO).  This loop forks with a pty, forwards child output
+    # (master) to stdout and stdin (the answer FIFO) to the master, and only
+    # stops when the CHILD is gone (master EOF or EIO) -- stdin EOF is ignored
+    # so a still-running command keeps pumping.
+    local python_pty_script='import pty, os, sys, select
+pid, master_fd = pty.fork()
+if pid == 0:
+    os.execv("/bin/bash", sys.argv[1:])
+    os._exit(127)
+stdin_open = True
+while True:
+    fds = [master_fd]
+    if stdin_open:
+        fds.append(0)
+    try:
+        rfds, _, _ = select.select(fds, [], [])
+    except (select.error, OSError):
+        rfds = []
+    if master_fd in rfds:
+        try:
+            data = os.read(master_fd, 1024)
+        except OSError:
+            break
+        if not data:
+            break
+        try:
+            os.write(1, data)
+        except OSError:
+            break
+    if 0 in rfds:
+        try:
+            data = os.read(0, 1024)
+        except OSError:
+            data = ""
+        if not data:
+            stdin_open = False
+        else:
+            try:
+                os.write(master_fd, data)
+            except OSError:
+                break
+try:
+    os.waitpid(pid, 0)
+except OSError:
+    pass
+sys.exit(0)'
+    if [[ -n "$python_bin" ]]; then
+        if [[ -n "$setsid_bin" ]]; then
+            setsid "$python_bin" -c "$python_pty_script" bash -c "$runner_command" <"$in_fifo" >"$out_fifo" 2>&1 &
+        else
+            "$python_bin" -c "$python_pty_script" bash -c "$runner_command" <"$in_fifo" >"$out_fifo" 2>&1 &
+        fi
+    elif [[ -n "$script_bin" ]]; then
+        if [[ -n "$setsid_bin" ]]; then
+            setsid "$script_bin" $script_flags "$runner_command" /dev/null <"$in_fifo" >"$out_fifo" 2>&1 &
+        else
+            "$script_bin" $script_flags "$runner_command" /dev/null <"$in_fifo" >"$out_fifo" 2>&1 &
+        fi
+    else
+        if [[ -n "$setsid_bin" ]]; then
+            setsid /bin/sh -c "$runner_command" <"$in_fifo" >"$out_fifo" 2>&1 &
+        else
+            /bin/sh -c "$runner_command" <"$in_fifo" >"$out_fifo" 2>&1 &
+        fi
+    fi
+    runner_pid=$!
+
+    # Open the matching ends; the order unblocks the runner's redirections.
+    exec 9>"$in_fifo"
+    exec 8<"$out_fifo"
+
+    exec 11>>"$SESSION_LOG"
+    exec 12>>"$transcript"
+
+    begin=$(shell_now_epoch)
+    rc=124
+    quiet_ticks=0
+    tail_buf=""
+    newline_done=1
+    redact_active=0
+    redact_pos=0
+    echo_expected=""
+    suppress_until_nl=0
+    SHELL_FILTER_ESC=0
+    SHELL_FILTER_CR_PENDING=0
+    SHELL_FILTER_LINE_HAS_CONTENT=0
+    SHELL_FILTER_PENDING_WS=""
+    SHELL_FILTER_SEQ_BYTES=0
+    while :; do
+        # A5-01: the deadline is checked at the TOP of every iteration so a
+        # continuous-output command cannot overrun its budget; the prompt
+        # pause keeps shifting `begin` while an answer is pending.
+        now="$(shell_now_epoch)"
+        if (( now - begin >= deadline )); then
+            rc=124
+            break
+        fi
+        if ! kill -0 "$runner_pid" 2>/dev/null; then
+            # The runner is gone: close its input and drain the final bytes
+            # with a bounded read; the drain never blocks unboundedly (A5-03).
+            exec 9>&- || true
+            shell_pump_drain_dead
+            rc=1
+            break
+        fi
+        if IFS= read -r -n 1 -t 1 -u 8 ch; then
+            read_rc=0
+        else
+            read_rc=$?
+        fi
+        if (( read_rc == 0 )); then
+            # read -n 1 delivers the newline byte as an empty string.  The
+            # answer-echo redaction (A5-05) and the transcript filter run
+            # before any byte reaches the wire, the logs or the prompt
+            # buffer.
+            if [[ -z "$ch" ]]; then
+                ch=$'\n'
+            fi
+            shell_pump_input_byte "$ch"
+            quiet_ticks=0
+            continue
+        fi
+        if (( read_rc > 0 )); then
+            # No byte arrived.  A real 1s timeout reports a status above 128;
+            # EOF reports 1..128.  On Etch's bash 3.1, `read -u 8` of an
+            # open-but-idle FIFO returns EOF (1) instead of a timeout, so a
+            # read-EOF is real death ONLY when the runner is actually gone; a
+            # live runner means a spurious EOF, paced (sleep 1) and treated
+            # exactly like the timeout quiet tick below.
+            if (( read_rc <= 128 )); then
+                if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then
+                    exec 9>&- || true
+                    shell_pump_drain_dead
+                    rc=1
+                    break
+                fi
+                if [[ $spurious_eof_reported -eq 0 ]]; then
+                    printf '%s\n' "Boot Bitch: shell pump read-EOF with a live runner; treating as a quiet tick." >&11
+                    spurious_eof_reported=1
+                fi
+                sleep 1
+            fi
+            # One quiet tick: no byte arrived for a second while the command
+            # lives (a real timeout, or a spurious read-EOF paced above).
+            now="$(shell_now_epoch)"
+            if [[ -n "$tail_buf" ]]; then
+                quiet_ticks=$((quiet_ticks + 1))
+            fi
+            if (( quiet_ticks >= SHELL_PROMPT_QUIET_TICKS )); then
+                # Alive, quiet and it has printed something -- but that does
+                # not mean it asked a question.  A transaction that turns
+                # quiet while it downloads/installs (after a real prompt was
+                # already answered) must not re-fire the prompt: only pause
+                # for the GUI when the trailing bytes actually look like an
+                # interactive confirmation.  Otherwise reset the quiet clock
+                # and keep pumping without pausing the deadline.
+                if ! shell_output_looks_like_prompt "$tail_buf"; then
+                    quiet_ticks=0
+                    continue
+                fi
+                # The trailing output looks like a real question: hand it to
+                # the GUI.  Flush the filter's deferred trailing whitespace
+                # first so an unterminated prompt line
+                # keeps every byte (including a trailing space) in the
+                # PROMPT payload, then close the current output line so the
+                # PROMPT record starts on a fresh line for the broker's
+                # reader.
+                shell_filter_flush_pending
+                clean="$SHELL_FILTER_OUT"
+                if [[ -n "$clean" ]]; then
+                    shell_pump_cleaned_byte "$clean"
+                fi
+                if (( newline_done == 0 )); then
+                    printf '\n'
+                    printf '\n' >&11
+                    printf '\n' >&12
+                    newline_done=1
+                fi
+                bytes="$tail_buf"
+                if (( ${#bytes} > SHELL_PROMPT_TRAILING_BYTES )); then
+                    bytes="$(printf '%s' "$bytes" | tail -c "$SHELL_PROMPT_TRAILING_BYTES")"
+                fi
+                encoded="$(printf '%s' "$bytes" | legacy_b64e | tr -d '\n')"
+                # No pump token: the PROMPT is a single 3-field control line
+                # (id + base64 payload) the GUI matches by id.
+                printf 'PROMPT\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$encoded"
+                paused_at=$now
+                encoded=""
+                wait_rc=1
+                answer=""
+                # The quiet-tick PROMPT above can fire before the real question
+                # is printed when a slow download/resolver sits between the
+                # newline-terminated summary and the no-newline prompt line
+                # (apk/apt/pacman all pause on quiet work before asking).  Once
+                # the PROMPT is out, keep draining the runner's output while the
+                # GUI decides so that late question line still streams live; the
+                # PROMPT is emitted once and the RAW answer arrives through the
+                # GUI's menu-answer file within the window.
+                answer_deadline=$(( $(shell_now_epoch) + SHELL_ANSWER_WINDOW_SECONDS ))
+                while :; do
+                    while IFS= read -r -n 1 -t 1 -u 8 ch; do
+                        if [[ -z "$ch" ]]; then
+                            ch=$'\n'
+                        fi
+                        shell_pump_input_byte "$ch"
+                    done
+                    if legacy_answer_file_read_record; then
+                        answer="$LEGACY_ANSWER_RAW"
+                        wait_rc=0
+                        break
+                    fi
+                    if (( $(shell_now_epoch) >= answer_deadline )); then
+                        break
+                    fi
+                done
+                # A5-09: the runner may have died while the popup waited.
+                # Never report a 125-cancel then: take the death path (the
+                # real exit code) instead.
+                if (( wait_rc != 0 )) \
+                    && ( ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie ); then
+                    exec 9>&- || true
+                    shell_pump_drain_dead
+                    rc=1
+                    break
+                fi
+                if (( wait_rc != 0 )); then
+                    printf '%s\n' "Boot Bitch: the interactive prompt was cancelled or no answer arrived in time, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                    rc=125
+                    break
+                fi
+                if [[ -z "$answer" ]]; then
+                    if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then
+                        exec 9>&- || true
+                        shell_pump_drain_dead
+                        rc=1
+                        break
+                    fi
+                    printf '%s\n' "Boot Bitch: the interactive prompt was cancelled, so the command cannot continue. Re-run it with the non-interactive flag, for example 'dnf update -y', 'apt-get -y upgrade' or 'pacman --noconfirm -Syu'."
+                    rc=125
+                    break
+                fi
+                # A5-09: before writing the ANSWER re-check that the runner is
+                # still there; a dead runner gets the death path instead of
+                # the cancel/continue paths.
+                if ! kill -0 "$runner_pid" 2>/dev/null || shell_runner_is_zombie; then
+                    exec 9>&- || true
+                    shell_pump_drain_dead
+                    rc=1
+                    break
+                fi
+                # Resume: hand the answer to the command and unpause the deadline.
+                now="$(shell_now_epoch)"
+                begin=$((begin + now - paused_at))
+                # A5-05: redact the terminal's echo of the answer so the
+                # answer never reaches the wire, the session log, the
+                # transcript or the prompt buffer.
+                shell_expected_echo "$answer"
+                echo_expected="$SHELL_ECHO_EXPECTED"
+                redact_active=1
+                redact_pos=0
+                suppress_until_nl=0
+                printf '%s\n' "$answer" >&9 2>/dev/null || true
+                tail_buf=""
+                quiet_ticks=0
+                newline_done=1
+                continue
+            fi
+            continue
+        fi
+    done
+
+    if (( rc == 124 || rc == 125 )); then
+        # A5-02: fail closed and tear down the runner's whole tree, not just
+        # the single runner pid.  Interrupt the command first (SIGINT to the
+        # runner and its descendant group leaders) so a default-on-EOF prompt
+        # is interrupted instead of proceeding, then close the input and
+        # group-terminate the runner (its setsid spawn made it the leader of
+        # its own group when setsid is available) and every child group below
+        # it, with the shared bounded grace before KILL.  A command that
+        # ignores TERM (or a child that detached) is still guaranteed to stop
+        # within the grace bound.
+        if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
+            interrupt_helper_tree "$runner_pid"
+        fi
+        exec 9>&- || true
+        if kill -0 "$runner_pid" 2>/dev/null && ! shell_runner_is_zombie; then
+            terminate_helper_tree "$runner_pid"
+        fi
+        wait "$runner_pid" 2>/dev/null || true
+    else
+        wait "$runner_pid" 2>/dev/null
+        rc=$?
+        if [[ -n "$runner_rc_file" ]]; then
+            IFS= read -r rc <"$runner_rc_file" 2>/dev/null || true
+            [[ "$rc" =~ ^[0-9]+$ ]] || rc=1
+        fi
+    fi
+    if [[ -n "$old_pipe_trap" ]]; then
+        eval "$old_pipe_trap"
+    else
+        trap - PIPE
+    fi
+    exec 8<&-
+    exec 9>&-
+    exec 11>&-
+    exec 12>&-
+    rm -f -- "$in_fifo" "$out_fifo"
+    [[ -z "$runner_rc_file" ]] || rm -f -- "$runner_rc_file"
+    return "$rc"
+}
+
+
+# ---------------------------------------------------------------------------
+# Bug #8 fix: the port's bash-3.1 empty-array shim (${arr[@]} -> ${arr[@]:-})
+# makes parse_cached_kernel_inventory's final `for p in
+# "${KERNEL_STALE_METAPACKAGES[@]:-}"` loop iterate once with an empty element
+# and therefore return 1 on success.  Under `set -Eeuo pipefail` that silently
+# aborts the kernel repair even though the baseline decoded and parsed
+# correctly.  The same shim makes `KERNEL_INVENTORY_VERSIONS=("${versions[@]:-}")`
+# yield one phantom empty element when the inventory is empty, defeating the
+# "names no installed kernels" fail-closed.  Re-define the function with the
+# empty entries filtered out and an explicit clean exit status; the decode and
+# parse body is otherwise identical to the transformed modern function.
+function parse_cached_kernel_inventory()
+{
+    local line v rest role size pkgs p baseline i
+    local -a versions=() pkgsl=() sizes=()
+
+    if [[ -z "${KERNEL_BASELINE_B64:-}" ]]; then
+        fail "Run the kernel diagnostic before starting the kernel repair (no cached kernel inventory baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$KERNEL_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached kernel inventory baseline could not be decoded; run the kernel diagnostic again."
+    fi
+    [[ -n "$baseline" ]] \
+        || fail "The cached kernel inventory baseline is empty; run the kernel diagnostic again."
+
+    KERNEL_INVENTORY_VERSIONS=()
+    KERNEL_INVENTORY_PKGS=()
+    KERNEL_INVENTORY_SIZES=()
+    KERNEL_RUNNING=""
+    KERNEL_LATEST=""
+    KERNEL_REPO_LATEST=""
+    KERNEL_METAPACKAGES=()
+    KERNEL_MANAGED=()
+    KERNEL_REMOVABLE=()
+    KERNEL_REMOVABLE_PKGS=()
+    KERNEL_LATEST_PKGS=()
+    KERNEL_MISSING_HEADERS=()
+    KERNEL_ORPHANED_HEADERS=()
+    KERNEL_ORPHANED_KERNELS=()
+    KERNEL_ORPHANED_SUPPORT_VERSIONS=()
+    KERNEL_ORPHANED_SUPPORT_PKGS=()
+    KERNEL_PARTIAL=()
+    KERNEL_PARTIAL_PKGS=()
+    KERNEL_STALE=()
+    KERNEL_STALE_PKGS=()
+    KERNEL_BROKEN=()
+    KERNEL_BROKEN_REASON=()
+    KERNEL_STALE_METAPACKAGES=()
+
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            "Kernel running: "*)
+                v="${line#Kernel running: }"
+                [[ "$v" != unknown && "$v" != none ]] && KERNEL_RUNNING="$v"
+                ;;
+            "Kernel latest: "*)
+                v="${line#Kernel latest: }"
+                [[ "$v" != unknown ]] && KERNEL_LATEST="$v"
+                ;;
+            "Kernel repository latest: "*)
+                v="${line#Kernel repository latest: }"
+                [[ "$v" != unavailable && "$v" != unknown ]] && KERNEL_REPO_LATEST="$v"
+                ;;
+            "Kernel installed: "*)
+                rest="${line#Kernel installed: }"
+                v="${rest%% *}"
+                size="${rest#*size=}"; size="${size%% *}"
+                pkgs="${rest#*pkgs=}"; pkgs="${pkgs%% *}"
+                versions+=("$v")
+                pkgsl+=("$pkgs")
+                sizes+=("${size:-0}")
+                ;;
+            "Kernel protected: "*)
+                rest="${line#Kernel protected: }"
+                v="${rest%% *}"
+                role="${rest#*role=}"
+                if [[ "$role" == metapackage ]]; then
+                    KERNEL_METAPACKAGES+=("$v")
+                else
+                    case ",${role}," in
+                        *,managed-default,*) KERNEL_MANAGED+=("$v") ;;
+                    esac
+                fi
+                ;;
+            "Kernel removable: "*)
+                rest="${line#Kernel removable: }"
+                [[ "$rest" == none ]] && continue
+                v="${rest%% *}"
+                pkgs="${rest#*pkgs=}"
+                KERNEL_REMOVABLE+=("$v")
+                while IFS= read -r p; do
+                    [[ -n "$p" ]] && KERNEL_REMOVABLE_PKGS+=("$p")
+                done <<<"$(tr ',' '\n' <<<"${pkgs:-}")"
+                ;;
+            "Kernel missing headers: "*)
+                KERNEL_MISSING_HEADERS+=("${line#Kernel missing headers: }")
+                ;;
+            "Kernel stale: "*)
+                KERNEL_STALE+=("${line#Kernel stale: }")
+                ;;
+            "Kernel broken: "*)
+                rest="${line#Kernel broken: }"
+                KERNEL_BROKEN+=("${rest%% *}")
+                if [[ "$rest" == *" reason="* ]]; then
+                    KERNEL_BROKEN_REASON+=("${rest#* reason=}")
+                else
+                    KERNEL_BROKEN_REASON+=("")
+                fi
+                ;;
+            "Kernel stale metapackage: "*)
+                KERNEL_STALE_METAPACKAGES+=("${line#Kernel stale metapackage: }")
+                ;;
+            "Kernel orphaned headers: "*)
+                KERNEL_ORPHANED_HEADERS+=("${line#Kernel orphaned headers: }")
+                ;;
+            "Kernel orphaned kernel: "*)
+                KERNEL_ORPHANED_KERNELS+=("${line#Kernel orphaned kernel: }")
+                ;;
+            "Kernel orphaned build support: "*)
+                rest="${line#Kernel orphaned build support: }"
+                v="${rest%% *}"
+                pkgs="${rest#*pkg=}"
+                KERNEL_ORPHANED_SUPPORT_VERSIONS+=("$v")
+                KERNEL_ORPHANED_SUPPORT_PKGS+=("$pkgs")
+                ;;
+            "Kernel incomplete: "*)
+                KERNEL_PARTIAL+=("${line#Kernel incomplete: }")
+                ;;
+        esac
+    done <<<"$baseline"
+
+    # Filter the phantom empty element the :- shim yields on an empty
+    # inventory, so a baseline naming no real kernels still fails closed
+    # below instead of surfacing a blank kernel row.
+    for i in "${!versions[@]}"; do
+        [[ -n "${versions[$i]}" ]] || continue
+        KERNEL_INVENTORY_VERSIONS+=("${versions[$i]}")
+        KERNEL_INVENTORY_PKGS+=("${pkgsl[$i]:-}")
+        KERNEL_INVENTORY_SIZES+=("${sizes[$i]:-}")
+    done
+
+    ((${#KERNEL_INVENTORY_VERSIONS[@]} > 0)) \
+        || { [[ -n "$KERNEL_REPO_LATEST" ]] \
+            || fail "The cached kernel inventory baseline names no installed kernels; run the kernel diagnostic again."; }
+
+    # Newest kernel's grouped package set (for the optional remove-newest plan).
+    if [[ -n "$KERNEL_LATEST" ]]; then
+        for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+            [[ "${KERNEL_INVENTORY_VERSIONS[$i]}" == "$KERNEL_LATEST" ]] || continue
+            while IFS= read -r p; do
+                [[ -n "$p" ]] && KERNEL_LATEST_PKGS+=("$p")
+            done <<<"$(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]:-}")"
+            break
+        done
+    fi
+
+    # Stale kernels' grouped package set (for the remove-stale plan), rebuilt
+    # from the parsed stale versions so the removal candidates resolve by package.
+    for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
+        kernel_is_stale "${KERNEL_INVENTORY_VERSIONS[$i]}" || continue
+        while IFS= read -r p; do
+            [[ -n "$p" ]] && KERNEL_STALE_PKGS+=("$p")
+        done <<<"$(tr ',' '\n' <<<"${KERNEL_INVENTORY_PKGS[$i]:-}")"
+    done
+    # The stale metapackages are unversioned (never in KERNEL_INVENTORY_PKGS),
+    # so add their names to the removal plan here for the cached round-trip.
+    for p in "${KERNEL_STALE_METAPACKAGES[@]:-}"; do
+        [[ -n "$p" ]] && KERNEL_STALE_PKGS+=("$p")
+    done
+    return 0
+}
+
+
+# ---------------------------------------------------------------------------
+# Bug #8 fix (kernel repair "cached kernel inventory baseline could not be
+# decoded").  Etch ships neither the coreutils `base64` binary (added in
+# coreutils 6.0; Etch has 5.97) nor the `openssl` binary (priority-optional),
+# so compat.sh's legacy_b64e/legacy_b64d fall through to a nonzero return and
+# parse_cached_kernel_inventory's `base64 -d` fails even though the GUI
+# serialized a valid single-line payload.  Add a python2.4 fallback (confirmed
+# present in the Etch guest toolchain) behind the existing base64 -> openssl
+# chain.  The `function` form keeps the port's duplicate-function gate treating
+# these as deliberate overrides of the compat.sh shims (the same mechanism the
+# kernel/gpu menu and shell pump overrides already use).
+#
+# Bug #8 follow-up: the first python fallback used the conditional expression
+# `X if C else Y`, which is Python 2.5+ syntax (PEP 308).  Etch's python is
+# 2.4, so `python -c` raised SyntaxError, legacy_b64d returned nonzero and the
+# decode STILL failed.  The snippets now use getattr(obj, name, default)
+# (Python 2.0+) so they parse and run on 2.4 as well as python3.
+# ---------------------------------------------------------------------------
+
+# Resolve a python interpreter for the base64 fallback (python is the standard
+# name on Etch; python2.4 is the versioned binary; python3 covers modern
+# recovery hosts).  Prints the path, or nothing when none is present.
+legacy_b64_python_bin()
+{
+    local real=""
+    real="$(legacy_real_tool_path python 2>/dev/null \
+        || legacy_real_tool_path python2.4 2>/dev/null \
+        || legacy_real_tool_path python3 2>/dev/null || true)"
+    printf '%s' "$real"
+}
+
+# True when at least one of the base64 backends legacy_b64e/legacy_b64d can use
+# is present: the coreutils base64 binary, openssl, or a python interpreter.
+# Etch's coreutils 5.97 has no base64 binary, so the readiness gate must not
+# require it; this is the prerequisite that replaces `command -v base64`.
+legacy_b64_available()
+{
+    [[ -n "$(legacy_real_tool_path base64 2>/dev/null)" ]] && return 0
+    [[ -n "$(legacy_real_tool_path openssl 2>/dev/null)" ]] && return 0
+    [[ -n "$(legacy_b64_python_bin)" ]]
+}
+
+function legacy_b64e()
+{
+    local real=""
+    if ! legacy_force_shims; then
+        real="$(legacy_real_tool_path base64 || true)"
+        if [[ -n "$real" ]]; then
+            "$real"
+            return $?
+        fi
+    fi
+    real="$(legacy_real_tool_path openssl || true)"
+    if [[ -n "$real" ]]; then
+        "$real" enc -base64 -A
+        return $?
+    fi
+    real="$(legacy_b64_python_bin)"
+    [[ -n "$real" ]] || return 1
+    # Byte-exact on python2 (str passthrough) and python3 (buffer/binary layer).
+    # The ternary `X if C else Y` form this previously used is Python 2.5+
+    # syntax (PEP 308), so Etch's Python 2.4 raised SyntaxError and the
+    # fallback never ran.  getattr(obj, name, default) has existed since Python
+    # 2.0 and keeps the same binary/str split without a conditional expression.
+    "$real" -c 'import base64,sys; d=getattr(sys.stdin,"buffer",sys.stdin).read(); w=getattr(sys.stdout,"buffer",sys.stdout); w.write(base64.b64encode(d))'
+}
+
+function legacy_b64d()
+{
+    local real=""
+    if ! legacy_force_shims; then
+        real="$(legacy_real_tool_path base64 || true)"
+        if [[ -n "$real" ]]; then
+            "$real" -d
+            return $?
+        fi
+    fi
+    real="$(legacy_real_tool_path openssl || true)"
+    if [[ -n "$real" ]]; then
+        "$real" enc -base64 -d -A
+        return $?
+    fi
+    real="$(legacy_b64_python_bin)"
+    [[ -n "$real" ]] || return 1
+    # Byte-exact on python2 (str passthrough) and python3 (buffer/binary layer).
+    # Python 2.4-compatible form: getattr default instead of the 2.5+ ternary
+    # (see legacy_b64e).
+    "$real" -c 'import base64,sys; d=getattr(sys.stdin,"buffer",sys.stdin).read(); w=getattr(sys.stdout,"buffer",sys.stdout); w.write(base64.b64decode(d))'
+}
+
+# The modern shell_interactive_ready() hard-requires `command -v base64`, but
+# Etch's coreutils 5.97 ships no base64 binary, so the interactive shell never
+# armed and a question hit stdin /dev/null instead of the GUI popup.  The
+# legacy PROMPT channel encodes through legacy_b64e (base64 -> openssl ->
+# python), so the readiness gate only needs one of those backends, not the
+# base64 binary itself.  This is a deliberate override (the `function` form,
+# like helper_menu_prompt/shell_run_interactive); the other tool checks stay.
+function shell_interactive_ready {
+    shell_interactive_enabled || return 1
+    command -v mkfifo >/dev/null 2>&1 || return 1
+    legacy_b64_available || return 1
+    command -v tr >/dev/null 2>&1 || return 1
+    command -v tail >/dev/null 2>&1 || return 1
+    command -v od >/dev/null 2>&1 || return 1
+}
+
+
+# ---------------------------------------------------------------------------
+# Bug #5 fix (install-host-package result popup never becomes closable).
+# compat.sh's legacy_timeout_watchdog backgrounds `( sleep "$seconds"; ... ) &`
+# and, once the command finishes early, kills that watchdog subshell with
+# `kill "$wd"` and `wait`s it.  On bash 3.1 a trapped SIGTERM is deferred while
+# a shell waits on its foreground `sleep` child, so `wait "$wd"` blocks for the
+# whole bound (600 s for a package install's mutate step) even though apt-get
+# already finished: the helper never exits, the GUI's QProcess `finished` signal
+# never fires, and helperFinished (which enables the result popup's Close
+# button) is never called.  On newer bash the subshell dies immediately but
+# orphans the long `sleep`, which then holds the helper's stdout open and delays
+# the read channel's EOF the same way.  Re-define the watchdog with 1-second
+# sleep ticks so the deferred trap is processed within ~1 s and the tick's
+# `sleep` child completes instead of lingering.  The `function` form keeps the
+# port's duplicate-function gate treating this as a deliberate override of the
+# compat.sh shim.
+# ---------------------------------------------------------------------------
+
+function legacy_timeout_watchdog()
+{
+    local signal="TERM" kill_after=0 duration="" arg="" rc=0
+    local tmp="" pid=0 wd=0 seconds=0 leader=0 setsid_bin="" descendants="" slept=0
+    local -a cmd=()
+    while (( $# > 0 )); do
+        arg="$1"
+        case "$arg" in
+            --foreground|--preserve-status|-v|--verbose) shift ;;
+            -s|--signal) shift; signal="${1:-TERM}"; shift ;;
+            --signal=*) signal="${arg#*=}"; shift ;;
+            -k|--kill-after) shift; kill_after="${1:-0}"; shift ;;
+            --kill-after=*) kill_after="${arg#*=}"; shift ;;
+            -*) shift ;;
+            *) duration="$arg"; shift; break ;;
+        esac
+    done
+    cmd=("$@")
+    (( ${#cmd[@]} > 0 )) || return 1
+    [[ "$kill_after" =~ ^[0-9]+$ ]] || kill_after=0
+    seconds="$(legacy_duration_seconds "$duration")"
+    tmp="$(mktemp "${TMPDIR:-/tmp}/legacy-timeout.XXXXXX" 2>/dev/null)" || return 1
+    rm -f -- "$tmp"
+    # Never toggle `set -e` here: shims must not change the caller's shell
+    # options, and `cmd || rc=$?` is errexit-safe on its own.
+    # Run the command in its own session (setsid) when available so the
+    # watcher can signal the whole group; otherwise fall back to signalling
+    # the direct child plus a /proc descendant sweep of the snapshotted tree.
+    setsid_bin="$(legacy_real_tool_path setsid 2>/dev/null || true)"
+    if [[ -n "$setsid_bin" ]]; then
+        leader=1
+        "$setsid_bin" "${cmd[@]}" &
+    else
+        leader=0
+        "${cmd[@]}" &
+    fi
+    pid=$!
+    (
+        # 1-second ticks: a cancelled watchdog is reaped within ~1 s instead of
+        # blocking the helper for the full bound (bash 3.1) or leaving a long
+        # `sleep` orphan that holds the helper's stdout open (bash 4+).
+        slept=0
+        while (( slept < seconds )); do
+            sleep 1 2>/dev/null
+            slept=$((slept + 1))
+        done
+        : > "$tmp" 2>/dev/null
+        # Snapshot the full descendant set before the first signal so a child
+        # reparented to init by its parent's death is still enumerated.
+        descendants="$(legacy_timeout_descendants "$pid")"
+        legacy_timeout_terminate "$pid" "$leader" "$signal" "$descendants"
+        if (( kill_after > 0 )); then
+            sleep "$kill_after" 2>/dev/null
+            # Reuse the SAME snapshot so reparented children are still reached.
+            legacy_timeout_terminate "$pid" "$leader" KILL "$descendants"
+        fi
+    ) &
+    wd=$!
+    rc=0
+    # 2>/dev/null keeps bash 3.1's job-control "Terminated" notice out of the
+    # helper transcript when the watchdog kills the command.
+    wait "$pid" 2>/dev/null || rc=$?
+    kill "$wd" 2>/dev/null || true
+    wait "$wd" 2>/dev/null || true
+    if [[ -e "$tmp" ]]; then
+        rc=124
+    fi
+    rm -f -- "$tmp"
+    return "$rc"
 }

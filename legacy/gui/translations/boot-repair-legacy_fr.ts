@@ -573,7 +573,7 @@
     </message>
     <message>
         <source>LVM inspection</source>
-        <translation>Contrôle LVM</translation>
+        <translation>Inspection LVM</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -581,7 +581,7 @@
     </message>
     <message>
         <source>Software RAID</source>
-        <translation>Logiciel RAID</translation>
+        <translation>RAID logiciel</translation>
     </message>
     <message>
         <source>Optional Linux MD RAID support</source>
@@ -648,7 +648,7 @@
     </message>
     <message>
         <source>Repair</source>
-        <translation>Réparer</translation>
+        <translation>Réparation</translation>
     </message>
     <message>
         <source>Chroot Shell</source>
@@ -1020,7 +1020,7 @@
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Exécuter l&apos;outil</translation>
+        <translation>Exécuter</translation>
     </message>
     <message>
         <source>Select a tool to review its repair action.</source>
@@ -1251,8 +1251,8 @@
         <translation>Filtrer le journal visible par type d&apos;entrée. La sélection d&apos;une section de diagnostic montre les lignes saisies pour cette section; un filtre de flux de travail comme la réparation du système de fichiers ou la réparation du paquet montre ses lignes de réparation cartographiées (la copie de fichier n&apos;a pas de lignes dans cette façade). Enregistrer Comme toujours écrit chaque entrée.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Les paramètres sont stockés par utilisateur sous ~/.qt/, un fichier par groupe de paramètres (devicesrc, logrc, diagnosticsrc, réparrc), et sont enregistrés immédiatement sur chaque changement et à la fin. Lancez l&apos;interface graphique en tant que même utilisateur pour conserver vos commandes; une interface graphique a commencé comme racine conserve ses propres copies.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Les paramètres sont stockés par utilisateur sous ~/.qt/, un fichier par groupe de paramètres (devicesrc, logrc, diagnosticsrc, réparrc), et sont enregistrés immédiatement sur chaque changement et à la fin. Le même emplacement par utilisateur est utilisé si l&apos;interface graphique fonctionne comme utilisateur connecté ou comme racine (sudo préserve le répertoire d&apos;origine).</translation>
     </message>
     <message>
         <source>Device discovery</source>

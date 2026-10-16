@@ -1251,8 +1251,8 @@
         <translation>Filtrar o log visível por tipo de entrada. Selecionando uma seção de diagnóstico mostra as linhas capturadas para essa seção; um filtro de fluxo de trabalho, como o reparo do sistema de arquivos ou o reparo do pacote, mostra suas linhas de reparo mapeadas (a cópia do arquivo não tem linhas neste frontend). Gravar Como sempre escreve todas as entradas.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>As configurações são armazenadas por usuário em ~/.qt/, um arquivo por grupo de configurações (dispositivosrc, logsrc, diagnosticsrc, repairrc), e são salvas imediatamente em cada mudança e ao fechar. Inicie a GUI como o mesmo usuário para manter suas sobreposições; uma GUI iniciada como root mantém suas próprias cópias.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>As configurações são armazenadas por usuário em ~/.qt/, um arquivo por grupo de configurações (dispositivosrc, logsrc, diagnosticsrc, repairrc), e são salvas imediatamente em cada mudança e ao fechar. A mesma localização por usuário é usada se a GUI é executada como usuário logado ou como root (sudo preserva o diretório home).</translation>
     </message>
     <message>
         <source>Device discovery</source>
