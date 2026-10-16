@@ -1251,8 +1251,8 @@
         <translation>Filtrovat viditelné logaritmus podle druhu záznamu. Výběr diagnostické sekce ukazuje linky zachycené pro tento oddíl; filtr workflow, jako je oprava souborového systému nebo oprava Schránky, zobrazuje své mapované opravy (Kopie souboru nemá žádné linky v této frontě). Uložit Jako vždy píše každý záznam.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Nastavení je uloženo na jednoho uživatele pod ~ / .qt /, jeden soubor na skupinu nastavení (devicesrc, logsrc, diagnosticsrc, oprava) a je okamžitě uloženo na každou změnu a na konci. Spusťte GUI jako stejný uživatel, aby vaše přejetí; GUI začal jako root udržuje své vlastní kopie.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Nastavení je uloženo na jednoho uživatele pod ~ / .qt /, jeden soubor na skupinu nastavení (devicesrc, logsrc, diagnosticsrc, oprava) a je okamžitě uloženo na každou změnu a na konci. Stejná per- uživatelská poloha se používá bez ohledu na to, zda GUI běží jako logged- v uživateli nebo jako root (sudo uchovává domovský adresář).</translation>
     </message>
     <message>
         <source>Device discovery</source>

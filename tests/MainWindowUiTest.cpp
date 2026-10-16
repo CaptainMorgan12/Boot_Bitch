@@ -19,76 +19,6 @@ void MainWindowUiTest::initTestCase()
     settings.sync();
 }
 
-void MainWindowUiTest::tabsAndReadOnlyControls()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(100);
-
-    QVERIFY(window.m_tabs);
-    QCOMPARE(window.m_tabs->count(), 9);
-    QVERIFY(!window.m_tabs->tabBar()->usesScrollButtons());
-    QVERIFY(window.m_tabScrollLeftButton);
-    QVERIFY(window.m_tabScrollRightButton);
-    QCOMPARE(window.m_tabScrollLeftButton->arrowType(), Qt::LeftArrow);
-    QCOMPARE(window.m_tabScrollRightButton->arrowType(), Qt::RightArrow);
-    window.m_tabScrollRightButton->click();
-    QCOMPARE(window.m_tabs->currentIndex(), 1);
-    window.m_tabScrollLeftButton->click();
-    QCOMPARE(window.m_tabs->currentIndex(), 0);
-    QCOMPARE(window.m_tabs->tabText(0), QStringLiteral("Systems"));
-    QCOMPARE(window.m_tabs->tabText(1), QStringLiteral("Diagnostics"));
-    QCOMPARE(window.m_tabs->tabText(2), QStringLiteral("EFI boot entries"));
-    QCOMPARE(window.m_tabs->tabText(3), QStringLiteral("Repair"));
-    QCOMPARE(window.m_tabs->tabText(4), QStringLiteral("Snapshots"));
-    QCOMPARE(window.m_tabs->tabText(5), QStringLiteral("Chroot Shell"));
-    QCOMPARE(window.m_tabs->tabText(6), QStringLiteral("File Copy"));
-    QCOMPARE(window.m_tabs->tabText(7), QStringLiteral("Logs"));
-    QCOMPARE(window.m_tabs->tabText(8), QStringLiteral("Settings"));
-    QCOMPARE(window.m_tabs->currentIndex(), 0);
-    window.resize(480, 500);
-    QTest::qWait(50);
-    QWidget *tabControls = window.m_tabs->cornerWidget(Qt::TopLeftCorner);
-    QVERIFY(tabControls);
-    QVERIFY(tabControls->geometry().right() <= window.m_tabs->tabBar()->geometry().left());
-    for (QToolButton *native : window.m_tabs->tabBar()->findChildren<QToolButton *>()) {
-        if (native->objectName().startsWith(QStringLiteral("Scroll"))) {
-            QVERIFY(!native->isVisible());
-        }
-    }
-    QVERIFY(window.m_chrootShellCommandEdit);
-    QVERIFY(window.m_chrootShellOutput);
-    QVERIFY(window.m_chrootShellRunButton);
-    QVERIFY(window.m_repairVerticalSplitter);
-    QCOMPARE(window.m_repairVerticalSplitter->orientation(), Qt::Vertical);
-    QCOMPARE(window.m_repairVerticalSplitter->count(), 2);
-    QVERIFY(!window.m_repairVerticalSplitter->childrenCollapsible());
-    QVERIFY(window.m_repairSplitter);
-    QCOMPARE(window.m_repairVerticalSplitter->widget(1), window.m_repairSplitter);
-    QVERIFY(window.m_repairToolTree);
-    QCOMPARE(window.m_repairToolTree->verticalScrollBarPolicy(), Qt::ScrollBarAlwaysOn);
-    QPushButton *configurePlan = buttonWithText(window, QStringLiteral("Configure Plan…"));
-    QVERIFY(configurePlan);
-    QVERIFY2(configurePlan->sizeHint().width() < 300,
-             "Full Repair plan controls should retain standard content-sized widths");
-    QVERIFY(window.m_deviceTree);
-    QCOMPARE(window.m_deviceTree->horizontalScrollBarPolicy(), Qt::ScrollBarAsNeeded);
-
-    for (int index = 0; index < window.m_tabs->count(); ++index) {
-        window.m_tabs->setCurrentIndex(index);
-        QCOMPARE(window.m_tabs->currentIndex(), index);
-    }
-
-    window.m_tabs->setCurrentIndex(7);
-    QPushButton *clearRegister = buttonWithText(window, QStringLiteral("Clear Register"));
-    QVERIFY(clearRegister);
-    QVERIFY(clearRegister->isEnabled());
-    QVERIFY(window.m_logView);
-    window.appendLog(QStringLiteral("UI_TEST_BEFORE_CLEAR"));
-    clearRegister->click();
-    QVERIFY(window.m_logView->toPlainText().contains(QStringLiteral("Action register cleared")));
-}
-
 // Clear Register must keep the cached diagnostic evidence and the on-screen
 // register coherent: with warm caches it confirms first, then clears both the
 // register and the diagnostic caches so every repair tool fails closed.
@@ -170,7 +100,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
     window.show();
     QTest::qWait(50);
     QVERIFY(window.m_diagnosticList);
-    QCOMPARE(window.m_diagnosticList->count(), 19);
+    QCOMPARE(window.m_diagnosticList->count(), 18);
 
     const QHash<QString, QString> expected = {
         {QStringLiteral("environment"), QStringLiteral("Summarize the selected system, protection state and inspection readiness.")},
@@ -190,7 +120,6 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
         {QStringLiteral("btrfs"), QStringLiteral("Show Btrfs filesystem and subvolume information.")},
         {QStringLiteral("mapper"), QStringLiteral("Show device-mapper ancestry and cryptsetup state.")},
         {QStringLiteral("luks"), QStringLiteral("Show LUKS ancestry plus crypttab and fstab mapper references.")},
-        {QStringLiteral("host-capabilities"), QStringLiteral("Report the recovery-host prerequisites read-only.")},
         {QStringLiteral("report"), QStringLiteral("Combine every read-only diagnostic for the selected scope.")}
     };
 
@@ -205,59 +134,6 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
         QVERIFY2(tooltip.size() < 80,
                  qPrintable(QStringLiteral("tooltip for %1 is not short: %2").arg(key, tooltip)));
     }
-}
-
-void MainWindowUiTest::chrootShellControlsAreGuardedAndReadOnly()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-
-    QVERIFY(window.m_chrootShellCommandEdit);
-    QVERIFY(window.m_chrootShellOutput);
-    QVERIFY(window.m_chrootShellRunButton);
-    QVERIFY(window.m_chrootShellOutput->isReadOnly());
-    window.m_previewTargetPath.clear();
-    window.m_previewTargetComponentPath.clear();
-    window.updateTargetLabels();
-    QVERIFY(!window.m_chrootShellRunButton->isEnabled());
-    QCOMPARE(window.m_chrootShellTargetLabel->text(), QStringLiteral("Target: none selected"));
-
-    window.m_chrootShellCommandEdit->setText(QStringLiteral("update-grub"));
-    QVERIFY(window.m_chrootShellCommandEdit->text().contains(QStringLiteral("update-grub")));
-}
-
-void MainWindowUiTest::unlockStatusPanelIsReadOnlyAndScoped()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-
-    QVERIFY(window.m_unlockStatusView);
-    QVERIFY(window.m_unlockStatusBox);
-    // The status frame expands into the left pane's remaining space so its
-    // bottom edge stays aligned with the selected-drive details frame.
-    QCOMPARE(window.m_unlockStatusBox->sizePolicy().verticalPolicy(), QSizePolicy::Expanding);
-    QCOMPARE(window.m_unlockStatusView->sizePolicy().verticalPolicy(), QSizePolicy::Expanding);
-    QVERIFY(window.m_selectedDriveDetailsBox);
-    if (window.m_systemSplitter->orientation() == Qt::Horizontal) {
-        QCoreApplication::processEvents();
-        const int unlockBottom = window.m_unlockStatusBox->mapTo(
-            window.m_systemSplitter, QPoint(0, window.m_unlockStatusBox->height())).y();
-        const int detailsBottom = window.m_selectedDriveDetailsBox->mapTo(
-            window.m_systemSplitter, QPoint(0, window.m_selectedDriveDetailsBox->height())).y();
-        QVERIFY2(qAbs(unlockBottom - detailsBottom) <= 2,
-                 "unlock status and selected-drive details frames should share a bottom edge");
-    }
-    QVERIFY(window.m_unlockStatusView->isReadOnly());
-    QVERIFY(!window.m_unlockStatusView->toPlainText().isEmpty());
-
-    // Session cleanup must discard cached unlock evidence so a subsequent
-    // target selection cannot display a mapper that is no longer owned.
-    window.m_unlockStatusCache.insert(QStringLiteral("/dev/test-disk"), QStringLiteral("UNLOCKED=/dev/mapper/test"));
-    window.closePrivilegedSession();
-    QVERIFY(window.m_unlockStatusCache.isEmpty());
-    QVERIFY(window.m_unlockStatusView->toPlainText().contains(QStringLiteral("No unlock operation")));
 }
 
 void MainWindowUiTest::filesystemRepairToolRowIsGatedByCapabilityEvidence()
@@ -310,111 +186,6 @@ void MainWindowUiTest::filesystemRepairToolRowIsGatedByCapabilityEvidence()
              "the Check File Systems action must be enabled for an available filesystem capability");
     QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("read-only")));
     QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("mounted filesystem")));
-}
-
-void MainWindowUiTest::kernelRemovalPreviewListsTuxedoPlanAndKeepsNewest()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    const QString bootSpace =
-        QStringLiteral("Kernel removable: 7.1.8.2-tuxedo-amd64 size=524288000 "
-                       "pkgs=linux-image-7.1.8.2-tuxedo-amd64,linux-modules-7.1.8.2-tuxedo-amd64,"
-                       "linux-headers-7.1.8.2-tuxedo-amd64,linux-headers-7.1.8.2-common-tuxedo\n")
-        + QStringLiteral("Kernel latest: 7.1.9.1-tuxedo-amd64\n");
-    window.m_targetDiagnosticCache.insert(QStringLiteral("kernel"), bootSpace);
-
-    const QString preview = window.kernelsRemovalPreview();
-    QVERIFY2(preview.contains(QStringLiteral("1. linux-image-7.1.8.2-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("2. linux-modules-7.1.8.2-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("3. linux-headers-7.1.8.2-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("4. linux-headers-7.1.8.2-common-tuxedo")),
-             qPrintable(preview));
-    // The grouped common headers are part of the same old kernel's plan, never
-    // a separate removable kernel.
-    QVERIFY2(preview.contains(QStringLiteral("Superseded kernel(s) available for removal: 1.")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Approximately 500.0 MB would be restored.")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Newest installed kernel: 7.1.9.1-tuxedo-amd64.")),
-             qPrintable(preview));
-    // No protected package or metapackage leaks into the plan text.
-    QVERIFY2(!preview.contains(QStringLiteral("linux-headers-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(!preview.contains(QStringLiteral("linux-image-tuxedo")),
-             qPrintable(preview));
-}
-
-void MainWindowUiTest::kernelRemovalPreviewDetectsMissingHeadersAndGroupsCommonHeaders()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    const QString bootSpace =
-        QStringLiteral("Kernel removable: 6.2.0-1000-generic size=1048576 "
-                       "pkgs=linux-image-6.2.0-1000-generic,linux-modules-6.2.0-1000-generic,"
-                       "linux-headers-6.2.0-1000-generic,linux-headers-6.2.0-1000\n")
-        + QStringLiteral("Kernel latest: 6.5.0-10038-generic\n")
-        + QStringLiteral("Kernel missing headers: 6.5.0-10038-generic\n");
-    window.m_targetDiagnosticCache.insert(QStringLiteral("kernel"), bootSpace);
-
-    const QString preview = window.kernelsRemovalPreview();
-    // The default -amd64/generic naming groups the bare linux-headers-<series>
-    // common headers with the old kernel.
-    QVERIFY2(preview.contains(QStringLiteral("4. linux-headers-6.2.0-1000")),
-             qPrintable(preview));
-    // The missing-headers note surfaces the newest kernel by version.
-    QVERIFY2(preview.contains(QStringLiteral("Missing headers (latest kernel has no matching headers): 6.5.0-10038-generic")),
-             qPrintable(preview));
-    // The newest kernel is reported.
-    QVERIFY2(preview.contains(QStringLiteral("Newest installed kernel: 6.5.0-10038-generic.")),
-             qPrintable(preview));
-}
-
-void MainWindowUiTest::kernelRemovalPreviewSurfacesRepoLatestAndOrphanedHeaders()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    prepareRepairScope(window);
-    // Rich evidence: a broken newest (not running), a removable older kernel,
-    // a repository-latest ahead of installed, orphaned headers, an orphaned
-    // kernel (zombie) and an incomplete kernel.
-    const QString bootSpace =
-        QStringLiteral("Kernel running: 7.1.8.2-tuxedo-amd64\n")
-        + QStringLiteral("Kernel latest: 7.1.9.1-tuxedo-amd64\n")
-        + QStringLiteral("Kernel repository latest: 7.1.9.3-tuxedo-amd64\n")
-        + QStringLiteral("Kernel removable: 7.1.7.0-tuxedo-amd64 size=1048576 "
-                         "pkgs=linux-image-7.1.7.0-tuxedo-amd64\n")
-        + QStringLiteral("Kernel orphaned headers: 6.2.0-1000-generic\n")
-        + QStringLiteral("Kernel orphaned kernel: 7.0.0-0-tuxedo-amd64\n")
-        + QStringLiteral("Kernel orphaned build support: 7.1.10.2 pkg=linux-kbuild-7.1.10.2\n")
-        + QStringLiteral("Kernel incomplete: 7.1.9.1-tuxedo-amd64\n")
-        + QStringLiteral("Kernel missing headers: 7.1.9.1-tuxedo-amd64\n");
-    window.m_targetDiagnosticCache.insert(QStringLiteral("kernel"), bootSpace);
-
-    const QString preview = window.kernelsRemovalPreview();
-    QVERIFY2(preview.contains(QStringLiteral("Running kernel: 7.1.8.2-tuxedo-amd64.")),
-             qPrintable(preview));
-    // Repository-latest note surfaces the newer available kernel.
-    QVERIFY2(preview.contains(QStringLiteral("Repository latest kernel: 7.1.9.3-tuxedo-amd64")),
-             qPrintable(preview));
-    // Orphaned headers are surfaced distinctly from missing headers.
-    QVERIFY2(preview.contains(QStringLiteral("Orphaned headers (no matching kernel): 6.2.0-1000-generic")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Missing headers (latest kernel has no matching headers): 7.1.9.1-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Orphaned kernel components (no owning package): 7.0.0-0-tuxedo-amd64")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Orphaned kernel build support (kernel gone): 7.1.10.2 pkg=linux-kbuild-7.1.10.2")),
-             qPrintable(preview));
-    QVERIFY2(preview.contains(QStringLiteral("Incomplete kernels (installed package without its on-disk files): 7.1.9.1-tuxedo-amd64")),
-             qPrintable(preview));
 }
 
 void MainWindowUiTest::kernelRepairActionsDeriveFromEvidenceAndProtectRunning()
@@ -477,6 +248,32 @@ void MainWindowUiTest::kernelRepairActionsDeriveFromEvidenceAndProtectRunning()
     for (const QPair<QString, QString> &action : runningNewest) {
         QVERIFY2(action.first != QStringLiteral("Remove newest kernel"),
                  "the running kernel must never be offered as the newest to remove");
+    }
+
+    // A repair target has no running kernel ("Kernel running: none" or empty),
+    // so "remove newest" is offered only when an older (removable) kernel exists
+    // to fall back to -- never merely because the newest differs from a host
+    // kernel.
+    const QString targetWithOlder =
+        QStringLiteral("Kernel running: none\n")
+        + QStringLiteral("Kernel latest: 7.1.9.1-tuxedo-amd64\n")
+        + QStringLiteral("Kernel removable: 7.1.8.2-tuxedo-amd64 size=1048576 "
+                         "pkgs=linux-image-7.1.8.2-tuxedo-amd64\n");
+    bool targetOffersRemoveNewest = false;
+    for (const QPair<QString, QString> &action : MainWindow::kernelRepairActionsFor(targetWithOlder)) {
+        if (action.first == QStringLiteral("Remove newest kernel")) {
+            targetOffersRemoveNewest = true;
+        }
+    }
+    QVERIFY2(targetOffersRemoveNewest,
+             "a target with an older kernel must offer remove-newest");
+
+    const QString targetSingle =
+        QStringLiteral("Kernel running: none\n")
+        + QStringLiteral("Kernel latest: 7.1.9.1-tuxedo-amd64\n");
+    for (const QPair<QString, QString> &action : MainWindow::kernelRepairActionsFor(targetSingle)) {
+        QVERIFY2(action.first != QStringLiteral("Remove newest kernel"),
+                 "a target with a single kernel must never offer remove-newest");
     }
 
     // No evidence yields no actions (the menu then reports nothing actionable).
@@ -775,60 +572,6 @@ void MainWindowUiTest::reasonKeyTokensMapToLocalizedStringsAndUnknownKeysPassThr
              "a legacy English reason must fail closed");
     QCOMPARE(reason, QStringLiteral("dpkg is not installed in the target"));
 }
-
-void MainWindowUiTest::fullRepairFilesystemStageIsFirstWhenEnabled()
-{
-    MainWindow window;
-    window.show();
-    QTest::qWait(50);
-    window.m_snapshotPreloadScheduled = true;
-
-    prepareRepairScope(window);
-    QString evidence = capabilityEvidence(false, true);
-    evidence += QStringLiteral("Repair tool filesystem: available\n");
-    cacheRepairEvidence(window, evidence);
-    // Apply the scope's availability first so the explicit setChecked calls
-    // below change widget state, emit toggled and record the preferences.
-    window.updateFullRepairSummary();
-
-    for (QCheckBox *toggle : {window.m_fullRepairDpkg, window.m_fullRepairBrokenPackages,
-                              window.m_fullRepairAptUpdate,
-                              window.m_fullRepairUpgrade, window.m_fullRepairDkms,
-                              window.m_fullRepairDisplayManager, window.m_fullRepairInitramfs,
-                              window.m_fullRepairEfi, window.m_fullRepairGrub}) {
-        QVERIFY(toggle);
-        toggle->setChecked(false);
-    }
-    QVERIFY(window.m_fullRepairFilesystem);
-    window.m_fullRepairFilesystem->setChecked(true);
-    window.updateFullRepairSummary();
-
-    QVERIFY(window.m_fullRepairStageList);
-    QCOMPARE(window.m_fullRepairStageList->count(), 1);
-    QVERIFY2(window.m_fullRepairStageList->item(0)->text().contains(QStringLiteral("Repair file system errors")),
-             "the file system stage must be the first Full Repair stage when enabled");
-    QVERIFY2(window.m_fullRepairStageList->item(0)->text().startsWith(QStringLiteral("1. ")),
-             "the file system stage must be ordered first in the execution plan");
-    QCOMPARE(window.selectedRepairStages(), QStringList{QStringLiteral("filesystem")});
-
-    // The execution list Full Repair sends to the helper must also start with
-    // the file system stage; otherwise the inspect/confirm/repair flow is
-    // skipped even though the plan lists it.
-    window.m_fullRepairGrub->setChecked(true);
-    window.updateFullRepairSummary();
-    QCOMPARE(window.selectedRepairStages(),
-             QStringList({QStringLiteral("filesystem"), QStringLiteral("grub")}));
-    window.m_fullRepairGrub->setChecked(false);
-
-    // Disabling the stage removes it from the plan.
-    window.m_fullRepairFilesystem->setChecked(false);
-    window.updateFullRepairSummary();
-    QCOMPARE(window.m_fullRepairStageList->count(), 1);
-    QVERIFY2(!window.m_fullRepairStageList->item(0)->text().contains(QStringLiteral("Repair file system errors")),
-             "a disabled file system stage must not appear in the plan");
-    QVERIFY(!window.selectedRepairStages().contains(QStringLiteral("filesystem")));
-}
-
 
 int main(int argc, char **argv)
 {

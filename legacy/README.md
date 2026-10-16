@@ -39,8 +39,8 @@ header (the real Boot Bitch icon resized from the modern master PNG,
 **GUARDED REPAIR • 0.2.25** badge flush against the window's right edge and,
 below it in a reserved row right-aligned under the badge, a busy indicator
 that shows the modern working text only while a helper command runs —
-**Running all diagnostics** / **Running diagnostic: <title>** /
-**Regenerating diagnostics automatically** / **Unlocking <device>** or the
+**Running all Host/Target diagnostics** / **Running Host/Target diagnostic: <title>** /
+**Regenerating Host/Target diagnostics automatically** / **Unlocking <device>** or the
 tool/operation title — animated with a lightweight QTimer ellipsis cycle
 (0..3 trailing dots, no threads) and keeping the header layout stable), **Systems** leading with
 the permanently-protected running-host card (green-check indicator,
@@ -118,7 +118,7 @@ reason otherwise), **File Copy** mirrors the modern tab with every control
 greyed and the exact `Legacy feature file-copy:` probe reason, **Logs**
 streams the helper output with the modern 1:1 kind filter (**All entries** /
 **Diagnostics** / **Repairs** / **File system repair** / **Package repair** /
-**File copy** / the 16 diagnostic sections; entries are tagged at capture
+**File copy** / the 17 diagnostic sections; entries are tagged at capture
 time from the stream's `Diagnostic: <key>` markers and the requested repair
 stages), a **Search log:** box and a per-session list (live session first,
 earlier files selectable read-only) with **Save As...** / **Clear Register**
@@ -152,13 +152,16 @@ configuration edit, any repair whose change status invalidates the cache, or
 once after the last Full Repair stage with the cached diagnostics invalidated
 first, never opening an authorization prompt by itself), the wrap-log toggle, the
 mandatory safety controls, the
-read-only **Host capabilities and dependencies** group (Distribution /
-Package manager family / adapted authorization-support summary labels, the
-6-column **Feature | Command | Scope | Status | Suggested package | Notes**
-table mirroring the modern probe rows plus the legacy unshare row, **Refresh
-Capabilities** (read-only PATH probes, nothing executed) and the disabled
-**Install Missing Support...** button with the modern tooltip) and the
-read-only configuration; the menus mirror the modern File/View/Help
+read-only **Capabilities and dependencies** group (Distribution / Package
+manager family / KAuth build support summary labels, the right-aligned
+Repair target / Host scope selector, the 7-column **Feature | Command |
+Scope | Status | Suggested package | Notes | Action** table mirroring the
+modern probe rows plus the legacy unshare row, **Refresh Capabilities**
+(read-only PATH probes, nothing executed) and the disabled
+**Install Missing Support...** button with the modern tooltip); the
+legacy-only Application configuration group is removed (the version is
+available via `--print-config` / Help → About); the menus mirror the modern
+File/View/Help
 structure
 (**Refresh Devices**, **Lock Administrator Session**, **Quit**; tab
 shortcuts, **Auto-size Device Columns**, **Wrap Log Lines**; **Using Boot
@@ -319,14 +322,14 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   the `port.sh --check` drift gate passed under bash 3.1, the Qt3 GUI compiled
   with no warnings and the installed helper was byte-identical to the
   generated tree helper.
-- `host-diagnose all` emitted the 13 `Repair tool` lines with `efi`, `dkms`,
+- `host-diagnose all` emitted the 15 `Repair tool` lines with `efi`, `dkms`,
   `display`, `extlinux` and `bootstack` unavailable for their probe reasons,
   plus the legacy feature gating for the unsupported host actions.
 - The GUI ran headless under Xvfb: `--print-config` resolved the helper, the
   running-host target (`/dev/hda` + `/dev/mapper/root`) and the
   read-only inventory (8 rows, including Etch's `/dev/mapper` block-device
   layout); `--smoke-test` ran `host-diagnose all` and `host-validate` through
-  the helper (`SMOKE OK: 13 capability lines parsed; host-validate: ok`, rc 0)
+  the helper (`SMOKE OK: 15 capability lines parsed; host-validate: ok`, rc 0)
   and the launched GUI measured 12 460 KiB RSS.
 - `host-repair apt-update` reported `changed`; `host-repair fix-broken`
   reported `unchanged|simulated fix-broken transaction proposed no package
@@ -335,7 +338,7 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   `sudo` elevation (`gksu`/`gksudo` are not installed on Etch); the GUI was
   validated as root because of that.
 - GUI polish pass (same day): the extended `--smoke-test` at 1024x768 reported
-  `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+  `SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
   controls: ok; layout: ok (29 widgets checked)` (app rc 0). The layout
   assertion failed on the pre-compaction layout (group panes and buttons below
   the page bottom) and passes after the compaction; the Unlock control stays
@@ -348,7 +351,7 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   search/session Logs and the committed-target / Host Maintenance gating was
   built and installed (`boot-repair-legacy_0.2.25-etch1_amd64.deb`, sha256
   `02f14b29…`; installed GUI `ffbeafda…`). The smoke reports
-  `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+  `SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
   controls: ok; layout: ok (51 widgets checked)` (rc 0) as root and through the
   default elevation probe; `--print-config` is clean and names the IDE
   transport plus the ext3 UUIDs. Etch's sudo 1.6.8 has no `-n`, so the modal
@@ -363,7 +366,7 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   `34545074…`; GUI `cd61e6d2…`, helper `d4d842d7…`). `dpkg -r` removed the
   previous package (launcher/desktop/man included) and the new `.deb` installs
   only the GUI, helper, desktop entry, icons and docs. The Xvfb smoke reports
-  `SMOKE OK: host-diagnose: 13 capability lines parsed; host-validate: ok;
+  `SMOKE OK: host-diagnose: 15 capability lines parsed; host-validate: ok;
   controls: ok; layout: ok (60 widgets checked)` (rc 0), and the session log
   carries all six `Legacy feature` lines. Evidence:
   `Development/release-0.2.25/etch-legacy/gui-residual-20260922/`.
@@ -376,7 +379,7 @@ The package was built and exercised on a real Debian 4.0 "Etch" guest (bash
   gained larger title/header font-metric floors plus a stretched last column.
   Built and installed on Etch (`boot-repair-legacy_0.2.25-etch1_amd64.deb`,
   sha256 `88b4072b…`; installed GUI `f11abe3a…`, helper `bd2fe7d4…`). The Xvfb
-  smoke reports `SMOKE OK: host-diagnose: 13 capability lines parsed;
+  smoke reports `SMOKE OK: host-diagnose: 15 capability lines parsed;
   host-validate: ok; controls: ok; layout: ok (59 widgets checked)` (rc 0); the
   Qt3 auth-pipe harness proves the SIGPIPE crash fix (pre-fix runner exits 141,
   fixed runner reports `AUTH-PIPE OK`); and an XTest-driven Xvfb drill enters
@@ -500,7 +503,7 @@ argv fallback and the caller's file surviving) and
 proves the modern helper is untouched. `legacy/tests/test-smoke.sh` (fast
 `boot-repair-legacy-smoke`) runs read-only `validate`/`diagnose` against a
 synthetic `/etc/os-release`-less Etch root and covers the dpkg status fallback,
-the GRUB-legacy rollback, the 13-key capability report, the B4 cancel-token
+the GRUB-legacy rollback, the 15-key capability report, the B4 cancel-token
 predicate and the B5 config-write content-file matrix (file round-trip with
 mode preservation, owner/symlink/oversize refusals, the argv fallback bound,
 no transported content in the session log, the caller's file never deleted).

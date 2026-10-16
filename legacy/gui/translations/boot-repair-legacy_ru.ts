@@ -1251,8 +1251,8 @@
         <translation>Фильтруйте видимый журнал по типу записи. Выбор диагностического раздела показывает линии, захваченные для этого раздела; фильтр рабочего процесса, такой как ремонт файловой системы или ремонт пакетов, показывает свои отображаемые линии ремонта (копия файла не имеет линий в этом интерфейсе). Спасти Как всегда, записывает каждую запись.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Настройки хранятся на каждого пользователя в ~/.qt/, один файл на группу настроек (устройство, логсрк, диагностика, ремонт) и сохраняются сразу же при каждом изменении и при закрытии. Запустите GUI как один и тот же пользователь, чтобы сохранить свои перезагрузки; GUI, запущенный как root, сохраняет свои собственные копии.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Настройки хранятся на каждого пользователя в ~/.qt/, один файл на группу настроек (устройство, логсрк, диагностика, ремонт) и сохраняются сразу же при каждом изменении и при закрытии. То же место для пользователя используется независимо от того, работает ли GUI как зарегистрированный пользователь или как root (sudo сохраняет домашний каталог).</translation>
     </message>
     <message>
         <source>Device discovery</source>

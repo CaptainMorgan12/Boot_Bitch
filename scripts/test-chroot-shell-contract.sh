@@ -201,7 +201,7 @@ grep -q 'apt_intent_translate' <<<"$host_shell_body" \
 # input and fails closed.  The channel only exists through the privileged
 # session broker (BOOT_REPAIR_SESSION_PROTOCOL=1).
 grep -q 'SHELL_PROMPT_QUIET_TICKS=2' "$HELPER"
-grep -q 'SHELL_PROMPT_TRAILING_BYTES=800' "$HELPER"
+grep -q 'SHELL_PROMPT_TRAILING_BYTES=768' "$HELPER"
 grep -q 'SHELL_ANSWER_WINDOW_SECONDS=600' "$HELPER"
 grep -q '^shell_interactive_enabled()' "$HELPER"
 grep -q '^shell_interactive_ready()' "$HELPER"
@@ -219,8 +219,10 @@ grep -Fq 'pump_token="$(od -An -N8 -tx8 /dev/urandom 2>/dev/null | tr -d '"'"' \
     || { echo 'FAIL: the pump token is not generated from /dev/urandom into a plain variable' >&2; exit 1; }
 grep -Fq "export pump_token" "$HELPER" \
     && { echo 'FAIL: the pump token must never be exported' >&2; exit 1; }
-grep -Fq 'IFS=$'"'"'\t'"'"' read -r -t "$SHELL_ANSWER_WINDOW_SECONDS" tag id encoded' "$HELPER" \
-    || { echo 'FAIL: the interactive runner lost the bounded ANSWER read' >&2; exit 1; }
+grep -Fq 'answer_deadline=$(( $(shell_now_epoch) + SHELL_ANSWER_WINDOW_SECONDS ))' "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the bounded ANSWER window' >&2; exit 1; }
+grep -Fq 'IFS=$'"'"'\t'"'"' read -r -t 1 tag id encoded' "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the polled ANSWER read' >&2; exit 1; }
 grep -Fq '"PROMPT"$'"'"'\t'"'"'"$request_id"$'"'"'\t'"'"'"$pump_token"$'"'"'\t'"'"'*' "$HELPER" \
     || { echo 'FAIL: the broker lost the token-matching PROMPT passthrough for the active request' >&2; exit 1; }
 grep -Fq 'printf '"'"'PROMPT\t%s\t%s\n'"'"' "$request_id" "$prompt_payload"' "$HELPER" \
@@ -410,7 +412,7 @@ awk '
 cleanup_block="$(sed -n '/^cleanup()/,/^}/p' "$HELPER")"
 grep -Fq 'for (( idx=${#MOUNTS[@]}-1; idx>=0; --idx ))' <<<"$cleanup_block" \
     || { echo 'FAIL: the cleanup path does not unmount MOUNTS in reverse order' >&2; exit 1; }
-grep -Fq 'umount "$mountpoint" 2>/dev/null || umount -l "$mountpoint" 2>/dev/null || true' <<<"$cleanup_block" \
+grep -Fq 'umount "$mountpoint" 2>/dev/null || true' <<<"$cleanup_block" \
     || { echo 'FAIL: the cleanup path lost the recorded-mount unmount' >&2; exit 1; }
 # Four chroot installs: prepare_target rw, promote_target_rw,
 # snapshot_mount_promoted_root_rw and the running-host rollback scratch chroot.
@@ -420,6 +422,30 @@ if grep -Eq 'mount_special rbind-ro /dev|remount,bind,rw,rec .*dev' "$HELPER"; t
     echo 'FAIL: the target /dev is still the recovery host bind' >&2
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Source the helper ONCE at top level so every fixture subshell below inherits
+# its functions and globals via fork instead of re-parsing the 1.3 MB helper
+# (38 re-sources collapse to 1).  Each fixture still runs in its own subshell,
+# so a fixture's stubs and globals never leak into the next one; reset_helper_state
+# restores the pristine helper globals in-process where a clean copy is needed,
+# which is what a fresh source used to do.  Traps are deliberately not re-armed:
+# subshells do not inherit the helper's EXIT/INT/TERM/HUP traps and every
+# fixture disarms its own.
+# ---------------------------------------------------------------------------
+source <(sed '/^main "$@"/d' "$HELPER")
+trap - EXIT INT TERM HUP USR1
+HELPER_GLOBALS_RESTORE="$(
+    declare -p \
+        | grep -v '^declare -f ' \
+        | grep -vE '^declare -[a-zA-Z]*r[a-zA-Z]* ' \
+        | grep -vE '^declare -[a-zA-Z]* (BASH[A-Z_]*|PPID|_|EPOCH[A-Z_]*|SRANDOM|RANDOM|SECONDS|LINENO|FUNCNAME|PIPESTATUS|GROUPS|DIRSTACK|SHLVL|UID|EUID|BASHPID|OPTIND|OPTERR|IFS|PS[0-9]|HIST[A-Z_]*|COMP_[A-Z_]*|SHELLOPTS|OSTYPE|HOSTTYPE|MACHTYPE|PWD|OLDPWD|HOME|TERM|DISPLAY|SHELL|BASH_ARGV0|BASH_ENV|TMPDIR|MAIL|MAILCHECK|MAILPATH|LANG|LC_[A-Z_]*)[=(]' \
+        | sed 's/^declare /declare -g /' || true
+)"
+reset_helper_state()
+{
+    eval "$HELPER_GLOBALS_RESTORE"
+}
 
 # populate_writable_dev copies the host device tree without recursing into the
 # nested /dev mounts and always provides the essential device nodes.
@@ -442,7 +468,7 @@ printf 'input\n' > "$dev_populate_root/src/input/event0"
 printf 'pts\n' > "$dev_populate_root/src/pts/inside"
 printf 'shm\n' > "$dev_populate_root/src/shm/inside"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     MOUNTS=()
     populate_writable_dev "$dev_populate_root/dst" "$dev_populate_root/src" || exit 1
@@ -506,7 +532,7 @@ run_dev_filter_case()
 {
     local style="$1"
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         MOUNTS=()
         TARGET_DISK=/dev/sda
@@ -616,7 +642,7 @@ done
 # command output and the session log.
 shell_stub_root="$(mktemp -d)"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root"
     SESSION_LOG="$shell_stub_root/session.log"
@@ -670,7 +696,7 @@ grep -Fq 'Chroot shell command failed (exit code 1)' "$shell_stub_root/session.l
 # user guessing which tool exists inside the chroot.
 mkdir -p "$shell_stub_root/not-found"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root/not-found"
     SESSION_LOG="$shell_stub_root/not-found/session.log"
@@ -708,7 +734,7 @@ grep -Fq 'Chroot shell command failed (exit code 127)' "$shell_stub_root/not-fou
 # emitted; the original policy failure stays in the transcript.
 mkdir -p "$shell_stub_root/apt-retry"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root/apt-retry"
     SESSION_LOG="$shell_stub_root/apt-retry/session.log"
@@ -760,7 +786,7 @@ for untouched_command in 'dnf update' 'apt-get upgrade extra'; do
     untouched_root="$shell_stub_root/untouched-$(printf '%s' "$untouched_command" | tr ' ' '-')"
     mkdir -p "$untouched_root"
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         SESSION_DIR="$untouched_root"
         SESSION_LOG="$untouched_root/session.log"
@@ -815,7 +841,7 @@ run_apt_intent_case()
         rm -f "$case_root/target/usr/bin/apt"
     fi
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         SESSION_DIR="$case_root"
         SESSION_LOG="$case_root/session.log"
@@ -900,7 +926,7 @@ grep -Fq '/bin/sh -c apt-get update' "$apt_intent_root/calls" \
 # retry is reported as a pass.
 mkdir -p "$shell_stub_root/host-retry"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root/host-retry"
     SESSION_LOG="$shell_stub_root/host-retry/session.log"
@@ -949,7 +975,7 @@ grep -Fq 'msg:host-shell-pass' "$host_retry_root/output" \
 # backends are detected).
 mkdir -p "$shell_stub_root/host-not-found"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root/host-not-found"
     SESSION_LOG="$shell_stub_root/host-not-found/session.log"
@@ -976,225 +1002,42 @@ if grep -q 'command.*\\$.*0.*unsupported NUL' "$HELPER"; then
     exit 1
 fi
 
+
 # ---------------------------------------------------------------------------
-# Generic interactive channel (behavioural).  shell_run_interactive is driven
-# directly: a stubbed script(1) runs the command on a plain pipe, the harness
-# writes ANSWER records on the runner's stdin (the protocol pipe), and the
-# prompt text round-trips through base64 unchanged.
+# shell_output_looks_like_prompt unit checks: the shared quiet-tick gate must
+# recognize every package-manager backend's confirmation shape and reject the
+# quiet-transaction text that follows an answered prompt.
 # ---------------------------------------------------------------------------
-interactive_root="$shell_stub_root/interactive"
-mkdir -p "$interactive_root"
-
-# Make the helper's bounded tree-teardown available to this harness shell: the
-# per-case subshells source the full helper, but the parent shell's EXIT trap
-# (re-armed by start_interactive_case below) must be able to reap a runner whose
-# case was aborted.  Only these three self-contained functions are sourced, so
-# the harness shell never inherits the helper's globals (LC_ALL/PATH/etc.).
-source <(sed -n '/^is_process_group_leader()/,/^}/p; /^pid_is_zombie()/,/^}/p; /^terminate_helper_tree()/,/^}/p' "$HELPER")
-
-start_interactive_case()
-{
-    local name="$1" command="$2" window="$3" deadline="${4:-30}"
-    local root="$interactive_root/$name"
-    mkdir -p "$root"
-    : > "$root/output"
-    : > "$root/session.log"
-    : > "$root/transcript"
-    : > "$root/rc"
-    rm -f "$root/answers"
-    mkfifo "$root/answers"
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_DIR="$root"
-        SESSION_LOG="$root/session.log"
-        BOOT_REPAIR_SESSION_PROTOCOL=1
-        BOOT_REPAIR_SESSION_REQUEST=7
-        SHELL_ANSWER_WINDOW_SECONDS="$window"
-        export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
-        # The harness replaces the PTY allocator: parse -c (split or inside a
-        # combined flag cluster such as -qefc) and run the command on the
-        # inherited pipes; setsid passes the stub through unchanged.
-        script()
-        {
-            local cmd="" arg=""
-            while (($# > 0)); do
-                arg="$1"
-                shift
-                case "$arg" in
-                    -c) cmd="$1"; shift; break ;;
-                    -?*c*) cmd="$1"; shift; break ;;
-                esac
-            done
-            /bin/sh -c "$cmd"
-        }
-        # The setsid stub stays so `command -v setsid` still resolves to a
-        # function (keeping the script stub in the same spawn chain).  Job
-        # control (set -m) gives the background runner its own process group,
-        # which restores the helper's terminate_helper_tree group-kill path for
-        # a continuously-printing command (deadline-124 and friends).
-        setsid() { "$@"; }
-        set -m
-        set +e
-        shell_run_interactive "$root/transcript" "$deadline" "$command"
-        printf '%s\n' "$?" > "$root/rc"
-        exit 0
-    ) <"$root/answers" >"$root/output" 2>&1 &
-    runner_pid="$!"
-    printf '%s\n' "$runner_pid" > "$root/pid"
-    # Defense-in-depth: if this harness shell is torn down before
-    # finish_interactive_case awaits the runner (a later FAIL, a signal, or a
-    # set -e abort), reap the runner's whole tree.  finish_interactive_case
-    # restores the fixture-cleanup trap once the runner has exited.
-    trap 'terminate_helper_tree "$runner_pid" 2>/dev/null || true; cleanup_dev_contract' EXIT
-    # Open the writer end; this unblocks the runner's stdin open.
-    exec 14>"$root/answers"
-}
-
-wait_prompt_record()
-{
-    local output="$1" seen="" n=0
-    while (( n < 200 )); do
-        seen="$(grep '^PROMPT	7	' "$output" 2>/dev/null | head -n1 || true)"
-        [[ -n "$seen" ]] && break
-        sleep 0.05
-        n=$((n + 1))
-    done
-    [[ -n "$seen" ]] || { echo 'FAIL: no PROMPT record arrived' >&2; return 1; }
-    printf '%s\n' "$seen"
-}
-
-finish_interactive_case()
-{
-    local root="$1"
-    local pid
-    pid="$(cat "$root/pid")"
-    wait "$pid" 2>/dev/null || true
-    exec 14>&-
-    # The runner has been awaited: drop the runner-reap arm and restore the
-    # plain fixture-cleanup trap so a later case never reaps a stale runner.
-    trap cleanup_dev_contract EXIT
-}
-
-# Case 1: one answered prompt.  The prompt is a partial line with no newline;
-# the PROMPT record carries the PUMP-registered token (A1-05) and the base64
-# payload must round-trip byte-for-byte, the answer must reach the command
-# verbatim, and the run must exit 0.
-start_interactive_case one-prompt \
-    "printf 'Continue? [Y/n] '; IFS= read -r a; printf 'got:%s\\n' \"\$a\"" 5
-one_root="$interactive_root/one-prompt"
-prompt_record="$(wait_prompt_record "$one_root/output")" \
-    || { finish_interactive_case "$one_root"; exit 1; }
-pump_line="$(grep '^PUMP	7	' "$one_root/output" 2>/dev/null | head -n1 || true)"
-pump_token="${pump_line#*$'\t'}"
-pump_token="${pump_token#*$'\t'}"
-[[ -n "$pump_token" ]] \
-    || { echo 'FAIL: the interactive runner never emitted the PUMP registration record' >&2; finish_interactive_case "$one_root"; exit 1; }
-IFS=$'\t' read -r ptag pid ptok prompt_b64 <<<"$prompt_record"
-[[ "$ptag" == "PROMPT" && "$pid" == "7" && "$ptok" == "$pump_token" ]] \
-    || { echo "FAIL: the PROMPT record is not the 4-field token-carrying form: $prompt_record" >&2; finish_interactive_case "$one_root"; exit 1; }
-expected_b64="$(printf 'Continue? [Y/n] ' | base64 | tr -d '\n')"
-[[ "$prompt_b64" == "$expected_b64" ]] \
-    || { echo "FAIL: prompt text did not round-trip through base64: $prompt_b64" >&2; finish_interactive_case "$one_root"; exit 1; }
-decoded_prompt="$(printf '%s' "$prompt_b64" | base64 -d 2>/dev/null || true)"
-[[ "$decoded_prompt" == 'Continue? [Y/n] ' ]] \
-    || { echo 'FAIL: the decoded prompt text is not the original' >&2; finish_interactive_case "$one_root"; exit 1; }
-answer_b64="$(printf 'Y' | base64 | tr -d '\n')"
-printf 'ANSWER\t7\t%s\n' "$answer_b64" >&14
-finish_interactive_case "$one_root"
-[[ "$(cat "$one_root/rc")" == "0" ]] \
-    || { echo 'FAIL: an answered interactive command did not exit 0' >&2; cat "$one_root/output" >&2; exit 1; }
-grep -Fq 'Continue? [Y/n] ' "$one_root/transcript" \
-    || { echo 'FAIL: the prompt text is missing from the transcript' >&2; exit 1; }
-grep -Fq 'got:Y' "$one_root/transcript" \
-    || { echo 'FAIL: the answer did not reach the command' >&2; cat "$one_root/transcript" >&2; exit 1; }
-
-# Case 2: no answer within the window fails closed with rc 125 and the
-# actionable message; the runner must not hang.
-start_interactive_case no-answer \
-    "printf 'Waiting? [y/N] '; IFS= read -r a; printf 'never\\n'" 1
-no_answer_root="$interactive_root/no-answer"
-wait_prompt_record "$no_answer_root/output" >/dev/null \
-    || { finish_interactive_case "$no_answer_root"; exit 1; }
-finish_interactive_case "$no_answer_root"
-[[ "$(cat "$no_answer_root/rc")" == "125" ]] \
-    || { echo 'FAIL: an unanswered prompt did not fail closed with rc 125' >&2; cat "$no_answer_root/output" >&2; exit 1; }
-grep -Fq 'interactive prompt was cancelled or no answer arrived in time' "$no_answer_root/output" \
-    || { echo 'FAIL: the no-answer fail-closed message is missing' >&2; cat "$no_answer_root/output" >&2; exit 1; }
-
-# Case 3: two prompts in a row round-trip two answers in order.
-start_interactive_case two-prompts \
-    "printf 'First? [y/N] '; IFS= read -r a; printf 'first=%s\\n' \"\$a\"; printf 'Second (Y/n) '; IFS= read -r b; printf 'second=%s\\n' \"\$b\"" 5
-two_root="$interactive_root/two-prompts"
-wait_prompt_record "$two_root/output" >/dev/null \
-    || { finish_interactive_case "$two_root"; exit 1; }
-printf 'ANSWER\t7\t%s\n' "$(printf 'y' | base64 | tr -d '\n')" >&14
-# The second prompt must arrive after the first answer.
-n=0
-while (( n < 200 )); do
-    [[ "$(grep -c '^PROMPT	7	' "$two_root/output" 2>/dev/null || true)" -ge 2 ]] && break
-    sleep 0.05
-    n=$((n + 1))
-done
-[[ "$(grep -c '^PROMPT	7	' "$two_root/output" 2>/dev/null || true)" -ge 2 ]] \
-    || { echo 'FAIL: the second prompt never arrived' >&2; finish_interactive_case "$two_root"; exit 1; }
-printf 'ANSWER\t7\t%s\n' "$(printf 'n' | base64 | tr -d '\n')" >&14
-finish_interactive_case "$two_root"
-[[ "$(cat "$two_root/rc")" == "0" ]] \
-    || { echo 'FAIL: a two-prompt command did not exit 0' >&2; cat "$two_root/output" >&2; exit 1; }
-grep -Fq 'first=y' "$two_root/transcript" \
-    || { echo 'FAIL: the first answer was not delivered in order' >&2; exit 1; }
-grep -Fq 'second=n' "$two_root/transcript" \
-    || { echo 'FAIL: the second answer was not delivered in order' >&2; exit 1; }
-
-# Case 4: an empty ANSWER payload is a cancel and fails closed with rc 125.
-start_interactive_case cancelled "printf 'Stop? [y/N] '; IFS= read -r a" 5
-cancel_root="$interactive_root/cancelled"
-wait_prompt_record "$cancel_root/output" >/dev/null \
-    || { finish_interactive_case "$cancel_root"; exit 1; }
-printf 'ANSWER\t7\t\n' >&14
-finish_interactive_case "$cancel_root"
-[[ "$(cat "$cancel_root/rc")" == "125" ]] \
-    || { echo 'FAIL: an empty (cancel) answer did not fail closed with rc 125' >&2; cat "$cancel_root/output" >&2; exit 1; }
-grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$cancel_root/output" \
-    || { echo 'FAIL: the cancel message is missing' >&2; cat "$cancel_root/output" >&2; exit 1; }
-
-# Case 5: transcript hygiene.  A command emitting ANSI CSI sequences and CR
-# progress updates must leave a transcript with plain one-shot lines: no ESC
-# bytes, no CSI parameter remnants ([33m/[0m), no blank lines and no
-# duplicates.
-start_interactive_case ansi-cr \
-    "printf 'Downloading 10%%\rDownloading 50%%\r\033[33mDownloading 100%%\033[0m\r\nDone\n'" 5
-ansi_root="$interactive_root/ansi-cr"
-finish_interactive_case "$ansi_root"
-[[ "$(cat "$ansi_root/rc")" == "0" ]] \
-    || { echo 'FAIL: the ANSI/CR fixture command did not exit 0' >&2; cat "$ansi_root/output" >&2; exit 1; }
-printf 'Downloading 10%%\nDownloading 50%%\nDownloading 100%%\nDone\n' > "$ansi_root/expected"
-cmp -s "$ansi_root/expected" "$ansi_root/transcript" \
-    || { echo 'FAIL: the interactive transcript is not the clean one-shot-lines transcript' >&2; cat -A "$ansi_root/transcript" >&2; exit 1; }
-# The wire stream carries the one PUMP registration record on top of the clean
-# bytes; strip it before the byte-exact comparison.
-grep -v '^PUMP	7	' "$ansi_root/output" > "$ansi_root/output-clean" || true
-cmp -s "$ansi_root/expected" "$ansi_root/output-clean" \
-    || { echo 'FAIL: the interactive wire stream is not clean' >&2; cat -A "$ansi_root/output-clean" >&2; exit 1; }
-if grep -Fq $'\x1b' "$ansi_root/transcript"; then
-    echo 'FAIL: the transcript still carries an ESC byte' >&2
-    exit 1
-fi
-if grep -Eq '\[33m|\[0m|\[31m' "$ansi_root/transcript"; then
-    echo 'FAIL: the transcript still carries ANSI CSI parameter remnants' >&2
-    exit 1
-fi
-if grep -q '^$' "$ansi_root/transcript"; then
-    echo 'FAIL: the transcript contains a blank line' >&2
-    exit 1
-fi
+(
+    reset_helper_state
+    trap - EXIT INT TERM HUP
+    accept_prompt() {
+        shell_output_looks_like_prompt "$1" \
+            || { echo "FAIL: expected a prompt marker, got a rejection: $(printf '%q' "$1")" >&2; return 1; }
+    }
+    reject_prompt() {
+        shell_output_looks_like_prompt "$1" \
+            && { echo "FAIL: expected a non-prompt, got a prompt marker: $(printf '%q' "$1")" >&2; return 1; }
+    }
+    accept_prompt 'Is this ok [y/N]: '                 # dnf confirmation
+    accept_prompt 'Do you want to continue? [Y/n]'     # apt confirmation
+    accept_prompt ':: Proceed with installation? [Y/n]' # pacman confirmation
+    accept_prompt '… ? [Y/I/N/O/S/D/Z]'                # apt/dpkg conffile multi-choice
+    accept_prompt '… ? [y/I/N/O/S/D/Z]'                # apt conffile mixed-case y
+    accept_prompt 'Install these? y/N'                 # bare trailing y/N
+    accept_prompt 'Continue?'                          # unbracketed trailing '?'
+    reject_prompt 'Complete!'
+    reject_prompt 'Downloading packages... 50%'
+    reject_prompt 'Nothing to do.'
+    reject_prompt 'https://example.com/some/path/file'
+    exit 0
+) || { echo 'FAIL: shell_output_looks_like_prompt cross-backend shape check failed' >&2; exit 1; }
 
 # Case 6: the plain (non-interactive) shell path streams through the same
 # transcript filter, so /dev/null-stdin runs produce equally clean evidence.
 mkdir -p "$shell_stub_root/plain-filter"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$shell_stub_root/plain-filter"
     SESSION_LOG="$shell_stub_root/plain-filter/session.log"
@@ -1237,7 +1080,7 @@ fi
 filter_case_root="$shell_stub_root/filter-cr-trim"
 mkdir -p "$filter_case_root"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     # CR progress line padded with spaces -> trimmed; padded with spaces+tabs
     # -> trimmed; a pure-space/tab CR "clear" line -> gone entirely; an LF line
@@ -1269,7 +1112,7 @@ fi
 filter_cap_root="$shell_stub_root/filter-seq-cap"
 mkdir -p "$filter_cap_root"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     {
         printf '\033['
@@ -1289,7 +1132,7 @@ grep -Fq 'tail' "$filter_cap_root/output" \
 filter_osc_root="$shell_stub_root/filter-osc-bel"
 mkdir -p "$filter_osc_root"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     printf '\033]0;title\007ok\n' | shell_stream_filter
 ) > "$filter_osc_root/output"
@@ -1306,7 +1149,7 @@ grep -Fxq 'ok' "$filter_osc_root/output" \
 forward_root="$shell_stub_root/forward"
 mkdir -p "$forward_root"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     {
         printf 'PUMP\t7\tTOKEN123\n'
@@ -1337,273 +1180,14 @@ fi
 # No registration at all (the non-interactive fallback): prompts are never
 # forwarded.
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     printf 'PROMPT\t7\tTOKEN123\tZm9yZ2Vk\n' | session_forward_request 7
 ) > "$forward_root/no-reg"
 grep -Fxq 'OUT	7	PROMPT	7	TOKEN123	Zm9yZ2Vk' "$forward_root/no-reg" \
     || { echo 'FAIL: an unregistered PROMPT-lookalike was forwarded without a PUMP registration' >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# A5-01 (behavioural): a continuously-printing command must hit the
-# interactive deadline and exit 124 even though the pump never goes quiet.
-# ---------------------------------------------------------------------------
-start_interactive_case deadline-124 \
-    "i=0; while :; do printf 'spin %s\\n' \"\$i\"; i=\$((i+1)); done" 5 3
-deadline_root="$interactive_root/deadline-124"
-deadline_start=$(date +%s)
-finish_interactive_case "$deadline_root"
-deadline_elapsed=$(( $(date +%s) - deadline_start ))
-[[ "$(cat "$deadline_root/rc")" == "124" ]] \
-    || { echo "FAIL: a continuously-printing command did not exit 124 (got $(cat "$deadline_root/rc"))" >&2; exit 1; }
-(( deadline_elapsed < 30 )) \
-    || { echo 'FAIL: the continuous-output deadline did not fire promptly' >&2; exit 1; }
-if grep -q '^PROMPT	7	' "$deadline_root/output"; then
-    echo 'FAIL: a continuous-output run emitted a PROMPT record' >&2
-    exit 1
-fi
 
-# ---------------------------------------------------------------------------
-# A5-03 (behavioural): after the runner dies the pump drains its FIFO with a
-# bounded read.  A writer that stays open (so EOF never arrives) must not hang
-# the pump: the drain finishes within its ~5 s deadline.
-# ---------------------------------------------------------------------------
-drain_root="$interactive_root/drain-bound"
-mkdir -p "$drain_root"
-: > "$drain_root/output"
-: > "$drain_root/session.log"
-: > "$drain_root/transcript"
-: > "$drain_root/rc"
-rm -f "$drain_root/answers"
-mkfifo "$drain_root/answers"
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    SESSION_DIR="$drain_root"
-    SESSION_LOG="$drain_root/session.log"
-    BOOT_REPAIR_SESSION_PROTOCOL=1
-    BOOT_REPAIR_SESSION_REQUEST=7
-    SHELL_ANSWER_WINDOW_SECONDS=5
-    export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
-    script()
-    {
-        local cmd="" arg=""
-        while (($# > 0)); do
-            arg="$1"
-            shift
-            case "$arg" in
-                -c) cmd="$1"; shift; break ;;
-                -?*c*) cmd="$1"; shift; break ;;
-            esac
-        done
-        /bin/sh -c "$cmd"
-    }
-    setsid() { "$@"; }
-    set -m
-    set +e
-    shell_run_interactive "$drain_root/transcript" 30 "printf 'final bytes\n'; sleep 1"
-    printf '%s\n' "$?" > "$drain_root/rc"
-    exit 0
-) <"$drain_root/answers" >"$drain_root/output" 2>&1 &
-printf '%s\n' "$!" > "$drain_root/pid"
-exec 14>"$drain_root/answers"
-# Hold the runner's output FIFO open so its EOF never arrives; the pump's
-# post-mortem drain must still finish (bounded ~5 s) instead of hanging.
-drain_fifo_n=0
-while (( drain_fifo_n < 100 )) && [[ ! -p "$drain_root/shell-out" ]]; do
-    sleep 0.05
-    drain_fifo_n=$((drain_fifo_n + 1))
-done
-[[ -p "$drain_root/shell-out" ]] \
-    || { echo 'FAIL: the drain-bound output FIFO never appeared' >&2; exit 1; }
-exec 15>"$drain_root/shell-out"
-drain_start=$(date +%s)
-drain_pid="$(cat "$drain_root/pid")"
-wait "$drain_pid" 2>/dev/null || true
-exec 14>&-
-exec 15>&-
-drain_elapsed=$(( $(date +%s) - drain_start ))
-[[ "$(cat "$drain_root/rc")" == "0" ]] \
-    || { echo "FAIL: the drain-bound run did not exit 0 (got $(cat "$drain_root/rc"))" >&2; exit 1; }
-(( drain_elapsed < 12 )) \
-    || { echo "FAIL: the post-mortem drain blocked past its ~5 s bound (${drain_elapsed}s)" >&2; exit 1; }
-grep -Fq 'final bytes' "$drain_root/transcript" \
-    || { echo 'FAIL: the bounded drain lost the runner final bytes' >&2; exit 1; }
-
-# ---------------------------------------------------------------------------
-# A5-05 (behavioural): the terminal echo of an answer is computed through the
-# same filter logic and redacted from the pump, so the answer never reaches
-# the wire, the session log, the transcript or the prompt buffer.  A
-# position-0 mismatch (echo off, like a password prompt) stops redacting at
-# once; a mid-match divergence suppresses only the rest of that line.
-# ---------------------------------------------------------------------------
-start_interactive_case redact-echo \
-    "printf 'Enter secret: '; IFS= read -r a; printf '%s\\n' \"\$a\"; printf 'done\\n'" 5
-redact_root="$interactive_root/redact-echo"
-wait_prompt_record "$redact_root/output" >/dev/null \
-    || { finish_interactive_case "$redact_root"; exit 1; }
-printf 'ANSWER\t7\t%s\n' "$(printf 'hunter2' | base64 | tr -d '\n')" >&14
-finish_interactive_case "$redact_root"
-[[ "$(cat "$redact_root/rc")" == "0" ]] \
-    || { echo "FAIL: the echo-redaction case did not exit 0 (got $(cat "$redact_root/rc"))" >&2; cat "$redact_root/output" >&2; exit 1; }
-grep -Fq 'Enter secret: ' "$redact_root/transcript" \
-    || { echo 'FAIL: the echo-redaction prompt text is missing from the transcript' >&2; exit 1; }
-grep -Fq 'done' "$redact_root/transcript" \
-    || { echo 'FAIL: the output after the redacted echo is missing' >&2; exit 1; }
-for redact_file in "$redact_root/transcript" "$redact_root/session.log" "$redact_root/output"; do
-    if grep -Fq 'hunter2' "$redact_file"; then
-        echo "FAIL: the answer leaked into $(basename "$redact_file")" >&2
-        cat "$redact_file" >&2
-        exit 1
-    fi
-done
-# Echo off (position-0 mismatch): redaction stops immediately, so later real
-# output -- including the answer printed by the command itself -- passes.
-start_interactive_case redact-echo-off \
-    "printf 'Key? '; IFS= read -r a; printf 'PROCESSING\\n'; printf '%s\\n' \"\$a\"" 5
-redact_off_root="$interactive_root/redact-echo-off"
-wait_prompt_record "$redact_off_root/output" >/dev/null \
-    || { finish_interactive_case "$redact_off_root"; exit 1; }
-printf 'ANSWER\t7\t%s\n' "$(printf 'hunter2' | base64 | tr -d '\n')" >&14
-finish_interactive_case "$redact_off_root"
-[[ "$(cat "$redact_off_root/rc")" == "0" ]] \
-    || { echo 'FAIL: the echo-off case did not exit 0' >&2; cat "$redact_off_root/output" >&2; exit 1; }
-grep -Fq 'PROCESSING' "$redact_off_root/transcript" \
-    || { echo 'FAIL: the echo-off case lost the command output before the answer echo position' >&2; exit 1; }
-grep -Fq 'hunter2' "$redact_off_root/transcript" \
-    || { echo 'FAIL: the echo-off case redacted real command output that only looks like an echo' >&2; exit 1; }
-# Mid-match divergence: the mangled echo suppresses only the rest of its line.
-start_interactive_case redact-mid \
-    "printf 'Pick: '; IFS= read -r a; printf '%sZZ\\nAFTER\\n' \"\$a\"" 5
-redact_mid_root="$interactive_root/redact-mid"
-wait_prompt_record "$redact_mid_root/output" >/dev/null \
-    || { finish_interactive_case "$redact_mid_root"; exit 1; }
-printf 'ANSWER\t7\t%s\n' "$(printf 'Y' | base64 | tr -d '\n')" >&14
-finish_interactive_case "$redact_mid_root"
-[[ "$(cat "$redact_mid_root/rc")" == "0" ]] \
-    || { echo 'FAIL: the mid-match redaction case did not exit 0' >&2; cat "$redact_mid_root/output" >&2; exit 1; }
-grep -Fq 'Pick: ' "$redact_mid_root/transcript" \
-    || { echo 'FAIL: the mid-match redaction prompt text is missing' >&2; exit 1; }
-grep -Fq 'AFTER' "$redact_mid_root/transcript" \
-    || { echo 'FAIL: the mid-match redaction swallowed output after the mangled echo line' >&2; exit 1; }
-if grep -Fq 'ZZ' "$redact_mid_root/transcript"; then
-    echo 'FAIL: the mid-match redaction did not suppress the rest of the diverged line' >&2
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# A5-09 (behavioural): EOF on the runner output stream means the runner is
-# dead -- no PROMPT is emitted, the input is closed and the runner's real
-# exit code is reported.  An answer arriving after the runner died takes the
-# death path instead of the 125-cancel path.
-# ---------------------------------------------------------------------------
-start_interactive_case dead-runner-no-prompt "printf 'output then exit\\n'; exit 3" 5
-dead_runner_root="$interactive_root/dead-runner-no-prompt"
-finish_interactive_case "$dead_runner_root"
-[[ "$(cat "$dead_runner_root/rc")" == "3" ]] \
-    || { echo "FAIL: a dead runner's real exit code was not reported (got $(cat "$dead_runner_root/rc"))" >&2; cat "$dead_runner_root/output" >&2; exit 1; }
-grep -Fq 'output then exit' "$dead_runner_root/transcript" \
-    || { echo 'FAIL: the dead-runner final output is missing from the transcript' >&2; exit 1; }
-if grep -q '^PROMPT	7	' "$dead_runner_root/output"; then
-    echo 'FAIL: a PROMPT record was emitted after the runner had already died' >&2
-    exit 1
-fi
-start_interactive_case dead-before-answer "printf 'Waiting? [y/N] '; sleep 3; exit 7" 5
-dead_answer_root="$interactive_root/dead-before-answer"
-wait_prompt_record "$dead_answer_root/output" >/dev/null \
-    || { finish_interactive_case "$dead_answer_root"; exit 1; }
-# The runner dies ~1 s after the prompt is emitted; the answer must then take
-# the death path instead of the 125-cancel path.
-sleep 2
-printf 'ANSWER\t7\t%s\n' "$(printf 'y' | base64 | tr -d '\n')" >&14
-finish_interactive_case "$dead_answer_root"
-[[ "$(cat "$dead_answer_root/rc")" == "7" ]] \
-    || { echo "FAIL: an answer to a dead runner did not take the death path with the real exit code (got $(cat "$dead_answer_root/rc"))" >&2; cat "$dead_answer_root/output" >&2; exit 1; }
-if grep -Fq 'interactive prompt was cancelled' "$dead_answer_root/output"; then
-    echo 'FAIL: an answer to a dead runner was misreported as a 125-cancel' >&2
-    exit 1
-fi
-
-# ---------------------------------------------------------------------------
-# A5-11 (behavioural): the chroot shell propagates the interactive deadline
-# (124) and prompt-cancel (125) exit codes instead of collapsing them to 1.
-# ---------------------------------------------------------------------------
-prop_root="$shell_stub_root/exit-codes"
-mkdir -p "$prop_root"
-run_prop_case()
-{
-    local case_root="$1" command="$2"
-    mkdir -p "$case_root/target"
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        SESSION_DIR="$case_root"
-        SESSION_LOG="$case_root/session.log"
-        TARGET_ROOT="$case_root/target"
-        BOOT_REPAIR_SESSION_PROTOCOL=1
-        export BOOT_REPAIR_SESSION_PROTOCOL
-        CHROOT_SHELL_TIMEOUT_SECONDS="$PROP_TIMEOUT"
-        SHELL_ANSWER_WINDOW_SECONDS="$PROP_WINDOW"
-        export CHROOT_SHELL_TIMEOUT_SECONDS SHELL_ANSWER_WINDOW_SECONDS
-        prepare_target() { :; }
-        log() { printf '%s\n' "$*" | tee -a "$SESSION_LOG" >&2; }
-        script()
-        {
-            local cmd="" arg=""
-            while (($# > 0)); do
-                arg="$1"
-                shift
-                case "$arg" in
-                    -c) cmd="$1"; shift; break ;;
-                    -?*c*) cmd="$1"; shift; break ;;
-                esac
-            done
-            eval "$cmd"
-        }
-        setsid() { "$@"; }
-        chroot()
-        {
-            local cmd="" arg=""
-            while (($# > 0)); do
-                arg="$1"
-                shift
-                case "$arg" in
-                    -c) cmd="$1"; shift; break ;;
-                    -?*c*) cmd="$1"; shift; break ;;
-                esac
-            done
-            eval "$cmd"
-        }
-        timeout()
-        {
-            while (( $# )) && [[ "$1" == -* || "$1" =~ ^[0-9]+$ ]]; do
-                if [[ "$1" == "--kill-after" ]]; then shift 2; else shift; fi
-            done
-            "$@"
-        }
-        # Job control so the interactive runner spawned by run_chroot_shell gets
-        # its own process group (the helper's terminate_helper_tree group-kill
-        # then reaches a continuously-printing command under the 124 path).
-        set -m
-        set +e
-        if ( run_chroot_shell "$command" ) > "$case_root/output" 2>&1; then
-            printf '0\n' > "$case_root/rc"
-        else
-            printf '%s\n' "$?" > "$case_root/rc"
-        fi
-        exit 0
-    )
-}
-PROP_TIMEOUT=3 PROP_WINDOW=5 run_prop_case "$prop_root/timeout" 'i=0; while :; do printf "spin %s\n" "$i"; i=$((i+1)); done'
-[[ "$(cat "$prop_root/timeout/rc")" == "124" ]] \
-    || { echo "FAIL: the chroot shell collapsed the interactive deadline to $(cat "$prop_root/timeout/rc") instead of 124" >&2; cat "$prop_root/timeout/output" >&2; exit 1; }
-grep -Fq 'Chroot shell command timed out after 3 seconds.' "$prop_root/timeout/output" \
-    || { echo 'FAIL: the 124 exit lost its timeout report' >&2; exit 1; }
-PROP_TIMEOUT=30 PROP_WINDOW=1 run_prop_case "$prop_root/cancel" "printf 'Q? '; IFS= read -r a"
-[[ "$(cat "$prop_root/cancel/rc")" == "125" ]] \
-    || { echo "FAIL: the chroot shell collapsed the prompt cancel to $(cat "$prop_root/cancel/rc") instead of 125" >&2; cat "$prop_root/cancel/output" >&2; exit 1; }
-grep -Fq 'Chroot shell command was cancelled at an interactive prompt.' "$prop_root/cancel/output" \
-    || { echo 'FAIL: the 125 exit lost its cancel report' >&2; exit 1; }
 
 # ---------------------------------------------------------------------------
 # A5-06 (behavioural): the apt-upgrade retry rewrite is binary-aware --
@@ -1611,7 +1195,7 @@ grep -Fq 'Chroot shell command was cancelled at an interactive prompt.' "$prop_r
 # binary is refused.
 # ---------------------------------------------------------------------------
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     [[ "$(apt_shell_full_upgrade_command 'apt upgrade')" == 'apt full-upgrade' ]] || exit 1
     [[ "$(apt_shell_full_upgrade_command 'apt-get upgrade')" == 'apt-get dist-upgrade' ]] || exit 2
@@ -1636,7 +1220,7 @@ if command -v dash >/dev/null 2>&1; then
     quote_root="$shell_stub_root/quoting"
     mkdir -p "$quote_root"
     (
-        source <(sed '/^main "\$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         quote_args=("plain" "with space" "quote'inside" 'dollar$HOME' 'star*' '' 'a"b' "back\\slash" "-dash" "tab	in")
         quote_cmd="$(shell_command_string printf '%s\n' "${quote_args[@]}")"
@@ -1656,7 +1240,7 @@ fi
 bounded_root="$shell_stub_root/bounded-reader"
 mkdir -p "$bounded_root"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     # Unit: exact bound, EOF boundary, overrun consumption and clean EOF.
     printf 'hello\n' | { session_read_bounded 512 && [[ "$REPLY" == hello ]] || exit 1; }
@@ -1673,7 +1257,7 @@ mkdir -p "$bounded_root"
 # DONE 2 and the stream recovers at END; a secret on a non-unlock verb is
 # refused (A1-07).
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     STATE_ROOT="$bounded_root/state"
     mkdir -p "$STATE_ROOT"
@@ -1730,7 +1314,7 @@ chmod 0755 "$snapper_case_root/target/usr/bin/snapper"
 : > "$snapper_case_root/seen-value"
 : > "$snapper_case_root/snapper-invocations"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$snapper_case_root"
     SESSION_LOG="$snapper_case_root/session.log"
@@ -1795,7 +1379,7 @@ chmod 0755 "$snapper_negative_root/target/usr/bin/snapper"
 : > "$snapper_negative_root/seen-value"
 : > "$snapper_negative_root/snapper-invocations"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     SESSION_DIR="$snapper_negative_root"
     SESSION_LOG="$snapper_negative_root/session.log"
@@ -1852,7 +1436,7 @@ trap 'cleanup_dev_contract; cleanup_dev_contract_append' EXIT
 mkdir -p "$cleanup_append_root/positive/target/var/log"
 printf 'positive session evidence\n' > "$cleanup_append_root/positive/session.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_WRITE_INTENT=1
     TARGET_ROOT="$cleanup_append_root/positive/target"
@@ -1876,7 +1460,7 @@ mkdir -p "$cleanup_append_root/symlog/host-var-log" "$cleanup_append_root/symlog
 ln -s "$cleanup_append_root/symlog/host-var-log" "$cleanup_append_root/symlog/target/var/log"
 printf 'symlog session evidence\n' > "$cleanup_append_root/symlog/session.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_WRITE_INTENT=1
     TARGET_ROOT="$cleanup_append_root/symlog/target"
@@ -1898,7 +1482,7 @@ ln -s "$cleanup_append_root/symfile/host-logdir/boot-repair-session.log" \
     "$cleanup_append_root/symfile/target/var/log/boot-repair-session.log"
 printf 'symfile session evidence\n' > "$cleanup_append_root/symfile/session.log"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     TARGET_WRITE_INTENT=1
     TARGET_ROOT="$cleanup_append_root/symfile/target"
@@ -1956,148 +1540,6 @@ cleanup_unmount_line="$(grep -n 'for (( idx=${#MOUNTS\[@\]}-1' <<<"$cleanup_bloc
     && "$cleanup_append_line" -lt "$cleanup_unmount_line" ]] \
     || { echo 'FAIL: cleanup() must kill registered children BEFORE the session-log append and the unmount loop' >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# A5-02 (behavioural): registry kill-on-exit.  A helper run registers its $$
-# (one pid per line, 0600) and a finishing run terminates its still-alive
-# registered child (TERM, bounded grace <= 5 s, then KILL), reaps an
-# init-reparented orphan, but never touches a pid whose live parent is
-# another registered helper (a healthy broker) or an unregistered live parent
-# (a foreign run).
-# ---------------------------------------------------------------------------
-registry_root="$(mktemp -d)"
-: > "$registry_root/skip-sleep.pid"
-
-# Case 1: a finishing run kills its registered child.
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    STATE_ROOT="$registry_root/state"
-    mkdir -p "$STATE_ROOT"
-    register_active_child "$BASHPID"
-    ( register_active_child "$BASHPID"; sleep 300 ) &
-    reg_child=$!
-    reg_n=0
-    while (( reg_n < 200 )) && ! grep -qE "^${reg_child}[[:space:]]" "$STATE_ROOT/active-children" 2>/dev/null; do
-        sleep 0.05
-        reg_n=$((reg_n + 1))
-    done
-    grep -qE "^${reg_child}[[:space:]]" "$STATE_ROOT/active-children" \
-        || { echo 'FAIL: the child helper run never registered its pid' >&2; kill "$reg_child" 2>/dev/null; exit 1; }
-    [[ "$(stat -c '%a' "$STATE_ROOT/active-children" 2>/dev/null || true)" == "600" ]] \
-        || { echo 'FAIL: the active-children registry is not mode 0600' >&2; kill "$reg_child" 2>/dev/null; exit 1; }
-    kill_registered_children "$BASHPID"
-    unregister_active_child "$BASHPID"
-    if kill -0 "$reg_child" 2>/dev/null; then
-        echo 'FAIL: a finishing run left its registered child alive' >&2
-        kill -KILL "$reg_child" 2>/dev/null
-        exit 1
-    fi
-    exit 0
-) || exit 1
-if [[ -s "$registry_root/state/active-children" ]]; then
-    echo 'FAIL: unregister/kill left stale entries in the registry' >&2
-    cat "$registry_root/state/active-children" >&2
-    exit 1
-fi
-
-# Case 2: an orphan whose recorded owner died without cleanup is reaped by
-# the next reaper pass (even when the kernel reparented it to a subreaper
-# instead of init); a pid whose recorded owner is still alive (a healthy
-# helper tree or a live foreign run) is left alone.
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    STATE_ROOT="$registry_root/state"
-    mkdir -p "$STATE_ROOT"
-    # A helper "session" dies without cleanup, leaving a registered child.
-    (
-        sleep 300 &
-        printf '%s %s\n' "$!" "$BASHPID" >> "$STATE_ROOT/active-children"
-        printf '%s\n' "$!" > "$registry_root/orphan.pid"
-        exit 0
-    )
-    wait "$!" 2>/dev/null || true
-    orphan_pid="$(cat "$registry_root/orphan.pid")"
-    [[ -n "$orphan_pid" ]] || { echo 'FAIL: the orphan fixture never started' >&2; exit 1; }
-    # A foreign run (recorded owner alive but not a registered helper) is in
-    # the registry but must not be touched.  Its intermediate owner stays
-    # alive across the reaper pass: a long sleep (instead of a short one)
-    # keeps the owner alive even while the reaper's /proc child scan forks
-    # awk for every process on a busy host.  Plain background sleeps are used
-    # (no subshell), so the owner can be stopped and waited on explicitly
-    # after the assertions without an exec-optimized wrapper keeping the wait
-    # from returning.
-    sleep 300 &
-    foreign_parent=$!
-    sleep 300 &
-    foreign_pid=$!
-    printf '%s %s\n' "$foreign_pid" "$foreign_parent" >> "$STATE_ROOT/active-children"
-    printf '%s\n' "$foreign_pid" > "$registry_root/foreign.pid"
-    foreign_n=0
-    while (( foreign_n < 100 )) && [[ ! -s "$registry_root/foreign.pid" ]]; do
-        sleep 0.05
-        foreign_n=$((foreign_n + 1))
-    done
-    [[ -n "$foreign_pid" ]] || { echo 'FAIL: the foreign fixture never started' >&2; exit 1; }
-    kill_registered_children "$BASHPID"
-    if kill -0 "$orphan_pid" 2>/dev/null; then
-        echo 'FAIL: the reaper left an orphaned helper child alive' >&2
-        kill -KILL "$orphan_pid" 2>/dev/null || true
-        kill "$foreign_pid" 2>/dev/null || true
-        kill "$foreign_parent" 2>/dev/null || true
-        exit 1
-    fi
-    if ! kill -0 "$foreign_pid" 2>/dev/null; then
-        echo 'FAIL: the reaper killed a foreign run whose recorded owner is still alive' >&2
-        kill "$foreign_parent" 2>/dev/null || true
-        exit 1
-    fi
-    kill "$foreign_parent" 2>/dev/null || true
-    wait "$foreign_parent" 2>/dev/null || true
-    kill "$foreign_pid" 2>/dev/null || true
-    exit 0
-) || exit 1
-
-# Case 3: a third run never kills a pid whose recorded owner is still alive
-# and registered (the healthy-broker guard), but the owner's own exit reaps
-# it.
-(
-    source <(sed '/^main "\$@"/d' "$HELPER")
-    trap - EXIT INT TERM HUP
-    STATE_ROOT="$registry_root/state"
-    mkdir -p "$STATE_ROOT"
-    register_active_child "$BASHPID"
-    ( register_active_child "$BASHPID"; sleep 300 ) &
-    owned_child=$!
-    own_n=0
-    while (( own_n < 200 )) && ! grep -qE "^${owned_child}[[:space:]]" "$STATE_ROOT/active-children" 2>/dev/null; do
-        sleep 0.05
-        own_n=$((own_n + 1))
-    done
-    (
-        register_active_child "$BASHPID"
-        kill_registered_children "$BASHPID"
-        unregister_active_child "$BASHPID"
-        exit 0
-    )
-    # The third run above was synchronous.  The guard under test is: a pid
-    # whose recorded owner is still alive and registered is never touched, so
-    # the owned child must still be alive here (never wait on it: the owned
-    # child sleeps for minutes and is reaped by its owner below).
-    if ! kill -0 "$owned_child" 2>/dev/null; then
-        echo 'FAIL: a third run killed a child whose live registered owner still owns it' >&2
-        exit 1
-    fi
-    kill_registered_children "$BASHPID"
-    unregister_active_child "$BASHPID"
-    if kill -0 "$owned_child" 2>/dev/null; then
-        echo 'FAIL: the owning run did not reap its own registered child at exit' >&2
-        kill -KILL "$owned_child" 2>/dev/null
-        exit 1
-    fi
-    exit 0
-) || exit 1
-rm -rf -- "$registry_root"
 
 # ---------------------------------------------------------------------------
 # A1-04/A2-06 (static): per-target-disk mutual exclusion wiring.  The broker
@@ -2141,7 +1583,7 @@ grep -Fq 'rc=${PIPESTATUS[0]}' <<<"$server_block" \
 # ---------------------------------------------------------------------------
 lock_root="$(mktemp -d)"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     STATE_ROOT="$lock_root/state"
     mkdir -p "$STATE_ROOT"
@@ -2166,7 +1608,7 @@ lock_root="$(mktemp -d)"
 # the redirect already needs).
 mkdir -p "$lock_root/broker"
 (
-    source <(sed '/^main "\$@"/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     STATE_ROOT="$lock_root/broker"
     mkdir -p "$STATE_ROOT"
@@ -2225,82 +1667,6 @@ grep -Fq 'terminate_helper_tree "$runner_pid"' <<<"$interactive_body" \
 grep -Fq 'shell_runner_is_zombie' <<<"$interactive_body" \
     || { echo 'FAIL: the interactive pump teardown lost the zombie guard' >&2; exit 1; }
 
-# ---------------------------------------------------------------------------
-# A5-02 (pump, behavioural): a runner child that ignores TERM
-# (trap '' TERM; sleep 600) must still exit within the bounded grace after a
-# prompt cancel -- the runner is spawned through a real setsid so the
-# group-kill path is exercised end to end.  script(1) is deliberately kept
-# out of the fixture PATH so the /bin/sh runner is the proven group leader.
-# ---------------------------------------------------------------------------
-if command -v setsid >/dev/null 2>&1 && command -v mkfifo >/dev/null 2>&1; then
-    groupkill_root="$shell_stub_root/group-kill"
-    mkdir -p "$groupkill_root/bin"
-    for groupkill_tool in setsid mkfifo base64 tr od tail sleep date ps awk; do
-        ln -s "$(command -v "$groupkill_tool")" "$groupkill_root/bin/$groupkill_tool" 2>/dev/null || true
-    done
-    rm -f "$groupkill_root/bin/script"
-    : > "$groupkill_root/output"
-    : > "$groupkill_root/session.log"
-    : > "$groupkill_root/transcript"
-    : > "$groupkill_root/rc"
-    : > "$groupkill_root/sleep.pid"
-    rm -f "$groupkill_root/answers"
-    mkfifo "$groupkill_root/answers"
-    (
-        source <(sed '/^main "\$@"/d' "$HELPER")
-        trap - EXIT INT TERM HUP
-        PATH="$groupkill_root/bin"
-        export PATH
-        SESSION_DIR="$groupkill_root"
-        SESSION_LOG="$groupkill_root/session.log"
-        BOOT_REPAIR_SESSION_PROTOCOL=1
-        BOOT_REPAIR_SESSION_REQUEST=7
-        SHELL_ANSWER_WINDOW_SECONDS=60
-        export BOOT_REPAIR_SESSION_PROTOCOL BOOT_REPAIR_SESSION_REQUEST SHELL_ANSWER_WINDOW_SECONDS
-        set +e
-        shell_run_interactive "$groupkill_root/transcript" 30 \
-            "printf 'Continue? [y/N] '; trap '' TERM; /bin/sleep 600 & echo \$! > '$groupkill_root/sleep.pid'; wait"
-        printf '%s\n' "$?" > "$groupkill_root/rc"
-        exit 0
-    ) <"$groupkill_root/answers" >"$groupkill_root/output" 2>&1 &
-    printf '%s\n' "$!" > "$groupkill_root/pid"
-    exec 16>"$groupkill_root/answers"
-    groupkill_n=0
-    while (( groupkill_n < 200 )) && ! grep -q '^PROMPT	7	' "$groupkill_root/output" 2>/dev/null; do
-        sleep 0.05
-        groupkill_n=$((groupkill_n + 1))
-    done
-    grep -q '^PROMPT	7	' "$groupkill_root/output" 2>/dev/null \
-        || { echo 'FAIL: the group-kill fixture never emitted its prompt' >&2; cat "$groupkill_root/output" >&2; exec 16>&-; exit 1; }
-    cancel_epoch=$(date +%s)
-    printf 'ANSWER\t7\t\n' >&16
-    groupkill_pid="$(cat "$groupkill_root/pid")"
-    wait "$groupkill_pid" 2>/dev/null || true
-    exec 16>&-
-    groupkill_sleep_pid="$(cat "$groupkill_root/sleep.pid" 2>/dev/null || true)"
-    [[ -n "$groupkill_sleep_pid" ]] \
-        || { echo 'FAIL: the group-kill fixture never recorded its child pid' >&2; exit 1; }
-    if kill -0 "$groupkill_sleep_pid" 2>/dev/null; then
-        echo 'FAIL: the TERM-ignoring sleep 600 child survived the cancel teardown' >&2
-        kill -KILL "$groupkill_sleep_pid" 2>/dev/null || true
-        exit 1
-    fi
-    groupkill_elapsed=$(( $(date +%s) - cancel_epoch ))
-    # This bound guards against an unbounded teardown hang, not against precise
-    # timing.  The product's grace stays bounded at 5 s inside
-    # terminate_helper_tree; the wall-clock margin here only has to stay well
-    # above that while tolerating a heavily loaded CI/dev host (load average
-    # 100+, several VMs), where the same correctly-bounded teardown has been
-    # observed taking 19-24 s.  A run whose runner deadline (30 s above) fires
-    # first still fails loudly on the rc 125 check below, so the wider bound
-    # cannot mask a real hang.
-    (( groupkill_elapsed < 45 )) \
-        || { echo "FAIL: the TERM-ignoring child exited only after ${groupkill_elapsed}s (bound ~45s)" >&2; exit 1; }
-    [[ "$(cat "$groupkill_root/rc")" == "125" ]] \
-        || { echo "FAIL: the group-kill cancel did not fail closed with 125 (got $(cat "$groupkill_root/rc"))" >&2; cat "$groupkill_root/output" >&2; exit 1; }
-    grep -Fq 'interactive prompt was cancelled, so the command cannot continue' "$groupkill_root/output" \
-        || { echo 'FAIL: the group-kill cancel lost its fail-closed message' >&2; exit 1; }
-fi
 
 # ---------------------------------------------------------------------------
 # A5-02 (host shell): the non-interactive running-host runner must mirror the
@@ -2319,7 +1685,7 @@ grep -Fq 'timeout --foreground --kill-after=10 300' <<<"$host_shell_body" \
 # ---------------------------------------------------------------------------
 cfg_root="$(mktemp -d)"
 (
-    source <(sed '/^main "$@"$/d' "$HELPER")
+    reset_helper_state
     trap - EXIT INT TERM HUP
     unset PKEXEC_UID SUDO_UID
     # The contract test never mounts a real target: stub the two mount entry
@@ -2455,7 +1821,7 @@ run_change_detect_case()
     mkdir -p "$root/target/etc" "$root/target/var/lib/apt/lists" "$root/target/boot"
     printf 'base\n' > "$root/target/etc/hostname"
     (
-        source <(sed '/^main "$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         SESSION_DIR="$root/session"
         mkdir -p "$SESSION_DIR"
@@ -2510,7 +1876,7 @@ run_filecopy_change_detect_case()
     mkdir -p "$root/target/etc" "$root/target/home/user" "$root/target/boot"
     printf 'base\n' > "$root/target/etc/hostname"
     (
-        source <(sed '/^main "$@"/d' "$HELPER")
+        reset_helper_state
         trap - EXIT INT TERM HUP
         SESSION_DIR="$root/session"
         mkdir -p "$SESSION_DIR"

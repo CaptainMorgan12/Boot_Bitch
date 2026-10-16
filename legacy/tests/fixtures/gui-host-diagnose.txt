@@ -12,11 +12,13 @@ Repair tool aptupdate: available
 Repair tool upgrade: available
 Repair tool dkms: unavailable|DKMS is not installed in the target
 Repair tool display: available
+Repair tool gpu: unavailable|reason:virtual-gpu-no-discrete-driver
 Repair tool initramfs: available
 Repair tool efi: unavailable|legacy BIOS target; no EFI boot path is available
 Repair tool grub: available
 Repair tool extlinux: unavailable|update-extlinux is not installed in the target
 Repair tool bootstack: unavailable|boot-stack reconciliation requires a GRUB2 or EFI boot path; the detected GRUB legacy BIOS layout is not supported
+Repair tool kernels: available
 Repair capability evidence (read-only):
 Repair capability evidence validate: read-only preflight always available
 Repair capability evidence filesystem: scope filesystems resolved; tools: e2fsck(ext3)
@@ -26,11 +28,13 @@ Repair capability evidence aptupdate: /usr/bin/apt-get present; APT sources pres
 Repair capability evidence upgrade: /usr/bin/dpkg and /usr/bin/apt-get present
 Repair capability evidence dkms: dkms executable missing
 Repair capability evidence display: legacy SysV: sysvinit display manager kdm (/usr/bin/kdm, init script /etc/init.d/kdm)
+Repair capability evidence gpu: GPU driver stack: expected=none; mismatch=none; boot=kernel; dkms=none
 Repair capability evidence initramfs: initramfs backend: initramfs-tools; update-initramfs and mkinitramfs present
 Repair capability evidence efi: grub-install present; ESP mount candidate: unresolved
 Repair capability evidence grub: update-grub present
 Repair capability evidence extlinux: update-extlinux is not installed in the target
 Repair capability evidence bootstack: initramfs backend: initramfs-tools; initramfs and GRUB prerequisites available
+Repair capability evidence kernels: running=2.6.18-6-amd64; latest=2.6.18-6-amd64; removable=0; backend=apt/dpkg
 Legacy feature gating (read-only):
 Legacy feature file-copy: unavailable|rsync is not installed in the recovery environment
 Legacy feature shell: unavailable|the installed timeout does not support --foreground/--kill-after

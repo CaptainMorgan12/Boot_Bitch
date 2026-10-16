@@ -96,6 +96,8 @@ Repair → Host	Reparatur → Host	Réparation → Hôte	Reparación → Host
 About Boot Bitch	Über Boot Bitch	À propos de Boot Bitch	Acerca de Boot Bitch
 Running…	Läuft…	En cours…	Ejecutando…
 Running diagnostics…	Diagnose läuft…	Diagnostics en cours…	Ejecutando diagnóstico…
+Cancelling diagnostic run…	Diagnoselauf wird abgebrochen…		
+Diagnostic cancelled at the request of the application.	Diagnose auf Anforderung der Anwendung abgebrochen.		Diagnóstico cancelado a petición de la aplicación.
 Scanning block devices…	Blockgeräte werden gescannt…	Analyse des périphériques bloc…	Escaneando dispositivos de bloque…
 Absolute path inside repaired system (for example /home/user/Recovered)		Chemin absolu à l'intérieur du système réparé (par exemple /home/user/Recovered)	
 Validate	Validieren	Valider	Validar
@@ -106,6 +108,9 @@ Simulate and Upgrade	Simulieren und aktualisieren	Simuler et mettre à niveau	Si
 Rebuild DKMS	DKMS neu aufbauen	Reconstruire DKMS	Reconstruir DKMS
 Rebuild akmods	akmods neu aufbauen	Reconstruire akmods	Reconstruir akmods
 Rebuild AKMS	AKMS neu aufbauen	Reconstruire AKMS	Reconstruir AKMS
+AKMS rebuild	AKMS Wiederaufbau	Reconstruction de AKMS	Reconstrucción de AKMS
+AKMODS rebuild	AKMODS Wiederaufbau	Reconstruction de AKMODS	Reconstrucción de AKMODS
+Snapshot rollback	Snapshot-Rollback	Retour instantané	Regreso de instantáneas
 Restore Graphical Login	Grafischen Login wiederherstellen	Restaurer la connexion graphique	Restaurar el acceso gráfico
 Rebuild Initramfs	initramfs neu aufbauen	Reconstruire les initramfs	Reconstruir initramfs
 Repair EFI / UKI	EFI / UKI reparieren	Réparer EFI / UKI	Reparar EFI / UKI
@@ -230,4 +235,21 @@ Record grub2-install version	grub2-install-Version aufzeichnen	Enregistrer la ve
 Arch pacman full transaction preflight	Arch pacman vollständige Transaktionsprüfung	Arch pacman précontrôle de transaction complète	Arch pacman preflight de transacción completa
 Alpine apk audit --system (missing-file detection)	Alpine apk audit --system (Erkennung fehlender Dateien)	Alpine apk audit --system (détection de fichiers manquants)	Alpine apk audit --system (detección de archivos faltantes)
 Alpine apk info --who-owns (%1 missing files)	Alpine apk info --who-owns (%1 fehlende Dateien)	Alpine apk info --who-owns (%1 fichiers manquants)	Alpine apk info --who-owns (%1 archivos faltantes)
+Running Host diagnostics…	Laufende Host-Diagnose…		
+Running Host repair: %1…	Laufende Host-Reparatur: %1…		
+Running %1 diagnostic: %2	Laufende %1-Diagnose: %2		
+Running all Host diagnostics	Ausführen aller Host-Diagnosen		
+Running Host diagnostics	Laufende Host-Diagnose		
+Running Host diagnostic	Laufende Host-Diagnose		
+Running Target diagnostics	Laufende Zieldiagnose		
+Running Target diagnostic	Laufende Zieldiagnose		
+LVM inspection	LVM-Inspektion	Inspection LVM	Inspección LVM
+Software RAID	Software-RAID	RAID logiciel	RAID por software
+The LVM userspace tool (lvs) is not installed; LVM volume inspection is unavailable.	Das LVM-Userspace-Tool (lvs) ist nicht installiert; die LVM-Volume-Inspektion ist nicht verfügbar.	L'outil LVM en espace utilisateur (lvs) n'est pas installé ; l'inspection des volumes LVM est indisponible.	La herramienta LVM de espacio de usuario (lvs) no está instalada; la inspección de volúmenes LVM no está disponible.
+mdadm is not installed; software-RAID assembly/inspection is unavailable.	mdadm ist nicht installiert; Software-RAID-Assembly/-Inspektion ist nicht verfügbar.	mdadm n'est pas installé ; l'assemblage/l'inspection RAID logiciel est indisponible.	mdadm no está instalado; el ensamblaje/la inspección RAID por software no está disponible.
+REFUSED: apk simulation would remove '%1', which is not an approved removable kernel package.	REFUSED: apk-Simulation würde "%1" entfernen, das kein genehmigtes entfernbares Kernel-Paket ist.	REFUSÉ: La simulation apk supprimerait '%1', qui n'est pas un paquet de noyau amovible approuvé.	REFUSED: La simulación apk eliminaría '%1', que no es un paquete de kernel extraíble aprobado.
+No out-of-tree kernel modules are installed to rebuild; nothing changed.	Keine Out-of-Tree-Kernelmodule sind zum Neuaufbau installiert; es wurde nichts geändert.	Aucun module de noyau hors de l'arbre à reconstruire n'est installé ; rien n'a changé.	No hay módulos de núcleo fuera del árbol instalados para reconstruir; nada ha cambiado.
 
+The selected Btrfs filesystem has no resolvable snapshot store (@.snapshots/.snapshots).	Das ausgewählte Btrfs-Dateisystem hat keinen auflösbaren Snapshot-Speicher (@.snapshots/.snapshots).
+The selected Btrfs filesystem has no top-level @ root subvolume; transactional rollback is limited to @-root layouts.	Das ausgewählte Btrfs-Dateisystem hat kein @-Root-Subvolume auf oberster Ebene; das transaktionale Rollback ist auf @-Root-Layouts beschränkt.
+akms preflight found no build tree for kernel %1: the installed %2 headers are newer (version %3). Reboot into the kernel matching the installed headers, or install headers matching %1 if they are still available.		AKMS preflight n'a trouvé aucun arbre de construction pour kernel %1 : les en-têtes %2 installés sont plus récents (version %3). Redémarrez sur le kernel correspondant aux en-têtes installés, ou installez des en-têtes correspondant à %1 s'ils sont encore disponibles.	

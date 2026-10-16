@@ -11,6 +11,7 @@
 #include <qdatetime.h>
 #include <qdialog.h>
 #include <qdir.h>
+#include <qevent.h>
 #include <qfiledialog.h>
 #include <qfile.h>
 #include <qfileinfo.h>
@@ -27,6 +28,8 @@
 #include <qlistview.h>
 #include <qmenubar.h>
 #include <qmessagebox.h>
+#include <qobjectlist.h>
+#include <qpainter.h>
 #include <qpixmap.h>
 #include <qpopupmenu.h>
 #include <qpushbutton.h>
@@ -59,7 +62,218 @@
 #define LEGACY_VERSION "unknown"
 #endif
 
+// A QScrollView whose minimumSizeHint() reports a one-row floor instead of the
+// inflated minimum AutoOneFit produces. AutoOneFit's minimumSizeHint() stays
+// large even after setMinimumHeight, which makes the parent vertical splitter
+// lock (the plan frame's minimum exceeds its maximum). The splitter queries
+// minimumSizeHint() for the pane floor, so overriding it here lets the handle
+// drag the plan frame down to its one-row minimum. See etch-lessons-learned.md
+// §6.
+class PlanScrollView : public QScrollView
+{
+public:
+    PlanScrollView(QWidget *parent, const char *name = 0)
+        : QScrollView(parent, name), m_minimumHeight(0)
+    {
+    }
+
+    void setMinimumContentHeight(int height)
+    {
+        m_minimumHeight = height;
+    }
+
+    QSize minimumSizeHint() const
+    {
+        if (m_minimumHeight <= 0) {
+            return QScrollView::minimumSizeHint();
+        }
+        return QSize(QScrollView::minimumSizeHint().width(), m_minimumHeight);
+    }
+
+private:
+    int m_minimumHeight;
+};
+
+// A QTable whose minimumSizeHint() reports a small floor (the header plus a
+// couple of rows) instead of its full 18-row content height. The table is
+// scrollable, so it can shrink far below its content; the inflated
+// minimumSizeHint() would otherwise keep the Capabilities frame tall and lock
+// the Settings vertical splitter, so the Full Repair plan frame could never
+// expand past its default. Same pattern as PlanScrollView (see
+// etch-lessons-learned.md §6).
+class CapabilityTable : public QTable
+{
+public:
+    CapabilityTable(int numRows, int numCols, QWidget *parent,
+                    const char *name = 0)
+        : QTable(numRows, numCols, parent, name), m_minimumHeight(0)
+    {
+    }
+
+    void setMinimumContentHeight(int height)
+    {
+        m_minimumHeight = height;
+    }
+
+    QSize minimumSizeHint() const
+    {
+        if (m_minimumHeight <= 0) {
+            return QTable::minimumSizeHint();
+        }
+        return QSize(QTable::minimumSizeHint().width(), m_minimumHeight);
+    }
+
+private:
+    int m_minimumHeight;
+};
+
 namespace legacy {
+
+// The modal repair-result dialog. Its Close button stays disabled and Escape /
+// the window-close are refused until the owner calls setCloseAllowed(true), so
+// the dialog cannot be silently dismissed while its helper request is still
+// running and strand the busy indicator or the completion feedback (modern
+// RepairProgressDialog parity: the popup stays with a disabled Close button
+// until the request completes). Qt 3.3.7's QDialog::accept()/reject() are
+// non-virtual slots, so the two widget-level dismissal paths (the Escape key
+// and the window-close) are gated here in keyPressEvent()/closeEvent() instead.
+class RepairResultDialog : public QDialog
+{
+public:
+    RepairResultDialog(QWidget *parent, const char *name)
+        : QDialog(parent, name, true), m_closeAllowed(false)
+    {
+    }
+
+    void setCloseAllowed(bool allowed)
+    {
+        m_closeAllowed = allowed;
+    }
+
+protected:
+    void closeEvent(QCloseEvent *event)
+    {
+        if (m_closeAllowed) {
+            QDialog::closeEvent(event);
+        } else {
+            event->ignore();
+        }
+    }
+
+    void keyPressEvent(QKeyEvent *event)
+    {
+        // Swallow Escape until the request completes; every other key (and
+        // Escape once Close is allowed) falls through to the base handling.
+        if (!m_closeAllowed && event->key() == Qt::Key_Escape) {
+            event->accept();
+            return;
+        }
+        QDialog::keyPressEvent(event);
+    }
+
+private:
+    bool m_closeAllowed;
+};
+
+// Item #3 (modern parity): the Shell tab command field is single-line, so
+// Up/Down are otherwise unused. This QLineEdit subclass forwards them to the
+// owning window's session-only command-history navigation and lets every other
+// key fall through to QLineEdit (Qt 3.3.7 has no QLineEdit::returnPressed for
+// Up/Down and no event-filter convenience, so a keyPressEvent subclass is the
+// reliable path).
+class ShellCommandLineEdit : public QLineEdit
+{
+public:
+    ShellCommandLineEdit(LegacyMainWindow *owner, QWidget *parent,
+                         const char *name = 0)
+        : QLineEdit(parent, name), m_owner(owner)
+    {
+    }
+
+protected:
+    void keyPressEvent(QKeyEvent *event)
+    {
+        if (event->key() == Qt::Key_Up) {
+            m_owner->stepShellHistory(+1);
+            event->accept();
+            return;
+        }
+        if (event->key() == Qt::Key_Down) {
+            m_owner->stepShellHistory(-1);
+            event->accept();
+            return;
+        }
+        QLineEdit::keyPressEvent(event);
+    }
+
+private:
+    LegacyMainWindow *m_owner;
+};
+
+// Item 3 (modern parity): Qt 3.3.7 QListView draws every column on a single
+// line, so the Systems details Value column elided long helper text
+// ("Helper-confirmed by the last read-only diagnostics.", "PROTECTED -
+// running system; read-only details only"). This QListViewItem subclass
+// raises the row height to the value's word-wrapped extent and paints the
+// Value column with Qt::WordBreak so long values wrap within the pane
+// instead of clipping (the modern Qt6 Selected drive details pane wraps its
+// value labels the same way). The Field column and every inherited
+// QListViewItem behavior stay untouched.
+class WrappingDetailItem : public QListViewItem
+{
+public:
+    WrappingDetailItem(QListView *parent, QListViewItem *after,
+                       const QString &field, const QString &value)
+        : QListViewItem(parent, after, field, value)
+    {
+    }
+
+    void setup()
+    {
+        QListViewItem::setup();
+        QListView *view = listView();
+        if (!view || view->columns() < 2 || text(1).isEmpty()) {
+            return;
+        }
+        const int margin = view->itemMargin();
+        const int columnWidth = view->columnWidth(1) - 2 * margin;
+        if (columnWidth <= 0) {
+            return;
+        }
+        const QFontMetrics metrics(view->font());
+        // Qt 3.3.7 has no QFontMetrics::boundingRect(QRect, int, QString)
+        // (that overload is Qt 4); the equivalent is the 11-arg form
+        // (x, y, w, h, flags, text, len...). A large height keeps the text
+        // from being truncated, so the returned rect's height is the
+        // word-wrapped extent (WordBreak wraps to the given width).
+        const QRect wrapped = metrics.boundingRect(
+            0, 0, columnWidth, 1000000,
+            Qt::AlignLeft | Qt::AlignTop | Qt::WordBreak, text(1));
+        const int wanted = wrapped.height() + 2 * margin;
+        if (wanted > height()) {
+            setHeight(wanted);
+        }
+    }
+
+    void paintCell(QPainter *p, const QColorGroup &cg, int column,
+                   int width, int alignment)
+    {
+        if (column != 1) {
+            QListViewItem::paintCell(p, cg, column, width, alignment);
+            return;
+        }
+        QListView *view = listView();
+        const int margin = view ? view->itemMargin() : 2;
+        if (isSelected()) {
+            p->fillRect(QRect(0, 0, width, height()), cg.highlight());
+            p->setPen(cg.highlightedText());
+        } else {
+            p->setPen(cg.text());
+        }
+        p->drawText(QRect(margin, 0, width - 2 * margin, height()),
+                    Qt::AlignLeft | Qt::AlignTop | Qt::WordBreak, text(1));
+    }
+};
 
 // Cycle 9 loop 2: --smoke-test settings isolation (set by main() before the
 // window is constructed). The flag lives in the legacy namespace so the
@@ -96,6 +310,12 @@ QString legacyInitialLogDirectory()
 }
 
 namespace {
+
+// Forward declaration: maps the helper's capability-unavailable reason key
+// (`reason:<key>[|param:...]`) to the modern kReasonSpecs wording, byte-identical.
+// Defined later in this file (next to the `reason:<key>` change-status table),
+// but called earlier by toolRunReady()/planStageState().
+QString localizedCapabilityReason(const QString &raw);
 
 // Layout floors applied by the widget guards and re-checked by the 1024x768
 // smoke layout assertion. They are deliberately larger than the raw font
@@ -173,11 +393,13 @@ const ToolSpec toolSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "File system repair"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Check File Systems"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "Run the read-only file system check for the selected system's root and "
-      "/boot filesystems and report each device's check tool and result "
-      "without changing anything. This legacy frontend exposes the read-only "
-      "check only; device repair is not wired."),
-      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Full Repair plan: unavailable on this frontend - read-only check only"), false, false, false, 0 },
+      "Run the read-only file system check on the selected system's root and "
+      "/boot filesystems, then repair only the devices that report errors. "
+      "The Etch check tools (e2fsck for ext2/ext3) run only after the helper "
+      "releases its read-only mounts; a still-mounted filesystem is never "
+      "repaired offline and unsupported filesystems are reported rather than "
+      "guessed about."),
+      "filesystem", "", false, false, false, 0 },
     { "dpkg", "dpkg-configure",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Complete package configuration"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Complete Configuration"),
@@ -238,6 +460,15 @@ const ToolSpec toolSpecs[] = {
       "display-manager", "", true, true, true,
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Restore the graphical login configuration for the running host? The helper backs up /etc/X11/default-display-manager and the runlevel symlink state, restores the configured entry and the missing S-symlink, rolls back on any failure, and never starts the display manager.") },
+    { "gpu", "gpu",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair GPU driver"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. "
+      "Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). "
+      "A separate one-boot nomodeset fallback reaches a console on a broken driver."),
+      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false,
+      0 },
     { "initramfs", "initramfs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuild Initramfs"),
@@ -284,7 +515,16 @@ const ToolSpec toolSpecs[] = {
       "boot-stack reconciliation and stays out of the Full Repair plan."),
       "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Full Repair plan: Manual recovery tool"), true, true, false,
       QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "Run the guarded boot-stack reconciliation? The helper runs the mapper/crypttab validation, the initramfs rebuild and the GRUB-legacy regeneration in one pass with every component preflight and backup.") }
+      "Run the guarded boot-stack reconciliation? The helper runs the mapper/crypttab validation, the initramfs rebuild and the GRUB-legacy regeneration in one pass with every component preflight and backup.") },
+    { "kernels", "kernels",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair kernels"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. "
+      "Nothing is removed or modified until you pick an action and confirm it. "
+      "The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal."),
+      "", QT_TRANSLATE_NOOP("LegacyMainWindow", "Interactive tool - run individually"), true, false, false,
+      0 }
 };
 const int toolSpecCount = sizeof(toolSpecs) / sizeof(toolSpecs[0]);
 
@@ -308,7 +548,8 @@ const RepairStageTitle repairStageTitles[] = {
     { "grub", QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration") },
     { "extlinux", QT_TRANSLATE_NOOP("LegacyMainWindow", "extlinux configuration") },
     { "bootstack", QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot stack reconciliation") },
-    { "host-default", QT_TRANSLATE_NOOP("LegacyMainWindow", "Make Default") }
+    { "host-default", QT_TRANSLATE_NOOP("LegacyMainWindow", "Make Default") },
+    { "install-host-package", QT_TRANSLATE_NOOP("LegacyMainWindow", "Install missing support package") }
 };
 const int repairStageTitleCount = sizeof(repairStageTitles) / sizeof(repairStageTitles[0]);
 
@@ -331,10 +572,11 @@ QString repairStageDisplayTitle(const QString &key)
 // initramfs, efi, grub, extlinux); a row is never hidden. Availability follows
 // the modern semantics: available = checkable with the saved/default
 // preference, unavailable = shown, disabled and unchecked (the reason names
-// the exact capability/feature probe outcome). The filesystem row is the
-// documented frontend gap: this legacy frontend exposes the read-only
-// fs-inspect check only, so the row carries no helper stage and is never
-// checkable (fail closed), with the exact reason in its tooltip.
+// the exact capability/feature probe outcome). The filesystem row maps to the
+// inspect-first `filesystem` plan stage: the frontend runs the read-only
+// fs-inspect and the per-device fs-repair verbs itself (split out of the
+// `repair` command by runFullRepair), so the row is checkable like any other
+// available stage.
 struct PlanSpec {
     const char *stage;
     const char *capability;
@@ -342,69 +584,75 @@ struct PlanSpec {
     const char *checkLabel; // Settings -> Full Repair plan checkbox label
     const char *settingsKey;
     bool defaultChecked;
+    // Host-scope stages other than the package stages run behind the helper's
+    // host-maintenance feature gate (`Legacy feature host-maintenance:`). The
+    // individual-tool run gate (toolRunReady()) still enforces this; the plan
+    // checkbox presentation (planStageState()) does not, so these stages stay
+    // checkable settings in Host Maintenance regardless of evidence warmth.
     bool hostMaintenance;
+    // Host-only stages (the legacy display-manager repair) stay disabled for
+    // the offline target scope with an exact reason, so the host-scope
+    // selection is never checkable (or overwritable) outside Host Maintenance.
+    bool hostOnly;
     // Non-empty when the frontend exposes no plan action for the capability:
     // the row is shown disabled+unchecked with this exact reason even when
     // the helper reports the capability as available (fail closed).
     const char *frontendGap;
 };
 const PlanSpec planSpecs[] = {
-    { "", "filesystem",
+    { "filesystem", "filesystem",
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Repair file system errors (read-only check first)"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Repair file system errors (read-only check first)"),
-      "repair/filesystem", true, false,
-      QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "the legacy frontend exposes the read-only file system check only; "
-      "per-device repair is not wired on this frontend (fail closed)") },
+      "repair/filesystem", true, false, false, "" },
     { "dpkg-configure", "dpkg",
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Complete interrupted package configuration"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Complete interrupted package configuration"),
-      "repair/dpkgConfigure", true, false, "" },
+      "repair/dpkgConfigure", true, false, false, "" },
     { "fix-broken", "fixbroken",
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Repair broken package dependencies"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Repair broken package dependencies"),
-      "repair/fixBroken", true, false, "" },
+      "repair/fixBroken", true, false, false, "" },
     { "apt-update", "aptupdate",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Refresh package metadata"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Refresh package metadata"),
-      "repair/refreshMetadata", true, false, "" },
+      "repair/refreshMetadata", true, false, false, "" },
     { "apt-upgrade", "upgrade",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Upgrade installed packages"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Upgrade installed packages (adaptive APT simulation)"),
-      "repair/upgradePackages", false, false, "" },
+      "repair/upgradePackages", false, false, false, "" },
     { "dkms", "dkms",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuild DKMS modules"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuild DKMS modules"),
-      "repair/dkms", true, true, "" },
+      "repair/dkms", true, true, false, "" },
     { "display-manager", "display",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Restore graphical login manager"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Restore graphical login manager"),
-      "repair/displayManager", false, true, "" },
+      "repair/displayManager", false, true, true, "" },
     { "initramfs", "initramfs",
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Rebuild initramfs after mapper/crypttab validation"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Rebuild initramfs after mapper/crypttab validation"),
-      "repair/initramfs", true, true, "" },
+      "repair/initramfs", true, true, false, "" },
     { "efi", "efi",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair EFI / UKI boot path"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair EFI / UKI boot path"),
-      "repair/efiBootloader", false, true, "" },
+      "repair/efiBootloader", false, true, false, "" },
     { "grub", "grub",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Update GRUB configuration"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Update GRUB configuration"),
-      "repair/grub", true, true, "" },
+      "repair/grub", true, true, false, "" },
     { "extlinux", "extlinux",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Update extlinux configuration"),
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Update extlinux configuration"),
-      "repair/extlinux", true, true, "" }
+      "repair/extlinux", true, true, false, "" }
 };
 const int planSpecCount = sizeof(planSpecs) / sizeof(planSpecs[0]);
 
@@ -480,6 +728,10 @@ const DiagnosticSpec diagnosticSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Distribution and boot backend profile"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Identifies the distribution family, package manager, initramfs generator, bootloader and current guarded repair capability.") },
+    { "package",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Package state"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Summarizes pending configuration, broken dependencies and missing package files for every detected package manager without changing the selected system.") },
     { "boot",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot diagnostics"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -487,7 +739,7 @@ const DiagnosticSpec diagnosticSpecs[] = {
     { "boot-evidence",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot evidence and selection history"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "Correlates the detected boot chain, bootloader selection, kernel/initramfs and unlock evidence.") },
+      "Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.") },
     { "kernel",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel / initramfs"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -504,6 +756,13 @@ const DiagnosticSpec diagnosticSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Graphical login / display manager"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Reviews the configured display manager and recent boot evidence without starting the GUI.") },
+    { "gpu",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Graphics / GPU driver stack"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow",
+      "Reviews the kernel GPU driver: detected hardware, the loaded and "
+      "blacklisted modules, installed driver packages, the expected driver, "
+      "per-kernel DKMS build status, how far this boot reached and actionable "
+      "journal driver errors.") },
     { "errors",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot errors"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
@@ -517,7 +776,7 @@ const DiagnosticSpec diagnosticSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Runs the read-only file system check for the selected system's root, /boot and other filesystems.") },
     { "fstab",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "/etc/fstab review"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "fstab"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.") },
     { "btrfs",
@@ -525,11 +784,11 @@ const DiagnosticSpec diagnosticSpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Shows Btrfs filesystem and subvolume information when the target uses Btrfs.") },
     { "mapper",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Device-mapper ancestry"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Mapper status"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
-      "Shows selected mapper ancestry and device-mapper state when available.") },
+      "Shows selected mapper ancestry, device-mapper state and cryptsetup status when available.") },
     { "luks",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS / crypttab evidence"),
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS / crypttab"),
       QT_TRANSLATE_NOOP("LegacyMainWindow",
       "Shows LUKS/mapped ancestry plus crypttab and fstab mapper references.") },
     { "report",
@@ -540,7 +799,7 @@ const DiagnosticSpec diagnosticSpecs[] = {
 const int diagnosticSpecCount = sizeof(diagnosticSpecs) / sizeof(diagnosticSpecs[0]);
 
 // The Logs filter combo, 1:1 with the modern order: All entries / Diagnostics
-// / Repairs / the three workflow filters / the 16 diagnostic sections. The
+// / Repairs / the three workflow filters / the 18 diagnostic sections. The
 // combo cannot carry per-item data in Qt3, so the index semantics live in
 // this single table. `kind` is the LogEntry::Kind filter (or Application for
 // an entry that matches nothing), `stage` is the helper stage a Repair entry
@@ -649,6 +908,12 @@ QString packageManagerLabelForHost()
 {
     const QString id = readOsReleaseValue(QString::fromLatin1("ID")).lower();
     const QString like = readOsReleaseValue(QString::fromLatin1("ID_LIKE")).lower();
+    // Debian Etch predates /etc/os-release (that file arrived later), so the
+    // ID read is empty on Etch; the /etc/debian_version (or /etc/debian_release)
+    // presence is the Debian-family fallback that still maps to APT / dpkg.
+    const bool debianReleaseFile =
+        QFileInfo(QString::fromLatin1("/etc/debian_version")).exists()
+        || QFileInfo(QString::fromLatin1("/etc/debian_release")).exists();
     const bool debianLike = id == QString::fromLatin1("debian")
         || id == QString::fromLatin1("ubuntu")
         || id == QString::fromLatin1("tuxedo")
@@ -657,7 +922,8 @@ QString packageManagerLabelForHost()
         || id == QString::fromLatin1("elementary")
         || id == QString::fromLatin1("zorin")
         || like.find(QString::fromLatin1("debian")) >= 0
-        || like.find(QString::fromLatin1("ubuntu")) >= 0;
+        || like.find(QString::fromLatin1("ubuntu")) >= 0
+        || (id.isEmpty() && debianReleaseFile);
     if (debianLike) {
         return QString::fromLatin1("APT / dpkg");
     }
@@ -691,10 +957,116 @@ QString packageManagerLabelForHost()
     return QString::fromLatin1("Unknown / unsupported automatic mapping");
 }
 
-// One read-only host-capability probe row, mirroring CapabilityChecker::scanHost
-// requirement-by-requirement plus the one legacy-specific row. The suggested
-// package follows packageForCommand's Debian-family mapping where it exists
-// and the command's conventional package otherwise.
+// True when `package` has an installable candidate on the running host
+// (apt/dpkg): a read-only `apt-cache policy <package>` probe (Etch's apt 0.6)
+// that reports a non-empty Candidate version. A missing apt-cache, a
+// "Candidate: (none)" answer or an "Unable to locate package" result fails
+// closed; nothing is ever installed here.
+bool hostPackageInstallable(const QString &package)
+{
+    if (package.isEmpty()) {
+        return false;
+    }
+    if (findExecutablePath(QString::fromLatin1("apt-cache")).isEmpty()) {
+        return false;
+    }
+    const QString command =
+        QString::fromLatin1("apt-cache policy \"%1\" 2>/dev/null").arg(package);
+    FILE *pipe = ::popen(command.local8Bit().data(), "r");
+    if (!pipe) {
+        return false;
+    }
+    bool installable = false;
+    char buffer[512];
+    while (::fgets(buffer, sizeof(buffer), pipe)) {
+        const QString line = QString::fromLocal8Bit(buffer).stripWhiteSpace();
+        if (!line.startsWith(QString::fromLatin1("Candidate:"))) {
+            continue;
+        }
+        const QString value = line.mid(QString::fromLatin1("Candidate:").length())
+                                  .stripWhiteSpace();
+        // A concrete candidate version means the package is installable from
+        // the configured apt sources; "(none)" or an empty value means not.
+        installable = !value.isEmpty()
+            && value != QString::fromLatin1("(none)");
+        break;
+    }
+    ::pclose(pipe);
+    return installable;
+}
+
+// True when installing `package` from the Etch APT sources could actually
+// deliver `command` on this frontend.  `hostPackageInstallable` only proves the
+// PACKAGE NAME is in the repo; it cannot prove the package version it would
+// install contains the command.  On Etch the `unshare` row is the concrete
+// trap: `util-linux` is present (2.12r) but `unshare` entered util-linux only
+// in 2.17, so installing the suggested package can never provide the missing
+// command.  The ported helper covers that absence with the guarded
+// plain-chroot fallback (legacy/overlay.sh), so the row must never offer
+// Install — mirroring the modern frontend, which only offers an install when a
+// precise `missing-*` reason proves the package actually resolves the missing
+// prerequisite.  Fail closed: unknown command/package pairs are refused here
+// only when they are a known cannot-provide case; everything else stays
+// governed by the apt-cache candidate probe.
+bool legacyPackageProvidesCommand(const QString &package, const QString &command)
+{
+    Q_UNUSED(package);
+    if (command == QString::fromLatin1("unshare")) {
+        return false;
+    }
+    return true;
+}
+
+// The installable package for a target-scope missing capability row, derived
+// from the cached state's machine-readable `reason:` key exactly like the
+// modern CapabilityChecker::capabilitiesFromRepairEvidence. Only the module-
+// build (dkms) row maps a `missing-*` build-system reason to a concrete
+// package (dkms on Debian-family/Arch, akmods on Fedora/RHEL, akms on
+// Alpine); a `*-no-build-tree` reason means the build system is present but
+// the matching kernel headers build tree is missing, so no one-click install
+// is offered (the headers package is version-specific). Every other row has
+// no installable package and fails closed (empty). Actual installability
+// against the TARGET's own apt sources is enforced by the helper's guarded
+// install-target-package verb (simulation-first, fail-closed) — never a host
+// apt-cache probe (hostPackageInstallable below stays host-only).
+QString legacyTargetInstallablePackage(const QString &key, const std::string &state)
+{
+    if (key != QString::fromLatin1("dkms")) {
+        return QString::null;
+    }
+    const QString s = QString::fromLatin1(state.c_str());
+    if (!s.startsWith(QString::fromLatin1("unavailable|"))) {
+        return QString::null;
+    }
+    const QString detail = s.mid(QString::fromLatin1("unavailable|").length())
+                               .stripWhiteSpace();
+    if (!detail.startsWith(QString::fromLatin1("reason:"))) {
+        return QString::null;
+    }
+    const QString reasonKey = detail.mid(QString::fromLatin1("reason:").length());
+    const int pipe = reasonKey.find(QString::fromLatin1("|"));
+    const QString keyOnly = pipe >= 0 ? reasonKey.left(pipe) : reasonKey;
+    if (keyOnly == QString::fromLatin1("missing-akmods")) {
+        return QString::fromLatin1("akmods");
+    }
+    if (keyOnly == QString::fromLatin1("missing-dkms-alpine")) {
+        return QString::fromLatin1("akms");
+    }
+    if (keyOnly == QString::fromLatin1("missing-dkms")
+        || keyOnly == QString::fromLatin1("missing-dkms-arch")) {
+        return QString::fromLatin1("dkms");
+    }
+    return QString::null;
+}
+
+// One read-only host-capability probe row. The consolidated table mirrors the
+// modern CapabilityChecker feature list (the 15 repair-tool capabilities plus
+// LVM and software RAID) into one row per feature, probing a representative
+// command through the read-only PATH search, and keeps the two Etch-specific
+// rows (LUKS support and the unshare fallback) the legacy frontend still
+// needs. The suggested package is the Etch-era Debian package that provides
+// that command; EFI/UKI and snapshot-rollback are omitted because Etch is a
+// BIOS/GRUB-legacy system with no btrfs/snapper (see refreshCapabilities()).
 struct CapabilitySpec {
     const char *feature;
     const char *command;
@@ -703,75 +1075,57 @@ struct CapabilitySpec {
     const char *note;
 };
 const CapabilitySpec capabilitySpecs[] = {
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Device discovery"), "lsblk",
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Validate environment"), "mount",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "util-linux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required for block-device inventory") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Filesystem identification"), "blkid",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "util-linux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Used to identify filesystem metadata") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Mount inspection"), "findmnt",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "util-linux",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Used to understand active mounts") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS support"), "cryptsetup",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "cryptsetup",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required to unlock encrypted targets") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Btrfs support"), "btrfs",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "btrfs-progs",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required for Btrfs inspection and snapshot rollback") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Bidirectional file copy"), "rsync",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host/Repair"), "rsync",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required for verified Host-to-Repair and Repair-to-Host transfer") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Chroot repair"), "chroot",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "coreutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required for target-side repair commands") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Offline systemd repair"), "systemctl",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host/Repair"), "systemd",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Used to restore graphical.target and the configured display manager without starting the target GUI") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "UEFI NVRAM inspection"), "efibootmgr",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "efibootmgr",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Used to preserve target EFI BootOrder during TUXEDO UKI rebuilds when efivars are available") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "UKI verification"), "objcopy",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "binutils",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Used to verify the kernel embedded in a rebuilt unified kernel image") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB EFI repair"), "grub-install",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target/Host"), "grub2-common",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required only for conventional GRUB-based EFI systems") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration"), "update-grub",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "grub-common",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Debian-family GRUB helper") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration"), "grub-mkconfig",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "grub-common",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Portable GRUB configuration generator used by Arch and other non-Debian systems") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "update-initramfs",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "initramfs-tools",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Debian-family initramfs helper") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "mkinitcpio",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "mkinitcpio",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Arch-family initramfs generator") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "dracut",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dracut",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative initramfs generator used by Arch and other distributions") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs verification"), "lsinitcpio",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "mkinitcpio",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only verification for mkinitcpio images") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs verification"), "lsinitrd",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dracut",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only verification for dracut images") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "systemd-boot inspection"), "bootctl",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host/Target"), "systemd",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only inspection of systemd-boot and generic UKI layouts") },
-    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Arch package manager"), "pacman",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host/Target"), "pacman",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Arch-family package database and transaction tool") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "File system repair"), "fsck",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "e2fsprogs",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Complete package configuration"), "dpkg",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dpkg",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Completes interrupted dpkg package configuration in the selected repair system") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Repair broken dependencies"), "apt-get",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Repairs broken package dependencies after the simulation-first safety preflight") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Refresh package metadata"), "apt-get",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Refreshes APT metadata without upgrading installed packages") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Upgrade installed packages"), "apt-get",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "apt",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Simulates the APT transaction, then applies a safe upgrade") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS rebuild"), "dkms",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "dkms",
-      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required only when target uses DKMS modules") },
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Graphical login / display manager"), "update-rc.d",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "sysv-rc",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "GPU driver repair"), "lspci",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "pciutils",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only capability on this frontend; the GPU-driver repair runs through the helper") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Initramfs rebuild"), "update-initramfs",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "initramfs-tools",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB configuration"), "update-grub",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "grub",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "extlinux configuration"), "extlinux",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "syslinux",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Boot stack reconciliation"), "chroot",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "coreutils",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "Kernel repair"), "modprobe",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Target"), "module-init-tools",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "LVM inspection"), "lvs",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "lvm2",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Optional LVM storage-stack support") },
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Software RAID"), "mdadm",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "mdadm",
       QT_TRANSLATE_NOOP("LegacyMainWindow", "Optional Linux MD RAID support") },
+    { QT_TRANSLATE_NOOP("LegacyMainWindow", "LUKS support"), "cryptsetup",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Host"), "cryptsetup",
+      QT_TRANSLATE_NOOP("LegacyMainWindow", "Required to unlock encrypted targets") },
     // Legacy-specific row: Etch has no unshare, so the ported helper falls
     // back to a guarded plain chroot.
     { QT_TRANSLATE_NOOP("LegacyMainWindow", "Process namespace isolation"), "unshare",
@@ -779,6 +1133,15 @@ const CapabilitySpec capabilitySpecs[] = {
       QT_TRANSLATE_NOOP("LegacyMainWindow", "The ported helper falls back to a guarded plain chroot when unshare is absent") }
 };
 const int capabilitySpecCount = sizeof(capabilitySpecs) / sizeof(capabilitySpecs[0]);
+
+// The 7th (Action) column shows the per-row install affordance as TEXT (Qt3
+// QTable cannot host a per-row cell widget, so there is no clickable per-row
+// button): "Install" for a missing, installable row and the "-" placeholder
+// otherwise. Selecting that row enables the Install Missing Support... button
+// below, which runs the guarded install-host-package helper verb. ASCII-only:
+// Etch's fonts garble the em dash, so a hyphen stands in for the modern "no
+// action" placeholder.
+const char *const kCapabilityActionCell = "-";
 
 // Etch-era target configuration files offered by the Diagnostics tab's
 // "Edit Target File..." control. The keys match the legacy helper's guarded
@@ -885,8 +1248,13 @@ QString promptHiddenPassword(QWidget *parent, const QString &title,
 // itself to the unwrapped text, so long repair confirmations stretched past
 // the window; this stack dialog wraps the wording (Qt::WordBreak) inside a
 // bounded width and keeps the Yes/No (or Yes/Cancel) question semantics.
+// Cycle 17: the optional yesLabel/noLabel overrides let a call site mirror a
+// specific modern confirmation's exact button text (for example the Full
+// Repair plan's "Run Repair"/"Cancel" pair) without losing the wrapping.
 bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
-                    bool cancelInsteadOfNo = false)
+                    bool cancelInsteadOfNo = false,
+                    const QString &yesLabel = QString::null,
+                    const QString &noLabel = QString::null)
 {
     QDialog dialog(parent, "legacy-confirm", true);
     dialog.setCaption(title);
@@ -899,12 +1267,17 @@ bool confirmWrapped(QWidget *parent, const QString &title, const QString &text,
     buttons->setSpacing(6);
     buttons->addStretch();
     QPushButton *noButton = new QPushButton(
-        cancelInsteadOfNo
-            ? qApp->translate("LegacyMainWindow", "Cancel")
-            : qApp->translate("LegacyMainWindow", "No"),
+        !noLabel.isEmpty()
+            ? noLabel
+            : (cancelInsteadOfNo
+                ? qApp->translate("LegacyMainWindow", "Cancel")
+                : qApp->translate("LegacyMainWindow", "No")),
         &dialog);
     QPushButton *yesButton = new QPushButton(
-        qApp->translate("LegacyMainWindow", "Yes"), &dialog);
+        !yesLabel.isEmpty()
+            ? yesLabel
+            : qApp->translate("LegacyMainWindow", "Yes"),
+        &dialog);
     yesButton->setDefault(true);
     buttons->addWidget(noButton);
     buttons->addWidget(yesButton);
@@ -1034,6 +1407,342 @@ QString diagnosticTitle(const QString &key)
         }
     }
     return key;
+}
+
+// The helper frames every diagnostic section and its title with this exact
+// divider. Section extraction relies on the framing to keep the captured
+// header and metadata intact (ported from MainWindow::isDiagnosticSectionDivider).
+bool isDiagnosticSectionDivider(const QString &line)
+{
+    return line == QString::fromLatin1("========================================");
+}
+
+// Line index where the embedded section whose "Diagnostic:" header is at
+// diagnosticLine begins. Helper output frames the title between two dividers
+// directly above the header, while the GUI framing places the opening divider
+// directly above the header instead (ported from
+// MainWindow::embeddedSectionStartLine).
+int embeddedSectionStartLine(const QStringList &lines, int diagnosticLine)
+{
+    if (diagnosticLine >= 3
+        && isDiagnosticSectionDivider(lines[diagnosticLine - 1])
+        && !lines[diagnosticLine - 2].isEmpty()
+        && !isDiagnosticSectionDivider(lines[diagnosticLine - 2])
+        && isDiagnosticSectionDivider(lines[diagnosticLine - 3])) {
+        return diagnosticLine - 3;
+    }
+    if (diagnosticLine >= 1
+        && isDiagnosticSectionDivider(lines[diagnosticLine - 1])) {
+        return diagnosticLine - 1;
+    }
+    return diagnosticLine;
+}
+
+// Extracts every embedded diagnostic section from a combined report, keyed by
+// the section's `Diagnostic: <key>` header (case-folded). Each section keeps
+// its header, metadata and framing exactly as captured, ending where the next
+// section's frame begins (ported from
+// MainWindow::extractEmbeddedDiagnosticSections).
+QMap<QString, QString> extractDiagnosticSections(const QString &entry)
+{
+    QMap<QString, QString> sections;
+    const QString headerPrefix = QString::fromLatin1("Diagnostic: ");
+    const QStringList lines = QStringList::split(QChar('\n'), entry, true);
+    const int lineCount = static_cast<int>(lines.count());
+    std::vector<int> headers;
+    for (int index = 0; index < lineCount; ++index) {
+        if (lines[index].startsWith(headerPrefix)) {
+            headers.push_back(index);
+        }
+    }
+    const int headerCount = static_cast<int>(headers.size());
+    for (int position = 0; position < headerCount; ++position) {
+        const int header = headers[position];
+        const QString key = lines[header].mid(headerPrefix.length()).stripWhiteSpace();
+        const int start = embeddedSectionStartLine(lines, header);
+        int end = position + 1 < headerCount
+            ? embeddedSectionStartLine(lines, headers[position + 1])
+            : lineCount;
+        while (end > start && lines[end - 1].stripWhiteSpace().isEmpty()) {
+            --end;
+        }
+        if (end > start) {
+            QStringList body;
+            for (int i = start; i < end; ++i) {
+                body.append(lines[i]);
+            }
+            sections.insert(key.lower(), body.join(QString::fromLatin1("\n")));
+        }
+    }
+    return sections;
+}
+
+// Qt 3.3.7 has no QByteArray::toBase64, so the repair-run baseline is
+// serialized with a local encoder over the section's UTF-8 bytes, matching
+// MainWindow's `QString::fromLatin1(section.toUtf8().toBase64())`. The helper
+// decodes with `base64 -d` and parses the original text back.
+QString legacyBase64Encode(const QString &text)
+{
+    static const char kTable[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    const QByteArray bytes = text.utf8();
+    const char *data = bytes.data();
+    const unsigned int length = static_cast<unsigned int>(bytes.size());
+    QCString out;
+    for (unsigned int i = 0; i < length; i += 3) {
+        const unsigned int a = static_cast<unsigned char>(data[i]);
+        const unsigned int b = (i + 1 < length)
+            ? static_cast<unsigned char>(data[i + 1]) : 0u;
+        const unsigned int c = (i + 2 < length)
+            ? static_cast<unsigned char>(data[i + 2]) : 0u;
+        out += kTable[(a >> 2) & 0x3Fu];
+        out += kTable[((a << 4) | (b >> 4)) & 0x3Fu];
+        out += (i + 1 < length) ? kTable[((b << 2) | (c >> 6)) & 0x3Fu] : '=';
+        out += (i + 2 < length) ? kTable[c & 0x3Fu] : '=';
+    }
+    return QString::fromLatin1(out.data(), static_cast<int>(out.size()));
+}
+
+// Qt 3.3.7 has no QByteArray::fromBase64, so the PROMPT menu payload is
+// decoded with a local decoder (the inverse of legacyBase64Encode).  The menu
+// text is only ever displayed, never interpreted, so a malformed payload fails
+// closed to an empty result rather than surfacing partial text.
+QByteArray legacyBase64Decode(const QString &encoded)
+{
+    static const char kTable[] =
+        "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    int lookup[256];
+    for (int i = 0; i < 256; ++i) {
+        lookup[i] = -1;
+    }
+    for (int i = 0; i < 64; ++i) {
+        lookup[static_cast<unsigned char>(kTable[i])] = i;
+    }
+    const QCString text = encoded.latin1();
+    QCString out;
+    int buffer = 0;
+    int bits = 0;
+    for (int i = 0; i < static_cast<int>(text.size()); ++i) {
+        const unsigned char c = static_cast<unsigned char>(text[i]);
+        if (c == '=') {
+            break;  // padding terminates the quad
+        }
+        if (c == '\n' || c == '\r' || c == ' ' || c == '\t') {
+            continue;  // tolerate stray transport whitespace
+        }
+        const int value = lookup[c];
+        if (value < 0) {
+            return QByteArray();  // invalid character: fail closed
+        }
+        buffer = (buffer << 6) | value;
+        bits += 6;
+        if (bits >= 8) {
+            bits -= 8;
+            out += static_cast<char>((buffer >> bits) & 0xFF);
+        }
+    }
+    return out;
+}
+
+// Ported from MainWindow::requiredDiagnosticSectionsForTool: the cached
+// diagnostic sections a repair consumes (the repair-run gate and the baseline
+// serialization both use this list). "report" means the combined report.
+QStringList requiredDiagnosticSectionsForTool(const QString &toolKey)
+{
+    if (toolKey == QString::fromLatin1("validate")) {
+        return QStringList() << QString::fromLatin1("environment");
+    }
+    if (toolKey == QString::fromLatin1("filesystem")) {
+        return QStringList() << QString::fromLatin1("filesystem");
+    }
+    if (toolKey == QString::fromLatin1("dpkg")
+        || toolKey == QString::fromLatin1("fixbroken")
+        || toolKey == QString::fromLatin1("aptupdate")
+        || toolKey == QString::fromLatin1("upgrade")) {
+        return QStringList() << QString::fromLatin1("package");
+    }
+    if (toolKey == QString::fromLatin1("dkms")) {
+        return QStringList() << QString::fromLatin1("kernel");
+    }
+    if (toolKey == QString::fromLatin1("display")) {
+        return QStringList() << QString::fromLatin1("display");
+    }
+    if (toolKey == QString::fromLatin1("initramfs")) {
+        return QStringList() << QString::fromLatin1("kernel");
+    }
+    if (toolKey == QString::fromLatin1("efi")) {
+        return QStringList() << QString::fromLatin1("uki");
+    }
+    if (toolKey == QString::fromLatin1("grub")) {
+        return QStringList() << QString::fromLatin1("grub");
+    }
+    if (toolKey == QString::fromLatin1("extlinux")) {
+        return QStringList() << QString::fromLatin1("boot-evidence");
+    }
+    if (toolKey == QString::fromLatin1("bootstack")) {
+        return QStringList() << QString::fromLatin1("boot-evidence")
+                             << QString::fromLatin1("kernel")
+                             << QString::fromLatin1("uki")
+                             << QString::fromLatin1("grub");
+    }
+    if (toolKey == QString::fromLatin1("kernels")) {
+        return QStringList() << QString::fromLatin1("kernel");
+    }
+    if (toolKey == QString::fromLatin1("gpu")) {
+        return QStringList() << QString::fromLatin1("gpu")
+                             << QString::fromLatin1("kernel");
+    }
+    return QStringList() << QString::fromLatin1("report");
+}
+
+// Ported from MainWindow::repairToolSerializesBaselineSection: the sections
+// with a helper-side `--evidence` consumer. The legacy helper's
+// store_evidence_baseline accepts exactly kernel, gpu, display, uki, grub,
+// boot-evidence and report; the individual repair path serializes the gpu
+// baseline as `--evidence gpu` (the helper routes it to GPU_BASELINE_B64, the
+// same store the modern runGpuRepairSession feeds via --gpu-baseline) and
+// report has no consumer, so only this set is serialized, exactly like modern.
+bool repairToolSerializesBaselineSection(const QString &section)
+{
+    return section == QString::fromLatin1("kernel")
+        || section == QString::fromLatin1("gpu")
+        || section == QString::fromLatin1("display")
+        || section == QString::fromLatin1("uki")
+        || section == QString::fromLatin1("grub")
+        || section == QString::fromLatin1("boot-evidence");
+}
+
+// Ported from MainWindow::splitDiagnosticCapabilityPreamble and extended for
+// the legacy helper's richer shared preamble: `diagnostic_repair_capabilities`
+// emits the modern `Repair capability probes (read-only...` block plus the
+// legacy `Legacy feature gating (read-only):` and (target scope only)
+// `Legacy configuration files (read-only probe):` blocks. A single-key
+// `diagnose <key>` run includes this whole preamble (REPORT_SHARED_PREAMBLE=0),
+// so it is stripped here so the section shows only its own content.
+void splitDiagnosticCapabilityPreamble(const QString &captured,
+                                       QString *body, QString *preamble)
+{
+    if (body) {
+        *body = captured;
+    }
+    if (preamble) {
+        *preamble = QString::null;
+    }
+    const QString marker = QString::fromLatin1("Repair capability probes (read-only");
+    if (!captured.contains(marker)) {
+        return;
+    }
+
+    const QStringList lines = QStringList::split(QChar('\n'), captured, true);
+    const int lineCount = static_cast<int>(lines.count());
+    int start = -1;
+    for (int index = 0; index < lineCount; ++index) {
+        if (lines[index].stripWhiteSpace().startsWith(marker)) {
+            start = index;
+            break;
+        }
+    }
+    if (start < 0) {
+        return;
+    }
+
+    // The preamble is the contiguous run of `Repair ` / `Host ` /
+    // `Snapshot rollback` / `Storage ...` lines plus the legacy
+    // `Legacy feature ...` and `Legacy config ...` blocks, ending at the first
+    // blank or unrelated line (the section's own body).
+    int end = start;
+    while (end < lineCount) {
+        const QString line = lines[end].stripWhiteSpace();
+        if (line.isEmpty()
+            || (!line.startsWith(QString::fromLatin1("Repair "))
+                && !line.startsWith(QString::fromLatin1("Host "))
+                && !line.startsWith(QString::fromLatin1("Snapshot rollback"))
+                && !line.startsWith(QString::fromLatin1("Storage lvm inspection"))
+                && !line.startsWith(QString::fromLatin1("Storage software raid"))
+                && !line.startsWith(QString::fromLatin1("Legacy feature "))
+                && !line.startsWith(QString::fromLatin1("Legacy config "))
+                && !line.startsWith(QString::fromLatin1("Legacy configuration files")))) {
+            break;
+        }
+        ++end;
+    }
+
+    if (preamble) {
+        QStringList block;
+        for (int index = start; index < end; ++index) {
+            block.append(lines[index]);
+        }
+        *preamble = block.join(QString::fromLatin1("\n")).stripWhiteSpace();
+    }
+
+    if (body) {
+        QStringList result;
+        for (int index = 0; index < lineCount; ++index) {
+            if (index >= start && index < end) {
+                continue;  // the shared preamble block
+            }
+            if (index == end && lines[index].stripWhiteSpace().isEmpty()) {
+                continue;  // the blank separator that framed the preamble
+            }
+            result.append(lines[index]);
+        }
+        *body = result.join(QString::fromLatin1("\n"));
+    }
+}
+
+// Ported from MainWindow::mergeEmbeddedDiagnosticSection: replaces one embedded
+// section of the combined report with a freshly captured section, matched by
+// its `Diagnostic: <key>` header, so an individual re-run keeps the Full report
+// usable instead of dropping the bundle. Returns the bundle unchanged when the
+// key is not embedded (or the bundle is empty).
+QString mergeEmbeddedDiagnosticSection(const QString &bundle, const QString &key,
+                                       const QString &section)
+{
+    if (bundle.stripWhiteSpace().isEmpty() || section.stripWhiteSpace().isEmpty()) {
+        return bundle;
+    }
+    QStringList lines = QStringList::split(QChar('\n'), bundle, true);
+    const QString headerPrefix = QString::fromLatin1("Diagnostic: ");
+    std::vector<int> headers;
+    for (int index = 0; index < static_cast<int>(lines.count()); ++index) {
+        if (lines[index].startsWith(headerPrefix)) {
+            headers.push_back(index);
+        }
+    }
+    int position = -1;
+    for (std::size_t index = 0; index < headers.size(); ++index) {
+        if (lines[headers[index]].mid(headerPrefix.length()).stripWhiteSpace().lower()
+                == key.lower()) {
+            position = static_cast<int>(index);
+            break;
+        }
+    }
+    if (position < 0) {
+        return bundle;
+    }
+    const int start = embeddedSectionStartLine(lines, headers[position]);
+    const int end = position + 1 < static_cast<int>(headers.size())
+        ? embeddedSectionStartLine(lines, headers[position + 1])
+        : static_cast<int>(lines.count());
+    const QStringList replacement =
+        QStringList::split(QChar('\n'), section.stripWhiteSpace(), true);
+    QStringList merged;
+    for (int index = 0; index < start; ++index) {
+        merged.append(lines[index]);
+    }
+    for (int index = 0; index < static_cast<int>(replacement.count()); ++index) {
+        merged.append(replacement[index]);
+    }
+    // Keep the blank separator that framed the replaced section so the next
+    // section's divider stays visually separated.
+    if (end < static_cast<int>(lines.count()) && !merged.isEmpty()
+        && !merged.last().isEmpty()) {
+        merged.append(QString::null);
+    }
+    for (int index = end; index < static_cast<int>(lines.count()); ++index) {
+        merged.append(lines[index]);
+    }
+    return merged.join(QString::fromLatin1("\n"));
 }
 
 // The filesystem name shown in the inventory/details: the mounted filesystem
@@ -1258,6 +1967,73 @@ bool rootBelongsToDisk(const QMap<QString, DeviceRow> &rows,
     return !row.disk && row.parent == diskName;
 }
 
+// Qt 3.3.7's DEFAULT QSettings is GLOBAL scope (QSettingsPrivate's ctor sets
+// globalScope=TRUE), NOT User scope: as root it writes qInstallPathSysconf()/
+// <group>rc (/etc/qt3/<group>rc on this rig) while readGroup() merges every
+// search path with the LAST path winning, so a stale ~/.qt/repairrc masked
+// fresh root writes.  setPath(..., QSettings::User) is therefore REQUIRED to
+// force User scope (see configureLegacySettings).  setPath ALSO inserts a
+// search path BEFORE the last element (insertSearchPath): User scope builds
+// $HOME/.<domain>/<product>.  An EMPTY domain collapses that to $HOME ITSELF
+// (qsettings.cpp: homeDirPath() + "/." + domain.mid(0, lastDot) + "/" +
+// product), so User-scope sync() - which writes searchPaths[1] - landed every
+// save at $HOME/<group>rc (rig-verified on the Etch VM) while
+// readGroup() merged [$HOME, ~/.qt] with ~/.qt winning, so the stale
+// ~/.qt/devicesrc masked the fresh $HOME writes and the Device discovery
+// checkboxes reverted to their defaults after every restart.  The domain "qt"
+// below makes the inserted path exactly $HOME/.qt, so sync() writes
+// ~/.qt/<group>rc and readGroup() reads [~/.qt, ~/.qt] - one location, no
+// cross-location masking, for root and the desktop user alike (sudo preserves HOME).
+// NOTE: a one-time cleanup is needed on already-deployed rigs: the
+// empty-domain build left stray $HOME/<group>rc and $HOME/.<group>rc.lock
+// files.  They are never read once $HOME stops being a search path; remove
+// them once by hand.  This code deliberately does NOT delete files
+// automatically.
+
+// The Full Repair plan group's file (heading "repair" -> ~/.qt/repairrc).
+QString legacySettingsRepairRcPath()
+{
+    return QDir::homeDirPath() + QString::fromLatin1("/.qt/repairrc");
+}
+
+// Force USER scope on a QSettings so root writes ~/.qt/<group>rc instead of the
+// system /etc/qt3/<group>rc (sudo preserves HOME, so root and
+// the desktop user share ~/.qt/).  The domain is NOT decoration: setPath(User) inserts
+// $HOME/.<domain>/<product> as searchPaths[1], and User-scope sync() writes
+// THERE.  An earlier empty domain collapsed that path to $HOME itself and
+// every save landed at $HOME/<group>rc (the Device discovery revert).  The
+// domain "qt" makes the inserted path exactly $HOME/.qt - the canonical
+// per-user location - so both the write and the read resolve
+// ~/.qt/<group>rc deterministically.
+void configureLegacySettings(QSettings &settings)
+{
+    settings.setPath(QString::fromLatin1("qt"), QString::fromLatin1(""),
+                     QSettings::User);
+}
+
+// The persisted settings files (~/.qt/<group>rc) that exist but cannot be read
+// by this user.  A file that cannot be read makes every key in it read as
+// absent, so the in-code defaults would silently stand in for the saved
+// selection; the constructor reports these files in the session log.
+QStringList unreadableSettingsFiles()
+{
+    QStringList files;
+    const QString qtDirectory = QDir::homeDirPath() + QString::fromLatin1("/.qt");
+    static const char *const settingsFiles[] = {
+        "devicesrc", "logsrc", "diagnosticsrc", "repairrc"
+    };
+    for (int i = 0;
+         i < static_cast<int>(sizeof(settingsFiles) / sizeof(settingsFiles[0])); ++i) {
+        const QString path = qtDirectory + QString::fromLatin1("/")
+            + QString::fromLatin1(settingsFiles[i]);
+        const QFileInfo info(path);
+        if (info.exists() && !info.isReadable()) {
+            files.append(path);
+        }
+    }
+    return files;
+}
+
 } // namespace
 
 LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
@@ -1276,7 +2052,6 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_deviceList(0),
       m_detailList(0),
       m_diagnosticList(0),
-      m_planStageList(0),
       m_toolList(0),
       m_sessionLogList(0),
       m_rawView(0),
@@ -1319,6 +2094,10 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_planParagraph(0),
       m_planCountLabel(0),
       m_planReadinessLabel(0),
+      m_planScroll(0),
+      m_planGroup(0),
+      m_toolsGroup(0),
+      m_planGridContentHeight(0),
       m_toolTitle(0),
       m_toolDescription(0),
       m_toolPlanStatus(0),
@@ -1328,15 +2107,12 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_configReasonLabel(0),
       m_chrootReasonLabel(0),
       m_authStatusLabel(0),
-      m_settingsHelperLabel(0),
       m_settingsElevationLabel(0),
-      m_settingsLogDirLabel(0),
-      m_settingsSessionLabel(0),
-      m_settingsVersionLabel(0),
       m_capDistributionLabel(0),
       m_capPackageManagerLabel(0),
       m_capAuthLabel(0),
       m_capabilityTable(0),
+      m_capabilityScopeSelector(0),
       m_scanButton(0),
       m_diagnosticsButton(0),
       m_runDiagnosticButton(0),
@@ -1385,14 +2161,39 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_fileCopyOptionsGroup(0),
       m_chrootTab(0),
       m_settingsContent(0),
+      m_settingsPlanGroup(0),
+      m_settingsCapabilityGroup(0),
+      m_settingsSafetyGroup(0),
+      m_settingsSplitterHandle(0),
+      m_settingsDragActive(false),
+      m_settingsDragBaseY(0),
+      m_settingsDragBaseUpper(0),
       m_repairContent(0),
       m_resultDialog(0),
       m_resultView(0),
+      m_promptInput(0),
+      m_promptSend(0),
+      m_promptHint(0),
+      m_promptActive(false),
+      m_interactiveRequestCounter(0),
+      m_shellPromptHint(0),
+      m_shellPromptInput(0),
+      m_shellPromptSend(0),
       m_chrootCommandHeading(0),
+      m_settingsLoaded(false),
       m_runner(new HelperRunner(this)),
       m_logEntryKind(LogEntry::Application),
       m_updatingSelection(false),
       m_running(false),
+      m_filesystemRepairFlowActive(false),
+      m_lastCommandOk(false),
+      m_repairPlanActive(false),
+      m_repairPlanFullRepair(false),
+      m_repairPlanHost(false),
+      m_repairPlanRepairIndex(-1),
+      m_repairPlanAnyRepairCompleted(false),
+      m_repairPlanInlineQuestion(false),
+      m_repairPlanPhase(RepairPlanIdle),
       m_pendingDiagnostic(false),
       m_pendingQuiet(false),
       m_pendingUnlock(false),
@@ -1403,13 +2204,20 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
       m_targetCommitted(false),
       m_hostMaintenance(false),
       m_viewingPriorLog(false),
+      m_showNonLinux(true),
+      m_showRemovable(true),
+      m_showEncrypted(true),
       m_logWrapEnabled(true),
       m_autoRefreshEnabled(true),
       m_pendingConfigWrite(false),
+      m_scopeSwitchPending(false),
+      m_commitPending(false),
       m_smokeMode(false),
       m_smokeStep(0),
       m_smokeDiagnoseOk(false),
-      m_smokeValidateOk(false)
+      m_smokeValidateOk(false),
+      m_shellScopeHost(false),
+      m_shellHistoryIndex(-1)
 {
     setCaption(tr("Boot Bitch Legacy (Etch / KDE 3.5 era)"));
     // B3/B5: a SIGTERM/SIGINT/SIGHUP must never leave a secret file behind
@@ -1558,6 +2366,25 @@ LegacyMainWindow::LegacyMainWindow(QWidget *parent, const char *name)
         "ported helper; actions stay disabled until a repair target is "
         "committed (or Host Maintenance is active) and diagnostics report their "
         "capability line."));
+    if (!legacySmokeSettingsIsolation()) {
+        const QStringList unreadable = unreadableSettingsFiles();
+        for (QStringList::ConstIterator it = unreadable.begin();
+             it != unreadable.end(); ++it) {
+            appendLog(QString::fromLatin1(
+                "WARNING: the saved GUI settings file %1 cannot be read; its "
+                "options read as their defaults, not as the saved values.").arg(*it));
+        }
+        // Record where Qt 3.3.7 will read/write the Full Repair preference
+        // (the per-user ~/.qt location, forced User scope via setPath), and
+        // emit the load-side read-location/value line recorded above.
+        appendLog(QString::fromLatin1(
+            "Settings location: Full Repair preferences resolve to %1 "
+            "(Qt 3.3.7 per-user location; User scope forced via setPath).")
+            .arg(legacySettingsRepairRcPath()));
+        if (!m_settingsLoadDiagnostic.isEmpty()) {
+            appendLog(m_settingsLoadDiagnostic);
+        }
+    }
     updateStatus();
     updateActionStates();
     resize(1024, 768);
@@ -1608,18 +2435,20 @@ void LegacyMainWindow::setLogDirectory(const QString &path)
         m_logDirectory = path;
         m_logPath = QString::null;
     }
-    if (m_settingsLogDirLabel) {
-        m_settingsLogDirLabel->setText(path);
-    }
-    if (m_settingsSessionLabel) {
-        m_settingsSessionLabel->setText(tr("(not created yet)"));
-    }
     refreshSessionLogList();
 }
 
 void LegacyMainWindow::setTarget(const QString &disk, const QString &root)
 {
     setSelection(disk, QString::null, root);
+    // Item #4 (preview/commit separation): the programmatic selection must also
+    // record the preview row, so updateActionStates()/updateUnlockStatus()
+    // (which act on previewDisk() while Host Maintenance is active) see the
+    // same drive the caller just selected. Without this, the smoke's host-scope
+    // checks (unlock status pane and the locked-LUKS Select Target tooltip)
+    // read a stale empty preview instead of the selected drive.
+    m_previewDisk = disk.stripWhiteSpace();
+    m_previewComponent = QString::null;
     selectInventoryRow(disk);
     updateStatus();
     updateActionStates();
@@ -1735,6 +2564,7 @@ QWidget *LegacyMainWindow::makeHelpButton(QWidget *parent, const QString &title,
     }
     connect(button, SIGNAL(clicked()), m_helpSignalMapper, SLOT(map()));
     m_helpSignalMapper->setMapping(button, href);
+    QToolTip::add(button, tr("About %1").arg(title));
     return button;
 }
 
@@ -1801,10 +2631,10 @@ void LegacyMainWindow::buildMenus()
     menuBar()->insertItem(tr("&File"), m_fileMenu);
     m_fileMenu->insertItem(tr("&Refresh Devices"), this,
                            SLOT(scanDevices()), Key_F5);
-    m_fileMenu->insertItem(tr("&Lock Administrator Session"),
+    m_fileMenu->insertItem(tr("Lock Administrator Session"),
                            this, SLOT(lockAdministratorSession()));
     m_fileMenu->insertSeparator();
-    m_fileMenu->insertItem(tr("&Quit"), qApp, SLOT(quit()),
+    m_fileMenu->insertItem(tr("Quit"), qApp, SLOT(quit()),
                            CTRL + Key_Q);
 
     m_viewMenu = new QPopupMenu(this);
@@ -1814,9 +2644,9 @@ void LegacyMainWindow::buildMenus()
     m_viewMenu->insertItem(tr("&Logs"), this, SLOT(showLogsTab()));
     m_viewMenu->insertItem(tr("&Settings"), this, SLOT(showSettingsTab()));
     m_viewMenu->insertSeparator();
-    m_viewMenu->insertItem(tr("&Auto-size Device Columns"),
+    m_viewMenu->insertItem(tr("Auto-size Device Columns"),
                            this, SLOT(autoSizeDeviceColumns()));
-    m_wrapLogsMenuId = m_viewMenu->insertItem(tr("&Wrap Log Lines"),
+    m_wrapLogsMenuId = m_viewMenu->insertItem(tr("Wrap Log Lines"),
                                               this, SLOT(toggleLogWrapFromMenu()));
     // Qt3 auto-generates negative ids; remember that the item exists instead of
     // testing the id's sign.
@@ -1919,10 +2749,10 @@ void LegacyMainWindow::autoSizeDeviceColumns()
         "Device columns auto-sized. Drag headers to fine-tune widths."), 3500);
 }
 
-// The View menu item and the Settings checkbox are two views of one state;
-// this slot derives the new value from the cached flag (Qt3 QPopupMenu does
-// not guarantee an automatic check toggle) and toggleLogWrap() updates both
-// controls without re-entering their signals.
+// The View menu item is the only wrap control (item 1 removed the Settings
+// checkbox); this slot derives the new value from the cached flag (Qt3
+// QPopupMenu does not guarantee an automatic check toggle) and toggleLogWrap()
+// updates the menu check mark without re-entering its signal.
 void LegacyMainWindow::toggleLogWrapFromMenu()
 {
     toggleLogWrap(!m_logWrapEnabled);
@@ -2034,7 +2864,7 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     // (helper facts + the read-only inventory) and stay honest when unknown.
     m_hostCard = new QGroupBox(page);
     QHBoxLayout *hostCardLayout = new QHBoxLayout(m_hostCard, 10, 6);
-    // Cycle 10: ASCII-only indicator — Etch's fonts garble the modern check
+    // Cycle 10: ASCII-only indicator - Etch's fonts garble the modern check
     // glyph.
     QLabel *hostCheck = new QLabel(tr("[OK]"), m_hostCard);
     QFont checkFont = hostCheck->font();
@@ -2183,8 +3013,7 @@ QWidget *LegacyMainWindow::buildTargetsTab()
     m_authorizeButton = makeButton(tr("Authorize"), left);
     m_authorizeButton->setEnabled(false);
     QToolTip::add(m_authorizeButton, tr(
-        "Establish the privileged helper session for the current scope now "
-        "instead of waiting for the next privileged action."));
+        "Establish the privileged helper session for the current scope now."));
     connect(m_authorizeButton, SIGNAL(clicked()), this, SLOT(authorizeNow()));
     actionRow->addWidget(m_authorizeButton, 0, Qt::AlignVCenter);
 
@@ -2391,8 +3220,15 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
 
     m_rawView = new QTextEdit(detail);
     m_rawView->setReadOnly(true);
-    m_rawView->setTextFormat(Qt::LogText);
-    m_rawView->setWordWrap(QTextEdit::NoWrap);
+    // Item 2: Qt 3.3.7's Qt::LogText mode disables word wrap entirely, so the
+    // Selected diagnostic pane uses Qt::PlainText with a fixed-pitch font and
+    // widget-width wrap: the result reflows as the window or the splitter
+    // shrinks instead of clipping long diagnostic lines horizontally.
+    m_rawView->setTextFormat(Qt::PlainText);
+    QFont rawMono(QString::fromLatin1("monospace"));
+    rawMono.setStyleHint(QFont::TypeWriter);
+    m_rawView->setFont(rawMono);
+    m_rawView->setWordWrap(QTextEdit::WidgetWidth);
     m_rawView->setMinimumHeight(80);
     detailLayout->addWidget(m_rawView, 1);
 
@@ -2410,7 +3246,7 @@ QWidget *LegacyMainWindow::buildDiagnosticsTab()
     registerGroupBox(detail);
 
     // Cycle 9: the Selected diagnostic pane keeps usable floors when the
-    // window shrinks — the results view needs its minimum height, the pane a
+    // window shrinks - the results view needs its minimum height, the pane a
     // minimum width that fits the Copy/Save Results row, and the checks list
     // keeps its size while the detail pane absorbs the rest, so the results
     // buttons row never gets clipped.
@@ -2483,6 +3319,7 @@ QWidget *LegacyMainWindow::buildActionsTab()
 
     // ---- Full Repair plan section -------------------------------------------
     QGroupBox *planBox = new QGroupBox(vertical);
+    m_planGroup = planBox;
     QVBoxLayout *planLayout = new QVBoxLayout(planBox, 6, 4);
     planLayout->addWidget(makeSectionTitle(tr("Full Repair plan"), planBox));
 
@@ -2518,22 +3355,65 @@ QWidget *LegacyMainWindow::buildActionsTab()
     m_planReadinessLabel->setAlignment(Qt::WordBreak | Qt::AlignLeft);
     planLayout->addWidget(m_planReadinessLabel);
 
-    m_planStageList = new QListView(planBox);
-    addListViewColumn(m_planStageList, tr("Stage"), 200);
-    m_planStageList->setAllColumnsShowFocus(true);
-    m_planStageList->setResizeMode(QListView::LastColumn);
-    m_planStageList->setSorting(-1);
-    m_planStageList->setMinimumHeight(64);
-    planLayout->addWidget(m_planStageList, 0);
-    // The plan frame floor keeps the header, readiness hint and a few stage
-    // rows visible when the user drags the vertical divider all the way up.
-    planBox->setMinimumHeight(150);
+    // Item 1 (two-column plan): the numbered stage titles flow across ONE
+    // two-column grid of read-only QLabels (ceil(planSpecCount/2) rows x 2
+    // columns, matching the Settings plan's two-column QGridLayout), left
+    // column first so the plan order reads top-to-bottom down the left column
+    // then the right. Qt3 has no responsive-column layout, so the columns are
+    // a fixed-row split; updatePlanView() fills the labels in a BALANCED split
+    // (ceil(N/2) left / floor(N/2) right) and hides the unused ones, keeping
+    // one section header with no per-column titles.
+    //
+    // The stage-label grid lives inside a QScrollView so the Full Repair plan
+    // scrolls its stages when the vertical splitter is dragged up to hide
+    // them: the plan count, readiness hint and Configure Plan... / Run Full
+    // Repair buttons stay outside the scroll view and remain visible.
+    PlanScrollView *planScroll = new PlanScrollView(planBox);
+    m_planScroll = planScroll;
+    // AutoOneFit (not AutoOne): the policy must stretch the single child to
+    // the viewport WIDTH as the view is resized, otherwise the child keeps its
+    // content width and a grey dead-space gutter is left to the right of the
+    // two columns. Qt3's AutoOne only keeps the contents at the child's own
+    // size; AutoOneFit resizes the child to at least the viewport (see
+    // QScrollViewData::viewportResized), so the setColStretch(1,1) columns
+    // below fill the available width with no right gutter.
+    planScroll->setResizePolicy(QScrollView::AutoOneFit);
+    planScroll->setVScrollBarMode(QScrollView::AlwaysOff);
+    planScroll->setHScrollBarMode(QScrollView::AlwaysOff);
+    planScroll->setFrameShape(QFrame::NoFrame);
+    QWidget *planGridHost = new QWidget(planScroll->viewport());
+    planScroll->addChild(planGridHost);
+    const int planGridRows = (planSpecCount + 1) / 2;
+    QGridLayout *planGrid = new QGridLayout(planGridHost, planGridRows, 2, 4, 4);
+    planGrid->setColStretch(0, 1);
+    planGrid->setColStretch(1, 1);
+    m_planStageLabels.clear();
+    for (int i = 0; i < planSpecCount; ++i) {
+        QLabel *stageLabel = new QLabel(planGridHost);
+        stageLabel->setTextFormat(Qt::PlainText);
+        stageLabel->setAlignment(Qt::AlignLeft | Qt::AlignVCenter);
+        stageLabel->hide();
+        planGrid->addWidget(stageLabel, i % planGridRows, i / planGridRows);
+        m_planStageLabels.append(stageLabel);
+    }
+    planLayout->addWidget(planScroll, 0);
+    // A trailing stretch absorbs any extra frame height at the bottom: the
+    // header rows and the capped stage grid keep their fixed heights (the
+    // spacing never moves when the splitter is dragged - no vertical
+    // stretching of the rows), and the slack collects below the last row.
+    planLayout->addStretch(1);
 
     // ---- Individual tools list + Selected tool pane -------------------------
     QSplitter *splitter = new QSplitter(Qt::Horizontal, vertical);
     splitter->setChildrenCollapsible(false);
+    // Drag floor: the tools pane is never squeezed below about a quarter of
+    // the default window height (the plan frame's own layout minimum is the
+    // matching floor on the other side), so the handle always has room and
+    // neither pane collapses to a sliver.
+    splitter->setMinimumHeight(192);
 
     QGroupBox *tools = new QGroupBox(splitter);
+    m_toolsGroup = tools;
     QVBoxLayout *toolsLayout = new QVBoxLayout(tools, 6, 4);
     toolsLayout->addWidget(makeSectionTitle(tr("Individual repair tools"), tools));
     m_toolList = new QListView(tools);
@@ -2616,14 +3496,13 @@ QWidget *LegacyMainWindow::buildActionsTab()
     detailLayout->addStretch();
 
     QValueList<int> splitterSizes;
-    splitterSizes.append(620);
-    splitterSizes.append(380);
+    // Modern parity (item 6): ~50/50 panes (450/550, matching the modern
+    // repair splitter's 9/11 stretch) instead of the lopsided KeepSize/Stretch
+    // default, so the tools list and the Selected tool pane split evenly.
+    splitterSizes.append(450);
+    splitterSizes.append(550);
     splitter->setSizes(splitterSizes);
 
-    QValueList<int> verticalSizes;
-    verticalSizes.append(190);
-    verticalSizes.append(340);
-    vertical->setSizes(verticalSizes);
     layout->addWidget(vertical, 0);
 
     // Cycle 13: no legacy-only elevation section (modern has none); the
@@ -2696,15 +3575,21 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
     QHBoxLayout *commandRow = new QHBoxLayout(shellLayout);
     commandRow->setSpacing(6);
     commandRow->addWidget(new QLabel(tr("Command:"), m_chrootGroup));
-    m_shellCommandEdit = new QLineEdit(m_chrootGroup);
+    m_shellCommandEdit = new ShellCommandLineEdit(this, m_chrootGroup);
     m_shellCommandEdit->setEnabled(false);
     m_shellCommandEdit->setText(QString::null);
     QToolTip::add(m_shellCommandEdit, tr(
         "One reviewed command string, passed to the helper as a single "
         "argument (no shell interpolation by the GUI)."));
     commandRow->addWidget(m_shellCommandEdit, 1);
+    // Enter in the command field runs the command through the same path as the
+    // Run button (modern returnPressed parity); the Run button stays the
+    // default action of the row.
+    connect(m_shellCommandEdit, SIGNAL(returnPressed()), this,
+            SLOT(runChrootShell()));
     m_shellRunButton = makeButton(tr("Run Command"), m_chrootGroup);
     m_shellRunButton->setEnabled(false);
+    m_shellRunButton->setDefault(true);
     connect(m_shellRunButton, SIGNAL(clicked()), this, SLOT(runChrootShell()));
     commandRow->addWidget(m_shellRunButton);
     m_shellClearButton = makeButton(tr("Clear Output"), m_chrootGroup);
@@ -2723,6 +3608,29 @@ QWidget *LegacyMainWindow::buildChrootShellTab()
         "enables the command only when the scope is committed, the session is "
         "authorized and the scope's Legacy feature probe reports available."));
     shellLayout->addWidget(m_shellOutput, 1);
+
+    // Prompt-flow contract (L1/L2): the shell run's interactive question is
+    // answered INLINE in this tab, not a separate popup.  A persistent hint
+    // label + input line + Send button sit directly under the output pane,
+    // hidden/disabled until a shell PROMPT record arrives.  The hint is the
+    // free-text shell hint (not the numbered repair-menu hint); the answer
+    // travels over the same mode-600 menu-answer file as the repair menus.
+    m_shellPromptHint = new QLabel(tr("Type the answer (Enter = Send)"),
+                                   m_chrootGroup);
+    m_shellPromptHint->hide();
+    shellLayout->addWidget(m_shellPromptHint);
+    QHBoxLayout *shellPromptRow = new QHBoxLayout(shellLayout);
+    shellPromptRow->setSpacing(6);
+    m_shellPromptInput = new QLineEdit(m_chrootGroup);
+    m_shellPromptInput->setEnabled(false);
+    m_shellPromptSend = new QPushButton(tr("Send"), m_chrootGroup);
+    m_shellPromptSend->setEnabled(false);
+    shellPromptRow->addWidget(m_shellPromptInput, 1);
+    shellPromptRow->addWidget(m_shellPromptSend);
+    QObject::connect(m_shellPromptInput, SIGNAL(returnPressed()), this,
+                     SLOT(sendPromptAnswer()));
+    QObject::connect(m_shellPromptSend, SIGNAL(clicked()), this,
+                     SLOT(sendPromptAnswer()));
 
     registerGroupBox(m_chrootGroup);
     layout->addWidget(m_chrootGroup, 1);
@@ -2954,7 +3862,8 @@ QWidget *LegacyMainWindow::buildLogTab()
     QToolTip::add(m_sessionLogList, tr(
         "The first entry is the live session; earlier files in the log "
         "directory are listed read-only below it."));
-    connect(m_sessionLogList, SIGNAL(selectionChanged()), this, SLOT(sessionLogSelectionChanged()));
+    connect(m_sessionLogList, SIGNAL(selectionChanged(QListViewItem *)),
+            this, SLOT(sessionLogSelectionChanged(QListViewItem *)));
     sessionLayout->addWidget(m_sessionLogList, 1);
 
     // Modern session controls (two compact rows so the narrow frame fits):
@@ -3021,7 +3930,7 @@ QWidget *LegacyMainWindow::buildLogTab()
     filterRow->addWidget(new QLabel(tr("Filter:"), applicationLog));
     m_logFilterCombo = new QComboBox(applicationLog);
     // 1:1 with the modern combo: All entries / Diagnostics / Repairs / the
-    // three workflows / the 16 diagnostic section titles. Qt3's QComboBox
+    // three workflows / the 18 diagnostic section titles. Qt3's QComboBox
     // cannot carry per-item data, so the index semantics live in
     // logFilterSpecs plus the diagnosticSpecs order below.
     for (int i = 0; i < logFilterSpecCount; ++i) {
@@ -3050,7 +3959,15 @@ QWidget *LegacyMainWindow::buildLogTab()
 
     m_logView = new QTextEdit(applicationLog);
     m_logView->setReadOnly(true);
-    m_logView->setTextFormat(Qt::LogText);
+    // Item 1: Qt 3.3.7's Qt::LogText mode disables word wrap entirely, so the
+    // Logs view uses Qt::PlainText with a fixed-pitch font (the LogText
+    // appearance) so the widget-width wrap below actually takes effect; long
+    // lines wrap down instead of clipping horizontally when the window is
+    // narrowed. The wrap preference still persists through /logs/wrapLines.
+    m_logView->setTextFormat(Qt::PlainText);
+    QFont logMono(QString::fromLatin1("monospace"));
+    logMono.setStyleHint(QFont::TypeWriter);
+    m_logView->setFont(logMono);
     m_logView->setWordWrap(m_logWrapEnabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
     // Cycle 14: long lines wrap at the widget width with no horizontal
     // scrollbar while wrapping is on (the default); turning wrap off
@@ -3085,9 +4002,9 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     settingsHeadingRow->addWidget(makeHelpButton(page, tr("Settings"), tr(
         "Settings are stored per user under ~/.qt/, one file per settings "
         "group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved "
-        "immediately on every change and on close. Launch the GUI as the "
-        "same user to keep your overrides; a GUI started as root keeps its "
-        "own copies.")));
+        "immediately on every change and on close. The same per-user location "
+        "is used whether the GUI runs as the logged-in user or as root (sudo "
+        "preserves the home directory).")));
     settingsHeadingRow->addStretch();
 
     // Modern Settings is a scrollable page. Qt3 has no QScrollArea, so the
@@ -3106,13 +4023,27 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     m_settingsContent = content;
     QVBoxLayout *layout = new QVBoxLayout(content, 6, 6);
 
-    // Modern parity: device discovery, the Full Repair plan, diagnostics and
-    // the mandatory safety list in the modern order, then the host
-    // capabilities section; the legacy-only read-only application
-    // configuration closes the page. Every frame is titleless with a
-    // sectionTitle label inside: Qt3's KDE/Etch style clips QGroupBox titles
-    // at the top.
-    QGroupBox *discovery = new QGroupBox(content);
+    // Modern Settings parity: the lightweight preferences row + Full Repair
+    // plan live in an UPPER pane and the capabilities + mandatory safety
+    // groups in a LOWER pane, separated by a draggable vertical QSplitter
+    // (non-collapsible children, a grabbable handle). The outer QScrollView
+    // stays so the whole page still scrolls vertically when the window is
+    // short. The splitter owns its panes from construction (the cycle-14
+    // rule: create the panes before the groups so they are never hidden by
+    // a later reparent on Etch).
+    QSplitter *settingsSplitter = new QSplitter(Qt::Vertical, content);
+    settingsSplitter->setChildrenCollapsible(false);
+    QWidget *upperPane = new QWidget(settingsSplitter);
+    QVBoxLayout *upperLayout = new QVBoxLayout(upperPane, 0, 6);
+    QWidget *lowerPane = new QWidget(settingsSplitter);
+    QVBoxLayout *lowerLayout = new QVBoxLayout(lowerPane, 0, 6);
+
+    // Modern parity: device discovery + diagnostics share one side-by-side
+    // preferences row, then the Full Repair plan, then the capabilities
+    // section and finally the mandatory safety list, in the modern order.
+    // Every frame is titleless with a sectionTitle label inside: Qt3's
+    // KDE/Etch style clips QGroupBox titles at the top.
+    QGroupBox *discovery = new QGroupBox(upperPane);
     QVBoxLayout *discoveryLayout = new QVBoxLayout(discovery, 6, 3);
     discoveryLayout->addWidget(makeSectionTitle(tr("Device discovery"), discovery));
     m_showNonLinuxCheck = new QCheckBox(
@@ -3132,30 +4063,14 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     discoveryLayout->addWidget(m_showNonLinuxCheck);
     discoveryLayout->addWidget(m_showRemovableCheck);
     discoveryLayout->addWidget(m_showEncryptedCheck);
-    connect(m_showNonLinuxCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
-    connect(m_showRemovableCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
-    connect(m_showEncryptedCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged()));
-    layout->addWidget(discovery);
+    connect(m_showNonLinuxCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
+    connect(m_showRemovableCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
+    connect(m_showEncryptedCheck, SIGNAL(toggled(bool)), this, SLOT(deviceFilterChanged(bool)));
+    // No trailing stretch: the box is pinned at its content height (below),
+    // so there is no extra height to absorb - the stretch only rendered the
+    // pin's extra height as padding below the lowest checkbox.
 
-    // Modern Settings -> Full Repair plan. The checkboxes drive the Repair
-    // plan section, the tools "Full Repair" column and Run Full Repair.
-    QGroupBox *planGroup = new QGroupBox(content);
-    QVBoxLayout *planGroupLayout = new QVBoxLayout(planGroup, 6, 3);
-    planGroupLayout->addWidget(makeSectionTitle(tr("Full Repair plan"), planGroup));
-    m_planChecks.clear();
-    for (int i = 0; i < planSpecCount; ++i) {
-        QCheckBox *check = new QCheckBox(tr(planSpecs[i].checkLabel), planGroup);
-        check->setChecked(planSpecs[i].defaultChecked);
-        QToolTip::add(check, tr(
-            "Include the %1 stage in the Full Repair plan. The stage runs in "
-            "the plan order shown on the Repair tab.").arg(tr(planSpecs[i].title)));
-        connect(check, SIGNAL(toggled(bool)), this, SLOT(planCheckboxChanged()));
-        planGroupLayout->addWidget(check);
-        m_planChecks.push_back(check);
-    }
-    layout->addWidget(planGroup);
-
-    QGroupBox *diagnostics = new QGroupBox(content);
+    QGroupBox *diagnostics = new QGroupBox(upperPane);
     QVBoxLayout *diagnosticsLayout = new QVBoxLayout(diagnostics, 6, 3);
     diagnosticsLayout->addWidget(makeSectionTitle(tr("Diagnostics"), diagnostics));
     m_autoRefreshCheck = new QCheckBox(
@@ -3169,46 +4084,102 @@ QWidget *LegacyMainWindow::buildSettingsTab()
         "itself."));
     connect(m_autoRefreshCheck, SIGNAL(toggled(bool)), this, SLOT(autoRefreshToggled(bool)));
     diagnosticsLayout->addWidget(m_autoRefreshCheck);
-    layout->addWidget(diagnostics);
+    // Empty-space absorber below the checkbox (the same mechanism the Full
+    // Repair plan box and the discovery box use): it takes all extra height
+    // the box is given, so the title and the checkbox stay pinned to the
+    // top-left with fixed gaps and the extra pools as empty space below the
+    // "Automatically regenerate..." checkbox - without it Qt3 spreads the
+    // extra evenly between the title and the checkbox.
+    diagnosticsLayout->addStretch(1);
 
-    QGroupBox *logs = new QGroupBox(content);
-    QVBoxLayout *logsLayout = new QVBoxLayout(logs, 6, 3);
-    logsLayout->addWidget(makeSectionTitle(tr("Logs"), logs));
-    m_logWrapCheck = new QCheckBox(tr("Wrap long log lines"), logs);
-    connect(m_logWrapCheck, SIGNAL(toggled(bool)), this, SLOT(toggleLogWrap(bool)));
-    logsLayout->addWidget(m_logWrapCheck);
-    layout->addWidget(logs);
+    // Modern parity: Device discovery and Diagnostics share one side-by-side
+    // row (each stretch 1) so the heavier Full Repair plan and the capability
+    // table below gain vertical room. The sub-layout is parentless and owned
+    // by addLayout() (see the file-copy direction-row guard).
+    QHBoxLayout *preferencesRow = new QHBoxLayout();
+    preferencesRow->setSpacing(6);
+    preferencesRow->addWidget(discovery, 1);
+    preferencesRow->addWidget(diagnostics, 1);
+    upperLayout->addLayout(preferencesRow);
+    // Pin both preferences boxes 10px below the old 108px row height: the
+    // 108px pin was one line (20px) taller than the boxes' content, and the
+    // removed trailing stretches rendered that extra as padding below the
+    // lowest checkbox; 98px leaves half of it. Nothing above the plan box
+    // stretches or distributes on a splitter drag - the pane's growth and
+    // squeeze land entirely on the plan box, exactly like the repair tab's
+    // plan frame.
+    discovery->setMinimumHeight(98);
+    discovery->setMaximumHeight(98);
+    diagnostics->setMinimumHeight(98);
+    diagnostics->setMaximumHeight(98);
 
-    // Cycle 13: the per-user settings note moved into the Settings (i) popup.
-
-    QGroupBox *safety = new QGroupBox(content);
-    QVBoxLayout *safetyLayout = new QVBoxLayout(safety, 6, 3);
-    safetyLayout->addWidget(makeSectionTitle(tr("Mandatory safety controls"), safety));
-    const char *safetyItems[] = {
-        "Protect every physical device backing the running host root",
-        "Require explicit confirmation before package installation or repair actions",
-        "Require mapper/crypttab consistency before initramfs rebuild",
-        "Never log LUKS passphrases or authentication secrets",
-        "Keep every helper runtime preflight active"
-    };
-    for (int i = 0; i < 5; ++i) {
-        QCheckBox *check = new QCheckBox(QString::fromLatin1(safetyItems[i]), safety);
-        check->setChecked(true);
-        check->setEnabled(false);
-        safetyLayout->addWidget(check);
+    // Modern Settings -> Full Repair plan. The checkboxes drive the Repair
+    // plan section, the tools "Full Repair" column and Run Full Repair.
+    // Modern parity: the 11 stages flow into two columns (6 left, 5 right) in
+    // the planSpecs order instead of one-per-row.
+    QGroupBox *planGroup = new QGroupBox(upperPane);
+    QVBoxLayout *planGroupLayout = new QVBoxLayout(planGroup, 6, 3);
+    planGroupLayout->addWidget(makeSectionTitle(tr("Full Repair plan"), planGroup));
+    QGridLayout *planGrid = new QGridLayout(planGroupLayout, 6, 2, 4);
+    planGrid->setColStretch(0, 1);
+    planGrid->setColStretch(1, 1);
+    m_planChecks.clear();
+    for (int i = 0; i < planSpecCount; ++i) {
+        QCheckBox *check = new QCheckBox(tr(planSpecs[i].checkLabel), planGroup);
+        check->setChecked(planSpecs[i].defaultChecked);
+        // Fixed vertical policy (like the section title): the checkbox rows
+        // never grow or shrink, so the two-column list stays pinned to the
+        // top of the box with fixed gaps between the frame, the title and
+        // the rows - the spacing never changes, and any extra height the
+        // box gains on a drag-down shows as empty space below the list,
+        // exactly like the repair tab's Full Repair plan box.
+        check->setSizePolicy(QSizePolicy(QSizePolicy::Preferred,
+                                          QSizePolicy::Fixed));
+        QToolTip::add(check, tr(
+            "Include the %1 stage in the Full Repair plan. The stage runs in "
+            "the plan order shown on the Repair tab.").arg(tr(planSpecs[i].title)));
+        connect(check, SIGNAL(toggled(bool)), this, SLOT(planCheckboxChanged()));
+        planGrid->addWidget(check, i % 6, i / 6);
+        m_planChecks.push_back(check);
     }
-    layout->addWidget(safety);
+    // Pin the title and the two-column list to the top of the box: this
+    // empty-space absorber takes ALL extra height the box gains on a
+    // drag-down, below the list. It is not a visual stretch - without it
+    // Qt3 spreads the extra height as wider gaps between the frame, the
+    // title, the list and the rows (everything slides down and the spacing
+    // adjusts, the behavior that was just observed). With it, the title and
+    // the rows stay at their fixed gaps and the extra shows as empty space
+    // below the list - the same mechanism the Device Discovery box has
+    // always used, and what keeps the repair tab's plan box content pinned.
+    planGroupLayout->addStretch(1);
+    // Make the Settings plan box behave exactly like the repair tab's plan
+    // frame on a drag: it shrinks toward 75px when the handle is dragged up
+    // and grows by about three checkbox rows past its ~188px default when
+    // dragged down (max 250 - the earlier 404 was wrong; the box only needs
+    // ~3 rows of headroom). No stretch factor: the discovery/diagnostics row
+    // above is fully pinned (see below), so this box is the pane's only
+    // growable item and receives the pane's pixels directly.
+    planGroup->setMinimumHeight(75);
+    planGroup->setMaximumHeight(250);
+    upperLayout->addWidget(planGroup);
 
-    // Modern Host capabilities and dependencies: the section title, the three
-    // summary labels (Distribution / Package manager family / an adapted
-    // authorization-support line in place of KAuth), the 6-column probe table
-    // mirroring CapabilityChecker::scanHost plus the one legacy-specific row,
-    // and the Refresh Capabilities / disabled Install Missing Support...
-    // actions. Every probe is a read-only PATH search (never executed).
-    QGroupBox *capability = new QGroupBox(content);
+    // Modern parity (item 1): the Settings page no longer exposes the log-wrap
+    // toggle (wrap is on by default in the modern backend); the View menu's
+    // "Wrap Log Lines" item remains the only wrap control. The m_logWrapCheck
+    // member stays declared (always null) so the wrap state, the View-menu
+    // sync and the settings persistence keep their existing code paths.
+
+    // Modern Capabilities and dependencies: the section title, the three
+    // summary labels (Distribution / Package manager family / KAuth build
+    // support), the 7-column probe table (the trailing Action column shows an
+    // "Install" text cell for missing+installable rows) and the Refresh
+    // Capabilities / Install Missing Support... actions. Every host probe is a
+    // read-only PATH search (never executed); the Repair-target scope re-reads
+    // only cached evidence.
+    QGroupBox *capability = new QGroupBox(lowerPane);
     QVBoxLayout *capabilityLayout = new QVBoxLayout(capability, 6, 3);
     capabilityLayout->addWidget(
-        makeSectionTitle(tr("Host capabilities and dependencies"), capability));
+        makeSectionTitle(tr("Capabilities and dependencies"), capability));
     QGridLayout *identityGrid = new QGridLayout(capabilityLayout, 3, 2, 4);
     identityGrid->setColStretch(1, 1);
     m_capDistributionLabel = new QLabel(capability);
@@ -3217,46 +4188,89 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     QLabel *capValues[] = {
         m_capDistributionLabel, m_capPackageManagerLabel, m_capAuthLabel
     };
-    const char *capNames[] = {
-        "Distribution:", "Package manager family:",
-        "Privileged authorization support:"
-    };
     for (int i = 0; i < 3; ++i) {
         capValues[i]->setTextFormat(Qt::PlainText);
         capValues[i]->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-        identityGrid->addWidget(new QLabel(QString::fromLatin1(capNames[i]), capability), i, 0);
-        identityGrid->addWidget(capValues[i], i, 1);
     }
+    // Modern parity: the Distribution row also carries the right-aligned
+    // scope selector (Repair target / Host), mirroring the modern
+    // distributionField HBox. It only re-reads cached capability evidence
+    // into the table below (never runs a new helper probe).
+    QHBoxLayout *distributionField = new QHBoxLayout();
+    distributionField->setSpacing(6);
+    distributionField->addWidget(m_capDistributionLabel, 1);
+    QLabel *scopeCaption = new QLabel(tr("Show capabilities for:"), capability);
+    scopeCaption->setAlignment(Qt::AlignRight | Qt::AlignVCenter);
+    distributionField->addWidget(scopeCaption);
+    m_capabilityScopeSelector = new QComboBox(capability);
+    m_capabilityScopeSelector->insertItem(tr("Repair target"));
+    m_capabilityScopeSelector->insertItem(tr("Host"));
+    QToolTip::add(m_capabilityScopeSelector, tr(
+        "Choose which cached scope's capabilities the table shows."));
+    // The legacy capability table's native data source is the read-only host
+    // PATH probe, so Host is the default scope (matching the pre-parity table
+    // and the smoke test's 18-row assertion); Repair target re-reads the
+    // cached target diagnostics' Repair tool lines.
+    m_capabilityScopeSelector->setCurrentItem(1);
+    connect(m_capabilityScopeSelector, SIGNAL(activated(int)),
+            this, SLOT(refreshCapabilities()));
+    distributionField->addWidget(m_capabilityScopeSelector);
+    identityGrid->addWidget(new QLabel(tr("Distribution:"), capability), 0, 0);
+    identityGrid->addLayout(distributionField, 0, 1);
+    identityGrid->addWidget(new QLabel(tr("Package manager family:"), capability), 1, 0);
+    identityGrid->addWidget(m_capPackageManagerLabel, 1, 1);
+    identityGrid->addWidget(new QLabel(QString::fromLatin1("KAuth build support:"), capability), 2, 0);
+    identityGrid->addWidget(m_capAuthLabel, 2, 1);
 
-    // Qt3 has no QTableWidget; the QTable fills the same 6-column
-    // Feature|Command|Scope|Status|Suggested package|Notes contract. The last
-    // column stretches to the frame edge, the table is read-only and the
-    // rows are populated by refreshCapabilities().
-    m_capabilityTable = new QTable(0, 6, capability);
+    // Qt3 has no QTableWidget; the QTable fills the same 7-column
+    // Feature|Command|Scope|Status|Suggested package|Notes|Action contract.
+    // The Notes column (5) stretches to the frame edge; the trailing Action
+    // column stays content-sized. The table is read-only and the rows are
+    // populated by refreshCapabilities().
+    m_capabilityTable = new CapabilityTable(0, 7, capability);
     m_capabilityTable->setLeftMargin(0);
     // Full-row selection (modern parity): clicking any cell highlights the
-    // whole row; the selected missing capability is the conceptual guard the
-    // disabled Install Missing Support... button documents.  The first row is
-    // selected by refreshCapabilities() after every repopulation.
+    // whole row; the selected missing+installable capability enables the
+    // Install Missing Support... button.  The first row is selected by
+    // refreshCapabilities() after every repopulation.
     m_capabilityTable->setSelectionMode(QTable::SingleRow);
     m_capabilityTable->setReadOnly(true);
-    m_capabilityTable->setMinimumHeight(230);
-    // Cycle 13: header-click sorting on the six columns; refreshCapabilities
+    // The table is scrollable, so it can shrink well below its full 18-row
+    // content: a low minimum-content floor lets the Capabilities frame shrink
+    // when the Settings splitter is dragged down, giving the Full Repair plan
+    // frame room to grow past its ~188px default.
+    m_capabilityTable->setMinimumContentHeight(100);
+    // Cycle 13: header-click sorting on the seven columns; refreshCapabilities
     // still restores the first-row selection after every repopulation.
     m_capabilityTable->setSorting(true);
-    const char *capabilityHeaders[] = {
-        "Feature", "Command", "Scope", "Status", "Suggested package", "Notes"
+    // Modern capability-table header parity: the seven column titles are
+    // translatable (tr()) so the parity extractor sees the same surface as
+    // MainWindow's Boot capabilities table.
+    const QString capabilityHeaders[] = {
+        tr("Feature"), tr("Command"), tr("Scope"), tr("Status"),
+        tr("Suggested package"), tr("Notes"), tr("Action")
     };
-    for (int column = 0; column < 6; ++column) {
+    for (int column = 0; column < 7; ++column) {
         m_capabilityTable->horizontalHeader()->setLabel(
-            column, QString::fromLatin1(capabilityHeaders[column]));
+            column, capabilityHeaders[column]);
     }
     m_capabilityTable->setColumnWidth(0, 150);
     m_capabilityTable->setColumnWidth(1, 150);
     m_capabilityTable->setColumnWidth(2, 90);
     m_capabilityTable->setColumnWidth(3, 100);
     m_capabilityTable->setColumnWidth(4, 150);
+    // The Action column is a read-only TEXT cell (Qt3 QTable cannot host a
+    // per-row cell widget, so there is no clickable per-row Install button):
+    // refreshCapabilities() writes "Install" for a missing+installable row and
+    // "-" otherwise; selecting such a row enables the Install Missing
+    // Support... button below, which runs the guarded install-host-package
+    // helper verb.
+    m_capabilityTable->setColumnWidth(6, 70);
     m_capabilityTable->setColumnStretchable(5, true);
+    // Item 2: the row selection drives the Install button's enabled state, so
+    // the selected row's suggested package can be installed on the running host.
+    connect(m_capabilityTable, SIGNAL(currentChanged(int, int)),
+            this, SLOT(capabilitySelectionChanged(int, int)));
     capabilityLayout->addWidget(m_capabilityTable);
 
     QHBoxLayout *capabilityButtons = new QHBoxLayout(capabilityLayout);
@@ -3274,43 +4288,238 @@ QWidget *LegacyMainWindow::buildSettingsTab()
     m_installSupportButton->setEnabled(false);
     QToolTip::add(m_installSupportButton, tr(
         "Automatic installation will require explicit package mapping and "
-        "privilege authorization."));
+        "privilege authorization; installs the selected missing capability's "
+        "suggested package on the current scope (running host or committed "
+        "repair target) through the guarded helper."));
+    connect(m_installSupportButton, SIGNAL(clicked()),
+            this, SLOT(installSelectedCapabilityPackage()));
     capabilityButtons->addWidget(m_installSupportButton);
-    layout->addWidget(capability);
+    // The Settings splitter's handle drags up but not down because the lower
+    // pane is pinned at its own minimumSizeHint (smoke evidence: the pane's
+    // floor equals its current height, 444px). The pane's layout computes
+    // that floor from the groups' minimumSizeHint()s (capabilities 239px +
+    // safety 110px + spacing), and an explicit minimumSize() REPLACES the
+    // computed floor for a layout item - verified on the upper pane, whose
+    // floor is discMin 108 + the plan group's explicit minimum 75 + spacing,
+    // = 189px exactly. A low explicit minimum on the capabilities group
+    // therefore lowers the pane's floor and lets the handle drag down: the
+    // capability table is scrollable (its own floor is the 100px
+    // CapabilityTable minimumSizeHint), so the Capabilities box shrinks
+    // gracefully and the Full Repair plan box grows by the same amount.
+    // Default heights are unchanged - a minimum only bounds how far a drag
+    // may shrink a box (same technique as the plan group's explicit 75px).
+    capability->setMinimumHeight(150);
+    // No stretch factor: the safety box below is Fixed at 110px, so this
+    // box is the lower pane's only growable item and absorbs the pane's
+    // growth and squeeze directly (its scrollable table shrinks gracefully).
+    lowerLayout->addWidget(capability);
 
-    QGroupBox *application = new QGroupBox(content);
-    QGridLayout *appGrid = new QGridLayout(application, 6, 2, 6, 4);
-    appGrid->setColStretch(1, 1);
-    appGrid->addMultiCellWidget(
-        makeSectionTitle(tr("Application configuration"), application),
-        0, 0, 0, 1, Qt::AlignLeft);
-    m_settingsHelperLabel = new QLabel(application);
-    m_settingsElevationLabel = new QLabel(application);
-    m_settingsLogDirLabel = new QLabel(application);
-    m_settingsSessionLabel = new QLabel(application);
-    m_settingsVersionLabel = new QLabel(QString::fromLatin1(LEGACY_VERSION), application);
-    QLabel *valueLabels[] = { m_settingsHelperLabel, m_settingsElevationLabel,
-                              m_settingsLogDirLabel, m_settingsSessionLabel,
-                              m_settingsVersionLabel };
-    const char *fieldNames[] = { "Helper:", "Elevation:", "Log directory:",
-                                 "Current session log:", "Version:" };
+    // Mandatory safety controls (modern parity): informational and
+    // de-prioritized below the capabilities table, in the same visual order as
+    // the modern lower pane (table, refresh, safety).
+    QGroupBox *safety = new QGroupBox(lowerPane);
+    QVBoxLayout *safetyLayout = new QVBoxLayout(safety, 6, 3);
+    safetyLayout->addWidget(makeSectionTitle(tr("Mandatory safety controls"), safety));
+    // Modern parity (item 3): the five safety controls flow 3 left / 2 right in
+    // a QGridLayout ((i % 3, i / 3)), mirroring the Full Repair plan's two-column
+    // layout; the five items keep their existing order.
+    QGridLayout *safetyGrid = new QGridLayout(safetyLayout, 3, 2, 4);
+    safetyGrid->setColStretch(0, 1);
+    safetyGrid->setColStretch(1, 1);
+    const QString safetyItems[] = {
+        QString::fromLatin1("Protect every physical device backing the running host root"),
+        tr("Require explicit confirmation before package installation or repair actions"),
+        tr("Require mapper/crypttab consistency before initramfs rebuild"),
+        tr("Never log LUKS passphrases or authentication secrets"),
+        QString::fromLatin1("Keep every helper runtime preflight active")
+    };
     for (int i = 0; i < 5; ++i) {
-        valueLabels[i]->setTextFormat(Qt::PlainText);
-        valueLabels[i]->setAlignment(Qt::WordBreak | Qt::AlignLeft);
-        appGrid->addWidget(new QLabel(QString::fromLatin1(fieldNames[i]), application), i + 1, 0);
-        appGrid->addWidget(valueLabels[i], i + 1, 1);
+        QCheckBox *check = new QCheckBox(safetyItems[i], safety);
+        check->setChecked(true);
+        check->setEnabled(false);
+        safetyGrid->addWidget(check, i % 3, i / 3);
     }
-    layout->addWidget(application);
+    // The mandatory safety box stays FIXED at its natural 110px height (its
+    // sizeHint equals its floor, so the pin changes no default): the lower
+    // pane's growth and shrink must adjust only the capabilities box.
+    safety->setSizePolicy(QSizePolicy(QSizePolicy::Preferred,
+                                       QSizePolicy::Fixed));
+    lowerLayout->addWidget(safety);
+
+    // Item 3: the legacy-only "Application configuration" group is removed
+    // (modern parity has no such section; the version is available via
+    // --print-config / Help -> About).
+    // Pane bounds - the repair-tab pattern (explicit min+max on the
+    // splitter's direct children are the only bounds the drag honors):
+    //   upper pane: row 98 + spacing 6 + plan box [75..250] = [179..354]
+    //   lower pane: capabilities floor 150 + spacing 6 + safety 110 = 266
+    // The lower pane's minimum keeps the mandatory safety box (110px) fully
+    // inside the pane on a full-down drag: without it the pane can be
+    // squeezed below its content, the safety box overflows past the
+    // scrollable content's bottom edge and no scrollbar position reveals it
+    // (the clipped-mandatory-items symptom). The upper pane's maximum stops
+    // the drag exactly at the plan box's 250px maximum, with no empty gap.
+    upperPane->setMinimumHeight(179);
+    upperPane->setMaximumHeight(354);
+    lowerPane->setMinimumHeight(266);
+    // Guarantee the total scrollable height can always contain the
+    // mandatory safety box: the splitter's own minimum is the full-down
+    // drag's worst case (upper pane max 354 + handle ~6 + lower pane floor
+    // 266 = 626, plus a little slack), so the content can never shrink
+    // past the point where the safety box would fall below the scrollable
+    // bottom edge (the hidden-mandatory-section symptom on a full-down
+    // drag - the total settings height must always include the mandatory
+    // box's pixels).
+    settingsSplitter->setMinimumHeight(630);
+    // The vertical splitter keeps a sensible default split; the user can
+    // drag the handle afterwards. The upper share dropped from 280 to 250
+    // with the row's 108->98 shrink: the plan box's default drops a further
+    // ~30px (1.5 lines, ~178->~148) - the box was 1.5-2 lines taller than
+    // its two-column list; now the last plan item ("Rebuild DKMS modules")
+    // sits at the bottom of the box with no extra line of empty space.
+    QValueList<int> settingsSizes;
+    settingsSizes.append(250);
+    settingsSizes.append(530);
+    settingsSplitter->setSizes(settingsSizes);
+    // Intercept the splitter's handle itself: Qt 3.3.7's own opaque drag
+    // path decays the panes' sum by the handle size on EVERY incremental
+    // mouse move (logged in the user's real drag: 815 -> 773 over six
+    // moves, the mandatory box sliding 92px below the splitter's bottom
+    // edge where it is clipped and unscrollable). The handle's mouse
+    // events are captured by the same filter and the drag is driven
+    // through setSizes() - the distribution path that provably preserves
+    // the panes' sum and keeps every box inside the content.
+    {
+        const QObjectList *splitterKids = settingsSplitter->children();
+        if (splitterKids) {
+            QObjectList splitterKidList(*splitterKids);
+            for (uint ci = 0; ci < splitterKidList.count(); ++ci) {
+                QObject *ko = splitterKidList.at(ci);
+                if (ko && ko->isWidgetType()) {
+                    QWidget *kid = static_cast<QWidget *>(ko);
+                    if (!kid->isHidden() && kid != upperPane
+                        && kid != lowerPane) {
+                        m_settingsSplitterHandle = kid;
+                    }
+                }
+            }
+        }
+        if (m_settingsSplitterHandle) {
+            m_settingsSplitterHandle->installEventFilter(this);
+        }
+    }
+    layout->addWidget(settingsSplitter, 0);
     layout->addStretch();
 
     registerGroupBox(discovery);
     registerGroupBox(planGroup);
     registerGroupBox(diagnostics);
-    registerGroupBox(logs);
-    registerGroupBox(safety);
     registerGroupBox(capability);
-    registerGroupBox(application);
+    registerGroupBox(safety);
+    // Retain the Settings section frames the drag controller's event filter
+    // walks (the pane and splitter parents, the capabilities and mandatory
+    // boxes it resizes; see etch-agent-guide.md §6).
+    m_settingsPlanGroup = planGroup;
+    m_settingsCapabilityGroup = capability;
+    m_settingsSafetyGroup = safety;
     return page;
+}
+
+bool LegacyMainWindow::eventFilter(QObject *watched, QEvent *event)
+{
+    // Settings-splitter drag control: Qt 3.3.7's own opaque drag path
+    // (doMove/setGeo) decays the panes' sum by the handle size on every
+    // incremental mouse move - logged in the user's real drag: the sum
+    // fell 815 -> 773 over six moves while the mandatory box slid 92px
+    // below the splitter's bottom edge, where it is clipped and no
+    // scrollbar position can reveal it. The handle's mouse events are
+    // intercepted here (the default path never runs) and the drag is
+    // driven through setSizes() instead: the distribution path that
+    // provably preserves the panes' sum (the smoke's extreme/jump tests)
+    // and keeps every box inside the content. The new upper-pane size is
+    // clamped to the pane's own explicit bounds [179..354] (= row 98 +
+    // spacing 6 + plan box [75..250]).
+    if (event && watched == m_settingsSplitterHandle) {
+        QWidget *upperPane = m_settingsPlanGroup
+            ? m_settingsPlanGroup->parentWidget() : 0;
+        QSplitter *splitter = m_settingsCapabilityGroup
+            ? static_cast<QSplitter *>(
+                m_settingsCapabilityGroup->parentWidget()->parentWidget())
+            : 0;
+        if (upperPane && splitter) {
+            if (event->type() == QEvent::MouseButtonPress) {
+                QMouseEvent *press = static_cast<QMouseEvent *>(event);
+                if (press->button() == Qt::LeftButton) {
+                    m_settingsDragActive = true;
+                    m_settingsDragBaseY = splitter->mapFromGlobal(
+                        press->globalPos()).y();
+                    m_settingsDragBaseUpper = upperPane->height();
+                }
+                return true;
+            }
+            if (event->type() == QEvent::MouseMove) {
+                if (m_settingsDragActive) {
+                    QMouseEvent *move = static_cast<QMouseEvent *>(event);
+                    const int deltaY = splitter->mapFromGlobal(
+                        move->globalPos()).y() - m_settingsDragBaseY;
+                    int newUpper = m_settingsDragBaseUpper + deltaY;
+                    if (newUpper < upperPane->minimumHeight()) {
+                        newUpper = upperPane->minimumHeight();
+                    }
+                    if (newUpper > upperPane->maximumHeight()) {
+                        newUpper = upperPane->maximumHeight();
+                    }
+                    QValueList<int> dragSizes;
+                    dragSizes.append(newUpper);
+                    dragSizes.append(splitter->height() - newUpper);
+                    splitter->setSizes(dragSizes);
+                    // Shrink the capabilities frame to the pane's new
+                    // height immediately and pin the mandatory section to
+                    // the pane's bottom. The logged real drag proved Qt3's
+                    // posted layout events lag the drag - the frame rode
+                    // at its old height while the pane shrank (lower 550
+                    // -> 458), pushing the mandatory section below the
+                    // pane's bottom edge where the pane clips it -
+                    // invisible at any scroll position. The pane's own
+                    // layout performs exactly this squeeze when its posted
+                    // event eventually catches up; doing it synchronously
+                    // here keeps the mandatory section visible at every
+                    // drag step (the frame shrinks by the drag amount,
+                    // the mandatory box stays inside).
+                    if (m_settingsCapabilityGroup
+                        && m_settingsSafetyGroup
+                        && m_settingsCapabilityGroup->parentWidget()) {
+                        const int paneHeight
+                            = m_settingsCapabilityGroup->parentWidget()
+                                ->height();
+                        const int safetyHeight
+                            = m_settingsSafetyGroup->height();
+                        const int layoutSpacing = 6;
+                        const int capTarget = paneHeight - safetyHeight
+                            - layoutSpacing;
+                        if (capTarget > 0
+                            && m_settingsCapabilityGroup->height()
+                                != capTarget) {
+                            m_settingsCapabilityGroup->resize(
+                                m_settingsCapabilityGroup->width(),
+                                capTarget);
+                        }
+                        m_settingsSafetyGroup->move(
+                            m_settingsSafetyGroup->x(),
+                            m_settingsCapabilityGroup->y()
+                                + m_settingsCapabilityGroup->height()
+                                + layoutSpacing);
+                    }
+                }
+                return true;
+            }
+            if (event->type() == QEvent::MouseButtonRelease) {
+                m_settingsDragActive = false;
+                return true;
+            }
+        }
+    }
+    return QMainWindow::eventFilter(watched, event);
 }
 
 void LegacyMainWindow::scanDevices()
@@ -3365,7 +4574,7 @@ void LegacyMainWindow::rebuildDeviceList()
     if (!m_deviceList) {
         return;
     }
-    const QString previousDisk = m_selectedDisk;
+    const QString previousDisk = previewDisk();
     m_deviceList->clear();
 
     // Pass 1: top-level disk items (inventory order, expanded).
@@ -3501,7 +4710,7 @@ bool LegacyMainWindow::diskHasLinuxCandidate(const QString &diskPath) const
 }
 
 // Filesystem label for a whole-disk row: aggregate the disk's children so the
-// row is informative but never blank — the primary Linux filesystem of the
+// row is informative but never blank - the primary Linux filesystem of the
 // children plus " + LUKS" when an encrypted child exists (e.g. "ext3 + LUKS",
 // "ext3", "unknown" when nothing is known).
 QString LegacyMainWindow::diskFilesystemSummary(const DeviceRow &row) const
@@ -3556,11 +4765,25 @@ void LegacyMainWindow::deviceSelectionChanged()
         return;
     }
     const DeviceRow &row = it.data();
+    // Item #4: highlighting a row records the PREVIEW row only. In ordinary
+    // repair-target mode the preview and the selection are the same, so the
+    // selection follows; while Host Maintenance is active the active scope is
+    // the protected running host and MUST NOT be changed by a highlight, so
+    // only the preview is recorded (the scope stays Host Maintenance until an
+    // explicit Select Target commit).
     if (row.disk) {
-        setSelection(path, QString::null, QString::null);
+        m_previewDisk = path;
+        m_previewComponent = QString::null;
+        if (!hostScope()) {
+            setSelection(path, QString::null, QString::null);
+        }
     } else {
         const QString disk = owningDiskFor(row);
-        setSelection(disk, path, QString::null);
+        m_previewDisk = disk;
+        m_previewComponent = path;
+        if (!hostScope()) {
+            setSelection(disk, path, QString::null);
+        }
     }
     updateStatus();
     updateActionStates();
@@ -3570,7 +4793,27 @@ void LegacyMainWindow::deviceSelectionChanged()
 
 void LegacyMainWindow::setRepairTarget()
 {
-    const QString disk = selectedDisk();
+    // Commit-path cancel parity (item #7 adjacent, modern setPreviewTarget()):
+    // committing a repair target is a scope change away from the currently
+    // diagnosed scope. A read-only diagnostic in flight is cancelled (the
+    // helper's cancel token + direct kill) and the commit is deferred until the
+    // cancelled run unwinds in helperFinished(), so the new scope's diagnostic
+    // can start immediately afterwards. A mutating repair is never cancelled
+    // here (the Select Target control stays disabled while one runs).
+    if (m_running && m_pendingDiagnostic) {
+        m_commitPending = true;
+        m_scopeSwitchPending = false;
+        appendLog(QString::fromLatin1(
+            "A read-only diagnostic is running; cancelling it to commit the "
+            "repair target. Mutating repairs are never cancelled."));
+        m_runner->cancel();
+        return;
+    }
+    const QString disk = previewDisk();
+    // Captured before the scope may flip below: the highlighted component the
+    // commit should carry forward (in Host Maintenance this is the preview
+    // child, not the stale running-host selection).
+    const QString commitComponent = previewComponent();
     if (disk.isEmpty()) {
         QMessageBox::warning(this, tr("Boot Bitch Legacy"),
                              tr("Select a physical drive in the Available repair targets list first."),
@@ -3602,7 +4845,7 @@ void LegacyMainWindow::setRepairTarget()
             QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    QString root = selectedRoot();
+    QString root = autoResolvedRoot(previewDisk());
     if (root.isEmpty()) {
         root = disk;
     }
@@ -3636,6 +4879,19 @@ void LegacyMainWindow::setRepairTarget()
     m_targetCommitted = true;
     m_committedDisk = disk;
     m_committedRoot = root;
+    // Item #4: committing switches the active scope to the committed disk. In
+    // ordinary mode the selection already equals the preview; entering from
+    // Host Maintenance the selection still names the running host, so update it
+    // here so the scope (selectedDisk/selectedRoot/identity) follows the commit.
+    m_selectedDisk = disk;
+    m_selectedComponent = commitComponent;
+    // Item #8: committing a repair target changes the scope identity, so the
+    // cached host evidence and the diagnostic display cache are cleared before
+    // the new scope's diagnostics run.
+    invalidateScopeDiagnostics();
+    // Item #3: the Settings capability selector follows the active scope
+    // (Repair target now that a target is committed).
+    syncCapabilityScopeSelector();
     appendLog(QString::fromLatin1("Repair target committed: %1 + %2. Diagnostics and gated repairs now target this scope.")
                   .arg(m_committedDisk).arg(m_committedRoot));
     QString statusText = tr("Repair drive selected: %1")
@@ -3659,7 +4915,7 @@ void LegacyMainWindow::setRepairTarget()
         "committing the repair target changed the diagnostics scope"));
 }
 
-// B7-7: Make Default for a GRUB-legacy BIOS host — the helper verifies
+// B7-7: Make Default for a GRUB-legacy BIOS host - the helper verifies
 // /boot/grub/menu.lst, sets `default <N>` to the canonical installed kernel
 // entry with a backup and rollback, and never writes a boot sector.
 void LegacyMainWindow::makeDefault()
@@ -3717,6 +4973,24 @@ void LegacyMainWindow::makeDefault()
 
 void LegacyMainWindow::toggleHostMaintenance()
 {
+    // Modern cancel-and-switch parity (item #7): selecting Host Maintenance
+    // (or leaving it) while a read-only diagnostic is in flight interrupts
+    // that diagnostic (the helper's cancel token + direct kill) and defers
+    // the actual scope switch until the cancelled run unwinds in
+    // helperFinished(), so the new scope's diagnostic can start immediately
+    // afterwards. A mutating repair is never cancelled here: the Host
+    // Maintenance control stays disabled while one runs (updateActionStates),
+    // so only a read-only diagnostic can reach this point with m_running set.
+    if (m_running && m_pendingDiagnostic) {
+        m_scopeSwitchPending = true;
+        m_commitPending = false;
+        appendLog(QString::fromLatin1(
+            "A read-only diagnostic is running; cancelling it to switch scope. "
+            "Mutating repairs are never cancelled."));
+        m_runner->cancel();
+        return;
+    }
+
     if (m_hostMaintenance) {
         m_hostMaintenance = false;
         if (m_hostMaintenanceButton) {
@@ -3724,10 +4998,25 @@ void LegacyMainWindow::toggleHostMaintenance()
         }
         appendLog(QString::fromLatin1(
             "Running-host maintenance deselected; commit an offline repair target to run diagnostics."));
+        // Item #8: leaving the running-host scope clears the host evidence and
+        // the diagnostic display cache so a later target-scope run never shows
+        // it.
+        invalidateScopeDiagnostics();
+        // Item #3: the Settings capability selector follows the active scope.
+        syncCapabilityScopeSelector();
         updateStatus();
         updateActionStates();
         updateDriveDetails();
         updateUnlockStatus();
+        // Modern exitHostMaintenanceMode() parity: leaving Host Maintenance
+        // changes the scope identity, so the cached diagnostics no longer
+        // describe the selected scope. With auto-refresh on and the session
+        // active, schedule one quiet Run All for the restored scope (never
+        // opens an authorization prompt by itself; the skip/pending reasons
+        // are logged). No target is committed yet, so this is recorded as
+        // pending until a target is committed.
+        maybeAutoRefreshDiagnostics(QString::fromLatin1(
+            "leaving Host Maintenance changed the diagnostics scope"));
         return;
     }
 
@@ -3749,13 +5038,26 @@ void LegacyMainWindow::toggleHostMaintenance()
     m_hostDetectedRoot = fromStd(root);
     setSelection(m_hostDetectedDisk, QString::null, m_hostDetectedRoot);
     selectInventoryRow(m_hostDetectedDisk);
-    if (!ensureAdministratorSession(tr("Host Maintenance"))) {
-        return;
-    }
+    // Modern parity (item #6): the running-host scope is committed BEFORE the
+    // session request, exactly like the deferred-authorization flow in
+    // MainWindow::selectHostForMaintenance(). A cancelled password prompt
+    // therefore leaves the scope entered and surfaces the Authorize affordance
+    // (updateAuthorizationAffordance, via updateActionStates below) instead of
+    // silently dropping the scope switch.
     m_targetCommitted = false;
     m_hostMaintenance = true;
     if (m_hostMaintenanceButton) {
         updateButtonText(m_hostMaintenanceButton, tr("Exit Host Maintenance"));
+    }
+    // Item #8: entering the running-host scope clears the target evidence and
+    // the diagnostic display cache so a host-scope run never shows it.
+    invalidateScopeDiagnostics();
+    // Item #3: the Settings capability selector follows the active scope.
+    syncCapabilityScopeSelector();
+    if (!ensureAdministratorSession(tr("Host Maintenance"))) {
+        appendLog(QString::fromLatin1(
+            "Administrator authorization deferred; press Authorize on the "
+            "Systems tab to establish the privileged session."));
     }
     appendLog(QString::fromLatin1(
         "Running-host maintenance activated; diagnostics and gated repairs now "
@@ -3805,7 +5107,7 @@ QString LegacyMainWindow::autoResolvedRoot(const QString &disk) const
         ? disk.mid(5) : disk;
 
     // Modern parity (B7-1): when the drive has a locked LUKS component (no
-    // unlocked mapper child yet), the target root is not resolvable — do NOT
+    // unlocked mapper child yet), the target root is not resolvable - do NOT
     // fall back to a plain partition candidate such as the unencrypted /boot,
     // which would commit an unusable component.  Select Target stays disabled
     // with the unlock-first reason until the unlock exposes the mapped Linux
@@ -3836,7 +5138,7 @@ QString LegacyMainWindow::autoResolvedRoot(const QString &disk) const
         return partitionCandidate;
     }
     // Whole-disk filesystem: the disk itself is a candidate only when its
-    // own filesystem is Linux root-capable — a vfat share disk or a
+    // own filesystem is Linux root-capable - a vfat share disk or a
     // blank/data disk must never become a committable target (Select Target
     // then stays disabled with the no-Linux-filesystem reason).
     const QMap<QString, DeviceRow>::const_iterator diskRow = m_rows.find(disk);
@@ -3939,7 +5241,7 @@ QString LegacyMainWindow::autoResolvedLuks(const QString &disk) const
 // otherwise the first locked LUKS component on the drive.
 QString LegacyMainWindow::unlockCandidateFor(const QString &disk) const
 {
-    const QString inspected = selectedComponent();
+    const QString inspected = previewComponent();
     if (!inspected.isEmpty()) {
         const QMap<QString, DeviceRow>::const_iterator row = m_rows.find(inspected);
         if (row != m_rows.end() && row.data().encrypted) {
@@ -4029,6 +5331,21 @@ QString LegacyMainWindow::selectedDisk() const
 QString LegacyMainWindow::selectedComponent() const
 {
     return m_selectedComponent.stripWhiteSpace();
+}
+
+// Item #4: the highlighted (preview) Systems tree row that Select Target,
+// Unlock and the details panes act on. While Host Maintenance is active the
+// preview is tracked separately from the active-scope selection, so merely
+// highlighting a row never changes the scope or disables host-scope actions.
+QString LegacyMainWindow::previewDisk() const
+{
+    return hostScope() ? m_previewDisk.stripWhiteSpace() : selectedDisk();
+}
+
+QString LegacyMainWindow::previewComponent() const
+{
+    return hostScope() ? m_previewComponent.stripWhiteSpace()
+                       : selectedComponent();
 }
 
 QString LegacyMainWindow::selectedRoot() const
@@ -4215,6 +5532,7 @@ void LegacyMainWindow::runSelectedDiagnostic()
 void LegacyMainWindow::diagnosticSelectionChanged()
 {
     updateDiagnosticDetails();
+    refreshDiagnosticResultsView();
     updateActionStates();
 }
 
@@ -4417,15 +5735,80 @@ void LegacyMainWindow::saveResults()
     statusBar()->message(tr("Diagnostic results saved to %1").arg(path), 4000);
 }
 
+QDialog *LegacyMainWindow::buildUnlockDialog(const QString &luks,
+                                            QLineEdit **editOut)
+{
+    QDialog *dialog = new QDialog(this, "legacy-unlock-passphrase", true);
+    dialog->setCaption(tr("Unlock LUKS repair target"));
+    QVBoxLayout *layout = new QVBoxLayout(dialog, 10, 8);
+
+    QHBoxLayout *targetRow = new QHBoxLayout(layout);
+    targetRow->setSpacing(4);
+    QLabel *targetCaption = new QLabel(tr("LUKS volume:"), dialog);
+    targetRow->addWidget(targetCaption, 0, Qt::AlignVCenter);
+    QLabel *targetPath = new QLabel(luks, dialog);
+    QFont pathFont = targetPath->font();
+    pathFont.setBold(true);
+    targetPath->setFont(pathFont);
+    targetRow->addWidget(targetPath, 1, Qt::AlignVCenter);
+
+    QLabel *instruction = new QLabel(
+        tr("Enter the passphrase to unlock this volume."), dialog);
+    enableLabelWordWrap(instruction);
+    instruction->setMaximumWidth(kHiddenInputMaximumWidth);
+    layout->addWidget(instruction);
+
+    QLineEdit *edit = new QLineEdit(dialog);
+    edit->setEchoMode(QLineEdit::Password);
+    edit->setText(QString::null);
+    layout->addWidget(edit);
+
+    QLabel *note = new QLabel(tr(
+        "Administrator authorization is already active. The passphrase is sent "
+        "only to cryptsetup over the privileged helper pipe and is never "
+        "logged or placed on a command line."), dialog);
+    enableLabelWordWrap(note);
+    note->setMaximumWidth(kHiddenInputMaximumWidth);
+    QFont noteFont = note->font();
+    noteFont.setPointSizeFloat(noteFont.pointSizeFloat() * 0.92f);
+    note->setFont(noteFont);
+    layout->addWidget(note);
+
+    QHBoxLayout *buttons = new QHBoxLayout(layout);
+    buttons->setSpacing(6);
+    buttons->addStretch();
+    QPushButton *cancel = new QPushButton(tr("Cancel"), dialog);
+    QPushButton *unlockButton = new QPushButton(tr("Unlock"), dialog);
+    unlockButton->setDefault(true);
+    buttons->addWidget(cancel);
+    buttons->addWidget(unlockButton);
+    QObject::connect(cancel, SIGNAL(clicked()), dialog, SLOT(reject()));
+    QObject::connect(unlockButton, SIGNAL(clicked()), dialog, SLOT(accept()));
+    QObject::connect(edit, SIGNAL(returnPressed()), dialog, SLOT(accept()));
+    // Widen the popup substantially over the earlier 420px minimum. Qt3 sizes
+    // a fresh modal dialog to its (narrow) content sizeHint and does NOT honor
+    // setMinimumWidth as a lower bound on the displayed width (the smoke
+    // measurement reads minimumWidth() back as 0, while setMaximumWidth
+    // persists). So pin the width explicitly with resize(); the label wrapping
+    // width stays on kHiddenInputMaximumWidth.
+    dialog->setMaximumWidth(800);
+    dialog->resize(420, dialog->sizeHint().height());
+
+    if (editOut) {
+        *editOut = edit;
+    }
+    return dialog;
+}
+
 void LegacyMainWindow::runUnlock()
 {
     if (m_running) {
         return;
     }
-    // Cycle 13 loop: Host Maintenance is a scope, not a lock — unlocking is
+    // Cycle 13 loop: Host Maintenance is a scope, not a lock - unlocking is
     // refused only when the selected drive IS the protected running host.
     if (!runningHostDisk().isEmpty()
-        && selectedDisk() == runningHostDisk()) {
+        && previewDisk() == runningHostDisk()) {
         QMessageBox::warning(this, tr("Unlock not available"),
                              tr(
                                  "The protected running host cannot be unlocked. "
@@ -4433,7 +5816,7 @@ void LegacyMainWindow::runUnlock()
                              QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    if (selectedDisk().isEmpty()) {
+    if (previewDisk().isEmpty()) {
         QMessageBox::warning(this, tr("Boot Bitch Legacy"),
                              tr("Select a physical drive in the Available repair targets list first."),
                              QMessageBox::Ok, QMessageBox::NoButton);
@@ -4441,7 +5824,7 @@ void LegacyMainWindow::runUnlock()
     }
     // Auto-resolve the locked LUKS component from the read-only inventory; the
     // helper's own cryptsetup preflights verify it again before opening it.
-    const QString luks = unlockCandidateFor(selectedDisk());
+    const QString luks = unlockCandidateFor(previewDisk());
     if (luks.isEmpty()) {
         QMessageBox::warning(this, tr("Unlock not available"),
                              tr(
@@ -4451,20 +5834,12 @@ void LegacyMainWindow::runUnlock()
         return;
     }
 
-    if (!m_unlockRetry) {
-        const bool answer = confirmWrapped(
-            this, tr("Confirm LUKS unlock"),
-            tr(
-                "Unlock %1 on %2?\n\n"
-                "The helper opens a temporary device-mapper mapping with "
-                "cryptsetup and keeps it open for this recovery session. The "
-                "passphrase travels through a private keyfile and is never "
-                "placed in command arguments or logs.")
-                .arg(luks).arg(selectedDisk()));
-        if (!answer) {
-            return;
-        }
-    }
+    // Modern parity: the user already pressed Unlock for the selected drive,
+    // so proceed straight to the cryptsetup passphrase prompt without an extra
+    // confirmation dialog. The explanation now lives as the note inside the
+    // passphrase dialog ("sent only to cryptsetup ... never logged"); the
+    // already-granted administrator authorization carries forward through
+    // ensureAdministratorSession below (no second prompt).
 
     // Establish the elevation session before collecting the disk passphrase,
     // so the two secrets are never held in memory at the same time. The cached
@@ -4474,15 +5849,20 @@ void LegacyMainWindow::runUnlock()
         return;
     }
 
-    bool ok = false;
-    QString passphrase = promptHiddenPassword(
-        this, tr("Unlock LUKS repair target"),
-        tr("Enter the passphrase for %1.\n\n"
-                            "It is sent only to cryptsetup over the helper's "
-                            "standard input and is never logged or placed on a "
-                            "command line.").arg(luks),
-        &ok);
-    if (!ok) {
+    // Modern parity: the unlock passphrase dialog is structured like the
+    // modern one instead of the generic single-label hidden-input prompt — a
+    // "LUKS volume: <path>" line (bold path), the "Enter the passphrase to
+    // unlock this volume." instruction, the hidden passphrase entry and the
+    // smaller "Administrator authorization is already active..." note. The
+    // passphrase delivery (a mode-600 --key-file argument, never stdin/argv)
+    // is unchanged.
+    QLineEdit *edit = 0;
+    QDialog *dialog = buildUnlockDialog(luks, &edit);
+    const int result = dialog->exec();
+    QString passphrase = (result == QDialog::Accepted && edit)
+        ? edit->text() : QString::null;
+    delete dialog;
+    if (result != QDialog::Accepted) {
         return;
     }
     if (passphrase.isEmpty()) {
@@ -4501,7 +5881,7 @@ void LegacyMainWindow::runUnlock()
     // Qt 3.3.7's QProcess cannot deliver stdin reliably, so the passphrase
     // travels through a mode-600 keyfile argument (O_EXCL, in the GUI's log
     // directory, never in argv) that the helper reads, verifies and never
-    // deletes — the GUI unlinks it on every completion path. The buffer is
+    // deletes - the GUI unlinks it on every completion path. The buffer is
     // wiped right after the write.
     QString keyfilePath;
     if (!writeUnlockKeyfile(secret, &keyfilePath)) {
@@ -4514,11 +5894,11 @@ void LegacyMainWindow::runUnlock()
 
     m_unlockRetry = false;
     m_unlockDevice = luks;
-    m_unlockDisk = selectedDisk();
+    m_unlockDisk = previewDisk();
     QStringList args;
     // Cycle 10: the GUI passes its own uid with the keyfile so the elevated
     // helper can accept the file under gksu/gksudo (no SUDO_UID) too.
-    args << QString::fromLatin1("unlock") << selectedDisk() << luks
+    args << QString::fromLatin1("unlock") << previewDisk() << luks
          << QString::fromLatin1("--key-file") << keyfilePath
          << QString::fromLatin1("--key-owner")
          << QString::number(static_cast<unsigned long>(::getuid()));
@@ -4658,6 +6038,91 @@ void LegacyMainWindow::discardConfigContentFile()
     gConfigContentFilePath[0] = '\0';
 }
 
+// Reserve the mode-600 menu-answer file for the running interactive repair and
+// return its path.  The helper polls this file (BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE)
+// for each PROMPT record and truncates it after every read, so the two-level
+// kernel menu can reuse the one path; the GUI writes the raw answer (plus a
+// newline) on Send.  Created empty in the GUI's private 0700 `.keys` directory
+// (the unlock keyfile pattern) so the helper's poll loop has a stable path from
+// the first prompt.
+bool LegacyMainWindow::ensureMenuAnswerFile(QString *path)
+{
+    if (path) {
+        *path = QString::null;
+    }
+    ensureLogDirectory();
+    const QString keysDirectory = m_logDirectory + QString::fromLatin1("/.keys");
+    if (::mkdir(keysDirectory.local8Bit().data(), 0700) != 0) {
+        struct stat info;
+        if (::stat(keysDirectory.local8Bit().data(), &info) != 0
+            || !S_ISDIR(info.st_mode)) {
+            return false;
+        }
+    }
+    if (::chmod(keysDirectory.local8Bit().data(), 0700) != 0) {
+        return false;
+    }
+    const QString candidate = keysDirectory + QString::fromLatin1("/.menu-answer-")
+        + QString::number(static_cast<unsigned long>(::getpid()));
+    const int fd = ::open(candidate.local8Bit().data(),
+                          O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        return false;
+    }
+    ::close(fd);
+    if (path) {
+        *path = candidate;
+    }
+    return true;
+}
+
+// Writes the RAW answer plus a single newline to the menu-answer file (no
+// `ANSWER\t<id>\t<base64>` framing, no base64).  An empty answer (cancel)
+// writes just the newline, which makes the helper fail closed.  The record is
+// a single small buffer; a short write unlinks the file so a partial record
+// can never be mistaken for a complete answer.
+bool LegacyMainWindow::writeMenuAnswerRecord(const QString &answer)
+{
+    if (m_promptAnswerFile.isEmpty()) {
+        return false;
+    }
+    const QString record = answer + QString::fromLatin1("\n");
+    const QCString bytes = record.latin1();
+    const int fd = ::open(m_promptAnswerFile.local8Bit().data(),
+                          O_WRONLY | O_CREAT | O_TRUNC, 0600);
+    if (fd < 0) {
+        return false;
+    }
+    const char *data = bytes.data();
+    std::size_t remaining = static_cast<std::size_t>(bytes.size());
+    bool ok = true;
+    while (remaining > 0) {
+        const ssize_t written = ::write(fd, data, remaining);
+        if (written <= 0) {
+            ok = false;
+            break;
+        }
+        data += written;
+        remaining -= static_cast<std::size_t>(written);
+    }
+    ::close(fd);
+    if (!ok) {
+        ::unlink(m_promptAnswerFile.local8Bit().data());
+    }
+    return ok;
+}
+
+// Delete the menu-answer file (best-effort) and clear the tracked path.  The
+// helper truncates but never deletes the file; this unlink runs on every
+// completion path so the answer channel never outlives the command.
+void LegacyMainWindow::discardMenuAnswerFile()
+{
+    if (!m_promptAnswerFile.isEmpty()) {
+        ::unlink(m_promptAnswerFile.local8Bit().data());
+        m_promptAnswerFile = QString::null;
+    }
+}
+
 
 void LegacyMainWindow::logFilterChanged()
 {
@@ -4669,12 +6134,17 @@ void LegacyMainWindow::logSearchChanged()
     refreshLogView();
 }
 
-void LegacyMainWindow::sessionLogSelectionChanged()
+void LegacyMainWindow::sessionLogSelectionChanged(QListViewItem *item)
 {
     if (!m_sessionLogList) {
         return;
     }
-    QListViewItem *item = m_sessionLogList->currentItem();
+    if (!item) {
+        item = m_sessionLogList->selectedItem();
+    }
+    if (!item) {
+        item = m_sessionLogList->currentItem();
+    }
     if (!item) {
         return;
     }
@@ -4734,8 +6204,9 @@ void LegacyMainWindow::toggleLogWrap(bool enabled)
     if (m_resultView) {
         m_resultView->setWordWrap(enabled ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
     }
-    // Keep the Settings checkbox and the View menu item in sync without
-    // re-entering their signals.
+    // Keep the View menu item in sync without re-entering its signal. The
+    // Settings checkbox is gone (item 1); the null-guarded m_logWrapCheck
+    // block remains only so the member/state plumbing stays intact.
     if (m_logWrapCheck && m_logWrapCheck->isChecked() != enabled) {
         m_logWrapCheck->blockSignals(true);
         m_logWrapCheck->setChecked(enabled);
@@ -4761,9 +6232,6 @@ void LegacyMainWindow::startNewSessionLog()
     m_priorLogLines.clear();
     if (m_priorLogBanner) {
         m_priorLogBanner->hide();
-    }
-    if (m_settingsSessionLabel) {
-        m_settingsSessionLabel->setText(tr("(not created yet)"));
     }
     appendLog(QString::fromLatin1(
         "Started a new session log; earlier files remain available in the "
@@ -4890,34 +6358,36 @@ void LegacyMainWindow::loadLegacySettings()
         // diagnosticsrc|repairrc overrides can never flip a smoke assertion,
         // and the smoke never reads or writes those files.
         applyLegacySettingsDefaults();
+        m_settingsLoaded = true;
         return;
     }
     QSettings settings;
-    // Qt 3.3.7 stores each settings group in its own per-user file under
-    // ~/.qt/ named after the group, so the keys below live in
-    // ~/.qt/devicesrc, ~/.qt/logsrc, ~/.qt/diagnosticsrc and ~/.qt/repairrc
-    // (not one boot-bitchrc). The setPath organization/application pair
-    // keeps the load and save sides identical; dpkg -r / dpkg -i reinstall
-    // never touches these files.
-    settings.setPath(QString::fromLatin1("boot-bitch"),
-                     QString::fromLatin1("boot-repair"), QSettings::User);
-    const bool nonLinux = settings.readBoolEntry(
+    configureLegacySettings(settings);
+    // Qt 3.3.7 stores each settings group in its own per-user file named after
+    // the group, so the keys below live in ~/.qt/devicesrc, ~/.qt/logsrc,
+    // ~/.qt/diagnosticsrc and ~/.qt/repairrc.  configureLegacySettings forces
+    // User scope (setPath(..., QSettings::User)); without it the DEFAULT is
+    // Global scope, so a root run would write the system path /etc/qt3/ and a
+    // stale ~/.qt/repairrc would mask the fresh values on the merge read.
+    // dpkg -r / dpkg -i reinstall never touches these files.
+    m_showNonLinux = settings.readBoolEntry(
         QString::fromLatin1("/devices/showNonLinux"), true);
-    const bool removable = settings.readBoolEntry(
+    m_showRemovable = settings.readBoolEntry(
         QString::fromLatin1("/devices/showRemovable"), true);
-    const bool encrypted = settings.readBoolEntry(
+    m_showEncrypted = settings.readBoolEntry(
         QString::fromLatin1("/devices/showEncrypted"), true);
     m_logWrapEnabled = settings.readBoolEntry(
         QString::fromLatin1("/logs/wrapLines"), true);
     m_autoRefreshEnabled = settings.readBoolEntry(
         QString::fromLatin1("/diagnostics/autoRefreshStale"), true);
 
-    QCheckBox *checks[] = { m_showNonLinuxCheck, m_showRemovableCheck,
-                            m_showEncryptedCheck, m_autoRefreshCheck,
-                            m_logWrapCheck };
-    const bool values[] = { nonLinux, removable, encrypted,
-                            m_autoRefreshEnabled, m_logWrapEnabled };
-    for (int i = 0; i < 5; ++i) {
+    // The device-discovery filters re-apply from their register (the plan
+    // path's updatePlanChecks() mirror); the auto-refresh and log-wrap widgets
+    // are set directly below.
+    updateDeviceFilterChecks();
+    QCheckBox *checks[] = { m_autoRefreshCheck, m_logWrapCheck };
+    const bool values[] = { m_autoRefreshEnabled, m_logWrapEnabled };
+    for (int i = 0; i < 2; ++i) {
         if (!checks[i]) {
             continue;
         }
@@ -4935,30 +6405,45 @@ void LegacyMainWindow::loadLegacySettings()
     // Full Repair plan checkboxes (modern-compatible key names). The saved
     // preference is kept separately from the widget state so the availability
     // pass (updatePlanChecks) can force unavailable rows off without losing
-    // the user's choice.
+    // the user's choice. The preference is a plain per-stage user setting: it
+    // never depends on diagnostic-cache warmth, so a stage stays checkable
+    // before its capability line arrives.
     m_planPreferences.assign(planSpecCount, false);
-    m_planPreferencesPersisted.assign(planSpecCount, false);
     for (int i = 0; i < planSpecCount; ++i) {
-        m_planPreferences[i] = planSpecs[i].defaultChecked;
-    }
-    for (int i = 0; i < planSpecCount
-                    && i < static_cast<int>(m_planChecks.size()); ++i) {
-        if (!m_planChecks[i]) {
-            continue;
-        }
-        // readBoolEntry's out-parameter reports whether the key was actually
-        // persisted, so a NoEvidence row can distinguish a saved selection
-        // (kept checkable) from the first-run default (kept disabled until
-        // evidence arrives).
-        bool persisted = false;
+        // Every stage's register entry comes from its persisted key (or the
+        // default when the key is absent), whether or not its checkbox exists.
         const bool checked = settings.readBoolEntry(
             QString::fromLatin1(planSpecs[i].settingsKey),
-            planSpecs[i].defaultChecked, &persisted);
+            planSpecs[i].defaultChecked);
         m_planPreferences[i] = checked;
-        m_planPreferencesPersisted[i] = persisted;
-        m_planChecks[i]->blockSignals(true);
-        m_planChecks[i]->setChecked(checked);
-        m_planChecks[i]->blockSignals(false);
+        if (i < static_cast<int>(m_planChecks.size()) && m_planChecks[i]) {
+            m_planChecks[i]->blockSignals(true);
+            m_planChecks[i]->setChecked(checked);
+            m_planChecks[i]->blockSignals(false);
+        }
+    }
+    // The register now holds the persisted selection (or the default of each
+    // absent key): presentation and saves may use it from here on.
+    m_settingsLoaded = true;
+    // Bug B diagnostic: record the resolved read location and the value loaded
+    // for the repair/grub key, so a post-deploy manual test can confirm the
+    // toggle round-trip.  Emitted by the constructor once the session log
+    // directory exists (appendLog here would bypass a pre-set --log-dir).
+    {
+        const int grubIdx = planIndexForCapability("grub");
+        const QString grubValue = (grubIdx >= 0
+                                   && grubIdx < static_cast<int>(m_planPreferences.size()))
+            ? (m_planPreferences[grubIdx]
+                   ? QString::fromLatin1("true") : QString::fromLatin1("false"))
+            : QString::fromLatin1("unknown");
+        m_settingsLoadDiagnostic = QString::fromLatin1(
+            "Settings load: repairrc read from %1; repair/grub = %2; "
+            "devices/showNonLinux = %3; diagnostics/autoRefreshStale = %4")
+            .arg(legacySettingsRepairRcPath()).arg(grubValue)
+            .arg(m_showNonLinux ? QString::fromLatin1("true")
+                                : QString::fromLatin1("false"))
+            .arg(m_autoRefreshEnabled ? QString::fromLatin1("true")
+                                      : QString::fromLatin1("false"));
     }
 }
 
@@ -4968,46 +6453,54 @@ void LegacyMainWindow::saveLegacySettings()
         // The smoke never writes the user's settings files.
         return;
     }
+    // Fail closed: nothing is written before loadLegacySettings() has filled the
+    // preference register, and the register is never refilled with defaults
+    // here (that refill would persist the in-code defaults over every saved key,
+    // including the Full Repair selection).
+    if (!m_settingsLoaded
+        || m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+        appendLog(QString::fromLatin1(
+            "Settings save: skipped (settings not loaded: m_settingsLoaded=%1, "
+            "preference count=%2 of %3); the plan selection was not written.")
+            .arg(m_settingsLoaded ? QString::fromLatin1("true")
+                                  : QString::fromLatin1("false"))
+            .arg(static_cast<int>(m_planPreferences.size()))
+            .arg(planSpecCount));
+        return;
+    }
     QSettings settings;
-    // Same per-group layout as loadLegacySettings: Qt 3.3.7 writes each
-    // settings group to its own per-user file under ~/.qt/ (devicesrc,
-    // logsrc, diagnosticsrc, repairrc).
-    settings.setPath(QString::fromLatin1("boot-bitch"),
-                     QString::fromLatin1("boot-repair"), QSettings::User);
-    if (m_showNonLinuxCheck) {
-        settings.writeEntry(QString::fromLatin1("/devices/showNonLinux"),
-                            m_showNonLinuxCheck->isChecked());
-    }
-    if (m_showRemovableCheck) {
-        settings.writeEntry(QString::fromLatin1("/devices/showRemovable"),
-                            m_showRemovableCheck->isChecked());
-    }
-    if (m_showEncryptedCheck) {
-        settings.writeEntry(QString::fromLatin1("/devices/showEncrypted"),
-                            m_showEncryptedCheck->isChecked());
-    }
+    configureLegacySettings(settings);
+    // Same per-group layout as loadLegacySettings: configureLegacySettings
+    // forces User scope so writes go to ~/.qt/ (devicesrc, logsrc,
+    // diagnosticsrc, repairrc), never the system path.
+    settings.writeEntry(QString::fromLatin1("/devices/showNonLinux"), m_showNonLinux);
+    settings.writeEntry(QString::fromLatin1("/devices/showRemovable"), m_showRemovable);
+    settings.writeEntry(QString::fromLatin1("/devices/showEncrypted"), m_showEncrypted);
     settings.writeEntry(QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
     settings.writeEntry(QString::fromLatin1("/diagnostics/autoRefreshStale"),
                         m_autoRefreshEnabled);
     // The persisted plan preference is written from the preference register
     // (never from the widget state, which the availability pass may have
     // forced off for unavailable rows).
-    if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
-        m_planPreferences.assign(planSpecCount, false);
-        for (int i = 0; i < planSpecCount; ++i) {
-            m_planPreferences[i] = planSpecs[i].defaultChecked;
-        }
-    }
-    if (m_planPreferencesPersisted.size() != static_cast<std::size_t>(planSpecCount)) {
-        m_planPreferencesPersisted.assign(planSpecCount, false);
-    }
     for (int i = 0; i < planSpecCount; ++i) {
         settings.writeEntry(QString::fromLatin1(planSpecs[i].settingsKey),
                             m_planPreferences[i]);
-        // Once written, the stage selection is persisted, so a NoEvidence
-        // presentation keeps it checkable instead of first-run-disabled.
-        m_planPreferencesPersisted[i] = true;
     }
+    // Flush the buffered writes to the canonical settings directory now
+    // (Qt 3.3.7 QSettings::sync(), the modern m_settings->sync() parity).
+    // QSettings::writeEntry only updates the in-memory map and relies on the
+    // QSettings destructor to flush; an explicit sync() makes the write
+    // durable the moment the toggle or save happens, so a freshly-checked
+    // plan stage survives a later
+    // abnormal exit. It also runs BEFORE the chmod pass below, so the
+    // per-group files already exist when they are tightened to 0600.
+    const bool syncOk = settings.sync();
+    // Bug B diagnostic: report the resolved write path and the sync result on
+    // EVERY save (success and failure), so a silent non-persist is visible.
+    appendLog(QString::fromLatin1(
+        "Settings save: repairrc written to %1 (sync %2).")
+        .arg(legacySettingsRepairRcPath())
+        .arg(syncOk ? QString::fromLatin1("ok") : QString::fromLatin1("failed")));
     // The four per-group files Qt 3.3.7 wrote under ~/.qt carry the GUI's
     // persisted state; keep them private (0600) like the session logs. A
     // file that was never written (its group stayed untouched) is missing and
@@ -5050,7 +6543,6 @@ void LegacyMainWindow::applyLegacySettingsDefaults()
         m_viewMenu->setItemChecked(m_wrapLogsMenuId, m_logWrapEnabled);
     }
     m_planPreferences.assign(planSpecCount, false);
-    m_planPreferencesPersisted.assign(planSpecCount, false);
     for (int i = 0; i < planSpecCount; ++i) {
         m_planPreferences[i] = planSpecs[i].defaultChecked;
     }
@@ -5065,12 +6557,23 @@ void LegacyMainWindow::applyLegacySettingsDefaults()
     }
 }
 
-void LegacyMainWindow::deviceFilterChanged()
+void LegacyMainWindow::deviceFilterChanged(bool checked)
 {
+    // Mirror autoRefreshToggled(bool): set the ONE toggled member from the
+    // signal parameter (sender() identifies which checkbox), never re-read all
+    // three widgets, so the user's change is recorded from the authoritative
+    // signal value.
+    const QObject *toggled = sender();
+    if (toggled == m_showNonLinuxCheck) {
+        m_showNonLinux = checked;
+    } else if (toggled == m_showRemovableCheck) {
+        m_showRemovable = checked;
+    } else if (toggled == m_showEncryptedCheck) {
+        m_showEncrypted = checked;
+    }
     saveLegacySettings();
     rebuildDeviceList();
     updateActionStates();
-    statusBar()->message(tr("Device discovery filters updated."), 2500);
 }
 
 void LegacyMainWindow::autoRefreshToggled(bool enabled)
@@ -5080,13 +6583,13 @@ void LegacyMainWindow::autoRefreshToggled(bool enabled)
     updateActionStates();
 }
 
-// Modern Host capabilities and dependencies: read-only labels fed by the
-// helper backend-profile facts parsed from the cached diagnostics.
-// Modern refreshCapabilities(): re-probe the running host read-only (a PATH
-// search, never an execution, plus /etc/os-release) and repopulate the
-// summary labels and the 6-column capability table. Missing optional tools
-// grey only their related features; the Install Missing Support... button
-// stays disabled with the modern tooltip.
+// Modern Capabilities and dependencies: read-only labels fed by the host's
+// /etc/os-release and package-manager facts, plus the KAuth build support
+// line (always "Not compiled" on Etch, which has no KAuth).
+// Modern refreshCapabilities(): repopulate the summary labels and the
+// 7-column capability table. Host scope = the existing read-only host PATH
+// probe; Repair-target scope = the cached target diagnostics' `Repair tool`
+// lines (the dropdown only re-reads cached evidence, never a new helper run).
 void LegacyMainWindow::refreshCapabilities()
 {
     if (m_capDistributionLabel) {
@@ -5099,47 +6602,240 @@ void LegacyMainWindow::refreshCapabilities()
     }
     if (m_capAuthLabel) {
         m_capAuthLabel->setText(tr(
-            "sudo / gksu (no KAuth on this frontend)"));
+            "Not compiled - optional integration unavailable"));
     }
     if (!m_capabilityTable) {
         return;
     }
-    m_capabilityTable->setNumRows(capabilitySpecCount);
-    for (int row = 0; row < capabilitySpecCount; ++row) {
-        const CapabilitySpec &spec = capabilitySpecs[row];
-        const QString command = QString::fromLatin1(spec.command);
-        const bool available = !findExecutablePath(command).isEmpty();
-        QString status;
-        if (available) {
-            status = tr("Available");
-        } else if (command == QString::fromLatin1("unshare")) {
-            // The legacy-specific row: Etch has no unshare, so the ported
-            // helper falls back to a guarded plain chroot.
-            status = tr("Missing on this frontend");
-        } else {
-            status = tr("Missing");
+    // Scope selector (modern parity): Host shows the existing read-only host
+    // PATH probe; Repair target re-reads the cached target diagnostics'
+    // `Repair tool` lines. The legacy table's native data source is the host
+    // probe, so Host (item 1) is the default scope.
+    const bool targetScope = m_capabilityScopeSelector
+        && m_capabilityScopeSelector->currentItem() == 0;
+    if (!targetScope) {
+        // Host scope: the 18 consolidated capabilitySpecs rows (the modern
+        // feature list plus the two Etch-specific rows), probed read-only from
+        // the running host's PATH plus the standard system directories.
+        m_capabilityTable->setNumRows(capabilitySpecCount);
+        for (int row = 0; row < capabilitySpecCount; ++row) {
+            const CapabilitySpec &spec = capabilitySpecs[row];
+            const QString command = QString::fromLatin1(spec.command);
+            const bool available = !findExecutablePath(command).isEmpty();
+            QString status;
+            if (available) {
+                status = tr("Available");
+            } else if (command == QString::fromLatin1("unshare")) {
+                // The legacy-specific row: Etch has no unshare, so the ported
+                // helper falls back to a guarded plain chroot.
+                status = tr("Missing on this frontend");
+            } else {
+                status = tr("Missing");
+            }
+            const QString package = QString::fromLatin1(spec.package);
+            // Item 2: the Action cell offers "Install" only for a row that is
+            // missing AND has a package with an apt install candidate on THIS
+            // Etch system AND whose suggested package can actually deliver the
+            // command (read-only probes, never an install). The Install Missing
+            // Support... button below installs the SELECTED row's package
+            // through the guarded helper verb.
+            const bool installable = !available && !package.isEmpty()
+                && hostPackageInstallable(package)
+                && legacyPackageProvidesCommand(package, command);
+            m_capabilityTable->setText(row, 0, tr(spec.feature));
+            m_capabilityTable->setText(row, 1, command);
+            m_capabilityTable->setText(row, 2, tr(spec.scope));
+            m_capabilityTable->setText(row, 3, status);
+            m_capabilityTable->setText(row, 4, package);
+            m_capabilityTable->setText(row, 5, tr(spec.note));
+            m_capabilityTable->setText(row, 6,
+                installable ? tr("Install")
+                            : QString::fromLatin1(kCapabilityActionCell));
         }
-        m_capabilityTable->setText(row, 0, tr(spec.feature));
-        m_capabilityTable->setText(row, 1, command);
-        m_capabilityTable->setText(row, 2, tr(spec.scope));
-        m_capabilityTable->setText(row, 3, status);
-        m_capabilityTable->setText(row, 4, QString::fromLatin1(spec.package));
-        m_capabilityTable->setText(row, 5, tr(spec.note));
+        appendLog(QString::fromLatin1(
+            "Host capability scan refreshed (read-only PATH probes; nothing was "
+            "executed). Missing optional tools disable only the related features."));
+    } else {
+        // Repair-target scope: reflect the cached target diagnostics' `Repair
+        // tool` lines. Fail closed: with no cached target evidence the table
+        // shows a single "run diagnostics first" placeholder row, never a
+        // fabricated availability.
+        const QString targetIdentity = QString::fromLatin1("target|")
+            + selectedDisk();
+        if (!m_model.hasDiagnostics(toStd(targetIdentity))) {
+            m_capabilityTable->setNumRows(1);
+            m_capabilityTable->setText(0, 0, tr("No capability evidence cached"));
+            m_capabilityTable->setText(0, 1, QString::null);
+            m_capabilityTable->setText(0, 2, tr("Repair target"));
+            m_capabilityTable->setText(0, 3, QString::null);
+            m_capabilityTable->setText(0, 4, QString::null);
+            m_capabilityTable->setText(0, 5, tr(
+                "Run read-only target diagnostics to populate this table."));
+            m_capabilityTable->setText(0, 6,
+                QString::fromLatin1(kCapabilityActionCell));
+            appendLog(QString::fromLatin1(
+                "Repair-target capability evidence is not cached; run target "
+                "diagnostics first."));
+        } else {
+            // The 15 Repair tool keys map 1:1 to the individual-tool specs
+            // (same order), so the friendly title comes from toolSpecs while
+            // the state/reason come from the cached target evidence.
+            // Item 2 (target-scope install): a missing capability row whose
+            // reason names an installable prerequisite (the module-build
+            // build-system package) shows "Install" in the Action cell and its
+            // package in the Suggested package column, routed to the helper's
+            // install-target-package verb. Fail closed: the affordance only
+            // appears while a repair target is committed AND the helper proved
+            // (read-only, against the TARGET's own repositories) that the
+            // suggested package is present - `Repair capability evidence
+            // dkms-installable: available`. No repo evidence -> no Install.
+            const bool committed = targetCommitted();
+            const bool dkmsRepoAvailable = m_model.evidence(
+                toStd(QString::fromLatin1("dkms-installable"))) == "available";
+            m_capabilityTable->setNumRows(toolSpecCount);
+            for (int i = 0; i < toolSpecCount; ++i) {
+                const QString key = QString::fromLatin1(toolSpecs[i].key);
+                const std::string state = m_model.state(toStd(key));
+                std::string reason;
+                const bool available = capabilityIsAvailable(state, &reason);
+                const QString package = legacyTargetInstallablePackage(key, state);
+                const bool installable = !available && !package.isEmpty()
+                    && committed && dkmsRepoAvailable;
+                m_capabilityTable->setText(i, 0, tr(toolSpecs[i].title));
+                m_capabilityTable->setText(i, 1, key);
+                m_capabilityTable->setText(i, 2, tr("Repair target"));
+                m_capabilityTable->setText(i, 3,
+                    available ? tr("Available") : tr("Missing"));
+                m_capabilityTable->setText(i, 4, package);
+                m_capabilityTable->setText(i, 5,
+                    available ? QString::null : fromStd(reason));
+                m_capabilityTable->setText(i, 6,
+                    installable ? tr("Install")
+                                : QString::fromLatin1(kCapabilityActionCell));
+            }
+            appendLog(QString::fromLatin1(
+                "Repair-target capability evidence refreshed from the cached "
+                "target diagnostics."));
+        }
     }
     // Modern parity: the first row starts selected and clicking any cell
-    // selects its whole row (QTable::SingleRow above); the selected missing
-    // capability is the conceptual guard the disabled Install Missing
-    // Support... button documents.
+    // selects its whole row (QTable::SingleRow above). The Install Missing
+    // Support... button's enabled state follows the selected row's Action cell
+    // ("Install" for a missing+installable row).
     if (m_capabilityTable->numRows() > 0) {
         m_capabilityTable->setCurrentCell(0, 0);
         m_capabilityTable->selectRow(0);
     }
-    appendLog(QString::fromLatin1(
-        "Host capability scan refreshed (read-only PATH probes; nothing was "
-        "executed). Missing optional tools disable only the related features."));
+    updateInstallSupportButton();
 }
 
-// ---- Individual repair tools and the Full Repair plan -----------------------
+// Item 2: the Install Missing Support... button is enabled exactly when the
+// selected capability row is missing, installable and has a package (its
+// Action cell shows "Install"). Fail closed: any other row keeps it disabled.
+void LegacyMainWindow::updateInstallSupportButton()
+{
+    if (!m_installSupportButton || !m_capabilityTable) {
+        return;
+    }
+    bool installableRow = false;
+    const int row = m_capabilityTable->currentRow();
+    if (row >= 0 && row < m_capabilityTable->numRows()) {
+        installableRow = m_capabilityTable->text(row, 6) == tr("Install");
+    }
+    m_installSupportButton->setEnabled(installableRow && !m_running);
+}
+
+// QTable currentChanged: the Install button follows the newly selected row.
+void LegacyMainWindow::capabilitySelectionChanged(int, int)
+{
+    updateInstallSupportButton();
+}
+
+// Installs the SELECTED capability row's suggested package through the helper's
+// guarded install verb (simulation-first, fail-closed; never a bare apt-get).
+// Host scope runs install-host-package; the Repair-target scope runs
+// install-target-package into the committed target (fail-closed: no committed
+// target -> no install affordance, so this never runs for a target that is not
+// committed). Mirrors the modern installMissingCapability branches.
+void LegacyMainWindow::installSelectedCapabilityPackage()
+{
+    if (m_running || !m_capabilityTable) {
+        return;
+    }
+    const int row = m_capabilityTable->currentRow();
+    if (row < 0 || row >= m_capabilityTable->numRows()) {
+        return;
+    }
+    const QString package = m_capabilityTable->text(row, 4).stripWhiteSpace();
+    // The Action cell is the single source of truth for installability
+    // ("Install" only for a missing, installable row).
+    if (package.isEmpty() || m_capabilityTable->text(row, 6) != tr("Install")) {
+        return;
+    }
+    if (!administratorSessionActive()) {
+        QMessageBox::warning(this, tr("Administrator authorization required"),
+                             tr(
+                                 "No administrator session is active; press "
+                                 "Authorize first."),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    // Item 2 (target-scope install): the scope selector (Repair target == 0,
+    // Host == 1) routes the same selected-row install to the matching helper
+    // verb. The target scope is fail-closed: without a committed target the
+    // Action cell never offered Install, and this double-check refuses anyway.
+    const bool targetScope = m_capabilityScopeSelector
+        && m_capabilityScopeSelector->currentItem() == 0;
+    QString disk;
+    QString root;
+    if (targetScope) {
+        if (!targetCommitted()) {
+            QMessageBox::warning(this, tr("Repair target required"),
+                                 scopeReadyReason(),
+                                 QMessageBox::Ok, QMessageBox::NoButton);
+            return;
+        }
+        disk = selectedDisk();
+        root = selectedRoot();
+    } else {
+        disk = runningHostDisk().isEmpty() ? selectedDisk() : runningHostDisk();
+        root = runningHostRoot().isEmpty() ? selectedRoot() : runningHostRoot();
+    }
+    if (disk.isEmpty() || root.isEmpty()) {
+        QMessageBox::warning(this, tr("Install unavailable"),
+                             tr(
+                                 "The selected scope's disk and root component "
+                                 "could not be resolved."),
+                             QMessageBox::Ok, QMessageBox::NoButton);
+        return;
+    }
+    const bool answer = confirmWrapped(
+        this, tr("Install Missing Support"),
+        targetScope
+            ? tr(
+                  "Install the package '%1' into the selected repair target "
+                  "through the guarded package backend? This modifies the "
+                  "repair target and invalidates cached diagnostics.").arg(package)
+            : tr(
+                  "Install the package '%1' on the running host through the "
+                  "guarded package backend? This modifies the running host and "
+                  "invalidates cached running-host diagnostics.").arg(package));
+    if (!answer) {
+        return;
+    }
+    const QString verb = targetScope
+        ? QString::fromLatin1("install-target-package")
+        : QString::fromLatin1("install-host-package");
+    QStringList args;
+    args << verb << disk << root << package;
+    const bool started = startCommand(args, false,
+                                      tr("Install %1").arg(package),
+                                      false, false, false, false,
+                                      QString::null, verb);
+    if (started && !m_smokeMode) {
+        showRepairResultDialog(tr("Install %1").arg(package));
+    }
+}
 
 // Cycle 14 loop: the tools list is sortable, so the selected tool resolves
 // by the current row's TITLE (titles are unique), never by row position.
@@ -5234,6 +6930,22 @@ void LegacyMainWindow::toolListHeaderClicked(int column)
     updateToolDetails();
 }
 
+// Missing required diagnostic sections for a repair tool (empty when every
+// required section is cached in m_diagnosticSections). The fail-closed repair
+// gate consumes this list, mirroring MainWindow::missingRequiredDiagnosticTitles.
+QStringList LegacyMainWindow::missingRequiredDiagnosticSections(
+    const QString &toolKey) const
+{
+    const QStringList required = requiredDiagnosticSectionsForTool(toolKey);
+    QStringList missing;
+    for (QStringList::ConstIterator it = required.begin(); it != required.end(); ++it) {
+        if (mapValue(m_diagnosticSections, *it).stripWhiteSpace().isEmpty()) {
+            missing.append(*it);
+        }
+    }
+    return missing;
+}
+
 // True when the selected tool may run now; `reason` always receives the exact
 // explanation. Fail closed: scope, session and the cached capability line
 // (plus the host-maintenance probe for the host initramfs/grub stages) must
@@ -5284,7 +6996,7 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
         std::string capabilityReason;
         if (!m_model.isAvailable(spec.key, toStd(identity()), &capabilityReason)) {
             if (reason) {
-                *reason = fromStd(capabilityReason);
+                *reason = localizedCapabilityReason(fromStd(capabilityReason));
             }
         } else if (reason) {
             *reason = tr(
@@ -5296,7 +7008,7 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
     std::string capabilityReason;
     if (!m_model.isAvailable(spec.key, toStd(identity()), &capabilityReason)) {
         if (reason) {
-            *reason = fromStd(capabilityReason);
+            *reason = localizedCapabilityReason(fromStd(capabilityReason));
         }
         return false;
     }
@@ -5310,12 +7022,309 @@ bool LegacyMainWindow::toolRunReady(int toolIndex, QString *reason) const
             return false;
         }
     }
+    // Single source of truth: every required diagnostic section must be cached
+    // before the tool may run. Missing/stale evidence fails closed with the
+    // same "run diagnostics first" remedy the modern GUI shows.
+    const QStringList missing = missingRequiredDiagnosticSections(
+        QString::fromLatin1(spec.key));
+    if (!missing.isEmpty()) {
+        QStringList titles;
+        for (QStringList::ConstIterator it = missing.begin(); it != missing.end(); ++it) {
+            titles.append(diagnosticTitle(*it));
+        }
+        if (reason) {
+            *reason = tr("Run the %1 diagnostic for the selected scope first "
+                         "(the cached evidence is missing).")
+                          .arg(titles.join(QString::fromLatin1(", ")));
+        }
+        return false;
+    }
     if (reason) {
         *reason = tr(
             "Run this guarded repair action using the cached read-only "
             "diagnostic evidence. A confirmation is shown first.");
     }
     return true;
+}
+
+// Ported from MainWindow::kernelsRemovalPreview(): parses the cached `kernel`
+// diagnostic section into the concise kernel-inventory summary modern shows in
+// the kernels tool detail pane (running/newest/repository-latest kernel,
+// superseded kernels available for removal, and the orphaned/incomplete/
+// missing-headers classes). Fail-closed: an empty/absent cached section returns
+// an empty string and the detail pane keeps its static description only.
+// gcc 4.1 (Etch) enforces the C++98 rule that a local type cannot be a
+// template argument, so KernelRemoval lives at namespace scope rather than
+// inside kernelsRemovalPreview(). (Qt3 QValueList<KernelRemoval> needs this.)
+struct KernelRemoval {
+    QString version;
+    QStringList packages;
+    unsigned long long sizeBytes;
+    KernelRemoval() : sizeBytes(0) {}
+};
+
+// Parses the helper's read-only `File system check <device>: <fstype>
+// uuid=<uuid> mount=<mount> tool=<tool> result=<result>` lines (plus the
+// per-device `File system check detail ...` line) into records. Fail closed: a
+// malformed or unrecognized line is skipped, never fabricated; the summary
+// line is ignored.
+QValueList<LegacyFsCheckResult> parseFilesystemCheckOutput(const QString &output)
+{
+    QValueList<LegacyFsCheckResult> results;
+    QMap<QString, int> indexByDevice;
+    const QStringList lines = QStringList::split(QChar('\n'), output, true);
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString line = (*it).stripWhiteSpace();
+        if (line.startsWith(QString::fromLatin1("File system check detail "))) {
+            const QString rest = line.mid(24);
+            const int colon = rest.find(QString::fromLatin1(": tool="));
+            if (colon < 0) {
+                continue;
+            }
+            const QString device = rest.left(colon);
+            const int outPos = rest.find(QString::fromLatin1("output="));
+            if (outPos < 0) {
+                continue;
+            }
+            const QMap<QString, int>::const_iterator found =
+                indexByDevice.find(device);
+            if (found != indexByDevice.end()) {
+                results[found.data()].detail =
+                    rest.mid(outPos + 7).stripWhiteSpace();
+            }
+            continue;
+        }
+        if (line.startsWith(QString::fromLatin1("File system check summary:"))) {
+            continue;
+        }
+        if (!line.startsWith(QString::fromLatin1("File system check "))) {
+            continue;
+        }
+        const QString rest = line.mid(18);
+        const int colon = rest.find(QString::fromLatin1(": "));
+        if (colon < 0) {
+            continue;
+        }
+        const QString device = rest.left(colon);
+        const QStringList fields =
+            QStringList::split(QChar(' '), rest.mid(colon + 2), true);
+        if (fields.count() < 5) {
+            continue;
+        }
+        LegacyFsCheckResult r;
+        r.device = device;
+        r.fstype = fields[0];
+        r.uuid = fields[1].startsWith(QString::fromLatin1("uuid="))
+            ? fields[1].mid(5) : QString::null;
+        r.mount = fields[2].startsWith(QString::fromLatin1("mount="))
+            ? fields[2].mid(6) : QString::null;
+        r.tool = fields[3].startsWith(QString::fromLatin1("tool="))
+            ? fields[3].mid(5) : QString::null;
+        r.result = fields[4].startsWith(QString::fromLatin1("result="))
+            ? fields[4].mid(7) : QString::null;
+        indexByDevice.insert(r.device, results.count());
+        results.append(r);
+    }
+    return results;
+}
+
+// The preferred (safest complete) repair mode is listed first (modern
+// MainWindow::filesystemRepairModes parity, mirroring the helper's
+// filesystem_mode_field matrix). A mounted non-btrfs filesystem offers only
+// the read-only check: its offline repair tool must never run against a
+// mounted filesystem.
+QStringList filesystemRepairModes(const QString &fstype, bool mounted)
+{
+    const QString fs = fstype.lower();
+    if (fs == QString::fromLatin1("btrfs")) {
+        return mounted
+            ? QStringList() << QString::fromLatin1("scrub")
+                            << QString::fromLatin1("check")
+            : QStringList() << QString::fromLatin1("repair")
+                            << QString::fromLatin1("rescue")
+                            << QString::fromLatin1("scrub")
+                            << QString::fromLatin1("check");
+    }
+    if (fs == QString::fromLatin1("zfs")) {
+        return QStringList() << QString::fromLatin1("scrub")
+                             << QString::fromLatin1("check");
+    }
+    if (fs == QString::fromLatin1("f2fs")) {
+        return mounted
+            ? QStringList()
+            : QStringList() << QString::fromLatin1("repair");
+    }
+    if (mounted) {
+        return QStringList() << QString::fromLatin1("check");
+    }
+    return QStringList() << QString::fromLatin1("repair")
+                         << QString::fromLatin1("check");
+}
+
+QString LegacyMainWindow::kernelsRemovalPreview() const
+{
+    const QString section = mapValue(m_diagnosticSections,
+                                     QString::fromLatin1("kernel"));
+    if (section.stripWhiteSpace().isEmpty()) {
+        return QString::null;
+    }
+
+    QValueList<KernelRemoval> removable;
+    QString running;
+    QString latest;
+    QString repoLatest;
+    QStringList missingHeaders;
+    QStringList orphanedHeaders;
+    QStringList orphanedKernels;
+    QStringList orphanedBuildSupport;
+    QStringList incompleteKernels;
+
+    const QString removablePrefix = QString::fromLatin1("Kernel removable:");
+    const QString runningPrefix = QString::fromLatin1("Kernel running:");
+    const QString latestPrefix = QString::fromLatin1("Kernel latest:");
+    const QString repoLatestPrefix = QString::fromLatin1("Kernel repository latest:");
+    const QString missingPrefix = QString::fromLatin1("Kernel missing headers:");
+    const QString orphanedPrefix = QString::fromLatin1("Kernel orphaned headers:");
+    const QString orphanedKernelPrefix = QString::fromLatin1("Kernel orphaned kernel:");
+    const QString orphanedBuildSupportPrefix =
+        QString::fromLatin1("Kernel orphaned build support:");
+    const QString incompletePrefix = QString::fromLatin1("Kernel incomplete:");
+    const QStringList lines = QStringList::split(QChar('\n'), section, true);
+    for (QStringList::ConstIterator it = lines.begin(); it != lines.end(); ++it) {
+        const QString line = (*it).stripWhiteSpace();
+        if (line.startsWith(removablePrefix)) {
+            const QString rest = line.mid(removablePrefix.length())
+                                     .stripWhiteSpace();
+            if (rest == QString::fromLatin1("none")) {
+                continue;
+            }
+            KernelRemoval entry;
+            const int spacePos = rest.find(QChar(' '));
+            entry.version = spacePos >= 0 ? rest.left(spacePos) : rest;
+            const int sizePos = rest.find(QString::fromLatin1("size="));
+            if (sizePos >= 0) {
+                bool ok = false;
+                const QString sizeRest = rest.mid(sizePos + 5);
+                const int sizeSpace = sizeRest.find(QChar(' '));
+                const QString sizeText = sizeSpace >= 0
+                    ? sizeRest.left(sizeSpace) : sizeRest;
+                const unsigned long long bytes = sizeText.toULongLong(&ok);
+                if (ok && bytes > 0) {
+                    entry.sizeBytes = bytes;
+                }
+            }
+            const int pkgsPos = rest.find(QString::fromLatin1("pkgs="));
+            if (pkgsPos >= 0) {
+                const QString pkgs = rest.mid(pkgsPos + 5).stripWhiteSpace();
+                if (!pkgs.isEmpty()) {
+                    entry.packages = QStringList::split(QChar(','), pkgs, false);
+                }
+            }
+            removable.append(entry);
+        } else if (line.startsWith(missingPrefix)) {
+            const QString version = line.mid(missingPrefix.length())
+                                        .stripWhiteSpace();
+            if (!version.isEmpty()) {
+                missingHeaders.append(version);
+            }
+        } else if (line.startsWith(orphanedPrefix)) {
+            const QString version = line.mid(orphanedPrefix.length())
+                                        .stripWhiteSpace();
+            if (!version.isEmpty()) {
+                orphanedHeaders.append(version);
+            }
+        } else if (line.startsWith(orphanedKernelPrefix)) {
+            const QString version = line.mid(orphanedKernelPrefix.length())
+                                        .stripWhiteSpace();
+            if (!version.isEmpty()) {
+                orphanedKernels.append(version);
+            }
+        } else if (line.startsWith(orphanedBuildSupportPrefix)) {
+            const QString rest = line.mid(orphanedBuildSupportPrefix.length())
+                                     .stripWhiteSpace();
+            if (!rest.isEmpty()) {
+                orphanedBuildSupport.append(rest);
+            }
+        } else if (line.startsWith(incompletePrefix)) {
+            const QString version = line.mid(incompletePrefix.length())
+                                        .stripWhiteSpace();
+            if (!version.isEmpty()) {
+                incompleteKernels.append(version);
+            }
+        } else if (line.startsWith(repoLatestPrefix)) {
+            const QString value = line.mid(repoLatestPrefix.length())
+                                      .stripWhiteSpace();
+            if (!value.isEmpty()
+                && value != QString::fromLatin1("unavailable")) {
+                repoLatest = value;
+            }
+        } else if (line.startsWith(runningPrefix)) {
+            running = line.mid(runningPrefix.length()).stripWhiteSpace();
+        } else if (line.startsWith(latestPrefix)) {
+            latest = line.mid(latestPrefix.length()).stripWhiteSpace();
+        }
+    }
+
+    QStringList out;
+    // Current kernel state (running / installed-latest / repository-latest).
+    // A repair target has no running kernel ("none" or empty), so no running
+    // line is emitted for it; a real host kernel is always shown.
+    if (!running.isEmpty() && running != QString::fromLatin1("none")) {
+        out << tr("Running kernel: %1.").arg(running);
+    }
+    if (!latest.isEmpty()) {
+        out << tr("Newest installed kernel: %1.").arg(latest);
+    }
+    if (!repoLatest.isEmpty() && repoLatest != latest) {
+        out << tr("Repository latest kernel: %1 (newer than the installed newest).")
+                   .arg(repoLatest);
+    }
+    if (removable.isEmpty()) {
+        out << tr("No superseded (older) kernels are installed.");
+    } else {
+        out << tr("Superseded kernel(s) available for removal: %1.")
+                   .arg(removable.count());
+        int number = 1;
+        for (QValueList<KernelRemoval>::ConstIterator it = removable.begin();
+             it != removable.end(); ++it) {
+            for (QStringList::ConstIterator pkg = (*it).packages.begin();
+                 pkg != (*it).packages.end(); ++pkg) {
+                out << QString::fromLatin1("%1. %2").arg(number++).arg(*pkg);
+            }
+        }
+        unsigned long long totalBytes = 0;
+        for (QValueList<KernelRemoval>::ConstIterator it = removable.begin();
+             it != removable.end(); ++it) {
+            totalBytes += (*it).sizeBytes;
+        }
+        if (totalBytes > 0) {
+            out << QString::null;
+            out << tr("Approximately %1 MB would be restored.")
+                       .arg(static_cast<double>(totalBytes) / (1024.0 * 1024.0),
+                            0, 'f', 1);
+        }
+    }
+    if (!missingHeaders.isEmpty()) {
+        out << tr("Missing headers (latest kernel has no matching headers): %1.")
+                   .arg(missingHeaders.join(QString::fromLatin1(", ")));
+    }
+    if (!orphanedHeaders.isEmpty()) {
+        out << tr("Orphaned headers (no matching kernel): %1.")
+                   .arg(orphanedHeaders.join(QString::fromLatin1(", ")));
+    }
+    if (!orphanedKernels.isEmpty()) {
+        out << tr("Orphaned kernel components (no owning package): %1.")
+                   .arg(orphanedKernels.join(QString::fromLatin1(", ")));
+    }
+    if (!orphanedBuildSupport.isEmpty()) {
+        out << tr("Orphaned kernel build support (kernel gone): %1.")
+                   .arg(orphanedBuildSupport.join(QString::fromLatin1("; ")));
+    }
+    if (!incompleteKernels.isEmpty()) {
+        out << tr("Incomplete kernels (installed package without its on-disk files): %1.")
+                   .arg(incompleteKernels.join(QString::fromLatin1(", ")));
+    }
+    return out.join(QString::fromLatin1("\n"));
 }
 
 // Selected tool pane: modern title, per-tool button text, description and
@@ -5380,6 +7389,17 @@ void LegacyMainWindow::updateToolDetails()
     } else {
         planStatus = tr(spec.planBase);
     }
+    // P2 (modern kernelsRemovalPreview parity): when the kernels tool is
+    // selected and the cached `kernel` diagnostic section is present, append
+    // the parsed kernel-inventory summary (superseded/orphaned/incomplete/
+    // missing-headers) to the plan-status pane. Fail-closed: no cached
+    // evidence leaves the static description untouched.
+    if (QString::fromLatin1(spec.key) == QString::fromLatin1("kernels")) {
+        const QString preview = kernelsRemovalPreview();
+        if (!preview.isEmpty()) {
+            planStatus += QString::fromLatin1("\n\n") + preview;
+        }
+    }
     QString reason;
     const bool ready = toolRunReady(index, &reason);
     if (!ready) {
@@ -5409,6 +7429,15 @@ void LegacyMainWindow::runSelectedTool()
                                  reason, QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
+    // The file system repair tool runs the inspect-then-repair flow inside the
+    // single repair result popup (the read-only check, the inline per-device
+    // decision and each confirmed repair through the helper's fs-repair verb).
+    // It carries its own per-device confirmation, so it never reaches the
+    // generic single-stage command path below.
+    if (QString::fromLatin1(spec.key) == QString::fromLatin1("filesystem")) {
+        runFilesystemRepairFlow();
+        return;
+    }
     if (spec.write && spec.confirm) {
         const bool answer = confirmWrapped(
             this, tr("Confirm repair"),
@@ -5432,12 +7461,515 @@ void LegacyMainWindow::runSelectedTool()
         && stage != QString::fromLatin1("fs-inspect")) {
         args << stage;
     }
+    // Serialize the cached baseline sections the helper consumes so this
+    // repair reuses the cached diagnostic evidence instead of re-collecting
+    // it (modern parity): initramfs and the interactive kernels menu consume
+    // `kernel`, the GPU repair consumes `gpu` + `kernel`, the display repair
+    // consumes `display`, the GRUB repair consumes `grub`, and the boot-stack
+    // reconciliation consumes boot-evidence/kernel/uki/grub. Sections without
+    // a helper-side consumer are gated by toolRunReady above only and stay
+    // verified fresh by the helper's own preflights. The gate above guarantees
+    // every required section is cached, so nothing is silently omitted.
+    const QString toolKey = QString::fromLatin1(spec.key);
+    const QStringList required = requiredDiagnosticSectionsForTool(toolKey);
+    for (QStringList::ConstIterator it = required.begin(); it != required.end(); ++it) {
+        if (!repairToolSerializesBaselineSection(*it)) {
+            continue;
+        }
+        const QString cached = mapValue(m_diagnosticSections, *it);
+        if (!cached.stripWhiteSpace().isEmpty()) {
+            args << QString::fromLatin1("--evidence") << *it
+                 << legacyBase64Encode(cached);
+        }
+    }
+    // The GPU and kernel repairs drive the helper's interactive menus over the
+    // PROMPT/ANSWER channel; startCommand reserves the mode-600 menu-answer
+    // file and hands the helper the interactive-session environment for these
+    // two tools only.
+    const bool interactive = toolKey == QString::fromLatin1("gpu")
+        || toolKey == QString::fromLatin1("kernels");
     const bool started = startCommand(args, false, tr(spec.title),
                                        false, false, false, false, QString::null,
-                                       stage);
+                                       stage, false, interactive);
     if (started && !m_smokeMode) {
         showRepairResultDialog(tr(spec.title));
     }
+}
+
+// The standalone "Check File Systems" flow (modern runFilesystemRepairFlow
+// parity): the read-only fs-inspect and the per-device repair all run inside
+// the single repair result popup, with the per-device decision surfaced inline
+// through the popup's prompt input line (no separate modal). Only a device the
+// check reported with `issues` is ever offered for repair, and the helper
+// repeats its scope/mount/tool preflights on every repair (never an offline
+// fsck against a still-mounted filesystem). Returns true when at least one
+// repair completed successfully.
+bool LegacyMainWindow::runFilesystemRepairFlow()
+{
+    if (m_running || m_filesystemRepairFlowActive || m_repairPlanActive) {
+        return false;
+    }
+    // Fail closed: the cached capability line must name the filesystem tool as
+    // available before any fs-inspect/fs-repair command runs.
+    std::string capReason;
+    if (!m_model.isAvailable("filesystem", toStd(identity()), &capReason)) {
+        QMessageBox::warning(this, tr("File system repair unavailable"),
+                             localizedCapabilityReason(fromStd(capReason)));
+        return false;
+    }
+    if (!beginRepairPlan(/*fullRepair=*/false, QStringList(),
+                         /*runFilesystem=*/true)) {
+        return false;
+    }
+    if (!m_smokeMode) {
+        showRepairResultDialog(tr("File system repair"));
+    }
+    return m_repairPlanAnyRepairCompleted;
+}
+
+// Captures the scope and starts the first command of the single-popup repair
+// plan (the read-only fs-inspect, or the remaining Full Repair stages directly
+// when the plan has no file system stage). The remaining steps (inline
+// decision, per-device repair, remaining Full Repair stages) are driven by
+// advanceRepairPlan().
+bool LegacyMainWindow::beginRepairPlan(bool fullRepair,
+                                       const QStringList &remainingStages,
+                                       bool runFilesystem)
+{
+    if (m_running || m_filesystemRepairFlowActive || m_repairPlanActive) {
+        return false;
+    }
+    const bool host = hostScope();
+    m_repairPlanActive = true;
+    m_repairPlanFullRepair = fullRepair;
+    m_repairPlanHost = host;
+    m_repairPlanDisk = selectedDisk();
+    m_repairPlanRoot = selectedRoot();
+    m_repairPlanScopeLabel = host ? tr("running host")
+                                  : tr("selected repair system");
+    m_repairPlanRemainingStages = remainingStages;
+    m_repairPlanCandidates.clear();
+    m_repairPlanCandidateModes.clear();
+    m_repairPlanChosenModes.clear();
+    m_repairPlanRepairIndex = -1;
+    m_repairPlanAnyRepairCompleted = false;
+    m_repairPlanInlineQuestion = false;
+    m_filesystemRepairFlowActive = runFilesystem;
+
+    if (!runFilesystem) {
+        // No file system pre-stage: run the remaining stages directly.
+        if (!startRemainingRepairStages()) {
+            m_repairPlanPhase = RepairPlanDone;
+            m_repairPlanActive = false;
+            m_filesystemRepairFlowActive = false;
+            return false;
+        }
+        return true;
+    }
+
+    m_repairPlanPhase = RepairPlanFsInspect;
+    QStringList args;
+    args << (host ? QString::fromLatin1("host-fs-inspect")
+                  : QString::fromLatin1("fs-inspect"))
+         << m_repairPlanDisk << m_repairPlanRoot;
+    const bool started = startCommand(
+        args, false,
+        fullRepair ? tr("Check File Systems (Full Repair pre-stage)")
+                   : tr("Check File Systems (manual)"),
+        false, false, false, false, QString::null,
+        QString::fromLatin1("fs-inspect"));
+    if (!started) {
+        // startCommand already emitted finished(false,-1), which scheduled
+        // advanceRepairPlan(); clearing the flag makes that a no-op and the
+        // caller reports the failure.
+        m_filesystemRepairFlowActive = false;
+        m_repairPlanActive = false;
+        m_repairPlanPhase = RepairPlanDone;
+        return false;
+    }
+    return true;
+}
+
+// The single-popup plan step driver, re-entered after every completed plan
+// command and after the inline per-device decision. It never opens a new
+// window: every step streams into the one repair result popup.
+void LegacyMainWindow::advanceRepairPlan()
+{
+    if (!m_repairPlanActive || m_repairPlanPhase == RepairPlanDone) {
+        return;
+    }
+    switch (m_repairPlanPhase) {
+    case RepairPlanFsInspect: {
+        // Step 2: parse the read-only per-device results and decide the repair
+        // candidates (only `issues` devices with a safe mode qualify).
+        const bool inspectOk = m_lastCommandOk;
+        const QString inspectOutput = m_transcript;
+        if (!inspectOk) {
+            appendLog(QString::fromLatin1(
+                "The read-only file system check failed; review the helper "
+                "output in Logs."));
+            m_repairPlanPhase = RepairPlanDone;
+            finishRepairPlan();
+            return;
+        }
+        const QValueList<LegacyFsCheckResult> results =
+            parseFilesystemCheckOutput(inspectOutput);
+        QValueList<LegacyFsCheckResult> repairCandidates;
+        QValueList<QStringList> candidateModes;
+        int issueCount = 0;
+        int skippedCount = 0;
+        int unavailableCount = 0;
+        int noSafeModeCount = 0;
+        for (QValueList<LegacyFsCheckResult>::ConstIterator it = results.begin();
+             it != results.end(); ++it) {
+            const LegacyFsCheckResult &result = *it;
+            if (result.result == QString::fromLatin1("skipped")) {
+                ++skippedCount;
+                continue;
+            }
+            if (result.result == QString::fromLatin1("unsupported")
+                || result.result == QString::fromLatin1("tool-missing")) {
+                ++unavailableCount;
+                continue;
+            }
+            if (result.result != QString::fromLatin1("issues")) {
+                continue;
+            }
+            ++issueCount;
+            const bool mounted = !result.mount.isEmpty()
+                && result.mount != QString::fromLatin1("unmounted");
+            const QStringList modes =
+                filesystemRepairModes(result.fstype, mounted);
+            bool hasRepairMode = false;
+            for (QStringList::ConstIterator m = modes.begin();
+                 m != modes.end(); ++m) {
+                if (*m != QString::fromLatin1("check")) {
+                    hasRepairMode = true;
+                    break;
+                }
+            }
+            if (!hasRepairMode) {
+                ++noSafeModeCount;
+                continue;
+            }
+            repairCandidates.append(result);
+            candidateModes.append(modes);
+        }
+
+        if (issueCount == 0) {
+            QStringList limitations;
+            if (skippedCount > 0) {
+                limitations.append(tr(
+                    "%1 mounted filesystem(s) were skipped because their check "
+                    "tools are offline-only").arg(skippedCount));
+            }
+            if (unavailableCount > 0) {
+                limitations.append(tr(
+                    "%1 filesystem(s) are unsupported or have no installed "
+                    "check tool").arg(unavailableCount));
+            }
+            const QString message = limitations.isEmpty()
+                ? tr("No file system errors were detected on the %1's root, "
+                     "/boot or /home filesystems. No repair was run.")
+                      .arg(m_repairPlanScopeLabel)
+                : tr("No repairable file system errors were detected on the "
+                     "%1's root, /boot or /home filesystems, but %2. No "
+                     "repair was run.").arg(m_repairPlanScopeLabel)
+                         .arg(limitations.join(QString::fromLatin1("; ")));
+            appendLog(message);
+            if (m_resultView) {
+                m_resultView->append(message);
+            }
+            m_repairPlanPhase = RepairPlanDone;
+            continueOrFinishRepairPlan();
+            return;
+        }
+
+        if (repairCandidates.isEmpty()) {
+            const QString message = tr(
+                "The read-only check found issues on %1 mounted filesystem(s) "
+                "that have no safe repair mode from this environment. Unmount "
+                "the filesystem and check again, or repair it from a live "
+                "system that is not using it.").arg(noSafeModeCount);
+            appendLog(message);
+            if (m_resultView) {
+                m_resultView->append(message);
+            }
+            // Issues exist but no safe repair is available: fail closed and do
+            // not proceed into the remaining plan stages.
+            m_repairPlanPhase = RepairPlanDone;
+            finishRepairPlan();
+            return;
+        }
+
+        m_repairPlanCandidates = repairCandidates;
+        m_repairPlanCandidateModes = candidateModes;
+        poseRepairPlanInlineDecision();
+        return;
+    }
+    case RepairPlanFsRepair: {
+        // A per-device repair finished; record its outcome and start the next
+        // selected device (or move on to the remaining plan stages).
+        if (m_lastCommandOk) {
+            m_repairPlanAnyRepairCompleted = true;
+        }
+        if (startNextRepairPlanDevice()) {
+            return;
+        }
+        // Every selected device has been attempted. If none completed, fail
+        // closed: the remaining plan stages never run after a file system
+        // repair that failed on every selected device.
+        if (!m_repairPlanAnyRepairCompleted) {
+            m_repairPlanPhase = RepairPlanDone;
+            finishRepairPlan();
+            return;
+        }
+        continueOrFinishRepairPlan();
+        return;
+    }
+    case RepairPlanRemaining: {
+        m_repairPlanPhase = RepairPlanDone;
+        finishRepairPlan();
+        return;
+    }
+    default:
+        return;
+    }
+}
+
+// Presents the numbered per-device repair decision through the popup's prompt
+// input line (the same surface the helper's interactive menus use). The user
+// types the 1-based device numbers to repair, or 0 to skip.
+void LegacyMainWindow::poseRepairPlanInlineDecision()
+{
+    m_repairPlanPhase = RepairPlanFsDecision;
+    m_repairPlanInlineQuestion = true;
+
+    QStringList lines;
+    lines << tr("File system errors were detected. Choose the devices to "
+                "repair (the safest mode is used for each):");
+    const int count = static_cast<int>(m_repairPlanCandidates.size());
+    for (int i = 0; i < count; ++i) {
+        const LegacyFsCheckResult &candidate = m_repairPlanCandidates[i];
+        const QStringList modes =
+            i < static_cast<int>(m_repairPlanCandidateModes.size())
+                ? m_repairPlanCandidateModes[i] : QStringList();
+        const QString mode = modes.isEmpty()
+            ? QString::fromLatin1("repair") : modes.first();
+        lines << QString::fromLatin1("  %1. %2 (%3) - %4")
+                     .arg(i + 1)
+                     .arg(candidate.device)
+                     .arg(candidate.fstype)
+                     .arg(mode);
+        if (!candidate.detail.isEmpty()) {
+            lines << QString::fromLatin1("     %1").arg(candidate.detail);
+        }
+    }
+    lines << QString::fromLatin1("  0. %1")
+                 .arg(tr("Skip file system repair and continue"));
+    lines << QString::null;
+    lines << tr("Enter the device numbers to repair (space- or comma-separated, "
+                "for example \"1 3\"), or 0 to skip.");
+    lines << tr("Offline repair modes refuse mounted filesystems; the running "
+                "host root is never repaired offline.");
+
+    const QString text = lines.join(QString::fromLatin1("\n"));
+    appendLog(text);
+    if (m_resultView) {
+        m_resultView->append(text);
+    }
+    if (m_promptHint) {
+        m_promptHint->setText(tr("Numbers of the devices to repair (0 = skip)"));
+        m_promptHint->show();
+    }
+    if (m_promptInput) {
+        m_promptInput->setEnabled(true);
+        m_promptInput->clear();
+        m_promptInput->setFocus();
+    }
+    if (m_promptSend) {
+        m_promptSend->setEnabled(true);
+    }
+}
+
+// Applies the typed inline answer (a numbered device list). Declining (0 or an
+// empty answer) stops a Full Repair plan (the remaining stages never run after
+// a declined file system repair) and just ends a standalone flow.
+void LegacyMainWindow::processRepairPlanInlineAnswer(const QString &answer)
+{
+    m_repairPlanInlineQuestion = false;
+
+    const int count = static_cast<int>(m_repairPlanCandidates.size());
+    m_repairPlanChosenModes.clear();
+    for (int i = 0; i < count; ++i) {
+        m_repairPlanChosenModes.append(QString::null);
+    }
+    // Parse decimal numbers out of the free text (space/comma separated).
+    bool any = false;
+    const int len = static_cast<int>(answer.length());
+    int idx = 0;
+    while (idx < len) {
+        if (answer[idx].isDigit()) {
+            int value = 0;
+            while (idx < len && answer[idx].isDigit()) {
+                value = value * 10 + answer[idx].digitValue();
+                ++idx;
+            }
+            if (value >= 1 && value <= count) {
+                const QStringList modes =
+                    value - 1 < static_cast<int>(m_repairPlanCandidateModes.size())
+                        ? m_repairPlanCandidateModes[value - 1] : QStringList();
+                m_repairPlanChosenModes[value - 1] =
+                    modes.isEmpty() ? QString::fromLatin1("repair")
+                                    : modes.first();
+                any = true;
+            }
+            continue;
+        }
+        ++idx;
+    }
+
+    if (!any) {
+        appendLog(QString::fromLatin1(
+            "File system repair cancelled before any repair was run."));
+        if (m_resultView) {
+            m_resultView->append(tr(
+                "No devices were selected; the file system repair stage was "
+                "skipped."));
+        }
+        m_repairPlanPhase = RepairPlanDone;
+        finishRepairPlan();
+        return;
+    }
+
+    m_repairPlanRepairIndex = -1;
+    m_repairPlanAnyRepairCompleted = false;
+    if (!startNextRepairPlanDevice()) {
+        // Cannot happen once at least one device is chosen, but fail closed.
+        m_repairPlanPhase = RepairPlanDone;
+        finishRepairPlan();
+    }
+}
+
+// Starts the next chosen per-device fs-repair command inside the single popup.
+// Returns false when no chosen device remains (the caller then moves on to the
+// remaining plan stages or finalizes the plan).
+bool LegacyMainWindow::startNextRepairPlanDevice()
+{
+    const int count = static_cast<int>(m_repairPlanCandidates.size());
+    int index = m_repairPlanRepairIndex + 1;
+    while (index < count && m_repairPlanChosenModes[index].isEmpty()) {
+        ++index;
+    }
+    if (index >= count) {
+        m_repairPlanRepairIndex = -1;
+        return false;
+    }
+    m_repairPlanRepairIndex = index;
+    m_repairPlanPhase = RepairPlanFsRepair;
+    const LegacyFsCheckResult &candidate = m_repairPlanCandidates[index];
+    const QString mode = m_repairPlanChosenModes[index];
+    QStringList args;
+    args << (m_repairPlanHost ? QString::fromLatin1("host-fs-repair")
+                              : QString::fromLatin1("fs-repair"))
+         << m_repairPlanDisk << m_repairPlanRoot << candidate.device << mode;
+    // A start failure emits finished(false,-1) synchronously, which schedules
+    // advanceRepairPlan(); the driver then records the failure and moves on.
+    startCommand(args, false, tr("File system repair (%1)").arg(mode),
+                 false, false, false, false, QString::null,
+                 QString::fromLatin1("filesystem"));
+    return true;
+}
+
+// Continues to the remaining Full Repair stages (one helper request) or
+// finalizes the plan when there is nothing left to run.
+void LegacyMainWindow::continueOrFinishRepairPlan()
+{
+    if (startRemainingRepairStages()) {
+        return;
+    }
+    m_repairPlanPhase = RepairPlanDone;
+    finishRepairPlan();
+}
+
+// Starts the remaining Full Repair stages as one helper request inside the
+// single popup. Returns false when there are no remaining stages (the plan
+// ends here) or the command could not start (the caller finalizes the plan).
+bool LegacyMainWindow::startRemainingRepairStages()
+{
+    if (!m_repairPlanFullRepair || m_repairPlanRemainingStages.isEmpty()) {
+        return false;
+    }
+    m_repairPlanPhase = RepairPlanRemaining;
+    QStringList args;
+    args << (m_repairPlanHost ? QString::fromLatin1("host-repair")
+                              : QString::fromLatin1("repair"))
+         << m_repairPlanDisk << m_repairPlanRoot;
+    args += m_repairPlanRemainingStages;
+    // Serialize the boot-stack component baselines (modern runFullRepair
+    // parity); the helper re-verifies the per-stage preflights regardless.
+    if (m_repairPlanRemainingStages.contains(QString::fromLatin1("boot-stack"))) {
+        const QStringList required =
+            requiredDiagnosticSectionsForTool(QString::fromLatin1("bootstack"));
+        for (QStringList::ConstIterator it = required.begin();
+             it != required.end(); ++it) {
+            const QString cached = mapValue(m_diagnosticSections, *it);
+            if (!cached.stripWhiteSpace().isEmpty()) {
+                args << QString::fromLatin1("--evidence") << *it
+                     << legacyBase64Encode(cached);
+            }
+        }
+    }
+    return startCommand(args, false, tr("Full Repair"),
+                        false, false, false, false, QString::null,
+                        m_repairPlanRemainingStages.join(QString::fromLatin1(" ")));
+}
+
+// Finalizes the single-popup plan on every path (success, failure, decline):
+// enables the popup's Close, performs the one invalidation + regeneration for
+// a Full Repair plan (or the stale-based refresh for a standalone flow), and
+// clears the plan state. Mirrors helperFinished's Full Repair path.
+void LegacyMainWindow::finishRepairPlan()
+{
+    const bool fullRepair = m_repairPlanFullRepair;
+    m_repairPlanPhase = RepairPlanDone;
+    m_repairPlanActive = false;
+    m_repairPlanInlineQuestion = false;
+    m_filesystemRepairFlowActive = false;
+
+    // The popup's Close stays disabled until this point.
+    if (m_resultStatus && m_resultCloseButton) {
+        m_resultStatus->setText(fullRepair
+            ? tr("Full Repair plan finished. Review the output above, then "
+                 "close this window.")
+            : tr("File system repair finished. Review the output above, then "
+                 "close this window."));
+        m_resultCloseButton->setEnabled(true);
+        if (m_resultDialog) {
+            m_resultDialog->setCloseAllowed(true);
+        }
+    }
+
+    if (fullRepair) {
+        m_model.reset();
+        m_diagnosticSections.clear();
+        m_fullDiagnosticReport = QString::null;
+        appendLog(QString::fromLatin1(
+            "Full Repair completed; cached diagnostics were invalidated "
+            "for the current scope."));
+        maybeAutoRefreshDiagnostics(QString::fromLatin1("Full Repair"));
+    } else if (m_model.diagnosticsStale()) {
+        maybeAutoRefreshDiagnostics(QString::fromLatin1("file system repair"));
+    }
+
+    m_repairPlanRemainingStages.clear();
+    m_repairPlanCandidates.clear();
+    m_repairPlanCandidateModes.clear();
+    m_repairPlanChosenModes.clear();
+    m_repairPlanRepairIndex = -1;
+    m_repairPlanDisk = QString::null;
+    m_repairPlanRoot = QString::null;
+    m_repairPlanScopeLabel = QString::null;
 }
 
 void LegacyMainWindow::configurePlan()
@@ -5449,18 +7981,23 @@ void LegacyMainWindow::configurePlan()
 
 void LegacyMainWindow::planCheckboxChanged()
 {
-    // Modern preference semantics: only the checkboxes the current scope
-    // actually offers (enabled) carry the user's preference; rows forced off
-    // by the availability pass must never clobber the saved preference.
+    // Nothing is recorded before loadLegacySettings() has filled the register;
+    // the register is never refilled with defaults from this handler.
+    if (!m_settingsLoaded
+        || m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+        return;
+    }
+    // Modern preference semantics: record the toggled checkbox directly
+    // (sender()) so the user's explicit change is never dropped, then refresh
+    // the other ENABLED rows.  Rows forced off by the availability pass stay
+    // untouched so they never clobber the saved preference.
+    const QObject *toggled = sender();
     for (int i = 0; i < planSpecCount
                     && i < static_cast<int>(m_planChecks.size()); ++i) {
-        if (m_planChecks[i] && m_planChecks[i]->isEnabled()) {
-            if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
-                m_planPreferences.assign(planSpecCount, false);
-                for (int j = 0; j < planSpecCount; ++j) {
-                    m_planPreferences[j] = planSpecs[j].defaultChecked;
-                }
-            }
+        if (!m_planChecks[i]) {
+            continue;
+        }
+        if (m_planChecks[i] == toggled || m_planChecks[i]->isEnabled()) {
             m_planPreferences[i] = m_planChecks[i]->isChecked();
         }
     }
@@ -5469,25 +8006,44 @@ void LegacyMainWindow::planCheckboxChanged()
 }
 
 // Modern availability semantics for the Settings plan checkboxes
+// Re-applies the device-discovery filter checkboxes from their register
+// (m_showNonLinux/m_showRemovable/m_showEncrypted), the plan path's
+// updatePlanChecks() mirror.  blockSignals keeps the re-apply from re-recording
+// a toggle; the register is the single source of truth for the filters.
+void LegacyMainWindow::updateDeviceFilterChecks()
+{
+    if (m_showNonLinuxCheck) {
+        m_showNonLinuxCheck->blockSignals(true);
+        m_showNonLinuxCheck->setChecked(m_showNonLinux);
+        m_showNonLinuxCheck->blockSignals(false);
+    }
+    if (m_showRemovableCheck) {
+        m_showRemovableCheck->blockSignals(true);
+        m_showRemovableCheck->setChecked(m_showRemovable);
+        m_showRemovableCheck->blockSignals(false);
+    }
+    if (m_showEncryptedCheck) {
+        m_showEncryptedCheck->blockSignals(true);
+        m_showEncryptedCheck->setChecked(m_showEncrypted);
+        m_showEncryptedCheck->blockSignals(false);
+    }
+}
+
 // (MainWindow::updateRepairScopeControls() parity): every row is shown. The
-// three-way planStageState() decides the presentation: an available stage is
-// checkable with its saved preference; an explicitly unavailable stage is
-// disabled AND unchecked with the exact reason; a NoEvidence stage keeps a
-// persisted selection checkable (modern "absent evidence never greys out a
-// saved selection") and only disables on the very first run when no selection
-// was persisted yet and evidence genuinely has not arrived. The pass blocks
-// signals so the presentation never re-records the preference; it runs from
-// updateActionStates() whenever the scope or the cached diagnostics change.
+// plan checkboxes are plain user settings: an available stage is checkable
+// with its saved preference (never clobbered by evidence warmth), while an
+// explicitly unavailable stage (capability `unavailable|<reason>`, a frontend
+// gap, or a host-only stage outside Host Maintenance) is disabled AND
+// unchecked with the exact reason. The pass blocks signals so the presentation
+// never re-records the preference; it runs from updateActionStates() whenever
+// the scope or the cached diagnostics change.
 void LegacyMainWindow::updatePlanChecks()
 {
-    if (m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
-        m_planPreferences.assign(planSpecCount, false);
-        for (int i = 0; i < planSpecCount; ++i) {
-            m_planPreferences[i] = planSpecs[i].defaultChecked;
-        }
-    }
-    if (m_planPreferencesPersisted.size() != static_cast<std::size_t>(planSpecCount)) {
-        m_planPreferencesPersisted.assign(planSpecCount, false);
+    // The presentation reads the register only after loadLegacySettings() has
+    // filled it; it never refills the register with defaults.
+    if (!m_settingsLoaded
+        || m_planPreferences.size() != static_cast<std::size_t>(planSpecCount)) {
+        return;
     }
     for (int i = 0; i < planSpecCount
                     && i < static_cast<int>(m_planChecks.size()); ++i) {
@@ -5506,32 +8062,14 @@ void LegacyMainWindow::updatePlanChecks()
                       "Include the %1 stage in the Full Repair plan. The stage runs "
                       "in the plan order shown on the Repair tab.")
                       .arg(tr(planSpecs[i].title));
-        } else if (state == PlanStageUnavailable) {
+        } else {
+            // PlanStageUnavailable is the only disabled state: the stage stays
+            // shown, disabled and unchecked with the exact reason. The saved
+            // preference register is left untouched, so the selection is never
+            // silently unchecked by the presentation pass.
             enabled = false;
             checked = false;
             tip = tr("Unavailable: %1").arg(reason);
-        } else {
-            // PlanStageNoEvidence: keep a persisted selection visible and
-            // editable; only the first-run row with no persisted choice stays
-            // disabled until diagnostics for this scope complete.
-            const bool persisted = i < static_cast<int>(m_planPreferencesPersisted.size())
-                && m_planPreferencesPersisted[i];
-            if (persisted) {
-                enabled = true;
-                checked = m_planPreferences[i];
-                tip = tr(
-                    "No cached capability evidence for this stage yet. Your "
-                    "saved selection is kept and its availability is re-checked "
-                    "when diagnostics for this scope complete.");
-            } else {
-                enabled = false;
-                checked = false;
-                tip = tr(
-                    "No cached capability evidence for this stage yet. Run "
-                    "diagnostics for the selected scope to populate the Full "
-                    "Repair plan; your selection is saved once the stage becomes "
-                    "available.");
-            }
         }
         m_planChecks[i]->blockSignals(true);
         if (enabled) {
@@ -5561,21 +8099,25 @@ bool LegacyMainWindow::planStageSelected(int planIndex) const
 }
 
 
-// Fail-closed availability for one plan stage: the cached capability line plus
-// the host-maintenance probe for the host initramfs/grub stages. A missing
-// diagnostic run keeps the stage unavailable (m_model.isAvailable).
+// Fail-closed availability for one plan stage: a frontend gap, a host-only
+// stage outside Host Maintenance, or a cached `unavailable|<reason>`
+// capability line (including a stale cache). Absent evidence keeps the stage
+// available to the plan presentation (checkable), while the run gate still
+// fails closed on the missing diagnostics.
 bool LegacyMainWindow::planStageAvailable(int planIndex, QString *reason) const
 {
     return planStageState(planIndex, reason) == PlanStageAvailable;
 }
 
-// Three-way presentation state for one plan stage, mirroring
-// MainWindow::capabilityState(). PlanStageAvailable needs an exact cached
-// `available` line (plus the host-maintenance probe for the host
-// initramfs/grub stages); PlanStageUnavailable is the fail-closed explicit
-// unavailable (frontend gap, `unavailable|<reason>` line, or a stale cache);
-// PlanStageNoEvidence means the capability line has not arrived yet (no
-// completed diagnostics for the scope, or no line for that key).
+// Presentation state for one plan stage. The plan checkboxes are plain user
+// settings that stay checkable unless the stage is EXPLICITLY unavailable: a
+// frontend gap, a host-only stage outside Host Maintenance, or a cached
+// `unavailable|<reason>` capability line in the current scope (including a
+// stale cache). A capability line that is merely absent (no completed
+// diagnostics yet) keeps the stage checkable with its saved preference, so the
+// presentation never depends on diagnostic-cache warmth. The fail-closed run
+// gate (toolRunReady()/planRunReady() and the helper runtime preflights) still
+// enforces the same capability evidence.
 LegacyMainWindow::PlanStageState LegacyMainWindow::planStageState(
     int planIndex, QString *reason) const
 {
@@ -5595,32 +8137,36 @@ LegacyMainWindow::PlanStageState LegacyMainWindow::planStageState(
         }
         return PlanStageUnavailable;
     }
+    // Host-only stages (the legacy display-manager repair) stay disabled for
+    // the offline target scope with an exact reason, mirroring the display
+    // tool's hostOnly gate. This is what keeps a host-scope display selection
+    // from being presented (and overwritable) in the ordinary target scope: the
+    // persisted register is only consulted/checkable under Host Maintenance, so
+    // it re-appears checked when the host scope is re-entered.
+    if (spec.hostOnly && !hostScope()) {
+        if (reason) {
+            *reason = tr(
+                "Restore Graphical Login is a host-scope stage on this legacy "
+                "frontend; enter Host Maintenance to run it.");
+        }
+        return PlanStageUnavailable;
+    }
+    // Capability explicitly unavailable in the current scope (the exact helper
+    // reason, including a stale cache). This is the soft gate: it disables the
+    // checkbox and surfaces the reason, but never silently unchecks a saved
+    // selection.
     std::string capabilityReason;
     const CapabilityModel::CapabilityState state =
         m_model.capabilityState(spec.capability, toStd(identity()),
                                 &capabilityReason);
     if (state == CapabilityModel::CapabilityUnavailable) {
         if (reason) {
-            *reason = fromStd(capabilityReason);
+            *reason = localizedCapabilityReason(fromStd(capabilityReason));
         }
         return PlanStageUnavailable;
     }
-    if (state == CapabilityModel::CapabilityNoEvidence) {
-        if (reason) {
-            *reason = fromStd(capabilityReason);
-        }
-        return PlanStageNoEvidence;
-    }
-    if (spec.hostMaintenance && hostScope()) {
-        std::string featureReason;
-        if (!m_model.legacyFeatureAvailable("host-maintenance", toStd(identity()),
-                                            &featureReason)) {
-            if (reason) {
-                *reason = fromStd(featureReason);
-            }
-            return PlanStageUnavailable;
-        }
-    }
+    // Capability available, or its line simply not cached yet: a plain
+    // checkable user setting.
     if (reason) {
         *reason = QString::null;
     }
@@ -5695,6 +8241,28 @@ bool LegacyMainWindow::planRunReady(QString *reason) const
         }
         return false;
     }
+    // Single source of truth: every selected+available stage's required
+    // diagnostic sections must be cached before the plan may run (modern
+    // runFullRepair's per-stage repairEvidenceReadyForTool gate).
+    for (int i = 0; i < planSpecCount; ++i) {
+        if (!planStageSelected(i) || !planStageAvailable(i, 0)) {
+            continue;
+        }
+        const QStringList missing = missingRequiredDiagnosticSections(
+            QString::fromLatin1(planSpecs[i].capability));
+        if (!missing.isEmpty()) {
+            QStringList titles;
+            for (QStringList::ConstIterator it = missing.begin(); it != missing.end(); ++it) {
+                titles.append(diagnosticTitle(*it));
+            }
+            if (reason) {
+                *reason = tr("Run the %1 diagnostic for the selected scope first "
+                             "(the cached evidence is missing).")
+                              .arg(titles.join(QString::fromLatin1(", ")));
+            }
+            return false;
+        }
+    }
     if (!administratorSessionActive()) {
         if (reason) {
             *reason = tr(
@@ -5715,14 +8283,17 @@ bool LegacyMainWindow::planRunReady(QString *reason) const
 // label and the readiness text, exactly like the modern Full Repair plan.
 void LegacyMainWindow::updatePlanView()
 {
-    if (!m_planStageList || !m_planCountLabel || !m_planReadinessLabel
-        || !m_runFullRepairButton) {
+    if (m_planStageLabels.isEmpty() || !m_planCountLabel
+        || !m_planReadinessLabel || !m_runFullRepairButton) {
         return;
     }
-    m_planStageList->clear();
+    for (int i = 0; i < static_cast<int>(m_planStageLabels.size()); ++i) {
+        m_planStageLabels[i]->setText(QString::null);
+        m_planStageLabels[i]->hide();
+    }
     int availableCount = 0;
     QString excludedReason;
-    QListViewItem *last = 0;
+    QStringList titles;
     for (int i = 0; i < planSpecCount; ++i) {
         if (!planStageSelected(i)) {
             continue;
@@ -5735,18 +8306,33 @@ void LegacyMainWindow::updatePlanView()
             continue;
         }
         ++availableCount;
-        last = new QListViewItem(
-            m_planStageList, last,
-            QString::fromLatin1("%1. %2").arg(availableCount)
-                .arg(tr(planSpecs[i].title)));
+        titles.append(QString::fromLatin1("%1. %2").arg(availableCount)
+                          .arg(tr(planSpecs[i].title)));
     }
     if (availableCount == 0) {
         m_planCountLabel->setText(tr("No stages selected"));
-        new QListViewItem(m_planStageList,
-                          tr(
-                              "No Full Repair stages selected - use Configure "
-                              "Plan... or Settings."));
+        m_planStageLabels[0]->setText(tr(
+            "No Full Repair stages selected - use Configure "
+            "Plan... or Settings."));
+        m_planStageLabels[0]->show();
     } else {
+        // Balanced two-column fill (modern parity): the titles flow down the
+        // left column first, then the right, preserving plan order, with the
+        // columns split as evenly as possible (leftCount = ceil(N/2),
+        // rightCount = floor(N/2), so 8 -> 4/4, 9 -> 5/4, 4 -> 2/2). The grid
+        // is a fixed two-column grid of ceil(planSpecCount/2) rows, so the
+        // right column's labels begin at label index ceil(planSpecCount/2).
+        const int leftCount = (availableCount + 1) / 2;
+        const int rightColumnStart = (planSpecCount + 1) / 2;
+        int index = 0;
+        for (QStringList::ConstIterator it = titles.begin();
+             it != titles.end(); ++it, ++index) {
+            const int slot = index < leftCount
+                ? index
+                : rightColumnStart + (index - leftCount);
+            m_planStageLabels[slot]->setText(*it);
+            m_planStageLabels[slot]->show();
+        }
         m_planCountLabel->setText(availableCount == 1
             ? tr("1 stage selected")
             : tr("%1 stages selected").arg(availableCount));
@@ -5780,6 +8366,68 @@ void LegacyMainWindow::updatePlanView()
     const bool canRun = planRunReady(&runReason);
     m_runFullRepairButton->setEnabled(canRun);
     QToolTip::add(m_runFullRepairButton, runReason);
+    // Cap the plan scroll view to the grid's real content height, computed
+    // from the visible labels' own size hints.  Measured on the rig: the
+    // AutoOneFit scroll view's inflated size hint (~676px) made the vertical
+    // splitter give the plan frame 700 of the ~645px Repair page (the tools
+    // pane was squeezed to 257px and clipped) and stretched the four stage
+    // rows to 92px each against 17px size hints (the dead white space between
+    // the rows and after the last one).  With the cap the plan frame sizes to
+    // its content, the stage rows keep their natural height, the readiness
+    // hint gets its full size hint back, and the tools pane reclaims the
+    // space; a two-row floor keeps the view shrinkable so the vertical
+    // scrollbar still appears when the splitter is dragged up.
+    if (m_planScroll) {
+        int rowHint = 0;
+        for (int i = 0; i < static_cast<int>(m_planStageLabels.size()); ++i) {
+            QLabel *stageLabel = m_planStageLabels[i];
+            if (!stageLabel || stageLabel->isHidden()) {
+                continue;
+            }
+            rowHint = QMAX(rowHint, stageLabel->sizeHint().height());
+        }
+        if (rowHint > 0) {
+            // The balanced two-column fill's taller column holds
+            // ceil(availableCount/2) rows; a placeholder-only view is one row.
+            const int rows = availableCount == 0
+                ? 1 : ((availableCount + 1) / 2);
+            const int gridSpacing = 4;
+            const int padding = 8;
+            const int content = rows * rowHint
+                + (rows - 1) * gridSpacing + padding;
+            m_planGridContentHeight = content;
+            m_planScroll->setMaximumHeight(content);
+            m_planScroll->setMinimumContentHeight(
+                rowHint + gridSpacing + padding);
+            m_planScroll->setMinimumHeight(
+                rowHint + gridSpacing + padding);
+            // Cap the plan frame so it shows its content instead of
+            // over-allocating from the scroll view's inflated sizeHint, and pin
+            // the splitter's default position to it. The header chrome is
+            // sizeHint() minus the inflated scroll hint; the extra lines cover
+            // the readiness label's wrap (sizeHint() under-reports it before
+            // layout). 25% of the frame stays visible at the minimum, and the
+            // maximum is generous so the handle can also be dragged down.
+            if (m_planGroup) {
+                const int chrome = m_planGroup->sizeHint().height()
+                    - m_planScroll->sizeHint().height();
+                const int lineHeight = m_planReadinessLabel
+                    ? m_planReadinessLabel->fontMetrics().height() : 20;
+                const int frameHeight = chrome + content + 4 * lineHeight;
+                // Cap the frame so it does not over-allocate from the scroll
+                // view's inflated sizeHint, but keep the cap generous (2x) so
+                // the handle can be dragged down to reveal content the height
+                // calculation under-reports. 65% stays visible at the minimum
+                // so the first plan stage label is still shown when dragged up.
+                m_planGroup->setMaximumHeight(2 * frameHeight);
+                m_planGroup->setMinimumHeight(frameHeight * 65 / 100);
+                QValueList<int> sizes;
+                sizes.append(frameHeight);
+                sizes.append(frameHeight);
+                m_repairVerticalSplitter->setSizes(sizes);
+            }
+        }
+    }
 }
 
 void LegacyMainWindow::runFullRepair()
@@ -5800,30 +8448,108 @@ void LegacyMainWindow::runFullRepair()
                              reason, QMessageBox::Ok, QMessageBox::NoButton);
         return;
     }
-    const QStringList titles = selectedPlanTitles();
-    QString text = tr(
-        "Run the Full Repair plan?\n\nThe selected stages run in order through "
-        "the helper's guarded repair command:\n\n");
-    for (int i = 0; i < static_cast<int>(titles.size()); ++i) {
-        text += tr("  %1. %2\n").arg(i + 1).arg(titles[i]);
+    const bool host = hostScope();
+    // Modern parity (MainWindow::runFullRepair / confirmRepairAction): the
+    // plan's confirmation popup mirrors the modern title, description and
+    // button text exactly.  The operation list is the modern per-stage wording
+    // (the same strings the modern Full Repair plan lists), not the legacy
+    // Settings row titles, so the confirmation reads identically on Etch.
+    const QString selectedSystemLabel = host
+        ? tr("running host") : tr("selected repair system");
+    QStringList operations;
+    for (QStringList::ConstIterator it = stages.begin(); it != stages.end(); ++it) {
+        const QString stage = *it;
+        if (stage == QString::fromLatin1("filesystem")) {
+            operations.append(tr(
+                "Run the read-only file system check, then repair the selected "
+                "devices"));
+        } else if (stage == QString::fromLatin1("dpkg-configure")) {
+            operations.append(tr("Complete interrupted package configuration"));
+        } else if (stage == QString::fromLatin1("fix-broken")) {
+            operations.append(tr("Repair broken APT dependencies"));
+        } else if (stage == QString::fromLatin1("apt-update")) {
+            operations.append(tr("Refresh APT package metadata"));
+        } else if (stage == QString::fromLatin1("apt-upgrade")) {
+            operations.append(tr(
+                "Simulate APT first, then choose a safe "
+                "upgrade/full-upgrade/dist-upgrade transaction"));
+        } else if (stage == QString::fromLatin1("dkms")) {
+            operations.append(tr("Rebuild DKMS modules"));
+        } else if (stage == QString::fromLatin1("display-manager")) {
+            operations.append(tr(
+                "Restore the detected display manager and graphical.target "
+                "without starting the GUI inside chroot"));
+        } else if (stage == QString::fromLatin1("initramfs")) {
+            operations.append(tr("Rebuild all initramfs images"));
+        } else if (stage == QString::fromLatin1("efi")) {
+            operations.append(tr(
+                "Repair the %1 EFI / UKI boot path using its validated ESP")
+                                  .arg(selectedSystemLabel));
+        } else if (stage == QString::fromLatin1("grub")) {
+            operations.append(tr("Regenerate the %1's GRUB configuration")
+                                  .arg(selectedSystemLabel));
+        } else if (stage == QString::fromLatin1("extlinux")) {
+            operations.append(tr("Regenerate the %1's extlinux configuration")
+                                  .arg(selectedSystemLabel));
+        }
     }
-    text += tr(
-        "\nThe helper keeps every runtime preflight; a stage that fails stops "
-        "the plan.");
+    operations.prepend(tr(
+        "Read-only diagnostics completed; review the full evidence in Logs "
+        "before confirming repair."));
+
+    QString text;
+    if (host) {
+        text = tr("Confirm changes to the running host")
+            + QString::fromLatin1("\n\n")
+            + tr(
+                "Host disk: %1\nLinux root: %2\n\nThe following guarded changes "
+                "will run natively on the active system:\n- %3\n\n"
+                "The helper independently re-checks that the selected disk backs "
+                "/, /boot and /boot/efi, and applies the same package, mapper, "
+                "EFI/NVRAM and GRUB preservation safeguards used for repair targets.")
+                  .arg(selectedDisk())
+                  .arg(selectedRoot())
+                  .arg(operations.join(QString::fromLatin1("\n- ")));
+    } else {
+        text = tr("Confirm changes to the selected repair system")
+            + QString::fromLatin1("\n\n")
+            + tr(
+                "Target disk: %1\nLinux root: %2\n\nThe following target-system "
+                "changes will run:\n- %3\n\n"
+                "The running host is independently re-checked and refused by the "
+                "privileged helper.")
+                  .arg(selectedDisk())
+                  .arg(selectedRoot())
+                  .arg(operations.join(QString::fromLatin1("\n- ")));
+    }
     const bool answer = confirmWrapped(
-        this, tr("Run Full Repair"), text);
+        this, tr("Run Full Repair"), text,
+        /*cancelInsteadOfNo=*/true, tr("Run Repair"), tr("Cancel"));
     if (!answer) {
         return;
     }
-    const bool host = hostScope();
-    QStringList args;
-    args << (host ? QString::fromLatin1("host-repair") : QString::fromLatin1("repair"))
-         << selectedDisk() << selectedRoot();
-    args += stages;
-    const bool started = startCommand(args, false, tr("Full Repair"),
-                                       false, false, false, false, QString::null,
-                                       stages.join(QString::fromLatin1(" ")));
-    if (started && !m_smokeMode) {
+    // File system repair is inspect-first: the read-only fs-inspect run and the
+    // per-device decision happen before the remaining stages execute. The stage
+    // list sent to the helper excludes `filesystem` because fs-repair is a
+    // separate helper verb with its own device/mode arguments. The complete
+    // plan - the inspect, the inline per-device decision, each per-device
+    // repair and the remaining stages - runs inside ONE repair result popup, so
+    // no window changes mid-plan. Declining the file system repair stops the
+    // plan before the remaining stages (the driver fails closed).
+    QStringList helperStages = stages;
+    // Qt3 QStringList has no removeAll() (Qt 4+); QValueList::remove(const T&)
+    // drops every occurrence but returns void, so probe with contains() first.
+    const bool hasFilesystem = helperStages.contains(QString::fromLatin1("filesystem"));
+    if (hasFilesystem) {
+        helperStages.remove(QString::fromLatin1("filesystem"));
+    }
+    if (!beginRepairPlan(/*fullRepair=*/true, helperStages,
+                         /*runFilesystem=*/hasFilesystem)) {
+        // beginRepairPlan already reset the plan state; nothing ran, so no
+        // end-of-plan invalidation is needed.
+        return;
+    }
+    if (!m_smokeMode) {
         showRepairResultDialog(tr("Full Repair"));
     }
 }
@@ -5836,7 +8562,7 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     if (m_smokeMode || m_resultDialog) {
         return;
     }
-    QDialog *dialog = new QDialog(this, "legacy-repair-result", true);
+    RepairResultDialog *dialog = new RepairResultDialog(this, "legacy-repair-result");
     dialog->setCaption(title);
     dialog->resize(760, 460);
     QVBoxLayout *layout = new QVBoxLayout(dialog, 10, 8);
@@ -5854,8 +8580,9 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     m_resultView->setReadOnly(true);
     // Qt 3.3.7's Qt::LogText mode disables word wrap entirely, so the popup
     // uses Qt::PlainText (the transcript is short-lived, not the Logs view)
-    // and follows the Settings "Wrap long log lines" toggle like the Logs
-    // view; the monospace font stays either way.
+    // and follows the View menu's "Wrap Log Lines" toggle (item 1 removed the
+    // Settings checkbox) like the Logs view; the monospace font stays either
+    // way.
     m_resultView->setTextFormat(Qt::PlainText);
     m_resultView->setWordWrap(m_logWrapEnabled
                                   ? QTextEdit::WidgetWidth : QTextEdit::NoWrap);
@@ -5864,6 +8591,24 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     m_resultView->setFont(mono);
     m_resultView->setText(m_transcript);
     layout->addWidget(m_resultView, 1);
+    // Interactive repair prompt surface (modern parity): a persistent input
+    // line + Send button, enabled and focused only while a PROMPT record is
+    // waiting.  Qt 3.3.7 QLineEdit has no placeholder, so the hint is a small
+    // label above the input row; it is hidden until the first prompt.
+    m_promptHint = new QLabel(tr("Number of the action (0 = Abort)"), dialog);
+    m_promptHint->hide();
+    layout->addWidget(m_promptHint);
+    QHBoxLayout *promptRow = new QHBoxLayout(layout);
+    m_promptInput = new QLineEdit(dialog);
+    m_promptInput->setEnabled(false);
+    m_promptSend = new QPushButton(tr("Send"), dialog);
+    m_promptSend->setEnabled(false);
+    promptRow->addWidget(m_promptInput, 1);
+    promptRow->addWidget(m_promptSend);
+    QObject::connect(m_promptInput, SIGNAL(returnPressed()), this,
+                     SLOT(sendPromptAnswer()));
+    QObject::connect(m_promptSend, SIGNAL(clicked()), this,
+                     SLOT(sendPromptAnswer()));
     QHBoxLayout *buttons = new QHBoxLayout(layout);
     buttons->addStretch();
     m_resultCloseButton = new QPushButton(tr("Close"), dialog);
@@ -5873,12 +8618,17 @@ void LegacyMainWindow::showRepairResultDialog(const QString &title)
     QObject::connect(m_resultCloseButton, SIGNAL(clicked()), dialog, SLOT(accept()));
     m_resultDialog = dialog;
     dialog->exec();
-    // exec() returns on Close, Esc or the window close. The helper command may
-    // still be running, so clear the streaming targets before deleting the
-    // dialog; helperLine/helperFinished then skip the missing view.
+    // exec() returns only on Close (accept), which stays disabled until the
+    // helper request completes and helperFinished calls setCloseAllowed(true)
+    // (Escape and the window-close are refused before then). The command has
+    // therefore always finished by the time exec() returns; clear the
+    // streaming targets before deleting the dialog.
     m_resultDialog = 0;
     m_resultStatus = 0;
     m_resultView = 0;
+    m_promptHint = 0;
+    m_promptInput = 0;
+    m_promptSend = 0;
     m_resultCloseButton = 0;
     delete dialog;
 }
@@ -5921,30 +8671,55 @@ void LegacyMainWindow::runChrootShell()
         return;
     }
     const bool host = hostScope();
-    if (host) {
-        const bool answer = confirmWrapped(
-            this, tr("Confirm running-host command"),
-            tr(
-                "Run this command as root on the protected running host?\n\n"
-                "%1\n\n"
-                "The helper keeps its runtime preflights; the command is passed "
-                "as one argument and is never interpreted by the GUI.").arg(command));
-        if (!answer) {
-            return;
+    // The modern GUI runs a running-host shell command directly after the
+    // scope/authorization checks above; no per-command confirmation popup is
+    // shown here (parity with the target-scope chroot shell, which has none).
+    QStringList args;
+    const QString shellVerb = host ? QString::fromLatin1("host-shell")
+                                   : QString::fromLatin1("shell");
+    args << shellVerb << selectedDisk() << selectedRoot() << command;
+    // Each shell command's transcript is APPENDED to the shared pane (modern
+    // parity), never clearing the previous run. A blank line plus a rule
+    // separates successive commands so the per-command "Running %1..." /
+    // "[exit N]" markers stay visually distinct; the Clear Output button is
+    // the only way to empty the pane.
+    if (m_shellOutput) {
+        if (!m_shellOutput->text().stripWhiteSpace().isEmpty()) {
+            m_shellOutput->append(QString::null);
+            m_shellOutput->append(QString::fromLatin1(
+                "----------------------------------------"));
+        }
+        m_shellOutput->append(tr("Running %1...").arg(shellVerb));
+    }
+    // Item #3 (modern parity): record the dispatched command into the
+    // session-only history (skipping consecutive duplicates, capped at 500),
+    // reset the navigation state, and clear the field once so it is empty while
+    // the command runs. A completion-time clear would wipe text the user typed
+    // during the run, so there is none; the user can recall the command with Up.
+    if (m_shellHistory.isEmpty() || m_shellHistory.last() != command) {
+        m_shellHistory.append(command);
+        if ((int)m_shellHistory.size() > 500) {
+            m_shellHistory.pop_front();
         }
     }
-    QStringList args;
-    args << (host ? QString::fromLatin1("host-shell") : QString::fromLatin1("shell"))
-         << selectedDisk() << selectedRoot() << command;
-    if (m_shellOutput) {
-        m_shellOutput->setText(tr("Running %1...")
-                                   .arg(host ? QString::fromLatin1("host-shell")
-                                             : QString::fromLatin1("shell")));
+    m_shellHistoryIndex = -1;
+    m_shellHistoryDraft = QString::null;
+    if (m_shellCommandEdit) {
+        m_shellCommandEdit->clear();
     }
-    startCommand(args, false,
-                 host ? QString::fromLatin1("host-shell")
-                      : QString::fromLatin1("shell"),
-                 false, false, true);
+    // The shell verbs drive the helper's generic interactive PTY pump over the
+    // same PROMPT/ANSWER channel as the kernel/GPU menus.  Set interactive=true
+    // so startCommand reserves the menu-answer file and HelperRunner hands the
+    // helper BOOT_REPAIR_SESSION_PROTOCOL=1 and the menu-answer path explicitly
+    // (also through an elevated run), and the Shell tab's own inline input line
+    // can answer a question the command asks instead of the helper running it
+    // on stdin /dev/null.  The transcript streams live into m_shellOutput
+    // (helperLine) and any question is answered inline in this tab - no separate
+    // showRepairResultDialog popup (prompt-flow contract L1/L2).
+    startCommand(args, false, shellVerb,
+                 false, false, true, false,
+                 QString::null, QString::null,
+                 false, true);
 }
 
 void LegacyMainWindow::clearChrootOutput()
@@ -5953,6 +8728,45 @@ void LegacyMainWindow::clearChrootOutput()
         m_shellOutput->setText(QString::null);
     }
     updateActionStates();
+}
+
+// Item #3 (modern parity): session-only Up/Down command-history navigation for
+// the Shell tab command field. +1 steps Up (toward older entries), -1 steps
+// Down (toward newer entries, then back to the saved draft). The history is
+// in-memory only and is never persisted to QSettings.
+void LegacyMainWindow::stepShellHistory(int direction)
+{
+    if (!m_shellCommandEdit) {
+        return;
+    }
+    if (direction > 0) {
+        // Up: toward older entries.
+        if (m_shellHistory.isEmpty()) {
+            return;
+        }
+        if (m_shellHistoryIndex == -1) {
+            m_shellHistoryDraft = m_shellCommandEdit->text();
+            m_shellHistoryIndex = (int)m_shellHistory.size() - 1;
+        } else if (m_shellHistoryIndex > 0) {
+            --m_shellHistoryIndex;
+        } else {
+            return; // Already at the oldest entry.
+        }
+        m_shellCommandEdit->setText(m_shellHistory[m_shellHistoryIndex]);
+    } else {
+        // Down: toward newer entries, then back to the saved draft.
+        if (m_shellHistoryIndex == -1) {
+            return;
+        }
+        if (m_shellHistoryIndex + 1 < (int)m_shellHistory.size()) {
+            ++m_shellHistoryIndex;
+            m_shellCommandEdit->setText(m_shellHistory[m_shellHistoryIndex]);
+        } else {
+            m_shellHistoryIndex = -1;
+            m_shellCommandEdit->setText(m_shellHistoryDraft);
+            m_shellHistoryDraft = QString::null;
+        }
+    }
 }
 
 bool LegacyMainWindow::administratorSessionActive() const
@@ -5999,6 +8813,12 @@ void LegacyMainWindow::authorizeNow()
     if (ensureAdministratorSession(tr("administrator authorization"))) {
         appendLog(QString::fromLatin1(
             "Administrator session authorized from the Authorize control."));
+        // Modern handlePrivilegedSessionEstablished() parity: establishing the
+        // session releases the deferred diagnostics regeneration the Authorize
+        // affordance promised ("diagnostics will regenerate after you
+        // authorize"). It never opens its own authorization prompt.
+        maybeAutoRefreshDiagnostics(QString::fromLatin1(
+            "administrator authorization became active"));
     }
     updateActionStates();
 }
@@ -6077,11 +8897,15 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
                                      bool diagnostic, const QString &label,
                                      bool unlock, bool config, bool shell,
                                      bool quiet, const QString &logSection,
-                                     const QString &logStages, bool browse)
+                                     const QString &logStages, bool browse,
+                                     bool interactive)
 {
     if (m_running) {
         return false;
     }
+    // The previous command's exit status must never leak into the next one
+    // (the file system repair flow reads m_lastCommandOk after each command).
+    m_lastCommandOk = false;
     // Every log entry is tagged at capture time; outside a running command
     // the register is plain application text.
     m_logEntryKind = LogEntry::Application;
@@ -6161,7 +8985,8 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     m_pendingDiagnostic = diagnostic;
     m_pendingQuiet = quiet;
     // The single-key diagnostic key (empty for the combined `all` run) drives
-    // the busy indicator's modern "Running diagnostic: <title>" text.
+    // the busy indicator's modern scope-aware "Running Host/Target diagnostic:
+    // <title>" text.
     m_pendingDiagnosticKey = diagnostic ? logSection : QString::null;
     m_pendingUnlock = unlock;
     m_pendingConfig = config;
@@ -6184,9 +9009,51 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     } else {
         m_activeRepairStages.clear();
     }
+    // Item 4 (hide-until-complete): a diagnostic run clears the results pane
+    // up front so the previous run's evidence never shows while the new run is
+    // in progress; helperFinished() re-populates it once the run completes.
+    if (diagnostic && m_rawView) {
+        m_rawView->clear();
+    }
     m_running = true;
     updateActionStates();
     updateBusyIndicator();
+
+    // Interactive repair session setup (kernels/gpu menus): reserve the
+    // mode-600 menu-answer file, mint a per-request id and hand the helper the
+    // interactive-session environment.  Fails closed: an unreservable answer
+    // file aborts the command instead of launching a menu the GUI cannot
+    // answer.  Qt 3.3.7 QProcess cannot deliver stdin, so the raw answer
+    // travels through this file (the unlock --key-file pattern).
+    m_promptActive = false;
+    m_promptRequestId = QString::null;
+    if (interactive) {
+        QString answerFile;
+        if (!ensureMenuAnswerFile(&answerFile)) {
+            appendLog(QString::fromLatin1(
+                "ERROR: the interactive menu-answer file could not be created "
+                "in %1; the command was not started.").arg(m_logDirectory));
+            m_running = false;
+            updateActionStates();
+            updateBusyIndicator();
+            return false;
+        }
+        m_promptAnswerFile = answerFile;
+        m_promptRequestId = QString::fromLatin1("legacy-")
+            + QString::number(static_cast<unsigned long>(::getpid()))
+            + QString::fromLatin1("-")
+            + QString::number(++m_interactiveRequestCounter);
+        QStringList interactiveEnv;
+        interactiveEnv << QString::fromLatin1("BOOT_REPAIR_SESSION_PROTOCOL=1");
+        interactiveEnv << (QString::fromLatin1("BOOT_REPAIR_SESSION_REQUEST=")
+                           + m_promptRequestId);
+        interactiveEnv << (QString::fromLatin1(
+                               "BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE=")
+                           + answerFile);
+        m_runner->setExtraEnvironment(interactiveEnv);
+    } else {
+        m_runner->setExtraEnvironment(QStringList());
+    }
 
     // A10-05: the cancel token for this command.  The file lives in the
     // GUI's own private directory (0700) and is removed before the run - a
@@ -6210,7 +9077,7 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
     appendLog(QString::fromLatin1("helper: %1 (%2)").arg(m_runner->helperPath()).arg(elevation));
     // The command transcript never carries secrets. The guarded config-write
     // verb transports the edited content either through a private file
-    // (--content-file <path>, B5) or — for the deprecated argv fallback — as
+    // (--content-file <path>, B5) or - for the deprecated argv fallback - as
     // one argv element (the last one); the unlock carries its passphrase in
     // the --key-file argument: all are redacted before the line is logged.
     QStringList loggableArgs(args);
@@ -6246,6 +9113,73 @@ bool LegacyMainWindow::startCommand(const QStringList &args,
 
 void LegacyMainWindow::helperLine(const QString &line)
 {
+    // Interactive repair menu records (legacy parity): while an interactive
+    // session is active (m_promptAnswerFile set) the helper emits a
+    // `PROMPT\t<id>\t<base64-menu>` record when the kernel/gpu menu waits for
+    // an answer (no PUMP token).  The menu text is base64-decoded and shown
+    // verbatim in the result pane (never interpreted or executed); the raw
+    // records stay out of the transcript and the Logs register.  A mismatched
+    // request id or a malformed record is dropped silently (fail closed).
+    if (!m_promptAnswerFile.isEmpty()) {
+        if (line.startsWith(QString::fromLatin1("PROMPT\t"))) {
+            const QStringList fields =
+                QStringList::split(QChar('\t'), line, true);
+            if (fields.count() == 3 && fields[1] == m_promptRequestId) {
+                const QByteArray decoded = legacyBase64Decode(fields[2]);
+                const QString promptText = QString::fromUtf8(
+                    decoded.data(), static_cast<int>(decoded.size()));
+                // Prompt-flow contract (L1/L2 + D5): the prompt surface is the
+                // Shell tab's inline pane while a shell command runs, the
+                // repair result dialog's pane otherwise.  m_pendingShell picks
+                // the live surface and the free-text vs numbered hint.
+                const bool shell = m_pendingShell;
+                const bool firstPrompt = !m_promptActive;
+                QTextEdit *pane = shell ? m_shellOutput : m_resultView;
+                QLineEdit *input = shell ? m_shellPromptInput : m_promptInput;
+                QPushButton *send = shell ? m_shellPromptSend : m_promptSend;
+                QLabel *hint = shell ? m_shellPromptHint : m_promptHint;
+                if (!shell) {
+                    // The repair menu text exists only in the PROMPT payload
+                    // (it is never streamed), so it is appended to the
+                    // transcript, the Logs register and the result pane.
+                    m_transcript += promptText;
+                    m_transcript += QString::fromLatin1("\n");
+                    appendLog(promptText);
+                    if (pane) {
+                        pane->append(promptText);
+                    }
+                }
+                // For a shell PROMPT the payload is the trailing output, which
+                // already streamed live into m_shellOutput
+                // (shell_pump_cleaned_byte echoes every byte to stdout); it is
+                // display-only and must never be re-appended, or the trailing
+                // question line would duplicate in the transcript.
+                m_promptActive = true;
+                if (input) {
+                    input->setEnabled(true);
+                    // A re-emitted PROMPT re-arms the line without clearing a
+                    // partially typed answer; a fresh prompt clears + focuses.
+                    if (firstPrompt) {
+                        input->clear();
+                        input->setFocus();
+                    }
+                }
+                if (send) {
+                    send->setEnabled(true);
+                }
+                if (hint) {
+                    // The hint is dynamic by run kind: a numbered hint for the
+                    // kernel/gpu menus, a free-text hint for the shell verbs
+                    // (y/n or a password typed into the input line).
+                    hint->setText(shell
+                        ? tr("Type the answer (Enter = Send)")
+                        : tr("Number of the action (0 = Abort)"));
+                    hint->show();
+                }
+            }
+            return;
+        }
+    }
     m_transcript += line;
     m_transcript += QString::fromLatin1("\n");
     // Diagnostic runs: the stream's `Diagnostic: <key>` markers drive the
@@ -6262,7 +9196,21 @@ void LegacyMainWindow::helperLine(const QString &line)
             }
         }
     }
-    appendLog(line);
+    // Item 4 (hide-until-complete): the diagnostic transcript is buffered
+    // while a run is in progress instead of being appended to the register
+    // live, so partial per-section results never appear mid-run; the complete
+    // run is flushed by helperFinished(). The tag is captured here (kind +
+    // current section key) so the deferred flush keeps the per-line filter.
+    if (m_pendingDiagnostic) {
+        LogEntry entry;
+        entry.text = line.isNull() ? QString::fromLatin1("") : line;
+        entry.kind = m_logEntryKind;
+        entry.diagnostic = m_logEntryDiagnostic;
+        entry.stages = m_logEntryStages;
+        m_bufferedDiagnosticEntries.push_back(entry);
+    } else {
+        appendLog(line);
+    }
     // Stream into the modern-style repair result popup only while the popup's
     // own command is running. The popup is opened for repair/file-copy
     // commands, never for diagnostics, so a quiet diagnostic regeneration that
@@ -6277,6 +9225,84 @@ void LegacyMainWindow::helperLine(const QString &line)
                                       : QTextEdit::NoWrap);
         m_resultView->append(line);
     }
+    // Prompt-flow contract (L1/L2): the shell transcript streams live into the
+    // Shell tab's own output pane (m_shellOutput) as the helper emits it, so a
+    // question appears at its natural position in the transcript and can be
+    // answered inline through the tab's prompt input line.
+    if (m_pendingShell && m_shellOutput) {
+        m_shellOutput->append(line);
+    }
+}
+
+// Emits the RAW answer for the waiting interactive repair menu.  The typed
+// answer is written verbatim (plus a single newline) to the mode-600
+// menu-answer file the helper polls (no ANSWER\t<id>\t<base64> framing, no
+// base64); an empty input (cancel) writes just the newline so the helper fails
+// closed.  The input surface is disabled until the next PROMPT record.
+void LegacyMainWindow::sendPromptAnswer()
+{
+    // Single-popup repair plan: the inline per-device decision is a GUI-driven
+    // question (not a helper PROMPT record), so the answer stays inside the
+    // frontend and advances the plan instead of writing the helper's
+    // menu-answer file.
+    if (m_repairPlanInlineQuestion) {
+        const QString answer = m_promptInput ? m_promptInput->text()
+                                             : QString::null;
+        if (m_promptInput) {
+            m_promptInput->setEnabled(false);
+            m_promptInput->clear();
+        }
+        if (m_promptSend) {
+            m_promptSend->setEnabled(false);
+        }
+        if (m_promptHint) {
+            m_promptHint->hide();
+        }
+        const QString echo = answer.isEmpty()
+            ? QString::fromLatin1(">> [prompt cancelled]")
+            : QString::fromLatin1(">> %1").arg(answer);
+        appendLog(echo);
+        if (m_resultView) {
+            m_resultView->append(echo);
+        }
+        processRepairPlanInlineAnswer(answer);
+        return;
+    }
+    if (!m_promptActive) {
+        return;
+    }
+    // The live prompt surface follows the running kind: the Shell tab's inline
+    // input line while a shell command runs, the repair result dialog's input
+    // line otherwise.
+    const bool shell = m_pendingShell;
+    QLineEdit *input = shell ? m_shellPromptInput : m_promptInput;
+    QPushButton *send = shell ? m_shellPromptSend : m_promptSend;
+    QLabel *hint = shell ? m_shellPromptHint : m_promptHint;
+    QTextEdit *pane = shell ? m_shellOutput : m_resultView;
+    const QString answer = input ? input->text() : QString::null;
+    if (!m_promptAnswerFile.isEmpty()) {
+        writeMenuAnswerRecord(answer);
+    }
+    m_promptActive = false;
+    if (input) {
+        input->setEnabled(false);
+        input->clear();
+    }
+    if (send) {
+        send->setEnabled(false);
+    }
+    if (hint) {
+        hint->hide();
+    }
+    // Echo the answer (or the cancel note) into the active pane, mirroring the
+    // modern ">> <answer>" / ">> [prompt cancelled]" lines.
+    const QString echo = answer.isEmpty()
+        ? QString::fromLatin1(">> [prompt cancelled]")
+        : QString::fromLatin1(">> %1").arg(answer);
+    appendLog(echo);
+    if (pane) {
+        pane->append(echo);
+    }
 }
 
 void LegacyMainWindow::helperFinished(bool ok, int exitCode)
@@ -6284,6 +9310,14 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     if (m_pendingLabel.isEmpty() && !m_running) {
         return;
     }
+    // Record the exit status for the file system repair flow (which runs the
+    // inspect and each per-device repair as separate commands).
+    m_lastCommandOk = ok;
+    // Item 4 (hide-until-complete): flush the buffered diagnostic transcript
+    // before the completion line so the full run appears in the register in
+    // order, then the "--- ... finished ---" line closes it (modern parity:
+    // the diagnostic register is revealed only once the run completes).
+    flushBufferedDiagnosticEntries();
     // A10-05: the finished command's cancel token is removed so the next run
     // starts clean (startCommand unlinks it again defensively).
     if (!m_cancelFilePath.isEmpty()) {
@@ -6300,17 +9334,34 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     m_logEntryDiagnostic = QString::null;
     m_logEntryStages = QString::null;
 
-    // Modern-style result popup: final status line and Close enablement.
+    // Modern-style result popup: final status line and Close enablement. While
+    // the single-popup repair plan owns the session, Close stays disabled and
+    // the status names the in-progress plan (finishRepairPlan() enables Close
+    // and writes the final status at the very end).
     if (m_resultStatus && m_resultCloseButton) {
-        m_resultStatus->setText(ok
-            ? tr(
-                  "Privileged operation completed successfully. Administrator "
-                  "authorization remains active for this session.")
-            : tr(
-                  "Privileged operation stopped with an error. Administrator "
-                  "authorization remains active; review the output before "
-                  "closing."));
-        m_resultCloseButton->setEnabled(true);
+        if (m_repairPlanActive) {
+            m_resultStatus->setText(ok
+                ? tr(
+                      "Repair stage completed successfully. The plan is "
+                      "continuing; review the streamed output below.")
+                : tr(
+                      "Repair stage stopped with an error. The plan is "
+                      "finishing; review the streamed output below."));
+        } else {
+            m_resultStatus->setText(ok
+                ? tr(
+                      "Privileged operation completed successfully. "
+                      "Administrator authorization remains active for this "
+                      "session.")
+                : tr(
+                      "Privileged operation stopped with an error. "
+                      "Administrator authorization remains active; review the "
+                      "output before closing."));
+            m_resultCloseButton->setEnabled(true);
+            if (m_resultDialog) {
+                m_resultDialog->setCloseAllowed(true);
+            }
+        }
     }
 
     // A cached sudo authorization can expire or be refused between commands:
@@ -6333,12 +9384,52 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     const QString configPath = m_pendingConfigPath;
     const bool wasShell = m_pendingShell;
     const bool wasBrowse = m_pendingBrowse;
+    // Prompt-flow contract (L1/L2): close each shell transcript with its exit
+    // marker so successive commands stay delimited in the shared pane (modern
+    // "[exit N]" parity; the pane appends and never clears). The transcript
+    // already streamed live into m_shellOutput through helperLine().
+    if (wasShell && m_shellOutput) {
+        m_shellOutput->append(QString::fromLatin1("[exit %1]").arg(exitCode));
+    }
     const bool wasFullRepair = m_pendingLabel == tr("Full Repair");
     const QString finishedLabel = m_pendingLabel;
     QString configReadContent;
     if (m_pendingDiagnostic) {
         m_model.applyDiagnosticTranscript(toStd(m_pendingIdentity), transcript, ok);
-        m_rawView->setText(m_transcript);
+        if (!ok) {
+            // Fail closed: a failed or cancelled diagnostic must not leave
+            // stale per-section results behind (the model cache is cleared
+            // too). Show the raw transcript so the failure is visible.
+            m_diagnosticSections.clear();
+            m_fullDiagnosticReport = QString::null;
+            m_rawView->setText(m_transcript);
+        } else if (m_pendingDiagnosticKey.isEmpty()) {
+            // Combined `diagnose all` run: parse the per-section results and
+            // show the SELECTED check's own section instead of the full
+            // combined transcript (modern parity). The `report` aggregate
+            // keeps the full combined report.
+            m_fullDiagnosticReport = m_transcript;
+            m_diagnosticSections = extractDiagnosticSections(m_transcript);
+            refreshDiagnosticResultsView();
+        } else {
+            // Individual `diagnose <key>` run: strip the shared capability
+            // preamble (the helper always includes it for a single-key run,
+            // REPORT_SHARED_PREAMBLE=0) so the section shows only its own
+            // content, then merge the fresh section back into the per-section
+            // cache and the combined report (modern mergeEmbeddedDiagnosticSection
+            // parity) so selecting away and back re-shows the fresh section
+            // rather than the older combined one.
+            QString sectionBody = m_transcript;
+            QString ignoredPreamble;
+            splitDiagnosticCapabilityPreamble(m_transcript, &sectionBody, &ignoredPreamble);
+            m_rawView->setText(sectionBody);
+            const QString key = m_pendingDiagnosticKey;
+            if (!key.isEmpty()) {
+                m_diagnosticSections.insert(key.lower(), sectionBody);
+                m_fullDiagnosticReport = mergeEmbeddedDiagnosticSection(
+                    m_fullDiagnosticReport, key, sectionBody);
+            }
+        }
         if (ok) {
             // Cycle 9: remember the run's key+scope so the Results button can
             // offer "Re-run Diagnostic" while this cached result matches the
@@ -6373,15 +9464,17 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
             // boot behavior: the complete cached target diagnostics are
             // invalidated, exactly like the modern Edit Target File dialog.
             m_model.reset();
+            m_diagnosticSections.clear();
+            m_fullDiagnosticReport = QString::null;
             appendLog(QString::fromLatin1(
                 "STALE DIAGNOSTICS: target configuration edited: %1. "
                 "Regenerate diagnostics before the next repair.").arg(configPath));
         }
-        if (wasShell && m_shellOutput) {
-            // The shell command's transcript is the tab's only content; the
-            // helper keeps its own containment/timeout preflights.
-            m_shellOutput->setText(m_transcript);
-        }
+        // Prompt-flow contract (L1/L2): the shell transcript already streamed
+        // live into m_shellOutput (helperLine), including the inline question
+        // and the ">> answer" echo, so the pane is NOT overwritten here with
+        // the transcript (which would drop the echo).  The helper keeps its
+        // own containment/timeout preflights.
     }
 
     const bool wasSmoke = m_smokeMode;
@@ -6407,10 +9500,67 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     // best-effort and idempotent).
     discardUnlockKeyfile();
     discardConfigContentFile();
+    // Interactive repair cleanup: a still-pending prompt is answered with an
+    // empty raw answer (a lone newline) so the helper fails closed, the prompt
+    // surface is disabled and the menu-answer file + interactive environment
+    // are released for the next command.
+    if (m_promptActive) {
+        m_promptActive = false;
+        // Disable BOTH prompt surfaces (kind-agnostic): the repair result
+        // dialog's and the Shell tab's inline input line, whichever was armed.
+        if (m_promptInput) {
+            m_promptInput->setEnabled(false);
+            m_promptInput->clear();
+        }
+        if (m_promptSend) {
+            m_promptSend->setEnabled(false);
+        }
+        if (m_promptHint) {
+            m_promptHint->hide();
+        }
+        if (m_shellPromptInput) {
+            m_shellPromptInput->setEnabled(false);
+            m_shellPromptInput->clear();
+        }
+        if (m_shellPromptSend) {
+            m_shellPromptSend->setEnabled(false);
+        }
+        if (m_shellPromptHint) {
+            m_shellPromptHint->hide();
+        }
+        if (!m_promptAnswerFile.isEmpty()) {
+            writeMenuAnswerRecord(QString::null);
+        }
+    }
+    discardMenuAnswerFile();
+    m_promptRequestId = QString::null;
+    m_runner->setExtraEnvironment(QStringList());
     updateActionStates();
     updateBusyIndicator();
     updateStatus();
     updateDriveDetails();
+
+    // Item 5: after a diagnostic run finishes, re-read the freshly cached
+    // capability evidence into the Settings table for the current scope, so
+    // the table populates immediately (no manual host/target toggle needed).
+    // Fail closed: an empty cache still shows the "No capability evidence
+    // cached" placeholder, never a fabricated availability.
+    if (wasDiagnostic) {
+        refreshCapabilities();
+    }
+
+    // Item 2 (install refresh): after a successful install-host-package /
+    // install-target-package helper run, re-read the freshly changed host/
+    // target capability evidence into the Settings table so the installed row
+    // flips from Missing to Available immediately (modern
+    // MainWindow::installMissingCapability parity, which calls
+    // refreshCapabilities() after every install). A failed install leaves the
+    // row Missing, so only the success path refreshes.
+    if (ok && !m_activeRepairStages.isEmpty()
+        && (m_activeRepairStages.contains(QString::fromLatin1("install-host-package"))
+            || m_activeRepairStages.contains(QString::fromLatin1("install-target-package")))) {
+        refreshCapabilities();
+    }
 
     // Config read/write follow-ups run after the run state is reset, so the
     // editor can start the guarded write without hitting the m_running guard.
@@ -6459,16 +9609,53 @@ void LegacyMainWindow::helperFinished(bool ok, int exitCode)
     // and one quiet Run All is scheduled when the auto-refresh setting, the
     // administrator session and the idle state allow it; it never prompts.
     // Individual repair actions keep the existing stale-based scheduling.
-    if (!wasDiagnostic && !wasConfig && !wasUnlock && !wasShell && !wasBrowse) {
+    // The single-popup repair plan driver owns this invalidation itself
+    // (finishRepairPlan()), so it is skipped while the plan is active.
+    if (!wasDiagnostic && !wasConfig && !wasUnlock && !wasShell && !wasBrowse
+        && !m_repairPlanActive) {
         if (wasFullRepair) {
             m_model.reset();
+            m_diagnosticSections.clear();
+            m_fullDiagnosticReport = QString::null;
             appendLog(QString::fromLatin1(
                 "Full Repair completed; cached diagnostics were invalidated "
                 "for the current scope."));
             maybeAutoRefreshDiagnostics(QString::fromLatin1("Full Repair"));
-        } else if (ok && m_model.diagnosticsStale()) {
+        } else if (ok && m_model.diagnosticsStale()
+                   && !m_filesystemRepairFlowActive) {
+            // During the file system repair flow the per-device invalidation is
+            // deferred: the flow schedules one regeneration when it ends.
             maybeAutoRefreshDiagnostics(finishedLabel);
         }
+    }
+
+    // The single-popup repair plan driver advances after every completed plan
+    // command (deferred so a new command never starts inside the finished
+    // signal's call stack). advanceRepairPlan() is a no-op outside a plan.
+    if (m_repairPlanActive) {
+        QTimer::singleShot(0, this, SLOT(advanceRepairPlan()));
+    }
+
+    // Item #7 cancel-and-switch: complete a Host Maintenance scope switch
+    // that was deferred while a read-only diagnostic was being cancelled. The
+    // cancelled diagnostic has already cleared the model and display cache;
+    // re-running the toggle now performs the switch (and, on the enter path,
+    // schedules the new scope's automatic diagnostic regeneration).
+    if (m_scopeSwitchPending) {
+        m_scopeSwitchPending = false;
+        toggleHostMaintenance();
+        return;
+    }
+
+    // Item #7 adjacent (commit-path cancel): complete a repair-target commit
+    // that was deferred while a read-only diagnostic was being cancelled. The
+    // cancelled diagnostic has already cleared the model and display cache;
+    // re-running setRepairTarget() now performs the commit (and schedules the
+    // new scope's automatic diagnostic regeneration).
+    if (m_commitPending) {
+        m_commitPending = false;
+        setRepairTarget();
+        return;
     }
 
     if (wasSmoke) {
@@ -6511,12 +9698,27 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
             "Method: helper unlock (cryptsetup; passphrase via a mode-600 keyfile, deleted after use)\n"
             "Result: mapping opened for this recovery session.")
             .arg(device).arg(fromStd(mapper));
-        // Opening the mapper changes the target topology: cached diagnostics
-        // for the old identity no longer describe the selected scope.
-        m_model.reset();
-        appendLog(QString::fromLatin1(
-            "LUKS volume unlocked; the target topology changed, so cached "
-            "diagnostics were invalidated. Run diagnostics again."));
+        // Item #1 (modern unlockSelectedTarget() parity): unlocking is a
+        // pre-commit step and must NOT change the active scope or trigger a
+        // diagnostics refresh against the unlocked target. Only when the
+        // unlocked drive IS the committed repair target does the topology
+        // change invalidate that target's cached evidence; otherwise the scope
+        // (for example Host Maintenance) and its cached diagnostics stay
+        // intact until the user explicitly commits the target with Select
+        // Target. Diagnostics are never auto-refreshed here - they regenerate
+        // at Select Target, mirroring the modern "unlocking must not run
+        // diagnostics" rule.
+        const bool unlockedCommittedTarget =
+            m_targetCommitted && !m_committedDisk.isEmpty()
+            && m_committedDisk == targetDisk;
+        if (unlockedCommittedTarget) {
+            m_model.reset();
+            m_diagnosticSections.clear();
+            m_fullDiagnosticReport = QString::null;
+            appendLog(QString::fromLatin1(
+                "LUKS volume unlocked; the committed target topology changed, "
+                "so cached diagnostics were invalidated. Run diagnostics again."));
+        }
         scanDevices();
         // Cycle 11: record the helper-confirmed root AFTER the rescan (which
         // clears the previous session state) so Select Target can resolve
@@ -6557,8 +9759,6 @@ void LegacyMainWindow::handleUnlockFinished(bool ok, const std::string &transcri
                                  m_unlockedRootUuid);
         updateDriveDetails();
         updateActionStates();
-        maybeAutoRefreshDiagnostics(QString::fromLatin1(
-            "the LUKS unlock changed the target topology"));
     } else if (authFailed) {
         status = tr(
             "State: locked\nComponent: %1\nMethod: helper unlock (cryptsetup)\n"
@@ -6680,7 +9880,7 @@ QString shortRepairFailureReason(const QString &transcript)
 // The failure reason the helper reported for one named stage (the last
 // `ERROR: stage '<tool-key stage>' failed: <reason>` line for that stage,
 // reason only), so an unrelated ERROR line elsewhere in the transcript can
-// never be misattributed to this stage — exactly like
+// never be misattributed to this stage - exactly like
 // MainWindow::repairStageFailureReason(). Empty when the transcript names no
 // failure for the stage.
 QString repairStageFailureReason(const QString &transcript, const QString &toolKey)
@@ -6713,6 +9913,233 @@ QString repairStageFailureReason(const QString &transcript, const QString &toolK
         }
     }
     return reason;
+}
+
+// Fix: maps the helper's stable `reason:<key>[|param:<value>...]` token to
+// human text for the legacy repair summary.  The helper's reason() prefixes
+// the machine key with `reason:` (for example `reason:validation-read-only`),
+// so the summary previously rendered the raw token verbatim.  This table maps
+// the reason keys the legacy helper can emit on the Etch-reachable repair
+// stages (validate, dpkg, fixbroken, aptupdate, upgrade, display, initramfs,
+// grub, bootstack, filesystem) plus the package-manager-timeout failure
+// reason, each to the modern kReasonSpecs wording lowercased and without the
+// trailing period to match the summary's fragment style (and the smoke
+// assertion `[-] Validate - validation is read-only`).  Unknown keys and
+// legacy English prose pass through verbatim: display-only, never a gate.
+struct LegacyReasonSpec {
+    const char *key;
+    const char *text;
+};
+
+const LegacyReasonSpec legacyReasonSpecs[] = {
+    { "validation-read-only", QT_TRANSLATE_NOOP("LegacyMainWindow", "validation is read-only") },
+    { "dpkg-nothing-pending", QT_TRANSLATE_NOOP("LegacyMainWindow", "dpkg reported no packages pending configuration") },
+    { "fixbroken-simulated-no-changes", QT_TRANSLATE_NOOP("LegacyMainWindow", "the simulated fix-broken transaction proposed no package changes") },
+    { "apt-lists-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "APT package lists are byte-identical and no repository index was fetched") },
+    { "upgrade-simulated-no-changes", QT_TRANSLATE_NOOP("LegacyMainWindow", "the simulated upgrade transaction proposed no package changes") },
+    { "display-already-correct", QT_TRANSLATE_NOOP("LegacyMainWindow", "default.target and display-manager.service were already correct") },
+    { "display-already-correct-boot-tty", QT_TRANSLATE_NOOP("LegacyMainWindow", "the display manager configuration is already correct, but the last boot stopped at a text console (the display manager did not start); the failure is likely elsewhere (driver or service crash)") },
+    { "openrc-runlevel-enabled", QT_TRANSLATE_NOOP("LegacyMainWindow", "the OpenRC default runlevel already enabled %1") },
+    { "initramfs-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "rebuilt initramfs images are byte-identical") },
+    { "grub-cfg-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub.cfg is byte-identical") },
+    { "grub-cfg-grubenv-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub.cfg and grubenv are byte-identical") },
+    { "fedora-grub-boot-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "MBR, BIOS boot partition and i386-pc modules are byte-identical") },
+    { "bootstack-grub2-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "initramfs and GRUB2 artifacts are byte-identical") },
+    { "bootstack-efi-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "initramfs, EFI/UKI and GRUB artifacts are byte-identical") },
+    { "pacman-no-changes", QT_TRANSLATE_NOOP("LegacyMainWindow", "the pacman transaction reported no packages to install, upgrade or remove") },
+    { "apk-no-changes", QT_TRANSLATE_NOOP("LegacyMainWindow", "apk simulated no package changes and the package state is byte-identical") },
+    { "dnf5-no-changes", QT_TRANSLATE_NOOP("LegacyMainWindow", "dnf5 simulated no package changes and the rpm database is byte-identical") },
+    { "dnf5-fixbroken-clean", QT_TRANSLATE_NOOP("LegacyMainWindow", "no missing package files were detected; dnf5 check is reported as evidence") },
+    { "dnf5-metadata-identical", QT_TRANSLATE_NOOP("LegacyMainWindow", "the dnf5 repository metadata cache is byte-identical") },
+    { "filesystem-check-clean", QT_TRANSLATE_NOOP("LegacyMainWindow", "the read-only check reported no errors") },
+    { "package-manager-timeout", QT_TRANSLATE_NOOP("LegacyMainWindow", "the package manager did not respond within the safety limit while %1 and was stopped; no package change was applied") }
+};
+const int legacyReasonSpecCount = sizeof(legacyReasonSpecs) / sizeof(legacyReasonSpecs[0]);
+
+// Resolves a `reason:<key>[|param:<value>...]` token to its human text and
+// substitutes the positional `%1`..`%n` placeholders.  Non-`reason:` text and
+// unknown keys pass through verbatim (fail open on display only, never on
+// gating).
+QString localizedReason(const QString &raw)
+{
+    const QString prefix = QString::fromLatin1("reason:");
+    if (!raw.startsWith(prefix)) {
+        return raw;
+    }
+    const QStringList tokens = QStringList::split(QChar('|'), raw, false);
+    const QString key = tokens.first().mid(prefix.length());
+    QStringList params;
+    QStringList::ConstIterator it = tokens.begin();
+    ++it;
+    for (; it != tokens.end(); ++it) {
+        if ((*it).startsWith(QString::fromLatin1("param:"))) {
+            params.append((*it).mid(6));
+        }
+    }
+    for (int i = 0; i < legacyReasonSpecCount; ++i) {
+        if (key != QString::fromLatin1(legacyReasonSpecs[i].key)) {
+            continue;
+        }
+        QString text = qApp->translate("LegacyMainWindow", legacyReasonSpecs[i].text);
+        for (int p = 0; p < static_cast<int>(params.size()) && p < 4; ++p) {
+            text.replace(QString::fromLatin1("%") + QString::number(p + 1), params[p]);
+        }
+        return text;
+    }
+    return raw;
+}
+
+// Maps the helper's capability-unavailable reason keys (the
+// `Repair tool <key>: unavailable|reason:<key>[|param:...]` detail) to the
+// modern kReasonSpecs wording, byte-identical, so each repair tool's
+// "Unavailable:" reason reads 1:1 with the modern GUI.  Unlike the
+// `legacyReasonSpecs` change-status fragments above (lowercased, no trailing
+// period, for the `[-] <stage> - <reason>` summary), this table carries the
+// full modern sentence for every reason key the legacy helper can emit for the
+// 15 capability keys (validate, filesystem, dpkg, fixbroken, aptupdate,
+// upgrade, dkms, display, gpu, initramfs, efi, grub, extlinux, bootstack,
+// kernels).  Non-`reason:` text and unknown keys still pass through verbatim
+// (fail open on display only, never on gating).
+struct LegacyCapabilityReasonSpec {
+    const char *key;
+    const char *text;
+};
+
+const LegacyCapabilityReasonSpec legacyCapabilityReasonSpecs[] = {
+    { "akmods-no-build-tree", QT_TRANSLATE_NOOP("LegacyMainWindow", "akmods preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
+    { "akms-headers-newer", QT_TRANSLATE_NOOP("LegacyMainWindow", "akms preflight found no build tree for kernel %1: the installed %2 headers are newer (version %3). Reboot into the kernel matching the installed headers, or install headers matching %1 if they are still available.") },
+    { "akms-no-build-tree", QT_TRANSLATE_NOOP("LegacyMainWindow", "akms preflight found no build tree for installed kernel %1; install the matching %2 headers package (or boot a kernel that matches the installed headers) and retry.") },
+    { "alpine-bootstack-extlinux-disabled", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).") },
+    { "alpine-bootstack-grub-disabled", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine boot-stack reconciliation is not enabled (run the initramfs and GRUB stages separately).") },
+    { "alpine-dkms-no-build-tree", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
+    { "alpine-nvidia-unsupported", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.") },
+    { "alpine-syslinux-efi-unsupported", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine syslinux-EFI boot detected (EFI/syslinux/syslinux.efi); guarded repair is not implemented.") },
+    { "aptupdate-not-on-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction.") },
+    { "aptupdate-not-on-arch", QT_TRANSLATE_NOOP("LegacyMainWindow", "Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction.") },
+    { "arch-bootstack-needs-efi", QT_TRANSLATE_NOOP("LegacyMainWindow", "Arch boot-stack reconciliation requires available initramfs, GRUB and EFI repair prerequisites.") },
+    { "arch-dkms-no-build-tree", QT_TRANSLATE_NOOP("LegacyMainWindow", "Arch DKMS preflight found no build tree for installed kernel %1; install the matching headers and retry.") },
+    { "booster-unsupported", QT_TRANSLATE_NOOP("LegacyMainWindow", "The initramfs backend is booster, which the current repair implementation does not handle.") },
+    { "bootstack-needs-initramfs-grub", QT_TRANSLATE_NOOP("LegacyMainWindow", "Requires available initramfs and GRUB repair prerequisites.") },
+    { "dkms-no-build-tree", QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS preflight found no build tree for installed kernel %1; install the matching kernel-devel packages and retry.") },
+    { "dnf4-unsupported", QT_TRANSLATE_NOOP("LegacyMainWindow", "dnf4 is not supported by the guarded rpm backend.") },
+    { "dpkg-not-on-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "Alpine uses apk; dpkg configuration is not available on Alpine.") },
+    { "dpkg-not-on-arch", QT_TRANSLATE_NOOP("LegacyMainWindow", "dpkg configuration is not available on Arch; use the Arch package transaction stages instead.") },
+    { "dpkg-not-on-fedora", QT_TRANSLATE_NOOP("LegacyMainWindow", "Fedora uses rpm/dnf; dpkg configuration is not available.") },
+    { "efi-stub-needs-efibootmgr", QT_TRANSLATE_NOOP("LegacyMainWindow", "EFI-stub entry repair requires efibootmgr in the recovery host.") },
+    { "efi-stub-needs-uefi", QT_TRANSLATE_NOOP("LegacyMainWindow", "EFI-stub boot requires UEFI firmware; the recovery host booted in legacy BIOS mode.") },
+    { "gpu-driver-unknown", QT_TRANSLATE_NOOP("LegacyMainWindow", "No expected GPU driver could be derived from hardware, package recommendations or the OEM flavour.") },
+    { "gpu-hybrid-ambiguous", QT_TRANSLATE_NOOP("LegacyMainWindow", "Multiple GPU devices were detected with no explicit choice; the GPU driver swap is refused rather than guessing the primary GPU.") },
+    { "grub-bios-no-efi", QT_TRANSLATE_NOOP("LegacyMainWindow", "GRUB detected on legacy BIOS; no EFI boot path is available.") },
+    { "incomplete-dpkg", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target dpkg database or executable is incomplete.") },
+    { "invalid-grubenv", QT_TRANSLATE_NOOP("LegacyMainWindow", "The grubenv file is missing or not a valid GRUB environment block.") },
+    { "legacy-bios-no-efi", QT_TRANSLATE_NOOP("LegacyMainWindow", "legacy BIOS target; no EFI boot path is available.") },
+    { "missing-akmods", QT_TRANSLATE_NOOP("LegacyMainWindow", "akmods is not installed in the target system.") },
+    { "missing-apk", QT_TRANSLATE_NOOP("LegacyMainWindow", "apk is not installed in the target.") },
+    { "missing-apk-installed-db", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target apk installed database is missing.") },
+    { "missing-apk-world", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target apk world file is missing.") },
+    { "missing-apt-get", QT_TRANSLATE_NOOP("LegacyMainWindow", "apt-get is not installed in the target.") },
+    { "missing-dkms-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS is not installed in the Alpine target system.") },
+    { "missing-dkms-arch", QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS is not installed in the Arch target system.") },
+    { "missing-dkms", QT_TRANSLATE_NOOP("LegacyMainWindow", "DKMS is not installed in the target.") },
+    { "missing-dnf5", QT_TRANSLATE_NOOP("LegacyMainWindow", "dnf5 is not installed in the target system.") },
+    { "missing-dpkg", QT_TRANSLATE_NOOP("LegacyMainWindow", "dpkg is not installed in the target.") },
+    { "missing-dracut-dir", QT_TRANSLATE_NOOP("LegacyMainWindow", "The dracut generator directory is missing from the target.") },
+    { "missing-dracut", QT_TRANSLATE_NOOP("LegacyMainWindow", "dracut is not installed in the target system.") },
+    { "missing-graphical-target", QT_TRANSLATE_NOOP("LegacyMainWindow", "graphical.target is missing from the target.") },
+    { "missing-grub2-install", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub2-install is not installed in the target.") },
+    { "missing-grub2-mkconfig", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub2-mkconfig is not installed in the target.") },
+    { "missing-grub-config", QT_TRANSLATE_NOOP("LegacyMainWindow", "%1 is missing.") },
+    { "missing-grub-config-tooling", QT_TRANSLATE_NOOP("LegacyMainWindow", "Requires GRUB configuration tooling.") },
+    { "missing-grub-efi-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub-efi is not installed in the Alpine target.") },
+    { "missing-grub-efi-modules", QT_TRANSLATE_NOOP("LegacyMainWindow", "The x86_64-efi GRUB module directory is missing from the Alpine target.") },
+    { "missing-grub-generator", QT_TRANSLATE_NOOP("LegacyMainWindow", "Neither grub-mkconfig nor update-grub is installed in the target system.") },
+    { "missing-grub-install-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub-install is not installed in the Alpine target.") },
+    { "missing-grub-install", QT_TRANSLATE_NOOP("LegacyMainWindow", "grub-install missing.") },
+    { "missing-grub-package-alpine", QT_TRANSLATE_NOOP("LegacyMainWindow", "The grub package is not installed in the Alpine target.") },
+    { "missing-grub-zfs-module", QT_TRANSLATE_NOOP("LegacyMainWindow", "The GRUB ZFS module (zfs.mod) is not installed in the target.") },
+    { "missing-initramfs-tools", QT_TRANSLATE_NOOP("LegacyMainWindow", "update-initramfs/mkinitramfs are not installed in the target.") },
+    { "missing-lsinitrd", QT_TRANSLATE_NOOP("LegacyMainWindow", "lsinitrd is not installed in the target system; dracut image verification is unavailable.") },
+    { "missing-mkinitcpio", QT_TRANSLATE_NOOP("LegacyMainWindow", "mkinitcpio is not installed in the target system.") },
+    { "missing-mkinitfs-conf", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no mkinitfs configuration.") },
+    { "missing-mkinitfs", QT_TRANSLATE_NOOP("LegacyMainWindow", "mkinitfs is not installed in the target system.") },
+    { "missing-pacman-conf", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no /etc/pacman.conf; refusing a package transaction.") },
+    { "missing-pacman-db", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target pacman database directory is missing.") },
+    { "missing-pacman", QT_TRANSLATE_NOOP("LegacyMainWindow", "pacman is not installed in the target.") },
+    { "missing-rpm-database", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target RPM database is missing.") },
+    { "missing-rpm", QT_TRANSLATE_NOOP("LegacyMainWindow", "rpm is not installed in the target system.") },
+    { "missing-syslinux-package", QT_TRANSLATE_NOOP("LegacyMainWindow", "The syslinux package is not installed according to the detected package manager.") },
+    { "missing-tuxedo-uki-builder", QT_TRANSLATE_NOOP("LegacyMainWindow", "TUXEDO UKI builder create_boot_uki_base.sh is not installed in the target.") },
+    { "missing-update-extlinux", QT_TRANSLATE_NOOP("LegacyMainWindow", "update-extlinux is not installed in the target.") },
+    { "missing-zfs-initramfs-hook", QT_TRANSLATE_NOOP("LegacyMainWindow", "The zfs-initramfs hook is not installed in the target (no /usr/share/initramfs-tools/hooks/zfs).") },
+    { "no-alpine-efi-path", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI boot path was detected for the Alpine target (bootloader backend %1).") },
+    { "no-alpine-kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "No installed Alpine kernels were found under target /boot.") },
+    { "no-apk-repositories", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no configured apk repositories.") },
+    { "no-apt-sources", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no configured APT sources to refresh.") },
+    { "no-arch-esp", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI System Partition was identified for the selected Arch target.") },
+    { "no-boot-filesystem", QT_TRANSLATE_NOOP("LegacyMainWindow", "No /boot (and no resolved EFI System Partition) is visible for the selected scope.") },
+    { "no-display-manager", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported display manager was detected in the target.") },
+    { "no-display-manager-unit", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported display manager unit is installed in the target.") },
+    { "no-dnf-repositories", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no enabled dnf repositories.") },
+    { "no-dnf-repositories-to-refresh", QT_TRANSLATE_NOOP("LegacyMainWindow", "The target has no enabled dnf repositories to refresh.") },
+    { "no-dracut-kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "No installed dracut kernels were found under target /boot.") },
+    { "no-efi-stub-initramfs", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI-stub initramfs image (initramfs-*) is present at the EFI System Partition root.") },
+    { "no-efi-stub-kernel", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI-stub kernel image (vmlinuz-*) is present at the EFI System Partition root.") },
+    { "no-esp-candidate", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI System Partition candidate on the selected disk.") },
+    { "no-esp-derivable", QT_TRANSLATE_NOOP("LegacyMainWindow", "No EFI System Partition is present or derivable on the selected disk.") },
+    { "no-extlinux-config", QT_TRANSLATE_NOOP("LegacyMainWindow", "No extlinux/syslinux configuration was detected in the target.") },
+    { "no-filesystem-check-tool", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported file system check tool is installed in the recovery environment.") },
+    { "no-gpu-hardware", QT_TRANSLATE_NOOP("LegacyMainWindow", "No class-03 GPU device and no target journal/module evidence were found; there is no GPU driver stack to repair.") },
+    { "no-initramfs-backend", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected.") },
+    { "no-kernel-inventory", QT_TRANSLATE_NOOP("LegacyMainWindow", "No installed versioned kernel packages were found; the newest kernel cannot be identified.") },
+    { "no-mkinitcpio-kernels", QT_TRANSLATE_NOOP("LegacyMainWindow", "No installed kernel module directories were found for mkinitcpio.") },
+    { "no-openrc-display-manager", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported OpenRC display manager service is installed in the target.") },
+    { "no-package-backend", QT_TRANSLATE_NOOP("LegacyMainWindow", "No guarded package-manager backend that can both answer installed-state and install packages was detected (detected: %1).") },
+    { "no-package-manager-for-syslinux", QT_TRANSLATE_NOOP("LegacyMainWindow", "No detected package manager can verify the syslinux package.") },
+    { "no-package-manager", QT_TRANSLATE_NOOP("LegacyMainWindow", "No guarded package-manager backend was detected (detected: %1).") },
+    { "no-resolvable-scope-filesystems", QT_TRANSLATE_NOOP("LegacyMainWindow", "The selected scope's root, /boot, ESP and /home filesystems could not be resolved.") },
+    { "no-service-manager", QT_TRANSLATE_NOOP("LegacyMainWindow", "No supported service manager (systemd or OpenRC) was detected in the target.") },
+    { "no-supported-filesystem-type", QT_TRANSLATE_NOOP("LegacyMainWindow", "The selected scope has no supported file system type for a read-only check.") },
+    { "not-grub-bootloader", QT_TRANSLATE_NOOP("LegacyMainWindow", "The detected bootloader is %1; GRUB is not the selected bootloader.") },
+    { "nvidia-dkms-requires-network", QT_TRANSLATE_NOOP("LegacyMainWindow", "The proprietary NVIDIA driver needs network access to fetch the package set; this offline target has no usable APT sources.") },
+    { "running-kernel-not-identified", QT_TRANSLATE_NOOP("LegacyMainWindow", "The running kernel release could not be determined (uname -r is empty).") },
+    { "syslinux-bios-no-efi", QT_TRANSLATE_NOOP("LegacyMainWindow", "syslinux/extlinux (BIOS) boot detected; no EFI boot path is available.") },
+    { "sysvinit-display-unsupported", QT_TRANSLATE_NOOP("LegacyMainWindow", "A sysvinit display-manager script was detected; offline repair is not implemented for sysvinit.") },
+    { "unimplemented-backend-stage", QT_TRANSLATE_NOOP("LegacyMainWindow", "Backend %1 has no guarded implementation for stage %2.") },
+    { "unresolvable-zfs-root", QT_TRANSLATE_NOOP("LegacyMainWindow", "The running host ZFS root pool is not resolvable (zpool is not installed or the pool is not imported).") },
+    { "virtual-gpu-no-discrete-driver", QT_TRANSLATE_NOOP("LegacyMainWindow", "The detected GPU is a virtual/para-virtual display device (Virtio, QEMU/Bochs, Cirrus, VirtualBox, VMware, QXL or Hyper-V) with no discrete driver to swap or rebuild; the GPU driver swap is not available.") },
+};
+const int legacyCapabilityReasonSpecCount =
+    sizeof(legacyCapabilityReasonSpecs) / sizeof(legacyCapabilityReasonSpecs[0]);
+
+QString localizedCapabilityReason(const QString &raw)
+{
+    const QString prefix = QString::fromLatin1("reason:");
+    if (!raw.startsWith(prefix)) {
+        return raw;
+    }
+    const QStringList tokens = QStringList::split(QChar('|'), raw, false);
+    const QString key = tokens.first().mid(prefix.length());
+    QStringList params;
+    QStringList::ConstIterator it = tokens.begin();
+    ++it;
+    for (; it != tokens.end(); ++it) {
+        if ((*it).startsWith(QString::fromLatin1("param:"))) {
+            params.append((*it).mid(6));
+        }
+    }
+    for (int i = 0; i < legacyCapabilityReasonSpecCount; ++i) {
+        if (key != QString::fromLatin1(legacyCapabilityReasonSpecs[i].key)) {
+            continue;
+        }
+        QString text = qApp->translate("LegacyMainWindow",
+                                       legacyCapabilityReasonSpecs[i].text);
+        for (int p = 0; p < static_cast<int>(params.size()) && p < 4; ++p) {
+            text.replace(QString::fromLatin1("%") + QString::number(p + 1),
+                         params[p]);
+        }
+        return text;
+    }
+    return raw;
 }
 
 } // namespace
@@ -6757,7 +10184,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
     // line owns the failure; requested stages after it never ran. This
     // mirrors MainWindow's Full Repair stage categorization.
     const QString failedStageKey = repairFailureStageKey(m_transcript);
-    QString failureReason = shortRepairFailureReason(m_transcript);
+    QString failureReason = localizedReason(shortRepairFailureReason(m_transcript));
     if (failureReason.isEmpty()) {
         failureReason = QString::fromLatin1("the privileged helper reported a failure");
     }
@@ -6787,8 +10214,8 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
             if (changeStatusIsUnchanged(toStd(state))) {
                 ++unchanged;
                 const QString reason = state.startsWith(QString::fromLatin1("unchanged|"))
-                    ? state.mid(10) : QString::fromLatin1("no repair needed");
-                // Cycle 10: ASCII markers only — Etch's fonts garble the
+                    ? localizedReason(state.mid(10)) : QString::fromLatin1("no repair needed");
+                // Cycle 10: ASCII markers only - Etch's fonts garble the
                 // modern check/cross/bullet glyphs in the Qt3 log view.
                 detail = QString::fromLatin1("[-] %1 - %2")
                              .arg(title).arg(reason);
@@ -6801,7 +10228,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
                 const int separator = state.find(QChar('|'));
                 if (separator > 0) {
                     detail += QString::fromLatin1(" - %1")
-                                  .arg(state.mid(separator + 1).stripWhiteSpace());
+                                  .arg(localizedReason(state.mid(separator + 1).stripWhiteSpace()));
                 }
             }
         } else if (!commandOk && !failureAttributed
@@ -6813,7 +10240,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
             // earlier in the transcript can never be misattributed.
             ++failed;
             failureAttributed = true;
-            QString stageReason = repairStageFailureReason(m_transcript, toolKey);
+            QString stageReason = localizedReason(repairStageFailureReason(m_transcript, toolKey));
             if (stageReason.isEmpty()) {
                 stageReason = failureReason;
             }
@@ -6846,7 +10273,7 @@ void LegacyMainWindow::appendRepairSummaryBlock(const ParsedTranscript &parsed,
         && !handledKeys.contains(failedStageKey)) {
         ++failed;
         failureAttributed = true;
-        QString stageReason = repairStageFailureReason(m_transcript, failedStageKey);
+        QString stageReason = localizedReason(repairStageFailureReason(m_transcript, failedStageKey));
         if (stageReason.isEmpty()) {
             stageReason = failureReason;
         }
@@ -6975,16 +10402,76 @@ void LegacyMainWindow::runSmokeStep()
                      false, false, false, false, QString::null,
                      QString::fromLatin1("validate"));
     } else if (m_smokeStep == 2) {
-        QString problems;
-        const bool controlsOk = verifySmokeControls(&problems);
-        int layoutChecked = 0;
-        const bool layoutOk = verifyLayout(&problems, &layoutChecked);
+        // Item #8 adjacent: verifySmokeControls() exercises the real commit
+        // path via a synthetic setRepairTarget(), which now (correctly)
+        // invalidates the scope's cached diagnostics. Capture the step-0
+        // capability count BEFORE that synthetic commit runs, so the recount
+        // reflects the parsed host-diagnose evidence rather than the expected
+        // post-reset empty model.
         int reported = 0;
         const std::vector<std::string> keys = capabilityKeys();
         for (std::size_t i = 0; i < keys.size(); ++i) {
             if (!m_model.state(keys[i]).empty()) {
                 ++reported;
             }
+        }
+        QString problems;
+        const bool controlsOk = verifySmokeControls(&problems);
+        int layoutChecked = 0;
+        const bool layoutOk = verifyLayout(&problems, &layoutChecked);
+        // Frame-height + content-height measurement (documented in
+        // etch-agent-guide.md §6): report the actual displayed frame heights
+        // (QWidget::height()) and the tight content heights (the sum of the
+        // content widgets plus layout padding/spacing, with the plan scroll
+        // view's inflated sizeHint replaced by its real grid content). The
+        // reliable read is QWidget::height() after the Repair page is laid out
+        // for real (Qt3 does not re-layout a hidden tab from processEvents()
+        // alone), so switch to the page, flush and activate the ancestor
+        // layouts first.
+        QString geometryReport;
+        if (m_planGroup && m_toolsGroup && m_planScroll) {
+            m_tabs->setCurrentPage(2);  // Repair page
+            qApp->sendPostedEvents();
+            qApp->processEvents();
+            for (QWidget *ancestor = m_planGroup; ancestor;
+                 ancestor = ancestor->parentWidget()) {
+                if (ancestor->layout()) {
+                    ancestor->layout()->activate();
+                }
+            }
+            for (QWidget *ancestor = m_toolsGroup; ancestor;
+                 ancestor = ancestor->parentWidget()) {
+                if (ancestor->layout()) {
+                    ancestor->layout()->activate();
+                }
+            }
+            qApp->processEvents();
+            // Tight content height of the plan frame: its sizeHint minus the
+            // scroll view's inflated hint (leaving the title + count + buttons
+            // + readiness chrome), plus the grid's real content height.
+            const int planContent = m_planGroup->sizeHint().height()
+                - m_planScroll->sizeHint().height()
+                + m_planGridContentHeight;
+            // The tools frame has no scroll view, so its sizeHint is already
+            // the tight content (title + list + padding).
+            const int toolsContent = m_toolsGroup->sizeHint().height();
+            geometryReport += QString::fromLatin1(
+                "; frame height (Full Repair plan): %1 px; "
+                "frame height (Individual repair tools): %2 px; "
+                "content height (Full Repair plan): %3 px; "
+                "content height (Individual repair tools): %4 px; "
+                "DEBUG gridCalc=%5 readActual=%6 readHint=%7 chrome=%8")
+                .arg(m_planGroup->height())
+                .arg(m_toolsGroup->height())
+                .arg(planContent)
+                .arg(toolsContent)
+                .arg(m_planGridContentHeight)
+                .arg(m_planReadinessLabel
+                     ? m_planReadinessLabel->height() : -1)
+                .arg(m_planReadinessLabel
+                     ? m_planReadinessLabel->sizeHint().height() : -1)
+                .arg(m_planGroup->sizeHint().height()
+                     - m_planScroll->sizeHint().height());
         }
         // A pass without checked widgets would be vacuous: every tab has
         // titles, buttons, lists and combos, so the floor stays well above 0.
@@ -7005,7 +10492,8 @@ void LegacyMainWindow::runSmokeStep()
             .arg(m_smokeValidateOk ? QString::fromLatin1("ok") : QString::fromLatin1("incomplete"))
             .arg(controlsOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"))
             .arg(layoutOk ? QString::fromLatin1("ok") : QString::fromLatin1("FAIL"))
-            .arg(layoutChecked);
+            .arg(layoutChecked)
+            + geometryReport;
         m_smokeMode = false;
         emit smokeFinished(ok, summary);
     }
@@ -7173,10 +10661,9 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("session log list missing or empty"));
         ok = false;
     }
-    if (!m_logWrapCheck) {
-        problems->append(QString::fromLatin1("log wrap setting missing"));
-        ok = false;
-    }
+    // Item 1: the Settings wrap checkbox is intentionally gone (modern parity:
+    // wrap is on by default and the View menu is the only wrap control), so
+    // there is no checkbox-presence assertion here anymore.
     if (!m_unlockButton || !m_setTargetButton || !m_hostMaintenanceButton) {
         problems->append(QString::fromLatin1("target/unlock/host-maintenance controls missing"));
         ok = false;
@@ -7195,7 +10682,8 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     // Repair parity: the Full Repair plan section and the tools list/Selected
     // tool pane replace the old button grid and the removed unsupported list.
     if (!m_planParagraph || !m_planCountLabel || !m_planReadinessLabel
-        || !m_planStageList || !m_configurePlanButton || !m_runFullRepairButton) {
+        || m_planStageLabels.isEmpty() || !m_configurePlanButton
+        || !m_runFullRepairButton) {
         problems->append(QString::fromLatin1("Full Repair plan controls missing"));
         ok = false;
     }
@@ -7316,7 +10804,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
             }
         }
     }
-    // Cycle 8: the File Copy tab matches modern's buildFileCopyPage — heading
+    // Cycle 8: the File Copy tab matches modern's buildFileCopyPage - heading
     // row (title | scope label | Preview Changes | Copy and Verify), the
     // direction row, and the three titled groups (sources / destination with
     // Browse Target Folders... / ownership and copy policy).
@@ -7464,7 +10952,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     // (detach + re-insert per toolSpecs) so later checks stay valid.
     if (m_toolList && m_toolList->header() && m_toolList->childCount() > 1
         && m_toolList->firstChild()) {
-        // Cycle 14 loop: the sort case is deterministic — the pane-follow
+        // Cycle 14 loop: the sort case is deterministic - the pane-follow
         // invariant compares the pane against the CURRENT first row's spec
         // (looked up by the row's text, never a hard-coded expectation), and
         // the restore rebuilds the curated order from toolSpecs.
@@ -7738,15 +11226,17 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "row on the host scope"));
             ok = false;
         }
-        // The file system repair row is the documented frontend gap: it is
-        // shown but never checkable, even though the capability is available.
+        // The file system repair row is now wired (the inspect-first flow): on
+        // the Etch host the filesystem capability is available, so its plan row
+        // must be present, checkable and on by default (the modern per-key
+        // default for the filesystem stage).
         const int filesystemPlan = planIndexForCapability("filesystem");
         if (filesystemPlan < 0 || !m_planChecks[filesystemPlan]
-            || m_planChecks[filesystemPlan]->isEnabled()
-            || m_planChecks[filesystemPlan]->isChecked()) {
+            || !m_planChecks[filesystemPlan]->isEnabled()
+            || !m_planChecks[filesystemPlan]->isChecked()) {
             problems->append(QString::fromLatin1(
-                "file system repair plan row is not the disabled frontend-gap "
-                "row (shown, never checkable)"));
+                "file system repair plan row is not a checkable on-by-default "
+                "row on the host scope"));
             ok = false;
         }
     }
@@ -8125,39 +11615,28 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         }
         m_tabs->setCurrentPage(originalPage);
     }
-    // Wrap Log Lines sync both ways: toggling the Settings checkbox updates
-    // the menu check mark, and activating the View menu item updates the
-    // checkbox and persists through saveLegacySettings().
-    if (m_logWrapCheck && m_viewMenu && m_wrapLogsMenuValid) {
+    // Wrap Log Lines (View menu): item 1 removed the Settings checkbox (wrap
+    // is on by default), so the smoke verifies the menu toggle round-trips and
+    // persists through saveLegacySettings().
+    if (m_viewMenu && m_wrapLogsMenuValid) {
         const bool originalWrap = m_logWrapEnabled;
-        // Settings checkbox -> state + menu check mark.
-        m_logWrapCheck->setChecked(!originalWrap);
-        const bool afterCheckbox = m_logWrapEnabled;
-        if (afterCheckbox == originalWrap) {
-            problems->append(QString::fromLatin1(
-                "Settings wrap checkbox did not change the wrap state"));
-            ok = false;
-        }
-        if (m_viewMenu->isItemChecked(m_wrapLogsMenuId) != afterCheckbox) {
-            problems->append(QString::fromLatin1(
-                "Wrap Log Lines menu check did not follow the Settings checkbox"));
-            ok = false;
-        }
-        // View menu item -> state + checkbox (this also restores the state).
+        // View menu item -> state (this also persists through saveLegacySettings).
         toggleLogWrapFromMenu();
-        if (m_logWrapEnabled != originalWrap) {
+        if (m_logWrapEnabled == originalWrap) {
             problems->append(QString::fromLatin1(
-                "Wrap Log Lines menu toggle did not restore the state"));
-            ok = false;
-        }
-        if (m_logWrapCheck->isChecked() != m_logWrapEnabled) {
-            problems->append(QString::fromLatin1(
-                "Settings wrap checkbox did not follow the menu item"));
+                "Wrap Log Lines menu toggle did not change the wrap state"));
             ok = false;
         }
         if (m_viewMenu->isItemChecked(m_wrapLogsMenuId) != m_logWrapEnabled) {
             problems->append(QString::fromLatin1(
                 "Wrap Log Lines menu check is out of sync after the menu toggle"));
+            ok = false;
+        }
+        // Toggle again to restore the original state.
+        toggleLogWrapFromMenu();
+        if (m_logWrapEnabled != originalWrap) {
+            problems->append(QString::fromLatin1(
+                "Wrap Log Lines menu toggle did not restore the state"));
             ok = false;
         }
         // Persistence: only asserted when the environment can write settings
@@ -8166,14 +11645,10 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         // round-trip probe is skipped and the deterministic defaults stand.
         if (!legacySmokeSettingsIsolation()) {
             QSettings probe;
-            probe.setPath(QString::fromLatin1("boot-bitch"),
-                          QString::fromLatin1("boot-repair"), QSettings::User);
             const bool settingsWritable = probe.writeEntry(
                 QString::fromLatin1("/logs/wrapLines"), m_logWrapEnabled);
             if (settingsWritable) {
                 QSettings readBack;
-                readBack.setPath(QString::fromLatin1("boot-bitch"),
-                                 QString::fromLatin1("boot-repair"), QSettings::User);
                 if (readBack.readBoolEntry(QString::fromLatin1("/logs/wrapLines"),
                                            !m_logWrapEnabled) != m_logWrapEnabled) {
                     problems->append(QString::fromLatin1(
@@ -8185,7 +11660,8 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     }
     // Cycle 9 loop 3: the smoke must run under settings isolation (set by
     // main() before the window was constructed); otherwise a persisted
-    // ~/.qt/repairrc etc. could flip the assertions above.
+    // settings file (e.g. the canonical repairrc) could flip the assertions
+    // above.
     if (!legacySmokeSettingsIsolation()) {
         problems->append(QString::fromLatin1(
             "smoke ran without the settings isolation"));
@@ -8223,23 +11699,25 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         problems->append(QString::fromLatin1("host capabilities group missing"));
         ok = false;
     }
-    // Modern 1:1 capability table: six columns, the 23 probe rows plus the
-    // one legacy-specific row, and the disabled Install Missing Support...
-    // button with the modern tooltip.
+    // Modern 1:1 capability table: seven columns (the trailing Action column
+    // is a read-only placeholder), the 16 modern-mirrored probe rows plus the
+    // two legacy-specific rows (LUKS support and process-namespace isolation),
+    // and the disabled Install Missing Support... button with the modern
+    // tooltip.
     if (m_capabilityTable) {
-        if (m_capabilityTable->numCols() != 6
+        if (m_capabilityTable->numCols() != 7
             || m_capabilityTable->numRows() != capabilitySpecCount) {
             problems->append(QString::fromLatin1(
-                "host capability table is %1x%2, expected 24x6")
+                "host capability table is %1x%2, expected 18x7")
                 .arg(m_capabilityTable->numRows())
                 .arg(m_capabilityTable->numCols()));
             ok = false;
         } else {
             const char *expectedHeaders[] = {
                 "Feature", "Command", "Scope", "Status",
-                "Suggested package", "Notes"
+                "Suggested package", "Notes", "Action"
             };
-            for (int column = 0; column < 6; ++column) {
+            for (int column = 0; column < 7; ++column) {
                 if (m_capabilityTable->horizontalHeader()->label(column)
                     != QString::fromLatin1(expectedHeaders[column])) {
                     problems->append(QString::fromLatin1(
@@ -8293,9 +11771,9 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         }
     }
     if (m_capAuthLabel
-        && m_capAuthLabel->text().find(QString::fromLatin1("no KAuth")) < 0) {
+        && m_capAuthLabel->text().find(QString::fromLatin1("Not compiled")) < 0) {
         problems->append(QString::fromLatin1(
-            "adapted authorization-support label does not name the missing KAuth"));
+            "KAuth build support label does not name the unavailable integration"));
         ok = false;
     }
     if (m_installSupportButton
@@ -8304,10 +11782,19 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                              .arg(m_installSupportButton->text()));
         ok = false;
     }
-    if (m_installSupportButton && m_installSupportButton->isEnabled()) {
-        problems->append(QString::fromLatin1(
-            "Install Missing Support... must stay disabled"));
-        ok = false;
+    // Item 2: the button is enabled exactly when the selected row's Action cell
+    // reads "Install" (a missing, installable row); any other row keeps it
+    // disabled. Fail closed either way.
+    if (m_installSupportButton && m_capabilityTable
+        && m_capabilityTable->numRows() > 0) {
+        const int selectedRow = m_capabilityTable->currentRow();
+        const bool cellOffersInstall = selectedRow >= 0
+            && m_capabilityTable->text(selectedRow, 6) == tr("Install");
+        if (m_installSupportButton->isEnabled() != cellOffersInstall) {
+            problems->append(QString::fromLatin1(
+                "Install Missing Support... enablement does not match the selected row's Action cell"));
+            ok = false;
+        }
     }
     if (m_installSupportButton
         && QToolTip::textFor(m_installSupportButton).find(
@@ -8409,7 +11896,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
         }
     }
 
-    // B7-2: the device list is a tree — top-level items are disks only and
+    // B7-2: the device list is a tree - top-level items are disks only and
     // their children are the disk's partitions/mappers; exactly four columns.
     // Orphan non-disk rows (/dev/fd0 floppy stubs, /dev/hdc empty devices,
     // helper-reported pass-through rows with no resolvable owner) must never
@@ -8518,7 +12005,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     }
 
     // Cycle 13 loop: a root-less non-LUKS drive (the vfat share disk) must
-    // show the no-Linux-filesystem reason — never the unlock-first wording.
+    // show the no-Linux-filesystem reason - never the unlock-first wording.
     {
         const QString savedDisk2 = selectedDisk();
         const QString savedRoot2 = selectedRoot();
@@ -8665,13 +12152,13 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
                 "committed scope label is '%1'").arg(m_scopeLabel->text()));
             ok = false;
         }
-        // Cycle 15 (modern parity): the committed drive keeps Select Target
-        // enabled with the committed tooltip; a different selectable drive
-        // switches the target.
+        // Item #1 (modern parity): the committed drive DISABLES Select Target
+        // (its row is already the committed target) but keeps the committed
+        // tooltip; a different selectable drive stays selectable.
         updateActionStates();
-        if (m_setTargetButton && !m_setTargetButton->isEnabled()) {
+        if (m_setTargetButton && m_setTargetButton->isEnabled()) {
             problems->append(QString::fromLatin1(
-                "Select Target disabled for the committed drive"));
+                "Select Target enabled for the already-committed drive"));
             ok = false;
         }
         if (m_setTargetButton
@@ -8939,7 +12426,7 @@ bool LegacyMainWindow::verifySmokeControls(QString *problems)
     }
 
     // Log filter (modern 1:1): All entries / Diagnostics / Repairs / the three
-    // workflows / the 16 diagnostic sections, plus the capture-time kind
+    // workflows / the 18 diagnostic sections, plus the capture-time kind
     // tagging: the smoke's real host-diagnose lines are Diagnostic entries
     // tagged per `Diagnostic: <key>` marker and the host-validate lines are
     // Repair entries with the validate stage.
@@ -9378,15 +12865,6 @@ bool LegacyMainWindow::verifyLayout(QString *problems, int *checked)
                 ok = false;
             }
         }
-        if (m_planStageList && m_planStageList->isVisibleTo(m_tabs)) {
-            ++checkedCount;
-            if (!listColumnsFit(m_planStageList, QString::fromLatin1("plan stage list"), problems)) {
-                ok = false;
-            }
-            if (!listLastColumnFills(m_planStageList, QString::fromLatin1("plan stage list"), problems)) {
-                ok = false;
-            }
-        }
         if (m_toolList && m_toolList->isVisibleTo(m_tabs)) {
             ++checkedCount;
             if (!listColumnsFit(m_toolList, QString::fromLatin1("tools list"), problems)) {
@@ -9726,6 +13204,18 @@ void LegacyMainWindow::updateFeatureTab(QLabel *label, const char *feature)
 void LegacyMainWindow::updateChrootShellMode()
 {
     const bool host = hostScope();
+    // Item #4: the shell transcript + command history are per-scope. When the
+    // scope flips, park the outgoing scope's transcript and restore the
+    // incoming scope's so the Host Shell and Chroot Shell never share output.
+    // Session-only (modern parity): the buffers are in-memory, not persisted.
+    if (host != m_shellScopeHost && m_shellOutput) {
+        QString &outgoing = m_shellScopeHost ? m_shellTranscriptHost
+                                             : m_shellTranscriptTarget;
+        outgoing = m_shellOutput->text();
+        m_shellScopeHost = host;
+        m_shellOutput->setText(host ? m_shellTranscriptHost
+                                    : m_shellTranscriptTarget);
+    }
     if (m_chrootHeading) {
         m_chrootHeading->setText(host
             ? tr("Host shell")
@@ -9900,8 +13390,8 @@ void LegacyMainWindow::updateFileCopyTab()
     const bool targetCommitted = !m_committedDisk.isEmpty();
 
     // Direction-driven labels (modern updateFileCopyDirection). The heading
-    // stays the static "File copy" title — the direction arrow lives only in
-    // the Direction combo — so the page-title row can never crowd it out.
+    // stays the static "File copy" title - the direction arrow lives only in
+    // the Direction combo - so the page-title row can never crowd it out.
     // The group-1 title uses the modern wording and is wrap-capable (see
     // buildFileCopyTab), so a narrow pane can never clip it.
     if (m_fileCopySourceTitle) {
@@ -10370,7 +13860,7 @@ void LegacyMainWindow::updateDriveDetails()
     }
     m_detailList->clear();
     const QString disk = m_inspectingHostDetails
-        ? runningHostDisk() : selectedDisk();
+        ? runningHostDisk() : previewDisk();
     if (m_detailsPaneTitle) {
         m_detailsPaneTitle->setText(m_inspectingHostDetails
             ? tr("Protected running host - details")
@@ -10382,8 +13872,8 @@ void LegacyMainWindow::updateDriveDetails()
     const std::vector<std::pair<QString, QString> > rows = driveDetailsRows(disk);
     QListViewItem *lastDetail = 0;
     for (std::size_t i = 0; i < rows.size(); ++i) {
-        lastDetail = new QListViewItem(m_detailList, lastDetail,
-                                       rows[i].first, rows[i].second);
+        lastDetail = new WrappingDetailItem(m_detailList, lastDetail,
+                                            rows[i].first, rows[i].second);
     }
 }
 
@@ -10402,7 +13892,7 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
     // selected, otherwise the drive) supplies the details; the Drive field
     // always names the top-level drive. For the protected-host pane the
     // resolved root component supplies UUID and Mounts.
-    QString inspectedPath = selectedComponent();
+    QString inspectedPath = previewComponent();
     if (inspectedPath.isEmpty() && m_inspectingHostDetails) {
         inspectedPath = autoResolvedRoot(disk);
     }
@@ -10411,8 +13901,8 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
     }
     QMap<QString, DeviceRow>::const_iterator inspectedRow = m_rows.find(inspectedPath);
     const DeviceRow *inspected = inspectedRow == m_rows.end() ? selected : &inspectedRow.data();
-    const bool inspectingChild = !selectedComponent().isEmpty()
-        && selectedComponent() != disk;
+    const bool inspectingChild = !previewComponent().isEmpty()
+        && previewComponent() != disk;
 
     QString model;
     QString size;
@@ -10501,7 +13991,7 @@ std::vector<std::pair<QString, QString> > LegacyMainWindow::driveDetailsRows(
         fstype = mapValue(m_factMap, QString::fromLatin1("Filesystem:"));
     }
 
-    QString component = selectedComponent();
+    QString component = previewComponent();
     if (component.isEmpty()) {
         component = autoResolvedRoot(disk);
     }
@@ -10625,7 +14115,7 @@ void LegacyMainWindow::updateHostCard()
 // reusing exactly the rows the Systems details pane shows.
 // Cycle 13: the Details button (kept on the host card, since the running
 // host is never selectable as a drive row) populates the right Selected
-// drive details pane with the running-host facts — the same rows the
+// drive details pane with the running-host facts - the same rows the
 // popup used. No dialog: selecting any drive row restores the normal
 // per-drive pane.
 void LegacyMainWindow::showHostDetails()
@@ -10639,7 +14129,7 @@ void LegacyMainWindow::updateUnlockStatus()
     if (!m_unlockStatusView) {
         return;
     }
-    const QString disk = selectedDisk();
+    const QString disk = previewDisk();
     if (disk.isEmpty()) {
         m_unlockStatusView->setText(tr("Select a drive to see unlock status."));
         return;
@@ -10677,10 +14167,10 @@ void LegacyMainWindow::updateUnlockStatus()
             "open it for this recovery session.")
             .arg(component));
     } else if (!mapper.isEmpty()) {
-        const QString shownComponent = selectedComponent().isEmpty()
+        const QString shownComponent = previewComponent().isEmpty()
             ? (m_helperComponent.isEmpty() ? tr("(visible mapper)")
                                            : m_helperComponent)
-            : selectedComponent();
+            : previewComponent();
         m_unlockStatusView->setText(tr(
             "State: unlocked\n"
             "Component: %1\n"
@@ -10850,16 +14340,10 @@ void LegacyMainWindow::updateElevationLabel()
     QString description;
     const bool ok = m_runner->resolveElevation(&description);
     m_lastHelperDescription = description;
-    if (m_settingsHelperLabel) {
-        m_settingsHelperLabel->setText(m_runner->helperPath());
-    }
     if (m_settingsElevationLabel) {
         m_settingsElevationLabel->setText(ok
             ? description
             : tr("unavailable - %1").arg(description));
-    }
-    if (m_settingsLogDirLabel) {
-        m_settingsLogDirLabel->setText(m_logDirectory);
     }
 }
 
@@ -10868,7 +14352,7 @@ void LegacyMainWindow::updateElevationLabel()
 // active, or "Target: none selected".
 void LegacyMainWindow::updateScopeLabel()
 {
-    // Cycle 9: the scope label renders like modern's wrapped scope label —
+    // Cycle 9: the scope label renders like modern's wrapped scope label -
     // "Host maintenance:" / "Target:" on the first line and the disk (or
     // disk + root) on the second.
     QString text;
@@ -10897,13 +14381,61 @@ void LegacyMainWindow::updateScopeLabel()
     }
 }
 
+// Modern updateTargetLabels() parity (item #3): the Settings "Show
+// capabilities for:" selector follows the active scope - Host Maintenance
+// selects "Host", otherwise the committed repair target selects
+// "Repair target". The selector only chooses which cached scope the table
+// reads; it never creates a scope model of its own. Qt3's setCurrentItem()
+// never emits activated(), so the sync never re-reads the cache by itself:
+// refreshCapabilities() runs explicitly below only when the selection
+// actually changed (so the frequent updateActionStates() passes do not spam
+// the session log).
+void LegacyMainWindow::syncCapabilityScopeSelector()
+{
+    if (!m_capabilityScopeSelector) {
+        return;
+    }
+    const int targetIndex = 0;   // "Repair target"
+    const int hostIndex = 1;     // "Host"
+    const int desired = hostScope() ? hostIndex : targetIndex;
+    if (m_capabilityScopeSelector->currentItem() != desired) {
+        m_capabilityScopeSelector->setCurrentItem(desired);
+        refreshCapabilities();
+    }
+}
+
+// Modern invalidateAllActiveScopeDiagnostics() parity (item #8): the legacy
+// frontend keeps ONE cached capability/evidence model (identity-keyed, not
+// two per-scope maps like the modern host/target caches), so a scope switch
+// must clear it together with the diagnostic display cache. This is what
+// stops a target-scope run from initially showing the previous host-scope
+// transcript (and vice-versa): the results pane, the per-section cache, the
+// re-run marker and the capability/evidence model are all dropped so the new
+// scope starts from "no evidence" until its own diagnostics complete.
+void LegacyMainWindow::invalidateScopeDiagnostics()
+{
+    m_model.reset();
+    m_diagnosticSections.clear();
+    m_fullDiagnosticReport = QString::null;
+    m_lastDiagnosticKey = QString::null;
+    m_lastDiagnosticIdentity = QString::null;
+    // Item #8 adjacent: the helper-confirmed fact map (and its derived disk/
+    // component fields) describe the previous scope's evidence; clearing them
+    // with the diagnostics cache stops the Systems "Selected drive details"
+    // pane from briefly showing the prior scope's facts.
+    m_factMap.clear();
+    m_helperDisk = QString::null;
+    m_helperComponent = QString::null;
+    refreshDiagnosticResultsView();
+}
+
 // Deferred-authorization affordance (modern m_authorizationStatusLabel /
 // Authorize): the status text and the button state on the Systems and Repair
 // pages. The modal hidden-input dialog is opened by authorizeNow().
 void LegacyMainWindow::updateAuthorizationAffordance()
 {
     // Cycle 11 (modern parity): the Authorize button and status label are
-    // only visible in the deferred-authorization state — a scope is ready
+    // only visible in the deferred-authorization state - a scope is ready
     // AND the administrator session is not active. With no scope, or once
     // the session is active, both are hidden (the modern frontend shows no
     // idle authorization row either).
@@ -10914,23 +14446,29 @@ void LegacyMainWindow::updateAuthorizationAffordance()
     QString text;
     bool canAuthorize = false;
     if (deferred) {
+        // Modern deferred wording (item #6): the status label and tooltip
+        // mirror MainWindow::updateAuthorizationAffordance()'s deferred
+        // (no-failure) branch, and the Authorize button keeps the modern
+        // tooltip.
         text = tr(
-            "Authorization required: diagnostics and repairs fail closed until "
-            "you press Authorize.");
+            "Administrator authorization deferred - diagnostics will regenerate "
+            "after you authorize.");
         canAuthorize = true;
     }
     if (m_authStatusLabel) {
         m_authStatusLabel->setText(text);
         m_authStatusLabel->setHidden(!deferred);
+        if (deferred) {
+            QToolTip::add(m_authStatusLabel, tr(
+                "Authorization deferred; press Authorize."));
+        }
     }
     if (m_authorizeButton) {
         m_authorizeButton->setHidden(!deferred);
         m_authorizeButton->setEnabled(canAuthorize);
         if (canAuthorize) {
             QToolTip::add(m_authorizeButton, tr(
-                "Re-establish the privileged helper session for the current "
-                "scope now. The password is requested in the hidden-input "
-                "modal and is never logged."));
+                "Establish the privileged helper session for the current scope now."));
         }
     }
 }
@@ -10977,6 +14515,31 @@ void LegacyMainWindow::updateDiagnosticDetails()
     }
 }
 
+// Results pane population: after a combined `diagnose all` run the per-section
+// cache is parsed and the SELECTED check's own section (title + body) is
+// shown, matching the modern GUI. The `report` aggregate shows the full
+// combined report; an individual run shows its raw helper output directly
+// (set by helperFinished), so a selection change re-populates from the
+// per-section cache only.
+void LegacyMainWindow::refreshDiagnosticResultsView()
+{
+    if (!m_rawView) {
+        return;
+    }
+    QListViewItem *item = m_diagnosticList ? m_diagnosticList->currentItem() : 0;
+    if (!item) {
+        m_rawView->setText(QString::null);
+        return;
+    }
+    const QString key = mapValue(m_diagKeyByTitle,
+                                 item->text(0).stripWhiteSpace());
+    if (key == QString::fromLatin1("report")) {
+        m_rawView->setText(m_fullDiagnosticReport);
+        return;
+    }
+    m_rawView->setText(mapValue(m_diagnosticSections, key));
+}
+
 void LegacyMainWindow::updateActionStates()
 {
     const bool complete = selectionComplete();
@@ -10991,6 +14554,7 @@ void LegacyMainWindow::updateActionStates()
     updateToolDetails();
     updatePlanView();
     updatePlanChecks();
+    updateDeviceFilterChecks();
 
     const bool diagnosticsEnabled = complete && idle && ready;
     if (m_diagnosticsButton) {
@@ -11053,13 +14617,13 @@ void LegacyMainWindow::updateActionStates()
     // drive; the helper's own cryptsetup preflights verify it at runtime.
     if (m_unlockButton) {
         const bool onRunningHost = !runningHostDisk().isEmpty()
-            && selectedDisk() == runningHostDisk();
+            && previewDisk() == runningHostDisk();
         // Cycle 11 Already-Unlocked state (modern parity): after this
         // session's successful unlock of the selected drive the button reads
         // "Already Unlocked" and is disabled; it returns to the normal
         // gating on another selection or a rescan.
-        const bool alreadyUnlocked = !selectedDisk().isEmpty()
-            && m_unlockedDisk == selectedDisk()
+        const bool alreadyUnlocked = !previewDisk().isEmpty()
+            && m_unlockedDisk == previewDisk()
             && !m_unlockedRoot.isEmpty();
         if (alreadyUnlocked && idle) {
             updateButtonText(m_unlockButton,
@@ -11075,12 +14639,12 @@ void LegacyMainWindow::updateActionStates()
         } else {
             updateButtonText(m_unlockButton, tr("Unlock"));
             const QString luks = onRunningHost ? QString::null
-                                               : unlockCandidateFor(selectedDisk());
+                                               : unlockCandidateFor(previewDisk());
             // Cycle 13: Host Maintenance is a scope, not a lock on other
-            // drives — a selected offline drive stays unlockable while it is
+            // drives - a selected offline drive stays unlockable while it is
             // active.
             const bool unlockEnabled = idle && !onRunningHost
-                && !selectedDisk().isEmpty() && !luks.isEmpty();
+                && !previewDisk().isEmpty() && !luks.isEmpty();
             m_unlockButton->setEnabled(unlockEnabled);
             if (onRunningHost) {
                 QToolTip::add(m_unlockButton, tr(
@@ -11090,7 +14654,7 @@ void LegacyMainWindow::updateActionStates()
                 QToolTip::add(m_unlockButton, tr(
                     "Host Maintenance is the current scope, but the selected "
                     "offline drive can still be unlocked."));
-            } else if (selectedDisk().isEmpty()) {
+            } else if (previewDisk().isEmpty()) {
                 QToolTip::add(m_unlockButton, tr(
                     "Select a physical drive in the Available repair targets list first."));
             } else if (!idle) {
@@ -11110,27 +14674,39 @@ void LegacyMainWindow::updateActionStates()
     }
     if (m_setTargetButton) {
         const bool onRunningHost = !runningHostDisk().isEmpty()
-            && selectedDisk() == runningHostDisk();
+            && previewDisk() == runningHostDisk();
         QMap<QString, DeviceRow>::const_iterator selectedRow =
-            m_rows.find(selectedDisk());
+            m_rows.find(previewDisk());
         const bool optical = selectedRow != m_rows.end()
             && selectedRow.data().optical;
-        const QString root = autoResolvedRoot(selectedDisk());
+        const QString root = autoResolvedRoot(previewDisk());
         // Cycle 15 (modern diskIsSelectableRepairTarget parity): Select
         // Target is enabled for every selectable non-host, non-optical drive
-        // — blank and non-Linux data disks included. The only drive-level
+        // - blank and non-Linux data disks included. The only drive-level
         // refusal besides the protected host and optical media is a locked
-        // LUKS container without a visible Linux filesystem. The committed
-        // drive stays enabled (modern never disables it) with the committed
-        // tooltip instead.
-        const bool lockedLuksNoLinux = !autoResolvedLuks(selectedDisk()).isEmpty()
+        // LUKS container without a visible Linux filesystem. The already-
+        // committed drive is disabled (Item #1: its row is already the
+        // committed target; every other row stays selectable), with the
+        // committed tooltip.
+        const bool lockedLuksNoLinux = !autoResolvedLuks(previewDisk()).isEmpty()
             && root.isEmpty();
-        const bool alreadyCommitted = !m_committedDisk.isEmpty()
-            && selectedDisk() == m_committedDisk;
-        const bool canCommit = idle && !selectedDisk().isEmpty() && !onRunningHost
-            && !optical && !lockedLuksNoLinux;
+        // Item #4: "already committed" only applies in ordinary repair-target
+        // mode; while Host Maintenance is active the scope is the running host,
+        // so the highlighted row always shows the commit (leave Host
+        // Maintenance) wording rather than a stale committed tooltip.
+        const bool alreadyCommitted = !hostScope() && !m_committedDisk.isEmpty()
+            && previewDisk() == m_committedDisk;
+        // Commit-path cancel parity (item #7 adjacent): Select Target stays
+        // enabled during a read-only diagnostic run - committing cancels that
+        // diagnostic and switches scope (setRepairTarget). It only waits (stays
+        // disabled) while a mutating repair is running, which is never
+        // cancelled.
+        const bool busyMutating = m_running && !m_pendingDiagnostic;
+        const bool canCommit = !busyMutating && !previewDisk().isEmpty()
+            && !onRunningHost && !optical && !lockedLuksNoLinux
+            && !alreadyCommitted;
         m_setTargetButton->setEnabled(canCommit);
-        if (selectedDisk().isEmpty()) {
+        if (previewDisk().isEmpty()) {
             QToolTip::add(m_setTargetButton, tr(
                 "Select a physical drive in the Available repair targets list first."));
         } else if (onRunningHost) {
@@ -11150,14 +14726,15 @@ void LegacyMainWindow::updateActionStates()
                 "Committed repair target. Repair, Diagnostics and File Copy "
                 "target this physical drive until another drive is explicitly "
                 "selected with Select Target."));
-        } else if (!idle) {
+        } else if (busyMutating) {
             QToolTip::add(m_setTargetButton, tr(
-                "A helper command is already running."));
+                "A guarded repair is running; wait for it to finish before "
+                "committing a repair target."));
         } else if (hostScope()) {
             QToolTip::add(m_setTargetButton, tr(
                 "Commit %1 as the repair target; this leaves Host Maintenance "
                 "and switches the scope to the selected drive.")
-                .arg(selectedDisk()));
+                .arg(previewDisk()));
         } else {
             QToolTip::add(m_setTargetButton, tr(
                 "Commit this physical drive as the repair target."));
@@ -11185,13 +14762,28 @@ void LegacyMainWindow::updateActionStates()
                   "The running host target could not be detected."));
     }
     if (m_hostMaintenanceButton) {
-        const bool canMaintain = idle && !runningHostDisk().isEmpty();
+        // Modern parity (item #7): Host Maintenance stays enabled during a
+        // read-only diagnostic run - selecting it cancels the diagnostic and
+        // switches scope (toggleHostMaintenance). It only waits (stays
+        // disabled) while a mutating repair is running, which is never
+        // cancelled.
+        const bool hostKnown = !runningHostDisk().isEmpty();
+        const bool busyMutating = m_running && !m_pendingDiagnostic;
+        const bool canMaintain = hostKnown && !busyMutating;
         m_hostMaintenanceButton->setEnabled(canMaintain);
-        QToolTip::add(m_hostMaintenanceButton, canMaintain
-            ? (m_hostMaintenance
-                ? tr("Leave Host Maintenance and return to repair-target mode.")
-                : tr("Select the running host for deliberate guarded maintenance; the administrator authorization is requested here once and cached for the session."))
-            : tr("The running host target could not be detected; diagnostics need a repair target."));
+        if (m_hostMaintenance) {
+            QToolTip::add(m_hostMaintenanceButton,
+                          tr("Exit Host Maintenance - return to ordinary repair-target mode."));
+        } else if (busyMutating) {
+            QToolTip::add(m_hostMaintenanceButton, tr(
+                "A guarded repair is running; wait for it to finish before switching scope."));
+        } else if (hostKnown) {
+            QToolTip::add(m_hostMaintenanceButton,
+                          tr("Host Maintenance - run guarded repair stages against the running system."));
+        } else {
+            QToolTip::add(m_hostMaintenanceButton, tr(
+                "The running host target could not be detected; diagnostics need a repair target."));
+        }
     }
     if (m_targetSummary) {
         if (hostMaintenanceActive()) {
@@ -11291,7 +14883,7 @@ void LegacyMainWindow::advanceBusyAnimation()
         return;
     }
     // The lightweight ellipsis cycle: the base working text plus (frame % 4)
-    // dots. Plain ASCII dots only — Etch's fonts garble non-ASCII glyphs and
+    // dots. Plain ASCII dots only - Etch's fonts garble non-ASCII glyphs and
     // Qt 3.3.7 has no animated-widget busy rendering.
     QString text = m_busyBaseText;
     for (int i = 0; i < (m_busyFrame % 4); ++i) {
@@ -11305,16 +14897,26 @@ QString LegacyMainWindow::busyIndicatorText() const
 {
     // The exact strings the modern Qt6 GUI's busy status label shows for the
     // equivalent operation, so the two frontends read identically while they
-    // work.
+    // work. Diagnostics runs are scope-aware: the label names the running host
+    // versus the repair target (modern "Running %1 diagnostic: %2" /
+    // "Running all %1 diagnostics" / "Regenerating %1 diagnostics
+    // automatically"), while install/repair/unlock keep their modern
+    // scope-independent labels.
     if (m_pendingDiagnostic) {
+        const QString scopeWord = hostScope() ? tr("Host") : tr("Target");
         if (m_pendingQuiet) {
-            return tr("Regenerating diagnostics automatically");
+            return hostScope()
+                ? tr("Regenerating Host diagnostics automatically")
+                : tr("Regenerating Target diagnostics automatically");
         }
         if (!m_pendingDiagnosticKey.isEmpty()) {
-            return tr("Running diagnostic: %1")
+            return tr("Running %1 diagnostic: %2")
+                .arg(scopeWord)
                 .arg(diagnosticTitle(m_pendingDiagnosticKey));
         }
-        return tr("Running all diagnostics");
+        return hostScope()
+            ? tr("Running all Host diagnostics")
+            : tr("Running all Target diagnostics");
     }
     if (m_pendingUnlock) {
         return tr("Unlocking %1").arg(m_unlockDevice);
@@ -11360,6 +14962,29 @@ void LegacyMainWindow::appendLog(const QString &line)
     }
 }
 
+// Flushes the diagnostic stream buffered during a run into the register and
+// the session file, preserving each line's captured kind/section tag (modern
+// hide-until-complete parity: the buffered transcript is revealed only once
+// the run completes).
+void LegacyMainWindow::flushBufferedDiagnosticEntries()
+{
+    if (m_bufferedDiagnosticEntries.empty()) {
+        return;
+    }
+    ensureLogFile();
+    for (std::size_t i = 0; i < m_bufferedDiagnosticEntries.size(); ++i) {
+        const LogEntry &entry = m_bufferedDiagnosticEntries[i];
+        m_logEntries.push_back(entry);
+        if (!m_logPath.isEmpty()) {
+            appendToLogFile(entry.text);
+        }
+        if (!m_viewingPriorLog && logLinePassesFilter(entry)) {
+            m_logView->append(entry.text);
+        }
+    }
+    m_bufferedDiagnosticEntries.clear();
+}
+
 // Ensures the session-log directory. The GUI's own default tree
 // (~/.boot-repair-legacy/logs) is private: components are created 0700 and
 // the leaf is re-tightened to 0700 (a pre-existing directory from an earlier
@@ -11389,9 +15014,6 @@ void LegacyMainWindow::ensureLogFile()
     m_logPath = m_logDirectory + QString::fromLatin1("/")
         + QDateTime::currentDateTime().toString(QString::fromLatin1("yyyyMMdd-hhmmss"))
         + QString::fromLatin1(".log");
-    if (m_settingsSessionLabel) {
-        m_settingsSessionLabel->setText(m_logPath);
-    }
     refreshSessionLogList();
 }
 
@@ -11619,6 +15241,21 @@ void LegacyMainWindow::clearLog()
     if (m_deleteSessionLogButton) {
         m_deleteSessionLogButton->setEnabled(false);
     }
+    // Modern clearActionRegister() parity: clearing the register also clears
+    // the cached diagnostic evidence that gates every repair tool, so the
+    // visible register and the invisible single source of truth cannot drift
+    // apart. Reset the capability model and the per-section display cache, then
+    // re-render the diagnostics list and the capability table so no stale
+    // evidence lingers after the clear.
+    m_model.reset();
+    m_diagnosticSections.clear();
+    m_fullDiagnosticReport = QString::null;
+    m_lastDiagnosticKey = QString::null;
+    m_lastDiagnosticIdentity = QString::null;
+    refreshDiagnosticResultsView();
+    updateDiagnosticDetails();
+    refreshCapabilities();
+    updateActionStates();
     refreshSessionLogList();
     refreshLogView();
 }

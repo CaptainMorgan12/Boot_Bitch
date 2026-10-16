@@ -222,13 +222,14 @@ These anonymized screenshots show Boot Bitch running in a disposable recovery VM
 
 ## 0.2.28 refinements
 
-0.2.28 introduces the EFI boot entries manager — a guarded view of the UEFI firmware's boot entries and the GRUB boot menu — plus the completed 22-language localization of the new surface and a hardened Debian Etch port. Highlights:
+0.2.28 makes diagnostics the single source of truth for every repair, adds the EFI boot entries manager and a read-only boot menu, extends kernel/module/GPU maintenance across Fedora, Alpine and Arch, and finishes the Debian Etch legacy GUI. Highlights:
 
-- EFI boot entries: list, reorder, rename and delete the running firmware's `Boot####`/`BootOrder` entries for the running host or a selected repair target, with the active BootCurrent entry always protected, blank labels refused, and every NVRAM write verified and rolled back on mismatch.
-- At-a-glance boot meaning: a "Boots" column shows what each entry does (GRUB menu, direct UKI boot, network/WebFAI, fallback), and an "EFI-/UKI Restore" action re-runs the EFI/UKI-Bootloader repair for the current scope to re-create missing entries.
-- Read-only GRUB menu: a dropdown switches to the GRUB boot menu (`grub.cfg`) as a collapsible tree with submenu nesting, the default entry marked, submenus that load an external config file surfaced, and a cross-reference to the firmware entries on the same disk.
-- Localization: all new and changed strings are translated into all 22 languages.
-- Debian Etch port: a masked drift-gate `pipefail` bug was fixed and the new firmware/GRUB code was made bash-3 safe, so the legacy helper builds correctly again.
+- Diagnostics as the single source of truth: the Boot capabilities page reads the cached diagnostic evidence (Repair target / Host scope selector, change-aware refresh), and repairs consume multi-diagnostic baselines for kernel, GPU, boot-error, DKMS, initramfs, display, EFI and GRUB work, with a shared boot-reached classifier and a read-only package-state gate.
+- EFI, boot menu and flows: a new EFI boot entries tab lists the UEFI firmware entries with reorder, rename and delete (BootCurrent is protected, NVRAM writes are verified and rolled back), plus a read-only boot-menu tree view falling back through GRUB, extlinux and GRUB legacy; the LUKS unlock queues behind running work, the shells gain bash-style command history, and File Copy and shell diagnostics invalidate on change.
+- Kernel, module and GPU across distributions: Fedora akmods and Alpine akms module-build systems, Fedora/rpm kernel cleanup parity, a relaxed GPU gate that still derives the expected driver from hardware evidence, and the file-system check refuses offline-only tools on a still-mounted btrfs device.
+- Debian Etch legacy GUI: the Settings splitter drags properly with pinned frame heights (a setSizes-driven drag controller works around Qt 3.3.7 drag-path bugs and keeps the mandatory safety section visible), closing the window exits the application, and the unlock-LUKS popup is sized correctly.
+- Bug fixes and UI/UX polish: firmware and bootloader changes are transactional (writes verified and rolled back), the shell no longer loses commands typed while a command is running, and host and target scope state no longer leaks between sessions.
+- Localization and polish: every new string is translated into 22 languages with German short action-word overrides, tooltips are shortened, and header and button rows reflow at the minimum window width.
 
 ## 0.2.27 refinements
 

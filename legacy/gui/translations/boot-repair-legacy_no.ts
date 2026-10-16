@@ -1251,8 +1251,8 @@
         <translation>Filtrer den synlige loggen etter oppføringstype. Velger du en diagnostisk seksjon viser linjer som er tatt opp for den delen; et arbeidsflytfilter som filsystemreparasjon eller pakkereparasjon viser sine kartlagde reparasjonslinjer (Filkopien har ingen linjer i denne frontenden). Lagre Som alltid skriver alle innlegg.</translation>
     </message>
     <message>
-        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. Launch the GUI as the same user to keep your overrides; a GUI started as root keeps its own copies.</source>
-        <translation>Innstillinger lagres per bruker under ~/.qt/, en fil per innstillingsgruppe (devicesrc, logsrc, diagnosticsrc, reparatrc), og lagres umiddelbart på hver endring og på slutten. Start GUI som samme bruker for å holde overstyrene dine; et GUI startet som root holder sine egne kopier.</translation>
+        <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
+        <translation>Innstillinger lagres per bruker under ~/.qt/, en fil per innstillingsgruppe (devicesrc, logsrc, diagnosticsrc, reparatrc), og lagres umiddelbart på hver endring og på slutten. Den samme plasseringen per bruker brukes om GUI kjører som den loggede brukeren eller som root (sudo bevarer hjemmekatalogen).</translation>
     </message>
     <message>
         <source>Device discovery</source>

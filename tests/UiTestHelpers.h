@@ -143,6 +143,34 @@ inline QTreeWidgetItem *repairItem(MainWindow &window, const QString &key)
     return nullptr;
 }
 
+// Collects the visible text of every Full Repair plan stage row on the Repair
+// tab. The plan stages now live in a ResponsiveColumnsLayout of PlanStageRow
+// widgets (icon + wrapping label) rather than a QListWidget, so this walks the
+// layout's items and reads each row's text label.
+inline QStringList fullRepairPlanStageTexts(MainWindow &window)
+{
+    QStringList texts;
+    if (!window.m_fullRepairStageList) {
+        return texts;
+    }
+    QLayout *layout = window.m_fullRepairStageList->layout();
+    for (int index = 0; layout && index < layout->count(); ++index) {
+        QLayoutItem *item = layout->itemAt(index);
+        QWidget *row = item ? item->widget() : nullptr;
+        if (!row) {
+            continue;
+        }
+        const auto labels = row->findChildren<QLabel *>();
+        for (QLabel *label : labels) {
+            if (!label->text().isEmpty()) {
+                texts.append(label->text());
+                break;
+            }
+        }
+    }
+    return texts;
+}
+
 // Add and select a top-level drive row so the scope-confirmation handlers can
 // read it exactly like a user selection in the device tree.
 inline QTreeWidgetItem *selectTopLevelDisk(MainWindow &window, const QString &diskPath)

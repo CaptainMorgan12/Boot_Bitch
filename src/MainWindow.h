@@ -6,6 +6,7 @@
 #include <QByteArray>
 #include <QDateTime>
 #include <QDialog>
+#include <QElapsedTimer>
 #include <QFileDialog>
 #include <QHash>
 #include <QIcon>
@@ -38,6 +39,7 @@ class QPlainTextEdit;
 class QProcess;
 class QPushButton;
 class QResizeEvent;
+class QScrollArea;
 class QSettings;
 class QSplitter;
 class QStackedWidget;
@@ -65,6 +67,11 @@ public:
     QLabel *statusLabel() const { return m_status; }
     QPlainTextEdit *outputPane() const { return m_output; }
     QPushButton *closeButton() const { return m_closeButton; }
+    // The persistent prompt input line and its Send affordance.  Disabled while
+    // no interactive prompt is waiting; enabled and focused by the request
+    // handler when the helper emits a PROMPT record for the Repair kind.
+    QLineEdit *promptInputLine() const { return m_promptInput; }
+    QPushButton *promptSendButton() const { return m_promptSend; }
     void setStatusText(const QString &text);
 
     void reject() override;
@@ -76,6 +83,8 @@ private:
     QLabel *m_status = nullptr;
     QPlainTextEdit *m_output = nullptr;
     QPushButton *m_closeButton = nullptr;
+    QLineEdit *m_promptInput = nullptr;
+    QPushButton *m_promptSend = nullptr;
     bool m_closeAllowed = false;
 };
 
@@ -425,9 +434,28 @@ private:
     void refreshCapabilities();
     void resizeCapabilityRows();
     // Boot capabilities table Install action: install a missing suggested
-    // package into the selected repair target (target-scope) or remind the user
-    // to install it on the host (host-scope).
+    // package into the selected repair target (target-scope) or onto the
+    // running host (host-scope, Host Maintenance only) through the guarded
+    // package backend, simulation-first and fail-closed.
     void installMissingCapability(const QString &package, bool targetScope);
+    // Dynamic tab visibility (Snapshots and EFI boot entries) from the cached
+    // capability evidence. The hidden tabs are REMOVED from the tab bar (never
+    // merely greyed out); re-applied on every scope change and after every
+    // diagnostics refresh that updates the cached capability preamble. Never
+    // raises an authorization prompt of its own.
+    void updateTabVisibility();
+    // Logical tab visibility (the read-only test seam): true only when the
+    // tab has something to show, independent of the tab-bar's actual index.
+    bool snapshotsTabVisible() const;
+    bool bootEntriesTabVisible() const;
+    // Stable logical-tab model. The AppTab enum stays the fixed logical index;
+    // these map between the logical identity and the QTabWidget's actual index
+    // (which shifts when a dynamic tab is removed/inserted).
+    bool logicalTabPresent(int logicalIndex) const;
+    void applyTabVisibility(int logicalIndex, bool visible, QWidget *page,
+                            const QString &iconName, const QString &title,
+                            const QString &tooltip);
+    void showLogicalTab(int logicalIndex);
     void resizeSnapshotRows();
     void populateDeviceTree(const QList<DeviceNode> &devices);
     void updateHostSystemSummary(const QList<DeviceNode> &devices);
@@ -494,6 +522,12 @@ private:
     // the running host (m_hostPrimaryPath/m_hostPrimaryComponentPath); a
     // selected repair target names m_previewTargetPath/m_previewTargetComponentPath.
     void bootEntriesScopeIdentity(bool *isHost, QString *disk, QString *root) const;
+    // The per-scope cache key ("host:<disk>" / "target:<disk>", empty when no
+    // scope is selected) derived from bootEntriesScopeIdentity().  A single
+    // source of truth so refreshBootEntries()/refreshGrubMenu() can capture it
+    // before a privileged request and re-validate it afterwards without
+    // re-deriving the format from updateBootEntriesControls().
+    QString bootEntriesScopeCacheKey() const;
     static BootEntriesInventory parseBootEntriesOutput(const QString &output);
     static GrubMenuInventory parseGrubMenuOutput(const QString &output);
     static ExtlinuxInventory parseExtlinuxOutput(const QString &output);
@@ -504,7 +538,11 @@ private:
     void updateSnapshotControls();
     void clearSnapshotResults();
     void scheduleSnapshotPreload();
-    void loadSnapshots();
+    // Loads the Btrfs snapshot inventory.  The automatic background preload
+    // (background=true) runs silently so a scope switch never flashes the
+    // Btrfs busy label over the diagnostics run that owns it; a manual Load
+    // Snapshots click (background=false) keeps the normal busy indicator.
+    void loadSnapshots(bool background = false);
     // Scope-aware Btrfs inventory accessors. In Host Maintenance they name the
     // running host; otherwise the committed repair target. The helper command
     // follows the scope (host-snapshots vs snapshots) and the identity is the
@@ -519,6 +557,11 @@ private:
     // Running-host rollback capability from the cached host capability
     // preamble. Fails closed when the host diagnostics have not run.
     bool hostSnapshotRollbackAvailable(QString *reason = nullptr) const;
+    // Scope-neutral snapshot-rollback capability: host scope consumes the
+    // cached `Host snapshot rollback:` evidence, target scope the cached
+    // `Snapshot rollback:` evidence. Fails closed when the active scope's
+    // diagnostics have not run.
+    bool snapshotRollbackAvailable(QString *reason = nullptr) const;
     // Running-host rollback flow and its persisted reboot-required state.
     void rollbackHostSnapshot(const QString &snapshotId);
     void setHostRebootRequired(const QString &snapshotId);
@@ -641,6 +684,11 @@ private:
     // only selects the user-visible wording and falls back to DKMS with no
     // evidence.
     QString detectedModuleBuildSystemLabel() const;
+    // Localizes a helper transcript for DISPLAY: the helper's `msg:` lines plus
+    // a rewrite of the stable `dkms` module-build key token to the detected
+    // build-system name (AKMS / AKMODS / DKMS). The cached evidence and every
+    // parser keep the machine-read `dkms` key; this is the display layer only.
+    QString displayLocalizedHelperOutput(const QString &raw) const;
     // Short-action labels that name the detected module-build system verbatim:
     // "Rebuild DKMS modules"/"Rebuild akmods modules"/"Rebuild AKMS modules"
     // and the button form "Rebuild DKMS"/"Rebuild akmods"/"Rebuild AKMS".
@@ -738,8 +786,8 @@ private:
     void clearTargetDiagnosticCache();
     bool currentDiagnosticScopeReady(QString *reason = nullptr) const;
     bool currentScopeEvidenceStale(QString *reason = nullptr) const;
-    bool shouldScheduleEvidenceRefresh(QString *reason = nullptr) const;
-    void scheduleEvidenceRefresh(const QString &reason);
+    bool shouldScheduleEvidenceRefresh(QString *reason = nullptr, bool force = false) const;
+    void scheduleEvidenceRefresh(const QString &reason, bool force = false);
     void handlePrivilegedSessionEstablished();
     void runScheduledEvidenceRefresh();
     // Coalescing asynchronous boot-entries refresh that runs after diagnostics
@@ -796,9 +844,24 @@ private:
                                  bool showProgressDialog = true,
                                  LogEntryKind kind = LogEntryKind::Application,
                                  const QString &statusIdentity = QString(),
-                                 RepairProgressDialog *sharedProgressDialog = nullptr,
-                                 bool queueWhenBusy = false);
+                                  RepairProgressDialog *sharedProgressDialog = nullptr,
+                                  bool quiet = false);
     void closePrivilegedSession();
+    // Aborts the in-flight read-only diagnostic so the application close can
+    // proceed promptly: sends the helper the QUIT/close signal it already
+    // understands and marks the request aborted so its non-modal wait loop
+    // stops waiting. Only called for LogEntryKind::Diagnostic requests;
+    // mutating requests (repairs, file copy, unlock, snapshots, shells) are
+    // never aborted through the window-close path.
+    void abortInFlightDiagnostic();
+    // Cancels the in-flight read-only diagnostic without closing the privileged
+    // session: sends the helper SIGUSR1 so it stops the current request early
+    // (returning partial output + a normal DONE) and continues its request
+    // loop, letting the new scope's diagnostic reuse the existing authorization.
+    // Unlike abortInFlightDiagnostic(), this never writes QUIT and never sets
+    // m_privilegedRequestAbortRequested. Used by the scope-change paths
+    // (selectHostForMaintenance / exitHostMaintenanceMode) only.
+    void cancelInFlightDiagnostic();
 
     // ---- Repair tools and result reporting -----------------------------------
 
@@ -1044,12 +1107,12 @@ private:
     // held-back/skipped package-manager feedback appended to a change status)
     // is appended for the non-failed forms so kept-back package names stay
     // visible in the result summary.
-    static QString repairResultSummary(RepairResultCategory category,
-                                       const QString &toolKey = QString(),
-                                       const QString &reason = QString(),
-                                       const QString &detail = QString());
+    QString repairResultSummary(RepairResultCategory category,
+                                const QString &toolKey = QString(),
+                                const QString &reason = QString(),
+                                const QString &detail = QString());
     static QString repairResultSymbol(RepairResultCategory category);
-    static QString repairResultStageLine(const RepairStageResult &stage);
+    QString repairResultStageLine(const RepairStageResult &stage);
     // Short, single-line failure reason extracted from the helper transcript
     // (last "ERROR:" line, else the last line mentioning a failure).
     static QString shortRepairFailureReason(const QString &output);
@@ -1073,7 +1136,7 @@ private:
     // stays traceable to the stage line that carries the affected device
     // list; the not-run reference names the stages an earlier failure stopped
     // before, so they are never confused with the failed stage.
-    static QString fullRepairPlanSummary(const QList<RepairStageResult> &stages);
+    QString fullRepairPlanSummary(const QList<RepairStageResult> &stages);
     // Records one Full Repair stage result; a no-op outside a running plan.
     void recordPlanStageResult(const QString &toolKey, RepairResultCategory category,
                                const QString &reason = QString(),
@@ -1181,6 +1244,7 @@ private:
     void updateResponsiveLayout();
     void updateFullRepairSummary();
     void updateFullRepairPlanHeight();
+    void updateSettingsSplitterDefaults();
     void updateRepairScopeControls();
     // The Settings Full Repair plan checkboxes in plan order paired with the
     // capability key each stage gates: the single list shared by the Settings
@@ -1262,6 +1326,19 @@ private:
     bool m_applyingColorScheme = false;
 
     QTabWidget *m_tabs = nullptr;
+    // Stable logical-tab page widgets. The AppTab enum keeps its fixed logical
+    // index even when a dynamic tab (Boot entries / Snapshots) is removed from
+    // the tab bar; every tab-bar lookup goes through indexOf(page) instead of
+    // the enum value so the actual indices can shift freely.
+    QWidget *m_systemsPage = nullptr;
+    QWidget *m_diagnosticsPage = nullptr;
+    QWidget *m_bootEntriesPage = nullptr;
+    QWidget *m_repairPage = nullptr;
+    QWidget *m_snapshotsPage = nullptr;
+    QWidget *m_chrootShellPage = nullptr;
+    QWidget *m_fileCopyPage = nullptr;
+    QWidget *m_logsPage = nullptr;
+    QWidget *m_settingsPage = nullptr;
     QToolButton *m_tabScrollLeftButton = nullptr;
     QToolButton *m_tabScrollRightButton = nullptr;
     QAction *m_wrapLogsAction = nullptr;
@@ -1288,6 +1365,11 @@ private:
     QGroupBox *m_unlockStatusBox = nullptr;
     QPlainTextEdit *m_unlockStatusView = nullptr;
     QMap<QString, QString> m_unlockStatusCache;
+    // Monotonic start time of the LUKS unlock's deferral while another request
+    // owns the single-request gate. Invalid while no unlock is deferred; it
+    // bounds the deferral to kPrivilegedQueueWaitTimeoutMs so a wedged owner
+    // can never make the unlock wait forever.
+    QElapsedTimer m_unlockDeferralStarted;
     bool m_targetDiagnosticsNeedRegeneration = false;
     // Scoped invalidation: sections whose cached evidence was invalidated by a
     // repair action but not yet regenerated. The full flag above supersedes
@@ -1328,6 +1410,12 @@ private:
     QLineEdit *m_chrootShellCommandEdit = nullptr;
     QPlainTextEdit *m_chrootShellOutput = nullptr;
     QPushButton *m_chrootShellRunButton = nullptr;
+    // Persistent prompt input line + Send button for the shell transcript pane.
+    // Disabled while no shell command is waiting for input; the PROMPT/ANSWER
+    // handler enables and focuses them while a ChrootShell/HostShell prompt is
+    // pending, mirroring the repair progress dialog's prompt surface.
+    QLineEdit *m_shellPromptInput = nullptr;
+    QPushButton *m_shellPromptSend = nullptr;
     // In-memory shell command history (oldest → newest), never written to
     // disk. The index is -1 while editing a fresh line; the draft holds the
     // user's in-progress text saved when navigating Up away from that line.
@@ -1366,7 +1454,11 @@ private:
     QLabel *m_fullRepairCountLabel = nullptr;
     QLabel *m_fullRepairReadinessLabel = nullptr;
     QGroupBox *m_fullRepairPlanBox = nullptr;
-    QListWidget *m_fullRepairStageList = nullptr;
+    // Container hosting the ResponsiveColumnsLayout that lays out the read-only
+    // Full Repair plan stage rows in two-column dynamic wrapping (the scroll
+    // area above it keeps the vertical-splitter shrink behavior).
+    QWidget *m_fullRepairStageList = nullptr;
+    QScrollArea *m_fullRepairStageScroll = nullptr;
     QPushButton *m_runFullRepairButton = nullptr;
 
     QTableWidget *m_snapshotTable = nullptr;
@@ -1444,8 +1536,41 @@ private:
     // True when the boot-menu tree currently renders GRUB legacy (menu.lst)
     // rows rather than GRUB menuentry or extlinux rows.
     bool m_bootMenuShowingGrubLegacy = false;
-    QString m_grubMenuScopeKey;
     bool m_grubMenuLoaded = false;
+
+    // Per-scope cache of the firmware boot entries and boot-menu inventories,
+    // keyed by the boot-entries scope key ("host:<disk>" / "target:<disk>").
+    // A scope switch parks the outgoing scope's parsed inventories plus its
+    // staged mutation state here and restores the incoming scope's, so a
+    // host↔target round-trip re-renders the previously loaded entries from
+    // cache instead of clearing the table — mirroring the per-scope
+    // diagnostic/capability cache. A scope whose diagnostics are regenerated
+    // (stale) re-fetches via the post-diagnostics boot-entries refresh and
+    // overwrites this cache on the next scope switch; a manual Load Entries /
+    // Load Menu refresh likewise repopulates the live members, which are
+    // parked here when the scope is next left.
+    // Every member is a VALUE type (strings, lists, flags) — the inventory
+    // structs own their QStrings and never hold QTableWidgetItem/QTreeWidgetItem
+    // or raw widget pointers — so parking an entry here and restoring it after
+    // the table/tree has been cleared is a plain value copy that can never
+    // dangle on a deleted item. The tables are re-derived from these copies by
+    // populateBootEntriesTable()/populateGrubMenuTable()/... on restore.
+    struct BootEntriesScopeCache
+    {
+        BootEntriesInventory entries;
+        QSet<QString> pendingDelete;
+        QHash<QString, QString> pendingRename;
+        QStringList savedOrder;
+        bool entriesLoaded = false;
+
+        GrubMenuInventory grubMenu;
+        ExtlinuxInventory extlinux;
+        GrubLegacyInventory grubLegacy;
+        bool menuShowingExtlinux = false;
+        bool menuShowingGrubLegacy = false;
+        bool menuLoaded = false;
+    };
+    QHash<QString, BootEntriesScopeCache> m_bootEntriesCache;
 
     // Persistent "Reboot required" state for a staged running-host rollback.
     // The flag survives an application restart but is cleared by the kernel
@@ -1509,6 +1634,23 @@ private:
     QLabel *m_packageManagerLabel = nullptr;
     QLabel *m_authBuildLabel = nullptr;
     QComboBox *m_capabilityScopeSelector = nullptr;
+    // Settings lower-pane pieces kept as members so the splitter's default
+    // minimum can be computed from their FIXED minimums (the capabilities
+    // table's 8-row floor plus the refresh button and the mandatory safety
+    // controls) instead of the table's content-derived minimumSizeHint, which
+    // is tiny while the table is empty.
+    QPushButton *m_capabilityRefreshButton = nullptr;
+    QGroupBox *m_safetyControlsBox = nullptr;
+    // Settings page splitter: separates the upper sections (device-discovery /
+    // diagnostics preferences and the Full Repair plan) from the Boot
+    // capabilities region below, so the user can drag-resize the two regions
+    // independently. The default keeps the upper pane at its content height
+    // (the pre-splitter visible size) until the user drags the divider.
+    QSplitter *m_settingsSplitter = nullptr;
+    // True once the user has dragged the Settings splitter divider, so the
+    // content-height default is no longer re-applied on resize (mirrors
+    // m_repairPlanSplitterUserAdjusted for the Repair vertical splitter).
+    bool m_settingsSplitterUserAdjusted = false;
 
     QCheckBox *m_showNonLinux = nullptr;
     QCheckBox *m_showRemovable = nullptr;
@@ -1540,6 +1682,13 @@ private:
     bool m_hostMaintenanceMode = false;
     QString m_previewTargetPath;
     QString m_previewTargetComponentPath;
+    // The committed repair target parked while Host Maintenance is active. On
+    // entering maintenance the preview target is cleared (so the Systems tree
+    // and target-only controls stop pointing at it) but remembered here; the
+    // shared exit path restores it so its cached diagnostics re-render without
+    // a re-diagnosis.
+    QString m_rememberedTargetPath;
+    QString m_rememberedTargetComponentPath;
     QString m_snapshotResultIdentity;
 
     QMap<QString, QString> m_targetDiagnosticCache;
@@ -1564,9 +1713,27 @@ private:
     QString m_bootEntriesRefreshReason;
     bool m_evidenceRefreshPending = false;
     bool m_evidenceRefreshInProgress = false;
+    // Set when a scope switch (host↔target or a repair-target selection)
+    // requests an automatic diagnostics regeneration that must run even though
+    // the current scope's cached evidence is still fresh. It latches across the
+    // deferred / pending / coalesced scheduler paths and is consumed by
+    // runScheduledEvidenceRefresh(), which forces a full report instead of the
+    // no-op section refresh the freshness gate would otherwise choose.
+    bool m_forceScopeEvidenceRefresh = false;
     bool m_diagnosticsRunInProgress = false;
     bool m_runAllDiagnosticsQueued = false;
     bool m_privilegedOperationActive = false;
+    // True while the request that owns the single-request gate is a read-only
+    // diagnostic. Diagnostics are the only kind the close path may abort: they
+    // are non-critical and read-only, so sending the helper QUIT and
+    // interrupting the wait loop terminates them safely. Mutating requests
+    // (repairs, file copy, unlock, snapshots, shells) never set this and keep
+    // their existing close gates.
+    bool m_privilegedOperationIsDiagnostic = false;
+    // Set by abortInFlightDiagnostic() while a diagnostic owns the gate. The
+    // request's non-modal wait loop observes it and stops waiting immediately,
+    // then reports the request as aborted instead of a protocol failure.
+    bool m_privilegedRequestAbortRequested = false;
     // Scope identity (the request's disk-path argument) of the request that
     // owns the gate above; empty when no request is active. A request that
     // finds the gate held is re-entrant by definition and must never block on

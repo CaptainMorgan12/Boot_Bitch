@@ -374,48 +374,6 @@ for report_fn in run_target_diagnostic run_host_diagnostic; do
         || { echo "FAIL: $report_fn does not restore per-section capability output" >&2; exit 1; }
 done
 
-# ---- diagnostic_host_capabilities: read-only host-prerequisite section -------
-grep -q '^diagnostic_host_capabilities()' "$HELPER" \
-    || { echo 'FAIL: helper is missing diagnostic_host_capabilities()' >&2; exit 1; }
-# Registered in the running-host dispatch (individual + combined), never the
-# repair-target combined loop.
-host_dispatch_body="$(sed -n '/^run_host_diagnostic()/,/^}/p' "$HELPER")"
-grep -q 'host-capabilities' <<<"$host_dispatch_body" \
-    || { echo 'FAIL: run_host_diagnostic does not emit the host-capabilities section' >&2; exit 1; }
-target_dispatch_body="$(sed -n '/^run_target_diagnostic()/,/^}/p' "$HELPER")"
-! grep -q 'host-capabilities' <<<"$target_dispatch_body" \
-    || { echo 'FAIL: run_target_diagnostic must not emit the host-capabilities section' >&2; exit 1; }
-grep -q 'host-capabilities) diagnostic_host_capabilities || rc=\$? ;;' "$HELPER" \
-    || { echo 'FAIL: run_one_diagnostic does not dispatch host-capabilities' >&2; exit 1; }
-
-# The section probes with `command -v` (running host only) and emits one stable
-# `Host capability:` line per prerequisite. It must never touch the target or
-# invoke a modifying command.
-host_cap_body="$(sed -n '/^diagnostic_host_capabilities()/,/^}/p' "$HELPER")"
-[[ -n "$host_cap_body" ]] || { echo 'FAIL: diagnostic_host_capabilities body is missing' >&2; exit 1; }
-grep -q 'command -v' <<<"$host_cap_body" \
-    || { echo 'FAIL: diagnostic_host_capabilities does not probe with command -v' >&2; exit 1; }
-grep -Fq 'Host capability: %s package=%s status=%s scope=host note=%s' <<<"$host_cap_body" \
-    || { echo 'FAIL: diagnostic_host_capabilities does not emit the stable Host capability line' >&2; exit 1; }
-# Read-only: the section must never invoke a modifying/install/mount command.
-# (The prerequisite names themselves — chroot, systemctl, etc. — are data, not
-# invocations, so the tokens below are chosen to match real command use only.)
-for forbidden in 'install ' 'apk add' 'apt-get ' 'pacman -S' 'dnf ' 'remount ' 'mkfs' 'grub-install'; do
-    grep -Fq "$forbidden" <<<"$host_cap_body" \
-        && { echo "FAIL: diagnostic_host_capabilities invokes a modifying command: $forbidden" >&2; exit 1; }
-done
-
-# Run the section in a controlled environment and assert every prerequisite line.
-host_caps_out="$(RUNNING_HOST_MODE=1 TARGET_ROOT=/ diagnostic_host_capabilities)"
-[[ "$(sed -n '1p' <<<"$host_caps_out")" == 'Host capability probes (read-only, recovery host):' ]] \
-    || { echo 'FAIL: diagnostic_host_capabilities header line changed' >&2; exit 1; }
-[[ "$(grep -c '^Host capability: ' <<<"$host_caps_out")" -eq 12 ]] \
-    || { echo 'FAIL: diagnostic_host_capabilities did not emit exactly 12 host prerequisites' >&2; exit 1; }
-for host_tool in lsblk blkid findmnt cryptsetup btrfs rsync chroot systemctl efibootmgr objcopy lvs mdadm; do
-    grep -Eq "^Host capability: $host_tool package=[^ ]+ status=(available|missing) scope=host note=.*" <<<"$host_caps_out" \
-        || { echo "FAIL: missing stable 'Host capability: $host_tool' line" >&2; exit 1; }
-done
-
 cap_assert_lines()
 {
     local output
@@ -543,7 +501,6 @@ stub_combined_diagnostic_sections()
     diagnostic_btrfs() { printf 'SECTION btrfs\n'; }
     diagnostic_mapper() { printf 'SECTION mapper\n'; }
     diagnostic_luks() { printf 'SECTION luks\n'; }
-    diagnostic_host_capabilities() { printf 'SECTION host-capabilities\n'; }
 }
 
 assert_combined_report()
@@ -591,13 +548,7 @@ combined_reports="$(
 target_combined="${combined_reports%%=====HOST COMBINED REPORT=====*}"
 host_combined="${combined_reports#*=====HOST COMBINED REPORT=====}"
 assert_combined_report target "$target_combined" 17
-assert_combined_report host "$host_combined" 18
-# The running-host combined report includes the host-capabilities section, but
-# the repair-target combined report must not.
-grep -Fqx 'Diagnostic: host-capabilities' <<<"$host_combined" \
-    || { echo 'FAIL: host combined report lost the host-capabilities section' >&2; exit 1; }
-! grep -Fqx 'Diagnostic: host-capabilities' <<<"$target_combined" \
-    || { echo 'FAIL: target combined report unexpectedly gained host-capabilities' >&2; exit 1; }
+assert_combined_report host "$host_combined" 17
 
 # The `package` diagnostic is read-only: its body must never run a modifying
 # package command or write into the target.  It emits stable evidence lines and
@@ -815,7 +766,7 @@ dpkg reason:dpkg-not-on-fedora
 fixbroken reason:no-package-manager|param:none
 aptupdate reason:missing-dnf5
 upgrade reason:no-package-manager|param:none
-dkms reason:missing-dkms
+dkms reason:missing-akmods
 display reason:no-service-manager
 initramfs reason:no-initramfs-backend
 efi reason:missing-grub-config-tooling
@@ -1592,6 +1543,7 @@ Sep 19 08:35:01 alpine user.info some-app[999]: unrelated application failure
 Sep 19 08:35:02 alpine daemon.info cryptsetup[123]: Failed to unlock device root
 Sep 19 08:35:03 alpine daemon.info fsck.ext4[77]: fsck failed on /dev/sda1
 Sep 19 08:35:04 alpine daemon.info tuxedo-tomte[88]: tuxedo service failure
+Sep 19 08:35:05 alpine audit: AVC avc: denied { read } for pid=1234 comm="probe"
 SYSLOG
 )"
 syslog_filter_output="$(syslog_boot_relevant_filter <<<"$syslog_filter_input")"
@@ -1603,7 +1555,7 @@ grep -Fq 'fsck.ext4[77]: fsck failed on /dev/sda1' <<<"$syslog_filter_output" \
     || { echo 'FAIL: syslog filter dropped the fsck line' >&2; exit 1; }
 grep -Fq 'tuxedo-tomte[88]: tuxedo service failure' <<<"$syslog_filter_output" \
     || { echo 'FAIL: syslog filter dropped the tuxedo line' >&2; exit 1; }
-for syslog_noise in 'starting pid' 'supervise-daemon' 'crond' 'unrelated application failure'; do
+for syslog_noise in 'starting pid' 'supervise-daemon' 'crond' 'unrelated application failure' 'AVC avc: denied'; do
     if grep -Fq "$syslog_noise" <<<"$syslog_filter_output"; then
         echo "FAIL: syslog filter kept unrelated line: $syslog_noise" >&2
         exit 1
@@ -1680,6 +1632,8 @@ package_log_input="$(cat <<'PKGLOG'
 /run/mount/var/log/dnf5.log:2026-09-20T06:00:00+0000 [7] ERROR Command returned error: Failed to download packages
 /run/mount/var/log/dnf5.log:2026-09-20T06:00:01+0000 [7] TRACE Sync check: failed for repo "updates", sha256 checksum mismatch
 /run/mount/var/log/dnf5.log:2026-09-20T06:00:02+0000 [7] ERROR GPG signature check failed for package deadbeefcafebabe1234567890abcdef (sha256 deadbeefcafebabe1234567890abcdefdeadbeefcafebabe1234567890abcdef)
+/run/mount/var/log/dnf5.log:2026-09-20T06:00:03+0000 [7] ERROR Command returned error: Operation aborted by the user.
+/run/mount/var/log/dnf5.log:2026-09-20T06:00:04+0000 [7] WARNING Failed to acquire systemd inhibitor lock: Failed to open bus: No such file or directory
 PKGLOG
 )"
 package_log_out="$(package_log_filter <<<"$package_log_input")"
@@ -1689,14 +1643,30 @@ grep -Fq 'dnf5.log:<time> [<pid>] ERROR Command returned error: Failed to downlo
 # survive: the mawk 1.3.4 interval bug corrupted both.
 grep -Fq 'dnf5.log:<time> [<pid>] ERROR GPG signature check failed for package <hash> (sha256 <hash>)' <<<"$package_log_out" \
     || { echo 'FAIL: long hex hashes were not normalized or short hex words were masked' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
-grep -Fq 'TRACE Sync check: failed for repo "updates", sha256 checksum mismatch' <<<"$package_log_out" \
-    || { echo 'FAIL: checksum mismatch was dropped' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
+# Transient repo-metadata sync checksums are dropped (dnf5 retries/resolves).
+if grep -Fq 'Sync check: failed' <<<"$package_log_out"; then
+    echo 'FAIL: transient sync-check noise was kept' >&2
+    printf '%s\n' "$package_log_out" >&2
+    exit 1
+fi
+# Boot Bitch's own --assumeno abort and the chroot inhibitor-lock warning are
+# benign helper noise, never reported as errors.
+if grep -Fq 'Operation aborted by the user' <<<"$package_log_out"; then
+    echo 'FAIL: helper --assumeno simulation noise was kept' >&2
+    printf '%s\n' "$package_log_out" >&2
+    exit 1
+fi
+if grep -Fq 'Failed to acquire systemd inhibitor lock' <<<"$package_log_out"; then
+    echo 'FAIL: chroot inhibitor-lock noise was kept' >&2
+    printf '%s\n' "$package_log_out" >&2
+    exit 1
+fi
 if grep -Fq 'Error during transfer' <<<"$package_log_out"; then
     echo 'FAIL: transient mirror-retry noise was kept' >&2
     printf '%s\n' "$package_log_out" >&2
     exit 1
 fi
-grep -Fq 'Suppressed: 3 transient mirror-retry line(s), 0 further unique message(s).' <<<"$package_log_out" \
+grep -Fq 'Suppressed: 4 transient mirror-retry line(s), 2 benign helper line(s), 0 further unique message(s).' <<<"$package_log_out" \
     || { echo 'FAIL: package-log suppression note is missing or wrong' >&2; printf '%s\n' "$package_log_out" >&2; exit 1; }
 
 # The cap keeps the report bounded and always states the suppressed count.
@@ -1710,7 +1680,7 @@ done
 package_log_cap_out="$(package_log_filter <<<"$package_log_cap_input")"
 [[ "$(grep -c 'Command returned error' <<<"$package_log_cap_out" || true)" -eq 10 ]] \
     || { echo 'FAIL: package-log cap did not keep exactly 10 lines' >&2; printf '%s\n' "$package_log_cap_out" >&2; exit 1; }
-grep -Fq 'Suppressed: 5 transient mirror-retry line(s), 2 further unique message(s).' <<<"$package_log_cap_out" \
+grep -Fq 'Suppressed: 5 transient mirror-retry line(s), 0 benign helper line(s), 2 further unique message(s).' <<<"$package_log_cap_out" \
     || { echo 'FAIL: package-log cap suppression note is missing or wrong' >&2; printf '%s\n' "$package_log_cap_out" >&2; exit 1; }
 
 # The dnf5 section on a noisy target reports the real error, not the flood of
@@ -2630,11 +2600,23 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
         assert_single_change_status "$change_out" dkms 'changed'
     )
     (
+        # akms with out-of-tree AKBUILDs to build: `akms install` reports real
+        # build output, so the stage stays changed.
         module_build_system() { printf 'akms\n'; }
         preflight_akms() { :; }
-        run_chroot_try() { CHROOT_TRY_RC=0; }
+        run_chroot_try() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT='akms: building example'; }
         change_out="$(adaptive_dkms_repair)"
         assert_single_change_status "$change_out" dkms 'changed'
+    )
+    (
+        # akms with no out-of-tree modules: `akms install`/`akms status` report
+        # "No modules found" / "No AKMBUILDs found", so the rebuild is a proven
+        # no-op and must report unchanged, never changed.
+        module_build_system() { printf 'akms\n'; }
+        preflight_akms() { :; }
+        run_chroot_try() { CHROOT_TRY_RC=0; CHROOT_TRY_OUTPUT='akms: No modules found'; }
+        change_out="$(adaptive_dkms_repair)"
+        assert_single_change_status "$change_out" dkms 'unchanged|reason:module-build-no-modules'
     )
 
     # GRUB: byte-identical grub.cfg -> unchanged; a regenerated file -> changed.
@@ -3360,7 +3342,7 @@ cap_expect "$rpm_caps" \
     'fixbroken: available' \
     'aptupdate: available' \
     'upgrade: available' \
-    'dkms: unavailable|reason:missing-dkms' \
+    'dkms: unavailable|reason:missing-akmods' \
     'display: available' \
     'initramfs: available' \
     'efi: unavailable|reason:legacy-bios-no-efi' \
@@ -4236,6 +4218,24 @@ fedora_grub_stub_env()
         || { echo 'FAIL: a foreign-entry removal blocked the GRUB guard' >&2; exit 1; }
     grep -Fq 'msg:grub-foreign-removed|param:' "$SESSION_LOG" \
         || { echo 'FAIL: the removed foreign entry was not reported as evidence' >&2; cat "$SESSION_LOG" >&2; exit 1; }
+    : > "$SESSION_LOG"
+
+    # Template-derived entries (EFI BootNext mirrors of NVRAM boot entries)
+    # track transient firmware state: when volatile-NVRAM firmware drops the
+    # mirrored NVRAM entry, the next regeneration legitimately drops the
+    # derived menu entry too.  The guard reports it as evidence and must not
+    # block (a native loss must still fail closed).
+    {
+        printf 'menuentry "keep" { linux /vmlinuz; }\n'
+        printf "menuentry 'arch (EFI BootNext)' --class arch --class os \$menuentry_id_option 'efi-bootnext-0004' {\n"
+    } > "$foreign_existing"
+    printf 'menuentry "keep" { linux /vmlinuz; }\n' > "$foreign_candidate"
+    guard_grub_candidate_preserves_entries "$foreign_existing" "$foreign_candidate" \
+        || { echo 'FAIL: a template-derived entry removal blocked the GRUB guard' >&2; exit 1; }
+    grep -Fq 'msg:grub-foreign-removed|param:' "$SESSION_LOG" \
+        || { echo 'FAIL: the removed derived entry was not reported as evidence' >&2; cat "$SESSION_LOG" >&2; exit 1; }
+    grep -Fq 'efi-bootnext-0004' "$SESSION_LOG" \
+        || { echo 'FAIL: the removed derived entry was not named' >&2; cat "$SESSION_LOG" >&2; exit 1; }
     : > "$SESSION_LOG"
     printf 'menuentry "other" { linux /vmlinuz; }\n' > "$foreign_candidate"
     if guard_grub_candidate_preserves_entries "$foreign_existing" "$foreign_candidate"; then
@@ -5173,7 +5173,7 @@ if reason_line="$(TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=fedora dkms_unavai
 fi
 [[ "$reason_line" == 'reason:akmods-no-build-tree|param:6.20.1-300.fc44.x86_64' ]] \
     || { echo "FAIL: unexpected akmods missing-build-tree reason: $reason_line" >&2; exit 1; }
-mkdir -p "$ms_root/lib/modules/6.20.1-300.fc44.x86_64/build"
+mkdir -p "$ms_root/usr/src/kernels/6.20.1-300.fc44.x86_64"
 TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=fedora dkms_unavailable_reason \
     || { echo 'FAIL: akmods capability stayed unavailable with the build tree present' >&2; exit 1; }
 
@@ -5190,11 +5190,25 @@ if reason_line="$(TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=alpine dkms_unavai
     echo 'FAIL: akms capability reported available without a build tree' >&2
     exit 1
 fi
-[[ "$reason_line" == 'reason:akms-no-build-tree|param:6.6.55-0-lts' ]] \
+[[ "$reason_line" == 'reason:akms-no-build-tree|param:6.6.55-0-lts|param:linux-lts-dev' ]] \
     || { echo "FAIL: unexpected akms missing-build-tree reason: $reason_line" >&2; exit 1; }
 mkdir -p "$ms_root/lib/modules/6.6.55-0-lts/build"
 TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=alpine dkms_unavailable_reason \
     || { echo 'FAIL: akms capability stayed unavailable with the build tree present' >&2; exit 1; }
+
+# akms version skew: the linux-<flavor>-dev headers are installed at a NEWER
+# version than the kernel, so the kernel has no build tree and the older headers
+# are gone from the repositories.  The reason names the skew (kernel, dev
+# package, installed dev version) so the remedy is "reboot into the matching
+# kernel", never "install an older dev package that no longer exists".
+rm -rf "$ms_root/lib/modules/6.6.55-0-lts/build"
+printf 'C:Q1fake\nP:linux-lts-dev\nV:6.18.55-r0\nA:x86_64\n' > "$ms_root/lib/apk/db/installed"
+if reason_line="$(TARGET_ROOT="$ms_root" TARGET_DISTRO_FAMILY=alpine dkms_unavailable_reason)"; then
+    echo 'FAIL: akms capability reported available with newer-only headers' >&2
+    exit 1
+fi
+[[ "$reason_line" == 'reason:akms-headers-newer|param:6.6.55-0-lts|param:linux-lts-dev|param:6.18.55-r0' ]] \
+    || { echo "FAIL: unexpected akms version-skew reason: $reason_line" >&2; exit 1; }
 
 rm -rf -- "$ms_root"
 

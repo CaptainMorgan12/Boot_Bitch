@@ -43,6 +43,10 @@ grep -q '^journal_cached_boot_head_lines()' "$HELPER" \
     || fail 'helper is missing journal_cached_boot_head_lines()'
 grep -q 'boot-head-4000.json' "$HELPER" \
     || fail 'the journal cache must capture the earliest boot entries as boot-head-4000.json'
+grep -q '^non_systemd_current_boot_syslog_lines()' "$HELPER" \
+    || fail 'helper is missing non_systemd_current_boot_syslog_lines()'
+grep -q 'non_systemd_current_boot_syslog_lines' "$HELPER" \
+    || fail 'the classifier must consume the current-boot syslog slice on the non-journald path'
 
 # ---------------------------------------------------------------------------
 # Behavioural harness
@@ -63,6 +67,7 @@ journal_boot_relevant_filter() { cat; }
 non_journald_log_fallback_ready() { return 1; }
 non_systemd_raw_log_lines() { :; }
 target_logging_backend() { printf 'journald\n'; }
+target_journal_evidence_present() { return 0; }
 
 TARGET_ROOT="$fake_root"
 RUNNING_HOST_MODE=0
@@ -132,6 +137,26 @@ expect tty-nomodeset \
     $'Oct 04 10:00:00 host systemd: Reached target Multi-User System.\nOct 04 10:00:00 host kernel: Command line: BOOT_IMAGE=/vmlinuz root=/dev/sda1 nomodeset' \
     'tty' 'graphics-save-mode,tty-only'
 
+# rsyslog unit-interpolated forms: systemd interpolates the unit name into the
+# message ("graphical.target - Graphical Interface." / "gdm.service - GNOME
+# Display Manager." / "systemd-logind.service - User Login Management."), not
+# the short journald form.  Both forms must classify identically.
+expect desktop-rsyslog \
+    'Oct 04 10:00:00 host systemd: Reached target graphical.target - Graphical Interface.' \
+    'desktop' ''
+
+expect login-manager-rsyslog \
+    'Oct 04 10:00:00 host systemd: Started gdm.service - GNOME Display Manager.' \
+    'login-manager' ''
+
+expect tty-rsyslog \
+    'Oct 04 10:00:00 host systemd: Reached target multi-user.target - Multi-User System.' \
+    'tty' 'tty-only'
+
+expect tty-rsyslog-logind \
+    'Oct 04 10:00:00 host systemd: Started systemd-logind.service - User Login Management.' \
+    'tty' 'tty-only'
+
 # ---- head slice: a boot longer than 1600 entries ----------------------------
 # The boot-complete markers live in the earliest entries (first couple of
 # minutes), outside the newest-1600 tail on a long boot.  The classifier must
@@ -182,5 +207,50 @@ grep -q '^Boot reached: desktop$' <<<"$out" \
     || fail "diagnostic_errors must emit 'Boot reached: desktop'; got: $out"
 grep -q '^Boot failure markers: none$' <<<"$out" \
     || fail "diagnostic_errors must emit 'Boot failure markers: none' when clean; got: $out"
+
+# ---- non-journald path: scan the current boot slice, not a fixed tail --------
+# On a long-lived messages file the boot markers sit far above a tail window;
+# the classifier must scan from the last kernel "Command line:" marker so the
+# markers are found without streaming the whole (audit-heavy) file.
+CURBOOT_ROOT="$sandbox/curboot-root"
+mkdir -p "$CURBOOT_ROOT/var/log"
+CURBOOT_MESSAGES="$CURBOOT_ROOT/var/log/messages"
+{
+    i=0
+    while (( i < 6000 )); do
+        printf '%s\n' "Oct 03 09:00:00 host audit: AVC avc: denied old-boot-$i"
+        (( i += 1 ))
+    done
+    printf '%s\n' 'Oct 04 10:00:00 host kernel: Command line: BOOT_IMAGE=/vmlinuz root=/dev/sda1'
+    printf '%s\n' 'Oct 04 10:00:01 host systemd: Reached target graphical.target - Graphical Interface.'
+    i=0
+    while (( i < 2000 )); do
+        printf '%s\n' "Oct 04 10:00:02 host audit: AVC avc: denied current-boot-$i"
+        (( i += 1 ))
+    done
+} > "$CURBOOT_MESSAGES"
+
+# The slice starts at the kernel command line, discarding the earlier boot's
+# audit noise, and still includes the early boot marker.
+slice="$(TARGET_ROOT="$CURBOOT_ROOT" non_systemd_current_boot_syslog_lines)"
+grep -q '^Oct 04 10:00:00 host kernel: Command line:' <<<"$slice" \
+    || fail 'current-boot slice must begin at the kernel Command line: marker'
+grep -q 'Reached target graphical.target - Graphical Interface.' <<<"$slice" \
+    || fail 'current-boot slice must include the early boot marker'
+! grep -q 'old-boot-0' <<<"$slice" \
+    || fail 'current-boot slice must discard earlier boots noise'
+
+# The classifier routes the non-journald path through that slice and reaches
+# desktop even though the marker sits deep in the file.
+TARGET_ROOT="$CURBOOT_ROOT"
+target_logging_backend() { printf 'messages\n'; }
+non_journald_log_fallback_ready() { return 0; }
+non_systemd_kernel_log_lines() { :; }
+BOOT_FAILURE_CLASSIFIED=0
+boot_failure_classification
+[[ "$BOOT_REACHED" == desktop ]] \
+    || fail "non-journald classifier classified '$BOOT_REACHED', want 'desktop'"
+[[ -z "$BOOT_FAILURE_MARKERS" ]] \
+    || fail "non-journald classifier: unexpected failure markers '$BOOT_FAILURE_MARKERS'"
 
 echo 'boot-errors-contract: PASS'

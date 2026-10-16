@@ -5,7 +5,7 @@
 # The fixture root carries /etc/debian_version + a dpkg database, an
 # update-grub-only GRUB legacy menu.lst, initramfs-tools tooling and an APT
 # source, so root detection, the dpkg status fallback, the GRUB legacy branch
-# and the 13-key capability report are exercised without touching a real disk.
+# and the 15-key capability report are exercised without touching a real disk.
 #
 # shellcheck disable=SC2034
 # Several assignments (TARGET_ROOT, ROOT_CANONICAL, CHROOT_TRY_*) are consumed
@@ -36,7 +36,7 @@ FIXTURE="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-legacy-smoke.XXXXXX")"
 smoke_cleanup()
 {
     # BOOT_REPAIR_LEGACY_SMOKE_KEEP=1 preserves the fixture for evidence
-    # capture (the guest-side Etch run collects the 13 capability lines).
+    # capture (the guest-side Etch run collects the 15 capability lines).
     if [[ -n "${BOOT_REPAIR_LEGACY_SMOKE_KEEP:-}" ]]; then
         printf 'fixture kept: %s\n' "$FIXTURE"
         return 0

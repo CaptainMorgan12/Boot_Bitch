@@ -1,4 +1,4 @@
-// Read-only MainWindow regression suite: single QTest class whose 20 test
+// Read-only MainWindow regression suite: single QTest class whose 63 test
 // slots (plus initTestCase) are implemented across several translation units
 // (MainWindowUiTest.cpp plus the MainWindowUiTest_<feature>.cpp files).
 // Keeping one class keeps the single ctest registration boot-repair-ui-read-only
@@ -14,47 +14,49 @@ class MainWindowUiTest final : public QObject
 
 private slots:
     void initTestCase();
-    void tabsAndReadOnlyControls();
+    void fullRepairPlanRowsAreTightAndUniform();
+    void fullRepairPlanFrameShrinksToContentAndGrowsOutputPane();
     void clearRegisterClearsDiagnosticCachesWithConfirmation();
     void repairToolStatusLineNamesMissingDiagnosticByTitle();
-    void chrootShellControlsAreGuardedAndReadOnly();
-    void unlockStatusPanelIsReadOnlyAndScoped();
     void filesystemRepairToolRowIsGatedByCapabilityEvidence();
     void reasonKeyTokensMapToLocalizedStringsAndUnknownKeysPassThrough();
-    void fullRepairFilesystemStageIsFirstWhenEnabled();
-    void logSectionFilterShowsRelatedRepairsAndDiagnosticSection();
     void blankAndDataTargetsSelectableWhileOpticalAndLuksStayGated();
     void scopeSwitchingRejectsStaleTargetEvidence();
+    void scopeSwitchAlwaysRegeneratesDiagnostics();
+    void scopeTransitionAnnouncementTaggedWithNewScope();
     void missingCapabilityEvidenceFailsClosed();
-    void filesystemDiagnosticCachedByScopeAutoRegeneration();
+    void rawCapabilityReasonKeyFailsClosedOnForeignTargetCache();
     void capabilityGateReadsOnlyCapabilitiesEntry();
     void capabilityRepairEvidenceParsesFromCache();
     void capabilityHostEvidenceParsesFromCache();
+    void capabilityStorageStackRowsParseFromCache();
+    void capabilitySnapshotRollbackRowsParseFromCache();
+    void capabilityRowsCachedAcrossScopeSwitch();
+    void capabilityRowsSurviveHostMaintenanceRoundTrip();
+    void capabilityInstallRoutesHostVsTarget();
     void capabilityTablePopulatesFromCacheWithoutProbe();
     void capabilityScopeSelectorSwitchesCaches();
-    void capabilityGroupBoxTitleIsScopeNeutral();
     void capabilityRefreshAfterDiagnosticsAndClear();
     void repairDetailPaneShowsMissingToolGuidance();
     void capabilityUnavailableRowsRenderAsMissing();
-    void capabilityHeaderColumnsFitTranslatedTitles();
-    void capabilityDistributionLabelIsElidedLabel();
+    void settingsSplitterSeparatesPlanFromCapabilitiesAndWidensCommandColumn();
+    void capabilityTableKeepsFixedHeightWhenEmpty();
     void fallbackAdoptionRefusesProtectedAndCrossDisk();
-    void disabledSettingsDoNotLeakIntoFullRepairAndPreservePreferences();
     void unavailablePlanStagesAreDisabledAndUnchecked();
     void settingsStageCheckboxesFirstRunStayDisabledUntilEvidence();
-    void settingsStageCheckboxesPersistAcrossDiagnosticWarmth();
     void settingsStageSelectionSurvivesRelaunchWithoutCleanClose();
-    void fullRepairProgressDialogShowsAtPlanStartBeforePreStageCompletes();
     void repairChangeStatusInvalidatesMappedSectionsOrFailsSafe();
-    void hostDefaultFedoraUnchangedParsesAsVerified();
+    void fullRepairSummaryNamesDetectedModuleBuildSystem();
+    void fullRepairPlanLabelsNameDetectedModuleBuildSystem();
+    void displayedLogNamesDetectedModuleBuildSystem();
+    void fullRepairPlanShrinksForFewStagesAndGrowsDetailsPane();
+    void fullRepairPlanFrameHasNoTrailingGapForSevenStages();
+    void fullRepairPlanUsesTwoColumnWrapping();
+    void safetyControlsUseTwoColumnWrapping();
     void unlockRoutesThroughSharedSessionAndQueuesBehindBusyGate();
     void targetShellDispatchStillUsesShell();
     void shellRunCommandDisabledDuringDiagnosticsRefresh();
-    void chrootShellHistoryNavigatesUpAndDown();
     void diagnosticListItemTooltipsAreShort();
-    void kernelRemovalPreviewListsTuxedoPlanAndKeepsNewest();
-    void kernelRemovalPreviewDetectsMissingHeadersAndGroupsCommonHeaders();
-    void kernelRemovalPreviewSurfacesRepoLatestAndOrphanedHeaders();
     void kernelRepairActionsDeriveFromEvidenceAndProtectRunning();
     void kernelRepairSessionSerializesCachedBaseline();
     void gpuRepairSessionSerializesGpuAndKernelBaselines();
@@ -63,39 +65,32 @@ private slots:
     void requiredDiagnosticSectionsMapping();
     void hostMaintenanceSwitchAfterFullRepairDoesNotCrash();
     void hostMaintenanceSwitchAfterResizeDoesNotCrash();
-    void hostMaintenanceSwitchAfterResizeRealScanDoesNotCrash();
     void privilegedSessionCoalescingWaitDoesNotNestEventLoop();
+    void privilegedSessionCancellationPublishesFailureAndDefersWithoutRetry();
+    void privilegedSessionGrantProducesSingleRequest();
+    void backgroundSnapshotPreloadDoesNotClaimBusyLabel();
+    void closeDuringDiagnosticShowsCancelState();
     void bootEntriesParserParsesProtocol();
-    void bootEntriesParserKeepsRepairClass();
     void bootEntriesPageGatedOutsideHostMaintenance();
     void bootEntriesReadyInTargetScope();
-    void bootEntriesParserWiredToFixtureAndMoveReorder();
-    void bootEntriesSaveOrderAssemblesCsv();
-    void bootEntriesBlankLabelRenameRevertsCell();
-    void bootEntriesEfiListUsesTargetIdentity();
     void bootEntriesHostClassRefusedClientSideInTargetScope();
-    void bootEntriesBootsColumnRendersRoleLabel();
     void bootEntriesRestoreButtonGatedAndIssuesEfiRepair();
     void bootEntriesRestoreRefusesWhenEfiUnavailable();
     void bootEntriesAutoReloadOnTabShow();
     void bootEntriesRefreshScheduledAfterDiagnosticsComplete();
+    void bootEntriesFirstScopeVisitLoadsFirmwareAndMenu();
+    void bootEntriesRenderFromCacheAcrossScopeRoundTrip();
+    void bootEntriesRoundTripWithPopulatedEntriesDoesNotCrash();
+    void bootEntriesMidRequestScopeSwitchDiscardsStaleResult();
     void bootEntriesDeleteStagesPendingWithoutHelperWrite();
     void bootEntriesRenameStagesPendingWithoutHelperWrite();
     void bootEntriesSaveIssuesReorderDeleteRenameAndClearsPending();
-    void bootEntriesSaveButtonLabelIsSave();
     void grubMenuParserParsesProtocol();
-    void grubMenuParserTracksSubmenuNesting();
-    void grubMenuParserParsesEspAndDriveHeaders();
     void grubMenuViewSwitchIssuesGrubListAndReadOnly();
-    void grubMenuMissingConfigYieldsHeaderOnly();
-    void grubMenuHeadingUpdatesOnViewSwitch();
-    void grubMenuCrossReferenceListsMatchingFirmwareEntries();
-    void grubMenuSubmenuConfigfileSurfacedInDetails();
-    void extlinuxParserParsesProtocol();
-    void bootMenuFallbackToExtlinuxWhenGrubAbsent();
     void grubLegacyParserParsesProtocol();
-    void bootMenuFallbackToGrubLegacyWhenGrubAndExtlinuxAbsent();
-    void bootEntriesHeaderComboRightOfScopeAndButtonRowWraps();
+    void snapshotsTabVisibilityFollowsSnapshotCapability();
+    void bootEntriesTabVisibilityFollowsBootEvidence();
+    void fullRepairPlanScrollsVerticallyWhenWrapped();
 };
 
 #endif // BOOT_REPAIR_UI_TEST_H

@@ -28,10 +28,11 @@ What it does
        - ``\\n`` newlines are never sent to MT: each source is split on newlines
          and rejoined exactly, so leading/trailing and ``\\n\\n`` newlines survive;
        - glyphs ``… • → ✓ ✗ ▪ &`` -> tokens, restored deterministically;
-       - technical terms (``initramfs``, ``mkinitcpio``, ``grub-install``, ``GRUB``,
-         ``LUKS``, ``ESP``, ``UEFI``, ``EFI``, ``UKI``, ``Btrfs``, ``Boot Bitch``,
-         ``pacman``/``apk``/``dnf``/``apt``/``dpkg``/``dkms``, ...) -> tokens,
-         so Argos cannot mangle them (``initramfs`` -> ``initramf``).
+        - technical terms (``initramfs``, ``mkinitcpio``, ``grub-install``, ``GRUB``,
+          ``LUKS``, ``ESP``, ``UEFI``, ``EFI``, ``UKI``, ``btrfs``, ``Boot Bitch``,
+          ``pacman``/``apk``/``dnf``/``apt``/``dpkg``/``dkms``, ... and the
+          standard Linux filesystems) -> tokens, matched case-insensitively, so
+          Argos cannot mangle them (``initramfs`` -> ``initramf``).
 5. Verifies placeholder integrity for every candidate (override or MT): the set
    of ``%N`` / ``%n`` placeholders (Qt translators legitimately reorder them, so
    this is a multiset comparison) and the number of ``\\n`` characters must match
@@ -147,26 +148,57 @@ GLYPH_TOKENS = (
 )
 
 # Technical terms that must survive MT verbatim (e.g. Argos turns "initramfs"
-# into "initramf").  They are matched case-sensitively and word-bounded so a
+# into "initramf").  They are matched CASE-INSENSITIVELY and word-bounded so a
 # short command name cannot match inside an ordinary word ("apt" must never
-# match "captured"/"adaptive", and "EFI" must not match inside "UEFI").  The
-# list is sorted longest-first below so a compound term (update-initramfs,
+# match "captured"/"adaptive", and "EFI" must not match inside "UEFI"); a term
+# directly FOLLOWED by a hyphen still does not match, so "apt" is not split out
+# of "apt-get" and "initramfs" is not split out of "update-initramfs" before
+# that longer compound term is consumed.  Each distinct term appears ONCE in a
+# canonical case — lowercase for tools/commands/filesystems, UPPERCASE for
+# acronyms, proper nouns as-is — which is the form restored after MT.  The list
+# is sorted longest-first below so a compound term (update-initramfs,
 # systemd-sysv-install) is protected before its constituent part.
 PROTECTED_TERMS = tuple(sorted((
+    # compound boot/recovery commands (longest first)
     "systemd-sysv-install", "update-initramfs", "update-grub", "grub-mkconfig",
-    "grub-install", "grub-probe", "systemd-boot", "Boot Bitch",
+    "grub-install", "grub-probe", "systemd-boot",
+    # proper nouns / mixed-case names (kept as-is)
+    "Boot Bitch", "TUXEDO", "WebFAI", "Shell", "BootCurrent", "BootOrder",
+    "BootNext", "iPXE",
+    # tools / commands (lowercase)
     "mkinitcpio", "mkinitfs", "initramfs", "extlinux", "syslinux",
-    "pacman", "TUXEDO", "dracut", "Btrfs", "UEFI", "NVRAM",
-    "GRUB", "LUKS", "ESP", "EFI", "UKI", "ZFS", "Shell",
-    "BootCurrent", "BootOrder", "BootNext", "menuentry", "os-prober",
-    "PARTUUID", "WebFAI", "iPXE", "shim",
-    "apt", "apk", "dnf", "dpkg", "dkms", "rpm", "RPM", "akmods", "akms", "AKMS",
+    "pacman", "dracut", "os-prober", "menuentry", "shim",
+    "lvm2", "lvs", "mdadm", "kernel",
+    "apt", "apk", "dnf", "dpkg", "dkms", "akmods",
+    # acronyms (UPPERCASE)
+    "LVM", "RAID", "ZFS", "UEFI", "NVRAM", "GRUB", "LUKS", "ESP", "EFI", "UKI",
+    "RPM", "AKMS", "PARTUUID",
+    # filesystems (lowercase canonical form; FAT/NTFS/exFAT are covered by
+    # case-insensitivity and zfs is the ZFS acronym above)
+    "ext", "ext2", "ext3", "ext4", "btrfs", "xfs", "jfs", "reiserfs", "reiser4",
+    "nilfs", "nilfs2", "vfat", "fat", "fat12", "fat16", "fat32", "exfat",
+    "ntfs", "ntfs3", "f2fs", "swap", "iso9660", "udf", "squashfs", "cramfs",
+    "romfs", "overlayfs", "overlay", "tmpfs", "devtmpfs", "devpts", "proc",
+    "sysfs", "efivarfs", "debugfs", "tracefs", "securityfs", "pstore",
+    "configfs", "fusectl", "hugetlbfs", "mqueue", "autofs", "minix", "sysv",
+    "hfs", "hfsplus", "hpfs", "qnx4", "qnx6", "ufs", "erofs",
 ), key=len, reverse=True))
 
 # Term token: "TR<n>X" where <n> is the 1-based index in the ordered list above.
 TERM_TOKENS = {
     term: f"TR{index + 1}X" for index, term in enumerate(PROTECTED_TERMS)
 }
+
+# Case-insensitive boundary pattern per term, shared by :func:`protect_segment`
+# and the fail-closed "did the protected term survive MT" check.  The boundary
+# is identical to protect_segment's: a term directly preceded by a hyphen still
+# matches (so "software-RAID" protects "RAID"), while a term directly followed
+# by a hyphen does not (so "apt" is not split out of "apt-get").
+TERM_BOUNDARY_PATTERNS = tuple(
+    (term, re.compile(r"(?<![\w])" + re.escape(term) + r"(?![\w-])",
+                      re.IGNORECASE))
+    for term in PROTECTED_TERMS
+)
 
 # Placeholder token: "%N" -> "PH<N>X", "%n" -> "PHNX".
 PH_DIGIT_SENTINEL_RE = re.compile(r"PH(\d+)X")
@@ -384,16 +416,52 @@ def placeholders(text: str):
     return PLACEHOLDER_RE.findall(text)
 
 
-def verify(source: str, translation: str) -> bool:
+def verify(source: str, translation: str, origin: str = "machine") -> bool:
     """Return True when ``translation`` preserves the source's placeholder set
     (Qt translators legitimately reorder %1/%2 for their word order, so this is
-    a multiset comparison) and newline count, and is non-empty."""
+    a multiset comparison) and newline count, and is non-empty.
+
+    For ``origin == "machine"`` candidates, additionally fail closed when the
+    backend returned the input unchanged (not actually translated), when a
+    sentinel token survived untranslated, or when a protected term present in
+    the source was dropped/transliterated by the backend.  Overrides and
+    protected-term passthroughs are exempt: a curated override may legitimately
+    equal its source (e.g. ``"UUID:"``) and a standalone term stays verbatim by
+    design.
+    """
     if not translation or not translation.strip():
         return False
     if Counter(placeholders(translation)) != Counter(placeholders(source)):
         return False
     if translation.count("\n") != source.count("\n"):
         return False
+    if origin == "machine":
+        # Argos returned the input unchanged -> not actually translated.
+        if translation.strip() == source.strip():
+            return False
+        # A sentinel token survived untranslated (TR/PH/GL + digit + X, or the
+        # "%n" token PHNX): a mangled machine output, not a translation.
+        if re.search(r"(?:TR|PH|GL)\d+X|PHNX", translation):
+            return False
+        # A protected term present in the source must survive in the
+        # translation (case-insensitive): a dropped or transliterated sentinel
+        # loses the term.
+        if not protected_terms_survive(source, translation):
+            return False
+    return True
+
+
+def protected_terms_survive(source: str, translation: str) -> bool:
+    """True when every protected term present in ``source`` also appears in
+    ``translation`` (case-insensitive, same boundary as :func:`protect_segment`).
+
+    A machine backend that drops or transliterates a term sentinel (e.g. Arabic
+    rendering "TR50X" as "تراي50X") ships a translation missing the term, so
+    this fails closed.
+    """
+    for term, pattern in TERM_BOUNDARY_PATTERNS:
+        if pattern.search(source) and not pattern.search(translation):
+            return False
     return True
 
 
@@ -424,7 +492,8 @@ def protect_segment(segment: str) -> str:
     # following word stays a separate token and still gets translated.
     text = text.replace("&", "GLAMX ")
     for term, token in TERM_TOKENS.items():
-        text = re.sub(r"(?<![\w-])" + re.escape(term) + r"(?![\w-])", token, text)
+        text = re.sub(r"(?<![\w])" + re.escape(term) + r"(?![\w-])", token, text,
+                      flags=re.IGNORECASE)
     return text
 
 
@@ -901,7 +970,7 @@ def main(argv=None) -> int:
         if candidate is None:
             candidate = mt_result.get(src)
             origin = "machine"
-        if candidate is not None and verify(src, candidate):
+        if candidate is not None and verify(src, candidate, origin=origin):
             final[src] = candidate
         else:
             final[src] = None
@@ -955,7 +1024,7 @@ def main(argv=None) -> int:
                 continue
             src = msg["source"]
             ov = effective_overrides.get(src, {}).get(args.target)
-            if ov is None or not verify(src, ov):
+            if ov is None or not verify(src, ov, origin="override"):
                 continue
             if msg["translation"] == ov:
                 continue
@@ -1022,7 +1091,7 @@ def main(argv=None) -> int:
     if token_sources:
         print(f"translate_ts: skipped token-only  {len(token_sources)}")
     if mismatch_warnings:
-        print(f"translate_ts: placeholder/newline mismatch -> left unfinished: "
+        print(f"translate_ts: failed verification -> left unfinished: "
               f"{len(mismatch_warnings)}", file=sys.stderr)
         for src, cand, origin in mismatch_warnings[:20]:
             print(f"  [{origin}] {src!r} -> {cand!r}", file=sys.stderr)
