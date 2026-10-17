@@ -8639,6 +8639,13 @@ rpm_transaction_try()
 {
     local label="$1"; shift
     local output rc
+    local -a rpm_args=("$@")
+    # A repair target shares the recovery host's kernel (uname(2) cannot be
+    # chrooted), so dnf5's running-kernel protection is disabled for target
+    # scope — a target is never running — while the running-host scope keeps it.
+    if [[ "${RUNNING_HOST_MODE:-0}" != 1 ]]; then
+        rpm_args=(--setopt=protect_running_kernel=False "${rpm_args[@]:-}")
+    fi
     msg_log try-label "$label"
     set +e
     output="$(
@@ -8647,7 +8654,7 @@ rpm_transaction_try()
             LC_ALL=C \
             DNF5_FORCE_INTERACTIVE=0 \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            "${RPM_DNF_TOOL:-dnf5}" "$@" 2>&1
+            "${RPM_DNF_TOOL:-dnf5}" "${rpm_args[@]:-}" 2>&1
     )"
     rc=$?
     set -e
@@ -30862,8 +30869,20 @@ kernel_menu_action_keys()
         # action: the bounded apt-get simulation must PROVE the headers
         # installable before the offer appears, so a target whose headers
         # cannot be installed is never offered an action that must fail.
+        # The probe is apt/dpkg-specific: the rpm/pacman/apk backends carry
+        # their own fail-closed availability pre-flights inside their
+        # install-missing-headers repairs, so the offer stays ungated there
+        # (gating it on the apt probe would silently suppress the action on
+        # every non-apt target).
         if kernel_in_list "$v" "${KERNEL_MISSING_HEADERS[@]:-}"; then
-            apt_headers_installable "$v" && action_keys+="install-headers "
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg)
+                    apt_headers_installable "$v" && action_keys+="install-headers "
+                    ;;
+                *)
+                    action_keys+="install-headers "
+                    ;;
+            esac
         fi
         if kernel_in_list "$v" "${KERNEL_PARTIAL[@]:-}"; then
             action_keys+="reinstall "

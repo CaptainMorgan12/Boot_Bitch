@@ -108,7 +108,7 @@ for rule in \
     'case conversion ,, +75' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +724' \
+    'array \[@\] expansions \(all forms\) +726' \
     'mapfile call sites +89' \
     'sed -i -E +1' \
     'sed -nE +97' \
