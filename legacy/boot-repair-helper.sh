@@ -5502,7 +5502,16 @@ profile_target_backends()
     if [[ -z "$TARGET_ESP_MOUNT" ]]; then
         for esp_path in /efi /boot/efi /boot; do
             esp_dir="$(target_path "$esp_path")"
-            if [[ -d "$esp_dir/EFI" || -d "$esp_dir/loader" ]]; then
+            # The fallback must only accept a REAL mount whose filesystem is
+            # not a known non-ESP type: an EFI-populated plain directory
+            # (anaconda leaves /boot/efi/EFI artifacts on the ext4 /boot of
+            # BIOS-only installs) is not an ESP, and Fedora's BLS
+            # /boot/loader/entries directory must never be read as an
+            # ESP-at-/boot on the ext4 /boot.
+            if [[ -d "$esp_dir/EFI" || -d "$esp_dir/loader" ]] \
+                && mountpoint -q "$esp_dir" 2>/dev/null \
+                && ! findmnt -rn -o FSTYPE --target "$esp_dir" 2>/dev/null \
+                    | grep -Eiq '^(ext2|ext3|ext4|xfs|btrfs|f2fs|reiserfs|jfs|zfs|tmpfs|devtmpfs)$'; then
                 TARGET_ESP_MOUNT="$esp_path"
                 break
             fi
@@ -9264,7 +9273,11 @@ apt_package_depends()
             n = split(deps, tok, /[ ,|]+/)
             for (j = 1; j <= n; j++) {
                 sub(/:.*/, "", tok[j])
-                if (tok[j] ~ /^[[:alnum:]][[:alnum:].+-]*$/) print tok[j]
+                # Explicit ranges, never POSIX classes: mawk 1.3.3 on Etch
+                # parses [[:alnum:]]-style classes unreliably (wrong-match
+                # collapse), which silently breaks the depends parse and
+                # misclassifies the common headers as orphaned.
+                if (tok[j] ~ /^[A-Za-z0-9][-A-Za-z0-9.+]*$/) print tok[j]
             }
             exit
         }
@@ -9276,7 +9289,8 @@ apt_package_depends()
 # common-headers directory so it can be sized and removed with its package.
 apt_package_owned_dirs()
 {
-    local pkg="$1" prefix="$2" listfile="$TARGET_ROOT/var/lib/dpkg/info/$pkg.list"
+    local pkg="$1" prefix="$2"
+    local listfile="$TARGET_ROOT/var/lib/dpkg/info/$pkg.list"
     [[ -f "$listfile" ]] || return 0
     awk -v p="$prefix" '
         index($0, p) == 1 && index(substr($0, length(p) + 1), "/") == 0 {
@@ -20549,14 +20563,14 @@ gpu_driver_mismatch_evidence()
 {
     GPU_MISMATCH=""
     GPU_MISMATCH_REASON=""
-    local expected="${GPU_EXPECTED:-}" inst="${GPU_INSTALLED_PKGS:-}" loaded="${GPU_LOADED_MODULES:-}"
-    [[ -z "$expected" ]] && return 0
-    case "$expected" in
+    local gpu_expected="${GPU_EXPECTED:-}" gpu_inst="${GPU_INSTALLED_PKGS:-}" gpu_loaded="${GPU_LOADED_MODULES:-}"
+    [[ -z "$gpu_expected" ]] && return 0
+    case "$gpu_expected" in
         nvidia)
-            if [[ "$loaded" == *nouveau* ]] && [[ "$loaded" != *nvidia* ]]; then
+            if [[ "$gpu_loaded" == *nouveau* ]] && [[ "$gpu_loaded" != *nvidia* ]]; then
                 GPU_MISMATCH="nvidia vs nouveau"
                 GPU_MISMATCH_REASON="expected nvidia but only nouveau is loading"
-            elif [[ "$inst" == *xserver-xorg-video-nouveau* ]] && [[ "$inst" != *nvidia-driver* && "$inst" != *nvidia-kernel* ]]; then
+            elif [[ "$gpu_inst" == *xserver-xorg-video-nouveau* ]] && [[ "$gpu_inst" != *nvidia-driver* && "$gpu_inst" != *nvidia-kernel* ]]; then
                 GPU_MISMATCH="nvidia vs nouveau"
                 GPU_MISMATCH_REASON="expected nvidia but the installed driver is nouveau"
             fi
@@ -20572,13 +20586,13 @@ gpu_driver_mismatch_evidence()
             # a wrong driver here: the generic all-drivers set installs nouveau
             # alongside amdgpu/radeon on non-NVIDIA machines.
             if ! gpu_hardware_has_vendor 10de \
-                && [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; then
-                GPU_MISMATCH="$expected vs nvidia"
-                GPU_MISMATCH_REASON="expected $expected but nvidia is installed"
+                && [[ "$gpu_inst" == *nvidia-* || "$gpu_inst" == *libnvidia-* ]]; then
+                GPU_MISMATCH="$gpu_expected vs nvidia"
+                GPU_MISMATCH_REASON="expected $gpu_expected but nvidia is installed"
             fi
             ;;
         nouveau)
-            if [[ "$inst" == *nvidia-* || "$inst" == *libnvidia-* ]]; then
+            if [[ "$gpu_inst" == *nvidia-* || "$gpu_inst" == *libnvidia-* ]]; then
                 GPU_MISMATCH="nouveau vs nvidia"
                 GPU_MISMATCH_REASON="expected nouveau but nvidia is installed"
             fi
@@ -21381,13 +21395,15 @@ repair_gpu_install_correct_driver()
 repair_gpu_blacklist_module()
 {
     gpu_repair_prepare_evidence
-    local conflicting="$(gpu_conflicting_module)"
+    local conflicting
+    conflicting="$(gpu_conflicting_module)"
     if [[ -z "$conflicting" ]]; then
         repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-no-blacklist-needed)"
         return 0
     fi
     local conf="$TARGET_ROOT/etc/modprobe.d/blacklist-${conflicting}.conf"
-    local fp_before="$(repair_file_fingerprint "$conf")"
+    local fp_before
+    fp_before="$(repair_file_fingerprint "$conf")"
     if [[ -f "$conf" ]] && grep -Eq "^[[:space:]]*blacklist[[:space:]]+${conflicting}([[:space:]]|$)" "$conf"; then
         repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-blacklist-identical)"
         return 0
@@ -21400,7 +21416,8 @@ repair_gpu_blacklist_module()
     printf 'blacklist %s\n' "$conflicting" > "$tmp" || fail "Failed to write blacklist for $conflicting."
     install -m 0644 "$tmp" "$conf" || fail "Failed to install blacklist for $conflicting."
     rm -f -- "$tmp"
-    local fp_after="$(repair_file_fingerprint "$conf")"
+    local fp_after
+    fp_after="$(repair_file_fingerprint "$conf")"
     if [[ "$fp_before" == "$fp_after" ]]; then
         repair_change_status "gpu:blacklist-module" "unchanged|$(reason gpu-blacklist-identical)"
     else
@@ -21744,10 +21761,12 @@ repair_nomodeset()
     editenv_tool="$(grub_editenv_tool)" || fail "grub-editenv is not installed; cannot set a one-boot nomodeset entry."
     grubenv="$(grub_env_path)"
     grub_env_block_valid || fail "grubenv is missing or invalid; refusing a nomodeset one-boot entry."
-    local fp_before="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    local fp_before
+    fp_before="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
     run_chroot_try "$(msg set-one-boot-nomodeset)" "$editenv_tool" "$grubenv" set next_entry='Boot (nomodeset)'
     (( CHROOT_TRY_RC == 0 )) || fail "grub-editenv could not set the nomodeset one-boot entry."
-    local fp_after="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
+    local fp_after
+    fp_after="$(repair_file_fingerprint "$TARGET_ROOT$grubenv")"
     if [[ "$fp_before" == "$fp_after" ]]; then
         repair_change_status nomodeset "unchanged|$(reason nomodeset-identical)"
     else
@@ -25607,6 +25626,12 @@ parse_repair_arguments()
     GRUB_CONFIG_PATH=""
     GRUB_LAYOUT=""
     GRUB_GENERATOR=""
+    # Per-scope reset: the value is re-assigned by the grub-env detection
+    # (grub_env_state, line ~10678) and read by the grub-env consumers across
+    # functions; shellcheck cannot see the cross-function read, so the reset
+    # looks unused (SC2034).  It is load-bearing: a scope without grubenv must
+    # not inherit the previous scope's validity state.
+    # shellcheck disable=SC2034
     GRUB_ENV_VALID=""
     GRUB_BOOT_CODE=""
     EXTLINUX_CONFIG_PATH=""
@@ -29965,7 +29990,7 @@ apt_partial_kernel_packages()
     while IFS= read -r pkg; do
         [[ -n "$pkg" ]] || continue
         case "$pkg" in
-            linux-image-*|linux-modules-*|linux-modules-extra-*|linux-main-modules-zfs-*|linux-headers-*)
+            linux-image-*|linux-modules-*|linux-main-modules-zfs-*|linux-headers-*)
                 kver="$(apt_kernel_version_from_package "$pkg" || true)"
                 ;;
             linux-base-*|linux-binary-*)
@@ -30813,15 +30838,15 @@ kernel_survivor_version()
 # still be removed to fall back to an older kernel (the two actions coexist).
 kernel_menu_action_keys()
 {
-    local v="$1" keys=""
+    local v="$1" action_keys=""
     if [[ "$v" == "$KERNEL_LATEST" ]] && kernel_newest_is_removable; then
-        keys+="remove-newest "
+        action_keys+="remove-newest "
     fi
-    kernel_is_stale "$v" && keys+="remove-stale "
+    kernel_is_stale "$v" && action_keys+="remove-stale "
     # A removable superseded kernel (never the running kernel; never the newest;
     # never stale) gets a per-kernel "remove this" action.
     if kernel_is_removable "$v" && [[ "$v" != "$KERNEL_LATEST" ]] && ! kernel_is_stale "$v"; then
-        keys+="remove-this "
+        action_keys+="remove-this "
     fi
     # An incomplete (partial) kernel offers a reinstall (restore its missing
     # files) and, on apt/dpkg only, a guarded remove (drop its remaining
@@ -30833,15 +30858,21 @@ kernel_menu_action_keys()
     # install-headers/reinstall are gated on NOT broken, while the guarded
     # apt/dpkg remove-partial removal stays.
     if ! kernel_is_broken "$v"; then
-        kernel_in_list "$v" "${KERNEL_MISSING_HEADERS[@]:-}" && keys+="install-headers "
+        # "Install missing headers" is pre-flighted like the repo-latest
+        # action: the bounded apt-get simulation must PROVE the headers
+        # installable before the offer appears, so a target whose headers
+        # cannot be installed is never offered an action that must fail.
+        if kernel_in_list "$v" "${KERNEL_MISSING_HEADERS[@]:-}"; then
+            apt_headers_installable "$v" && action_keys+="install-headers "
+        fi
         if kernel_in_list "$v" "${KERNEL_PARTIAL[@]:-}"; then
-            keys+="reinstall "
-            [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] && keys+="remove-partial "
+            action_keys+="reinstall "
+            [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]] && action_keys+="remove-partial "
         fi
     elif kernel_in_list "$v" "${KERNEL_PARTIAL[@]:-}" && [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
-        keys+="remove-partial "
+        action_keys+="remove-partial "
     fi
-    printf '%s' "$keys"
+    printf '%s' "$action_keys"
 }
 
 # Full per-kernel action label for the prompt-2 action list.  The selected

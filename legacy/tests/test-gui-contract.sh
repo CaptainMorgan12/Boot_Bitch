@@ -339,6 +339,12 @@ grep -q '"--session-request"' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner lost the --session-request helper option"
 grep -q '"--menu-answer-file"' "$GUI_DIR/src/HelperRunner.cpp" \
     || fail "HelperRunner lost the --menu-answer-file helper option"
+# 0.2.28 kernel-menu fix: Qt 3's QCString::size() counts the terminating NUL,
+# so the base64 menu decoder must exclude it from the loop bound — an unpadded
+# payload (length % 4 == 0, no '=' terminator) would otherwise fail closed on
+# the NUL and every kernel/GPU menu would render empty.
+grep -qF "text[len - 1] == '\\0'" "$GUI_DIR/src/LegacyMainWindow.cpp" \
+    || fail "legacy base64 decoder lost the QCString trailing-NUL exclusion"
 pass "0.2.28 interactive-session handoff is option-based (--session-request/--menu-answer-file)"
 # Cycle 4b: the display tool is the legacy host-scope SysV stage (runnable
 # with the helper's display capability line; offline stays disabled).

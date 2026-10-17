@@ -1519,10 +1519,18 @@ QByteArray legacyBase64Decode(const QString &encoded)
         lookup[static_cast<unsigned char>(kTable[i])] = i;
     }
     const QCString text = encoded.latin1();
+    // Qt 3's QByteArray/QCString::size() counts the terminating NUL, so the
+    // loop bound must exclude it: an unpadded payload (length % 4 == 0, no
+    // '=' terminator) would otherwise iterate one byte too far and fail
+    // closed on the NUL, returning an empty result for a valid payload.
+    int len = static_cast<int>(text.size());
+    if (len > 0 && text[len - 1] == '\0') {
+        --len;
+    }
     QCString out;
     int buffer = 0;
     int bits = 0;
-    for (int i = 0; i < static_cast<int>(text.size()); ++i) {
+    for (int i = 0; i < len; ++i) {
         const unsigned char c = static_cast<unsigned char>(text[i]);
         if (c == '=') {
             break;  // padding terminates the quad

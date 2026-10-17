@@ -390,6 +390,8 @@ add_test(NAME boot-repair-legacy-package-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/scripts/test-legacy-package-contract.sh)
 add_test(NAME boot-repair-legacy-gui-contract
     COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-gui-contract.sh)
+add_test(NAME boot-repair-legacy-kernel-parity-contract
+    COMMAND ${CMAKE_CURRENT_SOURCE_DIR}/legacy/tests/test-kernel-parity-contract.sh)
 
 add_test(NAME boot-repair-efi-label-update
     COMMAND python3 ${CMAKE_CURRENT_SOURCE_DIR}/tests/efi-label-update-test.py)
@@ -448,6 +450,8 @@ set_tests_properties(boot-repair-efi-label-update
 set_tests_properties(boot-repair-legacy-port-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-legacy-smoke
+    PROPERTIES LABELS "fast")
+set_tests_properties(boot-repair-legacy-kernel-parity-contract
     PROPERTIES LABELS "fast")
 set_tests_properties(boot-repair-backend-profile-contract
     PROPERTIES LABELS "slow")
