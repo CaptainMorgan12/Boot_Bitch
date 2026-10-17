@@ -10,6 +10,10 @@
 # -tuxedo-amd64 naming, the default -amd64 naming and a mixed set all resolve
 # identically.
 # shellcheck disable=SC1090,SC2034,SC2317
+# shellcheck disable=SC2218,SC2115
+# SC2218: the harness defines stub functions at runtime before the calls
+# (subshell-scoped) — intentional contract style.  SC2115: the fixture-path
+# expansions (rm/mount under "$fake_root") always name a set variable.
 set -euo pipefail
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
