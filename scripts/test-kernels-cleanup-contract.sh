@@ -1177,6 +1177,19 @@ kernel_inventory_collect
 [[ "${#KERNEL_ORPHANED_KERNELS[@]}" -eq 0 ]] \
     || fail "rpm must not flag the build-tree-less kernel as orphaned: ${KERNEL_ORPHANED_KERNELS[*]}"
 
+# ---- rpm transaction scope: running-kernel protection opt-out ---------------
+# A repair target shares the recovery host's kernel (uname(2) cannot be
+# chrooted), so dnf5's running-kernel protection must be disabled for target
+# scope — a target is never running — while the running-host scope keeps it.
+RPM_CAPTURE="$sandbox/rpm-try-args.txt"
+run_selected_chroot() { printf '%s\n' "$*" > "$RPM_CAPTURE"; return 0; }
+RUNNING_HOST_MODE=0 rpm_transaction_try "target sim" remove foo >/dev/null 2>&1
+grep -Fq 'protect_running_kernel=False' "$RPM_CAPTURE" \
+    || fail "target-scope dnf5 transactions must opt out of the running-kernel protection: $(cat "$RPM_CAPTURE")"
+RUNNING_HOST_MODE=1 rpm_transaction_try "host sim" remove foo >/dev/null 2>&1
+grep -Fq 'protect_running_kernel=False' "$RPM_CAPTURE" \
+    && fail "running-host dnf5 transactions must keep the running-kernel protection: $(cat "$RPM_CAPTURE")"
+
 # ---- rpm install-headers: exact NEVRA, guarded rpm backend, deduplicated -----
 # With the protected kernel's build tree dropped, KERNEL_MISSING_HEADERS names
 # 6.8.1-200.fc44.x86_64, so the install action builds kernel-devel-<kver> and
@@ -3257,6 +3270,26 @@ grep -q 'Remove newest kernel' "$SINGLE_MENU_FILE" \
     && fail 'single-kernel target must never offer "Remove newest kernel"'
 BOOT_REPAIR_SESSION_PROTOCOL=0
 KERNEL_BASELINE_B64=""
+
+# ---- non-apt install-headers offer (cross-distribution audit) --------------
+# The installability pre-flight is apt/dpkg-only.  A non-apt target with
+# missing headers must still offer install-headers: gating the offer on the
+# apt probe would silently suppress it on every rpm/pacman/apk target.
+TARGET_PACKAGE_MANAGER=pacman
+KERNEL_MISSING_HEADERS=(6.1.1-arch1-1)
+KERNEL_PARTIAL=()
+KERNEL_LATEST=6.1.1-arch1-1
+KERNEL_STALE=()
+KERNEL_REMOVABLE=()
+KERNEL_BROKEN=()
+KERNEL_BROKEN_REASON=()
+pacman_keys="$(kernel_menu_action_keys 6.1.1-arch1-1)"
+[[ "$pacman_keys" == *install-headers* ]] \
+    || fail "a pacman target with missing headers must offer install-headers (the apt probe must not gate it): $pacman_keys"
+TARGET_PACKAGE_MANAGER=apt/dpkg
+KERNEL_MISSING_HEADERS=()
+KERNEL_LATEST=""
+KERNEL_REMOVABLE=()
 
 # ---- apt/dpkg: repo-latest image uninstallable (headers installable) ---------
 # The backports scenario: the image has a stricter dependency (e.g. PreDepends:
