@@ -156,7 +156,10 @@ profile_target_backends
 [[ "$TARGET_PACKAGE_MANAGER" == pacman ]]
 [[ "$TARGET_INITRAMFS_BACKEND" == mkinitcpio ]]
 [[ "$TARGET_BOOTLOADER_BACKEND" == 'systemd-boot + UKI' ]]
-[[ "$TARGET_ESP_MOUNT" == /boot/efi ]]
+# The synthetic /boot/efi + /boot/loader are plain directories, not real
+# mounts: the ESP profile must stay unresolved (an EFI-populated plain
+# directory is not an ESP — the anaconda-on-ext4 BIOS-only trap).
+[[ "$TARGET_ESP_MOUNT" == unresolved ]]
 [[ "$TARGET_KERNEL_LAYOUT" == 'Arch-style named kernels (vmlinuz-linux*)' ]]
 [[ "$TARGET_REPAIR_BACKEND" == 'Arch profile — guarded pacman/mkinitcpio/GRUB/EFI repairs when transaction preflights pass' ]]
 
@@ -403,6 +406,40 @@ cap_expect()
 cap_root="$(mktemp -d)"
 trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root"' EXIT
 
+# The capability fixtures simulate a real mounted ESP: the cap_root's
+# /boot/efi is a plain directory, so the ESP profile (which only accepts a
+# genuine mount) is pinned with a path-scoped mountpoint/findmnt stub.  All
+# other paths delegate to the real tools.
+mountpoint() {
+    set +e
+    if [[ "$*" == *"$cap_root/boot/efi"* && -d "$cap_root/boot/efi" ]]; then
+        return 0
+    fi
+    if [[ "$*" == *"${cap_arch_min:-/nonexistent}/boot/efi"* && -d "${cap_arch_min:-/nonexistent}/boot/efi" ]]; then
+        return 0
+    fi
+    if [[ "$*" == *"${alpine_efi_root:-/nonexistent}/boot/efi"* && -d "${alpine_efi_root:-/nonexistent}/boot/efi" ]]; then
+        return 0
+    fi
+    command mountpoint "$@"
+}
+findmnt() {
+    set +e
+    if [[ "$*" == *"$cap_root/boot/efi"* && -d "$cap_root/boot/efi" ]]; then
+        printf 'vfat\n'
+        return 0
+    fi
+    if [[ "$*" == *"${cap_arch_min:-/nonexistent}/boot/efi"* && -d "${cap_arch_min:-/nonexistent}/boot/efi" ]]; then
+        printf 'vfat\n'
+        return 0
+    fi
+    if [[ "$*" == *"${alpine_efi_root:-/nonexistent}/boot/efi"* && -d "${alpine_efi_root:-/nonexistent}/boot/efi" ]]; then
+        printf 'vfat\n'
+        return 0
+    fi
+    command findmnt "$@"
+}
+
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=arch \
         TARGET_INITRAMFS_BACKEND=mkinitcpio TARGET_BOOTLOADER_BACKEND=grub \
@@ -433,6 +470,7 @@ done
 cap_expect \
     "$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=arch \
         TARGET_INITRAMFS_BACKEND=mkinitcpio TARGET_BOOTLOADER_BACKEND=grub \
+        TARGET_ESP_MOUNT=/boot/efi \
         diagnostic_repair_capabilities)" \
     'validate: available' \
     'fixbroken: available' \
@@ -445,7 +483,8 @@ cap_expect \
     'bootstack: available'
 
 full_cap="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=arch \
-    TARGET_INITRAMFS_BACKEND=mkinitcpio TARGET_BOOTLOADER_BACKEND=grub diagnostic_repair_capabilities)"
+    TARGET_INITRAMFS_BACKEND=mkinitcpio TARGET_BOOTLOADER_BACKEND=grub \
+    TARGET_ESP_MOUNT=/boot/efi diagnostic_repair_capabilities)"
 grep -Fqx 'Repair capability evidence dkms: dkms executable present; kernel 6.12.1-arch1-1 build tree present' <<<"$full_cap"
 grep -Fqx 'Repair capability evidence display: graphical.target present; display manager unit lightdm.service' <<<"$full_cap"
 grep -Fqx 'Repair capability evidence efi: grub-install present; ESP mount candidate: /boot/efi' <<<"$full_cap"
@@ -1568,6 +1607,9 @@ done
 display_out="$(TARGET_ROOT="$cap_alpine" TARGET_OS_ID=alpine TARGET_OS_LIKE="" \
     TARGET_DISTRO_FAMILY=alpine TARGET_INITRAMFS_BACKEND=mkinitfs \
     TARGET_BOOTLOADER_BACKEND=syslinux/extlinux RUNNING_HOST_MODE=0 diagnostic_display 2>&1)"
+grep -aFn 'graphical.target' <<<"$display_out" >&2 || true
+printf 'DISPLAY-OUT-DUMP:\n%s\nDISPLAY-OUT-END\n' "$display_out" >&2
+printf '%s\n' "$display_out" >&2
 grep -Fq 'OpenRC service manager:' <<<"$display_out" \
     || { echo 'FAIL: OpenRC display branch did not run' >&2; exit 1; }
 grep -Fq 'LightDM: service lightdm provides display-manager; enabled in runlevel(s): default; package lightdm: installed' <<<"$display_out" \
@@ -4619,6 +4661,7 @@ alpine_efi_caps()
         alpine_efi_firmware_available() { return "${CONTRACT_EFI_FIRMWARE:-0}"; }
         filesystem_scope_resolve() { :; }
         filesystem_scope_tools() { :; }
+        TARGET_ESP_MOUNT=/boot/efi
         TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine \
             diagnostic_repair_capabilities
     )
@@ -4727,6 +4770,7 @@ alpine_efi_stub_caps="$(
     alpine_efi_firmware_available() { return 0; }
     filesystem_scope_resolve() { :; }
     filesystem_scope_tools() { :; }
+    TARGET_ESP_MOUNT=/boot/efi
     TARGET_ROOT="$alpine_efi_root" TARGET_OS_ID=alpine TARGET_OS_LIKE="" TARGET_DISTRO_FAMILY=alpine \
         diagnostic_repair_capabilities
 )"

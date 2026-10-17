@@ -699,6 +699,17 @@ fi
     exit 1
 }
 
+# appimagetool's internal zsyncmake (invoked for the zsync update
+# information) can drop a stray <basename>.zsync into the calling directory:
+# it passes only the basename to its own zsyncmake run, so a release build
+# from the tree root leaves a binary at ./<name>.zsync and the repository
+# hygiene gate (which scans the root) fails on it. Remove the stray copy when
+# it is not the .zsync this script writes next to the AppImage.
+stray_zsync="$(pwd)/$(basename -- "$OUTPUT").zsync"
+if [[ -f "$stray_zsync" && "$stray_zsync" != "$(readlink -f -- "$OUTPUT").zsync" ]]; then
+    rm -f -- "$stray_zsync"
+fi
+
 # The embedded .upd_info section is what Gear Lever/AppImageUpdate read from
 # the file itself; readelf is optional tooling, so the check is skipped when
 # it is unavailable (verify-release.sh re-checks the captured artifact).

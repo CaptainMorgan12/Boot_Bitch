@@ -45,4 +45,5 @@ boot-repair-legacy-port-contract	fast	12	M	legacy	y
 boot-repair-legacy-smoke	fast	4	S	legacy	y
 boot-repair-legacy-package-contract	fast	4	S	legacy	y
 boot-repair-legacy-gui-contract	fast	3	S	legacy	y
+boot-repair-legacy-kernel-parity-contract	fast	2	S	legacy	y
 boot-repair-efi-label-update	fast	1	S	efi	y
