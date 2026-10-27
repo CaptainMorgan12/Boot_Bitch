@@ -6,7 +6,7 @@
 // list, Select Target / Unlock / Host Maintenance / Authorize action row,
 // Unlock status, Selected drive details), Diagnostics (Run All + scope label,
 // diagnostic checks list, Selected diagnostic pane with Run Diagnostic,
-// Results and Copy/Save Results, the target-only `Edit Target File...` control
+// Results and Copy/Save Results, the target-only `Edit Target File` control
 // with the Etch-era configuration key list probed through the helper's
 // read-only `Legacy config` lines), Repair (page heading + scope label,
 // privilege-elevation state with Authorize, only the legacy-supported
@@ -49,6 +49,7 @@
 #include <qstring.h>
 #include <qstringlist.h>
 #include <qvaluevector.h>
+#include <qdatetime.h>
 
 #include <cstddef>
 #include <vector>
@@ -79,6 +80,14 @@ class QTimer;
 class QSignalMapper;
 
 namespace legacy {
+
+// Round 31 (Debian Legacy #9): the in-field greyed placeholder QLineEdit
+// subclass (defined in LegacyMainWindow.cpp) — the Shell command field type.
+class ShellCommandLineEdit;
+// Round 31 (Debian Legacy #9): the in-field greyed placeholder QTextEdit
+// subclass (defined in LegacyMainWindow.cpp) — the Diagnostics results pane
+// and the Chroot/Host Shell output pane.
+class PlaceholderTextEdit;
 
 class HelperRunner;
 // The modal repair-result dialog (defined in LegacyMainWindow.cpp): its Close
@@ -119,7 +128,12 @@ QString legacyInitialLogDirectory();
 // a diagnostic command runs are Diagnostic (with the current section key from
 // the stream's `Diagnostic: <key>` markers), lines captured while a repair
 // action runs are Repair (with the helper stage or the space-separated Full
-// Repair stage set), everything else is Application.
+// Repair stage set), everything else is Application. Round 36 (Etch #5):
+// `stamp` carries the per-entry ARRIVAL time captured when the line lands in
+// the GUI (modern appendLog() parity); the display/save sinks render it, so a
+// view rebuild, a buffered-diagnostic flush or a Save As never re-stamps the
+// whole register with one shared format-time moment. A null stamp (synthetic
+// test entries) falls back to the format time.
 struct LogEntry {
     enum Kind { Application = 0, Diagnostic = 1, Repair = 2 };
     LogEntry() : kind(Application) {}
@@ -127,6 +141,7 @@ struct LogEntry {
     int kind;
     QString diagnostic; // diagnostic key for Diagnostic entries
     QString stages;     // space-separated helper stages for Repair entries
+    QDateTime stamp;    // per-entry arrival time (null = synthetic/unspecified)
 };
 
 class LegacyMainWindow : public QMainWindow
@@ -170,6 +185,11 @@ private slots:
     void deviceSelectionChanged();
     void setRepairTarget();
     void toggleHostMaintenance();
+    // Round 21: the Repair-tab visibility hook — re-applies a deferred plan
+    // hug after the page became current and its layouts activated for real
+    // (the Settings stage-toggle case: Qt3 does not re-layout a hidden tab).
+    // A real Qt3 SLOT: connect() refuses a plain private method.
+    void repairTabShown();
     void authorizeNow();
     void runDiagnostics();
     void runSelectedDiagnostic();
@@ -218,6 +238,22 @@ private slots:
     // closed.  Only fires while a PROMPT record is pending (the input line is
     // disabled otherwise).
     void sendPromptAnswer();
+    // A12-09: the repair result popup's Cancel button handler.  Cancels the
+    // running helper command through the documented legacy cancel path
+    // (HelperRunner::cancel(): the mode-600 cancel-file token + the bounded
+    // sudo-wrapper kill), disables the button (a cancel is one-shot) and
+    // shows the transient "Stopping..." status; helperFinished() reports the
+    // stopped-at-your-request status and re-enables Close.
+    void cancelResultOperation();
+    // Round 21 (modern cancel-surface parity): the Diagnostics page's Cancel
+    // button (armed only while a read-only diagnostic owns the helper) and
+    // the Chroot/Host Shell page's Cancel button (armed only while a shell
+    // command owns the helper).  Both drive the SAME documented legacy cancel
+    // path as cancelResultOperation() — the mode-600 cancel-file token +
+    // the bounded sudo-wrapper kill — and the finished run reports
+    // "stopped at your request" like the popup path.
+    void cancelDiagnosticOperation();
+    void cancelShellOperation();
     void saveLog();
     void clearLog();
     void showAbout();
@@ -244,6 +280,20 @@ private slots:
     void fileCopyPreview();
     void fileCopyRun();
     void fileCopyBrowse();
+    void fileCopyBrowseSource();
+    // Level-1 destination-entry dialog action: the Browse repair folders...
+    // button requests the level-2 picker at the entered path (the dialog
+    // closes; the picker's Choose This Folder re-opens the entry dialog).
+    void fileCopyBrowseEntryBrowse();
+    // Level-2 picker navigation actions (Up / Open Selected / Refresh):
+    // each issues the next read-only browse-target request; the picker STAYS
+    // OPEN (disabled/busy) and the response updates it in place — round 59.
+    // Round 60: the response is driven to completion synchronously while the
+    // picker stays visible (legacyFileCopyBrowsePump), so the update can
+    // never land in a hidden/new dialog instance.
+    void fileCopyBrowsePickerUp();
+    void fileCopyBrowsePickerOpen();
+    void fileCopyBrowsePickerRefresh();
     void showHelpPopup(const QString &href);
     void toolListHeaderClicked(int column);
     int toolIndexForTitle(const QString &title) const;
@@ -278,12 +328,28 @@ private:
     void registerGroupBox(QGroupBox *box);
     QWidget *makeHelpButton(QWidget *parent, const QString &title,
                             const QString &text);
+    // Round 21 (splitter hug + static): applies the pending Full Repair plan
+    // splitter hug through the sum-preserving setSizes() path (upper pane =
+    // the frame's tight content height, the tools pane takes the remainder).
+    // Round 21 (splitter hug + static): applies the pending Full Repair plan
+    // splitter hug through the sum-preserving setSizes() path (upper pane =
+    // the frame's tight content height, the tools pane takes the remainder).
+    // Deferred while the Repair page has no real geometry; the
+    // tab-visibility hook re-invokes it after the page lays out.
+    void applyPlanSplitterHug();
     QMap<QString, QString> m_helpTitles;
     QMap<QString, QString> m_helpTexts;
     int m_toolSortColumn;
     bool m_toolSortAscending;
     QSignalMapper *m_helpSignalMapper;
     void appendLog(const QString &line);
+    // Round 36 (Etch #5): renders one entry into the live Logs view. The
+    // formatted string is computed against the live VIEW sequence state (the
+    // newest rendered entry — a separate state from the append-only session
+    // file's chronological sequence) and prepended at the top, so the view
+    // keeps the newest entry at the top while a run streams (modern
+    // appendLog() prepend parity).
+    void prependLogEntryToView(const LogEntry &entry);
     void appendToLogFile(const QString &line);
     void ensureLogFile();
     // Ensures the session-log directory: the GUI's own default tree is
@@ -337,7 +403,8 @@ private:
     // B7-4: the structured repair summary block (-------- REPAIR --------
     // bracketed, Repair-tagged) appended after every repair command, built
     // from the parsed `Repair change status` lines.
-    void appendRepairSummaryBlock(const ParsedTranscript &parsed, bool commandOk);
+    void appendRepairSummaryBlock(const ParsedTranscript &parsed, bool commandOk,
+                                  bool cancelled = false);
     // Shows/hides the global busy indicator (modern parity) from m_running:
     // a reserved row below the guarded-repair badge with the modern working
     // text, animated by a plain QTimer cycling 0..3 trailing dots. The fixed
@@ -352,6 +419,11 @@ private:
     // otherwise the committed repair target). It only picks which cached
     // scope the table reads and never creates a scope model of its own.
     void syncCapabilityScopeSelector();
+    // A12-09: arms/disarms the repair result popup's Cancel button from the
+    // run state — armed only while a helper command runs and no cancel was
+    // requested yet (modern round-12 "armed only while a cancellable request
+    // is in flight" parity).
+    void updateResultCancelState();
     // Modern invalidateAllActiveScopeDiagnostics()/clearHostDiagnosticCache()
     // parity: the legacy frontend keeps ONE cached capability/evidence model
     // (identity-keyed, not two per-scope maps), so a scope switch clears the
@@ -374,6 +446,20 @@ private:
     void updateInstallSupportButton();
     int selectedToolIndex() const;
     bool toolRunReady(int toolIndex, QString *reason) const;
+    // Round 52 (user request): the proven display-manager package the CURRENT
+    // scope's capability evidence offers for install — the display row's
+    // missing-DM state plus the helper's `Repair capability evidence
+    // display-installable: <pkg>|available` side-channel (the same derivation
+    // the capabilities table's Install cell uses). Fail closed: no matching
+    // state or side-channel -> empty.
+    QString displayInstallablePackage() const;
+    // Round 52 (user request): the display tool's unavailable info derived
+    // from the capability evidence — the localized capability reason plus,
+    // when displayInstallablePackage() proves a package, a one-line pointer at
+    // the Capabilities table's Install action. Never a fixed host-scope
+    // literal: the scope hint is a separate, evidence-gated state.
+    QString displayToolUnavailableReason(
+        const std::string &capabilityReason) const;
     // Missing required diagnostic sections for a repair tool (empty when every
     // required section is cached in m_diagnosticSections). The fail-closed
     // repair gate uses this list, mirroring MainWindow::missingRequiredDiagnosticTitles.
@@ -389,11 +475,14 @@ private:
     // Presentation state for the Settings -> Full Repair checkboxes. The
     // checkboxes are plain user settings that stay checkable unless the stage
     // is EXPLICITLY unavailable (a cached `unavailable|<reason>` capability
-    // line in the current scope, a frontend gap, or a host-only stage outside
-    // Host Maintenance). Absent capability evidence keeps a stage checkable
-    // with its saved preference, so the presentation never depends on
-    // diagnostic-cache warmth. The fail-closed run gate
-    // planStageAvailable() is planStageState() == PlanStageAvailable.
+    // line in the current scope or a frontend gap). Absent capability
+    // evidence keeps a stage checkable with its saved preference, so the
+    // presentation never depends on diagnostic-cache warmth. Round 52: the
+    // host-only scope gate is deliberately NOT part of this presentation
+    // state — the checkbox records the user's preference at target scope too
+    // (the "Disabled in Settings" note must only point at Settings when
+    // Settings actually allows enabling). The fail-closed run gate
+    // planStageAvailable() keeps the hostOnly gate on top of this state.
     enum PlanStageState {
         PlanStageUnavailable = 0,
         PlanStageAvailable = 1
@@ -475,14 +564,60 @@ private:
                                   const QString &uuid = QString::null);
     bool startFileCopyCommand(bool realCopy);
     void handleFileCopyBrowseResult(const std::string &transcript, bool ok);
+    // The level-1 destination-entry dialog (modern repairDestinationDialog
+    // parity): entry field + Browse repair folders... + OK/Cancel (round 68:
+    // the redundant Clear button was removed — the field is cleared with
+    // backspace/Ctrl+A).
+    // `initial` pre-fills the field (the picker's Choose This Folder passes
+    // its chosen path); a null string starts from the staged destination or
+    // /home.
+    void fileCopyBrowseEntry(const QString &initial);
+    // Round 60: builds the level-2 picker ONCE and keeps it up (visible,
+    // greyed while each request is in flight) for the whole browse session.
+    // The first read-only browse-target listing is issued through a zero
+    // timer so it runs INSIDE the picker's exec loop; the level-1 entry
+    // dialog hands over directly with no blank background window in between.
+    void openFileCopyBrowsePicker();
+    // Issues the next read-only browse-target helper request for a level-2
+    // navigation action.  Round 60: after a successful start the completion
+    // is pumped to delivery while the picker stays visible
+    // (legacyFileCopyBrowsePump) — Qt 3.3.7 does not deliver the QProcess
+    // completion through the picker's modal exec loop on the rig, so the
+    // round-59 passive wait left the picker disabled until the user closed
+    // it (the response then rebuilt a NEW dialog — the wrong instance).
+    void legacyFileCopyBrowseIssue(const QString &path);
+    // Bounded request-to-response pump for an in-flight browse-target
+    // request (processEvents + QProcess::isRunning(), whose Qt 3.3.7
+    // implementation synchronously reaps the child and triggers the
+    // sigchld-pipe processExited delivery).  On the deadline the request is
+    // cancelled and the picker resolves to the previous listing with the
+    // failure warning — the disabled-while-in-flight state always resolves.
+    void legacyFileCopyBrowsePump();
     void updateChrootShellState();
     void updateChrootShellMode();
+    // Round 27 (Debian Legacy #8): stick-to-bottom append for the shell
+    // transcript.  Qt 3.3.7's QTextEdit::append moves the cursor but does NOT
+    // scroll the view, so every append re-positions to the newest line unless
+    // the user has scrolled up (the vertical scrollbar is no longer at its
+    // maximum) — manual scroll-up reading stays stable while new output
+    // arrives, and the latest output is always visible otherwise.
+    void appendShellOutput(const QString &text);
+    // Round 70 (E1): the repair result dialog pane twin.  Streaming lines
+    // stick to the bottom exactly like appendShellOutput(); forceBottom is
+    // true for the prompt-arrival and post-send updates, which must hit the
+    // bottom ALWAYS (the user's rule: before prompt, on prompt, after prompt,
+    // and after the answer is sent) — the prompt line and the sent answer are
+    // never hidden behind a manual scroll-up.
+    void appendResultOutput(const QString &text, bool forceBottom);
     void legacyFeatureDisplay(const char *feature, QString *state,
                               QString *reason) const;
     void updateFactView(const ParsedTranscript &parsed);
     void updateDriveDetails();
     void updateUnlockStatus();
     void updateDiagnosticDetails();
+    // Round 32 (Etch #4): the selected check's stable helper key, shared by
+    // updateDiagnosticDetails and the per-diagnostic Run button tooltip.
+    QString selectedDiagnosticKey() const;
     void refreshDiagnosticResultsView();
     void updateAuthorizationAffordance();
     void mergeHelperDevices(const ParsedTranscript &parsed);
@@ -511,10 +646,41 @@ private:
     void runDiagnosticsInternal(bool quiet);
     void maybeAutoRefreshDiagnostics(const QString &reason);
     void reportChangeStatuses(const ParsedTranscript &parsed);
+    // Round 30 (modern parity): the shared repair->diagnostic map application.
+    // applyCommandTranscriptMapped() replaces the round-21 whole-model
+    // staleness after a repair/shell command: a genuine (non-cancelled)
+    // failure of a modifying action and every unclassifiable case keep the
+    // fail-safe complete set, a cancelled run invalidates only when a stage
+    // reported "changed" before the abort (then the cancelled per-tool union
+    // / shell class map), and a completed run invalidates exactly the mapped
+    // sections (a proven unchanged/skipped stage invalidates nothing).
+    // Returns true when any cached evidence (or the capability model) was
+    // invalidated. applyDiagnosticInvalidation() carries out the mapped set:
+    // full resets the whole model + per-section cache; a targeted set removes
+    // exactly those sections (and clears the capability model only when the
+    // set names the capability pseudo-entry).
+    bool applyCommandTranscriptMapped(const ParsedTranscript &parsed,
+                                      bool commandOk, bool cancelled, bool shell);
+    bool applyDiagnosticInvalidation(bool full,
+                                     const QValueList<QString> &sections);
+    // The single-popup plan accumulates the per-stage mapped union instead of
+    // invalidating per command (modern accumulatePlanInvalidation parity); a
+    // genuine stage failure or a fail-safe row forces the complete set, and
+    // finishRepairPlan() applies the union once.
+    void accumulateRepairPlanInvalidation(const ParsedTranscript &parsed,
+                                          bool commandOk, bool cancelled);
+    // Round 30: the requires column of the shared map (the repair-run gate and
+    // the baseline serialization both use this list).
+    QStringList requiredDiagnosticSectionsForTool(const QString &toolKey) const;
+    // Round 30: loads the shared map once at startup (the staged package copy
+    // under /usr/share/boot-repair-legacy/, falling back to a copy beside the
+    // executable). A missing/malformed file logs a warning and every lookup
+    // fails safe to the complete set.
+    void loadRepairDiagnosticMap();
     void handleUnlockFinished(bool ok, const std::string &transcript,
                               const QString &device, const QString &disk);
     bool verifySmokeControls(QString *problems);
-    bool verifyLayout(QString *problems, int *checked);
+    bool verifyLayout(QString *problems, int *checked, QString *geometryOut = 0);
 
     QTabWidget *m_tabs;
     QPopupMenu *m_fileMenu;
@@ -548,7 +714,7 @@ private:
     QTextEdit *m_logView;
     QTextEdit *m_unlockStatusView;
     QLineEdit *m_logSearchEdit;
-    QLineEdit *m_shellCommandEdit;
+    ShellCommandLineEdit *m_shellCommandEdit;
     QTextEdit *m_shellOutput;
     QCheckBox *m_logWrapCheck;
     QCheckBox *m_showNonLinuxCheck;
@@ -574,6 +740,9 @@ private:
     QLabel *m_diagTitle;
     QLabel *m_diagDescription;
     QLabel *m_diagAvailability;
+    // Round 31 (Debian Legacy #9): the results pane's empty-state hint is the
+    // in-field greyed placeholder painted INSIDE the pane (the
+    // PlaceholderTextEdit subclass in the .cpp) — no label, no explicit sync.
     QLabel *m_chrootHeading;
     QLabel *m_chrootScopeLabel;
     QLabel *m_fileCopyHeading;
@@ -583,8 +752,6 @@ private:
     QLabel *m_fileCopyOptionsTitle;
     QLabel *m_logsHeading;
     QLabel *m_settingsHeading;
-    QLabel *m_gateHint;
-    QLabel *m_planParagraph;
     QLabel *m_planCountLabel;
     QLabel *m_planReadinessLabel;
     // The Full Repair plan's scroll view. It is a PlanScrollView whose
@@ -601,6 +768,23 @@ private:
     // padding), set by updatePlanView() so the smoke test can report the plan
     // frame's tight content height (see etch-agent-guide.md §6).
     int m_planGridContentHeight;
+    // Round 16 (b): the plan-content signature of the last applied splitter
+    // size pass — the splitter sizes are re-applied only when the plan
+    // content actually changed, so selecting an individual repair item never
+    // moves the plan splitter away from its hug.
+    QString m_planViewContentSignature;
+    // Round 21 (splitter hug + static): the hug is applied through
+    // applyPlanSplitterHug() only while a content change is pending and the
+    // Repair page has real geometry; a full-repair run/cancel/popup close/
+    // item selection never touches the splitter (no content change = no
+    // re-application). m_planHugContentHeight carries the grid's tight
+    // content height to the apply pass.
+    bool m_planHugPending;
+    int m_planHugContentHeight;
+    // The Repair page widget (the tab that hosts the plan/tools splitter),
+    // so the tab-visibility hook can re-apply a deferred hug after the page
+    // lays out for real (Qt3 does not re-layout a hidden tab otherwise).
+    QWidget *m_repairPage;
     QLabel *m_toolTitle;
     QLabel *m_toolDescription;
     QLabel *m_toolPlanStatus;
@@ -608,8 +792,7 @@ private:
     QLabel *m_targetSummary;
     QLabel *m_configLabel;
     QLabel *m_configReasonLabel;
-    QLabel *m_chrootReasonLabel;
-    QLabel *m_authStatusLabel;
+    QLabel *m_chrootReasonLabel;    QLabel *m_authStatusLabel;
     QLabel *m_settingsElevationLabel;
     QLabel *m_capDistributionLabel;
     QLabel *m_capPackageManagerLabel;
@@ -639,6 +822,18 @@ private:
     QPushButton *m_runFullRepairButton;
     QPushButton *m_toolRunButton;
     QPushButton *m_resultCloseButton;
+    // A12-09: the repair result popup's Cancel button — armed only while a
+    // helper command runs (updateResultCancelState()), disabled once nothing
+    // is cancellable (after a completion/abort the popup's Close button
+    // dismisses it, modern round-12 parity).
+    QPushButton *m_resultCancelButton;
+    // Round 21 (modern cancel-surface parity): the Diagnostics page Cancel —
+    // armed only while a read-only diagnostic owns the helper — and the
+    // Chroot/Host Shell page Cancel — armed only while a shell command owns
+    // the helper. Both are one-shot (disarmed at completion/abort and on the
+    // click itself) and share the cancel-file/kill path.
+    QPushButton *m_diagnosticsCancelButton;
+    QPushButton *m_shellCancelButton;
     QPushButton *m_shellRunButton;
     QPushButton *m_shellClearButton;
     QPushButton *m_newSessionLogButton;
@@ -658,8 +853,18 @@ private:
     QListView *m_fileCopySourceList;
     QLineEdit *m_fileCopyDestinationEdit;
     QPushButton *m_fileCopyBrowseButton;
+    // Repair -> Host only: browses the repaired system (the same read-only
+    // browse-target picker as the destination side) and stages the chosen
+    // folder as a source; hidden in Host -> Repair where the Add buttons
+    // already open host-native dialogs (modern buildFileCopyPage parity).
+    QPushButton *m_fileCopyBrowseSourceButton;
     QSplitter *m_systemsSplitter;
     QSplitter *m_repairVerticalSplitter;
+    // Round 21: the Repair tab's horizontal tools/Selected-tool splitter (the
+    // vertical splitter's LOWER pane).  Qt 3.3.7 QSplitter has no
+    // widget(int)/setSizes-per-widget accessors (Qt4 additions), so the hug
+    // pass reads the lower pane's floor through this stored pointer.
+    QSplitter *m_repairToolsSplitter;
     QGroupBox *m_chrootGroup;
     QGroupBox *m_fileCopySourceGroup;
     QGroupBox *m_fileCopyDestinationGroup;
@@ -712,6 +917,9 @@ private:
     QLineEdit *m_shellPromptInput;
     QPushButton *m_shellPromptSend;
     QLabel *m_chrootCommandHeading;
+    // Round 31 (Debian Legacy #9): the command field's hint is the in-field
+    // greyed placeholder INSIDE the field (ShellCommandLineEdit in the .cpp);
+    // the round-21 hint label is gone.
     std::vector<QCheckBox *> m_planChecks;
     // The saved per-stage plan preference, kept separately from the checkbox
     // state so the availability pass can force unavailable rows off (shown,
@@ -740,6 +948,11 @@ private:
 
     HelperRunner *m_runner;
     CapabilityModel m_model;
+    // Round 30: the shared repair->diagnostic invalidation map
+    // (data/repair-diagnostic-map.tsv, the same file the modern GUI embeds);
+    // loaded once from the staged package copy (see the constructor). An
+    // unavailable map fails every lookup safe to the complete set.
+    RepairDiagnosticMap m_repairDiagnosticMap;
     QMap<QString, DeviceRow> m_rows;
     QMap<QString, QString> m_factMap;
     QMap<QString, QString> m_unlockStatusCache;
@@ -783,6 +996,16 @@ private:
     QString m_committedRoot;
     QString m_priorLogPath;
     std::vector<LogEntry> m_logEntries;
+    // Round 34 (Etch #4): the live register/file formatting sequence's section
+    // grouping state (one header per section — see formattedLogEntry()). The
+    // rebuilt view and the save-as loops own their local states.
+    QString m_logSectionState;
+    // Round 36 (Etch #5): the live VIEW sequence's grouping state (the
+    // identity of the newest rendered entry). The view renders newest-first,
+    // so its sequence runs backwards from the file's chronological order and
+    // needs its own state for the live prepend path; refreshLogView()
+    // re-derives it from the newest visible entry on every rebuild.
+    QString m_logViewSectionState;
     // Item 4: the diagnostic stream buffered during a run in progress. The
     // lines are buffered (not appended live) so partial per-section results
     // stay out of the register until helperFinished() flushes the complete run
@@ -791,8 +1014,48 @@ private:
     QStringList m_priorLogLines;
     QStringList m_fileCopySources;
     QString m_fileCopyBrowsePath;
+    // 0 = the browse picker feeds the destination edit; 1 = it feeds the
+    // staged source list (Repair -> Host source browse).
+    int m_fileCopyBrowseMode;
+    // The level-1 destination-entry dialog (modern repairDestinationDialog
+    // parity) currently open, plus its path field and the Browse-requested
+    // latch; valid only while fileCopyBrowseEntry() runs its exec() loop (the
+    // Browse button latches the request and the dialog closes through its own
+    // accept() slot — the Qt3 metaobject, accept()/done() being protected).
+    QDialog *m_fileCopyBrowseEntryDialog;
+    QLineEdit *m_fileCopyBrowseEntryEdit;
+    bool m_fileCopyBrowseEntryBrowse;
+    // The level-2 folder picker currently open plus its folder list; valid
+    // only while openFileCopyBrowsePicker() runs the picker's exec() loop.
+    // Round 59 (picker persistence): the navigation slots keep the picker
+    // OPEN (disabled/busy) while the next read-only browse-target request is
+    // in flight and handleFileCopyBrowseResult() updates the list in place —
+    // no close/reopen flicker. m_fileCopyBrowsePickerHint / ...PickerUp are
+    // the in-place-updated children; m_fileCopyBrowsePickerAwaiting latches
+    // the in-flight navigation request.  Round 60: the request is pumped to
+    // completion inside the open picker (legacyFileCopyBrowsePump), so the
+    // response can never rebuild a second dialog; m_fileCopyBrowsePickerLate
+    // swallows the late completion of a request the pump timed out and
+    // cancelled (the failure was already reported and the picker re-enabled).
+    QDialog *m_fileCopyBrowsePickerDialog;
+    QListView *m_fileCopyBrowsePickerList;
+    QLabel *m_fileCopyBrowsePickerHint;
+    QPushButton *m_fileCopyBrowsePickerUp;
+    bool m_fileCopyBrowsePickerAwaiting;
+    bool m_fileCopyBrowsePickerLate;
     QString m_lastDiagnosticKey;
     QString m_lastDiagnosticIdentity;
+    // Round 41: per-key USER-RUN latch (modern parity) — the set of diagnostic
+    // keys the user has run successfully at least once in this application
+    // session. It drives the per-diagnostic Run button wording ("Run
+    // Diagnostic" until the user runs that diagnostic, "Re-run Diagnostic"
+    // afterwards) and is deliberately NOT the cached-section presence: a Run
+    // All that populates the per-section cache never flips an individual
+    // button, a cancelled or failed run produces no evidence and never flips,
+    // and the latch survives invalidation for the whole session. Qt 3.3.7 has
+    // no QSet, so the latch is a QMap<QString, bool> keyed by the lower-cased
+    // section key.
+    QMap<QString, bool> m_userRunDiagnosticKeys;
     // The GUI's mode-600 unlock keyfile (Qt 3.3.7 QProcess cannot deliver
     // stdin); created per unlock attempt and deleted on every path.
     QString m_unlockKeyfilePath;
@@ -811,6 +1074,7 @@ private:
     // and reallocates the per-widget Tip record on every add; the churn is
     // needless and is avoided by construction).
     QString m_fileCopyBrowseTip;
+    QString m_fileCopyBrowseSourceTip;
     QString m_fileCopyPreviewTip;
     QString m_fileCopyRunTip;
     // Live tagging context for the next appendLog: the kind and the section
@@ -826,6 +1090,23 @@ private:
 
     bool m_updatingSelection;
     bool m_running;
+    // A12-09: the repair result popup's Cancel was clicked for the running
+    // command; helperFinished() uses it for the stopped-at-your-request
+    // status wording and then resets it.
+    bool m_resultCancelRequested;
+    // Round 29 (Debian Legacy #8): the running diagnostic was cancelled
+    // through the Diagnostics page's Cancel button, whose at-initiation
+    // invalidation already emptied the results pane. helperFinished() must
+    // then NOT re-show the doomed run's raw transcript in the pane (the
+    // round-29 cancel race) — the pane stays empty through the completion
+    // and the transcript remains in the Logs tab. Reset at the start of
+    // every startCommand() and after the completion path consumes it.
+    bool m_diagnosticCancelInvalidated;
+    // Round 16 (ITEM 4e): the single-popup plan's running command was
+    // cancelled (popup button or the helper's abort evidence); set by
+    // helperFinished(), consumed + cleared by finishRepairPlan() so the final
+    // status reports the abort, never "plan finished".
+    bool m_repairPlanCancelled;
     // True while the file system repair flow (fs-inspect + per-device
     // fs-repair) owns the session; the per-command diagnostics auto-refresh is
     // suppressed while it is set and re-scheduled once at the end of the flow.
@@ -863,6 +1144,13 @@ private:
     bool m_repairPlanAnyRepairCompleted;
     bool m_repairPlanInlineQuestion;   // the inline decision is being asked
     RepairPlanPhase m_repairPlanPhase;
+    // Round 30 (modern accumulatePlanInvalidation parity): the plan accumulates
+    // the per-stage mapped union here and applies it ONCE in
+    // finishRepairPlan(); a genuine stage failure or a fail-safe row sets the
+    // full flag (complete set), and an unchanged plan invalidates nothing.
+    QValueList<QString> m_repairPlanInvalidatedSections;
+    bool m_repairPlanRequiresFullInvalidation;
+    bool m_repairPlanModified;
     bool m_pendingDiagnostic;
     // Quiet diagnostic runs are the scheduled auto-regeneration; the busy
     // indicator names them like the modern GUI does.
@@ -889,6 +1177,15 @@ private:
     QString m_pendingConfigKey;
     QString m_pendingConfigPath;
     bool m_pendingConfigWrite;
+    // Round 50: the pending helper-routed session-log delete (the selected
+    // file name + full path), consumed by helperFinished when the
+    // `session-log-delete` verb completes.
+    QString m_pendingSessionLogDeleteName;
+    QString m_pendingSessionLogDeletePath;
+    // Round 30: the helper verb of the running command (args.first()), so the
+    // mapped-invalidation path can distinguish the modifying copy verb from
+    // the read-only copy-preview/browse-target verbs (modern isFileCopy rule).
+    QString m_pendingVerb;
     // Set when Host Maintenance is selected (or left) while a read-only
     // diagnostic is in flight: the diagnostic is cancelled and the scope
     // switch is deferred until helperFinished unwinds the cancelled run.

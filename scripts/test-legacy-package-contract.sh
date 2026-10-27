@@ -53,6 +53,17 @@ grep -qE '^[[:space:]]*QT[[:space:]]*\+=' "$GUI_PRO" \
 grep -q '^TRANSLATIONS' "$GUI_PRO" \
     || fail "GUI project does not declare TRANSLATIONS for the Qt3 catalogs"
 
+# Hardening (VAR-1): the Qt3 build must be a position-independent executable
+# with full RELRO and immediate binding, and packaging must strip the GUI
+# binary. (The Depends/libc shlibdeps part stays deferred to the Etch build
+# wave, where dpkg-shlibdeps can resolve against the guest's own libraries.)
+grep -q 'QMAKE_CXXFLAGS += -fPIE' "$GUI_PRO" \
+    || fail "GUI project lost the -fPIE compile flag"
+grep -qE '^QMAKE_LFLAGS[[:space:]]*\+=[[:space:]]*-pie -Wl,-z,relro,-z,now' "$GUI_PRO" \
+    || fail "GUI project lost the -pie/-z,relro/-z,now link flags"
+grep -q 'strip --strip-unneeded' "$PKG" \
+    || fail "scripts/package-legacy.sh lost the GUI strip step"
+
 # --- Syntax and bash 3.1 floor ---------------------------------------------
 bash -n "$PKG" || fail "scripts/package-legacy.sh failed bash -n"
 
@@ -100,6 +111,7 @@ for path in \
     "$STAGE/usr/share/icons/hicolor/22x22/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy.png" \
     "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
+    "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png" \
     "$STAGE/usr/share/doc/boot-repair-legacy/copyright" \
     "$STAGE/usr/share/doc/boot-repair-legacy/changelog.Debian.gz"
 do
@@ -122,6 +134,19 @@ cmp -s "$FIXTURE_HELPER" "$STAGE/usr/sbin/boot-repair-legacy-helper" \
 if ! find "$STAGE/usr/share/boot-repair-legacy/translations" -name '*.qm' -print | grep -q .; then
     fail "staged translations directory carries no .qm catalog"
 fi
+
+# Round 30: the staged tree must carry the SHARED repair->diagnostic map — the
+# byte-identical copy of the canonical data file both GUIs consume, installed
+# where the legacy GUI resolves it at runtime.
+MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
+STAGED_MAP="$STAGE/usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+[[ -f "$MAP_FILE" ]] || fail "canonical repair-diagnostic-map.tsv is missing"
+[[ -f "$STAGED_MAP" ]] \
+    || fail "staged tree is missing usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+cmp -s "$MAP_FILE" "$STAGED_MAP" \
+    || fail "staged repair-diagnostic-map.tsv differs from the canonical data file"
+[[ "$(stat -c %a "$STAGED_MAP")" == '644' ]] \
+    || fail "staged repair-diagnostic-map.tsv mode is not 0644"
 
 # User access: the system-wide desktop entry and the GUI binary must be
 # readable/executable by every user (the guest's unprivileged user launches
@@ -162,9 +187,22 @@ grep -q '^Description: .\+' "$CONTROL" || fail "control Description is missing"
 grep -q '^Recommends: .*dosfstools' "$CONTROL" || fail "control Recommends is missing dosfstools"
 grep -q '^Suggests: .*kdelibs4c2a' "$CONTROL" || fail "control Suggests is missing kdelibs4c2a"
 
-DEPENDS='Depends: libqt3-mt (>= 3:3.3.7), bash (>= 3.1), util-linux, mount, e2fsprogs, grub, gksu | sudo, cryptsetup'
+# util-linux was dropped from Depends (VAR-1): it is an essential package on
+# Etch (always present) and lintian flags depends-on-essential-package-without-
+# using-version; a version guess would over-pin the rig. The libc dependency
+# comes from the packaging step (VAR-1): control.in carries the
+# ${shlibs:Depends} token, dpkg-shlibdeps resolves it on the real Etch build,
+# and the dry-run staging substitutes it empty (deterministic host control).
+DEPENDS='Depends: libqt3-mt (>= 3:3.3.7), bash (>= 3.1), mount, e2fsprogs, grub, gksu | sudo, cryptsetup'
 grep -qxF "$DEPENDS" "$CONTROL" || fail "staged control dependency list differs from the contract"
-grep -qxF "$DEPENDS" "$CONTROL_IN" || fail "control.in dependency list differs from the contract"
+grep -qxF "$DEPENDS, \${shlibs:Depends}" "$CONTROL_IN" \
+    || fail "control.in dependency list differs from the contract"
+grep -q 'dpkg-shlibdeps' "$PKG" \
+    || fail "scripts/package-legacy.sh lost the dpkg-shlibdeps step"
+grep -q 'resolve_shlibs_depends' "$PKG" \
+    || fail "scripts/package-legacy.sh lost the shlibs resolver"
+grep -q 'missing the dpkg-shlibdeps-resolved libc6 entry' "$PKG" \
+    || fail "scripts/package-legacy.sh lost the libc6 artifact assertion"
 grep -qxF 'Recommends: dosfstools, lvm2, mdadm, initramfs-tools, rsync' "$CONTROL" \
     || fail "control Recommends still carries launcher-only entries"
 grep -qxF 'Suggests: kdelibs4c2a' "$CONTROL" \
@@ -173,10 +211,11 @@ grep -q 'launcher' "$CONTROL" && fail "control Description still mentions the re
 
 # --- Default helper discovery and the port-helper drift gate ---------------
 TREE="$TMP/tree"
-mkdir -p "$TREE/scripts" "$TREE/legacy" "$TREE/legacy/packaging"
+mkdir -p "$TREE/scripts" "$TREE/legacy" "$TREE/legacy/packaging" "$TREE/data"
 cp "$PKG" "$TREE/scripts/package-legacy.sh"
 cp "$ROOT_DIR/legacy/packaging/"* "$TREE/legacy/packaging/"
 cp -a "$ROOT_DIR/legacy/gui" "$TREE/legacy/gui"
+cp "$ROOT_DIR/data/repair-diagnostic-map.tsv" "$TREE/data/repair-diagnostic-map.tsv"
 printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.txt"
 cp "$FIXTURE_HELPER" "$TREE/legacy/boot-repair-helper.sh"
 printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"
@@ -258,6 +297,13 @@ cmp -s "$GUI_DESKTOP" "$STAGE/usr/share/applications/boot-repair-legacy-gui.desk
     || fail "staged GUI desktop entry differs from its source"
 cmp -s "$GUI_ICON" "$STAGE/usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png" \
     || fail "staged 48x48 icon differs from its source"
+# Round 70 (E2): the shield badge stages byte-identical to its generated source.
+SHIELD_ICON="$ROOT_DIR/legacy/gui/data/boot-repair-legacy-shield-32x32.png"
+[[ -f "$SHIELD_ICON" ]] || fail "legacy/gui/data/boot-repair-legacy-shield-32x32.png is missing"
+cmp -s "$SHIELD_ICON" "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png" \
+    || fail "staged shield badge differs from its generated source"
+[[ "$(stat -c %a "$STAGE/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png")" == '644' ]] \
+    || fail "staged shield badge mode is not 0644"
 
 # --- Dry-run never builds, off-Etch build refuses, missing helper fails -----
 if find "$OUT" -name '*.deb' -print | grep -q .; then

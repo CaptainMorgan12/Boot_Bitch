@@ -108,11 +108,12 @@ find_apk()
 }
 
 DEB="$(find_one 'boot-repair_*.deb' || true)"
-RPM="$(find_one 'boot-bitch-*.rpm' || true)"
-[[ -n "$RPM" ]] || RPM="$(find_one 'boot-repair-*.rpm' || true)"
-ARCH_PACKAGE="$(find_one 'boot-bitch-*.pkg.tar.*' || true)"
-APK_PACKAGE="$(find_apk 'boot-bitch-*.apk' || true)"
-[[ -n "$APK_PACKAGE" ]] || APK_PACKAGE="$(find_apk 'boot-repair-*.apk' || true)"
+RPM="$(find_one 'boot-repair-*.rpm' || true)"
+[[ -n "$RPM" ]] || RPM="$(find_one 'boot-bitch-*.rpm' || true)"
+ARCH_PACKAGE="$(find_one 'boot-repair-*.pkg.tar.*' || true)"
+[[ -n "$ARCH_PACKAGE" ]] || ARCH_PACKAGE="$(find_one 'boot-bitch-*.pkg.tar.*' || true)"
+APK_PACKAGE="$(find_apk 'boot-repair-*.apk' || true)"
+[[ -n "$APK_PACKAGE" ]] || APK_PACKAGE="$(find_apk 'boot-bitch-*.apk' || true)"
 
 PACKAGE_KIND=""
 PACKAGE_PATH=""
@@ -315,6 +316,22 @@ read -r -p "Type INSTALL to continue: " confirm
 [[ "$confirm" == INSTALL ]] || {
     echo "Installation cancelled."
     exit 0
+}
+
+# The privileged install below runs cmake scripts from this build tree.  A
+# tree another user can write (group/other-writable entries) or a tree owned
+# by someone else must be refused before root executes anything from it.
+build_tree_private()
+{
+    local dir="$1" bad_entry
+    bad_entry="$(find "$dir" \( -perm -0002 -o -perm -0020 \) -print -quit 2>/dev/null)"
+    [[ -z "$bad_entry" ]] || { echo "group/other-writable entry: $bad_entry" >&2; return 1; }
+    [[ "$(stat -c %u -- "$dir")" == "$(id -u)" ]] || { echo "build tree not owned by the invoking user" >&2; return 1; }
+    return 0
+}
+build_tree_private "$SOURCE_BUILD_DIR" || {
+    echo "Refusing to install from $SOURCE_BUILD_DIR: owned by another user or writable by group/other." >&2
+    exit 1
 }
 run_privileged cmake --install "$SOURCE_BUILD_DIR" --prefix "$SOURCE_PREFIX"
 echo "Source installation completed under $SOURCE_PREFIX."

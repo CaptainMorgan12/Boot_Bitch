@@ -641,6 +641,165 @@ SESSION_LOG="$sandbox/session.log"
 mkdir -p "$SESSION_DIR"
 : > "$SESSION_LOG"
 
+# ---- MOD-2/CAL-1 delete-path validators (valid_kver / safe_rm_tree) ---------
+for v in 6.18.55-0-lts lts-2 6.1.9-0 a_b+c 6.6.52+tuxedo; do
+    valid_kver "$v" || fail "valid_kver must accept a real kernel version: $v"
+done
+for v in '' 'a b' '../x' 'x/y' '-lts' 'x;rm -rf /' '$(id)' 'x'$'\n''y'; do
+    valid_kver "$v" && fail "valid_kver must refuse a non-kernel token: $v"
+done
+safe_root="$(mktemp -d)"
+mkdir -p "$safe_root/base/sub" "$safe_root/sibling"
+touch "$safe_root/base/sub/file" "$safe_root/sibling/keep" "$safe_root/base/keep"
+safe_rm_tree "$safe_root/base" "sub" \
+    || fail 'safe_rm_tree must remove a valid relative tree'
+[[ ! -e "$safe_root/base/sub" ]] || fail 'safe_rm_tree did not remove the tree'
+[[ -e "$safe_root/base/keep" && -e "$safe_root/sibling/keep" ]] \
+    || fail 'safe_rm_tree removed files outside the target'
+mkdir -p "$safe_root/base/sub"
+safe_rm_tree "$safe_root/base" "../sibling" \
+    && fail 'safe_rm_tree must refuse a .. traversal'
+[[ -e "$safe_root/sibling/keep" ]] || fail 'the traversal refusal removed the sibling'
+safe_rm_tree "$safe_root/base" "/etc" \
+    && fail 'safe_rm_tree must refuse an absolute rel'
+safe_rm_tree "" "sub" && fail 'safe_rm_tree must refuse an empty base'
+safe_rm_tree "$safe_root/base" "" && fail 'safe_rm_tree must refuse an empty rel'
+safe_rm_tree / "usr" && fail 'safe_rm_tree must refuse a root base'
+safe_rm_tree "$safe_root/base" "." && fail 'safe_rm_tree must refuse a . rel'
+safe_rm_tree "$safe_root/base" ".." && fail 'safe_rm_tree must refuse a .. rel'
+safe_rm_tree "$safe_root/base" "sub/../../x" \
+    && fail 'safe_rm_tree must refuse an embedded traversal'
+safe_rm_tree "relative/base" "sub" \
+    && fail 'safe_rm_tree must refuse a relative base'
+safe_rm_tree "$safe_root/base" "sub/./x" \
+    && fail 'safe_rm_tree must refuse a dot segment'
+[[ -d "$safe_root/base/sub" && -d "$safe_root/sibling" ]] \
+    || fail 'a refused safe_rm_tree removed something'
+rm -rf -- "$safe_root"
+
+# ---- MOD-1 Alpine kernel-suffix allowlist -----------------------------------
+# A hostile flavor text must never reach a path or a command; a conforming
+# flavor (dash, version-shaped, underscore/plus) still pairs.
+mod1_root="$(mktemp -d)"
+mkdir -p "$mod1_root/lib/modules/6.18.52-0-lts" "$mod1_root/lib/modules/7.0.0-evil" \
+         "$mod1_root/lib/modules/8.1.9-0" "$mod1_root/lib/modules/9.0.0-a_b+c" "$mod1_root/boot"
+printf '%s\n' '-lts' > "$mod1_root/lib/modules/6.18.52-0-lts/kernel-suffix"
+printf '%s\n' "x';>f;'" > "$mod1_root/lib/modules/7.0.0-evil/kernel-suffix"
+printf '%s\n' '6.1.9-0' > "$mod1_root/lib/modules/8.1.9-0/kernel-suffix"
+printf '%s\n' 'a_b+c' > "$mod1_root/lib/modules/9.0.0-a_b+c/kernel-suffix"
+: > "$mod1_root/boot/vmlinuz-lts"
+: > "$mod1_root/boot/vmlinuz-x';>f;'"
+: > "$mod1_root/boot/vmlinuz-6.1.9-0"
+: > "$mod1_root/boot/vmlinuz-a_b+c"
+TARGET_ROOT="$mod1_root"
+mod1_out="$(alpine_kernel_pairs)"
+grep -Fqx '6.18.52-0-lts lts /boot/vmlinuz-lts /boot/initramfs-lts' <<<"$mod1_out" \
+    || fail 'the conforming lts suffix must still pair'
+grep -Fqx '8.1.9-0 6.1.9-0 /boot/vmlinuz-6.1.9-0 /boot/initramfs-6.1.9-0' <<<"$mod1_out" \
+    || fail 'a version-shaped suffix must still pair'
+grep -Fqx '9.0.0-a_b+c a_b+c /boot/vmlinuz-a_b+c /boot/initramfs-a_b+c' <<<"$mod1_out" \
+    || fail 'an underscore/plus suffix must still pair'
+grep -q "x';>f;'" <<<"$mod1_out" \
+    && fail 'the hostile kernel suffix was interpolated into the pairing output'
+grep -q '7.0.0-evil' <<<"$mod1_out" \
+    && fail 'the hostile-suffix kernel was paired'
+[[ ! -e "$mod1_root/f;" ]] || fail 'the hostile suffix left an injection side effect'
+grep -Fq "sh -c 'zcat -- \"\$1\" | cpio -t >/dev/null 2>&1' sh \"\$image\"" "$HELPER" \
+    || fail 'the Alpine initramfs verify must pass the image positionally, never interpolated'
+rm -rf -- "$mod1_root"
+
+# ---- MOD-2 zombie cleanup refuses a hostile kver (CAL-1) --------------------
+zombie_root="$(mktemp -d)"
+mkdir -p "$zombie_root/usr/lib/modules/9.9.9" "$zombie_root/lib/modules/9.9.9"
+TARGET_ROOT="$zombie_root"
+set +e
+zombie_out="$(apt_kernel_zombie_cleanup '9.9.9; rm -rf /' 2>&1)"
+zombie_rc=$?
+set -e
+[[ "$zombie_rc" -ne 0 ]] || fail 'a hostile kver must be refused by the zombie cleanup'
+grep -q 'kernel-zombie-refused' <<<"$zombie_out" \
+    || fail 'the zombie refusal must leave keyed evidence'
+[[ -d "$zombie_root/usr/lib/modules/9.9.9" && -d "$zombie_root/lib/modules/9.9.9" ]] \
+    || fail 'the refused zombie cleanup removed the module trees'
+rm -rf -- "$zombie_root"
+TARGET_ROOT="$fake_root"
+
+# ---- MOD-2 follow-up: suffix/pkgbase shape gates on the boot-image deletes --
+# A hostile flavor/pkgbase text is refused with evidence and the boot images
+# are left in place (the module tree itself is still swept); conforming
+# values still delete their named boot images.
+follow_root="$(mktemp -d)"
+mkdir -p "$follow_root/usr/lib/modules/9.9.9-alpine" "$follow_root/usr/lib/modules/8.0.0-alpine" \
+         "$follow_root/usr/lib/modules/9.9.9-arch" "$follow_root/usr/lib/modules/7.0.0-arch" \
+         "$follow_root/boot" "$follow_root/etc"
+printf '%s\n' "x';>f;'" > "$follow_root/usr/lib/modules/9.9.9-alpine/kernel-suffix"
+printf '%s\n' '-lts' > "$follow_root/usr/lib/modules/8.0.0-alpine/kernel-suffix"
+printf '%s\n' '../../etc/pwned' > "$follow_root/usr/lib/modules/9.9.9-arch/pkgbase"
+printf 'linux-lts\n' > "$follow_root/usr/lib/modules/7.0.0-arch/pkgbase"
+: > "$follow_root/boot/vmlinuz-x';>f;'"
+: > "$follow_root/boot/initramfs-x';>f;'"
+: > "$follow_root/boot/vmlinuz-lts"
+: > "$follow_root/boot/initramfs-lts"
+: > "$follow_root/boot/vmlinuz-linux-lts"
+: > "$follow_root/boot/initramfs-linux-lts.img"
+: > "$follow_root/boot/initramfs-linux-lts-fallback.img"
+touch "$follow_root/etc/pwned"
+TARGET_ROOT="$follow_root"
+# Hostile Alpine suffix: module tree swept, boot images kept, evidence logged.
+follow_out="$(alpine_apk_kernel_zombie_cleanup '9.9.9-alpine' 2>&1 || true)"
+[[ ! -d "$follow_root/usr/lib/modules/9.9.9-alpine" ]] \
+    || fail 'the apk zombie cleanup must still sweep the module tree'
+[[ -f "$follow_root/boot/vmlinuz-x';>f;'" && -f "$follow_root/boot/initramfs-x';>f;'" ]] \
+    || fail 'a hostile apk kernel suffix must not delete the boot images'
+grep -q 'kernel-zombie-refused' <<<"$follow_out" \
+    || fail 'the hostile apk suffix refusal must leave keyed evidence'
+[[ ! -e "$follow_root/f;" ]] || fail 'the hostile apk suffix left an injection side effect'
+# Conforming Alpine suffix: module tree and boot images cleaned.
+alpine_apk_kernel_zombie_cleanup '8.0.0-alpine' >/dev/null 2>&1
+[[ ! -d "$follow_root/usr/lib/modules/8.0.0-alpine" && ! -f "$follow_root/boot/vmlinuz-lts" \
+    && ! -f "$follow_root/boot/initramfs-lts" ]] \
+    || fail 'a conforming apk suffix must still clean its boot images'
+# Hostile pacman pkgbase: module tree swept, boot images (and any traversal
+# target) kept, evidence logged.
+follow_out="$(pacman_kernel_zombie_cleanup '9.9.9-arch' 2>&1 || true)"
+[[ ! -d "$follow_root/usr/lib/modules/9.9.9-arch" ]] \
+    || fail 'the pacman zombie cleanup must still sweep the module tree'
+[[ -f "$follow_root/etc/pwned" ]] \
+    || fail 'a hostile pacman pkgbase must never delete outside the boot image set'
+grep -q 'kernel-zombie-refused' <<<"$follow_out" \
+    || fail 'the hostile pacman pkgbase refusal must leave keyed evidence'
+# Conforming pacman pkgbase (real Arch flavors pass the shape): cleaned.
+pacman_kernel_zombie_cleanup '7.0.0-arch' >/dev/null 2>&1
+[[ ! -d "$follow_root/usr/lib/modules/7.0.0-arch" && ! -f "$follow_root/boot/vmlinuz-linux-lts" \
+    && ! -f "$follow_root/boot/initramfs-linux-lts.img" \
+    && ! -f "$follow_root/boot/initramfs-linux-lts-fallback.img" ]] \
+    || fail 'a conforming pacman pkgbase must still clean its boot images'
+for follow_pb in linux linux-lts linux-zen linux-hardened; do
+    [[ "$follow_pb" =~ ^[A-Za-z0-9][A-Za-z0-9._+-]*$ ]] \
+        || fail "a real Arch pkgbase must pass the shape check: $follow_pb"
+done
+# The apt common-headers dir delete is routed through safe_rm_tree: a
+# shape-guarded dir is removed, a traversal entry is refused and survives.
+# The kver used below deliberately differs from the common-headers dir name
+# so the /usr/src/linux-headers-"$kver"* glob cannot be the remover.  The
+# probe stubs are subshell-scoped so they never leak into later sections.
+mkdir -p "$follow_root/usr/src/linux-headers-6.1.0-common" "$follow_root/usr/src/escape"
+touch "$follow_root/usr/src/linux-headers-6.1.0-common/x.h" "$follow_root/usr/src/escape/keep"
+(
+    apt_package_owned_dirs() { printf '%s\n' '/usr/src/linux-headers-6.1.0-common' '/usr/src/other'; }
+    apt_kernel_zombie_cleanup '6.3.0' linux-headers-6.1.0-common >/dev/null 2>&1
+) || fail 'the apt zombie cleanup failed on the safe_rm_tree fixture'
+[[ ! -d "$follow_root/usr/src/linux-headers-6.1.0-common" ]] \
+    || fail 'the apt common-headers dir must still be removed through safe_rm_tree'
+(
+    apt_package_owned_dirs() { printf '%s\n' '/usr/src/linux-headers-../escape'; }
+    apt_kernel_zombie_cleanup '6.4.0' linux-headers-6.1.0-common >/dev/null 2>&1
+) || true
+[[ -e "$follow_root/usr/src/escape/keep" ]] \
+    || fail 'an apt traversal dir entry must be refused by safe_rm_tree'
+rm -rf -- "$follow_root"
+TARGET_ROOT="$fake_root"
+
 # ---- TUXEDO inventory: grouping, protection set, removable plan -------------
 write_tuxedo_fixture
 meta="$(apt_managed_kernel_metapackage)"
@@ -3258,11 +3417,10 @@ SINGLE_MENU_FILE="$sandbox/single-kernel-menu.txt"
 : > "$SINGLE_MENU_FILE"
 helper_menu_prompt() { printf '%s\n' "$1" >> "$SINGLE_MENU_FILE"; HELPER_MENU_ANSWER="0"; return 0; }
 # The repo-latest install is now pre-flighted: the image AND headers must be
-# provably installable before the action is offered.  Stub both probes as
-# installable so this test exercises the offer path (the suppression path is
-# covered below).
-apt_headers_installable() { return 0; }
-apt_image_installable() { return 0; }
+# provably installable before the action is offered.  Stub the unified
+# installability-state probe (round 71) as installable so this test exercises
+# the offer path (the suppression path is covered below).
+kernel_repo_latest_installability() { printf 'installable\n'; return 0; }
 kernel_interactive_menu >"$sandbox/single-kernel-status.txt" 2>&1 || true
 grep -q 'Install repository-latest kernel' "$SINGLE_MENU_FILE" \
     || fail 'single-kernel target with a newer repo kernel must offer install-repo-latest'
@@ -3313,9 +3471,12 @@ SUPPRESS_MENU_FILE="$sandbox/suppress-repo-latest-menu.txt"
 : > "$SUPPRESS_MENU_FILE"
 helper_menu_prompt() { printf '%s\n' "$1" >> "$SUPPRESS_MENU_FILE"; HELPER_MENU_ANSWER="0"; return 0; }
 # Headers installable, image uninstallable: the exact backports split.  The
-# menu must suppress the action on the image probe's failure.
-apt_headers_installable() { return 0; }
-apt_image_installable() { return 1; }
+# menu must suppress the action on the image probe's failure (round 71: the
+# unified installability-state probe reports proven-not with a reason).
+kernel_repo_latest_installability() {
+    printf 'not-installable: linux-image-7.1.10.1-tuxedo-amd64 requires linux-base (>= 4.17~) but 4.12.1 is to be installed\n'
+    return 0
+}
 kernel_interactive_menu >"$sandbox/suppress-repo-latest-status.txt" 2>&1 || true
 grep -q 'Install repository-latest kernel' "$SUPPRESS_MENU_FILE" \
     && fail 'uninstallable repo-latest image must suppress install-repo-latest (headers installable)'

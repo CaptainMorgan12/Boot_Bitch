@@ -134,10 +134,36 @@ public:
 
     bool isRunning() const;
 
+    // Round 60 (browse pump): Qt 3.3.7 does not deliver the QProcess
+    // completion (the sigchld-pipe socket-notifier activation) through a
+    // nested modal exec loop on the rig, and isRunning()'s internal
+    // sigchld-pipe select-trick depends on the pipe byte being present.
+    // This is the event-loop-independent fallback: when the child has
+    // exited (isRunning() reaped it) but the finished() report was not yet
+    // emitted, report it here (the drain + finished emission is idempotent
+    // through m_reported).  Returns true when this call produced the
+    // report.
+    bool pollFinished();
+
     // Starts the helper with `helperArgs`. Returns false (and emits an error
     // line) when the helper cannot be started or cannot be verified for
     // elevation.
     bool run(const QStringList &helperArgs);
+
+    // Round 75 (mid-run log deletion): a genuinely concurrent ONE-SHOT helper
+    // invocation that never touches the single QProcess above (so a running
+    // diagnostic/repair is undisturbed).  Same elevation resolution and
+    // helper verification as run(); raw fork/exec with a bounded wait and a
+    // bounded merged-output capture (32 KiB cap, 10 s deadline, then SIGKILL
+    // + re-reap).  The housekeeping session-log-delete verb takes no
+    // cancel-file and no session environment, so neither is passed.  Returns
+    // true only when the child was reaped within the deadline and its output
+    // was captured; `exitCode` receives the raw exit code (-1 when the child
+    // was not reaped), `errorDescription` the refusal reason (elevation
+    // resolution failure, unverified helper, password-requiring elevation).
+    bool runOneShotCaptured(const QStringList &helperArgs,
+                            QByteArray *output, int *exitCode,
+                            QString *errorDescription);
 
     void cancel();
 

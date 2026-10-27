@@ -516,17 +516,18 @@ void MainWindowUiTest::fullRepairPlanFrameHasNoTrailingGapForSevenStages()
                                         "last stage (height %1 vs content %2)")
                             .arg(window.m_fullRepairPlanBox->height())
                             .arg(expectedHeight)));
-    // The plan frame hugs its content: no bottom content margin pads the last
-    // stage row away from the vertical splitter handle below it, so the last
-    // row's bottom sits directly on the frame edge (only the 1-2 px frame
-    // border remains).
+    // The plan frame hugs its content with the deliberate Round-3 ~6 px
+    // bottom padding after the last stage row (matching the Settings plan
+    // box), so the last row's bottom sits 6 px plus the 1-3 px frame border
+    // above the frame edge — never a dead empty row.
     QVERIFY(window.m_fullRepairPlanBox->layout());
-    QCOMPARE(window.m_fullRepairPlanBox->layout()->contentsMargins().bottom(), 0);
+    QCOMPARE(window.m_fullRepairPlanBox->layout()->contentsMargins().bottom(), 6);
     const int lastStageBottom = window.m_fullRepairStageList->mapTo(
         window.m_fullRepairPlanBox, QPoint(0, window.m_fullRepairStageList->height())).y();
-    QVERIFY2(window.m_fullRepairPlanBox->height() - lastStageBottom <= 6,
-             qPrintable(QStringLiteral("the plan frame must hug its last stage row "
-                                        "(gap %1 px)")
+    QVERIFY2(window.m_fullRepairPlanBox->height() - lastStageBottom >= 6
+                 && window.m_fullRepairPlanBox->height() - lastStageBottom <= 10,
+             qPrintable(QStringLiteral("the plan frame must keep the ~6 px bottom padding "
+                                        "after its last stage row (gap %1 px)")
                             .arg(window.m_fullRepairPlanBox->height() - lastStageBottom)));
 }
 
@@ -833,8 +834,10 @@ void MainWindowUiTest::fullRepairPlanScrollsVerticallyWhenWrapped()
     window.m_autoRefreshDiagnostics->setChecked(false);
     prepareRepairScope(window);
     // Every configurable stage is available (filesystem and extlinux included)
-    // and selected, so the plan lists a full set of rows that overflows the
-    // pane once it wraps to a single column.
+    // and selected, so the plan lists a full set of rows that used to overflow
+    // the pane once it wrapped to a single column; the Settings-parity model
+    // now grows the plan pane to the full wrapped content and lets the repair
+    // page's OUTER scroll bar provide the room instead.
     QString evidence = capabilityEvidenceWithDisplay(false, true);
     evidence += QStringLiteral("Repair tool filesystem: available\n");
     evidence += QStringLiteral("Repair tool extlinux: available\n");
@@ -880,25 +883,164 @@ void MainWindowUiTest::fullRepairPlanScrollsVerticallyWhenWrapped()
     }
     QVERIFY2(singleColumn, "the plan must reflow to a single column at the narrow width");
 
-    // The wrapped content now exceeds the fixed plan pane, so the scroll area
-    // must expose a vertical scroll range (its widget grows taller than the
-    // viewport it is scrolled within and the vertical scrollbar gains range).
+    // The wrapped content now determines the plan section's own height
+    // (Settings-parity full-content model, no visible-row clamp): the pane
+    // hugs the FULL single-column content, so every stage row is visible
+    // without an inner scrollbar and the frame's bottom line tracks the
+    // content exactly.
     const int contentHeight = window.m_fullRepairStageList->height();
     const int viewportHeight = window.m_fullRepairStageScroll->viewport()->height();
-    QVERIFY2(contentHeight > viewportHeight,
-             qPrintable(QStringLiteral("the wrapped plan content (%1) must exceed the "
-                                        "scroll viewport (%2)")
+    QVERIFY2(qAbs(contentHeight - viewportHeight) <= 4,
+             qPrintable(QStringLiteral("the plan section must hug the full wrapped "
+                                        "content (list %1 vs viewport %2)")
                             .arg(contentHeight).arg(viewportHeight)));
-    QVERIFY2(window.m_fullRepairStageScroll->verticalScrollBar()->maximum() > 0,
-             qPrintable(QStringLiteral("the plan scroll area must gain a vertical scroll "
-                                        "range when the stages wrap (maximum %1)")
+    QVERIFY2(window.m_fullRepairStageScroll->verticalScrollBar()->maximum() == 0,
+             qPrintable(QStringLiteral("a full wrapped plan must show every row without an "
+                                        "inner scrollbar (maximum %1)")
                             .arg(window.m_fullRepairStageScroll->verticalScrollBar()->maximum())));
+    // The chrome (group-box frame, header, readiness hint, spacing, bottom
+    // padding) is measured from the real rendered geometry — the scroll
+    // area's top offset inside the box plus the space below the scroll —
+    // exactly like updateFullRepairPlanHeight does (the sizeHint difference
+    // is inflated by the word-wrapped labels' minimum-width hints).
+    const int chromeHeight = window.m_fullRepairStageScroll->mapTo(
+                                 window.m_fullRepairPlanBox, QPoint(0, 0)).y()
+                           + window.m_fullRepairPlanBox->layout()->contentsMargins().bottom()
+                           + window.m_fullRepairPlanBox->contentsMargins().bottom();
+    QVERIFY2(qAbs(window.m_fullRepairPlanBox->height() - (chromeHeight + contentHeight)) <= 4,
+             qPrintable(QStringLiteral("the plan frame must hug the full wrapped content "
+                                        "(height %1 vs chrome+content %2)")
+                            .arg(window.m_fullRepairPlanBox->height())
+                            .arg(chromeHeight + contentHeight)));
 
-    // The plan section's outer height stays bounded: the wrapped content is
-    // reached by scrolling inside the section, not by growing the pane out to
-    // the single-column content height.
-    QVERIFY2(window.m_fullRepairStageScroll->height() < contentHeight,
-             qPrintable(QStringLiteral("the plan section must not grow to fit the wrapped "
-                                        "content (pane %1 vs content %2)")
-                            .arg(window.m_fullRepairStageScroll->height()).arg(contentHeight)));
+    // The room comes from the repair page's outer vertical scroll area: its
+    // widget grows taller than its viewport and the outer scrollbar gains
+    // range, exactly the way the Settings page behaves on a short window.
+    QScrollArea *pageScroll = window.findChild<QScrollArea *>(QStringLiteral("repairPageScroll"));
+    QVERIFY2(pageScroll, "the repair page must keep its outer scroll area");
+    QVERIFY2(pageScroll->widget()->height() > pageScroll->viewport()->height(),
+             qPrintable(QStringLiteral("the page content (%1) must grow beyond the outer "
+                                        "viewport (%2) so the outer scroll bar provides "
+                                        "the room")
+                            .arg(pageScroll->widget()->height())
+                            .arg(pageScroll->viewport()->height())));
+    QVERIFY2(pageScroll->verticalScrollBar()->maximum() > 0,
+             qPrintable(QStringLiteral("the page's outer scroll bar must gain a vertical "
+                                        "range for the grown plan (maximum %1)")
+                            .arg(pageScroll->verticalScrollBar()->maximum())));
+}
+
+// Growing the plan frame by dragging the vertical splitter handle down must
+// grow the scroll viewport WITH the frame (more rows become visible instead of
+// dead space beside a scrollbar), while the stage rows stay EXACTLY as laid
+// out: pegged to the upper-left with unchanged heights, and every pixel beyond
+// the content absorbed below the rows by the trailing expansion placeholder.
+void MainWindowUiTest::fullRepairPlanGrowsWithSplitterWithoutReflowingRows()
+{
+    // Earlier tests in the same process close windows whose default-size plan
+    // splitter state is persisted and later restored, which pins the plan pane
+    // at the restored position (user-adjusted semantics). Discard it so this
+    // test always measures from the content-hugged default, the same cleanup
+    // the frame-shrink test applies to the stale V2 key.
+    {
+        QSettings cleanup(QStringLiteral("BootRepair"), QStringLiteral("BootRepair"));
+        cleanup.remove(QStringLiteral("repair/verticalSplitterStateV3"));
+        cleanup.sync();
+    }
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    prepareRepairScope(window);
+    // A full plan (every configurable stage available and selected) so the
+    // stage list has real content to measure.
+    QString evidence = capabilityEvidenceWithDisplay(false, true);
+    evidence += QStringLiteral("Repair tool filesystem: available\n");
+    evidence += QStringLiteral("Repair tool extlinux: available\n");
+    cacheRepairEvidence(window, evidence);
+    for (const auto &stage : window.fullRepairStageCheckboxes()) {
+        window.m_fullRepairStagePreferences.insert(stage.second, true);
+    }
+    window.m_tabs->setCurrentIndex(window.m_tabs->indexOf(window.m_repairPage));
+    window.resize(1180, 760);
+    QTest::qWait(50);
+    window.updateFullRepairSummary();
+    QApplication::processEvents();
+    QTest::qWait(50);
+
+    QVERIFY(window.m_fullRepairStageScroll);
+    QVERIFY(window.m_fullRepairStageList);
+    QVERIFY(window.m_fullRepairPlanBox);
+    QVERIFY(window.m_repairVerticalSplitter);
+    QLayout *stageLayout = window.m_fullRepairStageList->layout();
+    QVERIFY(stageLayout);
+
+    struct Row { int x = 0; int y = 0; int w = 0; int h = 0; };
+    const auto collectRows = [stageLayout] {
+        QList<Row> rows;
+        for (int i = 0; i < stageLayout->count(); ++i) {
+            if (QWidget *w = stageLayout->itemAt(i)->widget()) {
+                rows.append({w->x(), w->y(), w->width(), w->height()});
+            }
+        }
+        return rows;
+    };
+
+    const QList<Row> before = collectRows();
+    QVERIFY(!before.isEmpty());
+    const int viewportBefore = window.m_fullRepairStageScroll->viewport()->height();
+    const int frameBefore = window.m_fullRepairPlanBox->height();
+    QVERIFY2(viewportBefore > 0 && frameBefore > 0, "the plan frame must be laid out");
+
+    // Drag the handle down: grow the plan pane well beyond its content.
+    window.m_repairVerticalSplitter->setSizes({frameBefore + 120, 100000});
+    window.m_repairPlanSplitterUserAdjusted = true;
+    QApplication::processEvents();
+    QTest::qWait(50);
+    QApplication::processEvents();
+
+    const int viewportAfter = window.m_fullRepairStageScroll->viewport()->height();
+    const int frameAfter = window.m_fullRepairPlanBox->height();
+    QVERIFY2(frameAfter > frameBefore,
+             qPrintable(QStringLiteral("the plan frame must grow when the handle is dragged "
+                                       "down (before %1 after %2)")
+                            .arg(frameBefore).arg(frameAfter)));
+    QVERIFY2(viewportAfter > viewportBefore,
+             qPrintable(QStringLiteral("the scroll viewport must expand with the grown frame "
+                                       "(before %1 after %2)")
+                            .arg(viewportBefore).arg(viewportAfter)));
+
+    // The rows stay byte-identical: same positions (pegged upper-left), same
+    // heights — no reflow, no stretching, no redistributed spacing.
+    const QList<Row> after = collectRows();
+    QCOMPARE(after.size(), before.size());
+    for (int i = 0; i < before.size(); ++i) {
+        QCOMPARE(after.at(i).x, before.at(i).x);
+        QCOMPARE(after.at(i).y, before.at(i).y);
+        QCOMPARE(after.at(i).w, before.at(i).w);
+        QCOMPARE(after.at(i).h, before.at(i).h);
+    }
+
+    // The growth sits BELOW the rows (the trailing expansion placeholder): the
+    // rows stay byte-identical (asserted above) and the scroll viewport fills
+    // the grown frame exactly — no dead space beside a scrollbar.
+    QVERIFY2(qAbs((viewportAfter - viewportBefore) - (frameAfter - frameBefore)) <= 1,
+             qPrintable(QStringLiteral("the scroll viewport must fill the grown frame "
+                                       "(viewport +%1 vs frame +%2)")
+                            .arg(viewportAfter - viewportBefore)
+                            .arg(frameAfter - frameBefore)));
+
+    // Settings-parity drag cap: the requested +120 px growth is clamped to
+    // exactly two real plan rows beyond the full content-hugged height, so the
+    // handle physically stops there instead of overexpanding toward the lower
+    // pane's floor.
+    const int rowHeight = before.first().h;
+    QVERIFY2(qAbs((frameAfter - frameBefore) - 2 * rowHeight) <= 1,
+             qPrintable(QStringLiteral("the plan frame must grow by exactly the 2-row cap "
+                                       "(grew %1 px vs 2 rows = %2 px)")
+                            .arg(frameAfter - frameBefore).arg(2 * rowHeight)));
+    QVERIFY2(frameAfter - frameBefore < 120,
+             "the drag must not overexpand beyond the 2-row growth cap");
 }

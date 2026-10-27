@@ -13,8 +13,8 @@ set -euo pipefail
 # Build-host rule: the auto ELF Requires pin the build host's Qt symbol
 # version (for example libQt6Core.so.6(Qt_6.x)), so build the RPM on the
 # oldest target distribution (or in its matching container) rather than on the
-# newest build host. CPack produces boot-bitch-<version>-1.<arch>.rpm; the
-# release asset is normalized to boot-bitch-<version>.<arch>.rpm.
+# newest build host. CPack produces boot-repair-<version>-1.<arch>.rpm; the
+# release asset is normalized to boot-repair-<version>.<arch>.rpm.
 
 # The package modes must not depend on the builder's umask; a restrictive agent
 # umask (for example 077) would otherwise package 0700 directories.
@@ -77,7 +77,7 @@ BUILD_TYPE=Release BUILD_DIR="$BUILD_DIR" "$ROOT_DIR/scripts/build.sh"
 # built package, never a stale older .rpm left in BUILD_DIR from a prior cycle.
 VERSION="$(sed -n 's/^[[:space:]]*VERSION[[:space:]]\{1,\}\([0-9][0-9.]*\)[[:space:]]*$/\1/p' "$ROOT_DIR/CMakeLists.txt" | head -n1)"
 mapfile -t packages < <(
-    find "$BUILD_DIR" -maxdepth 1 -type f -name "boot-bitch-${VERSION}-1.*.rpm" -print | sort
+    find "$BUILD_DIR" -maxdepth 1 -type f -name "boot-repair-${VERSION}-1.*.rpm" -print | sort
 )
 [[ ${#packages[@]} -gt 0 ]] || {
     echo "CPack ran but no .rpm was generated." >&2

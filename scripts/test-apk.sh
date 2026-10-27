@@ -66,8 +66,8 @@ echo "=== PACKAGE METADATA ==="
 tar -xOf "$APK" .PKGINFO 2> >(tar_filter_stderr >&2) | tee "$TMP/.PKGINFO"
 echo
 
-grep -q '^pkgname = boot-bitch$' "$TMP/.PKGINFO" || {
-    echo "FAIL: .PKGINFO pkgname is not boot-bitch." >&2
+grep -q '^pkgname = boot-repair$' "$TMP/.PKGINFO" || {
+    echo "FAIL: .PKGINFO pkgname is not boot-repair." >&2
     exit 1
 }
 

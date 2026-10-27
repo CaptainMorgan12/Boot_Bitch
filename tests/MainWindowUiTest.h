@@ -1,4 +1,4 @@
-// Read-only MainWindow regression suite: single QTest class whose 63 test
+// Read-only MainWindow regression suite: single QTest class whose 64 test
 // slots (plus initTestCase) are implemented across several translation units
 // (MainWindowUiTest.cpp plus the MainWindowUiTest_<feature>.cpp files).
 // Keeping one class keeps the single ctest registration boot-repair-ui-read-only
@@ -65,9 +65,11 @@ private slots:
     void requiredDiagnosticSectionsMapping();
     void hostMaintenanceSwitchAfterFullRepairDoesNotCrash();
     void hostMaintenanceSwitchAfterResizeDoesNotCrash();
+    void hostExitWithSelectedSnapshotRowDoesNotCrash();
     void privilegedSessionCoalescingWaitDoesNotNestEventLoop();
     void privilegedSessionCancellationPublishesFailureAndDefersWithoutRetry();
     void privilegedSessionGrantProducesSingleRequest();
+    void privilegedSessionRestagesTamperedHelperCopy();
     void backgroundSnapshotPreloadDoesNotClaimBusyLabel();
     void closeDuringDiagnosticShowsCancelState();
     void bootEntriesParserParsesProtocol();
@@ -91,6 +93,8 @@ private slots:
     void snapshotsTabVisibilityFollowsSnapshotCapability();
     void bootEntriesTabVisibilityFollowsBootEvidence();
     void fullRepairPlanScrollsVerticallyWhenWrapped();
+    void fullRepairPlanGrowsWithSplitterWithoutReflowingRows();
+    void capabilityTableSortKeepsInstallWidgetsOnTheirRows();
 };
 
 #endif // BOOT_REPAIR_UI_TEST_H

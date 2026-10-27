@@ -1,0 +1,143 @@
+# Boot Bitch repair -> diagnostic invalidation map (round 30).
+#
+# THE SINGLE SOURCE OF TRUTH, consumed by BOTH GUIs:
+#   - the modern Qt6 GUI (src/MainWindow.cpp; embedded at build time via
+#     resources/boot-repair.qrc as ":/data/repair-diagnostic-map.tsv"),
+#   - the legacy Qt3 GUI (legacy/gui/src/EvidenceParser.cpp; staged into the
+#     Etch package at /usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
+#     by scripts/package-legacy.sh).
+# This file serializes the round-19/20 invalidation-map table
+# (Development/docs/cancel-and-cache-behavior.md section 2.4.4). A map change
+# is a deliberate, reviewed edit: the parity contract
+# (legacy/tests/test-ui-parity-qt3.sh) locks the row set and a golden checksum,
+# so a one-sided edit (or a divergence of either GUI from this file) fails the
+# gate.
+#
+# Columns: <key> TAB <requires> TAB <affected>
+#   key       the tool/action row key. A key ending in ":*" is a PREFIX row
+#             matching any lookup key with that prefix ("gpu:*" matches
+#             "gpu:purge-wrong-driver", "kernels:*" matches
+#             "kernels:remove-oldest"). Exact rows always win; the longest
+#             prefix row wins among prefix matches.
+#   requires  the diagnostic sections the action CONSUMES (the repair-run gate
+#             + baseline serialization):
+#               '-' = no baseline;
+#               'report' = the combined report;
+#               'union' = the union of the selected stages' requires sets
+#               (plan rule rows only);
+#               else a space-separated section-key list.
+#   affected  the diagnostic sections RE-GENERATED after a change:
+#               '-' = nothing (read-only / the proven no-op);
+#               'all' = the complete set (the fail-safe rows);
+#               'union' = the accumulated union of the stages' maps
+#               (plan/cancelled rule rows only);
+#               'shell-class' = the shell-command class row's map
+#               (cancelled-shell rule row only);
+#               else a space-separated section-key list.
+#   A column is EITHER one reserved token ('-', 'all', 'union', 'shell-class',
+#   'report') OR a list of plain section keys - never a mix. Both loaders
+#   reject a malformed row fail-closed.
+#
+# Section-key vocabulary (the runnable diagnostic sections plus the
+# capability pseudo-entry and the aggregate pseudo-keys):
+#   environment backend package boot boot-evidence kernel grub uki display
+#   gpu errors usage filesystem fstab btrfs mapper luks report capabilities
+#   all
+# 'capabilities' is the dedicated capability cache entry (cleared directly,
+# never a runnable section); 'report' means the combined report; 'all' means
+# the complete set.
+#
+# Code rules NOT carried as data (identical in both GUIs, fail-safe defaults
+# by construction):
+#   - an unknown/unclassifiable key, or a rule row ('union'/'shell-class')
+#     looked up directly -> the complete set ('all'; the requires gate uses
+#     the conservative 'report' default);
+#   - a cancelled repair with a change  -> the union of the tool row's
+#     requires and affected sets (for every real tool = the affected set);
+#   - a cancelled repair with no change -> nothing;
+#   - a cancelled shell with a change   -> its shell-class row;
+#   - a cancelled shell with no change  -> nothing;
+#   - the Full Repair plan              -> the accumulated union of the
+#     selected stages' maps (capabilities included); a genuine stage failure
+#     forces the complete set;
+#   - a cancelled Full Repair with a change -> the accumulated per-tool union;
+#   - a cancelled request with an unclassifiable verb -> the complete set;
+#   - a proven no-op (unchanged|... / skipped|...) -> nothing.
+#
+# Per-distribution note (round 18/19): the invalidated KEY SET is identical on
+# every backend (apt/dpkg, rpm/dnf5, apk, pacman); only the labels and evidence
+# behind the section keys differ per distribution.
+#
+# The per-tool rows (the round-19 table):
+validate	environment	-
+filesystem	filesystem	environment usage btrfs filesystem
+# The read-only file system check pre-stage (fs-inspect): the table's
+# "validate"-style read-only row. It never invalidates anything.
+fs-inspect	-	-
+dpkg	package	package backend usage capabilities
+dpkg-configure	package	package backend usage capabilities
+fixbroken	package	package backend usage capabilities
+fix-broken	package	package backend usage capabilities
+aptupdate	package	package backend usage capabilities
+apt-update	package	package backend usage capabilities
+upgrade	package	package backend usage capabilities
+apt-upgrade	package	package backend usage capabilities
+# The capability-table Install buttons (round 19: was the fail-safe 'all';
+# round 52: + display — a capability Install may install a display-manager
+# package (the display row's proven suggestion), which changes the display
+# diagnostic's evidence, so the display section is regenerated together with
+# the package/usage/capability state).
+install-target-package	package	package backend usage capabilities display
+install-host-package	package	package backend usage capabilities display
+dkms	kernel	kernel
+display	display	display
+display-manager	display	display
+# The GPU driver swap changes packages, modules, the initramfs and the
+# bootloader configuration (round 19: package/usage/capabilities included).
+gpu	gpu kernel	gpu display kernel boot boot-evidence grub uki package usage capabilities
+# The interactive GPU sub-actions (purge-wrong-driver, install-correct-driver,
+# blacklist-module, rebuild-dkms, rebuild-boot, remove-older-kernel,
+# replace-kernel): the documented fail-safe complete set (round 17 intent).
+gpu:*	gpu kernel	all
+# The one-boot nomodeset action belongs to the gpu sub-action family.
+nomodeset	gpu kernel	all
+initramfs	kernel	kernel
+efi	uki	uki grub boot-evidence
+grub	grub	grub
+extlinux	boot-evidence	boot boot-evidence
+bootstack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
+boot-stack	boot-evidence kernel uki grub	boot boot-evidence kernel grub uki
+kernels	kernel	kernel usage boot boot-evidence grub uki
+# Every kernel sub-action (remove-oldest, remove-newest, remove-orphaned-*,
+# install-headers, reinstall, install-repo-latest) folds onto 'kernels'.
+kernels:*	kernel	kernel usage boot boot-evidence grub uki
+# Make Default (firmware BootOrder / extlinux default / Fedora BLS
+# saved_entry): deliberately broad.
+host-default	report	all
+# The Boot entries page Save action (efi-reorder / efi-delete / efi-rename
+# batch): moving/deleting/renaming firmware entries changes only the boot-chain
+# evidence (the round-30 efi row's affected set), never the whole register.
+boot-entry-save	-	uki grub boot-evidence
+# The shell-command class rows (round 16; round 18/19: the package-manager
+# class carries usage + capabilities on every backend).
+shell:package-manager	-	package backend usage capabilities
+shell:boot-config	-	boot grub uki kernel
+shell:general	-	all
+# The proven no-op rule (round-18 per-backend proof): the cache stays valid.
+shell:no-op	-	-
+# Snapshot rows: load/inspect are read-only; the rollback restores an older
+# package/boot/snapshot state (complete by design).
+snapshot-load	-	-
+snapshot-inspect	-	-
+snapshot-rollback	-	all
+# File copy (both directions): the destination impact is unclassifiable.
+file-copy	-	all
+# The plan-union and cancelled-variant rules (code rules in both GUIs; the
+# runtime loaders never look these keys up directly and fail safe to 'all').
+plan	union	union
+cancelled-repair-with-change	-	union
+cancelled-repair-no-change	-	-
+cancelled-plan-with-change	-	union
+cancelled-shell-with-change	-	shell-class
+cancelled-shell-no-change	-	-
+cancelled-unclassified	-	all

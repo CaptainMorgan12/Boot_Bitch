@@ -988,12 +988,92 @@ void MainWindowUiTest::hostMaintenanceSwitchAfterResizeDoesNotCrash()
     qunsetenv("BOOT_REPAIR_LSBLK");
 }
 
-// Cancellation of the scope-commit authorization request must be terminal for
-// that request cycle: the failure is published once, the deferred-scope
-// affordance is shown, and no second authorization conversation is launched —
-// not even by a background caller (a snapshot/diagnostics refresh) that reaches
-// ensurePrivilegedSession() in the same cycle. Only the explicit Authorize
-// retry starts the next request.
+// Regression: leaving Host Maintenance (or committing a repair target, which
+// drives the same exit path) while a row of the POPULATED running-host snapshot
+// inventory was selected used to crash the application on Fedora + TUXEDO.
+// The crash chain (verified with a core from the Fedora rig):
+//   exitHostMaintenanceMode() -> updateTargetLabels() -> updateSnapshotControls()
+//   -> clearSnapshotResults() -> m_snapshotTable->setRowCount(0)
+//   -> QTableModel::removeRows() -> SIGSEGV.
+// The scope change clears the rows while the removed range still intersects the
+// selection; the selection model drops those rows and emits selectionChanged,
+// which re-enters updateSnapshotControls(). Because the recorded snapshot scope
+// identity still named the OLD scope, the re-entrant handler cleared the
+// half-removed table a SECOND time inside the still-running removeRows() and
+// corrupted the item storage (a deleted item was deleted again).
+// clearSnapshotResults() now publishes the new scope identity before touching
+// the table, so the re-entrant updateSnapshotControls() observes the new scope
+// and skips the nested clear.
+void MainWindowUiTest::hostExitWithSelectedSnapshotRowDoesNotCrash()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+
+    // Resolve the protected running host and park a committed repair target,
+    // then return to ordinary target mode so the round-trip can start there.
+    prepareRepairScope(window, /*host=*/false);
+    prepareRepairScope(window, /*host=*/true);
+    window.m_hostMaintenanceMode = false;
+
+    window.selectHostForMaintenance();
+    QVERIFY(window.m_hostMaintenanceMode);
+
+    // The running-host snapshot inventory loads while Host Maintenance is
+    // active (the rig crash run had 38 rows); mirror loadSnapshots()'s
+    // completed-load bookkeeping so the scope identity is recorded.
+    QList<SnapshotInventoryRow> rows;
+    for (int index = 1; index <= 38; ++index) {
+        SnapshotInventoryRow row;
+        row.id = QString::number(index);
+        row.created = QStringLiteral("2026-10-18 10:00:00");
+        row.type = QStringLiteral("single");
+        row.description = QStringLiteral("timeline %1").arg(index);
+        row.status = QStringLiteral("Linux root snapshot");
+        row.relativePath = QStringLiteral("/.snapshots/%1/snapshot").arg(index);
+        rows.append(row);
+    }
+    window.populateSnapshotTable(rows);
+    window.m_snapshotInventoryCount = rows.size();
+    window.m_snapshotResultIdentity = window.snapshotScopeIdentity();
+    QCOMPARE(window.m_snapshotTable->rowCount(), 38);
+
+    // The user selected (double-clicked) one of the snapshot rows.
+    window.m_snapshotTable->selectRow(0);
+    QVERIFY(!window.m_snapshotTable->selectedItems().isEmpty());
+
+    // The scope switch (Exit Host Maintenance — the same exit path a Select
+    // Target commit drives) is where the crash occurred.
+    window.exitHostMaintenanceMode();
+    QVERIFY(!window.m_hostMaintenanceMode);
+    QCOMPARE(window.m_previewTargetPath, QStringLiteral("/dev/test-system"));
+
+    // The inventory was cleared for the new scope and the table's model is
+    // intact and still usable: repopulating and reading rows back must work.
+    QCOMPARE(window.m_snapshotTable->rowCount(), 0);
+    QCOMPARE(window.m_snapshotInventoryCount, 0);
+    QList<SnapshotInventoryRow> refill;
+    {
+        SnapshotInventoryRow row;
+        row.id = QStringLiteral("7");
+        row.created = QStringLiteral("2026-10-18 09:00:00");
+        row.type = QStringLiteral("single");
+        row.description = QStringLiteral("refill");
+        row.status = QStringLiteral("Linux root snapshot");
+        row.relativePath = QStringLiteral("/.snapshots/7/snapshot");
+        refill.append(row);
+    }
+    window.populateSnapshotTable(refill);
+    QCOMPARE(window.m_snapshotTable->rowCount(), 1);
+    QCOMPARE(window.m_snapshotTable->item(0, 0)->text(), QStringLiteral("7"));
+    QVERIFY(window.isVisible());
+}
+
 void MainWindowUiTest::privilegedSessionCancellationPublishesFailureAndDefersWithoutRetry()
 {
     ScopedSessionLogDir logDir;
@@ -1073,6 +1153,91 @@ void MainWindowUiTest::privilegedSessionGrantProducesSingleRequest()
     QCOMPARE(window.m_privilegedSessionRequestCount, quint64(1));
 
     window.closePrivilegedSession();
+}
+
+// A staged private helper copy is reused for the same source only while its
+// bytes still hash to the SHA-256 recorded at staging time. A same-user
+// process can replace the copy before pkexec runs it, so a tampered copy must
+// force a re-stage (a fresh path) instead of being returned for elevation.
+void MainWindowUiTest::privilegedSessionRestagesTamperedHelperCopy()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    // A helper owned by the invoking user on a synthetic FUSE mount: the
+    // mount table forces a private copy before pkexec (FUSE without
+    // allow_other), and the trust check accepts a user-owned non-writable
+    // regular file.
+    QTemporaryDir helperHome;
+    QVERIFY(helperHome.isValid());
+    const QString helperPath = helperHome.filePath(QStringLiteral("boot-repair-helper"));
+    {
+        QFile source(helperPath);
+        QVERIFY(source.open(QIODevice::WriteOnly));
+        QVERIFY(source.write("#!/bin/bash\n# ui-test helper stub\n") > 0);
+        source.close();
+        QFile::setPermissions(helperPath, QFileDevice::ReadOwner | QFileDevice::WriteOwner
+                                             | QFileDevice::ExeOwner);
+    }
+    QTemporaryDir stagingBase;
+    QVERIFY(stagingBase.isValid());
+
+    // One synthetic mountinfo line per /proc/self/mountinfo: mount point
+    // field 5, options field 6, "-" field 7, fs type field 8, mount source
+    // field 9, super options field 10. fuse + no allow_other must demand a
+    // private copy.
+    const QByteArray fuseLine = QByteArrayLiteral("1 2 0:3 / ")
+        + helperHome.path().toUtf8()
+        + QByteArrayLiteral(" rw - fuse.helper /dev/fuse rw,nosuid,nodev");
+    const QList<QByteArray> mounts{fuseLine};
+
+    const QByteArray previousOverride = qgetenv("BOOT_REPAIR_HELPER_PATH");
+    qputenv("BOOT_REPAIR_HELPER_PATH", helperPath.toUtf8());
+
+    MainWindow window;
+
+    // First resolution stages a verified private copy.
+    QString firstResolution;
+    const QString first = window.privilegedSessionHelper(&firstResolution, stagingBase.path(), mounts);
+    QVERIFY2(!first.isEmpty(), qPrintable(firstResolution));
+    QVERIFY2(first != helperPath, "a FUSE-resident helper must be staged");
+    QVERIFY2(firstResolution.contains(QStringLiteral("staged a private copy")),
+             qPrintable(firstResolution));
+
+    // A second call for the same source reuses the verified copy.
+    QString secondResolution;
+    const QString second = window.privilegedSessionHelper(&secondResolution, stagingBase.path(), mounts);
+    QCOMPARE(second, first);
+    QVERIFY2(secondResolution.contains(QStringLiteral("using the private copy staged")),
+             qPrintable(secondResolution));
+
+    // Tamper with the staged copy's bytes: the recorded hash no longer
+    // matches, so the next call must stage a fresh copy (a different path).
+    {
+        QFile tampered(first);
+        QVERIFY(tampered.open(QIODevice::Append));
+        QVERIFY(tampered.write("\n# tampered\n") > 0);
+        tampered.close();
+    }
+    QString thirdResolution;
+    const QString third = window.privilegedSessionHelper(&thirdResolution, stagingBase.path(), mounts);
+    QVERIFY2(!third.isEmpty(), qPrintable(thirdResolution));
+    QVERIFY2(third != first, "a tampered staged copy must be re-staged, never reused");
+    QVERIFY2(thirdResolution.contains(QStringLiteral("staged a private copy")),
+             qPrintable(thirdResolution));
+
+    // A copy whose file went missing must also be re-staged, not returned.
+    QFile::remove(third);
+    QString fourthResolution;
+    const QString fourth = window.privilegedSessionHelper(&fourthResolution, stagingBase.path(), mounts);
+    QVERIFY2(!fourth.isEmpty(), qPrintable(fourthResolution));
+    QVERIFY2(fourth != third, "a deleted staged copy must be re-staged, never reused");
+
+    if (previousOverride.isNull()) {
+        qunsetenv("BOOT_REPAIR_HELPER_PATH");
+    } else {
+        qputenv("BOOT_REPAIR_HELPER_PATH", previousOverride);
+    }
 }
 
 // The automatic Btrfs snapshot preload is background work: it must never claim

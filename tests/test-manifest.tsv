@@ -26,7 +26,7 @@ boot-repair-ui-read-only	ui	13	M	ui	n
 boot-repair-boot-menu-parsers	fast	1	S	ui	y
 boot-repair-chroot-shell-contract	fast	6	M	backend	n
 boot-repair-display-manager-contract	fast	1	S	backend	y
-boot-repair-backend-profile-contract	slow	35	M	backend	n
+boot-repair-backend-profile-contract	slow	75	L	backend	n
 boot-repair-filesystem-repair-contract	fast	29	M	backend	n
 boot-repair-host-snapshot-contract	fast	5	S	backend	y
 boot-repair-host-default-contract	fast	15	M	backend	n

@@ -7,7 +7,9 @@
 //   boot-repair-legacy-gui --help | --version | --print-config
 //
 // The helper path discovery mirrors the boot-repair-legacy launcher:
-// --helper, BOOT_REPAIR_LEGACY_HELPER, /usr/sbin/boot-repair-legacy-helper,
+// --helper, the test-only BOOT_REPAIR_LEGACY_HELPER seam (compiled out of
+// production builds; never honoured by root),
+// /usr/sbin/boot-repair-legacy-helper,
 // /usr/libexec/boot-repair/boot-repair-helper-legacy, source-tree paths.
 #include <qapplication.h>
 #include <qfile.h>
@@ -76,10 +78,17 @@ QString discoverHelper(const QString &override, const QString &argv0)
     if (!override.isEmpty()) {
         return override;
     }
-    const char *env = ::getenv("BOOT_REPAIR_LEGACY_HELPER");
-    if (env && *env) {
-        return QString::fromLocal8Bit(env);
+#ifdef BOOT_REPAIR_LEGACY_TEST_SEAMS
+    // Test seam (ENV-1): BOOT_REPAIR_LEGACY_HELPER is honoured only by
+    // non-root test/development builds (the auth-pipe harness). It is
+    // compiled out of production builds and root never honours it.
+    if (::geteuid() != 0) {
+        const char *env = ::getenv("BOOT_REPAIR_LEGACY_HELPER");
+        if (env && *env) {
+            return QString::fromLocal8Bit(env);
+        }
     }
+#endif
     static const char *const installed[] = {
         "/usr/sbin/boot-repair-legacy-helper",
         "/usr/libexec/boot-repair/boot-repair-helper-legacy",
@@ -295,8 +304,11 @@ int main(int argc, char **argv)
     // A10-03: BOOT_REPAIR_LEGACY_ELEVATE stays an explicit escape hatch for
     // the elevation prefix.  The resolved tool is still verified against the
     // fixed trusted system locations (an absolute-path override is verified
-    // as-is); a bare name must resolve to one of those locations.
-    if (elevationOverride.isEmpty()) {
+    // as-is); a bare name must resolve to one of those locations.  ENV-1:
+    // root never honours the environment override (a root-run GUI already
+    // holds the privilege the prefix would grant); the explicit --elevate
+    // option stays available to every caller.
+    if (elevationOverride.isEmpty() && ::geteuid() != 0) {
         const char *envElevate = ::getenv("BOOT_REPAIR_LEGACY_ELEVATE");
         if (envElevate && *envElevate) {
             elevationOverride = QString::fromLocal8Bit(envElevate);

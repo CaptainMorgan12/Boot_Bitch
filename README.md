@@ -1,6 +1,6 @@
-# Boot Bitch 0.2.28 — maintenance release
+# Boot Bitch 0.2.29 — maintenance release
 
-Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.28 includes the EFI boot entries manager, the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
+Boot Bitch is a native Qt 6 Linux recovery utility. The application command and Debian package retain the stable technical name `boot-repair` for compatibility; the source repository is `Boot_Bitch`. Version 0.2.29 includes the Host/Target repair-environment isolation hardening (target-scope dnf5/dracut identity pins, the fresh-procfs guarantee and the scope-labeled identity reads), the Snapshots tab visible whenever a snapshot inventory exists, in-run confirmations for package-mutating repair stages, graphical-login repair on every service manager including the black-screen-after-unlock class, the splitter and plan-frame layout alignment, cancel/cache/shell and session-log fixes in both editions, a security hardening pass over the backend and both GUIs, the EFI boot entries manager, the guarded diagnostics cache, simulation-first repair stack, Btrfs snapshot recovery, audited chroot shell, verified file copy, responsive Qt interface, the Debian Etch (Qt 3) legacy edition, and native RPM/APK artifacts with Alpine, Arch and Fedora repair backends. Each repair layer performs the strongest practical read-only or trial preflight available, applies only recognized deterministic corrections, and stops on unknown failures instead of guessing. The application was written to address the lack of coherent tooling that lets a non-developer restore a system so it can boot after something goes wrong. Common boot issues can be addressed directly, while the diagnostics, chroot shell and file-copy workflows also support troubleshooting and manual fixes.
 
 This project was written with LLM assistance under human guidance, requirements and manually verified tests.
 
@@ -16,7 +16,7 @@ Boot Bitch must be launched from a **different booted Linux environment for ordi
 - **Alpine** (0.2.25) — `apk fix`/`apk upgrade` transactions, mkinitfs initramfs, config-only extlinux regeneration, OpenRC display-manager restore and guarded UEFI GRUB repair.
 - **Debian Etch (legacy)** (0.2.26) — the Qt 3 / KDE 3.5 edition with the same privileged helper: LUKS unlock, split-LVM targets, guarded menu.lst regeneration, file copy, host maintenance and Make Default.
 
-Host Maintenance runs the supported stages natively on the active Debian/Ubuntu, Arch, Alpine or Debian Etch (legacy) system. EFI/UKI stages remain Debian/Arch-only, and unknown boot layouts are refused instead of guessed.
+Host Maintenance runs the supported stages natively on the active Debian/Ubuntu, Fedora, Arch, Alpine or Debian Etch (legacy) system. Host EFI/UKI repair remains Debian/Arch-only (Alpine EFI adds guarded GRUB EFI repair), and unknown boot layouts are refused instead of guessed.
 
 ## Install
 
@@ -24,13 +24,13 @@ Download the artifact for your system from the GitHub release page and verify it
 
 | System | Artifact | Install |
 | --- | --- | --- |
-| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.28_amd64.deb` | `sudo apt install ./boot-repair_0.2.28_amd64.deb` |
-| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.28-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.28-etch1_amd64.deb` |
-| Arch | `boot-bitch-0.2.28-x86_64.pkg.tar.zst` | `sudo pacman -U boot-bitch-0.2.28-x86_64.pkg.tar.zst` |
-| Fedora/RHEL | `boot-bitch-0.2.28.x86_64.rpm` | `sudo dnf install ./boot-bitch-0.2.28.x86_64.rpm` |
-| openSUSE/SUSE | `boot-bitch-0.2.28.x86_64.rpm` | `sudo zypper install ./boot-bitch-0.2.28.x86_64.rpm` |
-| Alpine | `boot-bitch-0.2.28.apk` | `sudo apk add --allow-untrusted ./boot-bitch-0.2.28.apk` |
-| Any Linux desktop | `boot-repair_0.2.28_x86_64.AppImage` | `chmod +x boot-repair_0.2.28_x86_64.AppImage && ./boot-repair_0.2.28_x86_64.AppImage` |
+| Debian/Ubuntu/TUXEDO | `boot-repair_0.2.29_amd64.deb` | `sudo apt install ./boot-repair_0.2.29_amd64.deb` |
+| Debian Etch (legacy, Qt 3) | `boot-repair-legacy_0.2.29-etch1_amd64.deb` | `sudo dpkg -i ./boot-repair-legacy_0.2.29-etch1_amd64.deb` |
+| Arch | `boot-repair-0.2.29-x86_64.pkg.tar.zst` | `sudo pacman -U boot-repair-0.2.29-x86_64.pkg.tar.zst` |
+| Fedora/RHEL | `boot-repair-0.2.29.x86_64.rpm` | `sudo dnf install ./boot-repair-0.2.29.x86_64.rpm` |
+| openSUSE/SUSE | `boot-repair-0.2.29.x86_64.rpm` | `sudo zypper install ./boot-repair-0.2.29.x86_64.rpm` |
+| Alpine | `boot-repair-0.2.29.apk` | `sudo apk add --allow-untrusted ./boot-repair-0.2.29.apk` |
+| Any Linux desktop | `boot-repair_0.2.29_x86_64.AppImage` | `chmod +x boot-repair_0.2.29_x86_64.AppImage && ./boot-repair_0.2.29_x86_64.AppImage` |
 
 The native packages install the GUI, bundled icons, desktop metadata, the manual page, the EFI label helper and the privileged helper at `/usr/libexec/boot-repair/boot-repair-helper`. Privileged actions are authorized through Polkit/`pkexec` and use the host's runtime tools (`mount`, `cryptsetup`, `btrfs`, `efibootmgr`, and the selected distribution's boot and package tools); install the tools needed for the repair you intend to run.
 
@@ -168,7 +168,7 @@ The tests cover the MainWindow workflow plus the chroot-shell, display-manager, 
 - Btrfs rollback keeps the source snapshot unchanged, preserves the previous root as `@rollback-before-*`, and restores it automatically when critical post-switch validation fails.
 - Missing optional runtime tools disable only the related feature; host tools are never installed silently.
 
-Still intentionally constrained in 0.2.28:
+Still intentionally constrained in 0.2.29:
 
 - automatic/implicit EFI-loader reinstall: EFI repair remains an explicit action or opt-in Full Repair stage;
 - transactional rollback is limited to Btrfs layouts with a normal top-level `@` root and Snapper-style root snapshots; running-host rollback additionally requires a Snapper root configuration, no `subvolid=` pin, no separate `/boot` and no other nested `@` child subvolumes, and only migrates a nested `@/.snapshots` child subvolume; unsupported layouts are refused rather than guessed;
@@ -178,6 +178,7 @@ Still intentionally constrained in 0.2.28:
 
 - **Systems** — shows the protected running host separately from ranked repair drives; select a physical target (and unlock LUKS when needed) before any repair work.
 - **Diagnostics** — read-only reports for the Running Host or the selected repair drive, including boot state, firmware entries and file systems.
+- **EFI boot entries** — the UEFI firmware entry list with reorder, rename and delete (BootCurrent is protected, NVRAM writes are verified and rolled back), plus a read-only boot-menu tree.
 - **Repair** — the configurable Full Repair plan and individual tools (file system repair, package configuration, broken dependencies, metadata refresh, adaptive package upgrade, DKMS, display manager, initramfs, EFI/UKI and GRUB), or Host Maintenance on the active system.
 - **Snapshots** — read-only Btrfs/Snapper inventory and the guarded rollback workflow, including running-host rollback with a persistent **Reboot required** reminder.
 - **Chroot Shell** — one confirmed root command at a time inside the selected repair system. When a command asks a question (apt/dnf/dpkg prompts), it appears in a popup and your answer is sent back to the command; cancel stops it. Non-interactive flags such as `-y`/`--noconfirm` remain recommended for unattended runs.
@@ -186,39 +187,54 @@ Still intentionally constrained in 0.2.28:
 
 ## Screenshots
 
-These anonymized screenshots show Boot Bitch running in a disposable recovery VM. The target is a separate virtual disk; personal host paths and physical-device identifiers have been removed.
+These anonymized screenshots show Boot Bitch running in a disposable recovery VM. The target is a separate virtual disk; personal host paths and physical-device identifiers have been removed. The captures were refreshed for this release — nine screenshots (`1.png`..`9.png`) in the order below.
 
 ### Systems
 
-![Systems: choose the protected running host or a detected repair target](docs/screenshots/01-systems-target-selection.png)
+![Systems: choose the protected running host or a detected repair target](docs/screenshots/1.png)
 
 ### Diagnostics
 
-![Read-only diagnostics report for the selected scope](docs/screenshots/02-diagnostics-report.png)
+![Read-only diagnostics report for the selected scope](docs/screenshots/2.png)
+
+### EFI boot entries
+
+![EFI boot entries manager with the firmware entry list](docs/screenshots/3.png)
 
 ### Repair
 
-![Full Repair plan with per-stage gating from cached diagnostics](docs/screenshots/03-repair-confirmation.png)
+![Full Repair plan with per-stage gating from cached diagnostics](docs/screenshots/4.png)
 
 ### Snapshots
 
-![Btrfs snapshot inventory with a read-only scan](docs/screenshots/04-snapshots.png)
+![Btrfs snapshot inventory with a read-only scan](docs/screenshots/5.png)
 
-### Chroot Shell
+### Host Shell
 
-![Guarded Chroot Shell for the selected repair system](docs/screenshots/05-chroot-shell.png)
+![Guarded Host Shell for the running host](docs/screenshots/6.png)
 
 ### File Copy
 
-![Host to Repair file copy with a guarded destination path](docs/screenshots/06-file-copy.png)
+![Host to Repair file copy with a guarded destination path](docs/screenshots/7.png)
 
 ### Logs
 
-![Application log with session history and scoped diagnostics](docs/screenshots/07-application-log.png)
+![Application log with session history and scoped diagnostics](docs/screenshots/8.png)
 
 ### Settings
 
-![Settings for Full Repair stages, diagnostics refresh and safety controls](docs/screenshots/08-settings.png)
+![Settings for Full Repair stages, diagnostics refresh and safety controls](docs/screenshots/9.png)
+
+## 0.2.29 refinements
+
+0.2.29 completes the recovery-host/target isolation, adds proven capability installs and in-run confirmations, repairs graphical login everywhere, fixes cancel, cache, shell and log behavior in both editions, hardens the backend and both GUIs, and polishes the Debian Etch legacy edition. Highlights:
+
+- Host/Target isolation, snapshots and kernel evidence: target-scope dnf5 transactions skip the running-kernel protection; the dracut rebuild drops host-only mode, the fresh-procfs and identity-reading scope guarantees are contract-asserted, the Snapshots tab appears whenever a snapshot inventory exists (the Rollback button keeps its guard), already-mounted non-Linux disks report the clean verdict, and the kernel diagnostic names why a repository kernel is not installable.
+- UI alignment, confirmations and capability installs: splitter handles drag down, capabilities sort on header click, package-mutating stages confirm inside the progress popup (a declined answer skips the stage, the plan continues), a missing display manager or boot-stack prerequisite gets a proven Install action that re-probes and regenerates the affected diagnostics, Add Note gains a resizable memo, and dialogs render one button order and default.
+- Graphical login repair on every service manager: both editions detect a missing display manager (gdm, gdm3, kdm, lightdm and similar) and offer a proven Install that configures and enables it, so a graphical login returns after reboot, including on SysV-init targets. The display diagnostic flags the black-screen-after-unlock class and initramfs-backend switchover evidence, and the display repair appends console=tty0 last.
+- Cancel, cache, indicator, shell and log fixes in both editions: cancelling an individual diagnostic clears only that result and caches nothing partial, a queued snapshot indicator always resolves, session logs are listed, deleted mid-run and appended to the selected prior log through the authenticated helper, declined shell commands report nothing-changed without invalidating the cache, and the interactive shells keep a controlling terminal where script(1) is absent.
+- Security hardening in the backend and both GUIs: the Alpine kernel-suffix gains an allowlist, initramfs verification passes the image positionally, legacy menu-answer files never come from the environment, session logs are 0600, kernel zombie cleanups remove only realpath-contained trees, staged helper copies — AppImage's embedded helper and digest-pinned EFI label updater — are re-hashed before pkexec reuse, and a post-efi reconcile consolidates duplicate UKI entries.
+- Debian Etch edition, bug fixes and polish: the Settings splitter drags, apt actions translate to apt-get, the SysV probe detects kdm and xdm, prompts commit on Enter, the Add Note memo mirrors the modern dialog, notes append correctly to the selected prior log, and the host-to-target switch no longer crashes; the mounts list collapses stacked and kernel pseudo mounts, and File Copy waits out a running diagnostic.
 
 ## 0.2.28 refinements
 

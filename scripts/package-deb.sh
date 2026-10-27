@@ -3,7 +3,10 @@ set -euo pipefail
 
 # Build the Debian package on a Debian-family host (requires dpkg-dev).
 # scripts/build.sh sets umask 022 before CPack runs, so package modes stay
-# independent of the builder's umask.
+# independent of the builder's umask. The default build directory is
+# build-release: that is where Development/scripts/dev-check.sh writes its
+# gate-result .rc files, and scripts/build.sh's release gate refuses to build
+# without a complete green set (run dev-check first).
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 
@@ -29,7 +32,7 @@ for cmd in cpack dpkg-shlibdeps dpkg-deb; do
     }
 done
 
-BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-deb}" \
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}" \
 BUILD_TYPE=Release \
 "$ROOT_DIR/scripts/build.sh"
 

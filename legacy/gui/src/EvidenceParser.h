@@ -96,6 +96,75 @@ bool legacyFeatureIsAvailable(const std::string &state, std::string *reason);
 bool changeStatusIsUnchanged(const std::string &status);
 
 
+// ===== The shared repair -> diagnostic invalidation map (round 30) ==========
+// The canonical data file data/repair-diagnostic-map.tsv (the round-19/20
+// table serialized) is consumed by BOTH GUIs: the modern Qt6 GUI embeds it at
+// build time (resources/boot-repair.qrc) and the legacy GUI loads the staged
+// copy at /usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
+// (scripts/package-legacy.sh). The parity contract
+// (legacy/tests/test-ui-parity-qt3.sh) locks the row set + a golden checksum
+// so the two GUIs can never diverge by a one-sided edit. This loader is
+// deliberately Qt-free (C++98) so the host-side contract test
+// (legacy/tests/gui-parser-test.cpp) executes it against the real file.
+//
+// Row shape: <key> TAB <requires> TAB <affected> (see the file header for the
+// column vocabulary). A key ending in ":*" is a PREFIX row (exact rows win;
+// the longest prefix row wins among prefix matches).
+struct RepairDiagnosticMapRow {
+    std::string key;
+    std::string requiresSections; // '-' | 'report' | 'union' | section keys
+    std::string affectedSections; // '-' | 'all' | 'union' | 'shell-class' | keys
+    bool prefix;                  // key ends with ":*"
+    RepairDiagnosticMapRow() : prefix(false) {}
+};
+
+class RepairDiagnosticMap {
+public:
+    RepairDiagnosticMap();
+
+    // Loads and validates the shared map file. Returns false on ANY parse
+    // problem (fail closed: the empty map resolves every lookup through the
+    // conservative defaults - unknown key -> requires {report} / affected
+    // {all}) with *error describing the failure.
+    bool load(const std::string &path, std::string *error);
+
+    bool loaded() const { return m_loaded; }
+    std::size_t rowCount() const { return m_rows.size(); }
+
+    // Exact row first, then the longest matching prefix row; NULL when unknown.
+    const RepairDiagnosticMapRow *find(const std::string &key) const;
+
+private:
+    std::vector<RepairDiagnosticMapRow> m_rows;
+    bool m_loaded;
+};
+
+// The shared map-policy helpers (modern parity: src/MainWindow.cpp implements
+// the identical rules against the same data file):
+//   mapRequiredSections              the requires column of a tool row
+//                                   (unknown / rule rows -> {"report"}).
+//   mapAffectedSectionsForTool       MainWindow::diagnosticSectionsForRepair:
+//                                   the union of the requires and affected
+//                                   columns; "all"/"report"/rule rows and
+//                                   unknown keys -> {"all"}.
+//   mapCancelledRepairSections       the cancelled-repair union (requires OR
+//                                   affected; for every real tool = the
+//                                   affected set); empty -> {"all"}.
+//   mapShellClassAffectedSections    the shell-class row's affected column;
+//                                   an empty class or an unknown class ->
+//                                   {"all"}; the no-op class row -> {}.
+std::vector<std::string> mapRequiredSections(const RepairDiagnosticMap &map,
+                                             const std::string &key);
+std::vector<std::string> mapAffectedSectionsForTool(const RepairDiagnosticMap &map,
+                                                    const std::string &key);
+std::vector<std::string> mapCancelledRepairSections(const RepairDiagnosticMap &map,
+                                                    const std::string &key);
+std::vector<std::string> mapShellClassAffectedSections(const RepairDiagnosticMap &map,
+                                                       const std::string &shellClass);
+// True when the set carries the reserved complete-set token ("all").
+bool mapSectionsAreComplete(const std::vector<std::string> &sections);
+
+
 // LUKS unlock result helpers (legacy helper `unlock` command):
 //   `UNLOCKED=<mapper-path>` on success (the mapper path is returned, "" when
 //   the transcript carries no such line);
@@ -195,6 +264,12 @@ public:
     bool diagnosticsStale() const;
 
     void reset();
+    // Round 30 (modern parity): clears the dedicated capability cache entry
+    // (the `Repair tool` lines + their evidence) only — the legacy-only
+    // `Legacy feature`/`Legacy config` probes are separate evidence and
+    // survive, exactly like MainWindow::markDiagnosticSectionsStale clearing
+    // the "capabilities" pseudo-entry.
+    void clearRepairCapabilities();
 
 private:
     void clearCapabilities();

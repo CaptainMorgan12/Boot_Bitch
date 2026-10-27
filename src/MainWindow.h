@@ -63,10 +63,15 @@ public:
     explicit RepairProgressDialog(const QString &title, QWidget *parent = nullptr);
 
     void setCloseAllowed(bool allowed);
+    // A8-04: the Cancel affordance for a running request.  Disabled until the
+    // request owner arms it; the click routes to
+    // MainWindow::cancelRunningPrivilegedOperation().
+    void setCancelEnabled(bool enabled);
 
     QLabel *statusLabel() const { return m_status; }
     QPlainTextEdit *outputPane() const { return m_output; }
     QPushButton *closeButton() const { return m_closeButton; }
+    QPushButton *cancelButton() const { return m_cancelButton; }
     // The persistent prompt input line and its Send affordance.  Disabled while
     // no interactive prompt is waiting; enabled and focused by the request
     // handler when the helper emits a PROMPT record for the Repair kind.
@@ -83,6 +88,7 @@ private:
     QLabel *m_status = nullptr;
     QPlainTextEdit *m_output = nullptr;
     QPushButton *m_closeButton = nullptr;
+    QPushButton *m_cancelButton = nullptr;
     QLineEdit *m_promptInput = nullptr;
     QPushButton *m_promptSend = nullptr;
     bool m_closeAllowed = false;
@@ -94,6 +100,12 @@ private:
 // real value instead of its formatted string. Items without a key fall back to
 // a natural-order text comparison, so /dev/sda2 sorts before /dev/sda10.
 constexpr int BootRepairSortKeyRole = Qt::UserRole + 64;
+
+// Payload carried by the capabilities table's first (Feature) column item so
+// the per-row Install action cell widget can be re-attached to the CORRECT row
+// after a header-click sort (QTableWidget's sort moves items, not cell
+// widgets): the suggested package and the target/host routing, unit-separated.
+constexpr int CapabilityActionPayloadRole = Qt::UserRole + 1;
 
 // QTableWidgetItem with numeric-aware sorting: an optional explicit sort key
 // (number, QDateTime or rank) wins over the formatted display text.
@@ -362,6 +374,24 @@ public:
     void setProgressDetail(const QString &text);
     void clearProgressDetail();
 
+    // Round 22 (responsiveness sweep): visible deferred-work state.  A
+    // user-triggered action whose privileged request is deferred (the
+    // scope-change evidence refresh, an unlock or snapshot load behind the
+    // single-request gate) arms a preparation label synchronously in the
+    // click handler so the indicator flips immediately.  The label is
+    // inserted at the FRONT of the busy stack so a currently running
+    // operation stays visible until it finishes, and the preparation becomes
+    // the visible state the moment nothing else owns the indicator.  The
+    // real request's own busy state replaces it at start, and every
+    // definitive no-run resolution (refused, nothing-to-do, timeout) disarms
+    // it, so a preparation can never become a dead spinner.  The deferred
+    // scheduling itself is untouched: only the VISIBLE state moves earlier,
+    // and the flush inside armVisiblePreparation() is a bounded
+    // processEvents call — never a wait loop — so the unlock-deadlock rule
+    // (no nested event loop under the held request gate) stays intact.
+    void armVisiblePreparation(QString *slot, const QString &label);
+    void disarmVisiblePreparation(QString *slot);
+
     // Internal desktop color-scheme value. Qt::ColorScheme,
     // QStyleHints::colorScheme() and QStyleHints::colorSchemeChanged exist
     // only on Qt >= 6.5, so the window never names them in its interface and
@@ -433,6 +463,14 @@ private:
     void refreshDevices();
     void refreshCapabilities();
     void resizeCapabilityRows();
+    // Re-attaches the capabilities table's per-row Install cell widgets to the
+    // rows their payloads belong to (after a header-click sort or a repopulate).
+    void reattachCapabilityActionCells();
+    // Creates the per-row Install button for one capabilities row and attaches
+    // it to the Action column (shared by the populate path and the post-sort
+    // re-attach).
+    void installMissingCapabilityCellWidget(int row, const QString &suggestedPackage,
+                                            bool targetScope);
     // Boot capabilities table Install action: install a missing suggested
     // package into the selected repair target (target-scope) or onto the
     // running host (host-scope, Host Maintenance only) through the guarded
@@ -477,6 +515,7 @@ private:
     void updateFileCopyDirection();
     void updateFileCopyControls();
     void browseFileCopyDestination();
+    void browseFileCopySource();
     void addSourceFiles();
     void addSourceFolder();
     void removeSelectedSources();
@@ -484,6 +523,12 @@ private:
     void runFileCopyPreview();
     void runFileCopy();
     bool fileCopyReady(QString *reason = nullptr) const;
+    // The shared read-only repaired-system folder browser (the custom chroot
+    // picker): walks the selected repair tree through the helper's per-request
+    // temporary mounts, shows the in-chroot directory tree, and returns the
+    // chosen ABSOLUTE IN-CHROOT path (empty when cancelled). Used by the
+    // Host → Repair destination browse and the Repair → Host source browse.
+    QString runRepairFolderBrowser(QWidget *parent, const QString &initialPath);
 
     // ---- Boot entries (UEFI firmware entry manager; host and target scope) ----
 
@@ -491,6 +536,14 @@ private:
     void refreshBootEntries();
     void populateBootEntriesTable();
     void updateBootEntriesControls();
+    // Round 16 (ITEM 3): re-applies the 65/35 page-budget default (or the
+    // content-hugging minimum for a user-adjusted handle) for the CURRENT Boot
+    // entries view.  remainingRetries bounds the convergence chase: the first
+    // pass after the page becomes visible can still read stale layout geometry
+    // (the hidden-tab auto-load), so a pass that could not measure the real
+    // budget retries once on the next event-loop turn instead of leaving the
+    // comfortable seed in place on the FIRST show.
+    void rebalanceBootEntriesCurrentView(int remainingRetries = 2);
     void moveBootEntry(bool up);
     void applyBootEntryOrder();
     void deleteSelectedBootEntry();
@@ -538,6 +591,13 @@ private:
     void updateSnapshotControls();
     void clearSnapshotResults();
     void scheduleSnapshotPreload();
+    // Round 73 (A1, Fedora stuck-indicator): disarms the armed "queued behind
+    // the running operation" snapshot state when a deferred load is resolved
+    // WITHOUT dispatching a new request (an already-loaded scope, an in-flight
+    // request for the same scope, a scope that was cleared, or a completed
+    // matching load), and logs the explicit resolution. Only logs when the
+    // queued state was visibly armed, so ordinary bookkeeping stays quiet.
+    void resolveDeferredSnapshotQueuedState(const QString &reason);
     // Loads the Btrfs snapshot inventory.  The automatic background preload
     // (background=true) runs silently so a scope switch never flashes the
     // Btrfs busy label over the diagnostics run that owns it; a manual Load
@@ -660,6 +720,13 @@ private:
     // labels and Settings text derive from these detected backends, never from
     // the distribution family.
     QString currentScopeEvidence() const;
+    // Round 13: the session-persistent per-scope wording evidence.  Backend
+    // wording reads from this once evidence has landed for a scope (it is
+    // never invalidated with the diagnostic cache); capability gates keep
+    // reading the cache itself and fail closed as before.
+    QString wordingEvidence() const;
+    void absorbWordingEvidence(bool hostScope);
+    void resetTargetWordingForIdentityChange();
     QStringList detectedPackageManagers() const;
     QString detectedServiceManager() const;
     QString detectedInitramfsBackend() const;
@@ -669,6 +736,13 @@ private:
     // only for a single detected manager; mixed-manager targets keep the
     // generic wording.
     bool detectedRpmBackend() const;
+    // Short example commands for the Shell tab's command-field hint, derived
+    // from the current scope's detected package-manager backends (native-first
+    // order): apt/dpkg -> "apt update, apt upgrade", pacman -> "pacman -Syu",
+    // apk -> "apk update, apk upgrade", rpm/dnf -> "dnf check-update, dnf
+    // upgrade".  Empty when the cached evidence names no backend (the caller
+    // keeps its generic hint).
+    QString shellExampleCommands() const;
     // True when the detected GRUB backend uses Fedora's grub2 tooling and
     // paths (grub2-mkconfig, /boot/grub2, grub2-editenv) rather than the
     // Debian/Arch grub-* names.
@@ -689,6 +763,12 @@ private:
     // build-system name (AKMS / AKMODS / DKMS). The cached evidence and every
     // parser keep the machine-read `dkms` key; this is the display layer only.
     QString displayLocalizedHelperOutput(const QString &raw) const;
+    // Round 34 (translation completeness): the diagnostic REPORT pane's display
+    // form — displayLocalizedHelperOutput() plus the report boilerplate and
+    // static section headings translated at the rendering layer. Display-only:
+    // the raw cache, the session log and every parser keep the machine
+    // contract untouched.
+    QString localizedDiagnosticReport(const QString &raw) const;
     // Short-action labels that name the detected module-build system verbatim:
     // "Rebuild DKMS modules"/"Rebuild akmods modules"/"Rebuild AKMS modules"
     // and the button form "Rebuild DKMS"/"Rebuild akmods"/"Rebuild AKMS".
@@ -728,7 +808,31 @@ private:
     void startNewSessionLog();
     void addSessionNote();
     void deleteSelectedSessionLog();
+    // Round 75 (mid-run log deletion): a genuinely concurrent one-shot
+    // privileged helper invocation for the session-log-delete housekeeping
+    // verb.  The helper broker answers one request at a time, so while
+    // another request holds the single-request gate the delete cannot use
+    // the established session; this runs an independent helper process
+    // instead (the verb needs no target mount, no per-disk lock and no
+    // session state, so a concurrent run is safe).  Bounded wait, fail
+    // closed; returns the captured transcript (the `Session log delete:`
+    // markers included).
+    QString runOneShotSessionLogDelete(const QStringList &arguments);
+    // Builds the pkexec/helper invocation (program + arguments) shared by the
+    // persistent session launch and the concurrent one-shot runs.  Returns
+    // false with *error set when the helper cannot be resolved.
+    bool buildPrivilegedInvocation(const QStringList &verbArguments,
+                                   QString *program,
+                                   QStringList *processArguments,
+                                   QString *error);
     void pruneSessionLogs();
+    // Round 51 (modern-side log deletion): flushes the startup-retention
+    // queue — session files pruneSessionLogs() could not remove with the
+    // unprivileged GUI process (root-owned logs from elevated sessions) —
+    // through the authenticated session-log-delete helper verb, once the
+    // privileged channel is established and free.  Never prompts for
+    // authorization itself; a failure keeps the queue for the next attempt.
+    void flushPendingPruneLogDeletes();
     static QStringList parseSessionLogEntries(const QString &text);
     void appendDiagnosticLog(const QString &key, const QString &title,
                              const QString &scope, const QString &result,
@@ -788,6 +892,11 @@ private:
     bool currentScopeEvidenceStale(QString *reason = nullptr) const;
     bool shouldScheduleEvidenceRefresh(QString *reason = nullptr, bool force = false) const;
     void scheduleEvidenceRefresh(const QString &reason, bool force = false);
+    // Round 34 (translation completeness): maps a stable evidence-refresh
+    // reason KEY to its localized display phrase (the reason keys stay the
+    // locale-independent status-entry identity; only the displayed sentence
+    // translates). Unknown keys and pre-localized phrases pass through.
+    static QString localizedEvidenceRefreshReason(const QString &reason);
     void handlePrivilegedSessionEstablished();
     void runScheduledEvidenceRefresh();
     // Coalescing asynchronous boot-entries refresh that runs after diagnostics
@@ -798,6 +907,15 @@ private:
     // the gate.
     void scheduleBootEntriesRefresh(const QString &reason);
     void runScheduledBootEntriesRefresh();
+    // Round 31 (TUXEDO post-diagnostics race): true while any piece of the
+    // deferred post-diagnostics background chain is still pending or in
+    // flight — the boot-entries/GRUB-menu refresh (timer armed or request in
+    // flight) and the Btrfs snapshot preload (deferred behind the gate or in
+    // flight). While true, the repair gates stay closed so a repair can never
+    // be dispatched against the gate a background request still holds (which
+    // used to fail the repair with a refusal and force a full diagnostic
+    // regeneration).
+    bool postDiagnosticsChainPending() const;
     // Runs the work that arrived while a privileged request owned the gate:
     // one deferred Btrfs snapshot preload and at most one coalesced automatic
     // diagnostics regeneration for the current scope. Both were refused as
@@ -844,9 +962,24 @@ private:
                                  bool showProgressDialog = true,
                                  LogEntryKind kind = LogEntryKind::Application,
                                  const QString &statusIdentity = QString(),
-                                  RepairProgressDialog *sharedProgressDialog = nullptr,
-                                  bool quiet = false);
+                                 RepairProgressDialog *sharedProgressDialog = nullptr,
+                                 bool quiet = false,
+                                 int *exitCodeOut = nullptr);
     void closePrivilegedSession();
+    // A8-04: the single user-facing Cancel affordance for a RUNNING privileged
+    // operation (the progress dialog's Cancel for repairs, the Shell page's
+    // Cancel for shell commands, the Diagnostics page's Cancel for
+    // diagnostics).  A read-only diagnostic maps onto the EXISTING SIGUSR1
+    // cancel machinery (cancelInFlightDiagnostic); a mutating request
+    // (repair/shell) is a deliberate force-stop: the same SIGUSR1 makes the
+    // broker relay a process-group SIGTERM to the running request child (its
+    // EXIT-trap teardown detaches helper-owned mounts first and refuses the
+    // recursive session delete while mounted), and the run is then reported
+    // aborted fail-closed with the scope's diagnostic cache invalidated.
+    // The single-request gate is never dropped early: the active request's
+    // wait loop keeps running (bounded by the helper teardown grace) until
+    // the helper's DONE record arrives.  A no-op when no operation runs.
+    void cancelRunningPrivilegedOperation();
     // Aborts the in-flight read-only diagnostic so the application close can
     // proceed promptly: sends the helper the QUIT/close signal it already
     // understands and marks the request aborted so its non-modal wait loop
@@ -938,8 +1071,10 @@ private:
     // A7-01: trust gate for non-installed helper candidates (the helper is
     // executed by pkexec as root, so it must not be replaceable by another
     // local user): the canonicalized path must name a regular file owned by
-    // the invoking user and writable by neither group nor others. Installed
-    // /usr/libexec/ and /usr/lib/ helpers pass unconditionally.
+    // the invoking user or by root (root = the AppImage's read-only squashfs
+    // presentation of the embedded helper) and writable by neither group nor
+    // others. Installed /usr/libexec/ and /usr/lib/ helpers pass
+    // unconditionally.
     static bool helperPathTrusted(const QString &candidatePath);
     // A helper prepared for a privileged pkexec launch. AppImage FUSE mounts
     // are only accessible to the user who mounted them (root gets EACCES) and
@@ -1063,6 +1198,16 @@ private:
     static QString repairToolKeyForStage(const QString &stage);
     static QMap<QString, QString> parseRepairChangeStatuses(const QString &output);
     static bool repairChangeStatusIsUnchanged(const QString &status);
+    // A10-02: true when the transcript contains at least one
+    // `Repair change status <key>: changed` line — the conditional
+    // cache-invalidation rule for a cancelled repair (only a proven change
+    // before the abort invalidates the scope's cached diagnostics).
+    static bool repairTranscriptHasChangedStatus(const QString &output);
+    // True for `skipped|<reason>`: the stage ran its safety preflights but the
+    // user declined the confirmation, so nothing was changed (the plan
+    // continues).  Treated like unchanged for invalidation and rendered as the
+    // "not checked" category.
+    static bool repairChangeStatusIsSkipped(const QString &status);
     // Tool keys that must invalidate their mapped sections: every requested key
     // without an explicit unchanged status, plus any additional key the helper
     // reported changed (for example the GRUB follow-up of an EFI repair).
@@ -1160,11 +1305,43 @@ private:
     // Marks the mapped sections stale in the active scope, updates the
     // readiness controls and schedules one coalesced regeneration. Never called
     // while a Full Repair plan owns the repairs; the plan accumulates instead.
+    // `modified` is false for the round-42 Install-button no-op re-probe: the
+    // helper proved no package changed, but the capability evidence is still
+    // re-resolved so the row flips once the prerequisite is genuinely
+    // satisfied (the status wording then says "re-probed" instead of
+    // "modified").
     void invalidateDiagnosticsForRepair(const QStringList &toolKeys, bool failed,
-                                        const QString &reason, LogEntryKind kind);
+                                        const QString &reason, LogEntryKind kind,
+                                        bool modified = true);
     // Accumulates the union of sections invalidated by a Full Repair plan so
     // the plan regenerates them once at the end.
     void accumulatePlanInvalidation(const QStringList &toolKeys, bool failed);
+    // Round 16 (ITEM 1): the diagnostic sections a CANCELLED/aborted repair may
+    // have affected — the union of the sections the tool CONSUMES
+    // (requiredDiagnosticSectionsForTool) and the sections its completed
+    // mapping invalidates (diagnosticSectionsForRepair, "could affect").
+    // "all" means the complete set (unknown tools fail safe).
+    QStringList cancelledRepairAffectedSections(const QString &toolKey) const;
+    // The per-tool affected sections of a cancelled repair REQUEST, derived
+    // from its helper arguments (repair/host-repair stages, fs-repair, the
+    // install-* package verbs — round 19).  A non-repair verb or an
+    // unparsable stage list maps to "all" (fail safe).
+    QStringList cancelledRepairAffectedSectionsForArguments(const QStringList &arguments) const;
+    // Round 20 (ITEM 3): the affected diagnostic sections of a CANCELLED shell
+    // command that reported a change before the abort — the same class map as a
+    // completed shell command (package-manager -> package/backend/usage/
+    // capabilities; boot-config -> boot/grub/uki/kernel; a missing or
+    // unclassifiable class line -> the conservative complete set).
+    QStringList cancelledShellAffectedSections(const QString &output) const;
+    // Invalidates an explicit diagnostic-section list in the active scope (the
+    // round-16 shell-command class mapping) with the same presentation and
+    // coalesced-regeneration scheduling as invalidateDiagnosticsForRepair().
+    // "capabilities" is the dedicated capability cache entry, cleared directly
+    // (the regenerating section runs re-insert it); it is never a runnable
+    // section.  An empty runnable section list with nothing else to clear is a
+    // no-op.
+    void invalidateDiagnosticSections(const QStringList &sections, bool failed,
+                                      const QString &reason, LogEntryKind kind);
     // Sequentially regenerates only the requested sections in the active scope
     // through the existing per-section helper path and replaces only their
     // cached entries and log blocks.
@@ -1352,6 +1529,22 @@ private:
     // text; updateBusyIndicator() then blanks the reference-counted busy label
     // so exactly one concise progress text is visible at a time.
     bool m_progressDetailActive = false;
+    // Round 22: one preparation slot per deferred-work class.  Each holds the
+    // label currently armed for that class (empty when none), managed by
+    // armVisiblePreparation()/disarmVisiblePreparation().
+    QString m_refreshPreparationLabel;
+    QString m_unlockPreparationLabel;
+    QString m_snapshotPreparationLabel;
+    // Round 23 (ITEM 2): every (re-)arm of the refresh preparation bumps
+    // m_refreshPreparationGeneration, and a scheduled regeneration records the
+    // generation it was armed for in m_scheduledRunPrepGeneration.  A run only
+    // disarms a preparation that still belongs to IT — a NEWER pending
+    // schedule's preparation is never wiped by an older run's disarm (the
+    // rapid host->target switch dead gap: the first run's entry disarm erased
+    // the second switch's just-armed preparing state, leaving ~1.2 s with no
+    // indicator at all).
+    int m_refreshPreparationGeneration = 0;
+    int m_scheduledRunPrepGeneration = 0;
 
     QTreeWidget *m_deviceTree = nullptr;
     // Guards the viewport-resize -> column policy -> relayout chain so a
@@ -1376,6 +1569,15 @@ private:
     // this set, and the host set covers the same bookkeeping in host mode.
     QSet<QString> m_targetDiagnosticsStaleSections;
     QSet<QString> m_hostDiagnosticsStaleSections;
+    // Round 41: per-key USER-RUN latch — the set of diagnostic keys the user
+    // has run successfully at least once in this application session. It
+    // drives the per-diagnostic Run button wording ("Run Diagnostic" until
+    // the user runs that diagnostic, "Re-run Diagnostic" afterwards) and is
+    // deliberately NOT the cache presence: an auto-refresh (Run All) that
+    // populates the cache never flips an individual button, a cancelled or
+    // failed run produces no evidence and never flips, and the latch survives
+    // cache invalidation for the whole session (a monotone per-session latch).
+    QSet<QString> m_userRunDiagnosticKeys;
 
     QLabel *m_hostSystemLabel = nullptr;
     QLabel *m_hostStorageLabel = nullptr;
@@ -1406,7 +1608,13 @@ private:
     QLabel *m_chrootShellTargetLabel = nullptr;
     QLabel *m_chrootShellHeading = nullptr;
     QToolButton *m_chrootShellHelpButton = nullptr;
-    QLabel *m_chrootShellWarning = nullptr;
+    QPushButton *m_chrootShellClearButton = nullptr;
+    // Shell-unavailable reason line (legacy parity): a small label directly
+    // below the command row, shown only while the shell cannot run — it names
+    // the exact gate (no target committed, read-only scope refusal, missing
+    // authorization, diagnostics still generating) so the greyed Run button
+    // is explained by visible text, not only its tooltip. Hidden when ready.
+    QLabel *m_chrootShellReasonLabel = nullptr;
     QLineEdit *m_chrootShellCommandEdit = nullptr;
     QPlainTextEdit *m_chrootShellOutput = nullptr;
     QPushButton *m_chrootShellRunButton = nullptr;
@@ -1416,12 +1624,27 @@ private:
     // pending, mirroring the repair progress dialog's prompt surface.
     QLineEdit *m_shellPromptInput = nullptr;
     QPushButton *m_shellPromptSend = nullptr;
+    // A8-04: Cancel affordance for a running shell command (there is no
+    // progress dialog for the shell; the command streams into this pane).
+    // Enabled only while a ChrootShell/HostShell request owns the gate.
+    QPushButton *m_shellCancelButton = nullptr;
     // In-memory shell command history (oldest → newest), never written to
     // disk. The index is -1 while editing a fresh line; the draft holds the
     // user's in-progress text saved when navigating Up away from that line.
     QStringList m_chrootShellHistory;
     int m_chrootShellHistoryIndex = -1;
     QString m_chrootShellHistoryDraft;
+    // Scope-owned terminal (TUXEDO #2): the displayed shell transcript is
+    // parked per scope key ("host:<disk>" / "target:<disk>", the same key
+    // space as the boot-entries per-scope cache) and restored on a scope
+    // switch, so host output never leaks into the target shell and a
+    // host↔target round-trip re-renders each scope's own transcript. The
+    // cache is session-only and cleared only by an application launch or when
+    // the scope's disk actually changes (a different key misses the cache and
+    // resets to empty); the explicit Clear Output button also drops the
+    // current scope's cached copy.
+    QString m_shellTranscriptScopeKey;
+    QHash<QString, QString> m_shellTranscriptCache;
 
     QSplitter *m_diagnosticSplitter = nullptr;
     QListWidget *m_diagnosticList = nullptr;
@@ -1437,6 +1660,10 @@ private:
     QPlainTextEdit *m_diagnosticResults = nullptr;
     QPushButton *m_runDiagnosticButton = nullptr;
     QPushButton *m_runAllDiagnosticsButton = nullptr;
+    // A8-04: Cancel affordance for a running read-only diagnostics run.
+    // Enabled only while a Diagnostic request owns the gate; the click maps
+    // onto the existing SIGUSR1 cancel machinery.
+    QPushButton *m_diagnosticsCancelButton = nullptr;
     QPushButton *m_copyDiagnosticButton = nullptr;
     QPushButton *m_saveDiagnosticButton = nullptr;
     QLabel *m_targetConfigLabel = nullptr;
@@ -1452,6 +1679,11 @@ private:
     QLabel *m_repairToolPlanStatus = nullptr;
     QPushButton *m_repairToolButton = nullptr;
     QLabel *m_fullRepairCountLabel = nullptr;
+    // True while the Full Repair plan has NO selected stage rows (only the
+    // "No Full Repair stages selected" info row).  Drives the empty-plan
+    // comfort minimum in updateFullRepairPlanHeight() so the empty section
+    // never hugs a single tight text line with a scrollbar sliver.
+    bool m_fullRepairPlanEmpty = true;
     QLabel *m_fullRepairReadinessLabel = nullptr;
     QGroupBox *m_fullRepairPlanBox = nullptr;
     // Container hosting the ResponsiveColumnsLayout that lays out the read-only
@@ -1488,6 +1720,11 @@ private:
     QTableWidget *m_bootEntriesTable = nullptr;
     QPlainTextEdit *m_bootEntriesDetails = nullptr;
     QSplitter *m_bootEntriesSplitter = nullptr;
+    // True once the user dragged the EFI/UKI splitter handle: the 70/30
+    // default is not re-applied from then on (a width change clears it, like
+    // the Repair/Settings splitter flags).  The content-hugging table minimum
+    // still tracks the content.
+    bool m_bootEntriesSplitterUserAdjusted = false;
     QLayout *m_bootEntriesButtonLayout = nullptr;
     QPushButton *m_bootEntriesLoadButton = nullptr;
     QPushButton *m_bootEntriesMoveUpButton = nullptr;
@@ -1525,6 +1762,10 @@ private:
     QTreeWidget *m_grubMenuTree = nullptr;
     QPlainTextEdit *m_grubMenuDetails = nullptr;
     QSplitter *m_grubMenuSplitter = nullptr;
+    // True once the user dragged the Boot menu splitter handle: the 70/30
+    // default is not re-applied from then on (a width change clears it).  The
+    // content-hugging tree minimum still tracks the content.
+    bool m_grubMenuSplitterUserAdjusted = false;
     QPushButton *m_grubMenuLoadButton = nullptr;
     GrubMenuInventory m_grubMenuInventory;
     ExtlinuxInventory m_extlinuxInventory;
@@ -1592,6 +1833,7 @@ private:
     QListWidget *m_sourceList = nullptr;
     QPushButton *m_fileCopyAddFilesButton = nullptr;
     QPushButton *m_fileCopyAddFolderButton = nullptr;
+    QPushButton *m_fileCopyBrowseSourceButton = nullptr;
     QPushButton *m_fileCopyBrowseDestinationButton = nullptr;
     QPushButton *m_fileCopyPreviewButton = nullptr;
     QPushButton *m_fileCopyRunButton = nullptr;
@@ -1629,6 +1871,15 @@ private:
     QString m_viewedLogPath;
     QStringList m_viewedLogEntries;
     bool m_viewingPriorLog = false;
+    // Round 51: prior session files the startup retention prune could not
+    // remove unprivileged (root-owned logs), waiting for the privileged
+    // helper channel.  Flushed by flushPendingPruneLogDeletes().
+    QStringList m_pendingPruneLogDeletes;
+    // True while flushPendingPruneLogDeletes() owns its own helper request,
+    // so the post-request flush hook never re-schedules the flush from
+    // inside the flush's own completion (a failed flush stays queued for
+    // the next genuine privileged request instead of looping).
+    bool m_pruneFlushInProgress = false;
     QTableWidget *m_capabilityTable = nullptr;
     QLabel *m_distributionLabel = nullptr;
     QLabel *m_packageManagerLabel = nullptr;
@@ -1690,12 +1941,26 @@ private:
     QString m_rememberedTargetPath;
     QString m_rememberedTargetComponentPath;
     QString m_snapshotResultIdentity;
+    int m_snapshotInventoryCount = 0;
 
     QMap<QString, QString> m_targetDiagnosticCache;
     QMap<QString, QDateTime> m_targetDiagnosticTimes;
     QMap<QString, QString> m_hostDiagnosticCache;
     QMap<QString, QDateTime> m_hostDiagnosticTimes;
     QString m_targetDiagnosticCacheIdentity;
+
+    // Round 13: session-persistent per-scope backend/distribution wording
+    // evidence.  Seeded from the cached diagnostic evidence when it first
+    // lands for a scope, updated when fresh evidence arrives, and NEVER
+    // cleared by cache invalidation, a cancelled diagnostic or a host/target
+    // scope switch — once the backend evidence is known for a scope it keeps
+    // driving the backend-specific wording for the rest of the session.
+    // Each scope keeps its own copy; the target copy stays tied to the
+    // target diagnostic cache identity so wording from a different physical
+    // target never applies to the newly selected one.
+    QHash<QString, QString> m_hostWordingEvidence;
+    QHash<QString, QString> m_targetWordingEvidence;
+    QString m_targetWordingIdentity;
 
     QTimer *m_evidenceRefreshTimer = nullptr;
     // Coalescing delay for automatic evidence regeneration. Production keeps
@@ -1711,6 +1976,12 @@ private:
     // m_evidenceRefreshDelayMs.
     int m_bootEntriesRefreshDelayMs = 150;
     QString m_bootEntriesRefreshReason;
+    // Round 31 (TUXEDO post-diagnostics race): true from the moment the
+    // scheduled boot-entries refresh issues its first read-only request until
+    // both refreshBootEntries() and refreshGrubMenu() have returned — the
+    // window in which a repair click would be refused by the single-request
+    // gate and fail (forcing a full diagnostic regeneration).
+    bool m_bootEntriesRefreshInFlight = false;
     bool m_evidenceRefreshPending = false;
     bool m_evidenceRefreshInProgress = false;
     // Set when a scope switch (host↔target or a repair-target selection)
@@ -1734,6 +2005,45 @@ private:
     // request's non-modal wait loop observes it and stops waiting immediately,
     // then reports the request as aborted instead of a protocol failure.
     bool m_privilegedRequestAbortRequested = false;
+    // A8-04: set when the user force-stopped the running MUTATING request via
+    // cancelRunningPrivilegedOperation().  When the request's DONE record then
+    // arrives with a non-zero exit code, the run is reported aborted
+    // fail-closed (never success) and the scope's diagnostic cache is
+    // invalidated; a request that completed before the cancel landed keeps
+    // its real result.
+    bool m_privilegedRequestUserCancelled = false;
+    // Round 16 (ITEM 1): the cancel flag above is cleared by the request-frame
+    // gate guard the moment runPrivilegedRequest() returns, so the repair
+    // callers (runRepairHelper/runFilesystemRepairFlow) could never see it.
+    // This latch records the most recent request's user-cancel decision for
+    // the caller's completion path; it is reset when the next request starts.
+    bool m_lastPrivilegedRequestUserCancelled = false;
+    // A8-04: set when the user cancelled a read-only diagnostics run.  The
+    // per-section and single-diagnostic run loops observe it after the
+    // interrupted section returns: they stop the run and invalidate the
+    // scope's cache (a cancelled run must never cache partial evidence).
+    // Reset at the start of every diagnostics run path.
+    bool m_diagnosticsUserCancelled = false;
+    // A10-01: the protocol request id of the request that currently owns the
+    // privileged gate.  cancelRunningPrivilegedOperation() writes the
+    // record-level CANCEL\t<id> record for the mutating kinds: on the real
+    // pkexec topology the unprivileged GUI cannot signal the root helper
+    // (kill EPERM), so the CANCEL record over the session pipe is the only
+    // reliable cancel channel.
+    QByteArray m_privilegedRequestId;
+    // A10-01: the active request's prompt input/send widgets (the progress
+    // dialog's or the Shell pane's persistent line).  After the user clicks
+    // Cancel on a mutating request the input line is disabled so an answer
+    // can no longer continue the plan; the pointers are cleared when the
+    // request frame ends (GateGuard).
+    QPointer<QWidget> m_activePromptInput;
+    QPointer<QWidget> m_activePromptSend;
+    // A10-03: the diagnostic key of the in-flight diagnostic run ("" when
+    // none): "report" for the Run All/all-sections runs, the section key for
+    // an individual run.  cancelRunningPrivilegedOperation() invalidates
+    // that section AT CANCEL INITIATION so no path can re-retrieve the
+    // doomed cached section during the cancel window.
+    QString m_inFlightDiagnosticKey;
     // Scope identity (the request's disk-path argument) of the request that
     // owns the gate above; empty when no request is active. A request that
     // finds the gate held is re-entrant by definition and must never block on
@@ -1799,11 +2109,17 @@ private:
 
     QProcess *m_privilegedSession = nullptr;
     // Private helper copies staged for pkexec (AppImage/FUSE or noexec mount),
-    // the private directory each copy lives in, and the resolved source each
-    // copy was made from. All copies are removed when the window closes.
+    // the private directory each copy lives in, and the resolved source plus
+    // the verified SHA-256 each copy was made from (the hash is what makes a
+    // later reuse safe: the staged file is re-hashed against it). All copies
+    // are removed when the window closes.
+    struct StagedHelperSource {
+        QString sourcePath;
+        QString sha256;
+    };
     QStringList m_stagedHelperPaths;
     QStringList m_stagedHelperDirs;
-    QHash<QString, QString> m_stagedHelperSources;
+    QHash<QString, StagedHelperSource> m_stagedHelperSources;
     // Non-modal wait loop owned by the current ensurePrivilegedSession() call;
     // null unless a pkexec/Polkit authorization is being awaited. The session
     // QProcess handlers end the wait as soon as the outcome is known.
@@ -1837,4 +2153,9 @@ private:
     // inject realistic helper output (including the shared capability
     // preamble) without a privileged session.
     QMap<QString, QString> m_uiTestDiagnosticResults;
+    // Test-only one-shot launcher: when set, the concurrent session-log-delete
+    // invocation runs this program (with the verb arguments appended) instead
+    // of the resolved pkexec/helper, so the offscreen suite can prove the
+    // gate-exempt mid-run delete without a real Polkit conversation.
+    QString m_uiTestOneShotProgram;
 };

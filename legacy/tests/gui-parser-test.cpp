@@ -524,11 +524,13 @@ void testDeviceParsers()
     check(legacy::formatSizeKb(512ULL) == "512K", "formatSizeKb KiB");
 
     // /dev/mapper symlink layout (modern udev): the target names dm-N.
-    char dir[128];
-    std::snprintf(dir, sizeof(dir), "/tmp/legacy-mapper-test-%ld",
-                  static_cast<long>(::getpid()));
-    ::rmdir(dir);
-    check(::mkdir(dir, 0700) == 0, "mapper fixture directory created");
+    // AG-A-009 (round 45): the fixture directory is created by the kernel via
+    // mkdtemp (exclusive creation, unpredictable name) instead of the
+    // predictable pid-derived /tmp path a concurrent process could pre-create
+    // or a leftover run could leave behind.
+    char dirTemplate[] = "/tmp/legacy-mapper-test-XXXXXX";
+    const char *dir = ::mkdtemp(dirTemplate);
+    check(dir != NULL, "mapper fixture directory created (mkdtemp)");
     const std::string link = std::string(dir) + "/root";
     check(::symlink("dm-7", link.c_str()) == 0, "mapper symlink fixture created");
     std::map<std::string, std::string> emptyMap;
@@ -800,12 +802,156 @@ void testStageMapping()
     check(legacy::capabilityKeys().size() == 15, "15 capability keys");
 }
 
+// Round 30: the shared repair->diagnostic map loader executed against the REAL
+// canonical data file (the same file the modern GUI embeds). This is the
+// host-side cross-check that the legacy GUI's consumption is byte-for-byte the
+// round-19/20 table (the modern side is proven by the R19/R20 probes and the
+// ui suite).
+bool sameSections(const std::vector<std::string> &actual,
+                  const char *const *expected, std::size_t count)
+{
+    if (actual.size() != count) {
+        return false;
+    }
+    for (std::size_t i = 0; i < count; ++i) {
+        if (actual[i] != expected[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
+void testRepairDiagnosticMap(const std::string &mapPath)
+{
+    legacy::RepairDiagnosticMap map;
+    std::string error;
+    check(map.load(mapPath, &error),
+          "the canonical repair-diagnostic-map.tsv loads");
+    if (!map.loaded()) {
+        std::printf("  map load error: %s\n", error.c_str());
+        return;
+    }
+    check(map.rowCount() == 44, "the canonical map carries all 44 rows");
+
+    // The requires column (the repair-run gate).
+    {
+        const char *const environment[] = {"environment"};
+        check(sameSections(legacy::mapRequiredSections(map, "validate"),
+                           environment, 1),
+              "validate requires environment");
+        const char *const package[] = {"package"};
+        check(sameSections(legacy::mapRequiredSections(map, "fixbroken"),
+                           package, 1),
+              "fixbroken requires package");
+        const char *const bootstack[] = {"boot-evidence", "kernel", "uki", "grub"};
+        check(sameSections(legacy::mapRequiredSections(map, "bootstack"),
+                           bootstack, 4),
+              "bootstack requires the four component sections");
+        const char *const gpu[] = {"gpu", "kernel"};
+        check(sameSections(legacy::mapRequiredSections(map, "gpu"), gpu, 2),
+              "gpu requires gpu + kernel");
+        check(legacy::mapRequiredSections(map, "shell:package-manager").empty(),
+              "a shell class row has no baseline");
+        check(legacy::mapRequiredSections(map, "unknown-tool").size() == 1
+                  && legacy::mapRequiredSections(map, "unknown-tool")[0] == "report",
+              "an unknown key keeps the conservative report requires default");
+    }
+
+    // The completed-repair union (diagnosticSectionsForRepair parity).
+    {
+        const char *const packageSet[] = {"package", "backend", "usage", "capabilities"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "upgrade"),
+                           packageSet, 4),
+              "upgrade maps to package/backend/usage/capabilities");
+        const char *const fsSet[] = {"filesystem", "environment", "usage", "btrfs"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "filesystem"),
+                           fsSet, 4),
+              "filesystem maps to its storage sections");
+        const char *const grubSet[] = {"grub"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "grub"), grubSet, 1),
+              "grub maps to grub only");
+        const char *const extlinuxSet[] = {"boot-evidence", "boot"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "extlinux"),
+                           extlinuxSet, 2),
+              "extlinux maps to boot + boot-evidence");
+        const char *const envSet[] = {"environment"};
+        check(sameSections(legacy::mapAffectedSectionsForTool(map, "validate"),
+                           envSet, 1),
+              "validate keeps its read-only requires-derived set");
+        check(legacy::mapAffectedSectionsForTool(map, "fs-inspect").empty(),
+              "the read-only fs-inspect pre-stage invalidates nothing");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapAffectedSectionsForTool(map, "host-default")),
+              "host-default maps to the complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapAffectedSectionsForTool(map, "gpu:purge-wrong-driver")),
+              "the gpu prefix row keeps the fail-safe complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapAffectedSectionsForTool(map, "nomodeset")),
+              "nomodeset keeps the fail-safe complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapAffectedSectionsForTool(map, "file-copy")),
+              "file copy maps to the complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapAffectedSectionsForTool(map, "unknown-tool")),
+              "an unknown tool maps to the complete set");
+        const char *const kernelsSet[] = {"kernel", "usage", "boot", "boot-evidence",
+                                          "grub", "uki"};
+        check(sameSections(
+                  legacy::mapAffectedSectionsForTool(map, "kernels:install-headers"),
+                  kernelsSet, 6),
+              "the kernels prefix row folds onto the kernels set");
+    }
+
+    // The cancelled-repair union (requires OR affected).
+    {
+        const char *const packageSet[] = {"package", "backend", "usage", "capabilities"};
+        check(sameSections(legacy::mapCancelledRepairSections(map, "apt-update"),
+                           packageSet, 4),
+              "a cancelled package stage maps to the package set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapCancelledRepairSections(map, "unknown-tool")),
+              "a cancelled unknown stage fails safe to the complete set");
+    }
+
+    // The shell-class map (rounds 16/19/20).
+    {
+        const char *const pmSet[] = {"package", "backend", "usage", "capabilities"};
+        check(sameSections(legacy::mapShellClassAffectedSections(map, "package-manager"),
+                           pmSet, 4),
+              "the package-manager shell class maps to package/backend/usage/capabilities");
+        const char *const bootSet[] = {"boot", "grub", "uki", "kernel"};
+        check(sameSections(legacy::mapShellClassAffectedSections(map, "boot-config"),
+                           bootSet, 4),
+              "the boot-config shell class maps to boot/grub/uki/kernel");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapShellClassAffectedSections(map, "general")),
+              "the general shell class maps to the complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapShellClassAffectedSections(map, "unclassified")),
+              "an unknown shell class fails safe to the complete set");
+        check(legacy::mapSectionsAreComplete(
+                  legacy::mapShellClassAffectedSections(map, "")),
+              "a missing class line fails safe to the complete set");
+        check(legacy::mapShellClassAffectedSections(map, "no-op").empty(),
+              "the documented no-op class invalidates nothing");
+    }
+
+    // The rule rows resolve conservatively when looked up directly.
+    check(legacy::mapSectionsAreComplete(
+              legacy::mapAffectedSectionsForTool(map, "plan")),
+          "the plan rule row fails safe to the complete set on a direct lookup");
+    check(legacy::mapSectionsAreComplete(
+              legacy::mapAffectedSectionsForTool(map, "cancelled-repair-with-change")),
+          "the cancelled-repair rule row fails safe to the complete set on a direct lookup");
+}
+
 } // namespace
 
 int main(int argc, char **argv)
 {
     if (argc < 2) {
-        std::fprintf(stderr, "usage: %s <fixture-transcript>\n", argv[0]);
+        std::fprintf(stderr, "usage: %s <fixture-transcript> [repair-diagnostic-map.tsv]\n", argv[0]);
         return 2;
     }
     const std::string fixture = readFile(argv[1]);
@@ -818,6 +964,9 @@ int main(int argc, char **argv)
     testUdevMetadata();
     testUnlockHelpers();
     testStageMapping();
+    if (argc >= 3) {
+        testRepairDiagnosticMap(argv[2]);
+    }
 
     if (failures > 0) {
         std::printf("gui parser contract: FAIL (%d)\n", failures);

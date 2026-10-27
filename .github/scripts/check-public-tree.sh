@@ -98,12 +98,12 @@ else
 
     grep -qF 'set(CPACK_PACKAGE_NAME "boot-repair")' "$ROOT_DIR/CMakeLists.txt" \
         || fail "the Debian package name is no longer boot-repair"
-    grep -qF 'set(CPACK_RPM_PACKAGE_NAME "boot-bitch")' "$ROOT_DIR/CMakeLists.txt" \
-        || fail "the RPM package name is no longer boot-bitch"
-    grep -q '^pkgname=boot-bitch$' "$ROOT_DIR/scripts/package-arch.sh" \
-        || fail "the Arch package name is no longer boot-bitch"
-    grep -q '^pkgname=boot-bitch$' "$ROOT_DIR/scripts/package-alpine.sh" \
-        || fail "the Alpine package name is no longer boot-bitch"
+    grep -qF 'set(CPACK_RPM_PACKAGE_NAME "boot-repair")' "$ROOT_DIR/CMakeLists.txt" \
+        || fail "the RPM package name is no longer boot-repair"
+    grep -q '^pkgname=boot-repair$' "$ROOT_DIR/scripts/package-arch.sh" \
+        || fail "the Arch package name is no longer boot-repair"
+    grep -q '^pkgname=boot-repair$' "$ROOT_DIR/scripts/package-alpine.sh" \
+        || fail "the Alpine package name is no longer boot-repair"
 fi
 
 if (( failures > 0 )); then

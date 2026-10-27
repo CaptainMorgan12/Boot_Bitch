@@ -225,6 +225,13 @@ build_gui()
     ) || fail "legacy GUI build failed (see the output above); expected $GUI_NAME."
     [ -x "$_gui_build/$GUI_NAME" ] \
         || fail "legacy GUI build produced no executable: $_gui_build/$GUI_NAME"
+    # Hardening (VAR-1): strip the GUI binary at packaging time so the shipped
+    # artifact carries no unnecessary symbols (lintian
+    # unstripped-binary-or-object). Nothing consumes symbols from the GUI; the
+    # --install-vm hash verification compares the stripped artifact, so the
+    # installed payload always matches the package.
+    strip --strip-unneeded "$_gui_build/$GUI_NAME" \
+        || fail "strip failed for the built GUI binary: $_gui_build/$GUI_NAME"
     return 0
 }
 
@@ -250,6 +257,15 @@ stage_gui()
         install -m 0644 "$_icon" \
             "$_stage/usr/share/icons/hicolor/${_size}x${_size}/apps/boot-repair-legacy.png"
     done
+    # Round 70 (E2): the running-system shield badge — the COLORED semantic
+    # status asset extracted from the modern icon atlas (security.svg) by
+    # legacy/gui/data/make-shield-icon.py — ships beside the app icons and is
+    # loaded by the GUI with the "[OK]" text fallback when missing.
+    _shield_icon="$GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png"
+    [ -f "$_shield_icon" ] || fail "missing legacy shield icon: $_shield_icon"
+    mkdir -p "$_stage/usr/share/icons/hicolor/32x32/apps"
+    install -m 0644 "$_shield_icon" \
+        "$_stage/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png"
 }
 
 # Resolve the pinned absolute Qt3 lrelease path. Returns nonzero when none is
@@ -311,6 +327,30 @@ stage_translations()
     fi
 }
 
+# Resolve the runtime library dependencies of the staged GUI binary with
+# dpkg-shlibdeps (VAR-1: the libc dependency must come from the packaging
+# step, never a hand-written version). Real builds run on Etch and resolve
+# against the guest's own libraries; dry runs stage a placeholder binary and
+# return nothing, so the staged control stays deterministic on any host.
+# The explicit libqt3-mt floor in control.in stays; the shlibs-derived
+# libqt3-mt entry would duplicate it and is dropped.
+resolve_shlibs_depends()
+{
+    _binary="$1"
+    _out=""
+    if [ "$DRY_RUN" = 1 ]; then
+        return 0
+    fi
+    command -v dpkg-shlibdeps >/dev/null 2>&1 \
+        || fail 'dpkg-shlibdeps is required for the real Etch build (install dpkg-dev in the guest).'
+    _out="$(dpkg-shlibdeps -O "$_binary" 2>/dev/null || true)"
+    _out="$(printf '%s\n' "$_out" | sed -n 's/^shlibs:Depends=//p' | head -n1)"
+    _out="$(printf '%s\n' "$_out" \
+        | sed -e 's/[, ]*libqt3-mt ([^)]*)//g' \
+              -e 's/^, *//' -e 's/, *$//')"
+    printf '%s\n' "$_out"
+}
+
 stage_tree()
 {
     _stage="$1"
@@ -341,14 +381,34 @@ stage_tree()
     stage_gui "$_stage"
     stage_translations "$_stage"
 
+    # Round 30: the shared repair->diagnostic map (the same canonical data
+    # file the modern GUI embeds) so the legacy GUI applies the identical
+    # invalidation map; installed beside the Qt3 translation catalogs and
+    # resolved by the GUI at runtime.
+    install -m 0644 "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
+        "$_stage/usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
+
     bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
         || fail 'staged helper failed bash -n.'
 
     _installed_size="$(du -sk "$_stage/usr" | awk '{print $1}')"
-    sed -e "s|@VERSION@|$PROJECT_VERSION-$PKG_RELEASE|g" \
-        -e "s|@ARCH@|$ARCH|g" \
-        -e "s|@INSTALLED_SIZE@|$_installed_size|g" \
-        "$CONTROL_TEMPLATE" > "$_stage/DEBIAN/control"
+    # VAR-1: the resolved runtime dependencies (libc6, libgcc1, libstdc++6,
+    # ...) substitute the ${shlibs:Depends} token in control.in; a dry run
+    # leaves the token empty so the control contract stays deterministic.
+    _shlibs_depends="$(resolve_shlibs_depends "$_stage/usr/bin/$GUI_NAME")"
+    if [ -n "$_shlibs_depends" ]; then
+        sed -e "s|@VERSION@|$PROJECT_VERSION-$PKG_RELEASE|g" \
+            -e "s|@ARCH@|$ARCH|g" \
+            -e "s|@INSTALLED_SIZE@|$_installed_size|g" \
+            -e "s|, \${shlibs:Depends}|, $_shlibs_depends|g" \
+            "$CONTROL_TEMPLATE" > "$_stage/DEBIAN/control"
+    else
+        sed -e "s|@VERSION@|$PROJECT_VERSION-$PKG_RELEASE|g" \
+            -e "s|@ARCH@|$ARCH|g" \
+            -e "s|@INSTALLED_SIZE@|$_installed_size|g" \
+            -e "s|, \${shlibs:Depends}||g" \
+            "$CONTROL_TEMPLATE" > "$_stage/DEBIAN/control"
+    fi
     chmod 0644 "$_stage/DEBIAN/control"
 }
 
@@ -367,12 +427,16 @@ validate_artifact()
         || fail "built package Depends is missing cryptsetup"
     dpkg-deb --field "$_deb" Depends | grep -q 'libqt3-mt' \
         || fail "built package Depends is missing the Qt3 runtime libqt3-mt"
+    dpkg-deb --field "$_deb" Depends | grep -q 'libc6' \
+        || fail "built package Depends is missing the dpkg-shlibdeps-resolved libc6 entry"
     for _path in \
         ./usr/sbin/boot-repair-legacy-helper \
         ./usr/bin/$GUI_NAME \
         ./usr/share/applications/$GUI_NAME.desktop \
         ./usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png \
-        ./usr/share/doc/$PKG_NAME/copyright
+        ./usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png \
+        ./usr/share/doc/$PKG_NAME/copyright \
+        ./usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
     do
         if ! dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
             fail "built package is missing $_path"
@@ -502,13 +566,17 @@ main()
     [ -n "$PROJECT_VERSION" ] || fail 'unable to determine the project version from CMakeLists.txt.'
 
     for _required in "$CONTROL_TEMPLATE" "$COPYRIGHT_SRC" "$CHANGELOG_SRC" \
-        "$GUI_PRO" "$GUI_DESKTOP_SRC"; do
+        "$GUI_PRO" "$GUI_DESKTOP_SRC" \
+        "$ROOT_DIR/data/repair-diagnostic-map.tsv"; do
         [ -f "$_required" ] || fail "missing legacy packaging input: $_required"
     done
     for _size in $GUI_ICON_SIZES; do
         _required="$GUI_ICON_DIR/boot-repair-legacy-${_size}x${_size}.png"
         [ -f "$_required" ] || fail "missing legacy icon: $_required"
     done
+    # Round 70 (E2): the shield badge PNG is a mandatory packaging input.
+    [ -f "$GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png" ] \
+        || fail "missing legacy shield icon: $GUI_ICON_DIR/boot-repair-legacy-shield-32x32.png"
 
     HELPER_SRC="$(find_helper)" \
         || fail "legacy helper source not found. Set LEGACY_HELPER_SRC=<path> (documented variable; see the script header)."
@@ -530,7 +598,7 @@ metadata without building; run this script without --dry-run (and with
 EOF
             exit 2
         fi
-        for _cmd in dpkg dpkg-deb fakeroot gzip sed install du awk sha256sum qmake-qt3 make; do
+        for _cmd in dpkg dpkg-deb fakeroot gzip sed install du awk sha256sum qmake-qt3 make strip; do
             command -v "$_cmd" >/dev/null 2>&1 \
                 || fail "missing required Etch packaging command: $_cmd"
         done

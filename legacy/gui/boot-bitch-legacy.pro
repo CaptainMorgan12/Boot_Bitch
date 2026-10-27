@@ -44,6 +44,13 @@ SOURCES = \
 # C++98 baseline (g++ 4.1 on Etch).
 QMAKE_CXXFLAGS += -std=c++98
 
+# Hardening (VAR-1): position-independent executable with full RELRO and
+# immediate binding. g++ 4.1 accepts -fPIE/-pie and the -z,relro,-z,now
+# linker flags, and qmake-qt3 1.07a passes them through the g++ spec for
+# this app template.
+QMAKE_CXXFLAGS += -fPIE
+QMAKE_LFLAGS   += -pie -Wl,-z,relro,-z,now
+
 # Qt3 i18n: the shipped translation catalogs (sources). The .qm binaries are
 # compiled in-guest by Qt3 lrelease during packaging (scripts/package-legacy.sh),
 # because Qt3 and Qt6 .qm formats are incompatible. Deferred: zh ja ko ar (CJK

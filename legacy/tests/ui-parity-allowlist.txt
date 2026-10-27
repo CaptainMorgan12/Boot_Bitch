@@ -36,10 +36,22 @@
 # for what belongs here vs in the PORT backlog.
 
 # --- [feature] feature strings for backends Etch lacks (not on Etch) ---
- Fedora runs one guarded dnf upgrade transaction after a removal- and downgrade-free, signature-checked simulation.
- Fedora uses dnf makecache as its standalone metadata stage.
- Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.
- The detected dracut backend pairs each installed kernel with its /boot vmlinuz and initramfs image, verifies a trial build with lsinitrd, and backs up each image so a failed verification restores it.
+# round 66: the modern Add Note memo placeholder (the legacy Qt3 dialog keeps
+# the QInputDialog flow with no in-field placeholder).
+Enter the note text
+When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (the serial console stays) so the prompt remains on the visible screen instead of going black.
+Fedora runs one guarded dnf upgrade transaction after a removal- and downgrade-free, signature-checked simulation.
+Fedora uses dnf makecache as its standalone metadata stage.
+Fedora/RPM restores missing or corrupt package files via one simulated dnf reinstall transaction.
+The detected dracut backend pairs each installed kernel with its /boot vmlinuz and initramfs image, verifies a trial build with lsinitrd, and backs up each image so a failed verification restores it.
+The detected Fedora GRUB2/BLS backend repairs the boot code on a BIOS layout, leaving /boot/grub2/grub.cfg and the BLS entries intact.
+On a Fedora BIOS target this validates mapper/crypttab, rebuilds the dracut initramfs images and regenerates the GRUB2 configuration (config-only; the guarded bootloader reinstall stays in the GRUB stage).
+The detected GRUB EFI layout uses a guarded grub-install on the validated ESP and restores one verified vendor-loader firmware entry if the installer only writes files.
+The detected vendor UKI layout (for example the TUXEDO TUX.EFI builder) is rebuilt or re-registered through its official builder.
+The detected syslinux/extlinux layout is repaired through its configuration and boot code, never through EFI.
+Repair the running host or selected repair system's boot path with the detected backend's guarded installer or vendor builder, restoring one verified default-loader entry and preserving every other ESP's firmware entries and BootOrder.
+Reconcile a repaired or restored root with its boot artifacts: validate mapper/crypttab, rebuild installed-kernel initramfs images, repair the detected bootloader path (vendor UKI builder, GRUB EFI, extlinux or Fedora BLS), reconcile one canonical default destination per purpose, and regenerate the detected bootloader configuration.
+Restore the display manager identified from the running host or selected repair system's boot evidence and configuration (for example SDDM, GDM/GDM3, LightDM, or another systemd manager), set graphical.target as the default, and repair display-manager.service.
 %1 boot menu entries loaded read-only.
 %1 boot menu viewing is available. Load Menu to list the boot menu read-only.
 %1 default boot entry
@@ -374,7 +386,6 @@ Show Btrfs filesystem and subvolume information.
 Show boot mounts, /boot and EFI contents read-only.
 Shows Btrfs filesystem and subvolume information for the running host or selected repair system.
 Shows boot mounts, /boot and EFI contents plus storage evidence without changing the selected system.
-Simulate the distribution's package transaction first, inspect proposed removals, then apply a safe upgrade. Debian/Ubuntu chooses an APT mode; Arch runs one full pacman transaction; Alpine runs one guarded apk upgrade transaction. This maps directly to Settings → Upgrade installed packages.
 Snapshot
 Snapshot #%1 · %2
 Snapshot %1 is staged as the running host's next root.
@@ -397,8 +408,8 @@ The boot menu could not be loaded. See Logs for details.
 The cached running-host diagnostics do not decide whether the host default entry can be restored. Regenerate running-host diagnostics in Host Maintenance, and update Boot Bitch if the helper format changed.
 The detected Fedora GRUB2/BLS backend repairs the boot code on a BIOS layout, leaving /boot/grub2/grub.cfg and the BLS entries intact. 
 The detected GRUB EFI layout uses a guarded grub-install on the validated ESP and restores one verified vendor-loader firmware entry if the installer only writes files. 
-The detected backend is GDM (Fedora naming); its configuration lives in /etc/gdm/custom.conf. 
-The detected backend is GDM3; its configuration lives in /etc/gdm3/daemon.conf. 
+The detected backend is GDM (Fedora naming); its configuration lives in /etc/gdm/custom.conf.
+The detected backend is GDM3; its configuration lives in /etc/gdm3/daemon.conf.
 The detected syslinux/extlinux layout is repaired through its configuration and boot code, never through EFI. 
 The detected vendor UKI layout (for example the TUXEDO TUX.EFI builder) is rebuilt or re-registered through its official builder. 
 The helper did not identify a bootable running-host default entry.
@@ -539,7 +550,6 @@ Delete the selected session log.
 Description
 Destination: %1\nOwnership: %2\n\nSources:\n• %3\n\n
 Device: %1 · File system: %2 · Mount: %3 · Check tool: %4
-Diagnostic results appear here.
 Display the selected system's fstab read-only.
 Encrypted volume
 Encrypted — unlock to inspect
@@ -680,6 +690,10 @@ Validate mapper/crypttab against the %1
 Validate repair target
 Validate running host
 # --- [helper] helper reason/msg localisations (shown verbatim) ---
+No disk-unlock prompt is expected from this boot configuration (no passphrase-keyed crypttab entry and no cryptdevice kernel parameter); the console layout cannot move an unlock prompt off the visible screen.
+The console-routing fix is not implemented for the detected %1 boot configuration; the visible-console fix was not applied.
+The effective kernel command line could not be determined read-only; the console routing was not changed.
+The last registered console is already tty0 (the visible virtual terminal); no console-routing change is needed.
 %1 is a static unit; preserving it through the display-manager.service alias.
 %1 is missing or empty.
 %1 is missing.
@@ -773,6 +787,7 @@ Check Alpine grub-install availability/version
 Check grub-install availability/version
 Chroot shell exit code: %1
 Cleaning leftover on-disk components of removed kernel %1 (zombie cleanup)
+REFUSED: '%1' is not a valid kernel version or flavour name; its on-disk components were not cleaned.
 Clearing BootNext introduced during EFI repair.
 Command: %1
 Complete interrupted package configuration before correction
@@ -1055,6 +1070,7 @@ PREVIEW: target destination directory would be created: %1
 Package backend %1 change status: %2
 Package backend %1 did not report a change status; treating the stage as changed.
 Package stage '%1': running %2 runnable backend(s): %3
+Package-mutating stage %1 (%2): confirmation declined or timed out; the stage was skipped and the plan continues
 PackageKit daemon is running; it is only a conflict while it holds package-manager locks or spawns apt/dpkg.
 Post-repair DKMS status
 Post-repair akmods status
@@ -1143,6 +1159,7 @@ Remove superseded kernel packages
 Remove the incomplete kernel
 Removed firmware boot entry Boot%1.
 Removed leaked Boot Bitch session mount at %1 (source=%2)
+Removed propagated Boot Bitch session mount copy at %1 (source=%2, namespace pid=%3)
 Removing an incomplete kernel is not supported on the %1 package backend; reinstall the kernel to complete it instead.
 Removing duplicate/legacy selected-ESP firmware destination Boot%1.
 Removing the newest kernel would also remove the managed metapackage(s) %1 (they depend on it), and re-pointing them to the surviving kernel %2 could not be resolved; no kernel was removed.
@@ -1195,6 +1212,8 @@ Rollback source remains unchanged; the running host keeps the current root until
 Rollback source snapshot will remain unchanged.
 Root component fallback: selected component %1 (%2) lacks /etc/os-release; resolved %3 (%4) from %5.
 Root component: %1 (%2)
+Selected component %1 (%2) is already mounted at %3 and carries no /etc/os-release; the not-a-Linux-system check runs against the existing mount.
+Target root %1 is already mounted at %2; the existing mount was adopted read-only into the session (no second mount was attempted).
 Root filesystem: %1
 Root fs: %1
 Root subvolume: %1
@@ -1301,6 +1320,7 @@ The GPU driver repair was cancelled; no changes were made.
 The GRUB ZFS module (zfs.mod) is not installed in the target.
 The LVM userspace tool (lvs) is not installed; LVM volume inspection is unavailable.
 The OpenRC default runlevel already enabled %1.
+The confirmation was declined or timed out; the stage was skipped and no packages were changed.
 The conflicting module blacklist is already byte-identical.
 The correct GPU driver is already installed; there was nothing to change.
 The current kernel is intact; no removable, incomplete or orphaned kernel components were found.
@@ -1641,7 +1661,7 @@ Live / installer media cannot be selected
 Log saved to %1
 Missing %1: install the %2 package from the Boot capabilities table.
 No Full Repair stages are selected.
-No Full Repair stages selected — use Configure Plan… or Settings.
+No Full Repair stages selected — use Configure Plan or Settings.
 No cached capability evidence yet; your saved selection is kept and re-checked after diagnostics.
 No cached diagnostics belong to the selected target.
 No cached diagnostics belong to the selected target. Run target diagnostics first.
@@ -1649,7 +1669,7 @@ No cached diagnostics exist for the selected target.
 No cached running-host diagnostics exist.
 No capability evidence for repair tool %1 in the selected scope. Run diagnostics first.
 No mountable Linux root filesystem has been identified on the selected target.
-No repair stages are selected. Use Configure Plan… to choose the stages Full Repair will run.
+No repair stages are selected. Use Configure Plan to choose the stages Full Repair will run.
 No repair target committed; rows are inspection-only until Select Target.
 No repair target is ready for diagnostics.
 No repair target selected
@@ -1748,7 +1768,7 @@ Target: %1
 The Full Repair plan is running. The read-only file system check pre-stage runs first, then the selected repair stages; each stage's output streams here as it completes.
 The LUKS passphrase was not accepted.
 The administrator authorization session could not be established.
-The detected backend is %1. 
+The detected backend is %1.
 The edited content could not be written to a private temporary file in the application log directory; the write was not started.
 The edited file is larger than 1 MiB; the guarded write refuses it. Edit the file from a console instead.
 The full diagnostic report is already running; results appear when it completes.
@@ -1806,6 +1826,7 @@ the affected repository
 
 # [status] re-triage 2026-10-13 additions: GUI scope/busy/log/reason lines
 (no matching entries for this filter)
+A background refresh that follows the completed diagnostics is still finishing; this repair unlocks automatically in a moment.
 Committed repair target. Repair, Diagnostics, Snapshots and File Copy target this drive until Select Target picks another.
 ERROR: Privileged request '%1' was %2.
 File Copy — %1
@@ -1819,8 +1840,6 @@ Add Folder Path…
 Add Folder…
 Browse Target Folders…
 Browse…
-Configure Plan…
-Edit Target File…
 Save As…
 Save Results…
 
@@ -1844,3 +1863,365 @@ Live / installer media — not selectable
 PROTECTED — running system; read-only details only
 Repair → Host
 ✓ SELECTED TARGET  •  %1
+# --- [status] cancel/stop wording (rounds 8-10; the legacy GUI renders its own) ---
+Cancel operation
+Cancel the running operation? Changes already applied cannot be undone.
+Diagnostic cancelled by the user; the partial result was discarded and cached evidence for this scope was invalidated. Run the diagnostics again before any repair.
+Diagnostic cancelled by the user; the partial result was discarded and this diagnostic's cached section was invalidated. Run it again before any repair.
+Diagnostics run cancelled by the user; cached evidence for this scope was invalidated. Run the diagnostics again before any repair.
+Stop the running diagnostic.
+Stop the running operation.
+Stop the running shell command.
+Stopping the running operation…
+The privileged operation '%1' was stopped at your request. It was aborted before any stage reported a change, so cached diagnostics remain valid.
+The privileged operation was stopped at your request before any stage reported a change. Review the output before closing; cached diagnostics remain valid.
+# --- [status] round-12 dynamic backend wording (items 6/7; modern-GUI-only — the
+# legacy Selected-tool pane keeps its own static backend descriptions) ---
+Alpine runs one guarded apk upgrade transaction after the simulation.
+Arch runs one full pacman transaction after the sandboxed download preflight.
+Command to run on the running host, for example: %1
+Command, for example: %1
+Debian/Ubuntu chooses an APT mode (upgrade or full-upgrade) from the simulation feedback.
+Simulate the package transaction first, inspect proposed removals, then apply a safe upgrade.
+The detected apk backend runs its own guarded upgrade transaction as well.
+This maps directly to Settings → Upgrade installed packages.
+# --- [status] round-14 uniform shell-command placeholder (modern-surface-only:
+# Qt3 QLineEdit has no placeholder; the legacy shell hint is its own tooltip) ---
+Command to run, for example: %1
+Command to run, for example: refresh package metadata
+# --- [status] round-16 cancel wording ("affected sections" — modern-GUI-only:
+# the legacy keeps its conservative full invalidation on a cancelled repair and
+# its popup carries its own stopped-at-your-request wording) ---
+The privileged operation '%1' was stopped at your request. It was aborted mid-run: some of its changes may already have been applied. The affected cached diagnostic sections were invalidated; run the diagnostics again before retrying any repair.
+The privileged operation was stopped at your request. Review the output before closing; the affected cached diagnostic sections were invalidated.
+# --- [feature] round-32 log-line wraps for modern-only surfaces (boot entries/
+# firmware/EFI management, Btrfs snapshots/rollback/reboot, verified file
+# copy, host-default, the boot-menu read-only viewer, the Acquire retry flow,
+# the file-system repair output framing) — the legacy frontend has none of
+# these features and its own transcript framing instead ---
+Boot%1 marked for deletion (pending until Save).
+Boot%1 rename staged to "%2" (pending until Save).
+Boot entries refresh refused: %1
+Boot entries restore refused: %1
+Boot entry delete refused: %1
+Boot entry rename refused: %1
+Boot menu list failed.
+Boot menu refresh refused: %1
+Btrfs check --repair cancelled at the extra danger confirmation.
+Btrfs snapshot inventory failed.
+Deletion of Boot%1 cancelled (still pending until Save).
+Discarded the Btrfs snapshot inventory for %1 (%2) because the active scope changed while the request was running.
+extlinux boot menu list failed.
+File Copy made no diagnostic-relevant filesystem change; cached diagnostics remain usable.
+Firmware boot entry changes incomplete: %1
+Firmware boot entry list failed.
+GRUB legacy boot menu list failed.
+Host default not verified: %1
+Loaded 0 boot menu entries read-only (no GRUB, extlinux or GRUB legacy config).
+Loaded %1 %2 firmware boot entr%3 read-only.
+Loaded %1 %2 GRUB menu entr%3 read-only.
+Loaded %1 extlinux menu entr%2 read-only.
+Loaded %1 GRUB legacy menu entr%2 read-only.
+Loading %1 boot menu read-only for %2 (%3).
+Loading %1 UEFI firmware boot entries read-only for %2 (%3).
+Make Default refused: %1
+Preparing read-only running-host rollback plan for snapshot %1.
+Preparing read-only transactional rollback plan for Btrfs snapshot %1.
+Previous running-host rollback took effect at boot %1; the reboot reminder was cleared.
+Requesting an explicit running-host reboot after the second confirmation.
+Running-host reboot cancelled at the second confirmation; the staged rollback remains in effect.
+Running-host reboot scheduled by the privileged helper.
+Running-host reboot was not scheduled; the staged rollback and its reminder remain in effect.
+Running-host rollback cancelled after preflight; no host data was changed.
+Running-host rollback cancelled at the replacement warning; the previously staged rollback remains in effect.
+Running-host rollback cancelled because the confirmation text did not match ROLLBACK.
+running-host snapshot %1 rollback did not complete; cached host diagnostics and snapshots were invalidated. Review the operation output before the next repair or reboot.
+Running-host snapshot %1 rollback preflight failed; no host data was changed.
+running-host snapshot %1 rollback staged the promoted root for the next reboot; snapshot inventory and cached host diagnostics were invalidated. The running host keeps the current root until reboot.
+Save firmware boot entry changes refused: %1
+Snapshot %1 read-only inspection completed.
+Snapshot %1 read-only inspection failed.
+snapshot %1 rollback changed the active root; snapshot inventory and cached diagnostics were invalidated. Regenerate diagnostics before the next repair.
+snapshot %1 rollback did not complete; cached diagnostics and snapshots were invalidated. Regenerate diagnostics and review the operation output before the next repair or reboot.
+Snapshot %1 rollback preflight failed; no target data was changed.
+Snapshot rollback cancelled after preflight; no target data was changed.
+Snapshot rollback cancelled because the confirmation text did not match ROLLBACK.
+Starting File Copy preview (%1).
+Starting privileged default boot entry operation on %1 (%2).
+Starting privileged firmware boot entry changes on %1 (%2).
+Starting running-host Btrfs rollback to snapshot %1 on %2.
+Starting transactional Btrfs rollback to snapshot %1 on committed target %2.
+Starting verified File Copy (%1) to %2.
+Added %1 host file(s) to the Host → Repair staging list. No copy occurred.
+Added host folder to the Host → Repair staging list: %1. No copy occurred.
+Added repaired-system file path to the Repair → Host staging list: %1. No copy occurred.
+Added repaired-system folder path to the Repair → Host staging list: %1. No copy occurred.
+Staged Host → Repair destination: %1. No copy occurred.
+Staged Repair → Host destination: %1. No copy occurred.
+read-only ESP, UKI and firmware entry inspection
+Run diagnostic — %1
+Launch detection: %1 device(s) scanned; protected running host %2; repair target %3; privileged helper %4 (%5); pkexec %6.
+Running host selected for explicit maintenance: %1 (%2). All supported repair stages are available in this deliberate host scope; running-host Snapper @ snapshots are available in the Snapshots tab, while the chroot shell and file-copy workflows remain separate target tools.
+%1 repository metadata change accepted for %2; retrying once with Acquire::AllowReleaseInfoChange=true: %3
+%1 repository metadata change for %2 was not accepted; the original failure stands.
+File system check output\n%1
+File system repair output for %1 (%2)\n%3
+The privileged helper returned no file system check output.
+The privileged helper returned no repair output.
+Using cached read-only diagnostic evidence for %1 (%2 bytes).
+Using cached read-only diagnostic evidence for Full Repair (%1 bytes).
+Root component fallback refused: resolved component %1 backs the protected running system; keeping %2 as the committed component.
+Root component fallback refused: resolved component %1 is not provably on the same top-level device as %2; keeping %2 as the committed component.
+Target root component confirmed by privileged evidence: %1 (was %2). The committed target now uses the resolved component.
+# --- [status] round-32 log-line wraps whose legacy counterpart keeps its own
+# (already translated) wording — authorization/session, auto-refresh, repair
+# completion/cancel, capability-scan, LUKS, session-log management, the shell
+# completion forms and the STALE prose tails ---
+Action register cleared. No persistent target logs were modified.
+Administrator authorization session ended (helper exit code %1). The next privileged action will request authorization again.
+Administrator authorization session established. The GUI remains unprivileged.
+Administrator authorization session was explicitly locked by the user. Boot Bitch-owned temporary mounts were already released after each request and any Boot Bitch-owned LUKS mapper was asked to close.
+Administrator authorization was deferred; the next privileged action will request it again.
+Authorization retry failed: %1
+Authorization session: %1
+Automatically regenerating read-only diagnostics (%1).
+Automatic read-only diagnostics regeneration completed.
+Automatic read-only diagnostics regeneration failed; cached evidence remains stale.
+Automatic read-only diagnostics regeneration is deferred until the running privileged operation finishes (%1).
+Automatic read-only diagnostics regeneration is pending until administrator authorization is active (%1).
+Boot Bitch %1 started in guarded repair mode.
+Host capability evidence refreshed from the cached running-host diagnostics.
+LUKS passphrase was not accepted for %1; offering retry without re-authorizing the administrator session.
+LUKS unlock did not complete for %1.
+LUKS volume unlocked for %1; refreshing device topology.
+No system changes were detected; cached diagnostics remain valid.
+Privileged helper: %1 (%2).
+Running-host maintenance deselected; ordinary repair-target mode restored. Diagnostics scope returned to Repair Target.
+selected system was modified by a shell command. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.
+selected system was modified by repair action. Regenerate diagnostics before the next repair.
+selected system was modified by repair action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.
+a cancelled repair reported a change before the abort. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.
+repair failed after a modifying action. Regenerate diagnostics before the next repair.
+Session log %1 generated %2
+Session log retention removed %1 older file(s); at most 20 files / 10 MB are kept.
+Starting privileged action: %1 on %2 (%3).
+Starting privileged LUKS unlock for %1 on %2. Passphrase is not logged.
+stale evidence
+%1: aborted because the application is closing.
+%1 command completed: %2
+%1 command failed: %2
+%1 finished with exit code %2 (error).
+%1 finished with exit code %2 (success).
+%1 refused: %2
+%1: stopped by the user mid-run (helper exit code %2); a stage had reported a change, so the affected diagnostic sections were invalidated.
+%1: stopped by the user mid-run (helper exit code %2); no stage reported a change before the stop, so cached diagnostics were kept.
+%1: the privileged helper did not return a protocol DONE record; treating the request as failed.
+# --- [status] round-34 translation-completeness wraps (the legacy GUI renders
+# its own summary block, shell verdicts and scope wording; these modern log/
+# report lines are not UI labels to port) ---
+ · ▪ %1 not checked — %2
+ · ▪ %1 not run — %2
+ — changes were applied.
+ — no changes were applied; some checks were skipped.
+ — no repair was needed; cached diagnostics remain valid.
+ — review the failed stages in Logs.
+ — the plan stopped before any stage completed.
+%1 output
+(no command output)
+Chroot shell command made no diagnostic-relevant filesystem change; cached diagnostics remain usable.
+Chroot shell command was cancelled after it reported a filesystem change; the affected cached diagnostic sections were invalidated by the cancel path.
+Chroot shell command was cancelled before it reported a filesystem change; cached diagnostics remain valid.
+Discovered %1 top-level physical disk(s).
+Full Repair plan completed
+Host default output
+Host shell command made no diagnostic-relevant filesystem change; cached host diagnostics remain usable.
+Host shell command was cancelled after it reported a filesystem change; the affected cached host diagnostic sections were invalidated by the cancel path.
+Host shell command was cancelled before it reported a filesystem change; cached host diagnostics remain valid.
+Repair output
+Starting manual read-only file system check (standalone, not part of a Full Repair plan) on %1 (%2).
+Starting read-only file system check (Full Repair pre-stage) on %1 (%2).
+The privileged helper returned no diagnostic output.
+[command failed]
+[exit 0]
+[running…]
+administrator authorization became active
+automatic diagnostics regeneration enabled
+diagnostic cancelled by the user
+lsblk scan completed successfully.
+not selected
+repair-target
+repair target selection changed
+resolution detail unavailable
+running-host
+running-host default boot entry changed
+running-host maintenance deselected
+running-host maintenance selected
+see the %1 stage line
+see the stage lines for %1
+snapshot rollback completed
+snapshot rollback failed
+target
+target configuration edited
+target diagnostic identity changed
+the privileged helper reported a failure
+unknown
+✓ %1 successful · ✗ %2 failed · ▪ %3 no repair needed
+# --- [feature] round-34 Btrfs-snapshot log lines (Etch has no Btrfs) ---
+Btrfs snapshot inventory is not applicable for %1: the selected target filesystem is %2, not Btrfs. No snapshots were loaded and nothing was changed.
+Btrfs snapshot inventory is not applicable for the running host: the root filesystem is %1, not Btrfs. No snapshots were loaded and nothing was changed.
+Inspecting Btrfs snapshot %1 read-only.
+Inspecting running-host Btrfs snapshot %1 read-only.
+Loaded %1 Btrfs snapshot(s) read-only for the selected repair target.
+Loaded %1 running-host Btrfs snapshot(s) read-only.
+Loading Btrfs snapshots read-only for %1 (%2).
+Loading running-host Btrfs snapshots read-only for %1 (%2).
+# round 73 (A1): the deferred snapshot-load resolution lines — the legacy GUI
+# has no snapshot inventory preload/queued-load machinery (Btrfs snapshots are
+# a greyed modern-only feature there), so the queued state cannot occur.
+The deferred Btrfs snapshot load was not dispatched because the scope is not ready: %1.
+The queued Btrfs snapshot load was resolved without a new request: %1
+a snapshot inventory request for this scope is already in flight.
+no repair scope is committed, so there is no snapshot inventory to load.
+the completed snapshot inventory request for this scope already covers it.
+the snapshot inventory for this scope is already loaded.
+# --- [feature] round-34 pkexec/Polkit lines (Etch elevates via sudo) ---
+The privileged Boot Bitch helper could not be prepared for pkexec: %1
+pkexec/Polkit is required to authorize privileged Boot Bitch operations.
+# --- [helper] round-34 report-rendering sources (the modern Diagnostics pane
+# localizes the helper's static section headings and the fixed report
+# boilerplate at its display layer; the legacy GUI shows the helper output
+# verbatim — these are not legacy UI labels) ---
+Initramfs backend switchover evidence (read-only):
+Unlock prompt visibility / console routing (read-only):
+Block dependency tree for selected component:
+Boot evidence (read-only):
+Btrfs filesystem usage:
+Btrfs filesystem:
+Btrfs subvolumes:
+Configured display manager:
+Current recovery host kernel (context only):
+Damaged target snapshot recovery
+Default runlevel:
+Detected boot chain (read-only):
+Device-mapper tree:
+Diagnostic:
+EFI fallback binary (present, not the active boot path for this legacy BIOS boot):
+EFI fallback binary:
+EFI files:
+Embedded command line:
+Encrypted/mapped ancestry:
+Extlinux entry keys (normalized):
+Filesystem usage:
+Firmware boot selection and ownership (host NVRAM context):
+GRUB environment (saved/next selection):
+GRUB2 BLS loader entries (/boot/loader/entries):
+Grub menu entry keys (normalized):
+Installed display managers and OpenRC services:
+Installed display managers and units:
+Kernel/initramfs pairing:
+LUKS metadata/keyslot state (volume key and passphrase are never read):
+OpenRC service manager:
+Repair capability evidence (read-only):
+Repair capability probes (read-only, selected target):
+Scope:
+Snapshot selection evidence:
+Status:
+SysVinit display-manager scripts:
+Systemd default target:
+TUXEDO EFI-side GRUB handoff (/boot/efi/EFI/TUXEDO/grub.cfg):
+Time:
+Title:
+Unlock / master-password attempt evidence (passphrases redacted):
+What was actually run:
+ZFS datasets:
+ZFS pool layout:
+ZFS pool properties:
+ZFS pool status:
+systemd-boot loader layout:
+systemd-boot loader selection:
+Repair Target
+Running Host
+
+# --- [status] round-45 queue/preparing + nothing-to-do backlog (round-23/28
+# modern-only surfaces with no runtime impact on Etch — the coordinator's
+# allowlist decision): the deferred-snapshot/unlock preparation labels and the
+# diagnostics-queued status belong to the modern deferred-request machinery
+# (the legacy GUI never queues a request behind a held gate this way), and the
+# package-manager nothing-to-do lines are modern round-18 no-op-proof wording
+# (the legacy GUI renders its own status wording for the same verdicts) ---
+%1 diagnostics queued — waiting for administrator authorization…
+%1 reported nothing to do; no package or metadata change was applied, so cached diagnostics remain valid.
+Loading Btrfs snapshots — queued behind the running operation
+Preparing Host diagnostics…
+Preparing Target diagnostics…
+The multi-section diagnostics regeneration failed; the requested sections stay stale.
+The package-manager command reported that there was nothing to do; no package or metadata change was applied.
+Unlocking the LUKS target — queued behind the running operation
+
+# --- [status] round-45 mid-run diagnostic gate reason (the modern single-
+# request-gate status line; the legacy GUI never holds this gate shape and
+# renders its own busy/gating wording) ---
+A diagnostic run is still in progress for this scope; this repair unlocks automatically when the run completes.
+
+# --- [helper] round-45 message-key prose (the dynamic package-apply labels,
+# the translation.md round-34 follow-up; the legacy GUI shows the helper's
+# msg:<key> lines verbatim) ---
+Backed up the bootloader configuration before the console-routing edit (%1).
+Black-screen risk found: the disk-unlock prompt would be routed to the %1 console and the visible screen would stay black during unlock.
+Check the edited /etc/default/grub shell syntax
+No disk-unlock prompt is expected from this boot configuration; the console-routing fix is not needed.
+PASS: console=tty0 is now last in %1.
+PASS: the regenerated boot configuration %1 carries console=tty0.
+Plan: append console=tty0 (last) to /etc/kernel/cmdline and the BLS entries, then regenerate the GRUB2 configuration.
+Plan: append console=tty0 (last) to GRUB_CMDLINE_LINUX_DEFAULT and regenerate the GRUB configuration.
+Plan: append console=tty0 (last) to the menu.lst kernel and template lines.
+Regenerating the bootloader configuration with the console fix.
+Restored the bootloader configuration backup (%1).
+SIMULATE/PREFLIGHT: graphical login — unlock-prompt console routing (console=tty0 last; a serial console is never removed)
+The last registered console is already tty0 (the visible virtual terminal); the console routing is correct.
+Alpine apk %1 simulation
+Repair Alpine package dependencies (apk fix --depends)
+Repair Alpine package dependencies and missing files (apk fix --depends %1)
+Upgrade installed Alpine packages (apk upgrade)
+Install the correct GPU driver
+Install the missing %1 display manager
+Install missing kernel headers required by DKMS
+Install missing kernel headers for the newest kernel
+Install the repository-latest kernel
+Repair Arch package dependencies (pacman -Syu)
+Upgrade installed Arch packages (pacman -Syu)
+Reinstall the incomplete kernel package(s)
+Reinstall the managed OEM/HWE kernel for GPU driver rebuild
+Restore the TUXEDO desktop meta-package required for graphical login
+Repair RPM package files (dnf5 reinstall %1)
+Upgrade installed RPM packages (dnf5 upgrade)
+
+# --- [status] round-45 drifted backlog (5 further modern-only strings the
+# round-33 sweep snapshot predates; same coordinator-approved rationale):
+# the install no-op re-probe wording (round-42 — the legacy GUI's install
+# completion renders its own mapped status, and the capability-table re-probe
+# row is a modern surface) and the boot-entries Save invalidation line
+# (round-39 — the Boot entries page does not exist on Etch) ---
+Package '%1' was already installed in the repair target; no package changes were made. The capability evidence is re-probed so the Boot capabilities row reflects the current state.
+Package '%1' was already installed on the running host; no package changes were made. The capability evidence is re-probed so the Boot capabilities row reflects the current state.
+a package install that made no package changes (capability evidence re-probe)
+capability evidence re-probed after a package install that made no package changes. Stale cached diagnostic sections: %1. They will be regenerated automatically.
+firmware boot entries were changed by the Save action. Stale cached diagnostic sections: %1. They will be regenerated automatically before the next repair.
+
+# --- [status] round-48 triage (round-47 drift, same coordinator-approved
+# rationale): the retained-status-line feature is a modern capture-cap
+# surface — the legacy GUI's transcripts are unbounded and have no 2 MiB
+# cap, so the "retained protocol status lines" marker has no legacy
+# equivalent ---
+Retained protocol status lines (the earlier output was truncated for the log):
+
+# --- [status] round-54 (M1/M6): the modern uniform confirm-dialog button
+# texts and the mid-run file-copy gate reason have no legacy equivalent
+# surface — the legacy GUI keeps its own confirmWrapped button wording and
+# its own run gating (a helper command already running), so these strings
+# never render on Etch ---
+Cancel Operation
+Keep Running
+Try Again
+Write
+A diagnostic run is still in progress for this scope; file copy unlocks automatically when the run completes.

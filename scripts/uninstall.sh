@@ -35,7 +35,7 @@ remove_legacy_source_install()
         /usr/local/libexec/boot-repair/boot-repair-helper \
         /usr/local/libexec/boot-repair/boot-repair-efi-label.py \
         /usr/local/share/applications/org.bootrepair.BootRepair.desktop
-    run_privileged sh -c 'find /usr/local/share/icons/hicolor -path "*/apps/org.bootrepair.BootRepair.png" -type f -delete 2>/dev/null || true'
+    run_privileged find /usr/local/share/icons/hicolor -path "*/apps/org.bootrepair.BootRepair.png" -type f -delete 2>/dev/null || true
     # A stale /usr/local icon cache keeps pointing at the deleted PNGs and
     # makes launchers fall back to a generic icon; drop it so the theme is
     # rescanned, and remove the legacy metainfo/desktop database entry.
@@ -64,9 +64,24 @@ then
 fi
 
 if command -v pacman >/dev/null 2>&1 \
-   && pacman -Q boot-bitch >/dev/null 2>&1
+   && pacman -Q boot-repair >/dev/null 2>&1
 then
     echo "Boot Bitch is installed as an Arch package."
+    echo "Recommended removal command: pacman -R boot-repair"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    run_privileged pacman -R boot-repair
+    remove_legacy_source_install
+    exit $?
+fi
+
+# Legacy package name (boot-bitch, used by already published releases); still
+# removed so a user who installed an older published Arch artifact can uninstall it.
+if command -v pacman >/dev/null 2>&1 \
+   && pacman -Q boot-bitch >/dev/null 2>&1
+then
+    echo "Boot Bitch is installed as an Arch package (legacy boot-bitch name)."
     echo "Recommended removal command: pacman -R boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
@@ -77,9 +92,24 @@ then
 fi
 
 if command -v apk >/dev/null 2>&1 \
-   && apk info --exists boot-bitch >/dev/null 2>&1
+   && apk info --exists boot-repair >/dev/null 2>&1
 then
     echo "Boot Bitch is installed as an Alpine package."
+    echo "Recommended removal command: apk del boot-repair"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    run_privileged apk del boot-repair
+    remove_legacy_source_install
+    exit $?
+fi
+
+# Legacy package name (boot-bitch, used by already published releases); still
+# removed so a user who installed an older published Alpine artifact can uninstall it.
+if command -v apk >/dev/null 2>&1 \
+   && apk info --exists boot-bitch >/dev/null 2>&1
+then
+    echo "Boot Bitch is installed as an Alpine package (legacy boot-bitch name)."
     echo "Recommended removal command: apk del boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm
@@ -90,9 +120,30 @@ then
 fi
 
 if command -v rpm >/dev/null 2>&1 \
-   && rpm -q boot-bitch >/dev/null 2>&1
+   && rpm -q boot-repair >/dev/null 2>&1
 then
     echo "Boot Bitch is installed as an RPM package."
+    echo "Recommended removal command: dnf remove boot-repair or zypper remove boot-repair"
+    echo
+    read -r -p "Type UNINSTALL to remove the package: " confirm
+    [[ "$confirm" == UNINSTALL ]] || { echo "Uninstall cancelled."; exit 0; }
+    if command -v dnf >/dev/null 2>&1; then
+        run_privileged dnf remove boot-repair
+    elif command -v zypper >/dev/null 2>&1; then
+        run_privileged zypper --non-interactive remove boot-repair
+    else
+        run_privileged rpm -e boot-repair
+    fi
+    remove_legacy_source_install
+    exit $?
+fi
+
+# Legacy package name (boot-bitch, used by already published releases); still
+# removed so a user who installed an older published RPM artifact can uninstall it.
+if command -v rpm >/dev/null 2>&1 \
+   && rpm -q boot-bitch >/dev/null 2>&1
+then
+    echo "Boot Bitch is installed as an RPM package (legacy boot-bitch name)."
     echo "Recommended removal command: dnf remove boot-bitch or zypper remove boot-bitch"
     echo
     read -r -p "Type UNINSTALL to remove the package: " confirm

@@ -48,7 +48,7 @@ legacy_ucfirst()
 # silently consumed (A11-03).  Every ported call site is `mapfile -t`.
 legacy_readarray()
 {
-    local __name="" __line="" __arg=""
+    local __name="" __line="" __arg="" __q=""
     while (( $# > 0 )); do
         __arg="$1"
         case "$__arg" in
@@ -72,7 +72,19 @@ legacy_readarray()
     # intentional empty line (every consumer filters empty entries).
     while IFS= read -r __line || [[ -n "$__line" ]]; do
         [[ -n "$__line" ]] || continue
-        eval "$__name+=(\"$__line\")"
+        # LEG-1: quote each record as one shell word before the eval-append so
+        # target-derived text is stored literally and never parsed as code
+        # (the old form eval'ed the raw line, so a record carrying `$(...)`
+        # ran it as root).  A manual single-quote escaper ('\'' doubling) is
+        # used instead of `printf %q`: it is safe by construction on bash 3.1
+        # (Etch), which predates %q, and on every later POSIX/bash version.
+        __q=""
+        while [[ "$__line" == *"'"* ]]; do
+            __q+="${__line%%\'*}'\\''"
+            __line="${__line#*\'}"
+        done
+        __q+="$__line"
+        eval "$__name+=('$__q')"
     done
     return 0
 }

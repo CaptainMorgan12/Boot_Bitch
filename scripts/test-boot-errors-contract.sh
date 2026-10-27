@@ -37,8 +37,14 @@ grep -q "printf 'Boot failure markers:" "$HELPER" \
 # fresh journalctl.  It reads the boot HEAD slice (the earliest entries), not
 # the newest-entry window, because the boot-complete markers land in the first
 # couple of minutes and fall outside the newest-1600 tail on a long boot.
-grep -q 'journal_cached_boot_head_lines 4000 | journal_boot_relevant_filter' "$HELPER" \
+# (Round 17: the classifier consumes the once-per-run filtered-slice cache
+# evidence_journal_filtered head-4000, which pipes
+# journal_cached_boot_head_lines through the cancel guard and the
+# boot-relevant filter byte-identically.)
+grep -q 'evidence_journal_filtered head-4000' "$HELPER" \
     || fail 'the classifier must read the shared session journal head cache'
+grep -q '^evidence_journal_filtered()' "$HELPER" \
+    || fail 'helper is missing evidence_journal_filtered()'
 grep -q '^journal_cached_boot_head_lines()' "$HELPER" \
     || fail 'helper is missing journal_cached_boot_head_lines()'
 grep -q 'boot-head-4000.json' "$HELPER" \
@@ -77,9 +83,13 @@ mkdir -p "$SESSION_DIR"
 : > "$SESSION_LOG"
 
 # classify <snippet>: feed a hand-crafted journal snippet through the shared
-# classifier and print "BOOT_REACHED|BOOT_FAILURE_MARKERS".
+# classifier and print "BOOT_REACHED|BOOT_FAILURE_MARKERS".  Round 17: the
+# per-run evidence cache (the once-per-run filtered journal slice) is reset
+# per scenario exactly like the classification memo — each scenario models a
+# different journal state within one process.
 classify() {
     BOOT_FAILURE_CLASSIFIED=0
+    evidence_cache_invalidate
     printf '%s\n' "$1" > "$JOURNAL_FIXTURE"
     boot_failure_classification
     printf '%s|%s\n' "$BOOT_REACHED" "$BOOT_FAILURE_MARKERS"
@@ -179,6 +189,7 @@ grep -q 'Reached target Graphical Interface' <<<"$(head -n 4000 "$HEAD_SLICE_FIX
 
 journal_cached_boot_head_lines() { head -n "${1:-4000}" "$HEAD_SLICE_FIXTURE" 2>/dev/null || true; }
 BOOT_FAILURE_CLASSIFIED=0
+evidence_cache_invalidate
 boot_failure_classification
 [[ "$BOOT_REACHED" == desktop ]] \
     || fail "head slice: boot beyond the 1600-entry tail classified '$BOOT_REACHED', want 'desktop'"

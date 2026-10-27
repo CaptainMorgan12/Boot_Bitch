@@ -252,7 +252,9 @@ mkdir -p "$probe_bin"
 has_relr_section()
 {
     if command -v readelf >/dev/null 2>&1; then
-        readelf -S -- "$1" 2>/dev/null | grep -q '[.]relr[.]dyn'
+        # Round 32: no `grep -q` (SIGPIPE under pipefail — see the matching
+        # relr_in_file fix in scripts/build-appimage.sh).
+        readelf -S -- "$1" 2>/dev/null | grep -E '[.]relr[.]dyn' >/dev/null
     else
         grep -qF '.relr.dyn' -- "$1" 2>/dev/null
     fi

@@ -1,4 +1,7 @@
 <RCC>
+  <qresource prefix="/data">
+    <file alias="repair-diagnostic-map.tsv">../data/repair-diagnostic-map.tsv</file>
+  </qresource>
   <qresource prefix="/icons">
     <file alias="org.bootrepair.BootRepair.png">org.bootrepair.BootRepair.png</file>
     <file alias="atlas/drive.svg">icons/atlas/drive.svg</file>
@@ -14,6 +17,9 @@
     <file alias="atlas/folder.svg">icons/atlas/folder.svg</file>
     <file alias="atlas/snapshot.svg">icons/atlas/snapshot.svg</file>
     <file alias="atlas/check.svg">icons/atlas/check.svg</file>
+    <file alias="atlas/cancel.svg">icons/atlas/cancel.svg</file>
+    <file alias="atlas/clear.svg">icons/atlas/clear.svg</file>
+    <file alias="atlas/close.svg">icons/atlas/close.svg</file>
     <file alias="atlas/run.svg">icons/atlas/run.svg</file>
     <file alias="atlas/refresh.svg">icons/atlas/refresh.svg</file>
     <file alias="atlas/edit.svg">icons/atlas/edit.svg</file>

@@ -21,11 +21,13 @@ bool tabIsPresent(MainWindow &window, QWidget *page)
 
 } // namespace
 
-// The Snapshots tab is hidden (removed) when the selected scope has no snapshot
-// support and shown only when the scope's snapshot-rollback capability is
-// available. A missing producer tool (snapper / btrfs-progs) hides the tab too:
-// the install affordance lives in the Boot capabilities table, never a hidden
-// Snapshots tab showing an empty list.
+// The Snapshots tab follows the COMPLETED SNAPSHOT INVENTORY: it is hidden
+// until the scope's inventory found at least one snapshot, and shown whenever
+// it did — even when the rollback capability is refused (separate /boot,
+// non-@ root, no snapper config), because the read-only listing still works.
+// The Rollback button carries the rollback guard separately.  A missing
+// producer tool hides the tab too: the install affordance lives in the Boot
+// capabilities table, never a hidden Snapshots tab showing an empty list.
 void MainWindowUiTest::snapshotsTabVisibilityFollowsSnapshotCapability()
 {
     ScopedSessionLogDir logDir;
@@ -61,7 +63,8 @@ void MainWindowUiTest::snapshotsTabVisibilityFollowsSnapshotCapability()
         QVERIFY(!tabIsPresent(window, window.m_snapshotsPage));
     }
 
-    // Available capability: the tab is shown.
+    // Available capability but NO inventory yet: the tab stays hidden until
+    // the inventory completes (the inventory drives the visibility).
     {
         MainWindow window;
         window.show();
@@ -72,6 +75,26 @@ void MainWindowUiTest::snapshotsTabVisibilityFollowsSnapshotCapability()
         evidence += QStringLiteral("Snapshot rollback: available\n");
         cacheRepairEvidence(window, evidence);
         window.refreshCapabilities();
+
+        QVERIFY(!window.snapshotsTabVisible());
+        QVERIFY(!tabIsPresent(window, window.m_snapshotsPage));
+    }
+
+    // A completed inventory shows the tab even when the rollback is refused
+    // (the Fedora separate-/boot case): the listing works, the Rollback
+    // button carries the specific refusal.
+    {
+        MainWindow window;
+        window.show();
+        QTest::qWait(50);
+        window.m_snapshotPreloadScheduled = true;
+        prepareRepairScope(window, /*host=*/false);
+        QString evidence = capabilityEvidence(false, true);
+        evidence += QStringLiteral("Snapshot rollback: unavailable|reason:separate-boot\n");
+        cacheRepairEvidence(window, evidence);
+        window.refreshCapabilities();
+        window.m_snapshotInventoryCount = 1;
+        window.updateTabVisibility();
 
         QVERIFY(window.snapshotsTabVisible());
         QVERIFY(tabIsPresent(window, window.m_snapshotsPage));

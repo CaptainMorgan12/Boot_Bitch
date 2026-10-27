@@ -284,38 +284,47 @@
   <screenshots>
     <screenshot>
       <caption>Systems: choose the protected running host or a detected repair target</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/01-systems-target-selection.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/1.png</image>
     </screenshot>
     <screenshot type="default">
       <caption>Read-only diagnostics report for the selected scope</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/02-diagnostics-report.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/2.png</image>
+    </screenshot>
+    <screenshot>
+      <caption>EFI boot entries manager with the firmware entry list</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/3.png</image>
     </screenshot>
     <screenshot>
       <caption>Full Repair plan with per-stage gating from cached diagnostics</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/03-repair-confirmation.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/4.png</image>
     </screenshot>
     <screenshot>
       <caption>Btrfs snapshot inventory with a read-only scan</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/04-snapshots.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/5.png</image>
     </screenshot>
     <screenshot>
-      <caption>Guarded Chroot Shell for the selected repair system</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/05-chroot-shell.png</image>
+      <caption>Guarded Host Shell for the running host</caption>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/6.png</image>
     </screenshot>
     <screenshot>
       <caption>Host to Repair file copy with a guarded destination path</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/06-file-copy.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/7.png</image>
     </screenshot>
     <screenshot>
       <caption>Application log with session history and scoped diagnostics</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/07-application-log.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/8.png</image>
     </screenshot>
     <screenshot>
       <caption>Settings for Full Repair stages, diagnostics refresh and safety controls</caption>
-      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/08-settings.png</image>
+      <image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/9.png</image>
     </screenshot>
   </screenshots>
   <releases>
+    <release version="0.2.29" date="2026-10-27">
+      <description>
+        <p>Host/target repair-environment isolation hardening, the Snapshots tab visible whenever a snapshot inventory exists, splitter and plan-frame layout alignment, in-run confirmations for package-mutating repair stages, graphical-login repair on every service manager (including the black-screen-after-unlock class), cancel/cache/shell and session-log fixes in both editions, and a security hardening pass over the privileged backend and both GUIs.</p>
+      </description>
+    </release>
     <release version="0.2.28" date="2026-10-03">
       <description>
         <p>EFI boot entries manager with a read-only boot menu (GRUB, extlinux/syslinux and GRUB-legacy fallback), a smoother LUKS unlock flow, bash-style chroot/host shell command history, tooltip and responsive-layout polish, the completed 22-language localization, and a hardened Debian Etch port.</p>

@@ -5,7 +5,7 @@ set -euo pipefail
 # family, then verify the environment with check-dev-env.sh.
 #
 # Development dependencies only: this script never installs the built
-# boot-repair/boot-bitch package. The user installs packages on the host;
+# boot-repair package. The user installs packages on the host;
 # scripts/install.sh is the interactive user-facing installer.
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
