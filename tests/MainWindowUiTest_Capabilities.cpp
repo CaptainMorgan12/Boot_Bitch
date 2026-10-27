@@ -866,14 +866,18 @@ void MainWindowUiTest::settingsSplitterSeparatesPlanFromCapabilitiesAndWidensCom
                                 .arg(deviceBox->height()).arg(deviceContentHeight)));
     }
 
-    // The capabilities table defaults to a fixed ~16 rows of entries, measured
-    // with the same one-line row height the resize pass uses (not the earlier
-    // 8-row minimum), and independent of the current row count.
+    // The capabilities table's MINIMUM floor is a small ~4 rows (so the
+    // Settings splitter handle stays draggable down toward it; the table
+    // scrolls past the rest), measured with the same one-line row height the
+    // resize pass uses and independent of the current row count. The DEFAULT
+    // first-open look (≥16 rows) is applied through the splitter's default
+    // sizes instead and is asserted above.
     const int oneLineHeight = window.m_capabilityTable->fontMetrics().lineSpacing() + 10;
-    QVERIFY2(qAbs(window.m_capabilityTable->minimumHeight() - 16 * oneLineHeight) <= 1,
-             qPrintable(QStringLiteral("the capabilities table must default to ~16 rows "
-                                       "(got %1 vs %2)")
-                            .arg(window.m_capabilityTable->minimumHeight()).arg(16 * oneLineHeight)));
+    QVERIFY2(qAbs(window.m_capabilityTable->minimumHeight() - 4 * oneLineHeight) <= 1,
+             qPrintable(QStringLiteral("the capabilities table must keep its small ~4-row "
+                                       "minimum floor (got %1 vs %2)")
+                            .arg(window.m_capabilityTable->minimumHeight())
+                            .arg(4 * oneLineHeight)));
 
     // The safety controls stay reachable below the table: they live in the
     // lower pane (flowing vertically after the refresh button), keep a real
@@ -955,14 +959,16 @@ void MainWindowUiTest::capabilityTableKeepsFixedHeightWhenEmpty()
     const int oneLineHeight = window.m_capabilityTable->fontMetrics().lineSpacing() + 10;
     QVERIFY2(oneLineHeight > 0, "the one-line row height must be measurable");
 
-    // The fixed minimum is 16 rows, and it must hold even with zero rows (the
-    // table's own minimumSizeHint() collapses to ~1 line when empty, so the
-    // explicit setMinimumHeight() floor is what keeps it at 16 rows).
-    QVERIFY2(qAbs(window.m_capabilityTable->minimumHeight() - 16 * oneLineHeight) <= 1,
-             qPrintable(QStringLiteral("the empty capabilities table must keep its fixed ~16-row "
-                                       "minimum (got %1 vs %2)")
+    // The fixed MINIMUM floor is ~4 rows, and it must hold even with zero rows
+    // (the table's own minimumSizeHint() collapses to ~1 line when empty, so
+    // the explicit setMinimumHeight() floor is what keeps it at 4 rows). The
+    // default first-open look (>= 16 rows) comes from the splitter's default
+    // sizes and is asserted separately below.
+    QVERIFY2(qAbs(window.m_capabilityTable->minimumHeight() - 4 * oneLineHeight) <= 1,
+             qPrintable(QStringLiteral("the empty capabilities table must keep its small ~4-row "
+                                       "minimum floor (got %1 vs %2)")
                             .arg(window.m_capabilityTable->minimumHeight())
-                            .arg(16 * oneLineHeight)));
+                            .arg(4 * oneLineHeight)));
     QVERIFY2(window.m_capabilityTable->height() >= 16 * oneLineHeight,
              qPrintable(QStringLiteral("the empty capabilities table must render at least 16 rows "
                                        "tall at first open (got %1 vs %2)")
@@ -1206,11 +1212,123 @@ void MainWindowUiTest::capabilityRowsSurviveHostMaintenanceRoundTrip()
 // (b5) The Boot capabilities table Install action routes host-scope rows to the
 // guarded install-host-package verb (on the running host) and target-scope rows
 // to install-target-package. The helper command/arguments name the exact scope.
+// Header-click sorting must reorder the capability rows AND keep every
+// Action-column Install cell widget on the row its payload belongs to:
+// QTableWidget's sort moves the items, not the cell widgets, so the populate
+// path's payload (stored on the Feature item) plus the re-attach pass are what
+// keep the buttons on their rows. The curated repairToolKeyOrder() order stays
+// the default while no column has been sorted.
+void MainWindowUiTest::capabilityTableSortKeepsInstallWidgetsOnTheirRows()
+{
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    window.m_snapshotPreloadScheduled = true;
+    prepareRepairScope(window);
+
+    // Two installable missing rows (lvm + mdadm) so the Action column carries
+    // two Install widgets with distinct payloads.
+    QString preamble = repairCapabilitiesPreamble(
+        QStringLiteral("available"), QStringLiteral("dkms executable present"));
+    preamble += QStringLiteral(
+        "Storage lvm inspection: unavailable|reason:missing-lvm2\n"
+        "Storage lvm inspection evidence: lvs is not installed\n"
+        "Storage software raid: unavailable|reason:missing-mdadm\n"
+        "Storage software raid evidence: mdadm is not installed\n");
+    window.m_targetDiagnosticCache.insert(QStringLiteral("capabilities"), preamble);
+    window.m_targetDiagnosticCache.insert(QStringLiteral("backend"),
+                                          backendSection(QStringLiteral("dkms")));
+    window.refreshCapabilities();
+
+    // The curated order is the unsorted default: no sort indicator, and the
+    // first row is the first curated key ("Validate environment").
+    QCOMPARE(window.m_capabilityTable->horizontalHeader()->sortIndicatorSection(), -1);
+    QVERIFY(window.m_capabilityTable->rowCount() > 2);
+
+    const auto rowForFeature = [&window](const QString &feature) {
+        for (int row = 0; row < window.m_capabilityTable->rowCount(); ++row) {
+            QTableWidgetItem *item = window.m_capabilityTable->item(row, 0);
+            if (item && item->text() == feature) {
+                return row;
+            }
+        }
+        return -1;
+    };
+    const QString lvmFeature = QCoreApplication::translate("CapabilityChecker", "LVM inspection");
+    const QString raidFeature = QCoreApplication::translate("CapabilityChecker", "Software RAID");
+    const int lvmBefore = rowForFeature(lvmFeature);
+    const int raidBefore = rowForFeature(raidFeature);
+    QVERIFY2(lvmBefore >= 0 && raidBefore >= 0, "the installable storage rows must exist");
+    QVERIFY(window.m_capabilityTable->cellWidget(lvmBefore, 6) != nullptr);
+    QVERIFY(window.m_capabilityTable->cellWidget(raidBefore, 6) != nullptr);
+    QCOMPARE(window.m_capabilityTable->item(lvmBefore, 4)->text(), QStringLiteral("lvm2"));
+    QCOMPARE(window.m_capabilityTable->item(raidBefore, 4)->text(), QStringLiteral("mdadm"));
+
+    // Sort by the Feature column (a header click sets the indicator; the table
+    // applies the sort and the handler re-attaches the cell widgets after it).
+    window.m_capabilityTable->sortByColumn(0, Qt::AscendingOrder);
+    QApplication::processEvents();
+
+    QCOMPARE(window.m_capabilityTable->horizontalHeader()->sortIndicatorSection(), 0);
+    QCOMPARE(window.m_capabilityTable->horizontalHeader()->sortIndicatorOrder(),
+             Qt::AscendingOrder);
+
+    // The row order changed: the lvm/raid rows moved from their curated
+    // positions, the formerly-first curated row ("Validate environment") no
+    // longer leads (D/L/F all sort before V in any Latin collation), and the
+    // LVM row sorts before Software RAID (L < S).
+    const int lvmAfter = rowForFeature(lvmFeature);
+    const int raidAfter = rowForFeature(raidFeature);
+    QVERIFY2(lvmAfter >= 0 && raidAfter >= 0, "the rows must survive the sort");
+    QVERIFY2(lvmAfter != lvmBefore || raidAfter != raidBefore,
+             qPrintable(QStringLiteral("sorting by Feature must reorder the rows "
+                                       "(lvm %1->%2, raid %3->%4)")
+                            .arg(lvmBefore).arg(lvmAfter).arg(raidBefore).arg(raidAfter)));
+    QVERIFY2(window.m_capabilityTable->item(0, 0)->text()
+                 != QCoreApplication::translate("CapabilityChecker", "Validate environment"),
+             "the curated first row must not lead the ascending Feature sort");
+    QVERIFY2(lvmAfter < raidAfter, "LVM inspection must sort before Software RAID");
+
+    // Every Install widget still sits on the row its payload belongs to: the
+    // two installable rows (matched by Feature + Suggested package) carry the
+    // widgets, and every other row carries none.
+    int widgetRows = 0;
+    for (int row = 0; row < window.m_capabilityTable->rowCount(); ++row) {
+        QTableWidgetItem *featureItem = window.m_capabilityTable->item(row, 0);
+        QTableWidgetItem *packageItem = window.m_capabilityTable->item(row, 4);
+        QWidget *widget = window.m_capabilityTable->cellWidget(row, 6);
+        const bool isLvm = featureItem && featureItem->text() == lvmFeature;
+        const bool isRaid = featureItem && featureItem->text() == raidFeature;
+        if (widget) {
+            ++widgetRows;
+            QVERIFY2(isLvm || isRaid,
+                     qPrintable(QStringLiteral("an Install widget leaked onto row %1 (%2)")
+                                    .arg(row).arg(featureItem ? featureItem->text()
+                                                              : QStringLiteral("?"))));
+            QVERIFY2(packageItem && ((isLvm && packageItem->text() == QStringLiteral("lvm2"))
+                                     || (isRaid && packageItem->text() == QStringLiteral("mdadm"))),
+                     "the Install widget must sit on the row matching its suggested package");
+        } else {
+            QVERIFY2(!isLvm && !isRaid,
+                     qPrintable(QStringLiteral("the installable row %1 lost its Install widget")
+                                    .arg(row)));
+        }
+    }
+    QCOMPARE(widgetRows, 2);
+
+    // Sorting by the Action column (which holds only cell widgets) restores
+    // the curated default order instead of scrambling it.
+    window.m_capabilityTable->sortByColumn(6, Qt::AscendingOrder);
+    QApplication::processEvents();
+    QCOMPARE(window.m_capabilityTable->horizontalHeader()->sortIndicatorSection(), -1);
+    QVERIFY2(rowForFeature(lvmFeature) >= 0 && rowForFeature(raidFeature) >= 0,
+             "the curated order must be restored after an Action-column sort");
+}
+
 void MainWindowUiTest::capabilityInstallRoutesHostVsTarget()
 {
     ScopedSessionLogDir logDir;
     QVERIFY(logDir.isValid());
-
     // Host-scope install: install-host-package on the running host identity.
     {
         MainWindow window;

@@ -242,6 +242,14 @@ inline void cacheRepairEvidence(MainWindow &window, const QString &evidence)
                               QStringLiteral("boot-evidence")}) {
         cache.insert(key, QStringLiteral("Diagnostic: %1\n%2").arg(key, evidence));
     }
+    // Round 14: mirror the production flow as well — a successful diagnostic
+    // run seeds/refreshes the session-persistent per-scope wording state
+    // (absorbWordingEvidence), and the dynamic wording consumers (module-build
+    // labels, backend-specific descriptions, shell hints) read that pinned
+    // state.  Injecting the cache directly must therefore seed the wording
+    // state too, or a test that caches akms/alpine evidence keeps seeing the
+    // generic "DKMS" label.
+    window.absorbWordingEvidence(window.m_hostMaintenanceMode);
 }
 
 // Configure a target-scope window for a file-system-only Full Repair plan with
@@ -600,12 +608,14 @@ inline void fillUnlockPassphrase(QObject *context, const QString &passphrase)
                 continue;
             }
             auto *edit = dialog->findChild<QLineEdit *>();
-            auto *buttons = dialog->findChild<QDialogButtonBox *>();
-            if (!edit || !buttons) {
+            if (!edit) {
                 continue;
             }
             edit->setText(passphrase);
-            if (QPushButton *ok = buttons->button(QDialogButtonBox::Ok)) {
+            // Round 54 (M1/M2): the dialog buttons are explicit QPushButtons
+            // now (theme-independent order/icons); click the accept button.
+            if (QPushButton *ok = dialog->findChild<QPushButton *>(
+                    QStringLiteral("uniformDialogAcceptButton"))) {
                 ok->click();
             } else {
                 dialog->accept();
@@ -660,17 +670,49 @@ inline void acceptNextMessageBox(QObject *context, QMessageBox::StandardButton b
     QObject::connect(poll, &QTimer::timeout, context, [poll, button] {
         for (QWidget *top : QApplication::topLevelWidgets()) {
             auto *box = qobject_cast<QMessageBox *>(top);
-            if (!box) {
-                continue;
+            if (box) {
+                poll->stop();
+                if (QAbstractButton *target = box->button(button)) {
+                    target->click();
+                } else {
+                    box->done(button);
+                }
+                poll->deleteLater();
+                return;
             }
-            poll->stop();
-            if (QAbstractButton *target = box->button(button)) {
+            // Round 54 (M1/M2): the uniform confirm dialogs are plain QDialogs
+            // (theme-independent order/default/icons), not QMessageBoxes.  Map
+            // the requested standard button onto the dialog's action/cancel
+            // buttons so the existing acceptNextMessageBox() call sites keep
+            // working.
+            if (top->objectName() == QStringLiteral("uniformConfirmDialog")) {
+                QPushButton *target = top->findChild<QPushButton *>(
+                    (button == QMessageBox::Yes || button == QMessageBox::Ok
+                     || button == QMessageBox::Retry || button == QMessageBox::Save)
+                        ? QStringLiteral("uniformConfirmActionButton")
+                        : QStringLiteral("uniformConfirmCancelButton"));
+                if (!target) {
+                    continue;
+                }
+                poll->stop();
                 target->click();
-            } else {
-                box->done(button);
+                poll->deleteLater();
+                return;
             }
-            poll->deleteLater();
-            return;
+            // Round 54b (OK-only icon audit): the single-button notices are
+            // uniform QDialogs as well; any standard button maps onto the
+            // sole OK button.
+            if (top->objectName() == QStringLiteral("uniformOkDialog")) {
+                QPushButton *target = top->findChild<QPushButton *>(
+                    QStringLiteral("uniformOkButton"));
+                if (!target) {
+                    continue;
+                }
+                poll->stop();
+                target->click();
+                poll->deleteLater();
+                return;
+            }
         }
     });
     poll->start();
@@ -686,21 +728,43 @@ inline void acceptNextMessageBoxByText(QObject *context, const QString &text)
     QObject::connect(poll, &QTimer::timeout, context, [poll, text] {
         for (QWidget *top : QApplication::topLevelWidgets()) {
             auto *box = qobject_cast<QMessageBox *>(top);
-            if (!box || !box->isVisible()) {
-                continue;
-            }
-            poll->stop();
-            for (QAbstractButton *candidate : box->buttons()) {
-                if (candidate->text() == text) {
-                    candidate->click();
-                    poll->deleteLater();
-                    return;
+            if (box && box->isVisible()) {
+                poll->stop();
+                for (QAbstractButton *candidate : box->buttons()) {
+                    if (candidate->text() == text) {
+                        candidate->click();
+                        poll->deleteLater();
+                        return;
+                    }
                 }
+                // The named button is absent: dismiss rather than hang the test.
+                box->reject();
+                poll->deleteLater();
+                return;
             }
-            // The named button is absent: dismiss rather than hang the test.
-            box->reject();
-            poll->deleteLater();
-            return;
+            // Round 54 (M1/M2): the uniform confirm dialogs are plain QDialogs
+            // (see acceptNextMessageBox); match the button by its text.
+            if (top->objectName() == QStringLiteral("uniformConfirmDialog")
+                && top->isVisible()) {
+                poll->stop();
+                for (const QByteArray &name : {QByteArrayLiteral("uniformConfirmActionButton"),
+                                               QByteArrayLiteral("uniformConfirmCancelButton")}) {
+                    if (QPushButton *candidate = top->findChild<QPushButton *>(name)) {
+                        if (candidate->text() == text) {
+                            candidate->click();
+                            poll->deleteLater();
+                            return;
+                        }
+                    }
+                }
+                // The named button is absent: dismiss rather than hang the test.
+                if (auto *cancel = top->findChild<QPushButton *>(
+                        QStringLiteral("uniformConfirmCancelButton"))) {
+                    cancel->click();
+                }
+                poll->deleteLater();
+                return;
+            }
         }
     });
     poll->start();

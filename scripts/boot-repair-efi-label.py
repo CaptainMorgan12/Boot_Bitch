@@ -121,9 +121,13 @@ def main() -> int:
     except ValueError:
         fail("selected ESP PARTUUID is invalid")
 
-    root = os.environ.get("EFI_LABEL_EFIVARFS", "/sys/firmware/efi/efivars")
-    if root == "/sys/firmware/efi/efivars" and os.geteuid() != 0:
-        fail("EFI variable updates require root")
+    default_efivars = "/sys/firmware/efi/efivars"
+    if os.geteuid() == 0:
+        root = default_efivars                 # root never takes an override
+    else:
+        root = os.environ.get("EFI_LABEL_EFIVARFS", default_efivars)
+        if root == default_efivars:
+            fail("EFI variable updates require root")
     variable = pathlib.Path(root) / f"Boot{args.bootnum.upper()}-{EFI_GLOBAL}"
     try:
         original = variable.read_bytes()
@@ -163,7 +167,7 @@ def main() -> int:
         except OSError as exc:
             fail(f"cannot write the backup file {backup}: {exc}")
     try:
-        fd = os.open(variable, os.O_WRONLY)
+        fd = os.open(variable, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
         try:
             write_all(fd, updated)
         finally:
@@ -178,7 +182,7 @@ def main() -> int:
         # restored bytes), say so loudly instead of silently swallowing it.
         rollback_error = None
         try:
-            fd = os.open(variable, os.O_WRONLY)
+            fd = os.open(variable, os.O_WRONLY | getattr(os, "O_NOFOLLOW", 0))
             try:
                 write_all(fd, original)
             finally:

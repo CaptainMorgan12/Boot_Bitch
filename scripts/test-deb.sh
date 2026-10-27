@@ -6,7 +6,9 @@ set -euo pipefail
 # Usage: test-deb.sh [path/to/package.deb]
 
 ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-deb}"
+# package-deb.sh builds into build-release by default; search there so a bare
+# `test-deb.sh` after `package-deb.sh` finds the artifact.
+BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 DEB="${1:-}"
 
 need()

@@ -4,6 +4,32 @@ set -euo pipefail
 # Static contract for the icon set compiled into the binary.  Every literal
 # icon requested by MainWindow must resolve to one of the bundled semantic
 # SVGs when a desktop theme is absent or returns a placeholder.
+#
+# Known deliberate exception (round 59): the File Copy host-side pickers
+# (Add Files…, Add Folder…, Repair → Host destination) are the Qt WIDGET
+# file dialog, never the host's native/portal dialog — every call site
+# passes QFileDialog::DontUseNativeDialog (MainWindow.cpp), and the
+# AppImage path additionally sets Qt::AA_DontUseNativeDialogs. Their
+# Choose/Cancel button glyphs are drawn by the platform style from the
+# HOST icon theme (QStyle standard icons), not from this atlas — that is
+# why they render colored on Fedora and monochrome under TUXEDO's Plasma.
+# That is intentional (the portable Qt dialog stays) and out of the
+# atlas's reach; the contract below covers only the app-supplied
+# themedIcon() surface, never file-dialog chrome.
+#
+# Round 66 addition: the entry-field clear buttons (the shell command box,
+# the file-copy destination path field) are no longer the built-in
+# QLineEdit clear button (setClearButtonEnabled), whose glyph is drawn by
+# the platform style/theme and renders as a theme-colored circle-X on
+# several distributions. MainWindow installs an atlas-supplied QAction
+# instead (themedIcon("edit-clear") -> clear.svg, the Breeze edit-clear
+# backspace-X glyph — the TUXEDO baseline look, matching the monochrome
+# arrow-left-X the Fedora build showed). "edit-clear" now maps to the
+# dedicated clear asset; "document-edit" keeps the pencil edit glyph.
+# Round 67: the same treatment now covers the last three built-in
+# clear-button sites — the Logs search field, the rollback ROLLBACK
+# confirmation input and the LUKS passphrase field — so every distribution
+# renders the identical monochrome atlas glyph.
 root_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 source_file="$root_dir/src/MainWindow.cpp"
 atlas_dir="$root_dir/resources/icons/atlas"
@@ -16,9 +42,12 @@ map_icon() {
     grub) echo grub ;;
     distribution|distro) echo distribution ;;
     task-complete|dialog-ok-apply) echo check ;;
+    dialog-cancel|dialog-no) echo cancel ;;
+    dialog-close|window-close) echo close ;;
     system-run|tools-wizard) echo run ;;
     view-refresh) echo refresh ;;
-    document-edit|edit-clear) echo edit ;;
+    document-edit) echo edit ;;
+    edit-clear) echo clear ;;
     document-save) echo save ;;
     document-open|folder-open) echo open ;;
     document-open-recent) echo snapshot ;;

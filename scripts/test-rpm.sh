@@ -146,7 +146,7 @@ python3 -m py_compile "$TMP/root/usr/libexec/boot-repair/boot-repair-efi-label.p
     fail "EFI label updater is not valid Python."
 
 rpm_name="$(rpm -qp --qf '%{NAME}' "$RPM")"
-[[ "$rpm_name" == "boot-bitch" ]] || \
+[[ "$rpm_name" == "boot-repair" ]] || \
     fail "unexpected RPM package name: $rpm_name"
 rpm_license="$(rpm -qp --qf '%{LICENSE}' "$RPM")"
 [[ "$rpm_license" == "MIT" ]] || \

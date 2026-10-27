@@ -95,6 +95,18 @@ set +e
 # that hazard: disable it for the rest of the run.
 set +o pipefail
 
+# Round 45 (Ubuntu ZFS-host smoke): the synthetic fixture root is a plain
+# DIRECTORY on the RECOVERY HOST's filesystem. On a ZFS-on-root host (the
+# Ubuntu rig) the shim's mountinfo-based findmnt fallback resolves the
+# fixture through the host's ZFS root dataset, so the round-42 scope probe
+# target_root_is_zfs_dataset() would misclassify this non-ZFS fixture as a
+# ZFS scope and demand the zfs-initramfs hook (initramfs unavailable ->
+# bootstack unavailable -> the smoke's capability assertions fail). The
+# fixture genuinely is NOT a ZFS scope: pin the seam test-side only, exactly
+# like the other read-only seam stubs below. On a non-ZFS host the stub is a
+# no-op (the real probe already returns 1).
+target_root_is_zfs_dataset() { return 1; }
+
 # B6/A9-05: the split-LV data-mount tests below replace mount_recorded with
 # stubs; capture the real wrapper now so the mount-option retry tests can
 # restore it later.
@@ -630,10 +642,18 @@ printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
 display_unavailable_reason || fail "display capability refused the legacy SysV host"
 repair_capability_evidence display | grep -q 'legacy SysV: sysvinit display manager kdm' \
     || fail "display capability evidence line"
+# Round 48: a configured SysV display manager is PRESENT evidence in both
+# scopes (the capability row flips after the target-scope Install); the
+# REPAIR stays host-scope via legacy_display_manager_repair's own check.
 RUNNING_HOST_MODE=0
-reason="$(display_unavailable_reason)" \
-    && fail "display capability must stay a host-scope stage for the offline scope"
-[[ "$reason" == *'host-scope stage'* ]] || fail "offline display reason: $reason"
+display_unavailable_reason \
+    || fail "offline scope refused a configured legacy SysV display manager"
+# An UNconfigured SysV-era scope reports the missing-DM reason the display
+# install side-channel matches (probe-derived suggestion, fail closed).
+rm -f "$FIXTURE/etc/X11/default-display-manager"
+[[ "$(display_unavailable_reason)" == 'reason:no-display-manager' ]] \
+    || fail "unconfigured offline scope reason: $(display_unavailable_reason)"
+printf '/usr/bin/kdm\n' > "$FIXTURE/etc/X11/default-display-manager"
 RUNNING_HOST_MODE=1
 
 # Repair: the missing S-symlink is restored (the entry stays), the display
@@ -1978,7 +1998,10 @@ CANCEL_TOKEN=""
 SESSION_DIR=""
 
 # The stage-boundary check stays silent without a request and aborts through
-# fail() (exit 1, "Cancelled at the caller's request.") when one is present.
+# abort_mutating_request() (exit 143 with the modern
+# `Repair aborted: the user cancelled the running operation (session
+# force-stop).` evidence line, never a per-stage failure) when one is
+# present (round 16, ITEM 4e modern parity).
 CANCEL_FILE="$FIXTURE/cancel-request"
 rm -f "$CANCEL_FILE"
 legacy_cancel_stage_check || fail "the stage check failed without a cancel request"
@@ -1989,7 +2012,7 @@ set +e
 cancel_rc=$?
 set -e
 [[ $cancel_rc -ne 0 ]] || fail "the stage check did not abort on the cancel token"
-grep -q "Cancelled at the caller.s request" "$FIXTURE/cancel-abort.txt" \
+grep -q "Repair aborted: the user cancelled the running operation" "$FIXTURE/cancel-abort.txt" \
     || fail "the stage abort left no evidence"
 rm -f "$CANCEL_FILE"
 CANCEL_FILE=""

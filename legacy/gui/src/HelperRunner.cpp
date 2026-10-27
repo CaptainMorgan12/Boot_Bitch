@@ -147,10 +147,17 @@ QString trustedToolPath(const QString &name)
     // verification (A10-04) is never bypassed; the GUI never sets this
     // variable.
     if (name == QString::fromLatin1("sudo")) {
-        const char *fake = ::getenv("BOOT_REPAIR_LEGACY_FAKE_SUDO");
-        if (fake && *fake && ::access(fake, X_OK) == 0) {
-            return QString::fromLocal8Bit(fake);
+#ifdef BOOT_REPAIR_LEGACY_TEST_SEAMS
+        // ENV-1: the fake-sudo seam is compiled out of production builds and,
+        // even in seam builds, root never honours it (a root-run GUI must
+        // resolve the real trusted sudo, never an environment-chosen binary).
+        if (::geteuid() != 0) {
+            const char *fake = ::getenv("BOOT_REPAIR_LEGACY_FAKE_SUDO");
+            if (fake && *fake && ::access(fake, X_OK) == 0) {
+                return QString::fromLocal8Bit(fake);
+            }
         }
+#endif
     }
     const char *const *candidates = 0;
     if (name == QString::fromLatin1("sudo")) {
@@ -867,6 +874,22 @@ bool HelperRunner::isRunning() const
     return m_process && m_process->isRunning();
 }
 
+bool HelperRunner::pollFinished()
+{
+    // Round 60 (browse pump): event-loop-independent completion reporting.
+    // isRunning() (QProcess::isRunning) synchronously reaps the exited child
+    // (waitpid WNOHANG) and sets the exit values, but the processExited()
+    // signal is only emitted through the sigchld pipe notifier — which Qt
+    // 3.3.7 does not activate inside a nested modal exec loop on the rig.
+    // When the child is gone and nothing was reported yet, drain and emit
+    // here so the caller's pump can resolve the request synchronously.
+    if (!m_process || m_process->isRunning()) {
+        return false;
+    }
+    processExited();
+    return true;
+}
+
 void HelperRunner::emitErrorLine(const QString &text)
 {
     emit outputLine(text);
@@ -1023,6 +1046,176 @@ bool HelperRunner::run(const QStringList &helperArgs)
         m_process->closeStdin();
         m_input.fill('\0');
         m_input = QByteArray();
+    }
+    return true;
+}
+
+// Round 75 (mid-run log deletion): one-shot concurrent helper run.
+//
+// The GUI's single helper channel is busy while a diagnostic/repair runs
+// (m_process + m_running), and the session-log-delete housekeeping verb does
+// not depend on the target session state (no target mount, no per-disk lock),
+// so the delete is allowed to run CONCURRENTLY through an independent helper
+// process.  This never touches m_process: the running command keeps its
+// transcript and completion untouched.  The one-shot goes through the same
+// elevation resolution and helper verification as run() — with one extra
+// fail-closed guard: an elevation that would ask for a password (a plain
+// sudo without a cached timestamp) is refused here, because the raw fork/exec
+// cannot run an interactive prompt and must never block on sudo's password
+// read (the mid-run scenario already implies an authenticated session, so
+// `sudo -n`/the cached timestamp is the expected prefix).
+bool HelperRunner::runOneShotCaptured(const QStringList &helperArgs,
+                                      QByteArray *output, int *exitCode,
+                                      QString *errorDescription)
+{
+    if (output) {
+        *output = QByteArray();
+    }
+    if (exitCode) {
+        *exitCode = -1;
+    }
+    if (errorDescription) {
+        *errorDescription = QString::null;
+    }
+    QString elevationDescription;
+    if (!resolveElevation(&elevationDescription)) {
+        if (errorDescription) {
+            *errorDescription = elevationDescription;
+        }
+        return false;
+    }
+    if (elevationNeedsPassword(0)) {
+        if (errorDescription) {
+            *errorDescription = QString::fromLatin1(
+                "the elevation would ask for a password; the concurrent "
+                "delete refused to prompt (re-establish the administrator "
+                "session and retry)");
+        }
+        return false;
+    }
+    if (m_helperPath.isEmpty()) {
+        if (errorDescription) {
+            *errorDescription = QString::fromLatin1("no legacy helper path is configured.");
+        }
+        return false;
+    }
+    if (!m_direct) {
+        QString trustReason;
+        if (!verifyHelperForElevation(m_helperPath, &trustReason)) {
+            if (errorDescription) {
+                *errorDescription = QString::fromLatin1(
+                    "refusing to elevate the helper %1: %2.")
+                    .arg(m_helperPath).arg(trustReason);
+            }
+            return false;
+        }
+    }
+
+    // Build the argument vector: [elevation prefix...] <helper> <verb args...>.
+    // The pointers are taken from the stable QString storage before the fork
+    // and stay valid in the child's copy-on-write address space; the exec uses
+    // execv (absolute path), never execvp with a bare name.
+    QStringList fullArguments;
+    if (!m_direct) {
+        for (QStringList::ConstIterator it = m_prefix.begin(); it != m_prefix.end(); ++it) {
+            fullArguments.append(*it);
+        }
+    }
+    fullArguments.append(m_helperPath);
+    for (QStringList::ConstIterator it = helperArgs.begin(); it != helperArgs.end(); ++it) {
+        fullArguments.append(*it);
+    }
+    std::vector<const char *> argv;
+    argv.reserve(static_cast<std::size_t>(fullArguments.count()) + 1);
+    for (int i = 0; i < fullArguments.count(); ++i) {
+        argv.push_back(fullArguments[i].latin1());
+    }
+    argv.push_back(0);
+
+    int capturePipe[2];
+    if (::pipe(capturePipe) != 0) {
+        if (errorDescription) {
+            *errorDescription = QString::fromLatin1("cannot create the capture pipe.");
+        }
+        return false;
+    }
+    const pid_t pid = ::fork();
+    if (pid < 0) {
+        ::close(capturePipe[0]);
+        ::close(capturePipe[1]);
+        if (errorDescription) {
+            *errorDescription = QString::fromLatin1("cannot start the helper.");
+        }
+        return false;
+    }
+    if (pid == 0) {
+        ::signal(SIGPIPE, SIG_DFL);
+        ::close(capturePipe[0]);
+        ::dup2(capturePipe[1], 1);
+        ::dup2(capturePipe[1], 2);
+        ::close(capturePipe[1]);
+        ::execv(argv[0], const_cast<char *const *>(&argv[0]));
+        ::_exit(127);
+    }
+    ::close(capturePipe[1]);
+
+    // Bounded capture: 32 KiB cap (a wedged helper can never exhaust memory),
+    // poll with a deadline, then the existing bounded reap (SIGKILL escalation
+    // included).  The GUI thread stays responsive: poll sleeps 100 ms.
+    QByteArray captured;
+    const uint capturedLimit = 32 * 1024;
+    const time_t deadline = ::time(NULL) + 10;
+    char buffer[256];
+    struct pollfd pollFd;
+    pollFd.fd = capturePipe[0];
+    pollFd.events = POLLIN;
+    bool pipeOpen = true;
+    while (pipeOpen && ::time(NULL) < deadline) {
+        pollFd.revents = 0;
+        const int ready = ::poll(&pollFd, 1, 250);
+        if (ready < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            break;
+        }
+        if (ready == 0) {
+            continue; // the deadline check at the top bounds the loop
+        }
+        const ssize_t count = ::read(capturePipe[0], buffer, sizeof(buffer));
+        if (count > 0) {
+            if (captured.size() < capturedLimit) {
+                const uint room = capturedLimit - captured.size();
+                const uint take = static_cast<uint>(count) < room
+                    ? static_cast<uint>(count) : room;
+                const uint oldSize = captured.size();
+                captured.resize(oldSize + take);
+                ::memcpy(captured.data() + oldSize, buffer,
+                         static_cast<std::size_t>(take));
+            }
+            continue;
+        }
+        if (count < 0 && errno == EINTR) {
+            continue;
+        }
+        pipeOpen = false; // EOF (the child closed stdout) or a read error
+    }
+    ::close(capturePipe[0]);
+
+    int status = 0;
+    const bool reaped = boundedWaitPid(pid, &status);
+    if (output) {
+        *output = captured;
+    }
+    if (exitCode) {
+        *exitCode = reaped && WIFEXITED(status) ? WEXITSTATUS(status) : -1;
+    }
+    if (!reaped) {
+        if (errorDescription) {
+            *errorDescription = QString::fromLatin1(
+                "the helper did not respond within the timeout.");
+        }
+        return false;
     }
     return true;
 }

@@ -35,6 +35,16 @@ fi
 CANCEL_FILE="${CANCEL_FILE:-}"
 CANCEL_TOKEN="${CANCEL_TOKEN:-}"
 
+# Round 28 (Debian Legacy #4): the round-27 probe-start cancel gate in
+# run_selected_chroot reads this flag, but the port transforms assign it
+# only inside the diagnostic runners (run_target_diagnostic /
+# run_host_diagnostic_modern).  Every OTHER path through run_selected_chroot
+# — repair simulations, shells, validate — must still see a defined value
+# under `set -Eeuo pipefail`, so it is defaulted once here, before
+# `main "$@"` dispatches any verb.  The gate stays diagnostic-only: the
+# default is 0 and only the diagnostic runners set 1.
+LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+
 # Interactive session handoff (Qt3 GUI, see legacy_session_apply).  Filled only
 # from the --session-request / --menu-answer-file options, never from the
 # caller's environment.
@@ -1021,6 +1031,14 @@ legacy_session_apply()
     local request="" answer="" len=0
 
     if [[ -z "$LEGACY_SESSION_REQUEST_SEEN" && -z "$LEGACY_MENU_ANSWER_FILE_SEEN" ]]; then
+        # DR-1: the answer-file path is filled only from the validated
+        # --menu-answer-file option.  A caller-supplied environment value
+        # must never name the file the poll loop reads and truncates, so a
+        # direct root invocation with BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE
+        # pre-set is refused here exactly like the parser refuses a repeated
+        # option.
+        [[ -z "${BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE:-}" ]] \
+            || fail "--menu-answer-file was not given; refusing the BOOT_REPAIR_LEGACY_MENU_ANSWER_FILE environment value."
         return 0
     fi
     [[ -n "$LEGACY_SESSION_REQUEST_SEEN" && -n "$LEGACY_MENU_ANSWER_FILE_SEEN" ]] \
@@ -1091,14 +1109,19 @@ legacy_cancel_requested()
     return 1
 }
 
-# Stage-boundary check: abort (fail -> exit 1 -> cleanup) when a cancel was
-# requested.  Runs at the entry of every repair stage wrapper and between the
-# legacy boot-stack components.
+# Stage-boundary check: abort the whole plan with the modern abort evidence
+# when a cancel was requested.  Runs at the entry of every repair stage
+# wrapper and between the legacy boot-stack components.  Round 16 (ITEM 4e,
+# modern parity): the abort goes through abort_mutating_request — the
+# `Repair aborted: the user cancelled the running operation (session
+# force-stop).` line + exit 143 through the EXIT cleanup — never a per-stage
+# `ERROR: stage '...' failed: Cancelled at the caller's request.` line (the
+# modern reports the abort status, not a per-stage failure).
 legacy_cancel_stage_check()
 {
     if legacy_cancel_requested; then
         log "Cancel requested; aborting at the stage boundary (the session teardown unmounts everything)." | tee -a "$SESSION_LOG" >&2
-        fail "Cancelled at the caller's request."
+        abort_mutating_request
     fi
     return 0
 }
@@ -1185,6 +1208,20 @@ legacy_chroot()
 run_selected_chroot()
 {
     local -a args=("$@")
+    # Round 27 (Debian Legacy #6): while a read-only diagnostic runs, the
+    # legacy cancel surface (the --cancel-file token, observed through
+    # legacy_cancel_requested) gates EVERY chroot probe: a cancel that lands
+    # mid-section makes the next probe return 143 without starting, so a
+    # SINGLE-section diagnostic (e.g. `diagnose package`) stops at the next
+    # probe boundary instead of running to completion — the round-23 checks
+    # covered only the multi-section loops and the pre-run window.  The
+    # LEGACY_DIAGNOSTIC_IN_FLIGHT flag (set/cleared by the diagnostic
+    # runners) scopes the gate to diagnostic runs, so a leftover cancel file
+    # can never short-circuit a repair simulation/probe (those keep their
+    # stage-boundary + watcher checks).
+    if (( LEGACY_DIAGNOSTIC_IN_FLIGHT == 1 )) && legacy_cancel_requested; then
+        return 143
+    fi
     if (( HOST_COMMAND_GUARD == 1 )); then
         # EFI host: keep the fail-closed modern private namespace.
         run_selected_chroot_modern "${args[@]}"
@@ -1290,8 +1327,10 @@ legacy_display_manager_rollback()
 legacy_display_manager_repair()
 {
     local entry="" name="" default_runlevel="" changed=0 current=""
-    (( RUNNING_HOST_MODE == 1 )) \
-        || fail "the legacy display-manager repair is a host-scope stage."
+    # Round 54 (user request): the repair now runs for BOTH scopes — the
+    # running host and a committed repair target.  Every write below goes
+    # through $TARGET_ROOT (the host root in Host Maintenance, the mounted
+    # target root offline), and the display manager is never started.
     entry="$(legacy_sysv_display_manager_entry)" \
         || fail "No legacy SysV display manager is configured in /etc/X11/default-display-manager."
     name="$(basename -- "$entry")"
@@ -1345,20 +1384,141 @@ legacy_display_manager_repair()
     return 0
 }
 
+# Round 48 (user request): the target-scope display-manager Install.  After
+# the guarded install-target-package run the legacy SysV configuration is
+# completed for a just-installed display manager when the target has NONE
+# configured: the /etc/X11/default-display-manager entry and the default
+# runlevel S99-symlink (the Etch conventions), with a backup and a post-write
+# verification.  An existing valid entry is respected (never hijacked), the
+# display manager is never started, and a scope without the SysV-era evidence
+# is a no-op.  LEGACY_DISPLAY_CONFIG_CHANGED reports whether anything was
+# written; the caller owns the change verdict.
+LEGACY_DISPLAY_CONFIG_CHANGED=0
+
+# The Etch-era package name for a known SysV display-manager init script (the
+# package and the script share the name; the kdm/gdm/xdm/... convention).
+legacy_display_package_for_script()
+{
+    case "${1:-}" in
+        lightdm|slim|gdm|gdm3|kdm|xdm|sddm|lxdm) printf '%s\n' "$1" ;;
+        *) return 1 ;;
+    esac
+}
+
+# The conventional binary path for a known SysV display-manager init script.
+# The authoritative source is the init script's own DAEMON= declaration
+# (probe-derived, never a hardcoded path); this table is only the fallback.
+# Debian places the gdm/gdm3/slim daemons in /usr/sbin (the Etch gdm binary
+# is /usr/sbin/gdm — a hardcoded /usr/bin/gdm is a real miss), while kdm/xdm
+# live in /usr/bin.
+legacy_display_binary_for_script()
+{
+    case "${1:-}" in
+        kdm|xdm|sddm) printf '/usr/bin/%s\n' "$1" ;;
+        gdm|gdm3|slim|lightdm|lxdm) printf '/usr/sbin/%s\n' "$1" ;;
+        *) return 1 ;;
+    esac
+}
+
+# The executable the init script declares as its daemon (the DAEMON= line),
+# verified inside the target root.  Returns 1 when absent or unparsable.
+legacy_display_daemon_from_script()
+{
+    local script="$1" daemon=""
+    [[ -f "$TARGET_ROOT/etc/init.d/$script" ]] || return 1
+    # legacy_sed_ext runs sed with -E/-r (ERE): the grouping is (...) there,
+    # and both quote marks are optional (DAEMON=/path and DAEMON="/path").
+    daemon="$(legacy_sed_ext -n 's/^[[:space:]]*DAEMON="?([^ "]*)"?.*/\1/p' \
+        "$TARGET_ROOT/etc/init.d/$script" 2>/dev/null | head -n1 || true)"
+    [[ -n "$daemon" && -x "$TARGET_ROOT$daemon" ]] || return 1
+    printf '%s\n' "$daemon"
+    return 0
+}
+
+legacy_display_manager_ensure_config()
+{
+    local pkg script entry binary default_runlevel backup_dir=""
+    LEGACY_DISPLAY_CONFIG_CHANGED=0
+    legacy_sysvinit_era || return 0
+    # Only complete a MISSING configuration; an existing valid entry is
+    # respected and never replaced.
+    if legacy_sysv_display_manager_entry >/dev/null 2>&1; then
+        return 0
+    fi
+    for pkg in "$@"; do
+        script="$(legacy_display_package_for_script "$pkg" 2>/dev/null || true)"
+        [[ -n "$script" ]] || continue
+        [[ -f "$TARGET_ROOT/etc/init.d/$script" ]] || continue
+        # The binary comes from the init script's own DAEMON= line first (the
+        # probe-derived truth; e.g. Etch gdm -> /usr/sbin/gdm), with the
+        # conventional path as the fallback.
+        binary="$(legacy_display_daemon_from_script "$script" 2>/dev/null || true)"
+        if [[ -z "$binary" ]]; then
+            binary="$(legacy_display_binary_for_script "$script" 2>/dev/null || true)"
+        fi
+        [[ -n "$binary" && -x "$TARGET_ROOT$binary" ]] || continue
+        default_runlevel="$(legacy_sed_ext -n 's/^id:([0-9]):initdefault:.*/\1/p' \
+            "$TARGET_ROOT/etc/inittab" 2>/dev/null | head -n1 || true)"
+        [[ -n "$default_runlevel" ]] || default_runlevel=2
+        backup_dir="$SESSION_DIR/display-manager-install-backup"
+        mkdir -p -- "$backup_dir"
+        cp -a -- "$TARGET_ROOT/etc/X11/default-display-manager" \
+            "$backup_dir/default-display-manager.before" 2>/dev/null || true
+        if ! printf '%s\n' "$binary" > "$TARGET_ROOT/etc/X11/default-display-manager"; then
+            log "ERROR: unable to write /etc/X11/default-display-manager for $script." | tee -a "$SESSION_LOG"
+            continue
+        fi
+        if [[ ! -L "$TARGET_ROOT/etc/rc$default_runlevel.d/S99$script" ]]; then
+            if ! ln -s -- "../init.d/$script" "$TARGET_ROOT/etc/rc$default_runlevel.d/S99$script"; then
+                log "ERROR: unable to create the runlevel S-symlink for $script." | tee -a "$SESSION_LOG"
+                continue
+            fi
+        fi
+        # Post-write verification before reporting the configuration complete.
+        entry="$(head -n1 "$TARGET_ROOT/etc/X11/default-display-manager" 2>/dev/null | tr -d '[:space:]' || true)"
+        [[ "$entry" == "$binary" ]] || continue
+        [[ -L "$TARGET_ROOT/etc/rc$default_runlevel.d/S99$script" ]] || continue
+        LEGACY_DISPLAY_CONFIG_CHANGED=1
+        log "PASS: legacy SysV display manager $script configured for the repair target (entry $binary and the runlevel $default_runlevel S-symlink); the display manager was never started." | tee -a "$SESSION_LOG"
+        break
+    done
+    return 0
+}
+
+# Round 48 (user request): the guarded install-target-package verb completes
+# the legacy SysV display-manager configuration after the package install
+# (the postinst handles the enablement; the step above covers a target whose
+# debconf defaults left no /etc/X11/default-display-manager entry).  When the
+# configuration step changed the target, the install verdict is re-emitted as
+# changed so the GUI's invalidation and the capability re-probe see it (the
+# parsers take the LAST verdict for a key).
+install_target_packages()
+{
+    install_target_packages_modern "$@" || return $?
+    legacy_display_manager_ensure_config "$@"
+    if (( LEGACY_DISPLAY_CONFIG_CHANGED == 1 )); then
+        repair_change_status install-target-package changed
+    fi
+}
+
 display_unavailable_reason()
 {
     local legacy_reason=""
     if legacy_reason="$(legacy_display_manager_probe 2>/dev/null)"; then
-        # The legacy stage is a host-scope action on this frontend; the
-        # offline target form stays disabled with this exact reason.
-        if (( RUNNING_HOST_MODE != 1 )); then
-            printf 'the legacy SysV display-manager repair is a host-scope stage on this frontend (select Host Maintenance)'
-            return 1
-        fi
+        # Round 48 (user request): a configured SysV display manager is
+        # PRESENT evidence in both scopes, so the capability row flips to
+        # Available after the target-scope Install completes the
+        # configuration.  Round 54: the legacy REPAIR runs in both scopes
+        # too (legacy_display_manager_repair writes through $TARGET_ROOT),
+        # so present-DM evidence now unlocks the target-scope repair.
         return 0
     fi
     if legacy_sysvinit_era; then
-        printf '%s' "$legacy_reason"
+        # The missing-DM reason the display-installable side-channel matches:
+        # the suggestion is derived from the DETECTED family/backends by
+        # display_manager_package_suggestion (never a hardcoded per-distro
+        # list) and proven against the TARGET's own repositories.
+        printf 'reason:no-display-manager'
         return 1
     fi
     display_unavailable_reason_modern
@@ -1771,7 +1931,20 @@ mount_recorded()
                 ;;
         esac
     done
-    mount_recorded_modern "$source" "$destination" "${args[@]:-}" || rc=$?
+    # Round 57: when the first attempt carries `noload`, its failure is the
+    # EXPECTED Etch path (util-linux 2.12r rejects `ro,noload` with the raw
+    # "wrong fs type, bad option, bad superblock" stderr).  The retry branch
+    # below already logs the attempt + the journal state at evidence level, so
+    # the raw mount error must not also leak into the transcript (the user's
+    # etch2 Full Repair showed those raw lines right after msg:root-component
+    # even though the repair succeeded).  Silence only that expected-fail
+    # attempt; a failing NON-noload mount keeps its raw error (that failure is
+    # real evidence, not probing), and the retry below is unchanged.
+    if (( had_noload == 1 )); then
+        mount_recorded_modern "$source" "$destination" "${args[@]:-}" 2>/dev/null || rc=$?
+    else
+        mount_recorded_modern "$source" "$destination" "${args[@]:-}" || rc=$?
+    fi
     if (( rc == 0 || had_noload == 0 )); then
         return "$rc"
     fi
@@ -2572,6 +2745,16 @@ legacy_chroot_shell()
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
+    # Round 38 (Etch #6): publish the reviewed-shell change-verdict context
+    # exactly like the modern run_chroot_shell_modern - the ctime marker must
+    # exist BEFORE the command runs so filesystem_change_scan attributes only
+    # the command's own writes, and the published context lets
+    # abort_mutating_request emit the verdict a cancel cuts short.
+    touch "$SESSION_DIR/shell-change-marker"
+    SHELL_CHANGE_ROOT_PREFIX="$TARGET_ROOT"
+    SHELL_CHANGE_MARKER="$SESSION_DIR/shell-change-marker"
+    SHELL_COMMAND_TEXT="$run_command"
+    SHELL_CHANGE_TRANSCRIPT="$transcript"
     # A12-14: when the interactive channel is ready (session protocol + the
     # GUI's menu-answer file), run the command through the generic interactive
     # pump so an interactive question reaches the popup instead of aborting on
@@ -2625,9 +2808,24 @@ legacy_chroot_shell()
         log "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" | tee -a "$SESSION_LOG"
         log "Command: $retry_command" | tee -a "$SESSION_LOG"
         run_command="$retry_command"
+        SHELL_COMMAND_TEXT="$run_command"
         retried=1
     done
     log "Chroot shell exit code: $rc" | tee -a "$SESSION_LOG"
+    # Round 38 (Etch #6): emit the shell change verdict on EVERY completion
+    # (success, failure, cancel, timeout).  The legacy GUI's round-30 mapped
+    # invalidation consumes the class/status lines: a shell transcript without
+    # them falls back to the conservative complete set, which wiped the whole
+    # cached model - including the `Legacy feature shell:` probe - and left
+    # the command input and Run button disabled after the first run (the
+    # round-38 regression).  The abort-verdict context is cleared first (the
+    # completed path reports its own verdict below), exactly like the modern
+    # run_chroot_shell_modern tail.
+    SHELL_CHANGE_ROOT_PREFIX=""
+    SHELL_CHANGE_MARKER=""
+    SHELL_COMMAND_TEXT=""
+    SHELL_CHANGE_TRANSCRIPT=""
+    filesystem_change_verdict "$TARGET_ROOT" shell "$run_command" "$transcript"
     if (( rc == 125 )); then
         log "ERROR: Chroot shell command was cancelled at an interactive prompt." >&2
         exit 125
@@ -2696,6 +2894,16 @@ legacy_host_shell()
     if [[ "$run_command" != "$command" ]]; then
         log "apt intent translated: $run_command" | tee -a "$SESSION_LOG"
     fi
+    # Round 38 (Etch #6): publish the reviewed-shell change-verdict context
+    # exactly like the modern run_host_shell (the running-host shell scans the
+    # live / with an empty prefix).  The ctime marker must exist BEFORE the
+    # command runs and the published context lets abort_mutating_request emit
+    # the verdict a cancel cuts short.
+    touch "$SESSION_DIR/shell-change-marker"
+    SHELL_CHANGE_ROOT_PREFIX=""
+    SHELL_CHANGE_MARKER="$SESSION_DIR/shell-change-marker"
+    SHELL_COMMAND_TEXT="$run_command"
+    SHELL_CHANGE_TRANSCRIPT="$transcript"
     # A12-14: when the interactive channel is ready (session protocol + the
     # GUI's menu-answer file), run the command through the generic interactive
     # pump so an interactive question reaches the popup instead of aborting on
@@ -2745,9 +2953,22 @@ legacy_host_shell()
         log "apt upgrade is disabled by this distribution; running 'apt full-upgrade' instead" | tee -a "$SESSION_LOG"
         log "Command: $retry_command" | tee -a "$SESSION_LOG"
         run_command="$retry_command"
+        SHELL_COMMAND_TEXT="$run_command"
         retried=1
     done
     log "Running-host shell exit code: $rc" | tee -a "$SESSION_LOG"
+    # Round 38 (Etch #6): emit the shell change verdict on EVERY completion
+    # (success, failure, cancel) so the legacy GUI's round-30 mapped
+    # invalidation stays scoped to the command class and never takes the
+    # complete-set fallback that disabled the command input after the first
+    # run.  The abort-verdict context is cleared first (the completed path
+    # reports its own verdict below), exactly like the modern run_host_shell
+    # tail.
+    SHELL_CHANGE_ROOT_PREFIX=""
+    SHELL_CHANGE_MARKER=""
+    SHELL_COMMAND_TEXT=""
+    SHELL_CHANGE_TRANSCRIPT=""
+    filesystem_change_verdict "" shell "$run_command" "$transcript"
     if (( rc == 125 )); then
         log "ERROR: Running-host shell command was cancelled at an interactive prompt." >&2
         exit 125

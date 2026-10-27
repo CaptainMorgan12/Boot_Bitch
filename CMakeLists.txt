@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.28
+    VERSION 0.2.29
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -241,7 +241,7 @@ set(CPACK_DEBIAN_PACKAGE_CONTROL_EXTRA "${CMAKE_CURRENT_SOURCE_DIR}/scripts/post
 # package names differ per RPM family; the Debian Recommends and the Arch/
 # Alpine optdepends carry the optional contract instead.
 set(CPACK_PACKAGE_HOMEPAGE_URL "https://github.com/CaptainMorgan12/Boot_Bitch")
-set(CPACK_RPM_PACKAGE_NAME "boot-bitch")
+set(CPACK_RPM_PACKAGE_NAME "boot-repair")
 set(CPACK_RPM_PACKAGE_VERSION "${PROJECT_VERSION}")
 set(CPACK_RPM_PACKAGE_RELEASE "1")
 set(CPACK_RPM_PACKAGE_LICENSE "MIT")

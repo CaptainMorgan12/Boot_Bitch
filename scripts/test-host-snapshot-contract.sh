@@ -460,14 +460,14 @@ assert_body="$(sed -n '/^assert_target_is_running_host()/,/^}/p' "$HELPER")"
 grep -Fq 'zfs_dataset_backing_block "$root_source" "$root_device"' <<<"$assert_body" \
     || { echo 'FAIL: the running-host root assertion does not map a ZFS dataset to its vdev' >&2; exit 1; }
 initramfs_body="$(sed -n '/^initramfs_unavailable_reason()/,/^}/p' "$HELPER")"
-grep -Fq 'running_host_root_is_zfs_dataset' <<<"$initramfs_body" \
+grep -Fq 'target_root_is_zfs_dataset' <<<"$initramfs_body" \
     || { echo 'FAIL: initramfs availability is not ZFS-aware' >&2; exit 1; }
 grep -Fq 'target_zfs_initramfs_hook_present' <<<"$initramfs_body" \
     || { echo 'FAIL: initramfs does not require the zfs-initramfs hook on ZFS root' >&2; exit 1; }
 grub_body="$(sed -n '/^grub_unavailable_reason()/,/^}/p' "$HELPER")"
 grep -Fq 'target_grub_zfs_module_present' <<<"$grub_body" \
     || { echo 'FAIL: grub does not require the GRUB ZFS module on ZFS root' >&2; exit 1; }
-grep -Fq 'running_host_zfs_root_resolvable' <<<"$grub_body" \
+grep -Fq 'target_root_zfs_resolvable' <<<"$grub_body" \
     || { echo 'FAIL: grub does not require a resolvable ZFS root pool' >&2; exit 1; }
 # The blanket "not ZFS-aware" refusal must be gone.
 if grep -q 'is not ZFS-aware' "$HELPER"; then
@@ -529,6 +529,14 @@ findmnt() {
         "/boot/efi:SOURCE") printf '/dev/vda1\n' ;;
         "/boot/efi:SOURCE,FSTYPE") printf '/dev/vda1 vfat\n' ;;
     esac
+    # Round 42: the ZFS boot-chain gates probe the SELECTED scope's root mount
+    # ($TARGET_ROOT — the running host "/" or the capability fixture's pinned
+    # root), never the recovery host alone.  Answer the fixture root with the
+    # same dataset source as the running host so the 8d/8e capability drills
+    # exercise the scope-scoped probe.
+    if [[ -n "${ZFS_FIXTURE_ROOT:-}" && "$target" == "$ZFS_FIXTURE_ROOT" && "$columns" == SOURCE ]]; then
+        printf '%s\n' "${FAKE_ROOT_SOURCE:-rpool/ROOT/ubuntu_qev764}"
+    fi
     return 0
 }
 
@@ -864,6 +872,24 @@ fi
 recovery_probe_body="$(sed -n '/^target_root_needs_snapshot_recovery()/,/^}/p' "$HELPER")"
 grep -Fq 'prepare_target_snapshots_only quiet' <<<"$recovery_probe_body" \
     || { echo 'FAIL: target_root_needs_snapshot_recovery does not call prepare_target_snapshots_only quiet' >&2; exit 1; }
+# The probe's non-recovery teardown must follow the cleanup() mount-release
+# invariant: plain non-lazy umount of every recorded mount first, then the
+# session directory is removed ONLY behind a still-mounted check — never a
+# bare rm -rf that could recurse through a still-attached mount.
+grep -Fq 'still_mounted' <<<"$recovery_probe_body" \
+    || { echo 'FAIL: target_root_needs_snapshot_recovery lost the still-mounted guard' >&2; exit 1; }
+grep -Fq 'umount "$mnt"' <<<"$recovery_probe_body" \
+    || { echo 'FAIL: target_root_needs_snapshot_recovery does not umount the recorded mounts first' >&2; exit 1; }
+grep -Fq 'mount_records_prune' <<<"$recovery_probe_body" \
+    || { echo 'FAIL: target_root_needs_snapshot_recovery does not prune released mount records' >&2; exit 1; }
+grep -Fq 'rm -rf -- "$SESSION_DIR"' <<<"$recovery_probe_body" \
+    || { echo 'FAIL: target_root_needs_snapshot_recovery no longer removes the released session directory' >&2; exit 1; }
+# The rm -rf must sit behind the still-mounted check, never before it.
+if ! awk '/still_mounted/{guard=NR} /rm -rf -- "\$SESSION_DIR"/{if (!guard) exit 1; exit 0}' \
+        <<<"$recovery_probe_body" >/dev/null; then
+    echo 'FAIL: target_root_needs_snapshot_recovery deletes the session directory without the still-mounted guard' >&2
+    exit 1
+fi
 
 cat > "$sandbox/target-snapshot-harness.sh" <<'TARGETSNAP'
 #!/usr/bin/env bash

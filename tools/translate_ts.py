@@ -169,7 +169,7 @@ PROTECTED_TERMS = tuple(sorted((
     "mkinitcpio", "mkinitfs", "initramfs", "extlinux", "syslinux",
     "pacman", "dracut", "os-prober", "menuentry", "shim",
     "lvm2", "lvs", "mdadm", "kernel",
-    "apt", "apk", "dnf", "dpkg", "dkms", "akmods",
+    "apt", "apk", "dnf", "dpkg", "dkms", "akmods", "pkexec", "Polkit",
     # acronyms (UPPERCASE)
     "LVM", "RAID", "ZFS", "UEFI", "NVRAM", "GRUB", "LUKS", "ESP", "EFI", "UKI",
     "RPM", "AKMS", "PARTUUID",

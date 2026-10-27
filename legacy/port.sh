@@ -204,6 +204,7 @@ transform_syntax()
     note "assoc declarations (declare/local -A)" "$(count_regex '^[[:space:]]*(declare|local) -A ' "$file")"
     apply_sed "$file" \
         -e 's/^\([[:space:]]*\)local -A seen=()$/\1local -a seen=() seen_keys=()/' \
+        -e 's/^\([[:space:]]*\)local -A seen_namespaces=()$/\1local -a seen_namespaces=() seen_namespaces_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A seen_destination_names=()$/\1local -a seen_destination_names=() seen_destination_names_keys=()/' \
         -e 's/^declare -A FS_SCOPE_DEVICE_INDEX=()$/declare -a FS_SCOPE_DEVICE_INDEX=() FS_SCOPE_DEVICE_INDEX_keys=()/' \
         -e 's/^\([[:space:]]*\)local -A reasons=()$/\1local -a reasons=() reasons_keys=()/' \
@@ -262,7 +263,7 @@ transform_syntax()
         current_by_partition_label final_destination_count \
         seen_destination_names FS_SCOPE_DEVICE_INDEX destination_priority \
         destination_id current_by_key removed_seen current_by_id order_index \
-        reasons seen emitted essential_by_dev allowed_nodes; do
+        reasons seen emitted essential_by_dev allowed_nodes seen_namespaces; do
         note "assoc accesses: ${name}" \
             "$(( $(count_regex "[$][{]${name}[[]" "$file") \
                 + $(count_regex "${name}\[[^]]*\]=" "$file") \
@@ -617,9 +618,9 @@ transform_legacy_behaviour()
         '        desktop_status="$(legacy_dpkg_status_field tuxedoos-desktop)"' \
         || return 1
     replace_block "$file" \
-        '            status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-                dpkg-query -W -f='"'"'${db:Status-Status} ${Version}'"'"' "$pkg" 2>/dev/null || true)"' \
-        '            status="$(legacy_dpkg_status_version "$pkg")"' \
+        '                status="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                    dpkg-query -W -f='"'"'${db:Status-Status} ${Version}'"'"' "$pkg" 2>/dev/null || true)"' \
+        '                status="$(legacy_dpkg_status_version "$pkg")"' \
         || return 1
 
     # A10-05: optional leading cancel-token options, accepted before the
@@ -707,6 +708,218 @@ Interactive session (Qt3 GUI; both options or neither):
 Shell:' \
         || return 1
 
+    # Round 23 (Debian Legacy #5): the legacy GUI's cancel surface (the
+    # --cancel-file token, observed through legacy_cancel_requested) stops a
+    # multi-section diagnostic at the next section boundary exactly like the
+    # modern soft cancel — the run emits the stable msg:diagnostic-cancelled
+    # marker and returns its partial output normally (the GUI applies the
+    # cancelled run fail-closed, never caching partial evidence).
+    replace_block "$file" \
+        '            if (( SESSION_CANCEL_REQUESTED )); then
+                msg_log diagnostic-cancelled
+                break
+            fi' \
+        '            if (( SESSION_CANCEL_REQUESTED )) || legacy_cancel_requested; then
+                msg_log diagnostic-cancelled
+                break
+            fi' \
+        || return 1
+
+    # Round 23 (Debian Legacy #5): the cancel surface is also checked before
+    # the target diagnostic's first section: the GUI's cancel() touches the
+    # cancel-file and waits ~200 ms before killing the elevation wrapper, so
+    # this check observes a cancel that landed while the helper was still
+    # starting and skips the whole read-only run (the marker travels to the
+    # GUI, which applies the cancelled run fail-closed — a cancelled fast
+    # individual diagnostic never runs its section).
+    replace_block "$file" \
+        '    prepare_target ro
+    mount_target_boot_entry "/boot" ro
+    mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
+    # Round 63: resolve the selected ESP read-only so every inventory below
+    # (boot-evidence, uki and the BootOrder-lead ownership) classifies the
+    # repair ESP'"'"'s entries as `repair` instead of `foreign`.  Mirrors
+    # prepare_target_efi_readonly (the efi-list path); never mounts anything,
+    # so the read-only diagnostic contract is unchanged.
+    detect_mounted_esp || true
+
+    if [[ "$requested" == "all" || "$requested" == "report" ]]; then' \
+        '    prepare_target ro
+    mount_target_boot_entry "/boot" ro
+    mount_target_boot_entry "/boot/efi" ro
+    mount_target_boot_entry "/efi" ro
+    # Round 63: resolve the selected ESP read-only so every inventory below
+    # (boot-evidence, uki and the BootOrder-lead ownership) classifies the
+    # repair ESP'"'"'s entries as `repair` instead of `foreign`.  Mirrors
+    # prepare_target_efi_readonly (the efi-list path); never mounts anything,
+    # so the read-only diagnostic contract is unchanged.
+    detect_mounted_esp || true
+
+    # Round 23 (Debian Legacy #5): the legacy GUI'"'"'s cancel surface stops the
+    # diagnostic before the first section runs (see the port transforms).
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        return 0
+    fi
+
+    if [[ "$requested" == "all" || "$requested" == "report" ]]; then' \
+        || return 1
+
+    # Round 23 (Debian Legacy #5): the same pre-run cancel check for the
+    # running-host diagnostic (the host maintenance Read All / individual
+    # flows share the legacy cancel surface).
+    replace_block "$file" \
+        '    CURRENT_STAGE="host read-only diagnostic"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no
+    DIAGNOSTIC_SCOPE="Running Host"
+    if [[ "$requested" == all || "$requested" == report ]]; then' \
+        '    CURRENT_STAGE="host read-only diagnostic"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no
+    DIAGNOSTIC_SCOPE="Running Host"
+
+    # Round 23 (Debian Legacy #5): see the target-diagnostic pre-check.
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        return 0
+    fi
+
+    if [[ "$requested" == all || "$requested" == report ]]; then' \
+        || return 1
+
+    # Round 27 (Debian Legacy #6): a read-only diagnostic run arms the
+    # probe-start cancel gate (the overlay'"'"'s run_selected_chroot): the
+    # legacy GUI'"'"'s --cancel-file surface then stops a SINGLE-section
+    # diagnostic at its next probe boundary, not only the multi-section
+    # loops (round 23) and the pre-run window.  The flag is cleared at every
+    # return so a later repair in the same process is never gated.
+    replace_block "$file" \
+        'run_target_diagnostic()
+{
+    local requested="${1:-}" key
+    [[ -n "$requested" ]] || fail "diagnose requires one or more diagnostic names, or '"'"'all'"'"'."
+    (($# >= 1)) || fail "diagnose accepts one or more diagnostic names, or '"'"'all'"'"'."' \
+        'run_target_diagnostic()
+{
+    local requested="${1:-}" key
+    [[ -n "$requested" ]] || fail "diagnose requires one or more diagnostic names, or '"'"'all'"'"'."
+    (($# >= 1)) || fail "diagnose accepts one or more diagnostic names, or '"'"'all'"'"'."
+
+    # Round 27 (Debian Legacy #6): arm the probe-start cancel gate for this
+    # diagnostic run (see the overlay'"'"'s run_selected_chroot).
+    LEGACY_DIAGNOSTIC_IN_FLIGHT=1' \
+        || return 1
+
+    replace_block "$file" \
+        '    if target_root_needs_snapshot_recovery; then
+        report_target_damaged_recovery
+        return 0
+    fi' \
+        '    if target_root_needs_snapshot_recovery; then
+        report_target_damaged_recovery
+        LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+        return 0
+    fi' \
+        || return 1
+
+    replace_block "$file" \
+        '    # Round 23 (Debian Legacy #5): the legacy GUI'"'"'s cancel surface stops the
+    # diagnostic before the first section runs (see the port transforms).
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        return 0
+    fi' \
+        '    # Round 23 (Debian Legacy #5): the legacy GUI'"'"'s cancel surface stops the
+    # diagnostic before the first section runs (see the port transforms).
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+        return 0
+    fi' \
+        || return 1
+
+    # Round 27 (Debian Legacy #6): the single-section branch now observes the
+    # cancel surface AFTER its section ran: the probe-start gate stops the
+    # section at the next probe boundary, and this check emits the stable
+    # msg:diagnostic-cancelled marker the GUI applies fail-closed (a
+    # cancelled individual diagnostic is never cached).
+    replace_block "$file" \
+        '    elif (($# == 1)); then
+        run_one_target_diagnostic "$requested" || true' \
+        '    elif (($# == 1)); then
+        run_one_target_diagnostic "$requested" || true
+        if (( SESSION_CANCEL_REQUESTED )) || legacy_cancel_requested; then
+            msg_log diagnostic-cancelled
+        fi' \
+        || return 1
+
+    replace_block "$file" \
+        '    # Diagnostics are informational. Individual audit failures are retained in
+    # the output but do not turn a successfully completed read-only inspection
+    # into a helper transport failure.
+    return 0
+}' \
+        '    # Diagnostics are informational. Individual audit failures are retained in
+    # the output but do not turn a successfully completed read-only inspection
+    # into a helper transport failure.
+    LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+    return 0
+}' \
+        || return 1
+
+    replace_block "$file" \
+        'run_host_diagnostic()
+{
+    local requested="${1:-}" key
+    [[ -n "$requested" ]] || fail "host-diagnose requires one or more diagnostic names, or '"'"'all'"'"'."
+    (($# >= 1)) || fail "host-diagnose accepts one or more diagnostic names, or '"'"'all'"'"'."' \
+        'run_host_diagnostic()
+{
+    local requested="${1:-}" key
+    [[ -n "$requested" ]] || fail "host-diagnose requires one or more diagnostic names, or '"'"'all'"'"'."
+    (($# >= 1)) || fail "host-diagnose accepts one or more diagnostic names, or '"'"'all'"'"'."
+
+    # Round 27 (Debian Legacy #6): arm the probe-start cancel gate for this
+    # diagnostic run (see the overlay'"'"'s run_selected_chroot).
+    LEGACY_DIAGNOSTIC_IN_FLIGHT=1' \
+        || return 1
+
+    replace_block "$file" \
+        '    # Round 23 (Debian Legacy #5): see the target-diagnostic pre-check.
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        return 0
+    fi' \
+        '    # Round 23 (Debian Legacy #5): see the target-diagnostic pre-check.
+    if legacy_cancel_requested; then
+        msg_log diagnostic-cancelled
+        LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+        return 0
+    fi' \
+        || return 1
+
+    replace_block "$file" \
+        '    elif (($# == 1)); then
+        run_one_diagnostic "$requested" "$DIAGNOSTIC_SCOPE" || true' \
+        '    elif (($# == 1)); then
+        run_one_diagnostic "$requested" "$DIAGNOSTIC_SCOPE" || true
+        if (( SESSION_CANCEL_REQUESTED )) || legacy_cancel_requested; then
+            msg_log diagnostic-cancelled
+        fi' \
+        || return 1
+
+    replace_block "$file" \
+        '    DIAGNOSTIC_SCOPE="Repair Target"
+    return 0
+}' \
+        '    DIAGNOSTIC_SCOPE="Repair Target"
+    LEGACY_DIAGNOSTIC_IN_FLIGHT=0
+    return 0
+}' \
+        || return 1
+
     # A9-09 follow-up (rc preservation): the legacy overlay defines its own
     # cleanup() wrapper (resolver restore + the modern teardown) and the
     # modern body is renamed to cleanup_modern later.  cleanup_modern
@@ -732,7 +945,7 @@ Shell:' \
 transform_renames()
 {
     local file="$1"
-    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup run_package_stage adaptive_initramfs_repair adaptive_grub_stage populate_writable_dev_filtered"
+    local funcs="dpkg_configuration_pending target_package_installed read_target_os grub_config_path grub_unavailable_reason adaptive_grub_repair efi_unavailable_reason bootstack_unavailable_reason diagnostic_repair_capabilities config_path_for_key mount_special prepare_host_command_guard run_file_copy run_chroot_shell run_host_shell run_snapshots run_host_snapshots run_host_default run_host_repair run_host_reboot run_host_diagnostic validate_running_host fs_inspect fs_repair display_unavailable_reason adaptive_display_manager_repair run_selected_chroot repair_capability_evidence unlock_target mount_recorded resolve_fstab_source repair_boot_stack host_default_unavailable_reason browse_target_directory filesystem_release_all_mounts filesystem_mountpoint_for_device mount_target_resolver find_crypt_mapper_for_device cleanup run_package_stage adaptive_initramfs_repair adaptive_grub_stage populate_writable_dev_filtered install_target_packages"
     local func count=0
     for func in $funcs; do
         grep -qE "^${func}\(\)$" "$file" || {
@@ -785,19 +998,19 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 89
+    check_count 'legacy_readarray' 'legacy_readarray' 90
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 116
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 122
     check_count 'legacy_sort_versions' 'legacy_sort_versions' 16
     check_count 'legacy_date_iso' 'legacy_date_iso' 5
-    check_count 'legacy_lc' 'legacy_lc ' 75
+    check_count 'legacy_lc' 'legacy_lc ' 76
     check_count 'legacy_uc' 'legacy_uc ' 20
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 24
-    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 37
+    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 40
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 4
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 69
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 70
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }

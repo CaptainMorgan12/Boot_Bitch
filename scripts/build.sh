@@ -1,6 +1,21 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Round 53 hardening (the round-51 Ubuntu rig finding): a run that produced
+# nothing must never exit 0 silently. First, refuse to run under anything but
+# real bash — the Ubuntu rig's /usr/bin/env bash shebang resolved to a
+# rust-coreutils env shim and the script exited 0 with no output and no
+# artifact. A non-bash interpreter fails loudly here instead of pretending
+# success; re-run with 'bash ./scripts/build.sh' to bypass a broken env shim.
+if [ -z "${BASH_VERSION:-}" ]; then
+    echo "scripts/build.sh must run under bash; re-run with: bash $0 $*" >&2
+    exit 1
+fi
+# Second, the final verify_release_outputs() check below re-asserts that every
+# phase that was supposed to run actually produced a non-empty artifact and
+# fails loudly naming the missing file — the release pipeline can no longer
+# silently produce nothing, whatever the cause.
+
 # Configure, build and stage-validate Boot Bitch without installing it;
 # create a .deb too when running on a Debian-family host with the packaging
 # tools, and the versioned AppImage (+ .zsync) when --with-appimage (or
@@ -43,6 +58,10 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="${BUILD_DIR:-$ROOT_DIR/build-release}"
 BUILD_TYPE="${BUILD_TYPE:-Release}"
 JOBS="${JOBS:-$(nproc 2>/dev/null || echo 2)}"
+
+# Round 45: the dev-check gate results live outside the wiped build dir (see
+# release_gate_check); override for a one-off layout.
+DEV_CHECK_RESULTS_DIR="${DEV_CHECK_RESULTS_DIR:-$ROOT_DIR/Development/build-dev-check-gate}"
 
 opt_clean=0
 opt_with_appimage=0
@@ -200,6 +219,66 @@ a one-off out-of-tree location under that prefix. Nothing was removed.
 EOF
     exit 1
 fi
+
+# ---------------------------------------------------------------------------
+# Release gate (VAR-4): refuse to build next to missing or failing dev-check
+# results. Development/scripts/dev-check.sh writes one dev-check-*.rc per
+# check into $DEV_CHECK_RESULTS_DIR
+# (Development/build-dev-check-gate by default — round 45: the results
+# moved OUT of $BUILD_DIR because --clean/--release wipes that directory,
+# which used to delete the green gate state and refuse the next build until a
+# fresh dev-check re-ran); the value is pre-written as 1 and only replaced
+# with the final result when the job finishes, and a wiped run leaves no .rc
+# at all — both states mean "the gates are not green", so both refuse the
+# build. Guest-side packaging (package-alpine.sh/package-arch.sh) never runs
+# this script and never has these files, which is why the gate lives here
+# instead of in every packaging entry point.
+# ---------------------------------------------------------------------------
+release_gate_check()
+{
+    local dir="$1" file rc_value failed=0
+    local -a present=() bad=()
+    for file in "$dir"/*.rc; do
+        [[ -e "$file" ]] || continue
+        present+=("$file")
+        rc_value="$(tr -d '[:space:]' < "$file")"
+        if [[ "$rc_value" != 0 ]]; then
+            bad+=("$(basename -- "$file") (rc=$rc_value)")
+            failed=1
+        fi
+    done
+    if (( ${#present[@]} == 0 )); then
+        echo "Release gate: no dev-check results (*.rc) found in $dir; refusing to build." >&2
+        echo "Run Development/scripts/dev-check.sh first so the gate results exist." >&2
+        return 1
+    fi
+    if (( failed )); then
+        echo "Release gate: refusing to build next to failing dev-check results:" >&2
+        local name
+        for name in "${bad[@]}"; do
+            echo "  - $name" >&2
+        done
+        return 1
+    fi
+    return 0
+}
+# ---------------------------------------------------------------------------
+# Guest-tree exception (VAR-4/G17): the gate protects the maintainer host
+# builds where Development/scripts/dev-check.sh runs and writes the per-check
+# .rc results.  A tree without that tooling (the guest-share rsync excludes
+# Development/, so the documented in-VM packaging flows — package-rpm.sh on
+# the Fedora rig, and any guest package that invokes build.sh) can never
+# produce dev-check results, and must not be blocked by a gate it can never
+# satisfy.  The guest builds are validated by their own rig-side checks
+# (abuild check(), test-rpm.sh/test-apk.sh, the host-diagnose/host-repair
+# verification) instead.
+# ---------------------------------------------------------------------------
+if [[ -x "$ROOT_DIR/Development/scripts/dev-check.sh" ]]; then
+    release_gate_check "$DEV_CHECK_RESULTS_DIR" || exit 1
+else
+    echo "Release gate: maintainer dev-check tooling is not present in this tree (guest build); skipping the host-only gate." >&2
+fi
+
 if (( opt_clean )); then
     rm -rf -- "$BUILD_DIR"
 fi
@@ -602,11 +681,58 @@ build_appimage()
     echo "  $APPIMAGE_OUTPUT.zsync"
 }
 
+# Round 53 hardening (the round-51 Ubuntu rig silent no-op): re-assert that
+# every phase that was supposed to run produced a non-empty artifact, so a
+# run can never exit 0 without the outputs the pipeline depends on. Each
+# failure names the missing file and the known remedy (re-run with
+# 'bash ./scripts/build.sh' when the /usr/bin/env bash shebang resolved to a
+# rust-coreutils env shim).
+verify_release_outputs()
+{
+    local missing=0 found_deb=0 deb_output appimage_out
+    local -a deb_outputs=()
+    if (( host_is_debian )) \
+       && command -v cpack >/dev/null 2>&1 \
+       && command -v dpkg-shlibdeps >/dev/null 2>&1 \
+       && command -v dpkg-deb >/dev/null 2>&1 \
+       && ! (( opt_skip_deb )); then
+        mapfile -t deb_outputs < <(
+            compgen -G "$BUILD_DIR/boot-repair_${PROJECT_VERSION}_*.deb" || true
+        )
+        for deb_output in "${deb_outputs[@]}"; do
+            [[ -n "$deb_output" && -s "$deb_output" ]] && found_deb=1
+        done
+        if (( ! found_deb )); then
+            echo "ERROR: the .deb phase was expected to produce" \
+                 "$BUILD_DIR/boot-repair_${PROJECT_VERSION}_<arch>.deb but no" \
+                 "non-empty .deb exists; re-run with 'bash ./scripts/build.sh'." >&2
+            missing=1
+        fi
+    fi
+    if (( opt_with_appimage )) && appimagetool_available; then
+        appimage_out="$BUILD_DIR/boot-repair_${PROJECT_VERSION}_${ARCH:-x86_64}.AppImage"
+        if [[ ! -s "$appimage_out" ]]; then
+            echo "ERROR: the AppImage phase was expected to produce $appimage_out" \
+                 "but it is missing or empty; re-run with 'bash ./scripts/build.sh'." >&2
+            missing=1
+        fi
+        if [[ ! -s "$appimage_out.zsync" ]]; then
+            echo "ERROR: the AppImage phase was expected to produce $appimage_out.zsync" \
+                 "but it is missing or empty; re-run with 'bash ./scripts/build.sh'." >&2
+            missing=1
+        fi
+    fi
+    if (( missing )); then
+        exit 1
+    fi
+}
+
 manifest_load
 configure_and_build
 stage_and_validate
 build_deb
 build_appimage
+verify_release_outputs
 
 echo
 echo "Release mirror: VM-built packages (Alpine .apk, Arch .pkg.tar.zst, RPM)"

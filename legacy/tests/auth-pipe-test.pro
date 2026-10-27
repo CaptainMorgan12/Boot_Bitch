@@ -20,3 +20,8 @@ SOURCES = \
 
 # C++98 baseline (g++ 4.1 on Etch).
 QMAKE_CXXFLAGS += -std=c++98
+
+# ENV-1: this harness is the only target that needs the documented test seams
+# (BOOT_REPAIR_LEGACY_FAKE_SUDO / BOOT_REPAIR_LEGACY_HELPER); production GUI
+# builds compile them out entirely and root never honours them even here.
+DEFINES += BOOT_REPAIR_LEGACY_TEST_SEAMS

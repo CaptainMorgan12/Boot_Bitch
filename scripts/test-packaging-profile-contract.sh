@@ -84,18 +84,23 @@ grep -q '<screenshots>' "$metainfo"
 grep -q '<image type="source">https://raw.githubusercontent.com/CaptainMorgan12/Boot_Bitch/main/docs/screenshots/' \
     "$metainfo"
 
-# The public tree ships exactly the documented eight screenshots, the AppStream
+# The public tree ships exactly the documented nine screenshots, the AppStream
 # metadata lists every one of them (and nothing that is missing) and the README
 # gallery references the same files. A screenshot refresh must update all three.
+# Round 69 (2026-10-26): the user replaced the previous eight named captures
+# with nine new captures (1.png..9.png); round 70 mapped the captions in the
+# user's order (1 Systems, 2 Diagnostics, 3 EFI boot entries, 4 Repair,
+# 5 Snapshots, 6 Host Shell, 7 File Copy, 8 Logs, 9 Settings).
 documented_screenshots=(
-    01-systems-target-selection.png
-    02-diagnostics-report.png
-    03-repair-confirmation.png
-    04-snapshots.png
-    05-chroot-shell.png
-    06-file-copy.png
-    07-application-log.png
-    08-settings.png
+    1.png
+    2.png
+    3.png
+    4.png
+    5.png
+    6.png
+    7.png
+    8.png
+    9.png
 )
 mapfile -t public_screenshots < <(
     find "$ROOT_DIR/docs/screenshots" -maxdepth 1 -type f -name '*.png' -printf '%f\n' | LC_ALL=C sort
@@ -220,7 +225,7 @@ grep -q 'options=(!debug)' "$ROOT_DIR/scripts/package-arch.sh"
 # hicolor icon cache and the desktop database on install and upgrade so
 # launchers resolve the packaged icon. makepkg only embeds the hooks when the
 # PKGBUILD declares install=.
-grep -q '^install=boot-bitch.install$' "$ROOT_DIR/scripts/package-arch.sh"
+grep -q '^install=boot-repair.install$' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q '^post_install()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q '^post_upgrade()' "$ROOT_DIR/scripts/package-arch.sh"
 grep -q 'gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor' "$ROOT_DIR/scripts/package-arch.sh"

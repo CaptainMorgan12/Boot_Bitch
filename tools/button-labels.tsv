@@ -60,3 +60,10 @@ Remove orphaned kernel components	Verwaiste Kernel-Komponenten entfernen	Supprim
 Install missing headers	Fehlende Header installieren	Installer les en-têtes manquants	Instalar headers faltantes
 Reinstall/complete a kernel	Kernel neu installieren/vervollständigen	Réinstaller/compléter un noyau	Reinstalar/completar un kernel
 Install repository-latest kernel	Neuesten Repository-Kernel installieren	Installer le noyau le plus récent du dépôt	Instalar el kernel más reciente del repositorio
+# Round 54 (M1/M2): the uniform confirm-dialog button labels.
+Install	Installieren	Installer	Instalar
+Write	Schreiben	Écrire	Escribir
+OK	OK	OK	Aceptar
+Try Again	Erneut versuchen	Réessayer	Reintentar
+Cancel Operation	Vorgang abbrechen	Annuler l'opération	Cancelar operación
+Keep Running	Weiter ausführen	Continuer l'exécution	Seguir ejecutando

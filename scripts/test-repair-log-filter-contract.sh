@@ -215,7 +215,11 @@ grep -Fqx 'caller=de_DE.UTF-8' <<<"$locale_out" \
 
 # The dnf5 simulation (a parsed safety transcript) must keep its explicit
 # LC_ALL=C pin so its "Removing:"/"nothing provides" greps stay deterministic.
-sed -n '/^rpm_transaction_try()$/,/^}/p' "$HELPER" | grep -Fq 'LC_ALL=C' \
+# Round 75: grep without -q (reads the whole stream, never exits at the first
+# match) — a `grep -Fq` here races the producer under `set -o pipefail`
+# (the sed dies of SIGPIPE once grep exits early, and the pipeline then
+# fails even though the pin was found — rig-observed on BusyBox sed).
+sed -n '/^rpm_transaction_try()$/,/^}/p' "$HELPER" | grep -F 'LC_ALL=C' >/dev/null \
     || fail_test 'dnf5 simulation lost its LC_ALL=C pin'
 
 echo "PASS: repair-log TPM2/LUKS verbose noise is filtered with errors preserved."

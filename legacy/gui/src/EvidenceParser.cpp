@@ -5,7 +5,10 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <fstream>
+#include <iterator>
 #include <set>
+#include <sstream>
 
 namespace legacy {
 
@@ -223,6 +226,333 @@ std::string repairToolKeyForStage(const std::string &stage)
     if (stage == "display-manager") return "display";
     if (stage == "boot-stack") return "bootstack";
     return stage;
+}
+
+// ===== The shared repair -> diagnostic invalidation map (round 30) ==========
+// Loads data/repair-diagnostic-map.tsv (the round-19/20 table serialized).
+// The same file backs the modern Qt6 GUI (embedded at build time); the legacy
+// GUI loads the staged copy from /usr/share/boot-repair-legacy/. See
+// EvidenceParser.h and the data-file header for the full contract.
+namespace {
+
+const char *const mapTokenList[] = {
+    "environment", "backend", "package", "boot", "boot-evidence", "kernel",
+    "grub", "uki", "display", "gpu", "errors", "usage", "filesystem", "fstab",
+    "btrfs", "mapper", "luks", "report", "capabilities", "all",
+    "-", "union", "shell-class"
+};
+
+bool knownMapToken(const std::string &token)
+{
+    for (std::size_t i = 0; i < sizeof(mapTokenList) / sizeof(mapTokenList[0]); ++i) {
+        if (token == mapTokenList[i]) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Row keys: lowercase letters, digits, '-' and ':' only; '*' appears only as
+// the trailing ":*" prefix marker.
+bool validMapRowKey(const std::string &key)
+{
+    if (key.empty()) {
+        return false;
+    }
+    for (std::size_t i = 0; i < key.size(); ++i) {
+        const char c = key[i];
+        if ((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '-' || c == ':') {
+            continue;
+        }
+        if (c == '*' && i + 1 == key.size() && key.size() >= 2 && key[i - 1] == ':') {
+            continue;
+        }
+        return false;
+    }
+    return true;
+}
+
+// Splits a column on spaces and commas; every token must be in the shared
+// vocabulary (an empty column or an unknown token fails the row).
+bool splitMapColumn(const std::string &column, std::vector<std::string> *tokens)
+{
+    tokens->clear();
+    std::string current;
+    for (std::string::size_type i = 0; i < column.size(); ++i) {
+        const char c = column[i];
+        if (c == ' ' || c == ',') {
+            if (!current.empty()) {
+                if (!knownMapToken(current)) {
+                    return false;
+                }
+                tokens->push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current += c;
+    }
+    if (!current.empty()) {
+        if (!knownMapToken(current)) {
+            return false;
+        }
+        tokens->push_back(current);
+    }
+    return !tokens->empty();
+}
+
+std::string readMapFile(const std::string &path, bool *ok)
+{
+    std::ifstream in(path.c_str(), std::ios::binary);
+    if (!in) {
+        *ok = false;
+        return std::string();
+    }
+    const std::string contents((std::istreambuf_iterator<char>(in)),
+                               std::istreambuf_iterator<char>());
+    *ok = true;
+    return contents;
+}
+
+std::string mapLineError(std::size_t lineNumber, const std::string &problem)
+{
+    std::ostringstream out;
+    out << "line " << lineNumber << ": " << problem;
+    return out.str();
+}
+
+// The pre-validated column split at runtime; "-" contributes nothing.
+std::vector<std::string> sectionTokensOf(const std::string &column)
+{
+    std::vector<std::string> tokens;
+    if (column == "-") {
+        return tokens;
+    }
+    std::string current;
+    for (std::string::size_type i = 0; i < column.size(); ++i) {
+        const char c = column[i];
+        if (c == ' ' || c == ',') {
+            if (!current.empty()) {
+                tokens.push_back(current);
+                current.clear();
+            }
+            continue;
+        }
+        current += c;
+    }
+    if (!current.empty()) {
+        tokens.push_back(current);
+    }
+    return tokens;
+}
+
+void appendUniqueSections(std::vector<std::string> *target,
+                          const std::vector<std::string> &more)
+{
+    for (std::size_t i = 0; i < more.size(); ++i) {
+        bool present = false;
+        for (std::size_t j = 0; j < target->size(); ++j) {
+            if ((*target)[j] == more[i]) {
+                present = true;
+                break;
+            }
+        }
+        if (!present) {
+            target->push_back(more[i]);
+        }
+    }
+}
+
+// The shared union rule: requires ∪ affected with the fail-safes (unknown key,
+// the rule tokens and "report" -> the complete set).
+void unionRowSections(const RepairDiagnosticMap &map, const std::string &key,
+                      bool emptyIsComplete, std::vector<std::string> *result)
+{
+    result->clear();
+    const RepairDiagnosticMapRow *row = map.find(key);
+    if (!row || row->affectedSections == "all" || row->affectedSections == "union"
+        || row->affectedSections == "shell-class"
+        || row->requiresSections == "report" || row->requiresSections == "union") {
+        result->push_back("all");
+        return;
+    }
+    appendUniqueSections(result, sectionTokensOf(row->requiresSections));
+    appendUniqueSections(result, sectionTokensOf(row->affectedSections));
+    if (result->empty() && emptyIsComplete) {
+        result->push_back("all");
+    }
+}
+
+} // namespace
+
+RepairDiagnosticMap::RepairDiagnosticMap()
+    : m_loaded(false)
+{
+}
+
+bool RepairDiagnosticMap::load(const std::string &path, std::string *error)
+{
+    m_rows.clear();
+    m_loaded = false;
+    bool readOk = false;
+    const std::string text = readMapFile(path, &readOk);
+    if (!readOk) {
+        if (error) {
+            *error = "cannot read " + path;
+        }
+        return false;
+    }
+    const std::vector<std::string> lines = splitLines(text);
+    std::set<std::string> seen;
+    for (std::size_t i = 0; i < lines.size(); ++i) {
+        const std::string line = trim(lines[i]);
+        if (line.empty() || line[0] == '#') {
+            continue;
+        }
+        std::vector<std::string> fields;
+        std::string current;
+        for (std::string::size_type j = 0; j < line.size(); ++j) {
+            if (line[j] == '\t') {
+                fields.push_back(current);
+                current.clear();
+                continue;
+            }
+            current += line[j];
+        }
+        fields.push_back(current);
+        if (fields.size() != 3) {
+            if (error) {
+                *error = mapLineError(i + 1, "expected 3 tab-separated columns");
+            }
+            return false;
+        }
+        RepairDiagnosticMapRow row;
+        row.key = trim(fields[0]);
+        row.requiresSections = trim(fields[1]);
+        row.affectedSections = trim(fields[2]);
+        if (!validMapRowKey(row.key)) {
+            if (error) {
+                *error = mapLineError(i + 1, "invalid row key '" + row.key + "'");
+            }
+            return false;
+        }
+        if (row.key == "all" || row.key == "-" || row.key == "report"
+            || row.key == "capabilities" || row.key == "union"
+            || row.key == "shell-class") {
+            if (error) {
+                *error = mapLineError(i + 1, "reserved row key '" + row.key + "'");
+            }
+            return false;
+        }
+        std::vector<std::string> requireTokens;
+        std::vector<std::string> affectTokens;
+        if (!splitMapColumn(row.requiresSections, &requireTokens)
+            || !splitMapColumn(row.affectedSections, &affectTokens)) {
+            if (error) {
+                *error = mapLineError(i + 1,
+                                      "malformed requires/affected column for '"
+                                          + row.key + "'");
+            }
+            return false;
+        }
+        if (!seen.insert(row.key).second) {
+            if (error) {
+                *error = mapLineError(i + 1, "duplicate row key '" + row.key + "'");
+            }
+            return false;
+        }
+        row.prefix = row.key.size() >= 2
+            && row.key[row.key.size() - 1] == '*';
+        m_rows.push_back(row);
+    }
+    if (m_rows.empty()) {
+        if (error) {
+            *error = "the map file carries no data rows";
+        }
+        return false;
+    }
+    m_loaded = true;
+    return true;
+}
+
+const RepairDiagnosticMapRow *RepairDiagnosticMap::find(const std::string &key) const
+{
+    const RepairDiagnosticMapRow *prefixMatch = 0;
+    for (std::size_t i = 0; i < m_rows.size(); ++i) {
+        const RepairDiagnosticMapRow &row = m_rows[i];
+        if (row.key == key) {
+            return &row;
+        }
+        if (row.prefix && row.key.size() >= 2 && key.size() >= row.key.size() - 1
+            && key.compare(0, row.key.size() - 1, row.key, 0,
+                           row.key.size() - 1) == 0) {
+            if (!prefixMatch || prefixMatch->key.size() < row.key.size()) {
+                prefixMatch = &row;
+            }
+        }
+    }
+    return prefixMatch;
+}
+
+std::vector<std::string> mapRequiredSections(const RepairDiagnosticMap &map,
+                                             const std::string &key)
+{
+    std::vector<std::string> result;
+    const RepairDiagnosticMapRow *row = map.find(key);
+    if (!row || row->requiresSections == "union") {
+        result.push_back("report");
+        return result;
+    }
+    if (row->requiresSections == "-") {
+        return result;
+    }
+    return sectionTokensOf(row->requiresSections);
+}
+
+std::vector<std::string> mapAffectedSectionsForTool(const RepairDiagnosticMap &map,
+                                                    const std::string &key)
+{
+    std::vector<std::string> result;
+    unionRowSections(map, key, false, &result);
+    return result;
+}
+
+std::vector<std::string> mapCancelledRepairSections(const RepairDiagnosticMap &map,
+                                                    const std::string &key)
+{
+    std::vector<std::string> result;
+    unionRowSections(map, key, true, &result);
+    return result;
+}
+
+std::vector<std::string> mapShellClassAffectedSections(const RepairDiagnosticMap &map,
+                                                       const std::string &shellClass)
+{
+    std::vector<std::string> result;
+    if (shellClass.empty()) {
+        result.push_back("all");
+        return result;
+    }
+    const RepairDiagnosticMapRow *row = map.find("shell:" + shellClass);
+    if (!row || row->affectedSections == "all" || row->affectedSections == "union"
+        || row->affectedSections == "shell-class") {
+        result.push_back("all");
+        return result;
+    }
+    if (row->affectedSections == "-") {
+        return result;
+    }
+    return sectionTokensOf(row->affectedSections);
+}
+
+bool mapSectionsAreComplete(const std::vector<std::string> &sections)
+{
+    for (std::size_t i = 0; i < sections.size(); ++i) {
+        if (sections[i] == "all") {
+            return true;
+        }
+    }
+    return false;
 }
 
 ParsedTranscript::ParsedTranscript()
@@ -460,6 +790,12 @@ void CapabilityModel::clearCapabilities()
     m_evidence.clear();
     m_legacyFeatures.clear();
     m_configFiles.clear();
+}
+
+void CapabilityModel::clearRepairCapabilities()
+{
+    m_capabilities.clear();
+    m_evidence.clear();
 }
 
 void CapabilityModel::reset()

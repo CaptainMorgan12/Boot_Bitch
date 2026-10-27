@@ -352,13 +352,36 @@ if grep -Fq 'chroot_shell_guard_snapper' <<<"$host_shell_body"; then
     exit 1
 fi
 
-# Transcript hygiene: both shell paths run the command with TERM=dumb and
-# stream the output through the byte-level transcript filter, which drops
-# ANSI CSI/OSC sequences and BEL and normalizes CR/CRLF.
-grep -q 'TERM=dumb' <<<"$chroot_shell_body" \
-    || { echo 'FAIL: the chroot shell does not run with TERM=dumb' >&2; exit 1; }
-grep -q 'TERM=dumb' <<<"$host_shell_body" \
-    || { echo 'FAIL: the running-host shell does not run with TERM=dumb' >&2; exit 1; }
+# Round 20 (ITEM 1): both shell paths run the command with a REAL terminal
+# identifier — the caller's TERM carried (xterm as the fallback), never
+# TERM=dumb, which made apt's pager print "WARNING: terminal is not fully
+# functional" and block on RETURN — and a sane pager default (cat unless the
+# caller explicitly carries a PAGER).  The output still streams through the
+# byte-level transcript filter, which drops ANSI CSI/OSC sequences and BEL
+# and normalizes CR/CRLF.
+grep -q '^shell_term_value()' "$HELPER" \
+    || { echo 'FAIL: the shell TERM policy function is missing' >&2; exit 1; }
+grep -q '^shell_pager_value()' "$HELPER" \
+    || { echo 'FAIL: the shell PAGER policy function is missing' >&2; exit 1; }
+grep -q 'shell_term_value' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not carry the sanitized TERM' >&2; exit 1; }
+grep -q 'shell_term_value' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not carry the sanitized TERM' >&2; exit 1; }
+grep -q 'shell_pager_value' <<<"$chroot_shell_body" \
+    || { echo 'FAIL: the chroot shell does not carry the pager default' >&2; exit 1; }
+grep -q 'shell_pager_value' <<<"$host_shell_body" \
+    || { echo 'FAIL: the running-host shell does not carry the pager default' >&2; exit 1; }
+if grep -q 'TERM=dumb' <<<"$chroot_shell_body" || grep -q 'TERM=dumb' <<<"$host_shell_body"; then
+    echo 'FAIL: a shell command environment still pins TERM=dumb (round-20 regression)' >&2
+    exit 1
+fi
+# The policy functions themselves must fall back to xterm/cat on unsafe values.
+term_fn="$(sed -n '/^shell_term_value()/,/^}/p' "$HELPER")"
+pager_fn="$(sed -n '/^shell_pager_value()/,/^}/p' "$HELPER")"
+grep -q 'term="xterm"' <<<"$term_fn" \
+    || { echo 'FAIL: shell_term_value lost the xterm fallback' >&2; exit 1; }
+grep -q 'pager="cat"' <<<"$pager_fn" \
+    || { echo 'FAIL: shell_pager_value lost the cat fallback' >&2; exit 1; }
 grep -q '^shell_stream_filter()' "$HELPER"
 grep -q '^shell_filter_byte()' "$HELPER"
 grep -q 'SHELL_FILTER_ESC' "$HELPER"

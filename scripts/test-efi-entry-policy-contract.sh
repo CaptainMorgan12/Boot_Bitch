@@ -220,6 +220,51 @@ foreign_role_count()
 }
 
 # ---------------------------------------------------------------------------
+# MOD-3 (round 41) + round 62: the EFI label updater resolution honours the
+# environment override only when NOT running as root, and a root helper
+# accepts the updater shipped beside it only when its content matches the
+# build-pinned digest — executed as a root-owned session copy, never the
+# caller-visible file (so a user-writable sibling cannot be swapped between
+# the check and the exec).  This contract runs unprivileged, so the non-root
+# seam is asserted live and the root-side gates are asserted statically.
+# ---------------------------------------------------------------------------
+updater_fn_body="$(sed -n '/^efi_label_updater_path()/,/^}/p' "$HELPER")"
+grep -Fq 'local updater="/usr/libexec/boot-repair/boot-repair-efi-label.py"' <<<"$updater_fn_body" \
+    || fail_test 'efi_label_updater_path lost its installed default'
+grep -Fq '(( EUID != 0 )) && [[ -n "${EFI_LABEL_UPDATER:-}" ]]; then' <<<"$updater_fn_body" \
+    || fail_test 'the EFI_LABEL_UPDATER override is not gated on EUID != 0'
+grep -Fq 'if (( EUID != 0 )); then' <<<"$updater_fn_body" \
+    || fail_test 'the non-root sibling fallback is not gated on EUID != 0'
+grep -Fq 'EFI_LABEL_UPDATER_SHA256' <<<"$updater_fn_body" \
+    || fail_test 'the root sibling fallback no longer verifies against the build-pinned updater digest'
+grep -Fq '${digest%% *}' <<<"$updater_fn_body" \
+    || fail_test 'the root sibling fallback no longer compares the verified copy digest'
+grep -Fq 'verified="$SESSION_DIR/efi-label-updater.py"' <<<"$updater_fn_body" \
+    || fail_test 'the root sibling fallback no longer executes a root-owned session copy'
+# The pinned digest must match the shipped updater: an updater edit without
+# refreshing the pin would make every packaged root run skip the annotation
+# (and weaken the trust model), so fail loudly instead.
+if command -v sha256sum >/dev/null 2>&1; then
+    pinned_digest="$(sed -nE 's/^EFI_LABEL_UPDATER_SHA256="([0-9a-f]{64})".*/\1/p' "$HELPER" | head -n1)"
+    [[ "$pinned_digest" =~ ^[0-9a-f]{64}$ ]] \
+        || fail_test 'EFI_LABEL_UPDATER_SHA256 is missing or not a 64-hex digest in the helper'
+    shipped_digest="$(sha256sum -- "$ROOT_DIR/scripts/boot-repair-efi-label.py" | awk '{print $1}')"
+    [[ "$pinned_digest" == "$shipped_digest" ]] \
+        || fail_test "the pinned EFI label updater digest $pinned_digest does not match scripts/boot-repair-efi-label.py ($shipped_digest); refresh the pin"
+fi
+if (( EUID != 0 )); then
+    # The non-root test seam stays green: the override is honoured.
+    [[ "$(EFI_LABEL_UPDATER="$EFI_TEST_LABEL_UPDATER" efi_label_updater_path)" == "$EFI_TEST_LABEL_UPDATER" ]] \
+        || fail_test 'the non-root EFI_LABEL_UPDATER override was not honoured'
+    # A non-executable override fails closed after the (EUID-gated) fallback.
+    if EFI_LABEL_UPDATER="$WORK_ROOT/does-not-exist" efi_label_updater_path >/dev/null 2>&1; then
+        fail_test 'an unresolvable updater was accepted'
+    fi
+else
+    echo "note: running as root; the non-root EFI_LABEL_UPDATER seam checks are skipped"
+fi
+
+# ---------------------------------------------------------------------------
 # P1: the TUXEDO log state.  A managed fallback and a firmware device-path
 # fallback coexist on the host ESP.  The device-path record (Boot0002) is
 # BootCurrent, but a managed fallback exists on the same ESP, so prune removes

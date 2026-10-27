@@ -47,6 +47,7 @@ for file in \
     "$GUI_DIR/src/LegacyMainWindow.cpp" \
     "$GUI_DIR/src/main.cpp" \
     "$TESTS_DIR/gui-parser-test.cpp" \
+    "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
     "$FIXTURE"
 do
     [[ -f "$file" ]] || fail "missing GUI source: ${file#"$ROOT_DIR"/}"
@@ -67,8 +68,9 @@ g++ -std=c++98 -Wall -Wextra -Werror -I"$GUI_DIR/src" \
     || fail "GUI parser modules failed to compile with g++ -std=c++98"
 pass "Qt-free parser modules compile (g++ -std=c++98 -Werror)"
 
-"$TMP/gui-parser-test" "$FIXTURE" || fail "GUI parser fixture test failed"
-pass "capability parsing, fail-closed gating and device parsers"
+"$TMP/gui-parser-test" "$FIXTURE" "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
+    || fail "GUI parser fixture test failed (including the shared repair->diagnostic map self-test)"
+pass "capability parsing, fail-closed gating, device parsers and the shared map"
 
 # --- evidence contract prefixes ---------------------------------------------
 PARSER="$GUI_DIR/src/EvidenceParser.cpp"
@@ -255,8 +257,8 @@ grep -q 'review the helper output in Logs.' "$WINDOW" \
 # Application log heading.
 for marker in 'setSorting(true)' 'alreadyCommitted' 'm_inspectingHostDetails' \
     'm_detailsPaneTitle' 'makeHelpButton' \
-    'Run a command on the running host as root (sudo is not needed)' \
-    'Run a command inside the selected repair system as root' \
+    'Run a command on the running host as root (Host shell)' \
+    'the selected repair system as root (Chroot shell)' \
     'Committed repair target. Repair, Diagnostics and File Copy' \
     'Host Maintenance is the current scope, but the selected' \
     'isLinuxFileSystemName(own.fstype)' \
@@ -319,6 +321,19 @@ grep -q 'legacy_b64_available' <<<"$MENU_PROMPT_BLOCK" \
     || fail "legacy menu prompt gate lost legacy_b64_available (base64 -> openssl -> python)"
 grep -q 'command -v base64' <<<"$MENU_PROMPT_BLOCK" \
     && fail "legacy menu prompt gate re-added a live 'command -v base64' gate (coreutils 5.97 has no base64)"
+# --- 0.2.29 round-72 prompt-input guard (the Return-propagation trap) --------
+# Qt 3.3.7's QLineEdit leaves Return/Enter unaccepted, so the key propagates
+# to the parent dialog and clicks the FOCUSED button — in the repair result
+# popup that was the armed Cancel, cancelling the run right after the answer
+# (the round-72 rig evidence).  Both prompt surfaces must use the consuming
+# PromptAnswerLineEdit so ENTER commits the answer and never reaches the
+# dialog.
+grep -q 'class PromptAnswerLineEdit : public QLineEdit' "$WINDOW" \
+    || fail "GUI lost the PromptAnswerLineEdit class (Return/Enter consumption)"
+grep -q 'new PromptAnswerLineEdit(dialog)' "$WINDOW" \
+    || fail "repair result prompt input no longer consumes Return/Enter"
+grep -q 'new PromptAnswerLineEdit(m_chrootGroup)' "$WINDOW" \
+    || fail "shell prompt input no longer consumes Return/Enter"
 RC_WRITE_LINE="$(grep -F '_brc=\$?; printf' "$OVERLAY")"
 [[ -n "$RC_WRITE_LINE" ]] || fail "legacy shell runner lost the exit-code capture (_brc=\$?; printf ...)"
 grep -qF "printf '%s\\n'" <<<"$RC_WRITE_LINE" \
@@ -353,7 +368,10 @@ grep -qF '{ "display", "display-manager",' <<<"$ACTION_BLOCK" \
 # Plan-list parity fix: the display tool's Full Repair column now mirrors the
 # Settings plan row (the plan carries the display-manager stage), instead of
 # the removed "not part of the Full Repair plan" placeholder.
-grep -qF '"display-manager", "", true, true, true,' <<<"$ACTION_BLOCK" \
+# Round 54 (E1): the display repair runs at BOTH scopes, so the tool row's
+# hostOnly flag is false now (true, true, false) — the plan row and the tool
+# row stay wired to the same display-manager stage.
+grep -qF '"display-manager", "", true, true, false,' <<<"$ACTION_BLOCK" \
     || fail "display tool's plan stage is not wired to the Settings plan row"
 for marker in 'Restore Graphical Login' 'hostOnly' \
     'enter Host Maintenance to run it'; do
@@ -464,9 +482,11 @@ done
 # Repair parity (cycle 3): the Full Repair plan section replaces the old
 # button grid, the unsupported-features list is gone, and the individual tools
 # are a list + Selected tool pane with the modern result popup.
-for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
+# (Round 21: the inline plan paragraph moved into the Repair "i" popup, so
+# m_planParagraph is in the removed list below instead of the marker list.)
+for marker in 'm_planCountLabel' 'm_planReadinessLabel' \
     'm_planStageLabels' 'm_configurePlanButton' 'm_runFullRepairButton' \
-    'Configure Plan...' 'Run Full Repair' 'configurePlan' 'runFullRepair' \
+    'Configure Plan' 'Run Full Repair' 'configurePlan' 'runFullRepair' \
     'updatePlanView' 'planRunReady' 'selectedPlanStages' \
     'm_toolList' 'm_toolTitle' 'm_toolDescription' 'm_toolPlanStatus' \
     'm_toolRunButton' 'runSelectedTool' 'updateToolDetails' 'toolRunReady' \
@@ -481,7 +501,8 @@ for marker in 'm_planParagraph' 'm_planCountLabel' 'm_planReadinessLabel' \
     grep -q "$marker" "$WINDOW" || fail "Repair parity marker missing: $marker"
 done
 for removed in 'Modern features not available' 'm_unsupportedList' \
-    'unsupportedSpecs' 'm_actionButtons' 'actionSpecs'; do
+    'unsupportedSpecs' 'm_actionButtons' 'actionSpecs' \
+    'm_planParagraph' 'm_gateHint'; do
     grep -q "$removed" "$WINDOW" && fail "removed Repair element still present: $removed"
 done
 # Systems parity: page heading, Available repair targets list, Select Target /
@@ -547,7 +568,7 @@ done
 # The runner keeps its cancel capability for window close, without a dead UI.
 grep -q 'closeEvent' "$WINDOW" || fail "GUI lost the window-close helper cancel path"
 grep -q 'm_runner->cancel()' "$WINDOW" || fail "GUI lost the internal helper cancel call"
-for marker in 'm_configCombo' 'm_configButton' 'Edit Target File...' \
+for marker in 'm_configCombo' 'm_configButton' 'Edit Target File' \
     'editTargetConfigFile' 'openConfigEditor' 'config-read' 'config-write' \
     'Save Target File' 'm_configReasonLabel' 'configSpecs' \
     'configKeyForPath'; do
@@ -796,9 +817,41 @@ grep -q 'enableLabelWordWrap' "$WINDOW" || fail "hidden-input modal text is not 
 grep -q 'Qt::WordBreak' "$WINDOW" || fail "hidden-input modal lost the Qt3 wrap alignment"
 grep -q 'setMaximumWidth(kHiddenInputMaximumWidth)' "$WINDOW" \
     || fail "hidden-input modal is not width-constrained"
-# The Add Note dialog is the only QInputDialog use; the administrator
-# authorization prompt must stay the width-constrained hidden-input dialog.
-grep -q 'QInputDialog::getText' "$WINDOW" || fail "GUI lost the Add Note input dialog"
+# Round 72: the Add Note popup is the custom dialog (modern round-66
+# control-surface parity) — the Add Note/Cancel pair in the TUXEDO order
+# with Add Note as the default + focus, so Enter saves.  QInputDialog is
+# GONE from the GUI entirely; the administrator authorization prompt must
+# stay the width-constrained hidden-input dialog.
+grep -q 'legacy-add-note' "$WINDOW" || fail "GUI lost the custom Add Note dialog"
+grep -q 'new QPushButton(tr("Add Note")' "$WINDOW" \
+    || fail "GUI lost the Add Note accept button"
+ADDNOTE_BLOCK="$(sed -n '/^void LegacyMainWindow::addSessionNote/,/^}/p' "$WINDOW")"
+[[ -n "$ADDNOTE_BLOCK" ]] || fail "addSessionNote block not found"
+grep -q 'QInputDialog' <<<"$ADDNOTE_BLOCK" \
+    && fail "the Add Note dialog still uses the self-sizing QInputDialog"
+# Round 74: the note input is the multi-line memo (the modern round-66
+# shape) with the mirrored greyed placeholder, the popup is pinned at the
+# modern 640-px width, and the one-line field + its returnPressed commit
+# are GONE (Enter in the memo inserts a newline; the Add Note button stays
+# the default + focus so a dialog-level Enter commits there).
+grep -q 'PlaceholderTextEdit \*memo = new PlaceholderTextEdit(&dialog, "addNoteMemo")' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note input is no longer the multi-line memo"
+grep -q 'memo->setPlaceholderText(tr("Enter the note text"))' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note memo lost the modern placeholder"
+grep -q 'layout->addWidget(memo, 1);' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note memo lost the vertical stretch (resizable dialog)"
+grep -q 'dialog.setMinimumWidth(640);' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note popup lost the 640-px pinned width"
+grep -q 'dialog.setMaximumWidth(640);' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note popup is not width-pinned"
+grep -q 'layout->setResizeMode(QLayout::FreeResize);' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note width pin lost the Qt3 layout-clobber guard (FreeResize)"
+grep -q 'addNote->setFocus();' <<<"$ADDNOTE_BLOCK" \
+    || fail "the Add Note button lost the focus (dialog Enter commits)"
+grep -q 'QLineEdit \*edit' <<<"$ADDNOTE_BLOCK" \
+    && fail "the Add Note input regressed to the one-line QLineEdit"
+grep -q 'returnPressed' <<<"$ADDNOTE_BLOCK" \
+    && fail "the Add Note memo reconnected a returnPressed accept"
 AUTH_BLOCK="$(sed -n '/^bool LegacyMainWindow::ensureAdministratorSession/,/^}/p' "$WINDOW")"
 [[ -n "$AUTH_BLOCK" ]] || fail "ensureAdministratorSession block not found"
 grep -q 'QInputDialog' <<<"$AUTH_BLOCK" \
@@ -897,6 +950,29 @@ grep -q 'setIcon(headerPixmap)' "$WINDOW" \
     || fail "GUI window does not use the packaged icon artwork"
 pass "legacy icons generated from the modern master (LANCZOS, fail-fast script)"
 
+# --- Round 70 (E2): the running-system shield badge is extracted from the
+# modern icon atlas (the COLORED security.svg asset, themedIcon
+# "security-high"), generated by the fail-fast PySide6/QtSvg script, and
+# loaded by the GUI with the green "[OK]" text fallback when the PNG is
+# missing. ----------------------------------------------------------------
+SHIELD_SCRIPT="$GUI_DIR/data/make-shield-icon.py"
+[[ -f "$SHIELD_SCRIPT" ]] || fail "missing legacy shield-icon script"
+grep -q 'resources/icons/atlas/security.svg' "$SHIELD_SCRIPT" \
+    || fail "shield-icon script no longer extracts the modern atlas asset"
+grep -q 'PySide6' "$SHIELD_SCRIPT" \
+    || fail "shield-icon script no longer renders through the Qt SVG engine"
+grep -q 'sys.exit' "$SHIELD_SCRIPT" \
+    || fail "shield-icon script does not fail when the atlas asset is missing"
+SHIELD_PNG="$GUI_DIR/data/boot-repair-legacy-shield-32x32.png"
+[[ -f "$SHIELD_PNG" ]] || fail "missing generated legacy shield badge: $SHIELD_PNG"
+grep -q 'legacyShieldPixmap' "$WINDOW" \
+    || fail "GUI does not load the shield badge through legacyShieldPixmap"
+grep -qF 'boot-repair-legacy-shield.png' "$WINDOW" \
+    || fail "GUI does not resolve the packaged shield badge path"
+grep -qF 'setText(tr("[OK]"))' "$WINDOW" \
+    || fail "the green [OK] text fallback is gone from the host card"
+pass "legacy shield badge extracted from the modern icon atlas (PySide6 script, [OK] fallback)"
+
 # --- B3 hardening: secrets/logs/bounded waits (A10-01/06/07/08/09) ----------
 grep -q '<config-write content redacted>' "$WINDOW" \
     || fail "startCommand does not redact the config-write payload element"
@@ -914,14 +990,16 @@ grep -q 'ensureLogDirectory' "$WINDOW" \
     || fail "the private log-directory helper is missing"
 grep -q 'ensureDirectory(m_logDirectory, 0700)' "$WINDOW" \
     || fail "the default log directory is not created 0700"
-grep -q 'chmod(m_logDirectory.local8Bit().data(), 0700)' "$WINDOW" \
-    || fail "the default log directory leaf is not re-tightened to 0700"
+grep -q 'ensurePrivateDirectory0700(m_logDirectory)' "$WINDOW" \
+    || fail "the default log directory leaf is not re-tightened to 0700 through the fd helper"
 grep -q 'm_logDirectory + QString::fromLatin1("/.keys")' "$WINDOW" \
     || fail "unlock keyfiles are not moved to a dedicated .keys directory"
-grep -q 'mkdir(keysDirectory.local8Bit().data(), 0700)' "$WINDOW" \
-    || fail "the .keys directory is not created 0700"
-grep -q 'chmod(keysDirectory.local8Bit().data(), 0700)' "$WINDOW" \
-    || fail "the .keys directory is not re-tightened to 0700"
+grep -q 'ensurePrivateDirectory0700(keysDirectory)' "$WINDOW" \
+    || fail "the .keys directory is not created 0700 through the fd helper"
+grep -q 'O_RDONLY | O_DIRECTORY | O_NOFOLLOW' "$WINDOW" \
+    || fail "the private-directory helper does not open with O_DIRECTORY|O_NOFOLLOW"
+grep -q '::fchmod(fd, 0700)' "$WINDOW" \
+    || fail "the private-directory helper does not re-tighten 0700 through fchmod"
 grep -q 'legacyKeyfileTerminationHandler' "$WINDOW" \
     || fail "the keyfile termination handlers are missing"
 grep -q 'SIGTERM' "$WINDOW" || fail "the SIGTERM keyfile handler is missing"
@@ -934,13 +1012,28 @@ grep -q 'strncpy(registeredPath' "$WINDOW" \
 grep -q 'lstat(canonicalPath.local8Bit().data(), &earlier)' "$WINDOW" \
     || fail "deleteSelectedSessionLog lost the pre-confirmation lstat"
 grep -q 'lstat(canonicalPath.local8Bit().data(), &current)' "$WINDOW" \
-    || fail "deleteSelectedSessionLog lost the immediate pre-unlink lstat"
+    || fail "deleteSelectedSessionLog lost the immediate pre-delete lstat"
 grep -q 'current.st_dev != earlier.st_dev' "$WINDOW" \
     || fail "deleteSelectedSessionLog does not compare the device identity"
 grep -q 'current.st_ino != earlier.st_ino' "$WINDOW" \
     || fail "deleteSelectedSessionLog does not compare the inode identity"
-grep -q '::unlink(canonicalPath.local8Bit().data()) != 0' "$WINDOW" \
-    || fail "deleteSelectedSessionLog no longer unlinks after the lstat"
+# Round 50: the delete goes through the authenticated privileged helper verb
+# instead of a direct unlink, so root-owned logs are removable by the
+# unprivileged GUI.  Pin the dispatch, the pending-state handoff and the
+# completion-marker consumption; the direct unlink must not come back.
+grep -q 'QString::fromLatin1("session-log-delete")' "$WINDOW" \
+    || fail "deleteSelectedSessionLog no longer dispatches the privileged session-log-delete verb"
+grep -q 'm_pendingSessionLogDeleteName = fileName' "$WINDOW" \
+    || fail "deleteSelectedSessionLog does not record the pending delete name"
+grep -q 'Session log delete: ' "$WINDOW" \
+    || fail "helperFinished no longer consumes the Session log delete: completion marker"
+grep -q '::unlink(canonicalPath.local8Bit().data())' "$WINDOW" \
+    && fail "deleteSelectedSessionLog still unlinks the log directly (must go through the privileged helper)"
+# Round 50: an unreadable prior log (root-owned) must stay selectable for
+# deletion — the selection handler records the prior state and enables Delete
+# instead of early-returning with the button disabled.
+grep -q 'must still be SELECTABLE for deletion' "$WINDOW" \
+    || fail "sessionLogSelectionChanged no longer enables Delete for unreadable prior logs"
 grep -q 'static const char \*const settingsFiles\[\]' "$WINDOW" \
     || fail "the post-save settings permission pass is missing"
 for file in devicesrc logsrc diagnosticsrc repairrc; do
@@ -1009,7 +1102,7 @@ grep -q 'capturedLimit = 32 \* 1024' "$RUNNER_CPP" \
     || fail "authenticateElevation stderr capture is not capped at 32 KiB"
 grep -q 'did not respond within the timeout' "$RUNNER_CPP" \
     || fail "authenticateElevation lost the bounded-wait failure wording"
-pass "B3 hardening (redacted argv, O_NOFOLLOW/0600 log, 0700 log dir, .keys + signal handlers, lstat-before-unlink, rc 0600, bounded waits)"
+pass "B3 hardening (redacted argv, O_NOFOLLOW/0600 log, 0700 log dir, .keys + signal handlers, lstat-before-delete, rc 0600, bounded waits)"
 
 # --- B4 elevation trust: fixed paths, lstat checks, no bare execvp ----------
 RUNNER_CPP="$GUI_DIR/src/HelperRunner.cpp"
@@ -1080,6 +1173,55 @@ grep -q 'CANCEL_TOKEN' "$OVERLAY" \
 grep -q 'legacy_cancel_stage_check' "$OVERLAY" \
     || fail "overlay lost the stage-boundary cancel check"
 pass "B4 elevation trust (fixed paths, lstat/uid0/not-writable, no bare execvp), helper verification, cancel-file wiring, watcher kill -0 PPID"
+
+# --- Round 36 (Etch #5): Logs view ordering + scroll + per-entry timestamps --
+# The legacy Logs view must match the modern contract: the register renders
+# NEWEST-first (the newest entry at the TOP of the document), every rebuild
+# (filter/search/session switch) and the initial load land on the TOP of the
+# view (never scrolled down to the tail), and every entry carries its per-entry
+# ARRIVAL timestamp captured when the line landed in the GUI — never one shared
+# format-time stamp re-applied across the register. The smoke cannot drive the
+# log UI headlessly, so these rules are asserted at the code level: the reverse
+# iteration, the top scroll, the live prepend path and the captured-stamp
+# plumbing.
+APPEND_BLOCK="$(sed -n '/^void LegacyMainWindow::appendLog(const QString &line)/,/^}/p' "$WINDOW")"
+[[ -n "$APPEND_BLOCK" ]] || fail "appendLog() definition not found"
+REFRESH_BLOCK="$(sed -n '/^void LegacyMainWindow::refreshLogView()/,/^}/p' "$WINDOW")"
+[[ -n "$REFRESH_BLOCK" ]] || fail "refreshLogView() definition not found"
+FORMAT_BLOCK="$(sed -n '/^QString formattedLogEntry(const LogEntry &entry, QString \*sectionState)/,/^}/p' "$WINDOW")"
+[[ -n "$FORMAT_BLOCK" ]] || fail "formattedLogEntry() definition not found"
+# Ordering: the rebuild iterates the register in REVERSE (newest first) and the
+# live append path prepends through insertParagraph() at the top — a bottom-
+# growing append() inside appendLog() is the round-35 regression.
+grep -Fq 'for (std::size_t i = m_logEntries.size(); i-- > 0;)' <<<"$REFRESH_BLOCK" \
+    || fail "refreshLogView() no longer renders the register newest-first (reverse iteration)"
+grep -q 'prependLogEntryToView(entry)' <<<"$APPEND_BLOCK" \
+    || fail "appendLog() no longer prepends new entries at the top of the view"
+grep -q 'm_logView->append(' <<<"$APPEND_BLOCK" \
+    && fail "appendLog() still appends at the bottom (the newest entry must stay at the top)"
+grep -Fq 'm_logView->insertParagraph(formatted, 0);' "$WINDOW" \
+    || fail "the live view prepend lost the top insert (insertParagraph(formatted, 0))"
+# Scroll: every rebuild ends pinned to the TOP of the document.
+grep -Fq 'm_logView->setContentsPos(0, 0);' <<<"$REFRESH_BLOCK" \
+    || fail "refreshLogView() no longer scrolls the rebuilt view to the top"
+# Timestamps: the entry carries its captured arrival stamp; the formatter must
+# render the captured stamp and only fall back to the clock for null stamps.
+grep -q 'QDateTime stamp;' "$GUI_DIR/src/LegacyMainWindow.h" \
+    || fail "LogEntry lost the per-entry arrival stamp member"
+grep -q 'entry.stamp = QDateTime::currentDateTime();' <<<"$APPEND_BLOCK" \
+    || fail "appendLog() does not capture the per-entry arrival time"
+STAMP_COUNT="$(grep -c 'entry.stamp = QDateTime::currentDateTime();' "$WINDOW" || true)"
+[[ "$STAMP_COUNT" -ge 2 ]] \
+    || fail "per-entry arrival stamps must be captured at BOTH entry sites (appendLog + buffered diagnostic capture); found $STAMP_COUNT"
+grep -Fq 'entry.stamp.isNull()' <<<"$FORMAT_BLOCK" \
+    || fail "formattedLogEntry() lost the captured-stamp lookup (entry.stamp.isNull())"
+grep -Fq ': entry.stamp;' <<<"$FORMAT_BLOCK" \
+    || fail "formattedLogEntry() no longer falls back to the captured stamp"
+grep -Fq 'QDateTime::currentDateTime().toString' <<<"$FORMAT_BLOCK" \
+    && fail "formattedLogEntry() re-stamps entries with the format-time clock (must render the captured arrival stamp)"
+grep -q 'const QString timestamp = stamp' <<<"$FORMAT_BLOCK" \
+    || fail "formattedLogEntry() no longer renders the captured stamp into the timestamp line"
+pass "Round 36 log-view contract (newest-first render, top scroll, per-entry arrival stamps)"
 
 # --- Qt3 auth-pipe harness (runs on Etch; skips without qmake-qt3) ----------
 for file in "$TESTS_DIR/auth-pipe-test.cpp" "$TESTS_DIR/auth-pipe-test.pro" \

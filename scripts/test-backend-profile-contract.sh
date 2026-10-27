@@ -43,7 +43,7 @@ required_helper_functions=(
     apt_lists_fingerprint rpm_metadata_cache_fingerprint grub_entry_is_foreign diagnostic_repair_capabilities diagnostic_package_state apt_update_allow_release_info_retry apt_update_release_info_change_only
     apt_update_release_info_change_repos apt_update_release_info_change_details run_apt_update parse_repair_arguments repair_change_status repair_file_fingerprint
     initramfs_image_fingerprint efi_boot_artifact_fingerprint apt_transaction_reported_no_changes dpkg_configuration_pending dpkg_configure_stage efi_repair_emit_change_status
-    display_manager_already_correct apt_simulation_has_pending_packages apt_simulation_requests_full_upgrade run_host_default
+    display_manager_already_correct apt_simulation_has_pending_packages apt_simulation_requests_full_upgrade run_host_default confirm_mutating_stage
 )
 helper_function_names="$(grep -oE '^[A-Za-z_][A-Za-z0-9_]*\(\)' "$HELPER")"
 missing_helper_functions="$(grep -Fvxf \
@@ -1169,16 +1169,18 @@ alpine_apk_transaction_reported_no_changes $'(1/1) Purging foo (1.0-r0)' \
     && { echo 'FAIL: apk removal was treated as unchanged' >&2; exit 1; }
 
 # The apk backend must simulate exactly once, apply the exact simulated
-# command and never pass force/overwrite/untrusted flags.
-grep -Fq 'adaptive_alpine_apk_apply "Repair Alpine package dependencies (apk fix --depends)" fixbroken fix --depends' "$HELPER" \
+# command and never pass force/overwrite/untrusted flags.  (Round 45: the
+# labels are keyed msg tokens now — the transcript records the token, the
+# GUI localizes it.)
+grep -Fq 'adaptive_alpine_apk_apply "$(msg apk-fix-deps-apply)" "Repair Alpine package dependencies (apk fix --depends)" fixbroken fix --depends' "$HELPER" \
     || { echo 'FAIL: apk fix-broken stage is not wired' >&2; exit 1; }
-grep -Fq 'adaptive_alpine_apk_apply "Repair Alpine package dependencies and missing files (apk fix --depends ${missing_packages[*]})" fixbroken fix --depends "${missing_packages[@]}"' "$HELPER" \
+grep -Fq 'adaptive_alpine_apk_apply "$(msg apk-fix-deps-and-files-apply "${missing_packages[*]}")" "Repair Alpine package dependencies and missing files (apk fix --depends ${missing_packages[*]})" fixbroken fix --depends "${missing_packages[@]}"' "$HELPER" \
     || { echo 'FAIL: apk targeted missing-file repair is not wired' >&2; exit 1; }
-grep -Fq 'adaptive_alpine_apk_stage "Upgrade installed Alpine packages (apk upgrade)" upgrade upgrade' "$HELPER" \
+grep -Fq 'adaptive_alpine_apk_stage "$(msg apk-upgrade-apply)" "Upgrade installed Alpine packages (apk upgrade)" upgrade upgrade' "$HELPER" \
     || { echo 'FAIL: apk upgrade stage is not wired' >&2; exit 1; }
-grep -Fq 'alpine_apk_transaction_try "Alpine apk ${apk_command[*]} simulation" "${apk_command[@]}" --simulate' "$HELPER" \
+grep -Fq 'alpine_apk_transaction_try "$(msg apk-command-simulation "${apk_command[*]}")" "${apk_command[@]}" --simulate' "$HELPER" \
     || { echo 'FAIL: apk simulation is not wired' >&2; exit 1; }
-grep -Fq 'run_chroot_try_display "$label" apk "${apk_command[@]}"' "$HELPER" \
+grep -Fq 'run_chroot_try_display "$display_label" apk "${apk_command[@]}"' "$HELPER" \
     || { echo 'FAIL: apk apply is not wired' >&2; exit 1; }
 grep -Fq 'flock -n "$lock" true' "$HELPER" \
     || { echo 'FAIL: apk database lock probe is not wired' >&2; exit 1; }
@@ -1295,16 +1297,16 @@ apk_missing_commands="$fake_root/apk-missing-commands.log"
 ) || exit 1
 grep -Fq 'apk info --who-owns /boot/vmlinuz-lts /usr/bin/lightdm' "$apk_missing_commands" \
     || { echo 'FAIL: missing files were not mapped to owners with absolute paths' >&2; exit 1; }
-grep -Fq 'SIMULATE Alpine apk fix --depends lightdm linux-lts simulation fix --depends lightdm linux-lts --simulate' "$apk_missing_commands" \
+grep -Fq 'SIMULATE msg:apk-command-simulation|param:fix --depends lightdm linux-lts fix --depends lightdm linux-lts --simulate' "$apk_missing_commands" \
     || { echo 'FAIL: targeted repair was not simulated first' >&2; exit 1; }
-grep -Fq 'CHROOT Repair Alpine package dependencies and missing files (apk fix --depends lightdm linux-lts) apk fix --depends lightdm linux-lts' "$apk_missing_commands" \
+grep -Fq 'CHROOT msg:apk-fix-deps-and-files-apply|param:lightdm linux-lts apk fix --depends lightdm linux-lts' "$apk_missing_commands" \
     || { echo 'FAIL: targeted repair was not applied with the exact simulated command' >&2; exit 1; }
-grep -Fq 'SIMULATE Alpine apk fix --depends simulation fix --depends --simulate' "$apk_missing_commands" \
+grep -Fq 'SIMULATE msg:apk-command-simulation|param:fix --depends fix --depends --simulate' "$apk_missing_commands" \
     || { echo 'FAIL: the empty missing-file list did not use apk fix --depends' >&2; exit 1; }
-grep -Fq 'CHROOT Repair Alpine package dependencies (apk fix --depends) apk fix --depends' "$apk_missing_commands" \
+grep -Fq 'CHROOT msg:apk-fix-deps-apply apk fix --depends' "$apk_missing_commands" \
     || { echo 'FAIL: the empty missing-file list did not apply apk fix --depends' >&2; exit 1; }
-sim_line="$(grep -n 'SIMULATE Alpine apk fix --depends lightdm linux-lts simulation' "$apk_missing_commands" | head -n1 | cut -d: -f1)"
-apply_line="$(grep -n 'CHROOT Repair Alpine package dependencies and missing files .* apk fix --depends lightdm linux-lts$' "$apk_missing_commands" | head -n1 | cut -d: -f1)"
+sim_line="$(grep -n 'SIMULATE msg:apk-command-simulation|param:fix --depends lightdm linux-lts' "$apk_missing_commands" | head -n1 | cut -d: -f1)"
+apply_line="$(grep -n 'CHROOT msg:apk-fix-deps-and-files-apply|param:lightdm linux-lts apk fix --depends lightdm linux-lts$' "$apk_missing_commands" | head -n1 | cut -d: -f1)"
 [[ -n "$sim_line" && -n "$apply_line" && "$sim_line" -lt "$apply_line" ]] \
     || { echo 'FAIL: targeted missing-file repair applied before its simulation' >&2; exit 1; }
 
@@ -1406,17 +1408,25 @@ printf 'P:lightdm\nV:1.32.0-r12\n\n' > "$apk_fingerprint_root/lib/apk/db/install
 pair_root="$(mktemp -d)"
 trap 'rm -rf -- "$fake_root" "$dracut_root" "$dracut_pkg_root" "$cap_root" "$cap_arch_min" "$cap_alpine" "$pair_root"' EXIT
 mkdir -p "$pair_root/lib/modules/6.18.52-0-lts" "$pair_root/lib/modules/7.0.0-custom" "$pair_root/lib/modules/8.0.0-orphan" \
-    "$pair_root/lib/modules/10.0.0-empty" "$pair_root/usr/lib/modules/9.0.0-fallback" "$pair_root/boot"
+    "$pair_root/lib/modules/10.0.0-empty" "$pair_root/lib/modules/11.0.0-evil" \
+    "$pair_root/lib/modules/12.0.0-lts-2" "$pair_root/usr/lib/modules/9.0.0-fallback" "$pair_root/boot"
 # Real Alpine linux-lts/linux-virt packages write "-lts\n"/"-virt\n" into
 # kernel-suffix; the leading dash must be stripped to reach vmlinuz-lts.
 printf '%s\n' '-lts' > "$pair_root/lib/modules/6.18.52-0-lts/kernel-suffix"
 printf 'custom\n' > "$pair_root/lib/modules/7.0.0-custom/kernel-suffix"
 # An empty kernel-suffix still falls back to the module directory name.
 : > "$pair_root/lib/modules/10.0.0-empty/kernel-suffix"
+# MOD-1: a hostile flavor text must be rejected by the suffix allowlist and
+# never reach a path or a command; a dash-carrying conforming flavor still
+# pairs.
+printf '%s\n' "x';>f;'" > "$pair_root/lib/modules/11.0.0-evil/kernel-suffix"
+printf '%s\n' '-lts-2' > "$pair_root/lib/modules/12.0.0-lts-2/kernel-suffix"
 : > "$pair_root/boot/vmlinuz-lts"
 : > "$pair_root/boot/vmlinuz-custom"
 : > "$pair_root/boot/vmlinuz-9.0.0-fallback"
 : > "$pair_root/boot/vmlinuz-10.0.0-empty"
+: > "$pair_root/boot/vmlinuz-x';>f;'"
+: > "$pair_root/boot/vmlinuz-lts-2"
 TARGET_ROOT="$pair_root"
 alpine_pair_output="$(alpine_kernel_pairs)"
 grep -Fqx '6.18.52-0-lts lts /boot/vmlinuz-lts /boot/initramfs-lts' <<<"$alpine_pair_output" \
@@ -1435,6 +1445,20 @@ if grep -Fq '8.0.0-orphan' <<<"$alpine_pair_output"; then
     echo 'FAIL: kernel module directory without boot image was paired' >&2
     exit 1
 fi
+# MOD-1: the conforming dash-carrying flavor still pairs, and the hostile
+# suffix is rejected (never paired, never interpolated, no side effect).
+grep -Fqx '12.0.0-lts-2 lts-2 /boot/vmlinuz-lts-2 /boot/initramfs-lts-2' <<<"$alpine_pair_output" \
+    || { echo 'FAIL: the conforming lts-2 suffix must still pair' >&2; exit 1; }
+if grep -Fq '11.0.0-evil' <<<"$alpine_pair_output"; then
+    echo 'FAIL: the hostile-suffix kernel was paired' >&2
+    exit 1
+fi
+if grep -Fq "x';>f;'" <<<"$alpine_pair_output"; then
+    echo 'FAIL: the hostile kernel suffix was interpolated into the pairing output' >&2
+    exit 1
+fi
+[[ ! -e "$pair_root/f;" ]] \
+    || { echo 'FAIL: the hostile suffix left an injection side effect' >&2; exit 1; }
 grep -Fq 'alpine_kernel_pairs' "$HELPER"
 grep -Fq 'sim_path="/tmp/boot-repair-initramfs-preflight-${kver}"' "$HELPER" \
     || { echo 'FAIL: mkinitfs trial output path is not wired' >&2; exit 1; }
@@ -1442,8 +1466,39 @@ grep -Fq 'mkinitfs -o "$sim_path" "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs trial build is not wired' >&2; exit 1; }
 grep -Fq 'mkinitfs -l "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs -l verification fallback is not wired' >&2; exit 1; }
-grep -Fq "zcat '\$image' | cpio -t" "$HELPER" \
-    || { echo 'FAIL: zcat/cpio initramfs verification is not wired' >&2; exit 1; }
+grep -Fq "sh -c 'zcat -- \"\$1\" | cpio -t >/dev/null 2>&1' sh \"\$image\"" "$HELPER" \
+    || { echo 'FAIL: the Alpine zcat/cpio verification must pass the image positionally, never interpolated' >&2; exit 1; }
+if grep -Fq "zcat '\$image' | cpio -t" "$HELPER"; then
+    echo 'FAIL: the interpolated zcat sink form is still present' >&2
+    exit 1
+fi
+
+# MOD-1 behavioural: alpine_initramfs_verify passes the image as its own argv
+# element (the sh -c script is fixed, so a hostile image path can never reach
+# the shell as code).
+(
+    source <(sed '/^main "$@"/d' "$HELPER")
+    verify_argv_file="$(mktemp)"
+    trap 'rm -rf -- "$verify_argv_file"' EXIT
+    run_selected_chroot() {
+        printf '%s\n' "$@" > "$verify_argv_file"
+        return 0
+    }
+    msg_log() { :; }
+    hostile_image="/boot/vmlinuz-x';>f;'"
+    alpine_initramfs_verify "$hostile_image" "9.9.9" >/dev/null \
+        || { echo 'FAIL: alpine_initramfs_verify failed on the stubbed runner' >&2; exit 1; }
+    [[ "$(wc -l < "$verify_argv_file" | tr -d '[:space:]')" -eq 8 ]] \
+        || { echo "FAIL: the verify runner got $(wc -l < "$verify_argv_file") argv elements, expected 8" >&2; exit 1; }
+    [[ "$(sed -n '4p' "$verify_argv_file")" == sh \
+        && "$(sed -n '5p' "$verify_argv_file")" == -c \
+        && "$(sed -n '6p' "$verify_argv_file")" == 'zcat -- "$1" | cpio -t >/dev/null 2>&1' \
+        && "$(sed -n '7p' "$verify_argv_file")" == sh \
+        && "$(sed -n '8p' "$verify_argv_file")" == "$hostile_image" ]] \
+        || { echo "FAIL: the image was not passed positionally: $(cat "$verify_argv_file")" >&2; exit 1; }
+    grep -Fq 'zcat -- "$1"' "$verify_argv_file" \
+        || { echo 'FAIL: the fixed positional zcat form is missing from the verify call' >&2; exit 1; }
+)
 grep -Fq 'run_chroot_try_display "$(msg rebuild-alpine-initramfs "$kver")" mkinitfs "$kver"' "$HELPER" \
     || { echo 'FAIL: mkinitfs per-kernel apply is not wired' >&2; exit 1; }
 if grep -Fq 'mkinitcpio -P' <<<"$(sed -n '/^adaptive_alpine_initramfs_repair()/,/^}/p' "$HELPER")"; then
@@ -2012,19 +2067,35 @@ fi
 
 # Both diagnostic_errors journal sections must run the filter on the cached
 # journal streams (error-priority and failure-related) before the actionability
-# and collapsing stages.
+# and collapsing stages.  Round 17: the filter is applied inside
+# evidence_journal_filtered (the once-per-run filtered-slice cache), so each
+# evidence_journal_filtered use in diagnostic_errors is wired by construction;
+# the definition's own pipeline is asserted separately below.
 awk '
     /^diagnostic_errors\(\)/ { in_errors = 1; next }
     in_errors && /^}/ { exit(streams == 2 && filtered == 2 ? 0 : 1) }
-    in_errors && /journal_cached_/ { streams++; expect = 1; next }
-    in_errors && expect && /journal_boot_relevant_filter/ { filtered++; expect = 0 }
+    in_errors && /evidence_journal_filtered/ { streams++; filtered++; next }
 ' "$HELPER" \
-    || { echo 'FAIL: journal_boot_relevant_filter is not wired into both diagnostic_errors cached streams' >&2; exit 1; }
+    || { echo 'FAIL: both diagnostic_errors cached streams are not routed through evidence_journal_filtered' >&2; exit 1; }
+
+# The once-per-run filtered-slice cache must itself pipe the cached slice
+# through the boot-relevant filter (and the cancel guard) — that is where the
+# wiring now lives for every consumer.
+awk '
+    /^evidence_journal_filtered\(\)/ { in_fn = 1; next }
+    in_fn && /^}/ { exit(filtered == 1 ? 0 : 1) }
+    in_fn && /journal_boot_relevant_filter/ { filtered = 1 }
+' "$HELPER" \
+    || { echo 'FAIL: evidence_journal_filtered does not pipe the cached slice through journal_boot_relevant_filter' >&2; exit 1; }
 
 # Every cached full-journal window in diagnostic_boot_evidence and
 # diagnostic_display must run through the boot-relevant filter and collapse
 # near-identical lines.  The boot-ID inventory (journal_cached_boot_ids) is
 # exempt from the filter, exactly as the pre-cache --list-boots query was.
+# (Round 17: the windows are consumed through evidence_journal_filtered, which
+# pipes the slice through the cancel guard and the boot-relevant filter
+# byte-identically; the definition is asserted above, so a window routed
+# through it is wired by construction.)
 awk '
     /^diagnostic_boot_evidence\(\)/ { target = "diagnostic_boot_evidence"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
     /^diagnostic_display\(\)/ { target = "diagnostic_display"; functions_seen++; queries = 0; filtered = 0; collapsed = 0; expect_filter = 0; next }
@@ -2037,8 +2108,9 @@ awk '
         target = ""; next
     }
     expect_filter {
-        if (/journal_boot_relevant_filter/) { filtered++; expect_filter = 0; next }
-        printf "FAIL: %s cached-journal window query is not piped through journal_boot_relevant_filter\n", target
+        if (/evidence_journal_filtered/) { filtered++; expect_filter = 0; next }
+        if (/journal_cancel_guard/ || /journal_boot_relevant_filter/) { next }
+        printf "FAIL: %s cached-journal window query is not piped through evidence_journal_filtered\n", target
         failed = 1
         expect_filter = 0
         next
@@ -2046,6 +2118,12 @@ awk '
     /journal_cached_window_lines/ {
         queries++
         expect_filter = 1
+        next
+    }
+    /evidence_journal_filtered/ {
+        queries++
+        filtered++
+        expect_filter = 0
         next
     }
     /collapse_similar_journal_lines/ { collapsed++ }
@@ -2057,7 +2135,7 @@ awk '
         exit failed ? 1 : 0
     }
 ' "$HELPER" \
-    || { echo 'FAIL: journal_boot_relevant_filter/collapse_similar_journal_lines are not wired into all diagnostic_boot_evidence and diagnostic_display cached-journal windows' >&2; exit 1; }
+    || { echo 'FAIL: evidence_journal_filtered/collapse_similar_journal_lines are not wired into all diagnostic_boot_evidence and diagnostic_display cached-journal windows' >&2; exit 1; }
 
 # The four journal cache dumps are the only full-journal journalctl
 # invocations left: the 1600-entry window, the 4000-entry boot head, the
@@ -2545,8 +2623,8 @@ grep -Fq 'run_package_stage dpkg-configure dpkg' "$HELPER"
 grep -Fq 'run_package_stage fix-broken fixbroken' "$HELPER"
 grep -Fq 'run_package_stage apt-update aptupdate' "$HELPER"
 grep -Fq 'run_package_stage apt-upgrade upgrade' "$HELPER"
-grep -Fq 'adaptive_arch_pacman_repair "Repair Arch package dependencies" fixbroken' "$HELPER"
-grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade' "$HELPER"
+grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-fix-deps-apply)" "Repair Arch package dependencies" fixbroken' "$HELPER"
+grep -Fq 'adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" "Upgrade installed Arch packages" upgrade' "$HELPER"
 # The APT upgrade stage simulates the least invasive mode first and promotes
 # to full-upgrade/dist-upgrade only from the simulation evidence.
 
@@ -2612,19 +2690,19 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
         CHROOT_TRY_RC=0
         CHROOT_TRY_OUTPUT=$':: Synchronizing package databases...\n core is up to date\n:: Starting full system upgrade...\n there is nothing to do\n'
     }
-    change_out="$(adaptive_arch_pacman_repair 'Upgrade installed Arch packages' upgrade)"
+    change_out="$(adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" 'Upgrade installed Arch packages' upgrade)"
     assert_single_change_status "$change_out" upgrade 'unchanged|reason:pacman-no-changes'
     run_chroot_try() {
         CHROOT_TRY_RC=0
         CHROOT_TRY_OUTPUT=$'Packages (1) example-1.0-1 -> 2.0-1\n(1/1) upgrading example\n'
     }
-    change_out="$(adaptive_arch_pacman_repair 'Repair Arch package dependencies' fixbroken)"
+    change_out="$(adaptive_arch_pacman_repair "$(msg pacman-fix-deps-apply)" 'Repair Arch package dependencies' fixbroken)"
     assert_single_change_status "$change_out" fixbroken 'changed'
     run_chroot_try() {
         CHROOT_TRY_RC=0
         CHROOT_TRY_OUTPUT=$'Packages (1) example-1.0-1\n(1/1) removing example\n'
     }
-    change_out="$(adaptive_arch_pacman_repair 'Repair Arch package dependencies' fixbroken)"
+    change_out="$(adaptive_arch_pacman_repair "$(msg pacman-fix-deps-apply)" 'Repair Arch package dependencies' fixbroken)"
     assert_single_change_status "$change_out" fixbroken 'changed'
 
     # DKMS rebuilds stay changed (fail safe).
@@ -2980,6 +3058,116 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
         || { echo 'FAIL: the unsafe-promotion fallback was not logged' >&2; exit 1; }
 )
 
+# Round 6: package-mutating stages confirm over the PROMPT/ANSWER session
+# channel.  A channel-active upgrade emits the confirmation prompt through
+# helper_menu_prompt (the kernel/GPU menu channel), proceeds only on an
+# explicit yes, and reports `skipped|reason:user-declined` on a declined or
+# unanswered prompt while the plan continues with the remaining stages.  The
+# channel-less path (no BOOT_REPAIR_SESSION_PROTOCOL — the contracts) proceeds
+# without any prompt: the upfront plan confirmation is the gate there.
+(
+    reset_helper_state
+    trap - EXIT INT TERM HUP
+    confirm_root="$(mktemp -d)"
+    mkdir -p "$confirm_root/usr/bin" "$confirm_root/session"
+    : > "$confirm_root/usr/bin/apt-get"
+    chmod +x "$confirm_root/usr/bin/apt-get"
+    TARGET_ROOT="$confirm_root"
+    SESSION_DIR="$confirm_root/session"
+    SESSION_LOG="$confirm_root/session.log"
+    : > "$SESSION_LOG"
+    RUNNING_HOST_MODE=0
+    BOOT_REPAIR_SESSION_PROTOCOL=1
+    BOOT_REPAIR_SESSION_REQUEST=42
+    confirm_prompt_file="$confirm_root/prompt.txt"
+    confirm_apply_file="$confirm_root/apply-call"
+    : > "$confirm_prompt_file"
+    : > "$confirm_apply_file"
+    CONFIRM_ANSWER=""
+    run_selected_chroot()
+    {
+        local joined="$*"
+        case "$joined" in
+            *'apt-get -s'*' upgrade')
+                printf 'Reading package lists...\nInst linux-image [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n' ;;
+            *'apt-get -s'*'-f install')
+                printf 'Reading package lists...\nInst linux-image [1.0] (2.0 example [amd64])\n1 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n' ;;
+            *'apt-get -s'*' full-upgrade')
+                printf 'Reading package lists...\n0 upgraded, 0 newly installed, 0 to remove and 0 not upgraded.\n' ;;
+            *) return 0 ;;
+        esac
+    }
+    run_chroot_try()
+    {
+        local label="$1"; shift
+        printf '%s\n' "$*" >> "$confirm_apply_file"
+        CHROOT_TRY_RC=0
+        CHROOT_TRY_OUTPUT=""
+    }
+    helper_menu_prompt()
+    {
+        printf '%s\n' "$1" >> "$confirm_prompt_file"
+        HELPER_MENU_ANSWER="$CONFIRM_ANSWER"
+        [[ -n "$CONFIRM_ANSWER" ]]
+    }
+    confirm_apply_count()
+    {
+        wc -l < "$confirm_apply_file" | tr -d ' '
+    }
+
+    # Explicit yes proceeds: the prompt names the stage and scope, and the
+    # apply runs.
+    CONFIRM_ANSWER="yes"
+    confirm_out="$(adaptive_apt_upgrade)"
+    grep -q 'CONFIRM PACKAGE CHANGE' "$confirm_prompt_file" \
+        || { echo 'FAIL: the channel-active upgrade never emitted the confirmation prompt' >&2; exit 1; }
+    grep -q 'Stage: upgrade (apt-get upgrade)' "$confirm_prompt_file" \
+        || { echo 'FAIL: the confirmation prompt does not name the upgrade stage/backend' >&2; exit 1; }
+    grep -q 'Scope: the selected repair target' "$confirm_prompt_file" \
+        || { echo 'FAIL: the confirmation prompt does not name the scope' >&2; exit 1; }
+    grep -Fqx 'Repair change status upgrade: changed' <<<"$confirm_out" \
+        || { echo 'FAIL: the confirmed upgrade must apply and report changed' >&2; printf '%s\n' "$confirm_out" >&2; exit 1; }
+    [[ "$(confirm_apply_count)" -eq 1 ]] \
+        || { echo 'FAIL: the confirmed upgrade must run exactly one apply' >&2; exit 1; }
+
+    # A declined answer skips the stage (no apply, skipped status) and the plan
+    # continues: the next stage still prompts, applies and reports changed.
+    : > "$confirm_prompt_file"
+    : > "$confirm_apply_file"
+    CONFIRM_ANSWER="no"
+    confirm_out="$(adaptive_apt_upgrade)"
+    grep -Fqx 'Repair change status upgrade: skipped|reason:user-declined' <<<"$confirm_out" \
+        || { echo 'FAIL: a declined upgrade must report skipped|reason:user-declined' >&2; printf '%s\n' "$confirm_out" >&2; exit 1; }
+    [[ "$(confirm_apply_count)" -eq 0 ]] \
+        || { echo 'FAIL: the declined upgrade must not apply' >&2; exit 1; }
+    CONFIRM_ANSWER="y"
+    confirm_out="$(adaptive_fix_broken)"
+    grep -q 'Stage: fix-broken (apt-get -f install)' "$confirm_prompt_file" \
+        || { echo 'FAIL: the fix-broken confirmation prompt is missing after the decline' >&2; exit 1; }
+    grep -Fqx 'Repair change status fixbroken: changed' <<<"$confirm_out" \
+        || { echo 'FAIL: the stage after a declined stage must still run (plan continues)' >&2; printf '%s\n' "$confirm_out" >&2; exit 1; }
+
+    # A timeout (no answer) also skips the stage.
+    : > "$confirm_prompt_file"
+    : > "$confirm_apply_file"
+    CONFIRM_ANSWER=""
+    confirm_out="$(adaptive_apt_upgrade)"
+    grep -Fqx 'Repair change status upgrade: skipped|reason:user-declined' <<<"$confirm_out" \
+        || { echo 'FAIL: an unanswered confirmation must skip the stage' >&2; printf '%s\n' "$confirm_out" >&2; exit 1; }
+    [[ "$(confirm_apply_count)" -eq 0 ]] \
+        || { echo 'FAIL: the unanswered upgrade must not apply' >&2; exit 1; }
+
+    # Channel-less (no session protocol): proceed without any prompt.
+    : > "$confirm_prompt_file"
+    : > "$confirm_apply_file"
+    BOOT_REPAIR_SESSION_PROTOCOL=0
+    confirm_out="$(adaptive_apt_upgrade)"
+    [[ -z "$(cat "$confirm_prompt_file")" ]] \
+        || { echo 'FAIL: the channel-less upgrade must not prompt' >&2; exit 1; }
+    grep -Fqx 'Repair change status upgrade: changed' <<<"$confirm_out" \
+        || { echo 'FAIL: the channel-less upgrade must proceed without a prompt' >&2; printf '%s\n' "$confirm_out" >&2; exit 1; }
+)
+
 # dnf5: a skipped package is non-fatal and surfaced; the changed stage keeps
 # its package feedback in the status reason.
 (
@@ -3080,7 +3268,7 @@ grep -Fq 'adaptive_arch_pacman_repair "Upgrade installed Arch packages" upgrade'
         CHROOT_TRY_RC=0
         CHROOT_TRY_OUTPUT=$'warning: linux: ignoring package upgrade (6.12.1-1 => 6.12.2-1)\n there is nothing to do'
     }
-    pacman_feedback_out="$(adaptive_arch_pacman_repair 'Upgrade installed Arch packages' upgrade)"
+    pacman_feedback_out="$(adaptive_arch_pacman_repair "$(msg pacman-upgrade-apply)" 'Upgrade installed Arch packages' upgrade)"
     grep -Fqx 'Package ignored: linux' <<<"$pacman_feedback_out" \
         || { echo 'FAIL: pacman ignored evidence line is missing' >&2; printf '%s\n' "$pacman_feedback_out" >&2; exit 1; }
     grep -Fqx 'Package manager feedback: pacman: 1 package ignored: linux' <<<"$pacman_feedback_out" \
@@ -3365,6 +3553,13 @@ printf 'title Fedora Linux\nversion 6.19.10-300.fc44.x86_64\nlinux /vmlinuz-6.19
     > "$rpm_root/boot/loader/entries/cfe2564d1eaf4bd88faaff5dd35b5e31-6.19.10-300.fc44.x86_64.conf"
 printf 'loading\nGeom\n' > "$rpm_root/boot/grub2/i386-pc/boot.img"
 printf 'loading\nGeom\n' > "$rpm_root/boot/grub2/i386-pc/core.img"
+
+# Round 71: target_rpm_detected now requires a NON-EMPTY rpm package database
+# (a bare rpm utility on a dpkg-managed host initializes an empty rpmdb.sqlite
+# and must not be listed as a backend).  The fake sparse root cannot chroot-run
+# its stub rpm binary, so the package-state probe is stubbed: the fixture's
+# sqlite rpmdb stands in for a genuine rpm-managed system.
+rpm_database_has_packages() { return 0; }
 
 # The Fedora fixture pins the firmware probe to legacy BIOS so the capability
 # reasons are deterministic on a UEFI test host; the probe itself is covered by
@@ -3716,11 +3911,11 @@ rpm_transaction_reported_no_changes $'Transaction Summary:\n Installing: 1 packa
 # exact simulated apply and never pass a policy-relaxing dnf5 flag.
 grep -Fq 'rpm_transaction_try "dnf5 ${rpm_command[*]} simulation" "${rpm_command[@]}" --assumeno' "$HELPER" \
     || { echo 'FAIL: dnf5 write-free simulation is not wired' >&2; exit 1; }
-grep -Fq 'run_chroot_try "$label" "${RPM_DNF_TOOL:-dnf5}" "${rpm_command[@]}" -y' "$HELPER" \
+grep -Fq 'run_chroot_try "$display_label" "${RPM_DNF_TOOL:-dnf5}" "${rpm_command[@]}" -y' "$HELPER" \
     || { echo 'FAIL: dnf5 apply is not wired' >&2; exit 1; }
-grep -Fq 'adaptive_rpm_apply "Repair RPM package files (dnf5 reinstall ${missing_packages[*]})" fixbroken reinstall "${missing_packages[@]}"' "$HELPER" \
+grep -Fq 'adaptive_rpm_apply "$(msg rpm-reinstall-files-apply "${missing_packages[*]}")" "Repair RPM package files (dnf5 reinstall ${missing_packages[*]})" fixbroken reinstall "${missing_packages[@]}"' "$HELPER" \
     || { echo 'FAIL: rpm fix-broken reinstall is not wired' >&2; exit 1; }
-grep -Fq 'adaptive_rpm_stage "Upgrade installed RPM packages (dnf5 upgrade)" upgrade upgrade' "$HELPER" \
+grep -Fq 'adaptive_rpm_stage "$(msg rpm-upgrade-apply)" "Upgrade installed RPM packages (dnf5 upgrade)" upgrade upgrade' "$HELPER" \
     || { echo 'FAIL: rpm upgrade stage is not wired' >&2; exit 1; }
 grep -Fq 'run_chroot_try_display "$(msg refresh-dnf5-metadata)" "${RPM_DNF_TOOL:-dnf5}" makecache' "$HELPER" \
     || { echo 'FAIL: dnf5 makecache stage is not wired' >&2; exit 1; }
@@ -4001,7 +4196,7 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
         CHROOT_TRY_RC=0
         case "$*" in
             *'dracut --version'*) CHROOT_TRY_OUTPUT='dracut 108-6.fc44' ;;
-            *'dracut -f --kver'*)
+            *'dracut -f --no-hostonly --kver'*)
                 local last="${!#}"
                 printf '%s\n' "$(( $(dracut_builds) + 1 ))" > "$dracut_build_count_file"
                 [[ "$last" == /run/boot-repair-initramfs/* ]] \
@@ -4150,13 +4345,20 @@ grep -Fqx '/boot/initramfs-6.19.10-300.fc44.x86_64.img missing' <<<"$(TARGET_ROO
 dracut_apply_body="$(sed -n '/^adaptive_dracut_initramfs_repair()/,/^}/p' "$HELPER")"
 grep -Fq 'dracut -f --kver "$kver" "$build_path"' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut single-build-per-kernel invocation is not wired' >&2; exit 1; }
+# Host/Target isolation: the target-scope build pins --no-hostonly (a hostonly
+# build would embed the recovery host's hardware into the target image via the
+# shared /sys + /proc); the running-host scope keeps the default.
+grep -Fq 'dracut -f --no-hostonly --kver "$kver" "$build_path"' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut target-scope build lost the --no-hostonly pin' >&2; exit 1; }
+grep -Fq 'RUNNING_HOST_MODE == 1' <<<"$dracut_apply_body" \
+    || { echo 'FAIL: dracut build no longer scopes the hostonly pin by RUNNING_HOST_MODE' >&2; exit 1; }
 grep -Fq 'mv -- "$TARGET_ROOT$build_path" "$TARGET_ROOT$image"' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut verified-image install (mv) is not wired' >&2; exit 1; }
 grep -Fq 'initramfs-before-$kver.img' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut session backup convention is missing' >&2; exit 1; }
 grep -Fq 'msg_log fedora-initramfs-identical' <<<"$dracut_apply_body" \
     || { echo 'FAIL: dracut identical-image discard is not wired' >&2; exit 1; }
-if grep -Eq -- '--regenerate-all|--no-hostonly|--uefi|--noimageifnotneeded|--no-kernel|restorecon|setenforce|fixfiles' <<<"$dracut_apply_body"; then
+if grep -Eq -- '--regenerate-all|--uefi|--noimageifnotneeded|--no-kernel|restorecon|setenforce|fixfiles' <<<"$dracut_apply_body"; then
     echo 'FAIL: dracut apply passes a forbidden override or relabels SELinux' >&2
     exit 1
 fi
@@ -4350,6 +4552,17 @@ fedora_grub_stub_env()
     cmp -s "$fedora_grub_root/grub.cfg.orig" "$TARGET_ROOT/boot/grub2/grub.cfg" \
         || { echo 'FAIL: a refused trial changed grub.cfg' >&2; exit 1; }
 ) || exit 1
+
+# ---------------------------------------------------------------------------
+# Host/Target isolation (0.2.29 cycle): the repair chroot must mount a FRESH
+# procfs (never the recovery host's /proc), so tools that read /proc/modules
+# (mkinitcpio autodetect, dracut hostonly resolution) cannot see the host's
+# loaded modules.  The uname(2) syscall still reports the host kernel - the
+# rpm/dnf5 opt-out and the dracut --no-hostonly pin cover those separately.
+# ---------------------------------------------------------------------------
+isolation_mount_body="$(sed -n '/^mount_special()/,/^}/p' "$HELPER")"
+grep -Fq 'mount -t proc proc "$destination"' <<<"$isolation_mount_body" \
+    || { echo 'FAIL: the repair chroot lost the fresh-procfs mount (the target must never share the host /proc)' >&2; exit 1; }
 
 # The Fedora regeneration must always pass --no-grubenv-update and must never
 # call grub2-set-default/grub2-reboot/grubby/restorecon.

@@ -95,24 +95,32 @@ grep -Fxq 'export LANG=C' <<<"$legacy_top" \
 )
 
 # The rpm package-state branch answers installed queries without dpkg, and
-# package_query_available accepts an rpm-only target.
+# package_query_available accepts an rpm-only target.  Round 17: the query
+# consults the once-per-run package list (evidence_package_list rpm), so the
+# stub feeds the cached-list shape (<name>@<version>) and a changed package
+# database is modelled with evidence_cache_invalidate (the same hook a
+# changed-status repair uses).
 (
     source <(sed '/^main "\$@"/d' "$HELPER")
     trap - EXIT INT TERM HUP
     rpm_dm_root="$(mktemp -d)"
     trap 'rm -rf -- "$rpm_dm_root"' EXIT
-    mkdir -p "$rpm_dm_root/usr/bin"
+    mkdir -p "$rpm_dm_root/usr/bin" "$rpm_dm_root/var/lib/rpm"
     : > "$rpm_dm_root/usr/bin/rpm"; chmod +x "$rpm_dm_root/usr/bin/rpm"
+    # Round 71: rpm backend detection requires a NON-EMPTY rpm package database
+    # (the fixture's stubbed `rpm -qa` provides the package records).
+    printf 'sqlite' > "$rpm_dm_root/var/lib/rpm/rpmdb.sqlite"
     TARGET_ROOT="$rpm_dm_root"
     TARGET_OS_ID=fedora
     TARGET_DISTRO_FAMILY=fedora
     RUNNING_HOST_MODE=0
     package_query_available \
         || { echo 'FAIL: an rpm-only target has no package query backend' >&2; exit 1; }
-    run_selected_chroot() { printf 'gdm\n'; return 0; }
+    run_selected_chroot() { printf 'gdm@47.3-1.fc44\n'; return 0; }
     target_package_installed gdm \
         || { echo 'FAIL: rpm-installed gdm was not recognized' >&2; exit 1; }
-    run_selected_chroot() { printf 'something-else\n'; return 0; }
+    evidence_cache_invalidate
+    run_selected_chroot() { printf 'something-else@9\n'; return 0; }
     if target_package_installed gdm; then
         echo 'FAIL: a different rpm package satisfied the gdm query' >&2
         exit 1

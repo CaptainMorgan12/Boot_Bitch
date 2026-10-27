@@ -4,9 +4,9 @@ set -euo pipefail
 # Build the Arch package (makepkg) from a versioned copy of the working tree.
 # Must run as an unprivileged user on an Arch-family host.
 #
-# makepkg produces boot-bitch-<version>-1-<arch>.pkg.tar.zst (pkgrel stays
+# makepkg produces boot-repair-<version>-1-<arch>.pkg.tar.zst (pkgrel stays
 # inside the package); the release asset drops the pkgrel and is normalized to
-# boot-bitch-<version>-<arch>.pkg.tar.zst by sync-release-artifacts.sh.
+# boot-repair-<version>-<arch>.pkg.tar.zst by sync-release-artifacts.sh.
 
 # The package modes must not depend on the builder's umask; a restrictive agent
 # umask (for example 077) would otherwise package 0700 directories.
@@ -50,6 +50,10 @@ if [[ -z "$BUILD_DIR_REAL" || "$BUILD_DIR_REAL" == / || "$BUILD_DIR_REAL" == "$R
     echo "Refusing to remove unsafe package directory: $BUILD_DIR" >&2
     exit 1
 fi
+case "$BUILD_DIR_REAL" in
+    "$ROOT_DIR_REAL"/build-*|"$ROOT_DIR_REAL"/Development/*build*) ;;
+    *) echo "Refusing to remove unsafe package directory: $BUILD_DIR" >&2; exit 1 ;;
+esac
 rm -rf -- "$BUILD_DIR"
 mkdir -p -- "$BUILD_DIR"
 
@@ -61,15 +65,15 @@ mkdir -p -- "$BUILD_DIR"
 # registered in the test suite, so keep it in the source archive too. The
 # committed Qt UI translation catalogs (translations/*.qm) must be present or
 # cmake --install has nothing to install and the package ships English-only.
-SOURCE_ARCHIVE="$BUILD_DIR/boot-bitch-$VERSION.tar.gz"
+SOURCE_ARCHIVE="$BUILD_DIR/boot-repair-$VERSION.tar.gz"
 tar -C "$ROOT_DIR" \
-    --transform="s,^,boot-bitch-$VERSION/," \
+    --transform="s,^,boot-repair-$VERSION/," \
     -czf "$SOURCE_ARCHIVE" \
     CMakeLists.txt LICENSE README.md CHANGELOG.md .gitignore \
     src scripts tests translations data resources docs .github legacy
 
 cat > "$BUILD_DIR/PKGBUILD" <<'PKGBUILD'
-pkgname=boot-bitch
+pkgname=boot-repair
 pkgver=__VERSION__
 pkgrel=1
 pkgdesc='Guarded Linux diagnostics, host maintenance and repair-system recovery utility'
@@ -89,12 +93,12 @@ optdepends=('exfatprogs: exFAT file system check and repair (fsck.exfat)'
             'reiserfsprogs: ReiserFS file system check and repair (reiserfsck)'
             'zfsutils-linux: ZFS pool status and scrub (zpool)')
 makedepends=('cmake' 'ninja' 'gcc' 'pkgconf')
-install=boot-bitch.install
-source=("boot-bitch-${pkgver}.tar.gz")
+install=boot-repair.install
+source=("boot-repair-${pkgver}.tar.gz")
 sha256sums=('SKIP')
 
 build() {
-    cd "$srcdir/boot-bitch-$pkgver"
+    cd "$srcdir/boot-repair-$pkgver"
     cmake -S . -B build -G Ninja \
         -DCMAKE_BUILD_TYPE=Release \
         -DCMAKE_INSTALL_PREFIX=/usr
@@ -102,7 +106,7 @@ build() {
 }
 
 package() {
-    cd "$srcdir/boot-bitch-$pkgver"
+    cd "$srcdir/boot-repair-$pkgver"
     DESTDIR="$pkgdir" cmake --install build --strip
 }
 PKGBUILD
@@ -114,7 +118,7 @@ sed -i "s/__VERSION__/$VERSION/" "$BUILD_DIR/PKGBUILD"
 # (hicolor-icon-theme ships the directory, desktop-file-utils the database
 # tool), so failures are ignored and the hooks stay idempotent. makepkg embeds
 # this as .INSTALL only when the PKGBUILD references it through install=.
-cat > "$BUILD_DIR/boot-bitch.install" <<'INSTALL'
+cat > "$BUILD_DIR/boot-repair.install" <<'INSTALL'
 post_install() {
     gtk-update-icon-cache -q -t -f /usr/share/icons/hicolor || true
     update-desktop-database -q /usr/share/applications || true
@@ -146,7 +150,7 @@ sanitize_arch_package()
     local pkg="$1"
     local work extract builddate needs_repack=0 listing_before listing_after
 
-    work="$(mktemp -d "${TMPDIR:-/tmp}/boot-bitch-arch-sanitize.XXXXXX")"
+    work="$(mktemp -d "${TMPDIR:-/tmp}/boot-repair-arch-sanitize.XXXXXX")"
     extract="$work/pkg"
     mkdir -p -- "$extract"
 

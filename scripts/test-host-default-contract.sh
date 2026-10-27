@@ -37,7 +37,7 @@ for fn in host_secure_boot_state host_uki_signature_verified host_uki_file_path 
     extlinux_default_restore_backup extlinux_conf_with_default \
     extlinux_replace_conf extlinux_default_entry_ensure \
     conventional_efi_backup_state conventional_efi_restore_backup \
-    grub_boot_is_esp_mount \
+    grub_boot_is_esp_mount sort_repair_stages_by_rank \
     diagnostic_uki_registration_state objcopy_dump_section; do
     grep -q "^${fn}()" "$HELPER" || fail_test "missing helper function: $fn"
 done
@@ -1544,10 +1544,11 @@ grep -Fqx 'Host default: available' <<<"$fedora_caps" \
 # Order matrix: every starting state (already-correct, re-enumerated foreign
 # first, fallback-only) converges to the same verified canonical entry and
 # order while preserving foreign entries.  The repair stage order itself is
-# intentionally enforced by run_repair and an out-of-order request is refused
-# before any target work: the supported order is initramfs -> efi -> boot-stack
-# -> grub; make-default is a separate host operation that is safe before or
-# after any of them because it only ensures/promotes the verified host entry.
+# enforced by run_repair: a caller-supplied out-of-order stage list is
+# stable-sorted into the helper's own safe dependency order before any target
+# work (the supported order is initramfs -> efi -> boot-stack -> grub;
+# make-default is a separate host operation that is safe before or after any
+# of them because it only ensures/promotes the verified host entry).
 # ---------------------------------------------------------------------------
 # O1: a prior EFI repair already created the canonical entry first -> verified
 # no-op with a byte-identical firmware state.
@@ -1604,16 +1605,21 @@ fi
 grep -Eq '^BootOrder: 0009,0002,0001$' "$EFI_TEST_STATE" \
     || fail_test 'O3 did not converge to the canonical-first order'
 
-# O4: an out-of-order repair stage list is intentionally refused before any
-# target work (grub before efi is the classic permutation).
-if (
-    parse_repair_arguments() { REPAIR_STAGES=(grub efi); REPAIR_POST_EFI=0; }
-    run_repair
-) > "$WORK_ROOT/o4.out" 2>&1; then
-    fail_test 'O4 accepted out-of-order repair stages'
-fi
-grep -Fq 'out of safe dependency order' "$WORK_ROOT/o4.out" \
-    || fail_test 'O4 did not name the refused stage order'
+# O4: a caller-supplied out-of-order stage list is no longer refused before
+# any target work: run_repair/run_host_repair stable-sort the requested stages
+# into the helper's safe dependency order (grub before efi is the classic
+# permutation), and equal ranks keep the caller's order (stable).  The
+# GUI's grouped display order therefore never changes the execution order.
+(
+    REPAIR_STAGES=(grub efi boot-stack)
+    sort_repair_stages_by_rank
+    [[ "${REPAIR_STAGES[*]}" == 'efi boot-stack grub' ]] \
+        || fail_test "O4 did not stable-sort the out-of-order stage list (got: ${REPAIR_STAGES[*]})"
+    REPAIR_STAGES=(grub extlinux)
+    sort_repair_stages_by_rank
+    [[ "${REPAIR_STAGES[*]}" == 'grub extlinux' ]] \
+        || fail_test "O4 stable sort reordered equal ranks (got: ${REPAIR_STAGES[*]})"
+)
 
 # T11: TUXEDO UKI idempotence: a second Make Default converges to the same
 # verified entry and a byte-identical firmware state.

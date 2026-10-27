@@ -207,7 +207,12 @@ relr_in_file()
     local file="$1"
     [[ -f "$file" ]] || return 1
     if command -v readelf >/dev/null 2>&1; then
-        readelf -S -- "$file" 2>/dev/null | grep -q '[.]relr[.]dyn'
+        # Round 32 (Alpine check() gate): no `grep -q` here — under
+        # `set -o pipefail` the early close makes readelf die with SIGPIPE
+        # (rc 141) and the pipeline reports a false negative on hosts where
+        # readelf is slow to finish (reproduced deterministically on the
+        # Alpine rig: PIPESTATUS 141/0). Consume all input instead.
+        readelf -S -- "$file" 2>/dev/null | grep -E '[.]relr[.]dyn' >/dev/null
     else
         grep -qF '.relr.dyn' -- "$file" 2>/dev/null
     fi

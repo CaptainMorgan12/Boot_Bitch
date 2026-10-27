@@ -84,7 +84,7 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
 for rule in \
-    'assoc declarations \(declare/local -A\) +17' \
+    'assoc declarations \(declare/local -A\) +18' \
     'assoc accesses: bdf_hw +2' \
     'assoc accesses: bdf_drv +5' \
     'assoc accesses: nodisplay_bdf +2' \
@@ -100,25 +100,26 @@ for rule in \
     'assoc accesses: removed_seen +4' \
     'assoc accesses: current_by_id +3' \
     'assoc accesses: order_index +5' \
-    'assoc accesses: reasons +35' \
+    'assoc accesses: reasons +37' \
     'assoc accesses: seen +8' \
+    'assoc accesses: seen_namespaces +2' \
     'assoc accesses: emitted +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
-    'case conversion ,, +75' \
+    'case conversion ,, +76' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +726' \
-    'mapfile call sites +89' \
+    'array \[@\] expansions \(all forms\) +742' \
+    'mapfile call sites +90' \
     'sed -i -E +1' \
-    'sed -nE +97' \
-    'sed -E +18' \
+    'sed -nE +101' \
+    'sed -E +20' \
     'sort -V +16' \
     'date --iso-8601 +5' \
     '=~ regex literal hoists +14' \
     'os-release gates +1' \
-    'dpkg db:Status sites +6' \
-    'wrapped/replaced modern functions +43' \
+    'dpkg db:Status sites +7' \
+    'wrapped/replaced modern functions +44' \
     'mount-sweep process substitutions rewritten +6' \
     'legacy boot-remount promotion sites +2' \
     'post-rewrite residual: mapfile +0' \
@@ -129,19 +130,19 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +89' \
+    'shim calls: legacy_readarray +90' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +116' \
+    'shim calls: legacy_sed_ext +122' \
     'shim calls: legacy_sort_versions +16' \
     'shim calls: legacy_date_iso +5' \
-    'shim calls: legacy_lc +75' \
+    'shim calls: legacy_lc +76' \
     'shim calls: legacy_uc +20' \
     'shim calls: legacy_ucfirst +24' \
-    'shim calls: legacy_assoc_get +37' \
+    'shim calls: legacy_assoc_get +40' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +4' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +69' \
+    'shim calls: legacy_assoc_set +70' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \
@@ -228,7 +229,7 @@ pass "verify_regex_operands guard flags unhoisted operands and passes safe input
 if grep -qE 'removed_legacy_assoc_set|removed_seen_legacy' "$HELPER"; then
     fail "generated helper contains a corrupted assoc-set rewrite"
 fi
-assoc_known='seen seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes emitted bdf_hw bdf_drv nodisplay_bdf modeset seen_drv'
+assoc_known='seen seen_namespaces seen_destination_names reasons destination_id destination_priority removed_seen final_destination_count order_index current_by_id current_by_key current_by_partition_label FS_SCOPE_DEVICE_INDEX essential_by_dev allowed_nodes emitted bdf_hw bdf_drv nodisplay_bdf modeset seen_drv'
 assoc_unknown="$(grep -oE 'legacy_assoc_(get|get_num|keys|has|set|unset)[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' "$HELPER" \
     | awk '{print $2}' | sort -u \
     | while IFS= read -r n; do
@@ -363,8 +364,14 @@ grep -q 'STATE_ROOT=/var/run/boot-repair' "$HELPER" || fail "generated helper ha
 grep -q 'for feature in file-copy shell host-shell host-maintenance snapshots host-default' "$HELPER" \
     || fail "generated helper has no legacy feature list"
 grep -q 'Legacy feature %s:' "$HELPER" || fail "generated helper has no legacy feature report format"
-grep -q 'the legacy SysV display-manager repair is a host-scope stage' "$HELPER" \
-    || fail "generated helper has no host-scope display reason"
+# Round 54 (E1): the display repair runs at BOTH scopes — the pre-round-54
+# host-scope refusal must be GONE from the generated helper.
+grep -q 'legacy_display_manager_repair()' "$HELPER" \
+    || fail "generated helper is missing legacy_display_manager_repair"
+if grep -q 'the legacy display-manager repair is a host-scope stage' "$HELPER"; then
+    fail "generated helper still carries the removed host-scope display repair refusal"
+fi
+pass "display-manager repair is dual-scope (round 54)"
 grep -q '"$CRYPTSETUP_BIN" --key-file "$keyfile" luksOpen "$ROOT_DEVICE" "$mapper_name"' "$HELPER" \
     || fail "generated helper lost the keyfile-based cryptsetup 1.0 luksOpen invocation"
 grep -q 'legacy_unlock_keyfile_from_stdin' "$HELPER" \

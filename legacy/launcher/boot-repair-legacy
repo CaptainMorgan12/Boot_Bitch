@@ -77,7 +77,8 @@ Options:
 Elevation order: gksu --sudo-mode, gksudo, sudo, su (TTY prompt). The helper
 keeps its own runtime preflights; this launcher never weakens them and never
 puts a passphrase on argv. Helper discovery order: --helper, then
-BOOT_REPAIR_LEGACY_HELPER, then the installed path, then source-tree paths.
+BOOT_REPAIR_LEGACY_HELPER (a non-root-only environment seam, ENV-1), then the
+installed path, then source-tree paths.
 Any ELEVATED run first verifies the resolved helper (a regular, non-symlink,
 root-owned, non-group/world-writable file whose realpath equals the path), so
 development/source-tree helpers run with --no-elevate only.
@@ -108,7 +109,9 @@ helper_path()
         printf '%s\n' "$HELPER_OVERRIDE"
         return 0
     fi
-    if [ -n "${BOOT_REPAIR_LEGACY_HELPER:-}" ]; then
+    if [ -n "${BOOT_REPAIR_LEGACY_HELPER:-}" ] && [ "$(id -u)" -ne 0 ]; then
+        # ENV-1: the environment seam is honoured only by a non-root caller;
+        # root always resolves the installed helper.
         printf '%s\n' "$BOOT_REPAIR_LEGACY_HELPER"
         return 0
     fi

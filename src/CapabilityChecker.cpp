@@ -94,14 +94,17 @@ private:
 };
 
 // The running host's os-release. BOOT_REPAIR_OS_RELEASE is a read-only test
-// seam used by the UI regression test to simulate another distribution; normal
-// launches always read /etc/os-release.
+// seam used by the UI regression test to simulate another distribution; it is
+// compiled out of production builds (BOOT_REPAIR_UI_TEST) and normal launches
+// always read /etc/os-release.
 QString osReleasePath()
 {
+#ifdef BOOT_REPAIR_UI_TEST
     const QByteArray overridePath = qgetenv("BOOT_REPAIR_OS_RELEASE");
     if (!overridePath.isEmpty()) {
         return QString::fromLocal8Bit(overridePath);
     }
+#endif
     return QStringLiteral("/etc/os-release");
 }
 
@@ -368,14 +371,17 @@ static QString moduleBuildFeatureTitle(const QString &moduleBuild)
 // The stable repair-tool key order emitted by the helper's
 // diagnostic_repair_capabilities(). Iterating this list (instead of the parse
 // map's key order) keeps the table deterministic and mirrors the helper.
+// Functional grouping (user-verified): package chain first, then the kernel
+// group (kernels with the module-build and initramfs stages), then the
+// display/gpu group, then the boot chain, then boot-stack reconciliation.
 static const QStringList &repairToolKeyOrder()
 {
     static const QStringList keys = {
         QStringLiteral("validate"), QStringLiteral("filesystem"), QStringLiteral("dpkg"),
         QStringLiteral("fixbroken"), QStringLiteral("aptupdate"), QStringLiteral("upgrade"),
-        QStringLiteral("dkms"), QStringLiteral("display"), QStringLiteral("gpu"),
-        QStringLiteral("initramfs"), QStringLiteral("efi"), QStringLiteral("grub"),
-        QStringLiteral("extlinux"), QStringLiteral("bootstack"), QStringLiteral("kernels")
+        QStringLiteral("kernels"), QStringLiteral("dkms"), QStringLiteral("initramfs"),
+        QStringLiteral("display"), QStringLiteral("gpu"), QStringLiteral("efi"),
+        QStringLiteral("grub"), QStringLiteral("extlinux"), QStringLiteral("bootstack")
     };
     return keys;
 }
@@ -484,6 +490,56 @@ QList<Capability> CapabilityChecker::capabilitiesFromRepairEvidence(const QStrin
                     ? moduleBuildSystemPackageForFamily(distributionFamily)
                     : moduleBuildSystemPackageForBackend(moduleBuild);
                 capability.installable = true;
+            }
+        } else if (key == QStringLiteral("display")) {
+            capability.command = evidence.value(key);
+            capability.packageName.clear();
+            capability.installable = false;
+            // Round 39 (Ubuntu #4) + round 42 (all-distribution coverage): the
+            // missing-display-manager Install suggestion.  The helper derives
+            // the distribution-appropriate DM package from the DETECTED
+            // desktop/family (probe, don't prefilter — never a hardcoded
+            // per-distro list) and proves it present in the scope's own
+            // repositories; the side-channel line
+            // `Repair capability evidence display-installable: <pkg>|available`
+            // is the single source of truth.  Fail closed without it.  The
+            // installable reason set covers every family's missing-DM reason,
+            // including Alpine's OpenRC `no-openrc-display-manager`.
+            const QString reasonKey = capabilityReasonKey(state);
+            const bool installableReason = reasonKey == QStringLiteral("no-display-manager")
+                || reasonKey == QStringLiteral("no-display-manager-unit")
+                || reasonKey == QStringLiteral("no-openrc-display-manager");
+            if (!capability.available && installableReason) {
+                const QString sideChannel = evidence.value(
+                    QStringLiteral("display-installable")).trimmed();
+                const int separator = sideChannel.indexOf(QLatin1Char('|'));
+                if (separator > 0
+                    && sideChannel.mid(separator + 1).trimmed() == QStringLiteral("available")) {
+                    capability.packageName = sideChannel.left(separator).trimmed();
+                    capability.installable = !capability.packageName.isEmpty();
+                }
+            }
+        } else if (key == QStringLiteral("bootstack")) {
+            capability.command = evidence.value(key);
+            capability.packageName.clear();
+            capability.installable = false;
+            // Round 39 (Ubuntu #4): the missing initramfs/GRUB prerequisite
+            // Install suggestion (the dkms/display pattern).  The helper
+            // derives the package list from the DETECTED initramfs/bootloader
+            // backends + firmware mode and proves every package present in the
+            // scope's repositories (`bootstack-installable: <pkg> [<pkg>]|
+            // available`).  Fail closed without it.
+            const QString reasonKey = capabilityReasonKey(state);
+            if (!capability.available
+                && reasonKey == QStringLiteral("bootstack-needs-initramfs-grub")) {
+                const QString sideChannel = evidence.value(
+                    QStringLiteral("bootstack-installable")).trimmed();
+                const int separator = sideChannel.indexOf(QLatin1Char('|'));
+                if (separator > 0
+                    && sideChannel.mid(separator + 1).trimmed() == QStringLiteral("available")) {
+                    capability.packageName = sideChannel.left(separator).trimmed();
+                    capability.installable = !capability.packageName.isEmpty();
+                }
             }
         } else {
             capability.command = evidence.value(key);
