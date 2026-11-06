@@ -266,6 +266,16 @@ stage_gui()
     mkdir -p "$_stage/usr/share/icons/hicolor/32x32/apps"
     install -m 0644 "$_shield_icon" \
         "$_stage/usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png"
+    # Round 103: the tab info-button circle-i badge — the MONOCHROME semantic
+    # asset extracted from the modern icon atlas (info.svg) by
+    # legacy/gui/data/make-info-icon.py — ships beside the app icons and is
+    # loaded by the GUI (legacyInfoPixmap) with the plain "i" text fallback
+    # when missing.
+    _info_icon="$GUI_ICON_DIR/boot-repair-legacy-info-18x18.png"
+    [ -f "$_info_icon" ] || fail "missing legacy info icon: $_info_icon"
+    mkdir -p "$_stage/usr/share/icons/hicolor/18x18/apps"
+    install -m 0644 "$_info_icon" \
+        "$_stage/usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png"
 }
 
 # Resolve the pinned absolute Qt3 lrelease path. Returns nonzero when none is
@@ -388,6 +398,12 @@ stage_tree()
     install -m 0644 "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
         "$_stage/usr/share/boot-repair-legacy/repair-diagnostic-map.tsv"
 
+    # Round 106: the shared capability -> package table (the same canonical
+    # data file the modern GUI embeds) so the legacy GUI's Boot capabilities
+    # Packages column renders the identical static names.
+    install -m 0644 "$ROOT_DIR/data/capability-packages.tsv" \
+        "$_stage/usr/share/boot-repair-legacy/capability-packages.tsv"
+
     bash -n "$_stage/usr/sbin/boot-repair-legacy-helper" \
         || fail 'staged helper failed bash -n.'
 
@@ -435,8 +451,10 @@ validate_artifact()
         ./usr/share/applications/$GUI_NAME.desktop \
         ./usr/share/icons/hicolor/48x48/apps/boot-repair-legacy.png \
         ./usr/share/icons/hicolor/32x32/apps/boot-repair-legacy-shield.png \
+        ./usr/share/icons/hicolor/18x18/apps/boot-repair-legacy-info.png \
         ./usr/share/doc/$PKG_NAME/copyright \
-        ./usr/share/boot-repair-legacy/repair-diagnostic-map.tsv
+        ./usr/share/boot-repair-legacy/repair-diagnostic-map.tsv \
+        ./usr/share/boot-repair-legacy/capability-packages.tsv
     do
         if ! dpkg-deb --contents "$_deb" | grep -q -- "$_path\$"; then
             fail "built package is missing $_path"
@@ -567,7 +585,8 @@ main()
 
     for _required in "$CONTROL_TEMPLATE" "$COPYRIGHT_SRC" "$CHANGELOG_SRC" \
         "$GUI_PRO" "$GUI_DESKTOP_SRC" \
-        "$ROOT_DIR/data/repair-diagnostic-map.tsv"; do
+        "$ROOT_DIR/data/repair-diagnostic-map.tsv" \
+        "$ROOT_DIR/data/capability-packages.tsv"; do
         [ -f "$_required" ] || fail "missing legacy packaging input: $_required"
     done
     for _size in $GUI_ICON_SIZES; do

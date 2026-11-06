@@ -48,12 +48,12 @@
         <translation>Alpine folosește apk; configurația dpkg nu este disponibilă pe Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Principalul depozit al Alpine nu are un driver NVIDIA DKMS proprietar; schimbul de conducător auto GPU nu este disponibil pe această țintă.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Bootloader alternativ; cizme Etch prin GRUB-legacy, astfel încât extlinux nu face parte din calea de boot implicit</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Bootloader alternativ; pe acest sistem extlinux nu face parte din calea implicită de pornire</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -93,7 +93,7 @@
     </message>
     <message>
         <source>Boot diagnostics</source>
-        <translation>Diagnosticarea ghetelor</translation>
+        <translation>Diagnosticarea pornirelor</translation>
     </message>
     <message>
         <source>Boot errors</source>
@@ -108,7 +108,7 @@
         <translation>Reconcilierea stiva de boot</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Răsfoiește dosarele sistemului reparat numai-citit și pune în scenă dosarul ales.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Verificați și reparați sistemele de fișiere detectate.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Verificați montajele sistemului selectat, metadatele sistemului de fișiere, fișierele de boot, consistența mapper și disponibilitatea dependenței înainte de orice acțiune de reparații. Acesta este mai degrabă un zbor independent de siguranță decât o etapă opțională de reparații complete.</translation>
     </message>
     <message>
@@ -141,7 +141,7 @@
     </message>
     <message>
         <source>Choose a GPU driver repair action from the evidence.</source>
-        <translation>Alegeți o acțiune de reparare a conducătorului auto GPU din probe.</translation>
+        <translation>Alegeți o acțiune de reparare a driverului GPU din probe.</translation>
     </message>
     <message>
         <source>Choose a folder inside the repaired system to add as a source (current folder: %1):</source>
@@ -224,8 +224,8 @@
         <translation>Debian-familie initramfs ajutor</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian-familie initramfs ajutor; pe Etch reconstructia ruleaza prin pazita refren simplu</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Reconstruiește imaginile initramfs pentru nucleele instalate</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Utilizarea discului</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Afișează fstab-ul gazdei de funcționare sau al sistemului de reparații selectat; inspecția sistemului de reparații este montată numai pe citire.</translation>
     </message>
     <message>
@@ -309,7 +309,7 @@
     </message>
     <message>
         <source>GPU driver repair</source>
-        <translation>Reparația conducătorului auto GPU</translation>
+        <translation>Reparația driverului GPU</translation>
     </message>
     <message>
         <source>GRUB EFI repair</source>
@@ -364,7 +364,7 @@
         <translation>Verificarea initramfs</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspectează dovezile EFI/UKI; indisponibile pe acest frontend BIOS moștenire cu motivul sondei ajutorului.</translation>
     </message>
     <message>
@@ -528,8 +528,8 @@
         <translation>Reparaţii de sistem offline</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>O trecere păzită (validarea mapper/crypttab, reconstruirea initramfs, regenerarea GRUB-legatery) prin retragerea simplă</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>O trecere păzită: validarea mapper/cripttab, reconstrucţia initramfs şi regenerarea configuraţiei bootloader</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Izolarea namespațiului procesului</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Capacitatea de citire numai pe acest frontend; îndepărtarea/curățarea/instalarea kernel rula prin meniul interactiv al ajutorului</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>Îndepărtarea, curăţarea şi instalarea kernel prin meniul interactiv al ajutorului; nimic nu este eliminat sau modificat până când alegeţi o acţiune şi confirmaţi</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Capacitatea de citire numai pe acest frontend; repararea GPU-driver trece prin ajutor</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Driver GPU, bazat pe dovezi, repară prin meniul interactiv al ajutorului</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Verificare numai cu citire a sistemului selectat de rădăcină și /boot filesystems, apoi repara numai dispozitivele care raportează erori (e2fsck for ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Verificați numai în citire sistemele de fișiere de rădăcină și /boot ale sistemului selectat, apoi reparați numai dispozitivele care raportează erori</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -573,7 +573,7 @@
     </message>
     <message>
         <source>Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair</source>
-        <translation>@ info: whatsthis</translation>
+        <translation>Verificarea prealabilă numai în citire a montajelor, a metadatelor sistemului de fișiere, a fișierelor de boot și a consistenței mapper înainte de orice reparație</translation>
     </message>
     <message>
         <source>Read-only verification for dracut images</source>
@@ -628,8 +628,8 @@
         <translation>Reconstrucția initramfs pentru domeniul de aplicare selectat? Ajutor păstrează mapper / crypttab și de rezervă preflights.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Reconstruiește module kernel out-of-tree; necesare numai atunci când ținta utilizează module dkms</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Reconstruiește module out-of-tree kernel; necesare numai atunci când sistemul utilizează un sistem de construire a modulului</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Reconcile stiva de boot.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Reconciliați stiva de boot a sistemului de reparații selectat într-un singur permis de moștenire păzit: validarea mapper/cripttab, reconstruirea initramfs și regenerarea configurației GRUB-legatery, cu componentele de rezervă și prezblând neschimbat. Acesta este echivalentul Etch al reconcilierii moderne boot-stack și rămâne în afara planului de reparații complete.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Regenerează configurația extlinux.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Regenerați meniul/configurarea GRUB a sistemului de reparații selectat după preconfigurarea obligatorie a siguranței. Ajutorul susţine meniul.Ist, păstrează fiecare intrare de boot existentă şi se rostogoleşte înapoi pe orice eşec.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Regenerați configurația bootloaderului extlinux a sistemului selectat. Acest frontend moștenire expune nici o acțiune extlinux.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regenerează meniul Etch Grub-legacy.st configuration (back up, fiecare intrare conservată)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regenerază configurația GRUB (back up, fiecare intrare păstrată)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Repara calea de boot EFI / UKI.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Repara calea de boot EFI / UKI a sistemului selectat. Acest frontend moștenit nu expune nicio acțiune EFI; ținta Etch este un sistem BIOS/GRUB-legacy.</translation>
     </message>
     <message>
@@ -812,11 +812,11 @@
         <translation>Restaurați moștenirea managerului de afișare sysv configurată pentru sistemul selectat: intrarea /etc/X11/default-display-manager și veriga lipsă S-simlink, cu o copie de rezervă și rollback, fără a porni GUI. Atunci când boot-ul se așteaptă la un prompt disk-unlock, rutarea consolei este, de asemenea, reparată: consolă=ty0 este anexată ultima pe linia de comandă bootloader (menu.lst pe acest GRUB moștenirea; consola serială rămâne) astfel încât prompt rămâne pe ecranul vizibil în loc de a merge negru. Disponibil pentru gazda care rulează și o țintă de reparații angajate.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Restaurează /etc/X11/ Implicit-display-manager și lipsă sysv runlevel S-simlink fără a porni GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Restaurează managerul de afișare configurat și link-ul de pornire fără a porni GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Revizuiți inventarul instalat de nucleu și alegeți o acțiune de reparare a miezului de beton: eliminați cel mai vechi/superiat sau cel mai nou nucleu, eliminați antetele/componentele orfane/construiți suport, instalați antetele lipsă, reinstalați un nucleu incomplet sau instalați nucleul de depozit. Nimic nu este eliminat sau modificat până când alegeţi o acţiune şi confirmaţi. Nucleul de rulare este întotdeauna protejat, iar imaginile initramfs rămase și configurația bootloader sunt regenerate după îndepărtarea.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Să ruleze reparaţiile stricate? Ajutor păstrează simularea-primul pre-zbor și runtime guards.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Rulați verificarea sistemului de fișiere numai pentru citire pentru sistemul selectat de rădăcină și /boot de fișiere și raportează instrumentul de verificare al fiecărui dispozitiv și rezultatul fără a schimba nimic. Acest frontend moștenire expune numai verificarea numai citire; repararea dispozitivului nu este cu fir.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Rulați sistemul de fișiere numai pentru citire verificați rădăcinile și /boot-urile sistemului selectat, apoi reparați numai dispozitivele care raportează erori. Uneltele de verificare Etch (e2fsck for ext2/ext3) rulează numai după ce ajutorul eliberează montări numai pentru citire; un sistem de fișiere încă montat nu este niciodată reparat offline și sistemele de fișiere nesusținute sunt raportate mai degrabă decât ghicite.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Rulați înainte de zbor de siguranță numai citire.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Rulează verificarea sistemului de fișiere numai pentru citire pentru rădăcina sistemului selectat, /boot și alte sisteme de fișiere.</translation>
     </message>
     <message>
@@ -1008,7 +1008,7 @@
         <translation>Domeniul de aplicare selectat nu are un tip de sistem de fișiere suport pentru o verificare numai pentru citire.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Rădăcina domeniului de aplicare selectat, /boot, ESP și /home sisteme de fișiere nu au putut fi rezolvate.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Validarea mediului</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Mergi o sesiune interactivă ghidată de dovezi pentru a repara driver-ul GPU de nucleu (nvidia/nouveau/amdgpu/radeon/mesa), aplicând doar pasul mic păzit pe care îl alegi cu propriul său rollback. Două puncte de decizie ghidează sesiunea: kernel-vs-driver (replaceți cel mai nou nucleu pe care conducătorul auto nu îl poate construi împotriva, sau elimina nucleul mai vechi pe care este fixat conducătorul auto) și driver-ul greșit (purge driver-ul incorect, instalați cel mai corect, și reconstruiți-l împotriva fiecărui nucleu instalat). O rezervă separată cu un singur boot ajunge la o consolă pe un şofer defect.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Mergi pe o sesiune interactivă bazată pe dovezi pentru a repara driver-ul GPU; meniul se adaptează la probele de diagnosticare, fiecare pas păzit este reverificat în această fereastră înainte de următoarea opțiune, iar un nou modeset cu un singur boot păstrează o consolă accesibilă pe un driver defect.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>Validarea este numai citire</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Dispozitive de intrare / tastatură</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Rețea/conectivitate</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Reviews the input device stack: detected tastature/mouse/touchpad devices and classings, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, Bus-controller state, the tastature layout, the initramfs included and the built-image tastature-module proof for the LUKS deblocare prompt, plus recent boot proof.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Revizuiește stiva de rețea: platforma de configurare detectată, adaptoarele și drivere/module legate, lista neagră și starea firmware-ului, precum și ruta gazdei care rulează, DNS și dovezile de accesibilitate delimitate, fără a schimba nimic.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>dispozitiv de intrare numai pentru citire și inspecție a tastaturii initramfs</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>adaptor de rețea numai pentru citire și inspecție a conectivității</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Reparația dispozitivului de intrare</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Dispozitive de intrare pentru reparații</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Plimbați o sesiune interactivă bazată pe dovezi pentru a repara tastatura, intrarea mouse-ului și a touchpad-ului; meniul se adaptează la probele de diagnostic, fiecare acțiune este reverificată în această fereastră înainte de următoarea opțiune, iar pașii păziți acoperă drivere, module, firmware, liste negre, filajul HID și modulele de tastatură initramfs.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Alegeți o acțiune de reparare a dispozitivului de intrare din probe.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Rețea/repararea conectivității</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Rețea de reparații</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Mergi o sesiune interactivă bazată pe dovezi pentru a repara stiva de rețea; meniul se adaptează la probele de diagnosticare, fiecare acțiune este reverificată în această fereastră înainte de următoarea opțiune, iar pașii păziți acoperă drivere, module, firmware, liste negre, module initramfs NIC, adrese, rute și DNS. Modificările de conectivitate live nu ating niciodată interfața care deține ruta implicită.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Alegeți o acțiune de reparare a rețelei din probe.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Indisponibil: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1433,7 +1489,7 @@ Indisponibil: %1</translation>
     </message>
     <message>
         <source>%1 results: [OK] %2 successful | [FAIL] %3 failed | [-] %4 no repair needed - %5</source>
-        <translation type="unfinished" />
+        <translation>%1 rezultate: [OK] %2 cu succes | [FAIL] %3 au eșuat | [-] %4 nu este necesară repararea - %5</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
@@ -1445,7 +1501,7 @@ Indisponibil: %1</translation>
     </message>
     <message>
         <source>%1 stopped at your request: [OK] %2 successful | [-] %3 no repair needed - %4</source>
-        <translation type="unfinished" />
+        <translation>%1 s-a oprit la cererea dumneavoastră: [OK] %2 cu succes | [-] %3 nu este necesară repararea - %4</translation>
     </message>
     <message>
         <source>&amp;About Boot Bitch</source>
@@ -1564,7 +1620,7 @@ Indisponibil: %1</translation>
         <translation>; cea mai bună componentă a sistemului detectat: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt; Acest GUI este punctul de intrare al pachetului: un frontend Qt 3.3.x cu ajutorul portat pentru sistemele Debian Etch-era. &lt;/p&gt; &lt;p&gt; &lt;b&gt;Diagnoza numai pentru citire poate inspecta fie gazda de rulare protejată, fie o unitate de reparații selectată în mod explicit. Etapele de pachete Debian/APT păzite (configurație întreruptă, dependențe rupte, reîmprospătare metadate, actualizare), regenerarea configurației GRUB-legacy, deblocarea țintei LUKS și editarea fișierului țintă păzită rula prin ajutorul portat după confirmare; Host Maintenance permite aceleași etape sprijinite nativ pe sistemul activ după repetarea identității gazdei și a controalelor boot-mount.&lt;/p&gt; Caracteristicile moderne - verificate File Copy, Btrfs snapshot rollback, EFI/UKI și extlinux reparație, boot-stack reconciliere și Make Implicit - sunt grided cu propriile motive de sondă de ajutor pe acest frontend; Arch/Alpine/Fedora pachete backend-uri rămâne diagnostic-doar aici. &lt;/p&gt; &lt; p &gt; Prima acțiune privilegiată autorizează o sesiune cache de administrator pe domeniu de aplicare printr-un mod ascuns de introducere (GUI Qt rămâne neprivilegat). Acesta poate fi încheiat în orice moment din fișier - Lock Administrator sesiune.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1772,7 +1828,7 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
         <translation>Instalarea automată va necesita cartografierea explicită a pachetelor și autorizarea privilegiilor.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Instalația automată va necesita cartografierea explicită a pachetelor și autorizarea privilegiilor; instalează pachetul de capacități lipsă selectat pe domeniul actual de aplicare (o gazdă sau o țintă de reparații angajate) prin ajutorul păzit.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
         <translation>Boot Bitch moștenire GUI gata. Fiecare comandă privilegiată trece prin ajutorul portat; acțiunile rămân dezactivate până când este angajată o țintă de reparații (sau Host Maintenance este activă) și diagnosticele raportează linia lor de capacitate.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch trebuie să ruleze dintr-un mediu Linux diferit de sistemul reparat. Utilizați un mediu Linux live sau un alt sistem Linux pe o unitate fizică diferită. Gazda care rulează este protejată împotriva selecţiei obişnuite de reparaţii-ţintă, dar poate fi selectată explicit prin &lt;b&gt;Host Mentenanţă&lt;/b&gt; pentru diagnosticarea nativă păzită şi etapele de întreţinere susţinute. Diagnosticul urmează pagina Systems: unitatea de reparații comisă în timp ce Host Maintenance este oprit sau gazda de funcționare protejată în timp ce este activă. Prima acțiune privilegiată solicită autorizarea administratorului o dată pentru această fereastră Boot Bitch; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; se încheie imediat sesiunea de ajutor. Fiecare reparaţie păstrează propriile precursoare.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
         <translation>Navighează dosarele de reparații...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Răsfoiește dosarele sistemului reparat numai-citit și pune în scenă dosarul ales.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Răsfoiţi sistemul de reparaţii selectat prin montări temporare numai-citite de ajutor şi alegeţi o cale de destinaţie absolută. Nu sunt schimbate fișiere țintă în timpul navigării.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
         <translation>Alegeți dosarul destinație gazdă</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Alege care cache capabilitatile domeniului de aplicare de tabel arată.</translation>
     </message>
     <message>
@@ -1913,7 +1969,7 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
     </message>
     <message>
         <source>Chroot Shell</source>
-        <translation>Chroot Shell</translation>
+        <translation>Shell chroot</translation>
     </message>
     <message>
         <source>Chroot shell</source>
@@ -2064,7 +2120,7 @@ Introduceți parola pentru %2 (sudo). Acesta este utilizat numai pentru această
         <translation>Copiază și verifică</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Copiați și verificați fișierele în orice direcție prin ajutorul păzit (cp -a plus restaurarea proprietății și un octet-compare per fișier). Sonda de copiere a fişierului ajutătorului poartă comenzile şi păstrează controalele de izolare a direcţiei şi traseului.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ Asistentul îşi păstrează direcţia şi calea de control de izolare; o destin
         <translation>Introduceţi comanda pentru a rula mai întâi.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Introduceți numerele dispozitivului de reparat (spațiu- sau virgulă-separat, de exemplu "1 3"), sau 0 pentru a sări.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Introduceți numerele dispozitivului de reparat (spațiu- sau virgulă-separat, de exemplu &quot;1 3&quot;), sau 0 pentru a sări.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Introduceți fraza de acces pentru %1.
 
 Acesta este trimis doar pentru a cripta peste intrare standard de ajutor și nu este niciodată autentificat sau plasat pe o linie de comandă.</translation>
@@ -2276,7 +2332,7 @@ Acesta este trimis doar pentru a cripta peste intrare standard de ajutor și nu 
         <translation>Stabilește sesiunea de ajutor privilegiat pentru domeniul actual de aplicare acum.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etch-era fișiere de configurare țintă; disponibilitatea este cercetată-doar prin diagnosticarea ajutorului.</translation>
     </message>
     <message>
@@ -2305,7 +2361,7 @@ Acesta este trimis doar pentru a cripta peste intrare standard de ajutor și nu 
     </message>
     <message>
         <source>File Copy</source>
-        <translation>Copie fișier</translation>
+        <translation>Copiere fișiere</translation>
     </message>
     <message>
         <source>File Copy - Browse Source Folders</source>
@@ -2461,7 +2517,7 @@ Acesta este trimis doar pentru a cripta peste intrare standard de ajutor și nu 
     </message>
     <message>
         <source>Host Shell</source>
-        <translation>Gazdă Shell</translation>
+        <translation>Shell gazdă</translation>
     </message>
     <message>
         <source>Host capabilities and dependencies</source>
@@ -2554,12 +2610,12 @@ Ajutorul reverifică independent că discul selectat se întoarce /, /boot și /
         <translation>Instalează suport lipsă...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Instalați pachetul "%1" în ținta de reparații selectată prin platforma pachetului păzit? Acest lucru modifică ținta de reparații și invalidează diagnosticarea cache.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Instalați pachetul &quot;%1&quot; în ținta de reparații selectată prin platforma pachetului păzit? Acest lucru modifică ținta de reparații și invalidează diagnosticarea cache.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Instalați pachetul "%1" pe gazda care rulează prin platforma pachet păzit? Acest lucru modifică gazda care rulează și invalidează cached running-host diagnostics.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Instalați pachetul &quot;%1&quot; pe gazda care rulează prin platforma pachet păzit? Acest lucru modifică gazda care rulează și invalidează cached running-host diagnostics.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2650,6 +2706,50 @@ Ajutorul verifică /boot/grub/meniu.lst, stabileşte directiva de intrare canoni
         <translation>Manager de afișare lipsă: instalați pachetul %1 din tabelul Capabilități.</translation>
     </message>
     <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI scule</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>Unelte de configurare GRUB</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>Unelte de instalare GRUB</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Lipsește %1: instalați pachetul de potrivire (s) %2 din tabelul capabilități Boot.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Lipsește %1: instala pachetul de potrivire de la tabelul capabilități Boot.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>Constructor TUXEDO UKI</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>condiție prealabilă pentru portbagaj</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramfs-tools</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
+    </message>
+    <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
         <translation>Antete lipsă (ultimul kernel nu are antete de potrivire): %1.</translation>
     </message>
@@ -2694,8 +2794,12 @@ Ajutorul verifică /boot/grub/meniu.lst, stabileşte directiva de intrare canoni
         <translation>Cel mai nou instalat kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Nici o "cochilie caracteristică Legacy:" linia este cached; rulați diagnostice pentru domeniul de aplicare selectat pentru a evalua chroot ajutor / timeout sonde de izolare (inchise fail).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Compilator de constructii Kernel: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Nici o &quot;cochilie caracteristică Legacy:&quot; linia este cached; rulați diagnostice pentru domeniul de aplicare selectat pentru a evalua chroot ajutor / timeout sonde de izolare (inchise fail).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Nici un rezultat diagnostic pentru a salva încă.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Nu au fost detectate erori ale sistemului de fișiere pe rădăcina %1, /boot sau /home filesystems. Nicio reparaţie nu a fost făcută.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Nu este selectat niciun instrument de reparații.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>Nu au fost detectate erori de sistem de fișiere reparabile pe rădăcina %1, /boot sau /home filesystems, dar %2. Nicio reparaţie nu a fost făcută.</translation>
     </message>
     <message>
@@ -2838,7 +2942,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Bine.</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Comenzi offline rula unul la un moment dat într-o prospețime chroot și nu poate răspunde prompte interactive (apt-get-y upgrade works). Comenzile Hoste-shell rulează direct pe gazda care rulează. Liniile sondei ajutătorului poartă câmpul de comandă; motivul exact apare în vârful uneltei.</translation>
     </message>
     <message>
@@ -2955,7 +3059,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
     </message>
     <message>
         <source>Quit</source>
-        <translation>Renunță</translation>
+        <translation>Ieșire</translation>
     </message>
     <message>
         <source>Re-establish the privileged helper session for the current scope now. The password is requested in the hidden-input modal and is never logged.</source>
@@ -3026,11 +3130,11 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Reîmprospătează dispozitivele</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Regenerează configurația %1 GRUB</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Regenerează configurația %1 extlinux</translation>
     </message>
     <message>
@@ -3159,7 +3263,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
     </message>
     <message>
         <source>Run Diagnostic - %1</source>
-        <translation type="unfinished" />
+        <translation>Rulați diagnosticul - %1</translation>
     </message>
     <message>
         <source>Run Diagnostic - run the selected read-only diagnostic for the current scope.</source>
@@ -3179,14 +3283,14 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Comment</translation>
+        <translation>Rulează instrumentul</translation>
     </message>
     <message>
         <source>Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as apt-get -y upgrade. Output is kept in this window and in the application log.</source>
         <translation>Rulați o comandă în interiorul sistemului de reparații selectat ca rădăcină (sudo nu este necesar). Comenzile sunt executate una la un moment dat într-un chroot proaspăt și nu pot răspunde prompte interactive; utilizați steaguri inactive, cum ar fi apt-get-y upgrade. Ieșirea este păstrată în această fereastră și în jurnalul de aplicații.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Rulați o comandă pe gazda care rulează ca rădăcină (Host Shell) sau în interiorul sistemului de reparații selectat ca rădăcină (Chroot Shell); sudo nu este necesar în nici unul. Comenzile Host-Shell sunt executate direct pe sistemul activ; comenzile chroot sunt executate una la un moment dat într-un chroot proaspăt și nu pot răspunde promptelor interactive, astfel încât steagurile non-interactive cum ar fi upgrade-ul apt-gety rămân recomandate pentru rulările nesupravegheate. Ieșirea este păstrată în această fereastră și în jurnalul de aplicații. Sondele numai-citite ale ajutor poartă câmpul de comandă; în timp ce Shell este indisponibil pagina arată motivul exact sub câmpul.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Rulați diagnostice pentru acest domeniu de aplicare pentru a debloca acțiunile poarta. Diagnosticele sunt doar citite și singura sursă de dovezi.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Rulați diagnostice pentru a testa ce fișiere de configurare țintă există; sonda numai-citit a ajutorului decide lista.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
         <translation>Rulează pe gazdă</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Rulați un instrument de reparații sau utilizați planul de reparații complete împotriva unității de reparații selectate. Alegeți Host Întreținere pe sisteme pentru a rula aceleași etape susținute, păzite împotriva gazdei de rulare protejate. Alegeți etapele de reparații complete în setări. Etape activate rula în ordinea afișată. Fiecare etapă configurabilă apare și mai jos ca instrument individual; coloana de reparații complete reflectă starea actuală a Configurărilor. Uneltele de boot (configurația GRUB, reconcilierea boot-stack și Make Implicit) sunt independente: rulează-le în orice ordine, iar o acțiune ulterioară reverifică ceea ce s-a schimbat și raportează propriul rezultat. Domeniul de aplicare activ este afişat lângă Reparare: unitate de reparaţii selectate sau de întreţinere Rularea gazde. Fiecare acţiune rămâne dezactivată până când liniile de capacitate cache spun că este disponibilă şi ajutorul îşi păstrează precursoarele. Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită "neschimbată" invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Rulați un instrument de reparații sau utilizați planul de reparații complete împotriva unității de reparații selectate. Alegeți Host Întreținere pe sisteme pentru a rula aceleași etape susținute, păzite împotriva gazdei de rulare protejate. Alegeți etapele de reparații complete în setări. Etape activate rula în ordinea afișată. Fiecare etapă configurabilă apare și mai jos ca instrument individual; coloana de reparații complete reflectă starea actuală a Configurărilor. Uneltele de boot (configurația GRUB, reconcilierea boot-stack și Make Implicit) sunt independente: rulează-le în orice ordine, iar o acțiune ulterioară reverifică ceea ce s-a schimbat și raportează propriul rezultat. Domeniul de aplicare activ este afişat lângă Reparare: unitate de reparaţii selectate sau de întreţinere Rularea gazde. Fiecare acţiune rămâne dezactivată până când liniile de capacitate cache spun că este disponibilă şi ajutorul îşi păstrează precursoarele. Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită &quot;neschimbată&quot; invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Rulați o comandă revizuită ca rădăcină în interiorul chroot țintă prin verbul scoica păzit de ajutor.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Rulați o comandă revizuită ca rădăcină pe gazda care rulează prin verbul pazit de ajutor gazdă-shell.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Apăsați Autorizați pe fila Systems sau Reparare pentru a stabili sesiunea, sa
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Rulați planul de reparații complete?
@@ -3386,7 +3490,7 @@ Ajutorul își păstrează pre-zborurile; comanda este transmisă ca un argument
         <translation>Selectaţi o unitate fizică în lista de ţinte de reparaţii disponibile pe fila Systems primul, sau utilizaţi Host Întreţinere pentru gazda care rulează protejate.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Selectaţi o unitate fizică; Boot Bitch rezolvă cel mai probabil volumul sistemului Linux automat. Gazda care ruleaza ramane protejata de reparatiile tinta obisnuite, cu o cale separata explicita de intretinere a gazdelor pentru propriul sistem. Butonul Details arată faptele gazdei protejate în panoul de detalii; selectarea oricărui rând de comandă restabilește panoul per-drive.</translation>
     </message>
     <message>
@@ -3495,7 +3599,7 @@ Ajutorul își păstrează pre-zborurile; comanda este transmisă ca un argument
     </message>
     <message>
         <source>Settings save: skipped (settings not loaded: m_settingsLoaded=%1, preference count=%2 of %3); the plan selection was not written.</source>
-        <translation type="unfinished" />
+        <translation>Salvare setări: omisă (setările nu au fost încărcate: m_settingsLoaded=%1, număr de preferințe %2 din %3); selecția planului nu a fost scrisă.</translation>
     </message>
     <message>
         <source>Shell command required</source>
@@ -3512,6 +3616,14 @@ Ajutorul își păstrează pre-zborurile; comanda este transmisă ca un argument
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Afișează dispozitivele fără instalare Linux identificată</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Atunci când este oprit, ascunde doar datele squashfs volume container (snap-stil) care nu pot fi Linux instala ținte.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Arată dispozitivele de buclă squashfs</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3694,8 +3806,8 @@ Metoda: cartografiere confirmată de un ajutor de la ultimele diagnostice.</tran
         <translation>Oprind comanda Shell... Fila jurnalele păstrează transcrierea completă.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Ambalajul recomandat</translation>
+        <source>Packages</source>
+        <translation>Pachete</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3756,8 +3868,8 @@ Gazda care ruleaza este reverificata independent si refuzata de ajutorul privile
         <translation>Planul de reparații complete rulează etapele moștenite selectate în ordine prin ajutorul păzit; instrumentele individuale rulează o singură etapă la un moment dat. Fiecare acţiune rămâne dezactivată până când liniile de capacitate cache spun că este disponibilă şi ajutorul îşi păstrează precursoarele.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Planul de reparații complete rulează etapele moștenite selectate în ordine prin ajutorul păzit; instrumentele individuale rulează o singură etapă la un moment dat. Fiecare acţiune rămâne dezactivată până când liniile de capacitate cache spun că este disponibilă şi ajutorul îşi păstrează precursoarele. Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită "neschimbată" invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Planul de reparații complete rulează etapele moștenite selectate în ordine prin ajutorul păzit; instrumentele individuale rulează o singură etapă la un moment dat. Fiecare acţiune rămâne dezactivată până când liniile de capacitate cache spun că este disponibilă şi ajutorul îşi păstrează precursoarele. Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită &quot;neschimbată&quot; invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Apăsați Autorizați pe fila Sisteme sau reparații pentru a restabili sesiunea
         <translation>Domeniul de aplicare selectat nu are nicio componentă rădăcină rezolvată; utilizați Dispozitive Reîmprospătare și angajați din nou ținta de reparații.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Discul și componenta rădăcină a domeniului de aplicare selectat nu au putut fi rezolvate.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Apăsați Autorizați pe fila Sisteme sau reparații pentru a restabili sesiunea
         <translation>Această unitate criptată nu are încă un sistem de fișiere Linux vizibil. Utilizați Deblocare, dispozitive de reîmprospătare și selectați ținta după detectarea rădăcinii Linux.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Acest frontend moștenire expune nicio acțiune %1; ajutorul raportează capacitatea ca fiind disponibilă.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Disponibil doar ca un diagnostic/capability - acest frontend moștenire expune nici o acțiune de reparații; rula repararea interactivă de la GUI moderne.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ Ajutorul deschide o cartografiere temporară a dispozitivului-mapper cu cryptset
         <translation>ATENŢIE: fişierul setărilor GUI salvate %1 nu poate fi citit; opţiunile sale sunt citite ca implicit, nu ca valori salvate.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>ATENŢIE: fişierul setărilor GUI salvate %1 nu poate fi citit sau eliminat; opţiunile sale sunt citite ca implicit. Eliminați-l (sau faceți ca ~/.qt să poată fi scris) astfel încât setările salvate să poată persista din nou.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Înlăturate %1 fișiere de setări vechi necitite: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Nu s-au putut elimina fișierele de setări vechi necitite %1; valorile implicite se aplică până când nu sunt eliminate.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Când este oprit, motoarele cu un dispozitiv criptat sunt ascunse până când volumul este deblocat.</translation>
     </message>
@@ -4064,8 +4188,8 @@ Ajutorul deschide o cartografiere temporară a dispozitivului-mapper cu cryptset
         <translation>Învelește linii lungi de jurnal</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită "neschimbată" invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Scrie acțiunile cere confirmarea și apoi executați propriile precursoare ale ajutorului; GUI nu le slăbește niciodată. O reparaţie care nu este dovedită &quot;neschimbată&quot; invalidează diagnosticul cache şi dezactivează acţiunile poartă până la diagnosticarea rula din nou.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,7 +4224,7 @@ Ajutorul deschide o cartografiere temporară a dispozitivului-mapper cu cryptset
         <translation>Autorizare administrator</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
         <translation>elevație necesită o parolă sudo interactivă; rulați fumul ca rădăcină sau după sudo -S -v</translation>
     </message>
     <message>
@@ -4180,7 +4304,7 @@ Comanda nu a început.</translation>
         <translation>indisponibil - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>indisponibil: a se vedea fişierul-copie Legacy de ajutor: sonda motiv de mai sus</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ Comanda nu a început.</translation>
         <source>your account</source>
         <translation>contul dumneavoastră</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Cel mai recent depozit kernel: %1 (mai nou decât cel mai nou instalat; %2).</translation></message><message><source>Try Again</source><translation>Încearcă din nou.</translation></message><message><source>Enter the note text</source><translation>Introduceți textul notei</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Această notă va fi anexată la jurnalul de sesiune selectat %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>NOTĂ anexată jurnalului de sesiune anterior %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Înregistrarea jurnalului selectat nu este un jurnal valid al sesiunii; nota nu a fost scrisă.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Jurnalul de sesiune selectat %1 nu este scris; nota nu a fost adăugată.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Cel mai recent depozit kernel: %1 (mai nou decât cel mai nou instalat; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Încearcă din nou.</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Introduceți textul notei</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Această notă va fi anexată la jurnalul de sesiune selectat %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>NOTĂ anexată jurnalului de sesiune anterior %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Înregistrarea jurnalului selectat nu este un jurnal valid al sesiunii; nota nu a fost scrisă.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Jurnalul de sesiune selectat %1 nu este scris; nota nu a fost adăugată.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Nici un diagnostic cached running-host diagnostics; rula doar citire gazde diagnostice în Host Întreținere pentru a popula acest rând.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - avortat</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>Stadiul %1 (s) modificările raportate înainte de oprire; aceste modificări sunt aplicate și diagnosticele afectate au fost regenerate</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>o etapă raportată o modificare înainte de oprire; modificările acesteia pot fi deja aplicate</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>nu s-au făcut modificări</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Instalat</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Reparatii traseul de boot EFI / UKI pentru sistemele UEFI</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Tastatură bazată pe dovezi, mouse-ul și touchpad de reparații prin meniul interactiv al ajutorului</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Reparații de rețea bazate pe dovezi prin meniul interactiv al ajutorului; modificări de conectivitate live nu ating niciodată interfața care deține ruta implicită</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Pachete care nu sunt disponibile în repertoriile acestui sistem</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 intrări de boot firmware încărcate numai pentru citire.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 Vizualizarea intrărilor de firmware este disponibilă. Încarcă intrările pentru a lista intrările UEFI numai citite.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Pornire</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Reîmprospătare de boot refuzat: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Rezultatul listei de înscrieri a fost eliminat: domeniul de aplicare a schimbat în timp ce cererea a fost difuzate.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Cizme</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Clasă</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Clasa: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Direct (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Condu</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>Intrări de boot EFI</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Retragerea</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Intrările de boot Firmware nu au putut fi încărcate. Vezi jurnale pentru detalii.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Lista de intrare a boot-ului Firmware a eșuat.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>Meniu GRUB</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Eticheta</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Eticheta: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Listă intrări de boot firmware</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Listat în BootOrder: nr.</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Listat în BootOrder: da</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Încarcă intrările</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Încarcă intrările de boot %1 UEFI numai pentru citire.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Încărcat %1 %2 firmware boot entr%3 numai-citit.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Încărcător</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Încărcător: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Se încarcă intrările de boot %1 UEFI firmware doar pentru %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Rețea</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Nu s-au găsit intrări de boot UEFI firmware</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Niciun domeniu de aplicare selectat</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Altele</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Ţinta de reparare: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Ţinta de reparare: nu este pregătită</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Obiectiv de reparare</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Rolul: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Gazda de rulare: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Gazdă curentă: neselectată</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Gazda alergătoare</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Selectaţi Hoste Maintenance pe gazda care rulează, sau o ţintă de reparaţii în Systems, pentru a gestiona intrări de boot firmware.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Selectaţi Hoste Maintenance pe gazda care rulează, sau o ţintă de reparaţii în Systems, pentru a gestiona intrări de boot firmware. Încărcarea înscrie înregistrările UEFI actuale.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>Intrările de boot UEFI firmware (tra51X gazdei care rulează) sunt enumerate doar aici. În Host Mentainment vedeți propriile intrări ale gazdei care rulează; cu o țintă de reparații angajată vedeți intrările NVRAM ale căror puncte de partiție sunt partiția sistemului EFI. Acest punct de vedere nu schimbă niciodată firmware-ul; o gazdă numai BIOS (Etch) nu are intrări de boot firmware și nu enumeră nici unul. Meniul de boot GRUB (lista de nuclee din cadrul GRUB) este separat și este regenerat prin repararea GRUB sau boot-stack.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Intrarea de boot UEFI firmware în BootOrder, listată numai pentru citire.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Această intrare este în prezent activă (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Imposibil de șters %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>țintă de reparații</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>țintă pentru reparații</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>Gazda care rulează</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>Running-host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>Articole EFI</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Meniul cizmelor</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Comutați între intrările de firmware UEFI și meniul de boot numai pentru citire.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Intrare meniu</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Meniul de boot numai pentru citire (înscrierea kernelului/OS în ordinea fișierelor).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>Meniul de boot %1 introduceri încărcate numai pentru citire.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>Vizualizarea meniului de boot %1 este disponibilă. Alegeți Meniul Boot pentru a lista meniul de boot numai citire.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>Vizualizarea intrărilor de firmware %1 este disponibilă. Alegeți Intrările EFI pentru a lista intrările UEFI numai citire.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Selectaţi Hoste Mentenanţă pe gazda care rulează, sau o ţintă de reparaţii în Systems, pentru a vizualiza intrări de boot firmware. Alegeți intrările EFI sau Meniul Boot de mai sus pentru a încărca doar intrările din domeniul de aplicare curent.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Se încarcă meniul de boot %1 citit numai pentru %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Lista meniului de boot</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Refresh meniu Boot refuzat: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Lista de meniu Boot a eșuat.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Meniu de boot de rezervă refuzat: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Rezultatul meniului Boot a fost eliminat: domeniul de aplicare a schimbat în timp ce cererea a fost difuzate.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Intrare meniu: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>ID intrare: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Acesta este un submeniu.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Încarcă configurația: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Străin: indică o unitate diferită sau partiție.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Intrare implicită: da</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Intrare implicită: nu</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Implicit</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (submeniu)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Încărcat %1 meniu de boot entr%2 numai citire.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Nici un meniu de moștenire GRUB.st pe acest domeniu de aplicare; încercarea grub GRUB.cfg meniu boot citit-doar.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Nu s-a găsit nicio configuraţie a meniului de boot pe această unitate. Sistemul nu poate avea niciun meniu de boot GRUB, extlinux/syslinux sau GRUB moștenit, sau configurația acestuia trăiește în altă parte.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Configurația meniului de boot există, dar nu enumeră intrările.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Meniul de boot nu a putut fi încărcat. Vezi jurnale pentru detalii.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>implicit</translation>
+    </message>
+</context>
 </TS>

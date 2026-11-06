@@ -184,6 +184,24 @@ check_pattern 'setProcessChannelMode|setProcessEnvironment|waitForStarted|waitFo
 check_pattern '\.terminate\(\)' 'QProcess/QThread::terminate (Qt 4; Qt3: tryTerminate)'
 check_pattern '&[A-Za-z_][A-Za-z0-9_:]*::[A-Za-z_][A-Za-z0-9_]*[[:space:]]*,' 'new-style member-function-pointer connect (Qt 5)'
 
+# --- setCurrentPage overload guard (round 125 (d) / round-127 C8) ------------
+# Qt 3.3.7 QTabWidget::setCurrentPage takes an INT index only; the QWidget
+# overload is Qt4+ (the round-125 #27 tab-gate edit passed a widget member
+# and only the first Etch build caught it).  The legal form resolves through
+# indexOf() or passes an int local/index; a member access (m_...) in the
+# argument — the widget-overload shape — is a Qt4+-only hit.  grep cannot
+# type-check, so the guard flags the member shape only; the established
+# convention (tab indexes are `const int ... = currentPageIndex()` locals)
+# keeps the int-variable form unambiguous.
+SPC_HITS="$(grep -E 'setCurrentPage\(' "$TMP/stripped" \
+    | grep -v 'indexOf(' \
+    | grep -E 'setCurrentPage\([^)]*m_[A-Za-z_][A-Za-z0-9_]*' || true)"
+if [[ -n "$SPC_HITS" ]]; then
+    printf '  Qt4+ API QTabWidget::setCurrentPage(QWidget*) (Qt3 takes an int index):\n'
+    printf '%s\n' "$SPC_HITS" | sed 's/^/    /'
+    HITS=$((HITS + 1))
+fi
+
 # --- table 2: QByteArray operator+= / append() --------------------------------
 # Qt3 QByteArray has neither operator+= nor append(); accumulation must go
 # through resize()+memcpy.  grep cannot type-check a bare `ba += x`, so the
@@ -214,14 +232,14 @@ MAP_FILE="$ROOT_DIR/data/repair-diagnostic-map.tsv"
 # (1) Golden full-file checksum: a map edit must deliberately re-baseline this
 # contract (the "checksum/content assertion" lock).
 MAP_SHA="$(sha256sum "$MAP_FILE" | awk '{print $1}')"
-[[ "$MAP_SHA" == '1fc9ae6e3828dadabdd8de5406087c27682ee033016999d0f56de58c8b26a035' ]] \
+[[ "$MAP_SHA" == '423e4039f87cc15fe443d567b3afd3e8b0998de0ecedfcd26c174dce1df89e16' ]] \
     || fail "repair-diagnostic-map.tsv sha256 $MAP_SHA != the golden checksum (a map change must update the parity contract)"
 
 # (2) Golden data-row content: every row key in the locked order (the row
 # content is asserted row-by-row below so a drift names the exact row).
 MAP_ROWS="$(grep -vE '^#|^[[:space:]]*$' "$MAP_FILE")"
 [[ -n "$MAP_ROWS" ]] || fail "repair-diagnostic-map.tsv carries no data rows"
-GOLDEN_ROW_COUNT=44
+GOLDEN_ROW_COUNT=74
 [[ "$(printf '%s\n' "$MAP_ROWS" | wc -l)" -eq "$GOLDEN_ROW_COUNT" ]] \
     || fail "repair-diagnostic-map.tsv row count changed (expected $GOLDEN_ROW_COUNT)"
 
@@ -239,11 +257,41 @@ upgrade	package	package backend usage capabilities
 apt-upgrade	package	package backend usage capabilities
 install-target-package	package	package backend usage capabilities display
 install-host-package	package	package backend usage capabilities display
+enable-snapshot-config	-	package backend usage btrfs capabilities
+enable-host-snapshot-config	-	package backend usage btrfs capabilities
 dkms	kernel	kernel
 display	display	display
 display-manager	display	display
 gpu	gpu kernel	gpu display kernel boot boot-evidence grub uki package usage capabilities
 gpu:*	gpu kernel	all
+input-devices	input kernel	input kernel
+input-devices:include-initramfs	input kernel	input kernel usage
+input-devices:load-module	input kernel	input
+input-devices:load-controller	input kernel	input
+input-devices:remove-blacklist	input kernel	input kernel
+input-devices:install-package	input kernel	package backend usage capabilities input kernel
+input-devices:hid-fallback	input kernel	input kernel
+input-devices:quirk-fnmode	input kernel	input kernel
+input-devices:reinstall	input kernel	package backend usage capabilities input kernel usage
+input-devices:pin-version	input kernel	package backend usage capabilities input kernel
+input-devices:resolve-conflict	input kernel	input kernel
+input-devices:user-artifact	input kernel	package backend usage capabilities input kernel
+input-devices:*	input kernel	all
+network	network	network kernel
+network:include-initramfs	network	network kernel usage
+network:module-load	network	network kernel
+network:remove-blacklist	network	network kernel
+network:load-candidate	network	network
+network:firmware-install	network	package backend usage capabilities network kernel
+network:driver-switch	network	package backend usage capabilities network kernel
+network:reinstall	network	package backend usage capabilities network kernel usage
+network:pin-version	network	package backend usage capabilities network kernel
+network:resolve-conflict	network	network kernel
+network:user-artifact	network	package backend usage capabilities network kernel
+network:dhcp-renew	network	network
+network:default-route	network	network
+network:dns-repair	network	network
+network:*	network	all
 nomodeset	gpu kernel	all
 initramfs	kernel	kernel
 efi	uki	uki grub boot-evidence
@@ -340,6 +388,10 @@ check_tooltip_pair 'Restore the graphical login manager.' \
     'Restore the graphical login manager.' 'display: identical'
 check_tooltip_pair 'Choose a GPU driver repair action from the evidence.' \
     'Choose a GPU driver repair action from the evidence.' 'gpu: identical (round-32 modern chain completion)'
+check_tooltip_pair 'Choose an input device repair action from the evidence.' \
+    'Choose an input device repair action from the evidence.' 'input-devices: identical'
+check_tooltip_pair 'Choose a network repair action from the evidence.' \
+    'Choose a network repair action from the evidence.' 'network: identical'
 check_tooltip_pair 'Rebuild initramfs images.' \
     'Rebuild initramfs images.' 'initramfs: identical'
 check_tooltip_pair 'Repair the EFI / UKI boot path.' \
@@ -359,7 +411,7 @@ fi
 # lock): a table field that updateToolDetails never reads is invisible.
 grep -q 'tr(spec.tooltip)' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp" \
     || fail "updateToolDetails no longer reads the per-tool spec.tooltip"
-printf '  per-repair tooltip parity: PASS (%d modern per-tool tooltips locked)\n' 15
+printf '  per-repair tooltip parity: PASS (%d modern per-tool tooltips locked)\n' 17
 
 # ===== file-copy-surface parity block (round 57): the legacy File Copy tab
 # and its destination browse must carry the MODERN two-level workflow
@@ -457,6 +509,148 @@ if [[ "$MODERN_TOOL_ORDER" != "$LEGACY_TOOL_ORDER" ]]; then
     fail "legacy toolSpecs order drifted from the modern functional grouping"
 fi
 printf '  repair-tool order parity: PASS (modern order: %s)\n' "$MODERN_TOOL_ORDER"
+
+# ===== capability-notes parity block (round 105, ITEM 3): the shared
+# Notes-column strings + the status vocabulary + the Packages header =======
+# The modern CapabilityChecker::capabilityNoteForTool (plus the storage-stack
+# call sites) and the legacy capabilitySpecs/capabilityNoteSpecs must carry
+# the SAME per-row note literals, so the shared capability rows render the
+# identical wording in both GUIs (the modern is the reference).  The
+# four-status vocabulary (Installed/Available/Missing — the round-105 ITEM 2
+# derivation) and the Packages header (ITEM 4) are locked as tr() literals in
+# both GUI sources; the legacy-only "Missing on this frontend" (the unshare
+# row's frontend-limited state) keeps its existing phrasing and stays a
+# documented legacy-only string.
+printf '  capability-note parity:\n'
+CNOTE_HITS=0
+check_cnote_pair()
+{
+    local key="$1" note="$2"
+    grep -qF "\"$note\"" "$ROOT_DIR/src/CapabilityChecker.cpp" \
+        || fail "modern capability note missing from CapabilityChecker.cpp ($key): $note"
+    if ! grep -qF "\"$note\"" "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp"; then
+        printf '    legacy capability note missing (%s): %s\n' "$key" "$note"
+        CNOTE_HITS=$((CNOTE_HITS + 1))
+    fi
+    printf '    %s: identical\n' "$key"
+}
+check_cnote_pair 'validate' 'Read-only preflight of mounts, filesystem metadata, boot files and mapper consistency before any repair'
+check_cnote_pair 'filesystem' "Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors"
+check_cnote_pair 'dpkg' 'Completes interrupted dpkg package configuration in the selected repair system'
+check_cnote_pair 'fixbroken' 'Repairs broken package dependencies after the simulation-first safety preflight'
+check_cnote_pair 'aptupdate' 'Refreshes APT metadata without upgrading installed packages'
+check_cnote_pair 'upgrade' 'Simulates the APT transaction, then applies a safe upgrade'
+check_cnote_pair 'kernels' "Kernel removal, cleanup and install run through the helper's interactive menu; nothing is removed or modified until you pick an action and confirm it"
+check_cnote_pair 'dkms' 'Rebuilds out-of-tree kernel modules; required only when the system uses a module build system'
+check_cnote_pair 'initramfs' 'Rebuilds the initramfs images for the installed kernels'
+check_cnote_pair 'display' 'Restores the configured display manager and its startup link without starting the GUI'
+check_cnote_pair 'gpu' "Evidence-driven GPU driver repair through the helper's interactive menu"
+check_cnote_pair 'input-devices' "Evidence-driven keyboard, mouse and touchpad repair through the helper's interactive menu"
+check_cnote_pair 'network' "Evidence-driven network repair through the helper's interactive menu; live connectivity changes never touch the interface holding the default route"
+check_cnote_pair 'efi' 'Repairs the EFI / UKI boot path for UEFI systems'
+check_cnote_pair 'grub' 'Regenerates the GRUB configuration (backed up, every entry preserved)'
+check_cnote_pair 'extlinux' 'Alternative bootloader; on this system extlinux is not part of the default boot path'
+check_cnote_pair 'bootstack' 'One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration'
+check_cnote_pair 'lvm' 'Optional LVM storage-stack support'
+check_cnote_pair 'raid' 'Optional Linux MD RAID support'
+# The status vocabulary + the renamed Packages header (round 105 ITEM 2/4):
+# the exact tr() literals must exist in BOTH GUI sources.
+check_vocab_pair()
+{
+    local string="$1"
+    grep -qF "tr(\"$string\")" "$ROOT_DIR/src/MainWindow.cpp" \
+        || fail "modern capability-table string missing from src/MainWindow.cpp: $string"
+    if ! grep -qF "tr(\"$string\")" "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp"; then
+        printf '    legacy capability-table string missing: %s\n' "$string"
+        CNOTE_HITS=$((CNOTE_HITS + 1))
+    fi
+}
+check_vocab_pair 'Installed'
+check_vocab_pair 'Available'
+check_vocab_pair 'Missing'
+check_vocab_pair 'Packages'
+if [[ "$CNOTE_HITS" -gt 0 ]]; then
+    fail "$CNOTE_HITS legacy capability-table string(s) drifted from the modern reference"
+fi
+printf '  capability-note parity: PASS (%d shared notes + status vocabulary + Packages header locked)\n' 19
+
+# ===== capability-packages parity block (round 106, ITEM 2): the shared
+# capability -> package table (data/capability-packages.tsv) + the honest
+# not-available caveat ======================================================
+# The static per-row package names the Boot capabilities Packages column
+# renders come from ONE shared data file, consumed by BOTH GUIs (the modern
+# embeds it via resources/boot-repair.qrc; the legacy loads the staged copy).
+# The parity lock covers: (a) the canonical file (a golden checksum + the row
+# count), (b) the consumption references in both GUI sources + the packaging
+# staging, (c) the legacy capabilitySpecs package values == the table's
+# Debian-family rows for the 16 shared keys (the two sources must be the SAME
+# truth), and (d) the shared not-available caveat literal in both sources.
+printf '  capability-packages parity:\n'
+CPKG_FILE="$ROOT_DIR/data/capability-packages.tsv"
+[[ -f "$CPKG_FILE" ]] || fail "canonical capability-packages table missing: data/capability-packages.tsv"
+CPKG_SHA="$(sha256sum "$CPKG_FILE" | awk '{print $1}')"
+[[ "$CPKG_SHA" == "9adc6dbb9bc6eb2694aad45edefa651e49871211ccb587ad58f2793573073359" ]] \
+    || fail "capability-packages.tsv sha256 $CPKG_SHA != the golden checksum (a table change must update the parity contract)"
+CPKG_ROWS="$(grep -vcE '^#|^$' "$CPKG_FILE")"
+[[ "$CPKG_ROWS" == 41 ]] \
+    || fail "capability-packages.tsv row count changed (expected 41, got $CPKG_ROWS)"
+grep -q 'capability-packages.tsv' "$ROOT_DIR/src/CapabilityChecker.cpp" \
+    || fail "the modern GUI no longer consumes capability-packages.tsv"
+grep -q 'capability-packages.tsv' "$ROOT_DIR/resources/boot-repair.qrc" \
+    || fail "resources/boot-repair.qrc no longer embeds capability-packages.tsv"
+grep -q 'capability-packages.tsv' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp" \
+    || fail "the legacy GUI no longer consumes capability-packages.tsv"
+grep -q 'capability-packages.tsv' "$ROOT_DIR/scripts/package-legacy.sh" \
+    || fail "scripts/package-legacy.sh no longer stages capability-packages.tsv"
+# (c) the legacy capabilitySpecs package values == the table's Debian rows for
+# the 16 shared keys (in the spec order validate, filesystem, dpkg, fixbroken,
+# aptupdate, upgrade, dkms, display, gpu, initramfs, grub, extlinux, bootstack,
+# kernels, lvm, raid).
+CPKG_KEYS="validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs grub extlinux bootstack kernels lvm raid"
+CPKG_HITS=0
+CPKG_IDX=0
+for _key in $CPKG_KEYS; do
+    CPKG_IDX=$((CPKG_IDX + 1))
+    _table_value="$(awk -F'\t' -v k="$_key" '$1 == k && $2 == "debian" { print $3; exit }' "$CPKG_FILE")"
+    if [[ -z "$_table_value" ]]; then
+        _table_value="$(awk -F'\t' -v k="$_key" '$1 == k && $2 == "*" { print $3; exit }' "$CPKG_FILE")"
+    fi
+    [[ -n "$_table_value" ]] || fail "capability-packages.tsv has no row for key $_key"
+    _spec_value="$(awk -v idx="$CPKG_IDX" '
+        /^const CapabilitySpec capabilitySpecs\[\] = \{/ { inspec = 1 }
+        inspec && /^[[:space:]]*\{ QT_TRANSLATE_NOOP\(/ { rowno++ }
+        inspec && rowno == idx && /QT_TRANSLATE_NOOP\("LegacyMainWindow",/ {
+            lineno++
+            if (lineno == 2) {
+                s = $0
+                sub(/^.*QT_TRANSLATE_NOOP\("LegacyMainWindow", "[^"]*"\), "/, "", s)
+                sub(/".*$/, "", s)
+                print s
+                exit
+            }
+        }
+    ' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp")"
+    if [[ "$_spec_value" != "$_table_value" ]]; then
+        printf '    legacy capabilitySpecs package drifted for %s: spec=%s table=%s\n' \
+            "$_key" "${_spec_value:-<unparsed>}" "$_table_value"
+        CPKG_HITS=$((CPKG_HITS + 1))
+    fi
+done
+if [[ "$CPKG_HITS" -gt 0 ]]; then
+    fail "$CPKG_HITS legacy capabilitySpecs package value(s) drifted from the shared capability-packages table"
+fi
+# (d) the shared not-available caveat literal (tr() in both GUI sources).
+grep -qF 'tr("Packages not available in this system'"'"'s repositories")' "$ROOT_DIR/src/CapabilityChecker.cpp" 2>/dev/null \
+    || grep -qF 'Packages not available in this system' "$ROOT_DIR/src/CapabilityChecker.cpp" \
+    || fail "modern capability-table caveat missing from src/CapabilityChecker.cpp"
+if ! grep -qF 'Packages not available in this system' "$ROOT_DIR/legacy/gui/src/LegacyMainWindow.cpp"; then
+    printf '    legacy capability-table caveat missing\n'
+    CPKG_HITS=$((CPKG_HITS + 1))
+fi
+if [[ "$CPKG_HITS" -gt 0 ]]; then
+    fail "$CPKG_HITS legacy capability-packages string(s) drifted from the shared table/strings"
+fi
+printf '  capability-packages parity: PASS (golden table 41 rows + consumption locks + 16 spec values == the Debian rows + the caveat)\n'
 
 # ===== clear-register parity block (round 58): the legacy Clear Register
 # confirmation must mirror the modern clearActionRegister() dialog — the same
@@ -608,10 +802,14 @@ if grep -qF 'QInputDialog::getText' "$LEGACY_DLG"; then
     printf '    legacy Add Note regressed to QInputDialog::getText (platform-ordered OK/Cancel)\n'
     DLOG_HITS=$((DLOG_HITS + 1))
 fi
-# Round 74 (the modern-parity Add Note memo + pinned width): the modern
-# round-66/73-A5 reference (multi-line memo + placeholder + 640 min/max pin)
-# and the legacy mirror (the round-31 PlaceholderTextEdit memo, the vertical
-# stretch, the 640 min/max pin).  A drift on either side fails here.
+# Round 154 (ITEM 1, the modern-popup-contract alignment): the modern
+# round-66/73-A5 Add Note reference (the multi-line memo + the placeholder)
+# now carries the STANDARD popup contract — the 470 drag floor via
+# standardDialogLayout, the historical 640 opening preserved through the
+# explicit resize, and NO maximum width (the round-73 pin retired).  The
+# legacy mirror keeps its Qt3 FreeResize-guarded 640 min/max pin (the
+# intentional Modern↔legacy divergence — the legacy is the pinned class).
+# A drift on either side fails here.
 check_dialog_lock modern "$MODERN_DLG" \
     'auto *memo = new QPlainTextEdit;' \
     'the modern Add Note memo is the multi-line editor'
@@ -619,11 +817,11 @@ check_dialog_lock modern "$MODERN_DLG" \
     'memo->setPlaceholderText(tr("Enter the note text"));' \
     'the modern Add Note memo carries the placeholder'
 check_dialog_lock modern "$MODERN_DLG" \
-    'standardDialogLayout(&dialog, 640)' \
-    'the modern Add Note dialog pins the 640 floor'
+    'standardDialogLayout(&dialog, 470)' \
+    'the modern Add Note dialog carries the 470 standard floor'
 check_dialog_lock modern "$MODERN_DLG" \
-    'dialog.setMaximumWidth(640);' \
-    'the modern Add Note dialog pins the 640 cap'
+    'dialog.resize(640, dialog.sizeHint().height());' \
+    'the modern Add Note dialog preserves the 640 opening (no maximum)'
 check_dialog_lock legacy "$LEGACY_DLG" \
     'PlaceholderTextEdit *memo = new PlaceholderTextEdit(&dialog, "addNoteMemo");' \
     'the legacy Add Note input is the multi-line memo'

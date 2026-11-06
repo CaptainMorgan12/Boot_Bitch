@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.20)
 
 project(BootRepair
-    VERSION 0.2.29
+    VERSION 0.2.30
     DESCRIPTION "Guarded Linux diagnostics, host maintenance and repair-system recovery utility"
     LANGUAGES CXX
 )
@@ -142,7 +142,10 @@ install(FILES data/copyright
 # Committed Qt UI translations. The .qm catalogs are generated from the
 # committed .ts sources with lrelease and installed so the application can load
 # them at runtime from ${CMAKE_INSTALL_DATADIR}/boot-repair/translations.  Every
-# language's .qm under translations/ is installed; the .ts sources are not.
+# .qm under translations/ is installed; the .ts sources are not.  The shipped
+# set is the curated 23-catalog list below (round 112: id/sk/vi dropped —
+# unshipped .ts sources only, no .qm present); the rpm/apk guards assert the
+# exact set.
 install(DIRECTORY translations/
     DESTINATION ${CMAKE_INSTALL_DATADIR}/boot-repair/translations
     FILES_MATCHING PATTERN "*.qm"
@@ -478,11 +481,15 @@ find_program(BOOT_REPAIR_LRELEASE_EXECUTABLE lrelease
     HINTS /usr/lib/qt6/bin /usr/lib64/qt6/bin)
 
 if(BOOT_REPAIR_LUPDATE_EXECUTABLE AND BOOT_REPAIR_LRELEASE_EXECUTABLE)
-    # The full shipped language set (bare Qt locale codes; "no" is Norwegian
-    # Bokmål, which Argos packages as "nb"). Keep this in sync with the
-    # translations/ directory and SUPPORTED_TARGETS in tools/translate_ts.py.
+    # The full shipped language set (23 catalogs since round 112; bare Qt
+    # locale codes; "no" is Norwegian Bokmål, which Argos packages as "nb").
+    # The id/sk/vi .ts sources stay in translations/ but are UNSHIPPED
+    # (round 112 decision — no Argos model exists; their .qm catalogs are not
+    # built and the install rule below picks up only the shipped .qm set).
+    # Keep this in sync with the translations/ directory and SUPPORTED_TARGETS
+    # in tools/translate_ts.py.
     set(BOOT_REPAIR_TRANSLATION_TS)
-    foreach(lang IN ITEMS de fr es it pt nl pl ru zh ja ko sv da fi no
+    foreach(lang IN ITEMS de fr es it pt nl pl ru zh ja ko sv da fi no nb
                           cs hu ro tr el ar uk)
         list(APPEND BOOT_REPAIR_TRANSLATION_TS
             ${CMAKE_CURRENT_SOURCE_DIR}/translations/boot-repair_${lang}.ts)

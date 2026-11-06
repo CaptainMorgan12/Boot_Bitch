@@ -57,6 +57,23 @@ grep -q 'GPU_BASELINE_B64=' "$HELPER" \
     || fail 'the gpu baseline state variable is missing'
 grep -q 'GPU_BASELINE_B64=""' "$HELPER" \
     || fail 'parse_repair_arguments must reset GPU_BASELINE_B64'
+
+# --- Round-86 input/network baseline wiring (the round-85 sessions) ----------
+grep -q -- '--input-baseline)' "$HELPER" \
+    || fail 'the --input-baseline input-device baseline mode hint is not parsed'
+grep -q 'INPUT_BASELINE_B64=""' "$HELPER" \
+    || fail 'parse_repair_arguments must reset INPUT_BASELINE_B64'
+grep -q -- '--network-baseline)' "$HELPER" \
+    || fail 'the --network-baseline network baseline mode hint is not parsed'
+grep -q 'NETWORK_BASELINE_B64=""' "$HELPER" \
+    || fail 'parse_repair_arguments must reset NETWORK_BASELINE_B64'
+# The GUI's privileged-argument allow-list must accept the two flags (round 86
+# defect B: the round-85 wiring missed the registration and the GUI refused
+# both tools before dispatch).
+grep -q 'QStringLiteral("--input-baseline")' "$ROOT_DIR/src/MainWindow.cpp" \
+    || fail 'the GUI argument allow-list must register --input-baseline'
+grep -q 'QStringLiteral("--network-baseline")' "$ROOT_DIR/src/MainWindow.cpp" \
+    || fail 'the GUI argument allow-list must register --network-baseline'
 grep -q -- '--baseline)' "$HELPER" \
     || fail 'the --baseline kernel baseline mode hint is not parsed'
 grep -q 'for i in "${!GPU_HARDWARE_DEVICES\[@\]}"' "$HELPER" \

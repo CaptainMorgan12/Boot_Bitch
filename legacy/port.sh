@@ -574,6 +574,33 @@ transform_legacy_behaviour()
         '    legacy_root_evidence_present "$probe_dir" && found=0' \
         || return 1
 
+    # Round 101: the round-100/101 bounded initrd readers dispatch
+    # `setsid timeout ...` when `command -v timeout` succeeds — but on the
+    # legacy helper the compat.sh `timeout()` FUNCTION matches that probe
+    # (Etch has no real timeout binary), and setsid's execvp cannot exec a
+    # shell function ("execvp: No such file or directory" — the overlay's
+    # documented Bug #5 shape).  The timeout branch must therefore require
+    # the REAL binary (`legacy_real_tool_path` = `type -P`, which ignores
+    # functions); without one the readers keep the round-100 documented
+    # setsid fallback (unbounded wait + the group sweep; Etch's own readers
+    # are fast and the display scan's reader gate never opens on Etch).
+    replace_block "$file" \
+        '        if (( bound > 0 )) && command -v timeout >/dev/null 2>&1 && [[ -n "$TARGET_ROOT" ]]; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                chroot "$TARGET_ROOT" "${reader_chain[@]:-}" > "$out_file" 2>>"$err_file" &' \
+        '        if (( bound > 0 )) && [[ -n "$(legacy_real_tool_path timeout 2>/dev/null || true)" ]] && [[ -n "$TARGET_ROOT" ]]; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                chroot "$TARGET_ROOT" "${reader_chain[@]:-}" > "$out_file" 2>>"$err_file" &' \
+        || return 1
+    replace_block "$file" \
+        '        if (( bound > 0 )) && command -v timeout >/dev/null 2>&1; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                "$@" > "$out_file" 2>>"$err_file" &' \
+        '        if (( bound > 0 )) && [[ -n "$(legacy_real_tool_path timeout 2>/dev/null || true)" ]]; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                "$@" > "$out_file" 2>>"$err_file" &' \
+        || return 1
+
     # Cycle 9 loop 2: the unlock verb accepts an optional --key-file <path>
     # so the Qt3 GUI can deliver the LUKS passphrase through a mode-600 file
     # (Qt 3.3.7 QProcess cannot deliver stdin). Without the argument the
@@ -998,19 +1025,19 @@ verify_transform_counts()
     check_zero 'date --iso-8601' 'date --iso-8601'
     check_zero 'case conversion' '[$][{][0-9A-Za-z_][0-9A-Za-z_]*(\[[^]]*\])?(\^\^|\^|,,)[}]'
     check_zero 'corrupted assoc set' 'removed_legacy_assoc_set|removed_seen_legacy'
-    check_count 'legacy_readarray' 'legacy_readarray' 90
+    check_count 'legacy_readarray' 'legacy_readarray' 92
     check_count 'legacy_remount_rw' 'legacy_remount_rw' 2
-    check_count 'legacy_sed_ext' 'legacy_sed_ext' 122
-    check_count 'legacy_sort_versions' 'legacy_sort_versions' 16
+    check_count 'legacy_sed_ext' 'legacy_sed_ext' 130
+    check_count 'legacy_sort_versions' 'legacy_sort_versions' 18
     check_count 'legacy_date_iso' 'legacy_date_iso' 5
-    check_count 'legacy_lc' 'legacy_lc ' 76
+    check_count 'legacy_lc' 'legacy_lc ' 77
     check_count 'legacy_uc' 'legacy_uc ' 20
     check_count 'legacy_ucfirst' 'legacy_ucfirst ' 24
-    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 40
+    check_count 'legacy_assoc_get' 'legacy_assoc_get ' 49
     check_count 'legacy_assoc_get_num' 'legacy_assoc_get_num ' 2
     check_count 'legacy_assoc_keys' 'legacy_assoc_keys ' 4
     check_count 'legacy_assoc_has' 'legacy_assoc_has ' 1
-    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 70
+    check_count 'legacy_assoc_set' 'legacy_assoc_set ' 75
     check_count 'legacy_assoc_unset' 'legacy_assoc_unset ' 0
     return "$rc"
 }

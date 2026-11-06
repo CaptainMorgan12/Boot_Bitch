@@ -148,6 +148,19 @@ cmp -s "$MAP_FILE" "$STAGED_MAP" \
 [[ "$(stat -c %a "$STAGED_MAP")" == '644' ]] \
     || fail "staged repair-diagnostic-map.tsv mode is not 0644"
 
+# Round 106: the staged tree must carry the SHARED capability -> package
+# table — the byte-identical copy of the canonical data file both GUIs
+# consume, installed where the legacy GUI resolves it at runtime.
+CPKG_FILE="$ROOT_DIR/data/capability-packages.tsv"
+STAGED_CPKG="$STAGE/usr/share/boot-repair-legacy/capability-packages.tsv"
+[[ -f "$CPKG_FILE" ]] || fail "canonical capability-packages.tsv is missing"
+[[ -f "$STAGED_CPKG" ]] \
+    || fail "staged tree is missing usr/share/boot-repair-legacy/capability-packages.tsv"
+cmp -s "$CPKG_FILE" "$STAGED_CPKG" \
+    || fail "staged capability-packages.tsv differs from the canonical data file"
+[[ "$(stat -c %a "$STAGED_CPKG")" == '644' ]] \
+    || fail "staged capability-packages.tsv mode is not 0644"
+
 # User access: the system-wide desktop entry and the GUI binary must be
 # readable/executable by every user (the guest's unprivileged user launches
 # the GUI from the KDE menu and a shell; the menu resolves Exec through PATH).
@@ -216,6 +229,7 @@ cp "$PKG" "$TREE/scripts/package-legacy.sh"
 cp "$ROOT_DIR/legacy/packaging/"* "$TREE/legacy/packaging/"
 cp -a "$ROOT_DIR/legacy/gui" "$TREE/legacy/gui"
 cp "$ROOT_DIR/data/repair-diagnostic-map.tsv" "$TREE/data/repair-diagnostic-map.tsv"
+cp "$ROOT_DIR/data/capability-packages.tsv" "$TREE/data/capability-packages.tsv"
 printf 'project(BootRepair\n    VERSION %s\n)\n' "$VERSION" > "$TREE/CMakeLists.txt"
 cp "$FIXTURE_HELPER" "$TREE/legacy/boot-repair-helper.sh"
 printf '#!/bin/bash\nexit 0\n' > "$TREE/legacy/port.sh"

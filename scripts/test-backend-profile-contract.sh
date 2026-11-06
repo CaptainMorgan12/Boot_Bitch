@@ -389,7 +389,7 @@ cap_assert_lines()
     [[ "$(grep -c '^Repair tool ' <<<"$output")" -eq 15 ]]
     [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$output")" -eq 15 ]]
     grep -Fqx 'Repair capability evidence (read-only):' <<<"$output"
-    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)
     local idx
     for idx in "${!keys[@]}"; do
         sed -n "$((idx + 2))p" <<<"$output" | grep -Fqx "Repair tool ${keys[$idx]}: available" \
@@ -513,10 +513,12 @@ individual_report="$(TARGET_ROOT="$cap_root" TARGET_OS_ID=arch TARGET_OS_LIKE=""
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability preamble' >&2; exit 1; }
 [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$individual_report")" -eq 1 ]] \
     || { echo 'FAIL: individual diagnostic did not emit exactly one capability evidence header' >&2; exit 1; }
-[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 15 ]] \
+[[ "$(grep -c '^Repair tool ' <<<"$individual_report")" -eq 17 ]] \
     || { echo 'FAIL: individual diagnostic lost capability key lines' >&2; exit 1; }
-[[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$individual_report")" -eq 15 ]] \
-    || { echo 'FAIL: individual diagnostic lost capability evidence lines' >&2; exit 1; }
+for ind_ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
+    [[ "$(grep -c "^Repair capability evidence $ind_ev_key: " <<<"$individual_report")" -eq 1 ]] \
+        || { echo "FAIL: individual diagnostic lost the capability evidence line for $ind_ev_key" >&2; exit 1; }
+done
 
 # A combined Run All report emits the shared capability preamble once at the
 # top and omits it from every diagnostic section. Section bodies are stubbed so
@@ -544,6 +546,8 @@ stub_combined_diagnostic_sections()
     diagnostic_btrfs() { printf 'SECTION btrfs\n'; }
     diagnostic_mapper() { printf 'SECTION mapper\n'; }
     diagnostic_luks() { printf 'SECTION luks\n'; }
+    diagnostic_input() { printf 'SECTION input\n'; }
+    diagnostic_network() { printf 'SECTION network\n'; }
 }
 
 assert_combined_report()
@@ -560,10 +564,13 @@ assert_combined_report()
         || { echo "FAIL: $label combined report emitted duplicate capability preambles" >&2; exit 1; }
     [[ "$(grep -c '^Repair capability evidence (read-only):$' <<<"$combined_report")" -eq 1 ]] \
         || { echo "FAIL: $label combined report emitted duplicate capability evidence headers" >&2; exit 1; }
-    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 15 ]] \
+    [[ "$(grep -c '^Repair tool ' <<<"$combined_report")" -eq 17 ]] \
         || { echo "FAIL: $label combined report lost capability key lines" >&2; exit 1; }
-    [[ "$(grep -c '^Repair capability evidence [a-z]*: ' <<<"$combined_report")" -eq 15 ]] \
-        || { echo "FAIL: $label combined report lost capability evidence lines" >&2; exit 1; }
+    local ev_key
+    for ev_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
+        [[ "$(grep -c "^Repair capability evidence $ev_key: " <<<"$combined_report")" -eq 1 ]] \
+            || { echo "FAIL: $label combined report does not contain exactly one capability evidence line for $ev_key" >&2; exit 1; }
+    done
     [[ "$(grep -c '^SECTION ' <<<"$combined_report")" -eq "$section_count" ]] \
         || { echo "FAIL: $label combined report did not run every diagnostic section" >&2; exit 1; }
     [[ "$(grep -c '^Diagnostic: ' <<<"$combined_report")" -eq "$section_count" ]] \
@@ -572,7 +579,14 @@ assert_combined_report()
     # generated and cached with every other section.
     grep -Fqx 'Diagnostic: filesystem' <<<"$combined_report" \
         || { echo "FAIL: $label combined report lost the File systems section" >&2; exit 1; }
-    for cap_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels; do
+    # 0.2.30 Phase 1: the new input-device and network evidence sections are
+    # part of the combined report (added after LUKS, before File systems —
+    # which stays last because it releases the helper's read-only mounts).
+    grep -Fqx 'Diagnostic: input' <<<"$combined_report" \
+        || { echo "FAIL: $label combined report lost the Input devices section" >&2; exit 1; }
+    grep -Fqx 'Diagnostic: network' <<<"$combined_report" \
+        || { echo "FAIL: $label combined report lost the Network section" >&2; exit 1; }
+    for cap_key in validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels; do
         [[ "$(grep -c "^Repair tool $cap_key: " <<<"$combined_report")" -eq 1 ]] \
             || { echo "FAIL: $label combined report does not contain exactly one 'Repair tool $cap_key' line" >&2; exit 1; }
     done
@@ -590,8 +604,8 @@ combined_reports="$(
 )"
 target_combined="${combined_reports%%=====HOST COMBINED REPORT=====*}"
 host_combined="${combined_reports#*=====HOST COMBINED REPORT=====}"
-assert_combined_report target "$target_combined" 17
-assert_combined_report host "$host_combined" 17
+assert_combined_report target "$target_combined" 19
+assert_combined_report host "$host_combined" 19
 
 # The `package` diagnostic is read-only: its body must never run a modifying
 # package command or write into the target.  It emits stable evidence lines and

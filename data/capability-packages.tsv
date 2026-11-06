@@ -1,0 +1,70 @@
+# Boot Bitch capability -> package map (round 106).
+#
+# THE SINGLE SOURCE OF TRUTH for the Boot capabilities table's Packages
+# column, consumed by BOTH GUIs:
+#   - the modern Qt6 GUI (src/CapabilityChecker.cpp; embedded at build time
+#     via resources/boot-repair.qrc as ":/data/capability-packages.tsv"),
+#   - the legacy Qt3 GUI (legacy/gui/src/LegacyMainWindow.cpp; staged into
+#     the Etch package at /usr/share/boot-repair-legacy/capability-packages.tsv
+#     by scripts/package-legacy.sh).
+# The column's rule is shared: the PROBE-DERIVED package (the helper's proven
+# installable side-channel, e.g. display-installable) wins when one exists for
+# the row's state; otherwise the static row below names the package(s) that
+# provide the capability (the packages that WOULD enable the functionality on
+# that distribution family, even when they are not installable there).  The
+# Debian-family rows are the legacy capabilitySpecs package values verbatim
+# (the parity contract locks the two sources).  A row change is a deliberate,
+# reviewed edit: legacy/tests/test-ui-parity-qt3.sh locks the row set and a
+# golden checksum, so a one-sided edit fails the gate.
+#
+# Columns: <key> TAB <family> TAB <packages>
+#   key       the capability key (the `Repair tool <key>` vocabulary plus the
+#             storage-stack rows "lvm" and "raid").
+#   family    the distribution family: debian, fedora, rhel, arch, alpine,
+#             suse, or "*" for every family.  The exact family row wins; "*"
+#             is the fallback; a key with no row (or an empty packages cell)
+#             has no static package set — the Packages cell then shows only
+#             the probe-derived suggestion, or stays empty.
+#   packages  the space-separated package name(s).  Raw package names, never
+#             translated, never a GUI string.
+validate	*	util-linux
+filesystem	*	e2fsprogs
+dpkg	debian	dpkg
+fixbroken	debian	apt
+fixbroken	fedora	dnf
+fixbroken	rhel	dnf
+fixbroken	arch	pacman
+fixbroken	alpine	apk-tools
+fixbroken	suse	zypper
+aptupdate	debian	apt
+aptupdate	fedora	dnf
+aptupdate	rhel	dnf
+aptupdate	arch	pacman
+aptupdate	alpine	apk-tools
+aptupdate	suse	zypper
+upgrade	debian	apt
+upgrade	fedora	dnf
+upgrade	rhel	dnf
+upgrade	arch	pacman
+upgrade	alpine	apk-tools
+upgrade	suse	zypper
+kernels	debian	module-init-tools
+dkms	*	dkms
+initramfs	debian	initramfs-tools
+initramfs	fedora	dracut
+initramfs	rhel	dracut
+initramfs	arch	mkinitcpio
+initramfs	alpine	mkinitfs
+initramfs	suse	dracut
+display	debian	sysv-rc
+gpu	*	pciutils
+extlinux	*	syslinux
+grub	debian	grub
+grub	fedora	grub2-tools
+grub	rhel	grub2-tools
+grub	arch	grub
+grub	alpine	grub
+grub	suse	grub2-tools
+bootstack	debian	coreutils
+lvm	*	lvm2
+raid	*	mdadm

@@ -100,7 +100,7 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
     window.show();
     QTest::qWait(50);
     QVERIFY(window.m_diagnosticList);
-    QCOMPARE(window.m_diagnosticList->count(), 18);
+    QCOMPARE(window.m_diagnosticList->count(), 20);
 
     const QHash<QString, QString> expected = {
         {QStringLiteral("environment"), QStringLiteral("Summarize the selected system, protection state and inspection readiness.")},
@@ -120,6 +120,8 @@ void MainWindowUiTest::diagnosticListItemTooltipsAreShort()
         {QStringLiteral("btrfs"), QStringLiteral("Show Btrfs filesystem and subvolume information.")},
         {QStringLiteral("mapper"), QStringLiteral("Show device-mapper ancestry and cryptsetup state.")},
         {QStringLiteral("luks"), QStringLiteral("Show LUKS ancestry plus crypttab and fstab mapper references.")},
+        {QStringLiteral("input"), QStringLiteral("Review keyboard, mouse and touchpad devices, modules and layout read-only.")},
+        {QStringLiteral("network"), QStringLiteral("Review adapters, drivers, firmware and the live route/DNS state read-only.")},
         {QStringLiteral("report"), QStringLiteral("Combine every read-only diagnostic for the selected scope.")}
     };
 
@@ -185,7 +187,7 @@ void MainWindowUiTest::filesystemRepairToolRowIsGatedByCapabilityEvidence()
     QVERIFY2(window.m_repairToolButton->isEnabled(),
              "the Check File Systems action must be enabled for an available filesystem capability");
     QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("read-only")));
-    QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("mounted filesystem")));
+    QVERIFY(window.m_repairToolDescription->text().contains(QStringLiteral("still-mounted file systems")));
 }
 
 void MainWindowUiTest::kernelRepairActionsDeriveFromEvidenceAndProtectRunning()
@@ -402,6 +404,90 @@ void MainWindowUiTest::gpuRepairSessionSerializesGpuAndKernelBaselines()
     const QString decodedKernel = QString::fromUtf8(
         QByteArray::fromBase64(args.at(kernelBaselineIndex + 1).toLatin1()));
     QCOMPARE(decodedKernel, kernelSection);
+}
+
+// Round 86 (defect B): the round-85 interactive input-device and network
+// repair sessions must DISPATCH — the GUI's privileged-argument allow-list
+// accepts --input-baseline / --network-baseline (the round-85 wiring missed
+// the registration and both tools were refused before dispatch) — and hand
+// the cached `input`/`network` diagnostic sections to the helper as
+// --input-baseline <base64> / --network-baseline <base64> (the single cached
+// sources of truth, the gpu pattern).
+void MainWindowUiTest::inputNetworkRepairSessionsSerializeBaselinesAndDispatch()
+{
+    ScopedSessionLogDir logDir;
+    QVERIFY(logDir.isValid());
+
+    MainWindow window;
+    window.show();
+    QTest::qWait(50);
+    prepareRepairScope(window);
+    window.m_snapshotPreloadScheduled = true;
+    window.m_autoRefreshDiagnostics->setChecked(false);
+    QString evidence = capabilityEvidence(false, true);
+    // The two round-85 capability rows must be available for the session gates.
+    evidence += QStringLiteral(
+        "Repair tool input-devices: available\n"
+        "Repair tool network: available\n");
+    cacheRepairEvidence(window, evidence);
+    const QString inputSection = QStringLiteral(
+        "Input device (boot log): AT Translated Set 2 keyboard\n"
+        "Input verdict: initramfs-keyboard-missing\n");
+    const QString networkSection = QStringLiteral(
+        "Network config backend: NetworkManager\n"
+        "Network classification: blacklist-removal\n");
+    window.m_targetDiagnosticCache.insert(QStringLiteral("input"), inputSection);
+    window.m_targetDiagnosticCache.insert(QStringLiteral("network"), networkSection);
+
+    QTemporaryDir requestDir;
+    QVERIFY(requestDir.isValid());
+    const QString capturePath = requestDir.filePath(QStringLiteral("input-network-request.log"));
+    QVERIFY2(startChangeStatusFakePrivilegedSession(
+                 window, capturePath,
+                 {QStringLiteral("input-devices=unchanged|reason:input-verified"),
+                  QStringLiteral("network=unchanged|reason:network-verified")}),
+             "the scripted privileged session must start");
+
+    // The input-device session: dispatch + the serialized input baseline.
+    closeRepairProgressDialogWhenDone(&window);
+    QTreeWidgetItem *inputItem = repairItem(window, QStringLiteral("input-devices"));
+    QVERIFY(inputItem);
+    window.m_repairToolTree->setCurrentItem(inputItem);
+    window.runSelectedRepairTool();
+
+    {
+        const QStringList args = capturedHelperArguments(capturePath);
+        QVERIFY2(args.contains(QStringLiteral("input-devices")),
+                 qPrintable(args.join(QLatin1Char(' '))));
+        const int baselineIndex = args.indexOf(QStringLiteral("--input-baseline"));
+        QVERIFY2(baselineIndex >= 0 && baselineIndex + 1 < args.size(),
+                 "the input repair must dispatch with --input-baseline <base64>");
+        const QString decoded = QString::fromUtf8(
+            QByteArray::fromBase64(args.at(baselineIndex + 1).toLatin1()));
+        QCOMPARE(decoded, inputSection);
+    }
+
+    // The network session: dispatch + the serialized network baseline.
+    // (The completed first repair re-scanned the device tree — re-seed the
+    // synthetic scope for the second dispatch.)
+    prepareRepairScope(window);
+    closeRepairProgressDialogWhenDone(&window);
+    QTreeWidgetItem *networkItem = repairItem(window, QStringLiteral("network"));
+    QVERIFY(networkItem);
+    window.m_repairToolTree->setCurrentItem(networkItem);
+    window.runSelectedRepairTool();
+
+    {
+        const QStringList args = capturedHelperArguments(capturePath);
+        QVERIFY2(args.contains(QStringLiteral("network")),
+                 qPrintable(args.join(QLatin1Char(' '))));
+        const int baselineIndex = args.indexOf(QStringLiteral("--network-baseline"));
+        QVERIFY2(baselineIndex >= 0 && baselineIndex + 1 < args.size(),
+                 "the network repair must dispatch with --network-baseline <base64>");
+        const QString decoded = QString::fromUtf8(
+            QByteArray::fromBase64(args.at(baselineIndex + 1).toLatin1()));
+        QCOMPARE(decoded, networkSection);
+    }
 }
 
 // The boot-stack reconciliation must hand its four component baselines to the

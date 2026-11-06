@@ -58,6 +58,33 @@ bool validKey(const std::string &key)
     return true;
 }
 
+// Round 102 (slice 2): the change-status key alphabet extends the generic
+// contract alphabet with ':' for the interactive sub-action keys
+// (`input-devices:load-module`, `gpu:purge-wrong-driver`, `kernels:<step>`)
+// — the modern parseRepairChangeStatuses shape
+// (`[A-Za-z0-9._:-]+`, non-empty, with at least one non-colon character so a
+// bare ":" never parses).
+bool validChangeStatusKey(const std::string &key)
+{
+    if (key.empty()) {
+        return false;
+    }
+    bool sawPlain = false;
+    for (std::string::size_type i = 0; i < key.size(); ++i) {
+        const char c = key[i];
+        if ((c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z')
+            || (c >= '0' && c <= '9') || c == '.' || c == '_' || c == '-') {
+            sawPlain = true;
+            continue;
+        }
+        if (c == ':') {
+            continue;
+        }
+        return false;
+    }
+    return sawPlain;
+}
+
 bool startsWith(const std::string &text, const char *prefix)
 {
     const std::size_t length = std::strlen(prefix);
@@ -167,8 +194,8 @@ std::vector<std::string> capabilityKeys()
 {
     static const char *const keys[] = {
         "validate", "filesystem", "dpkg", "fixbroken", "aptupdate", "upgrade",
-        "dkms", "display", "gpu", "initramfs", "efi", "grub", "extlinux",
-        "bootstack", "kernels"
+        "dkms", "display", "gpu", "input-devices", "network", "initramfs",
+        "efi", "grub", "extlinux", "bootstack", "kernels"
     };
     std::vector<std::string> result;
     for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -181,8 +208,16 @@ std::vector<std::string> diagnosticKeys()
 {
     static const char *const keys[] = {
         "environment", "backend", "package", "boot", "boot-evidence", "kernel",
-        "grub", "uki", "display", "gpu", "errors", "usage", "filesystem",
-        "fstab", "btrfs", "mapper", "luks", "report"
+        "grub", "uki", "display", "gpu",
+        // Round 99 (ITEM 1b): the input and network diagnostic entries sit
+        // DIRECTLY BELOW the graphics driver stack diagnostic (the round-97
+        // modern reorder mirrored to the LIVE legacy list — the round-97
+        // change had reordered only the diagnosticSpecs display table while
+        // this list still drove the Diagnostics-tab check list with the old
+        // order).
+        "input", "network",
+        "errors", "usage", "filesystem", "fstab", "btrfs", "mapper", "luks",
+        "report"
     };
     std::vector<std::string> result;
     for (std::size_t i = 0; i < sizeof(keys) / sizeof(keys[0]); ++i) {
@@ -225,6 +260,14 @@ std::string repairToolKeyForStage(const std::string &stage)
     if (stage == "apt-upgrade") return "upgrade";
     if (stage == "display-manager") return "display";
     if (stage == "boot-stack") return "bootstack";
+    // Round 102 (slice 2): the interactive kernel sub-actions roll up to the
+    // single `kernels` capability key (the modern repairToolKeyForStage
+    // normalization); the other interactive sub-actions (gpu:<step>,
+    // input-devices:<step>, network:<step>) keep their full keys and resolve
+    // through the shared map's `:*` prefix rows.
+    if (stage.size() > 8 && stage.compare(0, 8, "kernels:") == 0) {
+        return "kernels";
+    }
     return stage;
 }
 
@@ -237,7 +280,8 @@ namespace {
 
 const char *const mapTokenList[] = {
     "environment", "backend", "package", "boot", "boot-evidence", "kernel",
-    "grub", "uki", "display", "gpu", "errors", "usage", "filesystem", "fstab",
+    "grub", "uki", "display", "gpu", "input", "network", "errors", "usage",
+    "filesystem", "fstab",
     "btrfs", "mapper", "luks", "report", "capabilities", "all",
     "-", "union", "shell-class"
 };
@@ -609,8 +653,27 @@ ParsedTranscript parseTranscript(const std::string &text)
             parsed.configFiles.push_back(std::make_pair(key, value));
             continue;
         }
-        if (parseEvidenceLine(line, "Repair change status ", &key, &value)) {
-            parsed.changeStatuses.push_back(std::make_pair(key, value));
+        // Round 102 (slice 2, the rig-smoke catch): the change-status keys of
+        // the interactive sub-actions (`input-devices:load-module`,
+        // `gpu:purge-wrong-driver`, `kernels:<step>`, …) carry a colon, which
+        // the generic validKey alphabet rejects — the legacy parse silently
+        // DROPPED those lines, so a changed sub-action before a stop was
+        // invisible to the invalidation and the aborted-summary tails (the
+        // modern parser accepts them: `[A-Za-z0-9._:-]+`).  This branch
+        // accepts the sub-action shape directly and folds `kernels:<step>`
+        // onto `kernels` (the modern repairToolKeyForStage normalization).
+        if (startsWith(line, "Repair change status ")) {
+            const std::string rest =
+                line.substr(std::strlen("Repair change status "));
+            const std::string::size_type colon = rest.find(": ");
+            if (colon != std::string::npos) {
+                const std::string rawKey = rest.substr(0, colon);
+                const std::string value = trim(rest.substr(colon + 2));
+                if (validChangeStatusKey(rawKey)) {
+                    parsed.changeStatuses.push_back(std::make_pair(
+                        repairToolKeyForStage(rawKey), value));
+                }
+            }
             continue;
         }
         if (isFactLabel(line)) {

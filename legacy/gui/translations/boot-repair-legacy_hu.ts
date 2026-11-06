@@ -48,12 +48,12 @@
         <translation>Alpine használ apk; dpkg konfiguráció nem elérhető Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Az Alpok fő adattárában nincs NVIDIA DKMS meghajtó; a GPU meghajtó swap nem elérhető ezen a célon.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Alternatív bootloader; Etch boots keresztül GRUB- örökség, így extlinux nem része az alapértelmezett boot path</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Alternatív bootloader; ezen a rendszeren extlinux nem része az alapértelmezett boot path</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Boot stack megbékélés</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Keresse meg a javított rendszer mappák csak olvasó és színpadon a kiválasztott mappa.</translation>
     </message>
     <message>
@@ -121,7 +121,7 @@
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Törlés</translation>
+        <translation>Mégse</translation>
     </message>
     <message>
         <source>Check File Systems</source>
@@ -132,7 +132,7 @@
         <translation>Ellenőrizzék és javítsák a felderített fájlrendszereket.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Ellenőrizzék a kiválasztott rendszer szerelvényeit, fájlrendszer metaadatait, boot fájlokat, a térkép konzisztenciáját és a függőségi készséget a javítás előtt. Ez egy független biztonsági repülés előtt, nem egy opcionális teljes javítási szakasz.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Debian- család initramfs segítő</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian- család initramfs segítő; Etch az újjáépítés fut keresztül az őrzött egyszerű-chroot defback</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Újjáépíti a initramfs képeket a telepített magokhoz</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Lemezhasználat</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Megjeleníti a futtató gazdatest vagy a kiválasztott javítórendszer fstab; javítás-rendszer ellenőrzés telepített read- csak.</translation>
     </message>
     <message>
@@ -333,7 +333,7 @@
     </message>
     <message>
         <source>Host</source>
-        <translation>Host</translation>
+        <translation>Gazdagép</translation>
     </message>
     <message>
         <source>Host+Target</source>
@@ -364,7 +364,7 @@
         <translation>Initramfs hitelesítése</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Ellenőrzi EFI / UKI bizonyíték; nem elérhető ezen örökölt BIOS frontend a segítő szonda oka.</translation>
     </message>
     <message>
@@ -528,8 +528,8 @@
         <translation>Offline rendszerjavítás</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Egy őrzött hágó (Mapper / crypttab validation, initramfs reservation, GRUB- residue regeneration) a sima-chroot visszacsatoláson keresztül</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Egy őrzött hágó: Mapper / crypttab validálás, initramfs újjáépítés és bootloader konfigurációs regenerálás</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>A folyamat névtérbeli elkülönítése</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Ezen a fronton csak olvasható; kernel eltávolítás / tisztítás / telepítés a segítő interaktív menüjében</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel eltávolítása, tisztítása és telepítése fut keresztül a helper interaktív menü; semmi sem távolítható el vagy módosítható, amíg nem választ egy akció, és erősítse meg</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Csak ezen a fronton lehet visszaállítani; a GPU- driver javítás a kezelőn keresztül fut</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Evidence- vezérelt GPU meghajtó javítás a segítő interaktív menüjében</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>A kiválasztott rendszer root és / boot fájlrendszereinek visszaállítása, majd csak a hibák bejelentésére szolgáló eszközök javítása (e2fsck ext2 / ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>A kijelölt rendszer root és / boot fájlrendszereinek visszaállítása, majd csak a hibák bejelentésére szolgáló eszközök javítása</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>Újjáépíti a initramfs-et a kiválasztott hatókörhöz? A segítő megtartja a mapper / crypttab és tartalék preflights.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Újjáépíti a fa kernel modulokat; csak akkor szükséges, ha a cél dkms modulokat használ</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Újjáépíti a fa kernel modulokat; csak akkor szükséges, ha a rendszer modulépítő rendszert használ</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Visszaszerezni a bakancsot.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>A kiválasztott javítórendszer bakancskészletének rekonstruálása egy őrzött öröklődésben: mapper / crypttab validálás, initramfs újjáépítés és GRUB- restate konfigurációs regeneráció, a komponens mentések és a preflights változatlanul. Ez az Etch megfelelője a modern boot- stack megbékélésnek, és kimarad a teljes javítási tervből.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Regenerálja a extlinux konfigurációt.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Regenerálja a kiválasztott javítórendszer GRUB menüjét / konfigurációját a kötelező repülés előtt. A segítő támogatja a menu.lst-et, megőriz minden létező boot bejegyzést, és minden hibára visszafordul.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>A kijelölt rendszer extlinux bootloader konfigurációjának visszaállítása. Ez a hagyaték nem mutat extlinux akciót.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Regenerálja az Etch GRUB- örökség menu.lst konfigurációját (alátámasztva, minden bejegyzés megőrzött)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Regenerálja a GRUB konfigurációt (alátámasztás, minden bejegyzés megőrizve)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>A EFI / UKI indítási útvonal javítása.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>A kijelölt rendszer EFI / UKI rendszerindítási útvonalának javítása. Ez a hagyatéki front nem mutat EFI tevékenységet; az Etch cél egy BIOS / GRUB- örökölt rendszer.</translation>
     </message>
     <message>
@@ -812,11 +812,11 @@
         <translation>A kijelölt rendszerre konfigurált sysv kijelző manager visszaállítása: az / etc / X11 / default- display- manager bejegyzés és a hiányzó Runlevel S- szimlink mentéssel és visszafordítással, a GUI elindítása nélkül. Amikor a boot egy disk-display prompt-ot vár, a konzol routing is javításra kerül: konzol = tty0 van csatolva utoljára a bootloader parancssorhoz (menu.lst ezen a hagyatékon GRUB; a soros konzol marad), így a prompt a látható képernyőn marad a fekete helyett. Elérhető a futó host és egy elkötelezett javítási cél.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Restores / etc / X11 / default- display- manager és a hiányzó sysv Runlevel S- szimlink a GUI elindítása nélkül</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Visszaállítja a beállított kijelző kezelőjét és indító linkjét a GUI elindítása nélkül</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Felülvizsgálja a telepített kernel leltárt, és válasszon egy beton kernel javítási művelet: távolítsa el a legrégebbi / felülseded vagy legújabb kernel, távolítsa el árva fejlécek / komponensek / build támogatás, telepítse hiányzó fejlécek, újra telepíteni egy hiányos kernel, vagy telepítse a repository- legújabb kernel. Semmi sem távolítható el vagy módosítható, amíg meg nem erősíted. A futó kernel mindig védett, és a fennmaradó kernelek initramfs képei és a bootloader konfigurációja eltávolítás után regenerálódik.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Lefuttatni az őrzött javítást? A segítő megtartja a szimulációját, az első repülés előtti és futási idejű őröket.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Futtasd le az olvasófájlrendszer ellenőrzését a kiválasztott rendszer root és / boot fájlrendszereire, és jelentsd be minden eszköz ellenőrző eszközét és eredményét anélkül, hogy bármit megváltoztatnál. Ez a hagyatéki front csak a leolvasott ellenőrzést mutatja ki; az eszközjavítás nem vezetékes.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Futtassa le az olvasófájl rendszer ellenőrzését a kijelölt rendszer root és / boot fájlrendszerein, majd javítsa csak a hibákat jelentő eszközöket. Az Etch check eszközök (e2fsck ext2 / ext3) csak azután futnak, hogy a segítő kiadja a csak olvasható állományokat; a still-installált fájlrendszert soha nem javítják offline és nem támogatott fájlrendszert jelentenek ahelyett, hogy kitalálnák.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Futtasd le a biztonsági rendszert repülés előtt.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>A kijelölt rendszer root, / boot és más fájlrendszereinek leolvasását futtatja.</translation>
     </message>
     <message>
@@ -1008,7 +1008,7 @@
         <translation>A kijelölt szkópban nincs támogatott fájltípus egy csak olvasható ellenőrzéshez.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>A kijelölt szcope root, / boot, ESP és / home fájlrendszerei nem sikerült megoldani.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>A környezet jóváhagyása</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>A rendszermag GPU-meghajtó (nvidia / nouveau / amdgpu / radeon / mesa) javítása érdekében egy kézenfekvő interaktív munkamenetet kell végigjárni, amely csak a saját háttámlájával kiválasztott kis őrzött lépést alkalmazza. Két döntési pont vezérli az ülést: kernel- vs- driver (cserélje ki a legújabb kernel a vezető nem tud építeni ellen, vagy távolítsa el a régebbi kernel a vezető van rögzítve) és rossz-driver (tisztítsa meg a hibás vezető, telepítse a megfelelő egyet, és újjáépíteni minden telepített kernel). Egy különálló indító nomodeset visszaesés eléri a konzolt egy törött meghajtón.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>A GPU meghajtó javítása érdekében sétáljon egy, a bizonyítékokkal alátámasztott interaktív munkamenetet; a menü alkalmazkodik a diagnosztikai bizonyítékhoz, minden őrzött lépést újra ellenőriznek ebben az ablakban a következő opció előtt, és az egy-boot nomodeset háttámla egy törött meghajtón egy konzolt tart elérhetőnek.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>A validálás csak olvasható</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Bemeneti eszközök / billentyűzet</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Hálózat / kapcsolat</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Áttekinti a bemeneti eszköz stack: észlelt billentyűzet / egér / touchpad eszközök és osztályok, a betöltött, builtin, elérhető és feketelistán HID / billentyűzetű kernel modulok, buszvezérlő állapot, a billentyűzet elrendezése, a initramfs beépítése és az épület-kép keyboard- modul bizonyíték a LUKS kinyit prompt, plusz a legújabb boot bizonyíték.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Felülvizsgálja a hálózati stack: a felfedezett config backend, adapterek és azok kötött meghajtók / modulok, feketelista és firmware állapot, és a futó host útvonalát, DNS és határolt elérhetőségi bizonyíték, anélkül, hogy bármit megváltoztatna.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>read- only input eszköz és initramfs billentyűzet ellenőrzés</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>csak a hálózati adapter és a kapcsolat ellenőrzése</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Bemeneti eszköz javítása</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Beépített javítási eszközök</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Járj egy bizonyítás-vezérelt interaktív munkamenetet a billentyűzet, egér és touchpad bemenet javítása érdekében; a menü alkalmazkodik a diagnosztikai bizonyítékhoz, minden műveletet újra ellenőriznek ebben az ablakban a következő opció előtt, és az őrzött lépések lefedik a meghajtókat, modulokat, firmware-eket, feketelistákat, a HID visszaesés és a initramfs billentyűzet modulokat.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Válassza ki a bemeneti eszköz javítási művelet a bizonyítékok.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Hálózati / összekapcsolási javítás</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Javítóhálózat</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Járj egy tényeken alapuló interaktív munkamenetet a hálózati stack javítása érdekében; a menü alkalmazkodik a diagnosztikai bizonyítékhoz, minden műveletet újra ellenőriznek ebben az ablakban a következő opció előtt, és az őrzött lépések a meghajtókra, modulokra, firmware-re, feketelistákra, initramfs NIC modulokra, címekre, útvonalakra és DNS-re terjednek ki. Élő kapcsolat változások soha nem érinti a kapcsolat tartó alapértelmezett útvonal.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Válassza ki a hálózati javítási művelet a bizonyítékok.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Nem elérhető: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1433,7 +1489,7 @@ Nem elérhető: %1</translation>
     </message>
     <message>
         <source>%1 results: [OK] %2 successful | [FAIL] %3 failed | [-] %4 no repair needed - %5</source>
-        <translation type="unfinished" />
+        <translation>%1 eredmények: [OK] %2 sikeres | [FAIL] %3 sikertelen | [-] %4 nincs szükség javításra - %5</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
@@ -1564,7 +1620,7 @@ Nem elérhető: %1</translation>
         <translation>; a legjobban érzékelt rendszerelem: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt; h3 &gt; Boot Bitch %1 &lt; / h3 &gt; &lt; p &gt; &lt; b &gt; Fejlesztő: &lt; / b &gt; Captain Morgan12 &lt; / p &gt; &lt; p &gt; Ez a GUI a csomag belépési pontja: egy Qt 3.3.x frontend a Debian Etch- era rendszerekhez rendelt őrzött helperrel. &lt; / p &gt; &lt; p &gt; &lt; b &gt; Őrzött javítási mód: &lt; / b &gt; read- only diagnostics lehet ellenőrizni a védett Running Host vagy egy kifejezetten kiválasztott javítási meghajtót. Az őrzött Debian / APT csomag szakaszai (megszakított konfiguráció, hibás függések, metaadatok frissítése, frissítés), GRUB- örökölt konfigurációs regeneráció, LUKS cél kinyit és őrzött Target- fájl szerkesztés fut keresztül a portált helper után megerősítés; Host Maintenance lehetővé teszi ugyanazokat a támogatott szakaszokat nutly az aktív rendszeren, miután megismételte a host identity és boot- mount check. &lt; / p &gt; &lt; p &gt; A Modern - only funkciók - hitelesített File Copy, Btrfs pillanatfelvétel tekercs, EFI / UKI és extlinux javítás, boot- stack megbékélés és Make Alapértelmezés - a segítő saját szonda indokai ezen a fronton; Arch / Alpine / Fedora csomag backends marad diagnoszták - csak itt. &lt; / p &gt; &lt; p &gt; Az első privilegizált intézkedés hatókörenként egy zárt rendszergazdai munkamenetet engedélyez rejtett input modál segítségével (a Qt GUI továbbra is kiváltságos marad). A program bármikor befejezhető a File - Lock Administrator munkamenetből. &lt; / p &gt;</translation>
     </message>
     <message>
@@ -1772,7 +1828,7 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
         <translation>Automatikus telepítés explicit csomagfeltérképezést és kiváltság engedélyezést igényel.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Az automatikus telepítéshez explicit csomag feltérképezésre és kiváltságokra van szükség; a kiválasztott hiányzó képesség javasolt csomagját az őrzött segítőn keresztül telepíti az aktuális hatókörre (futtató host vagy elkötelezett javítási cél).</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
         <translation>Boot Bitch hagyaték GUI kész. Minden kiváltságos parancs fut keresztül a portált helper; akciók tiltva maradnak, amíg a javítási cél (vagy a host Maintenance aktív), és diagnosztika jelenti a képesség vonal.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>A Boot Bitch-nek máshonnan kell futnia, mint a javított rendszernek. Linux élő médium vagy más Linux telepítés használata egy másik fizikai meghajtón. &lt; br &gt; &lt; br &gt; A futó gazdatest védett a közönséges javítástól, de kifejezetten kiválasztható &lt; b &gt; Host Maintenance &lt; / b &gt; segítségével őrzött natív diagnosztikákhoz és támogatott karbantartási fázisokhoz. &lt; br &gt; &lt; br &gt; Diagnosztika követi a Systems oldalt: az elkötelezett javítási meghajtó, amíg a host karbantartás kikapcsolt, vagy a védett futó host, amíg aktív. &lt; br &gt; &lt; br &gt; Az első privilegizált akció egyszer kér rendszergazdai engedélyt erre a Boot Bitch ablakra; &lt; b &gt; Fájl - Lock Administrator Session &lt; / b &gt; azonnal befejeződik. Minden javításnál ott van a segítő saját kifutó lámpája.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
         <translation>A javítási mappák böngészése...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Keresse meg a javított rendszer mappák csak olvasó és színpadon a kiválasztott mappa.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Böngésszen a kiválasztott javítórendszerbe a segítő ideiglenes, csak olvasóegységén keresztül, és válasszon egy abszolút célútvonalat. A célfájlok nem változnak böngészés közben.</translation>
     </message>
     <message>
@@ -1861,7 +1917,7 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Törlés</translation>
+        <translation>Mégse</translation>
     </message>
     <message>
         <source>Capabilities and dependencies</source>
@@ -1904,7 +1960,7 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
         <translation>Válassza ki a célmappát</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Válassza ki, hogy melyik távcső képességeit mutatja az asztal.</translation>
     </message>
     <message>
@@ -2064,7 +2120,7 @@ Adja meg a %2 (sudo) jelszót. Csak erre a sudo hitelesítésre használják, á
         <translation>Másolás és ellenőrzés</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>A fájlok másolása és ellenőrzése bármelyik irányban az őrzött segítőn keresztül (cp -a plusz tulajdonosi helyreállítás és per- file byte- comparation). A segítő file-copy szondája kinyitja a vezérlőket, és megtartja az irány- és útvonalellenőrzést.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ A segítő fenntartja az irányt és az útvonal-elszigetelési ellenőrzéseket
         <translation>Adja meg az első futási parancsot.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Adja meg a javítandó eszközszámokat (űr- vagy komma- elválasztott, például "1 3"), vagy 0-t a kiugráshoz.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Adja meg a javítandó eszközszámokat (űr- vagy komma- elválasztott, például &quot;1 3&quot;), vagy 0-t a kiugráshoz.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Adja meg a %1 jelszavát.
 
 Ez csak a cryptsetting felett a helper standard bemenet, és soha nem naplózza, vagy helyezi a parancssort.</translation>
@@ -2276,7 +2332,7 @@ Ez csak a cryptsetting felett a helper standard bemenet, és soha nem naplózza,
         <translation>Hozzák létre a kiváltságos segítő ülést a jelenlegi körben.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etch- era célkonfigurációs fájlok; a rendelkezésre állás csak a segítő diagnosztikája alapján tesztelhető.</translation>
     </message>
     <message>
@@ -2305,7 +2361,7 @@ Ez csak a cryptsetting felett a helper standard bemenet, és soha nem naplózza,
     </message>
     <message>
         <source>File Copy</source>
-        <translation>Fájl másolása</translation>
+        <translation>Fájlok másolása</translation>
     </message>
     <message>
         <source>File Copy - Browse Source Folders</source>
@@ -2429,7 +2485,7 @@ Ez csak a cryptsetting felett a helper standard bemenet, és soha nem naplózza,
     </message>
     <message>
         <source>Host</source>
-        <translation type="unfinished" />
+        <translation>Gazdagép</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2461,7 +2517,7 @@ Ez csak a cryptsetting felett a helper standard bemenet, és soha nem naplózza,
     </message>
     <message>
         <source>Host Shell</source>
-        <translation>Host Shell</translation>
+        <translation>Gazdagép shell</translation>
     </message>
     <message>
         <source>Host capabilities and dependencies</source>
@@ -2554,12 +2610,12 @@ A segítő önállóan ellenõrzi, hogy a kiválasztott lemez háttámlái /, / 
         <translation>Hiányzó támogatás telepítése...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Telepítse a csomag "%1" a kiválasztott javítási cél segítségével őrzött csomag backend? Ez módosítja a javítási cél és érvényteleníti a tárolt diagnosztika.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Telepítse a csomag &quot;%1&quot; a kiválasztott javítási cél segítségével őrzött csomag backend? Ez módosítja a javítási cél és érvényteleníti a tárolt diagnosztika.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>A "%1" csomagot telepítse a futó gazdatestre az őrzött csomagon keresztül? Ez módosítja a futó host és érvényteleníti a tárcsa futtatás-host diagnosztika.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>A &quot;%1&quot; csomagot telepítse a futó gazdatestre az őrzött csomagon keresztül? Ez módosítja a futó host és érvényteleníti a tárcsa futtatás-host diagnosztika.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2611,7 +2667,7 @@ A segítő önállóan ellenõrzi, hogy a kiválasztott lemez háttámlái /, / 
     </message>
     <message>
         <source>Logs</source>
-        <translation>Bejelentkezés</translation>
+        <translation>Naplók</translation>
     </message>
     <message>
         <source>Make Default</source>
@@ -2635,7 +2691,7 @@ A segítő önállóan ellenõrzi, hogy a kiválasztott lemez háttámlái /, / 
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Legyen a kanonikus telepített kernel bejegyzés az alapértelmezett GRUB- örökség boot bejegyzés a futó host?
 
-A segéd ellenőrzi a / boot / grub / menu.lst-et, az "alapértelmezett &lt; N &gt;" -re állítja az "alapértelmezett &lt; N &gt;" -et "a kanonikai bejegyzéshez, először támogatja a menüt, és minden hibára visszaállítja.</translation>
+A segéd ellenőrzi a / boot / grub / menu.lst-et, az &quot;alapértelmezett &lt; N &gt;&quot; -re állítja az &quot;alapértelmezett &lt; N &gt;&quot; -et &quot;a kanonikai bejegyzéshez, először támogatja a menüt, és minden hibára visszaállítja.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2650,8 +2706,52 @@ A segéd ellenőrzi a / boot / grub / menu.lst-et, az "alapértelmezett &lt; N &
         <translation>Hiányzó kijelző: telepítse a %1 csomagot a Kapacitások asztaláról.</translation>
     </message>
     <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI szerszámok</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>GRUB beállítóeszköz</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB telepítési eszközök</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Hiányzó %1: telepítse a megfelelő csomag (ek) %2 a Boot képességek táblázat.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Hiányzik a %1: telepítse a megfelelő csomagot a Boot képességek táblából.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI építész</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>boot- stack előfeltétel</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>initramf- szerszámok</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
+    </message>
+    <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
-        <translation type="unfinished" />
+        <translation>Hiányzó fejlécek (a legutóbbi rendszermagnak nincs megfelelő fejléce): %1.</translation>
     </message>
     <message>
         <source>Missing on this frontend</source>
@@ -2694,8 +2794,12 @@ A segéd ellenőrzi a / boot / grub / menu.lst-et, az "alapértelmezett &lt; N &
         <translation>Legújabb telepített kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Nincs 'Legacy funkció shell:' vonal tárolja; futtassa diagnosztika a kiválasztott alkalmazási terület, hogy értékelje a helper chroot / timeout elszigetelési szondák (hiba zárva).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Kernel build fordító: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Nincs &apos;Legacy funkció shell:&apos; vonal tárolja; futtassa diagnosztika a kiválasztott alkalmazási terület, hogy értékelje a helper chroot / timeout elszigetelési szondák (hiba zárva).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Még nincs mentendő diagnosztikai eredmény.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>A %1 root, / boot vagy / home fájlrendszer hibáit nem észlelték. Nem volt javítás.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Nincs kiválasztva javítási eszköz.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>A %1 root, / boot vagy / home fájlrendszer hibáit nem észlelték, de %2. Nem volt javítás.</translation>
     </message>
     <message>
@@ -2838,7 +2942,7 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Oké.</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Offline parancsok futnak egy időben egy friss chroot, és nem válaszol interaktív parancsok (apt- get -y upgrade működik). Host- shell parancsok futnak közvetlenül a futó host. A segítő szondája a parancsmezőn keresztül halad; a pontos ok megjelenik a szerszámtippben.</translation>
     </message>
     <message>
@@ -3026,11 +3130,11 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Frissítő eszközök</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>A %1 GRUB konfiguráció helyreállítása</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>A %1 extlinux konfiguráció helyreállítása</translation>
     </message>
     <message>
@@ -3179,14 +3283,14 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Eszköz</translation>
+        <translation>Eszköz futtatása</translation>
     </message>
     <message>
         <source>Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as apt-get -y upgrade. Output is kept in this window and in the application log.</source>
         <translation>Futtass egy parancsot a kiválasztott javítórendszeren belül root-ként (sudo nem szükséges). A parancsokat egyszerre, egy friss chroot-ban hajtják végre, és nem válaszolnak interaktív parancsokra; nem interaktív zászlók, mint például az apt-get -y frissítés használata. A kimenetet ebben az ablakban és az alkalmazás naplójában tartjuk.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Futtasson parancsot a futtató gazdatestre root (Host Shell) vagy a kiválasztott javítórendszeren belül root (Chroot Shell); sudo egyikben sem szükséges. Host- Shell parancsokat hajtanak végre közvetlenül az aktív rendszer; chroot parancsokat hajtanak végre egy időben egy friss chroot, és nem válaszol interaktív kérések, így nem interaktív zászlók, mint az apt- get -y frissítést továbbra is ajánlott felügyelet nélküli futások. A kimenetet ebben az ablakban és az alkalmazás naplójában tartjuk. A segítő csak a parancsmezőt használja, míg a Shell nem elérhető, az oldal a mező alatti pontos okot mutatja.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Futtass diagnosztikát erre a hatványra, hogy kinyisd a rejtett akciókat. Diagnosztika csak olvasható és az egyetlen bizonyíték forrása.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Futtasd le a diagnosztikát, hogy megtudd, melyik beállítási fájl létezik; a segítő csak olvasója dönti el a listát.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
         <translation>Run on Host</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Futtasson egy javítóeszközt, vagy használja a teljes javítási tervet a kiválasztott javítógép ellen. Válassza ki a Host Maintenance on Systems fut ugyanazon támogatott, őrzött szakaszok ellen védett Running Host. Válassza ki a Beállítások teljes javítási szakaszait. Engedélyezett szakaszok fut a megadott sorrendben. Minden konfigurálható szakasz az alábbiakban is megjelenik, mint egy egyedi eszköz; a Teljes Javítás oszlop tükrözi a jelenlegi Beállítások állapotát. A boot eszközök (GRUB konfiguráció, boot- stack megbékélés és Make Alapértelmezés) függetlenek: futtatják őket minden sorrendben, és egy későbbi művelet újra ellenőrzi, hogy egy korábbi hogyan változott, és jelenti a saját eredményét. Az aktív hatókör a Javítás mellett látható: a kiválasztott javítási meghajtó vagy a Running Host karbantartás. Minden művelet mindaddig üzemképtelen marad, amíg a tárhelyező azt nem mondja, hogy rendelkezésre áll, és a segítő megőrzi a futási idejét. Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított "változatlan" érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Futtasson egy javítóeszközt, vagy használja a teljes javítási tervet a kiválasztott javítógép ellen. Válassza ki a Host Maintenance on Systems fut ugyanazon támogatott, őrzött szakaszok ellen védett Running Host. Válassza ki a Beállítások teljes javítási szakaszait. Engedélyezett szakaszok fut a megadott sorrendben. Minden konfigurálható szakasz az alábbiakban is megjelenik, mint egy egyedi eszköz; a Teljes Javítás oszlop tükrözi a jelenlegi Beállítások állapotát. A boot eszközök (GRUB konfiguráció, boot- stack megbékélés és Make Alapértelmezés) függetlenek: futtatják őket minden sorrendben, és egy későbbi művelet újra ellenőrzi, hogy egy korábbi hogyan változott, és jelenti a saját eredményét. Az aktív hatókör a Javítás mellett látható: a kiválasztott javítási meghajtó vagy a Running Host karbantartás. Minden művelet mindaddig üzemképtelen marad, amíg a tárhelyező azt nem mondja, hogy rendelkezésre áll, és a segítő megőrzi a futási idejét. Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított &quot;változatlan&quot; érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Futtass egy felülvizsgált parancsot root-ként a cél chroot-ban a segítő őrzött héja ige.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Futtass egy felülvizsgált parancsot root-ként a futó gazdatestre a segítő őrzött host- shell igéjén keresztül.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Nyomja meg a Systems vagy javítási lap létrehozása a munkamenet, vagy írja 
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Lefuttatni a teljes javítási tervet?
@@ -3295,7 +3399,7 @@ A segítő megőrzi a futási idejét, a parancsot egy érvként fogadják el, �
     </message>
     <message>
         <source>Running kernel: %1.</source>
-        <translation type="unfinished" />
+        <translation>Futó kernel: %1.</translation>
     </message>
     <message>
         <source>Running system protection unresolved</source>
@@ -3315,7 +3419,7 @@ A segítő megőrzi a futási idejét, a parancsot egy érvként fogadják el, �
     </message>
     <message>
         <source>Runs one read-only diagnostic for the selected scope through the helper (`diagnose &lt;key&gt;` / `host-diagnose &lt;key&gt;`); Run All is the combined report.</source>
-        <translation>Futtatja a kiválasztott hatókör egy read- only diagnosztikáját ("diagnózis &lt; kulcs &gt;" / "host- diagnózis &lt; kulcs &gt;"); Run All a kombinált jelentés.</translation>
+        <translation>Futtatja a kiválasztott hatókör egy read- only diagnosztikáját (&quot;diagnózis &lt; kulcs &gt;&quot; / &quot;host- diagnózis &lt; kulcs &gt;&quot;); Run All a kombinált jelentés.</translation>
     </message>
     <message>
         <source>Runs the selected stages using the cached read-only diagnostic evidence after privilege confirmation.</source>
@@ -3386,7 +3490,7 @@ A segítő megőrzi a futási idejét, a parancsot egy érvként fogadják el, �
         <translation>Válasszon egy fizikai meghajtót a rendelkezésre álló javítási célpontok listájában a Systems fülén először, vagy használja a Host Maintenance-t a védett futtató gazdatesthez.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Válassza ki a fizikai meghajtót; a Boot Bitch automatikusan feloldja a legvalószínűbb Linux rendszermennyiséget. A futó host védett marad a közönséges céljavításoktól, külön, explicit host- karbantartási útvonalat biztosítva saját rendszeréhez. A Részletek gomb a védett gazdatest tényeit mutatja a részletekben; a meghajtó sor kiválasztása visszaállítja a perdrive táblát.</translation>
     </message>
     <message>
@@ -3512,6 +3616,14 @@ A segítő megőrzi a futási idejét, a parancsot egy érvként fogadják el, �
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Eszközök megjelenítése azonosított Linux telepítés nélkül</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Amikor ki, elrejti a Read-only squashfs konténer kötetek (snap- style), hogy nem lehet Linux telepíteni célokat.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>squashfs hurok eszközök megjelenítése</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3694,8 +3806,8 @@ Módszer: a segélyhívó által megerősített leképezés az utolsó csak olva
         <translation>A Shell parancs leállítása... A naplók tab megtartja a teljes átiratot.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Javasolt csomag</translation>
+        <source>Packages</source>
+        <translation>Csomagok</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3756,8 +3868,8 @@ A futtató gazdatestet a kiváltságos segítő önállóan ellenőrzi és eluta
         <translation>A teljes javítási terv futtatja a kiválasztott örökölt szakaszok sorrendben az őrzött segítő; az egyes eszközök fut egy szakaszban egy időben. Minden művelet mindaddig üzemképtelen marad, amíg a tárhelyező azt nem mondja, hogy rendelkezésre áll, és a segítő megőrzi a futási idejét.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>A teljes javítási terv futtatja a kiválasztott örökölt szakaszok sorrendben az őrzött segítő; az egyes eszközök fut egy szakaszban egy időben. Minden művelet mindaddig üzemképtelen marad, amíg a tárhelyező azt nem mondja, hogy rendelkezésre áll, és a segítő megőrzi a futási idejét. Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított "változatlan" érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>A teljes javítási terv futtatja a kiválasztott örökölt szakaszok sorrendben az őrzött segítő; az egyes eszközök fut egy szakaszban egy időben. Minden művelet mindaddig üzemképtelen marad, amíg a tárhelyező azt nem mondja, hogy rendelkezésre áll, és a segítő megőrzi a futási idejét. Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított &quot;változatlan&quot; érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Nyomja meg a Systems vagy Javító lap újra létrehozni a munkamenet, majd futt
         <translation>A kiválasztott alkalmazási kör nem rendelkezik megoldott root komponens; használja a Frissítő eszközök és a javítási cél újra.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>A kijelölt szcope lemez- és root komponense nem sikerült megoldani.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Nyomja meg a Systems vagy Javító lap újra létrehozni a munkamenet, majd futt
         <translation>Ennek a titkosított meghajtónak még nincs látható Linux fájlrendszer. Az Unlock, frissítő eszközök használata, és válassza ki a célpontot a Linux root felismerése után.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Ez az örökölt frontend nem mutat %1 akció; a segítő jelenti a képesség a rendelkezésre álló.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Csak diagnosztikai / képességként érhető el - ez a hagyaték nem mutat javítási tevékenységet; futtassa le az interaktív javítást a modern GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -3961,7 +4073,7 @@ Nyomja meg a Systems vagy Javító lap újra létrehozni a munkamenet, majd futt
     </message>
     <message>
         <source>Unlock</source>
-        <translation>Nyisd ki!</translation>
+        <translation>Feloldás</translation>
     </message>
     <message>
         <source>Unlock %1 on %2?
@@ -4040,6 +4152,18 @@ A segítő megnyit egy ideiglenes device- mapper feltérképezést cryptsetup-al
         <translation>FIGYELEM: a mentett GUI beállítások nem olvashatók el a %1 fájlból; a beállítások alapértelmezésként olvashatók, nem pedig mentett értékként.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>FIGYELEM: a mentett GUI beállítások %1 fájlt nem lehet leolvasni vagy eltávolítani; a beállítások alapértelmezésként olvashatók. Távolítsa el (vagy tegye írhatóvá a ~/.qt mappát), így a mentett beállítások ismét fennmaradhatnak.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Eltávolítva %1 olvashatatlan elavult beállításfájl: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Nem sikerült eltávolítani az olvashatatlan elavult beállításfájl(oka)t %1; az alapértelmezések addig érvényesek, amíg el nem távolítják azokat.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Amikor ki, meghajtók egy titkosított eszköz van elrejtve, amíg a hangerő van nyitva.</translation>
     </message>
@@ -4064,8 +4188,8 @@ A segítő megnyit egy ideiglenes device- mapper feltérképezést cryptsetup-al
         <translation>Hosszú log vonalak tekercselése</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított "változatlan" érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Írj cselekvéseket kér megerősítést, majd futtassa a segítő saját futási ideje preferenciák; a GUI soha nem gyengíti őket. A javítást, amely nem bizonyított &quot;változatlan&quot; érvényteleníti a tárolt diagnosztikai és letiltja a shed akciók, amíg a diagnosztika újra fut.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,8 +4224,8 @@ A segítő megnyit egy ideiglenes device- mapper feltérképezést cryptsetup-al
         <translation>Igazgatói felhatalmazás</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>Magasság igényel egy interaktív sudo jelszót; futtasd a füstöt root vagy után 'sudo -S -v' -val --emelje 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>Magasság igényel egy interaktív sudo jelszót; futtasd a füstöt root vagy után &apos;sudo -S -v&apos; -val --emelje &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4180,8 +4304,8 @@ A parancs még nem kezdődött el.</translation>
         <translation>Nem elérhető - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
-        <translation>Nem elérhető: lásd a helper 's Legacy funkció fájl-másolás: szonda ok fenti</translation>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
+        <translation>Nem elérhető: lásd a helper &apos;s Legacy funkció fájl-másolás: szonda ok fenti</translation>
     </message>
     <message>
         <source>unresolved</source>
@@ -4191,5 +4315,409 @@ A parancs még nem kezdődött el.</translation>
         <source>your account</source>
         <translation>az Ön számlája</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Adattár legújabb kernel: %1 (újabb, mint a telepített legújabb; %2).</translation></message><message><source>Try Again</source><translation>Próbálja újra!</translation></message><message><source>Enter the note text</source><translation>Adja meg a megjegyzés szövegét</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Ez a megjegyzés a %1 munkamenet-naplóhoz lesz csatolva.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>Megjegyzés csatolva a korábbi munkamenet napló %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>A kijelölt naplóbejegyzés nem érvényes munkamenet napló; a megjegyzés nem volt megírva.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>A kijelölt munkamenet napló %1 nem írható; a megjegyzés nem került hozzáadásra.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Adattár legújabb kernel: %1 (újabb, mint a telepített legújabb; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Próbálja újra!</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Adja meg a megjegyzés szövegét</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Ez a megjegyzés a %1 munkamenet-naplóhoz lesz csatolva.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>Megjegyzés csatolva a korábbi munkamenet napló %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>A kijelölt naplóbejegyzés nem érvényes munkamenet napló; a megjegyzés nem volt megírva.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>A kijelölt munkamenet napló %1 nem írható; a megjegyzés nem került hozzáadásra.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Nincs gyorsítótár futtató-host diagnosztika; futtassa read-only host diagnosztika host karbantartás populálni ezt a sort.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - megszakítva - az Ön kérésére leállt</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 fázis (ok) a megállás előtt jelentett változások; ezeket a változásokat alkalmazzák, és az érintett diagnosztika regenerálódott</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>a megállás előtti változásról szóló jelentés; annak módosításai már alkalmazhatók</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>nem történt változás</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Telepítve</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>A EFI / UKI rendszerindítási útvonal javítása UEFI rendszerekhez</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Evidence- vezérelt billentyűzet, egér és touchpad javítás a segítő interaktív menüjében</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Evidence-vezérelt hálózati javítás a helper interaktív menüjén keresztül; élő kapcsolat változások soha nem érinti az interfész tartó alapértelmezett útvonal</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>A rendszer adattáraiban nem elérhető csomagok</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 firmware boot bejegyzések betöltve csak olvasható.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware bejegyzés megtekinthető. A UEFI bejegyzések listájának betöltése csak olvasható.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Rendszerindítás</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Boot %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>A boot bejegyzéseket elutasították: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>A boot nevezési lista eredménye elvetve: a hatály a kérés lefutása alatt megváltozott.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Csizma</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Osztály</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>osztály: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Közvetlen (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Vezess!</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI indítási bejegyzések</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Visszaesés</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Firmware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>A firmware boot bejegyzéseket nem sikerült betölteni. Lásd a Logs részleteket.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>A Firmware boot bejegyzési listája nem sikerült.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB menü</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Címke</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Címke: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>A firmware boot bejegyzései</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>A BootOrder-ben szerepel: nem (a firmware kihagyta)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>A BootOrder-ben szerepel: igen</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Bejegyzések betöltése</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Töltse be a %1 UEFI firmware boot bejegyzéseket read- only.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Töltve %1 %2 firmware boot entr%3 csak olvasható.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Loader</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Loader: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>%1 UEFI firmware boot bejegyzések betöltése csak %2 (%3) esetén.</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Hálózat</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Nem található UEFI firmware boot bejegyzés - ez a rendszer BIOS / örökség vagy hiányzik efibootmgr, így nincs firmware boot order kezelni.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Nincs kijelölve hatály</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Egyéb</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Javítási cél: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Javítási cél: nem kész</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Javítási cél</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Szerep: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Menetíró: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Running host: nincs kijelölve</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Running- host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Válassza ki a Host Maintenance-t a futó gazdatesten, vagy a Systems javítási célpontját a firmware boot bejegyzések kezeléséhez.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Válassza ki a Host Maintenance-t a futó gazdatesten, vagy a Systems javítási célpontját a firmware boot bejegyzések kezeléséhez. A Load Entry felsorolja a jelenlegi UEFI bejegyzéseit.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>A UEFI firmware boot bejegyzések (a futó host NVRAM) csak itt vannak felsorolva. A Host Maintenance-ben láthatjuk a futó host saját bejegyzéseit; egy javítási célponttal együtt láthatjuk a NVRAM bejegyzéseket, amelyek a EFI rendszerpartíciójára mutatnak. Ez a nézet soha nem változtatja meg a firmware; egy BIOS- only host (Etch) nincs firmware boot bejegyzések és listák semmit. A GRUB boot menü (a GRUB belsejében található kernelek listája) különálló és a GRUB vagy a boot- stack javítás által regenerált.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Az UEFI firmware boot bejegyzései a BootOrder-ben, csak olvasható.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Ez a bejegyzés jelenleg aktív (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>A %1 törlése nem sikerült.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>javítási cél</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>javítás- cél</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>futó host &apos;s</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>Running- host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>Az EFI bejegyzései</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Boot Menu</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Váltás az UEFI firmware bejegyzések és a csak olvasható boot menü között.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Menü bejegyzés</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>A read- only boot menü (a bootloader kernel / OS bejegyzései fájlsorrendben).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>A %1 rendszerindító menü bejegyzései csak olvasható.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 boot menü megtekintése elérhető. Válassza a Boot Menüt a boot menü listázásához csak olvasható módban.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 firmware bejegyzés megtekintése elérhető. Válassza az EFI Bejegyzéseket az UEFI bejegyzések listázásához csak olvasható módban.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Válassza ki a Host Maintenance-t a futó gazdatesten, vagy a Systems javítási célpontját, hogy megtekinthesse a firmware boot bejegyzéseket. Válassza ki az EFI Entry-t vagy a Boot Menu-t, ha szeretné betölteni az aktuális hatály bejegyzéseit.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>%1 rendszerindító menü betöltése - csak %2 (%3) esetén.</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Indítási menü</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>A boot menü frissítését elutasították: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>A boot menülista nem sikerült.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>A boot menü tartalék beállítása elutasítva: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>A boot menü lista eredménye elvetve: a hatály megváltozott, amíg a kérés futott.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Menü bejegyzés: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Bejegyzés azonosítója: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Ez egy almenü.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Konfiguráció betöltése: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Külföldi: pont egy másik meghajtó vagy partíció.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Kernel: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Alapértelmezett bejegyzés: igen</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Alapértelmezett bejegyzés: nem</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Alapértelmezett</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (almenü)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Betöltve %1 boot menü bejegyz%2 csak olvasható módban.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Nincs GRUB hagyaték menü ezen a területen; próbálja a GRUB grub.cfg boot menü read- csak.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Nem található boot menü konfiguráció ezen a meghajtón. A rendszer nem rendelkezhet GRUB, extlinux / syslinux vagy GRUB hagyományos boot menüvel, vagy konfigurációja máshol él.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>A boot menü konfigurációja létezik, de nincs bejegyzés.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>A boot menüt nem sikerült betölteni. Lásd a Logs részleteket.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>alapértelmezés</translation>
+    </message>
+</context>
 </TS>

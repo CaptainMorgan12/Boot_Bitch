@@ -84,7 +84,7 @@ printf '%s\n' "$check_out" | grep -q 'in sync' || fail "port --check did not rep
 # its exact audited count (A11-01/A11-04).  The `+N` are per-transform counts
 # of the modern source; the shim/residual lines pin the ported body.
 for rule in \
-    'assoc declarations \(declare/local -A\) +18' \
+    'assoc declarations \(declare/local -A\) +19' \
     'assoc accesses: bdf_hw +2' \
     'assoc accesses: bdf_drv +5' \
     'assoc accesses: nodisplay_bdf +2' \
@@ -100,21 +100,21 @@ for rule in \
     'assoc accesses: removed_seen +4' \
     'assoc accesses: current_by_id +3' \
     'assoc accesses: order_index +5' \
-    'assoc accesses: reasons +37' \
-    'assoc accesses: seen +8' \
+    'assoc accesses: reasons +49' \
+    'assoc accesses: seen +10' \
     'assoc accesses: seen_namespaces +2' \
     'assoc accesses: emitted +4' \
     'assoc accesses: essential_by_dev +1' \
     'assoc accesses: allowed_nodes +1' \
-    'case conversion ,, +76' \
+    'case conversion ,, +77' \
     'case conversion \^\^ +20' \
     'case conversion \^ +24' \
-    'array \[@\] expansions \(all forms\) +742' \
-    'mapfile call sites +90' \
+    'array \[@\] expansions \(all forms\) +959' \
+    'mapfile call sites +92' \
     'sed -i -E +1' \
-    'sed -nE +101' \
-    'sed -E +20' \
-    'sort -V +16' \
+    'sed -nE +104' \
+    'sed -E +25' \
+    'sort -V +18' \
     'date --iso-8601 +5' \
     '=~ regex literal hoists +14' \
     'os-release gates +1' \
@@ -130,19 +130,19 @@ for rule in \
     'post-rewrite residual: date --iso-8601 +0' \
     'post-rewrite residual: case conversion +0' \
     'post-rewrite residual: corrupted assoc set +0' \
-    'shim calls: legacy_readarray +90' \
+    'shim calls: legacy_readarray +92' \
     'shim calls: legacy_remount_rw +2' \
-    'shim calls: legacy_sed_ext +122' \
-    'shim calls: legacy_sort_versions +16' \
+    'shim calls: legacy_sed_ext +130' \
+    'shim calls: legacy_sort_versions +18' \
     'shim calls: legacy_date_iso +5' \
-    'shim calls: legacy_lc +76' \
+    'shim calls: legacy_lc +77' \
     'shim calls: legacy_uc +20' \
     'shim calls: legacy_ucfirst +24' \
-    'shim calls: legacy_assoc_get +40' \
+    'shim calls: legacy_assoc_get +49' \
     'shim calls: legacy_assoc_get_num +2' \
     'shim calls: legacy_assoc_keys +4' \
     'shim calls: legacy_assoc_has +1' \
-    'shim calls: legacy_assoc_set +70' \
+    'shim calls: legacy_assoc_set +75' \
     'shim calls: legacy_assoc_unset +0' \
     'prelude \(legacy/compat.sh\) ' \
     'overlay \(legacy/overlay.sh\) ' \

@@ -167,7 +167,9 @@ for icon_size in 16 22 24 32 48 64 128 256 512 1024; do
 done
 
 # Committed Qt UI translation catalogs must ship in every package format so
-# the GUI localizes instead of falling back to English-only.
+# the GUI localizes instead of falling back to English-only. The exact shipped
+# set is the curated 23-catalog list (round 112: id/sk/vi are unshipped —
+# no Argos model exists for them; their .qm catalogs must not appear).
 translations_dir="$TMP/root/usr/share/boot-repair/translations"
 [[ -d "$translations_dir" ]] || {
     echo "FAIL: translation catalog directory is missing from the package: usr/share/boot-repair/translations" >&2
@@ -175,6 +177,19 @@ translations_dir="$TMP/root/usr/share/boot-repair/translations"
 }
 find "$translations_dir" -name '*.qm' -print | grep -q . || {
     echo "FAIL: the translation catalog directory carries no compiled .qm catalogs." >&2
+    exit 1
+}
+shipped_catalogs='ar cs da de el es fi fr hu it ja ko nb nl no pl pt ro ru sv tr uk zh'
+for lang in $shipped_catalogs; do
+    [[ -f "$translations_dir/boot-repair_${lang}.qm" ]] || {
+        echo "FAIL: shipped translation catalog missing from the package: boot-repair_${lang}.qm" >&2
+        exit 1
+    }
+done
+extra_catalogs="$(find "$translations_dir" -maxdepth 1 -type f -name '*.qm' -printf '%f\n' \
+    | grep -vE '^boot-repair_(ar|cs|da|de|el|es|fi|fr|hu|it|ja|ko|nb|nl|no|pl|pt|ro|ru|sv|tr|uk|zh)\.qm$' || true)"
+[[ -z "$extra_catalogs" ]] || {
+    echo "FAIL: unexpected catalogs shipped in the package (unshipped languages must not ship): $extra_catalogs" >&2
     exit 1
 }
 

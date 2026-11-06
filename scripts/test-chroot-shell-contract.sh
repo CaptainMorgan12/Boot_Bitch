@@ -221,8 +221,16 @@ grep -Fq "export pump_token" "$HELPER" \
     && { echo 'FAIL: the pump token must never be exported' >&2; exit 1; }
 grep -Fq 'answer_deadline=$(( $(shell_now_epoch) + SHELL_ANSWER_WINDOW_SECONDS ))' "$HELPER" \
     || { echo 'FAIL: the interactive runner lost the bounded ANSWER window' >&2; exit 1; }
-grep -Fq 'IFS=$'"'"'\t'"'"' read -r -t 1 tag id encoded' "$HELPER" \
-    || { echo 'FAIL: the interactive runner lost the polled ANSWER read' >&2; exit 1; }
+# Round 132 (F3): the polled ANSWER read is the transport-aware bounded read
+# (the round-125 rule — a PIPE transport never fires the main shell's read -t
+# timeout, the round-131 N8 class): the poll calls the shared
+# shell_protocol_poll_read with a 1 s window, and that reader carries the
+# bounded pipe read in a trap-cleared command substitution plus the FIFO
+# single-record background reader.
+grep -Fq 'shell_protocol_poll_read 1 "$proto_answer_file"' "$HELPER" \
+    || { echo 'FAIL: the interactive runner lost the transport-aware polled ANSWER read' >&2; exit 1; }
+grep -Fq 'read -r -t "$window" tag id encoded' "$HELPER" \
+    || { echo 'FAIL: the transport-aware ANSWER read lost its bounded pipe read' >&2; exit 1; }
 grep -Fq '"PROMPT"$'"'"'\t'"'"'"$request_id"$'"'"'\t'"'"'"$pump_token"$'"'"'\t'"'"'*' "$HELPER" \
     || { echo 'FAIL: the broker lost the token-matching PROMPT passthrough for the active request' >&2; exit 1; }
 grep -Fq 'printf '"'"'PROMPT\t%s\t%s\n'"'"' "$request_id" "$prompt_payload"' "$HELPER" \

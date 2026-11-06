@@ -119,6 +119,12 @@ jobs:
 
   build-and-test:
     needs: fast-gate
+    # The full Configure/Build/Test gate runs only when the fast gate
+    # escalates (lane == 'full': build-relevant paths, or any
+    # workflow_dispatch, which forces full). On a shell/docs push this job
+    # is SKIPPED on purpose — the fast-gate checks covered that lane. The
+    # forced-full workflow_dispatch run is what re-covers the full gate
+    # against the published commit after a docs-only push.
     if: needs.fast-gate.outputs.lane == 'full'
     # ubuntu-24.04 ships Qt 6.4, the oldest Qt this project supports. Pinning
     # the image keeps that compatibility gate deterministic instead of letting

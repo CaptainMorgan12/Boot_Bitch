@@ -60,17 +60,28 @@ for fn in apt_installed_kernel_packages apt_installed_kernel_support_packages ap
     grep -q "^${fn}()" "$HELPER" || fail "helper is missing ${fn}()"
 done
 
-# The 15 capability keys are registered; kernels gates through the reasons array.
-grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)' "$HELPER" \
+# The 17 capability keys are registered; kernels gates through the reasons array.
+grep -q 'local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)' "$HELPER" \
     || fail 'the keys array does not carry the kernels capability key'
 grep -q 'reasons\[kernels\]="available"' "$HELPER" \
     || fail 'diagnostic_repair_capabilities does not gate kernels through the reasons array'
+grep -q 'reasons\[input-devices\]="available"' "$HELPER" \
+    || fail 'diagnostic_repair_capabilities does not gate input-devices through the reasons array'
+grep -q 'reasons\[network\]="available"' "$HELPER" \
+    || fail 'diagnostic_repair_capabilities does not gate network through the reasons array'
 # The stage is wired into validate/stage_rank/backend-validation/dispatch.
-grep -q 'dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux|kernels|gpu|' "$HELPER" \
+grep -q 'dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux|kernels|gpu|input-devices|network|' "$HELPER" \
     || fail 'validate_stage does not accept the kernels stage'
 grep -q 'kernels) printf' "$HELPER" || fail 'stage_rank has no kernels rank'
 grep -q 'kernels) kernel_interactive_menu' "$HELPER" || fail 'repair dispatch is missing kernels'
 grep -q '^kernel_interactive_menu()' "$HELPER" || fail 'helper is missing kernel_interactive_menu()'
+grep -q 'input-devices) input_interactive_menu' "$HELPER" || fail 'repair dispatch is missing input-devices'
+grep -q '^input_interactive_menu()' "$HELPER" || fail 'helper is missing input_interactive_menu()'
+grep -q '^adaptive_input_repair()' "$HELPER" || fail 'helper is missing adaptive_input_repair()'
+grep -q 'network) network_interactive_menu' "$HELPER" || fail 'repair dispatch is missing network'
+grep -q '^network_interactive_menu()' "$HELPER" || fail 'helper is missing network_interactive_menu()'
+grep -q '^adaptive_network_repair()' "$HELPER" || fail 'helper is missing adaptive_network_repair()'
+grep -q '^parse_cached_network_inventory()' "$HELPER" || fail 'helper is missing parse_cached_network_inventory()'
 grep -q '^helper_menu_prompt()' "$HELPER" || fail 'helper is missing helper_menu_prompt()'
 grep -q 'kernel-cleanup:apt/dpkg) apt_kernel_cleanup_stage' "$HELPER" \
     || fail 'run_package_stage has no kernel-cleanup apt/dpkg case'
@@ -118,7 +129,7 @@ grep -q 'KERNEL_BASELINE_B64=' "$HELPER" \
 # no section-list entry may remain.
 ! grep -q 'boot-space)  diagnostic_boot_space' "$HELPER" || fail 'boot-space diagnostic dispatch still present'
 ! grep -q '^diagnostic_boot_space()' "$HELPER" || fail 'diagnostic_boot_space function still present'
-grep -q 'errors usage fstab btrfs mapper luks filesystem' "$HELPER" || fail 'section list must place usage directly before fstab'
+grep -q 'errors usage fstab btrfs mapper luks input network filesystem' "$HELPER" || fail 'section list must place usage directly before fstab'
 # The interactive kernel repair evidence lines are emitted verbatim.
 grep -q 'Kernel orphaned kernel: ' "$HELPER" || fail 'kernel orphaned-kernel evidence line missing'
 grep -q 'Kernel incomplete: ' "$HELPER" || fail 'kernel incomplete evidence line missing'
@@ -168,6 +179,16 @@ reset_fixture() {
         "$fake_root/var/lib/apt/lists"
     mkdir -p "$fake_root/var/lib/dpkg/info" "$fake_root/boot" "$fake_root/usr/src"
     : > "$fake_root/var/lib/dpkg/status"
+    # Round 118: the owner map is built ONCE per session into a fixed path
+    # (the round-118 performance change); the harness rewrites the package
+    # database at the fixture boundary, so it drops the cached map exactly
+    # like the production mutation paths do (dpkg_path_owner_map_clear runs
+    # after every package mutation in the helper).  The kernel-inventory
+    # collect-once flag describes the same pre-mutation state: production
+    # resets it in repair_change_status on every changed mutation, so the
+    # fixture boundary resets it here for the multi-scenario harness.
+    dpkg_path_owner_map_clear 2>/dev/null || true
+    KERNEL_INVENTORY_COLLECTED=0
 }
 
 # TUXEDO fixture: old 7.1.8.2 + running/latest 7.1.9.1, each with
@@ -617,6 +638,15 @@ STATUS
 source <(sed '/^main "$@"/d' "$HELPER")
 trap - EXIT INT TERM HUP
 
+# Round 118 (helper performance change): kernel_inventory_collect gained a
+# collect-once flag (the combined diagnostic collects the inventory once and
+# the preamble subshells/section reuse it).  Production resets that flag in
+# repair_change_status on every changed mutation; this multi-scenario harness
+# mutates the fixture directly, so its scenario collects reset the flag first
+# (the flag is a freshness memo, never part of the cleanup semantics under
+# test).
+recollect_kernel_inventory() { KERNEL_INVENTORY_COLLECTED=0; kernel_inventory_collect; }
+
 profile_target_backends() {
     TARGET_DISTRO_FAMILY=debian
     TARGET_PACKAGE_MANAGERS=(apt/dpkg)
@@ -808,7 +838,7 @@ grep -qx 'linux-headers-tuxedo-amd64' <<<"$meta" \
 grep -qx 'linux-image-tuxedo' <<<"$meta" \
     || fail "managed metapackage must include linux-image-tuxedo: $(echo "$meta")"
 
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] || fail "a repair target has no running kernel: $KERNEL_RUNNING"
 [[ "$KERNEL_LATEST" == 7.1.9.1-tuxedo-amd64 ]] || fail "latest kernel: $KERNEL_LATEST"
 [[ "${#KERNEL_INVENTORY_VERSIONS[@]}" -eq 2 ]] || fail "version count: ${#KERNEL_INVENTORY_VERSIONS[@]}"
@@ -855,7 +885,7 @@ grep -q '^Kernel protected: linux-image-tuxedo role=metapackage$' <<<"$output" \
 # inventory globals kernel_inventory_collect sets, without re-collecting.
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 # Wipe every inventory global so the parse is provably rebuilding from the
@@ -958,7 +988,7 @@ KERNEL_BASELINE_B64=""
 RUNNING_HOST_MODE=1
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 # The running kernel is now the OLDER kernel, not the baseline's running kernel.
@@ -1037,7 +1067,7 @@ grep -q 'linux-headers-7.1.8.2-common-tuxedo' "$sandbox/apply.log" \
 
 # ---- rollback completeness (metapackage + common headers restored) ---------
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 : > "$sandbox/rollback.log"
 run_chroot_try_display() {
     local label="$1"; shift
@@ -1113,7 +1143,7 @@ awk 'BEGIN { RS = ""; ORS = "\n\n" }
      && $0 !~ /^Package: linux-headers-7.1.9.1-common-tuxedo\n/m { print }' \
     "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
 mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.1.9.1-tuxedo-amd64' <<<"${KERNEL_MISSING_HEADERS[*]}" \
     || fail 'the latest kernel without headers must be surfaced as missing headers'
 output="$(diagnostic_kernel || true)"
@@ -1135,7 +1165,7 @@ grep -q 'removable=1' <<<"$cap_detail" \
 # validator refuses fail-closed with apt-refused-protected).
 write_tuxedo_split_fixture
 DPKG_PATH_OWNER_INDEX=""
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "$KERNEL_LATEST" == 7.1.9.1-tuxedo ]] || fail "split latest kernel: $KERNEL_LATEST"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 1 && "${KERNEL_REMOVABLE[0]}" == 7.1.8.2-tuxedo ]] \
     || fail "split removable: ${KERNEL_REMOVABLE[*]}"
@@ -1164,7 +1194,7 @@ kernel_package_is_removable linux-image-tuxedo \
 # linux-image-<v> as apt-refused-protected.
 write_tuxedo_split_fixture
 DPKG_PATH_OWNER_INDEX=""
-kernel_inventory_collect
+recollect_kernel_inventory
 : > "$sandbox/apply.log"
 : > "$sandbox/rollback.log"
 run_selected_chroot() {
@@ -1270,7 +1300,7 @@ run_selected_chroot() {
     return 0
 }
 
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_ORPHANED_KERNELS[@]}" -eq 0 ]] \
     || fail "rpm must not flag kernels without dpkg ownership as orphaned: ${KERNEL_ORPHANED_KERNELS[*]}"
 [[ "${#KERNEL_ORPHANED_HEADERS[@]}" -eq 0 ]] \
@@ -1330,7 +1360,7 @@ fi
 # Drop the protected (running == latest) kernel's build tree: it is reported
 # exactly once as missing headers, and no kernel is falsely orphaned.
 rm -rf "$fake_root/usr/src/kernels/$rpm_new"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${KERNEL_MISSING_HEADERS[*]}" == "$rpm_new" ]] \
     || fail "rpm missing headers must name the protected kernel exactly once: ${KERNEL_MISSING_HEADERS[*]}"
 [[ "${#KERNEL_ORPHANED_KERNELS[@]}" -eq 0 ]] \
@@ -1481,7 +1511,7 @@ grep -q "kernel-devel-$rpm_intact" <<<"$dev_nevras" \
     || fail "rpm_installed_kernel_devel_nevras must enumerate the real kernel-devel NEVRA: $dev_nevras"
 grep -q 'matched' <<<"$dev_nevras" \
     && fail "rpm_installed_kernel_devel_nevras must never enumerate kernel-devel-matched: $dev_nevras"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${KERNEL_INVENTORY_VERSIONS[*]}" == "$rpm_intact" ]] \
     || fail "rpm orphaned-devel fixture must keep only the intact kernel in the inventory: ${KERNEL_INVENTORY_VERSIONS[*]}"
 [[ "${KERNEL_ORPHANED_HEADERS[*]}" == "$rpm_orphaned_dev" ]] \
@@ -1520,7 +1550,7 @@ rm -rf "$fake_root/var/lib/rpm" "$fake_root/etc/yum.repos.d"
 
 # ---- default -amd64/generic naming ----------------------------------------
 write_generic_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "$KERNEL_LATEST" == 6.5.0-10038-generic ]] || fail "generic latest kernel: $KERNEL_LATEST"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 1 && "${KERNEL_REMOVABLE[0]}" == 6.2.0-1000-generic ]] \
     || fail "generic removable: ${KERNEL_REMOVABLE[*]}"
@@ -1552,7 +1582,7 @@ awk 'BEGIN { RS = ""; ORS = "\n\n" }
      && $2 != "linux-headers-6.2.0-1000" { print }' \
     "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
 mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
-kernel_inventory_collect
+recollect_kernel_inventory
 # The cached `kernel` diagnostic section is the repair baseline.
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
@@ -1601,7 +1631,7 @@ KERNEL_BASELINE_B64=""
 # prompt (kernels are numbered 1..2, the global action follows at 3).
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 REPAIR_CHANGE_STATUS_COLLECT=0
@@ -1635,6 +1665,10 @@ repair_kernel_remove_oldest() {
          && $0 !~ /^Package: linux-headers-7\.1\.8\.2-common-tuxedo\n/m { print }' \
         "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
     mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
+    # Round 118: the real action ends with a `Repair change status … changed`
+    # line, which resets the kernel-inventory collect-once flag; this stub
+    # simulates the mutation directly, so it resets the flag the same way.
+    KERNEL_INVENTORY_COLLECTED=0
 }
 helper_menu_prompt() {
     local n=0
@@ -1682,7 +1716,7 @@ KERNEL_BASELINE_B64=""
 RUNNING_HOST_MODE=1
 write_legacy_fixture
 FAKE_RUNNING=2.6.32-5-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${KERNEL_INVENTORY_VERSIONS[*]}" == '2.6.26-2-amd64 2.6.32-5-amd64 3.5.0-27-generic' ]] \
     || fail "legacy versions must sort by version, got: ${KERNEL_INVENTORY_VERSIONS[*]}"
 [[ "$KERNEL_LATEST" == 3.5.0-27-generic ]] || fail "legacy latest kernel: $KERNEL_LATEST"
@@ -1700,7 +1734,7 @@ Version: 7.1.9.3
 Depends: linux-image-7.1.9.3-tuxedo-amd64 (= 7.1.9.3-1)
 
 PACKAGES
-kernel_inventory_collect
+recollect_kernel_inventory
 repo_latest="$(apt_kernel_repo_latest)"
 [[ "$repo_latest" == 7.1.9.3-tuxedo-amd64 ]] || fail "repo latest kernel: $repo_latest"
 output="$(diagnostic_kernel || true)"
@@ -1710,7 +1744,7 @@ grep -q '^Kernel state: running=none installed-latest=7.1.9.1-tuxedo-amd64 repo-
     || fail 'kernel state relationship line wrong'
 # Offline/no-candidate falls back to `unavailable` and never gates the stage.
 rm -rf "$fake_root/var/lib/apt/lists"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$(apt_kernel_repo_latest || true)" ]] || fail 'offline repo probe must be empty'
 output="$(diagnostic_kernel || true)"
 grep -q '^Kernel repository latest: unavailable$' <<<"$output" \
@@ -1720,7 +1754,7 @@ grep -q '^Kernel repository latest: unavailable$' <<<"$output" \
 write_tuxedo_fixture
 # Remove the old kernel's module tree but keep its headers -> orphaned.
 rm -rf "$fake_root/usr/lib/modules/7.1.8.2-tuxedo-amd64"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.1.8.2-tuxedo-amd64' <<<"${KERNEL_ORPHANED_HEADERS[*]}" \
     || fail 'the old kernel headers without a module tree must be orphaned'
 grep -q '7.1.9.1-tuxedo-amd64' <<<"${KERNEL_ORPHANED_HEADERS[*]}" \
@@ -1737,7 +1771,7 @@ grep -q '^Kernel orphaned headers: 7.1.8.2-tuxedo-amd64$' <<<"$output" \
 # arch-independent common header surfaces as KERNEL_ORPHANED_HEADERS; the intact
 # current kernel stays protected and never appears in orphaned/partial/removable.
 write_tuxedo_strays_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${KERNEL_INVENTORY_VERSIONS[*]}" == '7.3.0.1-tuxedo-amd64' ]] \
     || fail "strays fixture must leave exactly the intact kernel in the inventory: ${KERNEL_INVENTORY_VERSIONS[*]}"
 [[ "$KERNEL_LATEST" == 7.3.0.1-tuxedo-amd64 ]] || fail "strays fixture latest kernel: $KERNEL_LATEST"
@@ -1776,7 +1810,7 @@ grep -q '^Kernel incomplete: 7.1.13+deb14-amd64$' <<<"$output" \
 RUNNING_HOST_MODE=1
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.8.2-tuxedo-amd64   # running is the OLDER kernel
-kernel_inventory_collect
+recollect_kernel_inventory
 REPAIR_REMOVE_NEWEST=false
 kernel_is_removal_candidate 7.1.9.1-tuxedo-amd64 \
     && fail 'the newest kernel must not be a candidate without --remove-newest'
@@ -1826,7 +1860,7 @@ FAKE_RUNNING=7.1.9.1-tuxedo-amd64
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64   # newest IS the running kernel
 REPAIR_REMOVE_NEWEST=true
-kernel_inventory_collect
+recollect_kernel_inventory
 run_package_stage() { :; }
 adaptive_initramfs_repair() { :; }
 adaptive_extlinux_repair() { :; }
@@ -1846,7 +1880,7 @@ RUNNING_HOST_MODE=0
 # A real removal (KERNEL_CLEANUP_APPLIED=true, set by the cleanup backend after
 # it applied a transaction) triggers the initramfs + bootloader regen.
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 INITRAMFS_RAN=0
 GRUB_RAN=0
 run_package_stage() { KERNEL_CLEANUP_APPLIED=true; }
@@ -1861,7 +1895,7 @@ repair_kernel_cleanup
 # The cleanup backend proves no changes (KERNEL_CLEANUP_APPLIED stays false), so
 # repair_kernel_cleanup / repair_kernel_remove_oldest must skip the regen.
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 KERNEL_CLEANUP_APPLIED=false
 NOOP_INITRAMFS_RAN=0
 NOOP_GRUB_RAN=0
@@ -1874,7 +1908,7 @@ repair_kernel_cleanup
 [[ "$NOOP_GRUB_RAN" -eq 0 ]] || fail 'a no-op kernel cleanup must not regenerate GRUB'
 # Same gate for the interactive remove-oldest sub-action.
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 KERNEL_CLEANUP_APPLIED=false
 NOOP_INITRAMFS_RAN=0
 NOOP_GRUB_RAN=0
@@ -1921,7 +1955,7 @@ running_kernel_version() { printf '%s\n' "${FAKE_RUNNING-7.1.9.1-tuxedo-amd64}";
 
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 
@@ -1945,8 +1979,19 @@ kernel_cleanup_stage() {
         "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
     mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
     KERNEL_CLEANUP_APPLIED=true
+    # Round 118: the real cleanup stage ends with a `Repair change status
+    # kernels: changed` line, which resets the kernel-inventory collect-once
+    # flag; this stub mutates the fixture directly and resets the flag the
+    # same way so the post-removal re-collection re-collects fresh.
+    KERNEL_INVENTORY_COLLECTED=0
 }
-dpkg_path_owner_map_clear() { DPKG_PATH_OWNER_INDEX=""; }
+dpkg_path_owner_map_clear() {
+    # Round 118: the owner index is a fixed per-session file now; the stub
+    # mirrors the real function's drop (variable + fixed file) so the
+    # post-removal re-collects rebuild the map from the mutated fixture.
+    DPKG_PATH_OWNER_INDEX=""
+    rm -f -- "${SESSION_DIR:-${TMPDIR:-/tmp}}/dpkg-owner.index" 2>/dev/null || true
+}
 
 INITRAMFS_KERNELS=""
 adaptive_initramfs_repair() {
@@ -1976,7 +2021,7 @@ write_tuxedo_fixture
 # Leave a module tree (and a stray boot image) no package owns -> zombie.
 mkdir -p "$fake_root/usr/lib/modules/7.0.0-0-tuxedo-amd64"
 touch "$fake_root/boot/vmlinuz-7.0.0-0-tuxedo-amd64"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.0.0-0-tuxedo-amd64' <<<"${KERNEL_ORPHANED_KERNELS[*]}" \
     || fail 'an unowned module tree must be detected as an orphaned kernel'
 # The fully-installed kernels are never orphaned.
@@ -2005,7 +2050,7 @@ grep -q '^Repair change status kernels:remove-orphaned-kernels: changed$' <<<"$s
 write_tuxedo_fixture
 # The image package stays installed but its vmlinuz is missing -> incomplete.
 rm -f "$fake_root/boot/vmlinuz-7.1.8.2-tuxedo-amd64"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.1.8.2-tuxedo-amd64' <<<"${KERNEL_PARTIAL[*]}" \
     || fail 'an installed image without its vmlinuz must be flagged incomplete'
 grep -q '7.1.9.1-tuxedo-amd64' <<<"${KERNEL_PARTIAL[*]}" \
@@ -2018,7 +2063,7 @@ if ! reason="$(kernels_unavailable_reason)"; then
 fi
 # The reinstall stage is a no-op (unchanged) when nothing is incomplete.
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
 status_line="$(repair_kernel_reinstall)"
@@ -2027,7 +2072,7 @@ grep -q '^Repair change status kernels:reinstall: unchanged|reason:no-partial-ke
 
 # ---- repository-latest install (unchanged when no newer kernel) -------------
 write_tuxedo_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
 status_line="$(repair_kernel_install_repo_latest)"
@@ -2041,7 +2086,7 @@ grep -q '^Repair change status kernels:install-repo-latest: unchanged|reason:no-
 # files because the sub-actions run inside command substitutions (a subshell).
 write_tuxedo_fixture
 rm -f "$fake_root/boot/vmlinuz-7.1.8.2-tuxedo-amd64"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.1.8.2-tuxedo-amd64' <<<"${KERNEL_PARTIAL[*]}" \
     || fail 'fixture must make the old kernel incomplete for the reinstall follow-on test'
 FOLLOWON_LOG="$sandbox/followon.log"
@@ -2065,7 +2110,7 @@ grep -q '^Repair change status kernels:reinstall: changed$' <<<"$status_line" \
 write_tuxedo_fixture
 mkdir -p "$fake_root/usr/lib/modules/7.0.0-0-tuxedo-amd64"
 touch "$fake_root/boot/vmlinuz-7.0.0-0-tuxedo-amd64"
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '7.0.0-0-tuxedo-amd64' <<<"${KERNEL_ORPHANED_KERNELS[*]}" \
     || fail 'fixture must surface the zombie kernel for the orphaned follow-on test'
 : > "$FOLLOWON_LOG"
@@ -2170,7 +2215,7 @@ KERNEL_BASELINE_B64=""
 # the still-installed 7.1.13.1 kernel -> protected.
 FAKE_RUNNING=7.1.13.1-tuxedo-amd64
 write_kbuild_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] || fail "a repair target has no running kernel: $KERNEL_RUNNING"
 [[ "$KERNEL_LATEST" == 7.1.13.1-tuxedo-amd64 ]] || fail "latest kernel: $KERNEL_LATEST"
 grep -q '7.1.10.2' <<<"${KERNEL_ORPHANED_SUPPORT_VERSIONS[*]}" \
@@ -2194,7 +2239,7 @@ fi
 
 # ---- orphaned build/support removal (simulation-first, guarded) --------------
 write_kbuild_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 : > "$sandbox/apply.log"
 : > "$sandbox/rollback.log"
 run_selected_chroot() {
@@ -2241,7 +2286,7 @@ apt_orphaned_headers_removal_is_safe 'Remv linux-kbuild-7.1.10.2 [7.1.10.2]' 'li
 
 # ---- orphaned build/support removal failure rolls back / fails closed --------
 write_kbuild_fixture
-kernel_inventory_collect
+recollect_kernel_inventory
 run_selected_chroot() { return 0; }
 run_chroot_try_display() {
     local label="$1"; shift
@@ -2270,7 +2315,7 @@ FAKE_RUNNING=7.1.9.1-tuxedo-amd64
 # kernel_inventory_collect); the fresh running-kernel re-check runs instead.
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 COLLECT_CALLS=0
@@ -2294,7 +2339,7 @@ KERNEL_BASELINE_B64=""
 # baseline so the FOLLOWING display re-collects fresh.
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 COLLECT_CALLS=0
@@ -2400,7 +2445,7 @@ target_apk_package_installed() {
     esac
 }
 
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_INVENTORY_VERSIONS[@]}" -eq 1 ]] \
     || fail "apk inventory must map one kernel: ${KERNEL_INVENTORY_VERSIONS[*]}"
 [[ "${KERNEL_INVENTORY_PKGS[0]}" == linux-lts ]] \
@@ -2426,7 +2471,7 @@ target_apk_package_installed() {
         *) return 1 ;;
     esac
 }
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${KERNEL_MISSING_HEADERS[*]}" == 6.18.55-0-lts ]] \
     || fail "apk missing headers must name the protected kernel exactly once: ${KERNEL_MISSING_HEADERS[*]}"
 [[ "${#KERNEL_ORPHANED_KERNELS[@]}" -eq 0 ]] \
@@ -2649,7 +2694,7 @@ run_selected_chroot() {
     return 0
 }
 
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_INVENTORY_VERSIONS[@]}" -eq 2 ]] \
     || fail "pacman inventory must map two kernels: ${KERNEL_INVENTORY_VERSIONS[*]}"
 [[ "${KERNEL_INVENTORY_PKGS[0]}" == linux ]] \
@@ -2892,7 +2937,7 @@ run_selected_chroot() {
     fi
     return 0
 }
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '6.1.1-arch1-1' <<<"${KERNEL_PARTIAL[*]}" \
     || fail "pacman must flag an installed package whose module tree is missing as partial: ${KERNEL_PARTIAL[*]}"
 grep -q 'linux' <<<"${KERNEL_PARTIAL_PKGS[*]}" \
@@ -2963,7 +3008,7 @@ run_selected_chroot() {
     fi
     return 0
 }
-kernel_inventory_collect
+recollect_kernel_inventory
 grep -q '6.1.1-arch1-1' <<<"${KERNEL_STALE[*]}" \
     || fail "pacman must classify a non-running kernel stale on an unambiguous not found: ${KERNEL_STALE[*]}"
 grep -q 'linux' <<<"${KERNEL_STALE_PKGS[*]}" \
@@ -2986,7 +3031,7 @@ run_selected_chroot() {
     fi
     return 0
 }
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_STALE[@]}" -eq 0 ]] \
     || fail "pacman must never classify stale on a missing sync DB: ${KERNEL_STALE[*]}"
 
@@ -3379,7 +3424,7 @@ awk 'BEGIN { RS = ""; ORS = "\n\n" }
      && $2 != "linux-headers-6.2.0-1000" { print }' \
     "$fake_root/var/lib/dpkg/status" > "$fake_root/var/lib/dpkg/status.new"
 mv "$fake_root/var/lib/dpkg/status.new" "$fake_root/var/lib/dpkg/status"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] \
     || fail "apt single-kernel target must have an empty KERNEL_RUNNING: $KERNEL_RUNNING"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 0 ]] \
@@ -3462,7 +3507,7 @@ Version: 7.1.10.1.1
 Depends: linux-image-7.1.10.1-tuxedo-amd64 (= 7.1.10.1-1)
 
 PACKAGES
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 BOOT_REPAIR_SESSION_PROTOCOL=1
@@ -3486,7 +3531,7 @@ KERNEL_BASELINE_B64=""
 # ---- apt/dpkg: target with TWO kernels (older + newest) ----------------------
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] || fail "apt two-kernel target must have an empty KERNEL_RUNNING: $KERNEL_RUNNING"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 1 ]] || fail "apt two-kernel target removable count: ${#KERNEL_REMOVABLE[@]}"
 kernel_newest_is_removable \
@@ -3535,11 +3580,11 @@ KERNEL_BASELINE_B64=""
 RUNNING_HOST_MODE=1
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.8.2-tuxedo-amd64   # running (older) != latest (7.1.9.1)
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "$KERNEL_RUNNING" == 7.1.8.2-tuxedo-amd64 ]] || fail "host running kernel: $KERNEL_RUNNING"
 kernel_newest_is_removable || fail 'host running!=latest must allow newest removal'
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64   # running == latest
-kernel_inventory_collect
+recollect_kernel_inventory
 kernel_newest_is_removable && fail 'host running==latest must refuse newest removal'
 RUNNING_HOST_MODE=0
 
@@ -3587,7 +3632,7 @@ run_selected_chroot() {
     done
     return 0
 }
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] || fail "rpm two-kernel target must have an empty KERNEL_RUNNING: $KERNEL_RUNNING"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 1 ]] || fail "rpm two-kernel target removable count: ${#KERNEL_REMOVABLE[@]}"
 kernel_newest_is_removable || fail 'rpm two-kernel target must allow newest removal'
@@ -3598,7 +3643,7 @@ grep -q '^Kernel running: none$' <<<"$out" \
 # Drop the older rpm kernel -> single kernel, newest removal refused.
 rm -rf "$fake_root/usr/lib/modules/$rpm_old" "$fake_root/usr/src/kernels/$rpm_old"
 rm -f "$fake_root/boot/vmlinuz-$rpm_old"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 0 ]] || fail "rpm single-kernel target removable count: ${#KERNEL_REMOVABLE[@]}"
 kernel_newest_is_removable && fail 'rpm single-kernel target must refuse newest removal'
 
@@ -3648,7 +3693,7 @@ run_selected_chroot() {
     return 0
 }
 target_apk_package_installed() { return 0; }
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ -z "$KERNEL_RUNNING" ]] || fail "apk two-kernel target must have an empty KERNEL_RUNNING: $KERNEL_RUNNING"
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 1 ]] || fail "apk two-kernel target removable count: ${#KERNEL_REMOVABLE[@]}"
 kernel_newest_is_removable || fail 'apk two-kernel target must allow newest removal'
@@ -3659,7 +3704,7 @@ grep -q '^Kernel running: none$' <<<"$out" \
 # Drop the older apk kernel -> single kernel, newest removal refused.
 rm -rf "$fake_root/lib/modules/6.18.55-0-lts"
 rm -f "$fake_root/boot/vmlinuz-lts"
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_REMOVABLE[@]}" -eq 0 ]] || fail "apk single-kernel target removable count: ${#KERNEL_REMOVABLE[@]}"
 kernel_newest_is_removable && fail 'apk single-kernel target must refuse newest removal'
 
@@ -3693,7 +3738,7 @@ profile_target_backends() {
 }
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 baseline_text="$(diagnostic_kernel_inventory || true)"
 KERNEL_BASELINE_B64="$(printf '%s' "$baseline_text" | base64 | tr -d '\n')"
 BOOT_REPAIR_SESSION_PROTOCOL=1
@@ -3745,7 +3790,7 @@ KERNEL_BASELINE_B64=""
 # must never repeat the full package list.
 write_five_kernel_fixture
 FAKE_RUNNING=6.4.0-5-generic
-kernel_inventory_collect
+recollect_kernel_inventory
 [[ "${#KERNEL_INVENTORY_VERSIONS[@]}" -eq 5 ]] \
     || fail "five-kernel fixture must map 5 kernels, got: ${KERNEL_INVENTORY_VERSIONS[*]}"
 baseline_text="$(diagnostic_kernel_inventory || true)"
@@ -3793,7 +3838,7 @@ KERNEL_BASELINE_B64=""
 # pin the newest 7.1.9.1; the survivor is 7.1.8.2).
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 KERNEL_REMOVE_MODE=newest
 KERNEL_STAGE_STATUS_KEY="kernels:remove-newest"
 : > "$sandbox/apply.log"
@@ -3887,7 +3932,7 @@ fi
 # reason naming the cascaded metapackages and the surviving kernel.
 write_tuxedo_fixture
 FAKE_RUNNING=7.1.9.1-tuxedo-amd64
-kernel_inventory_collect
+recollect_kernel_inventory
 KERNEL_REMOVE_MODE=newest
 KERNEL_STAGE_STATUS_KEY="kernels:remove-newest"
 run_selected_chroot() {

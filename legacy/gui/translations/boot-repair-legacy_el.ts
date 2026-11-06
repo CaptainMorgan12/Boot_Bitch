@@ -48,12 +48,12 @@
         <translation>Το Alpine χρησιμοποιεί το apk· η διαμόρφωση του dpkg δεν είναι διαθέσιμη στο Alpine.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
         <translation>Το κύριο αποθετήριο της Alpine δεν έχει ιδιόκτητο οδηγό NVIDIA DKMS· η ανταλλαγή οδηγών GPU δεν είναι διαθέσιμη σε αυτόν τον στόχο.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Εναλλακτικός bootloader; Etch μπότες μέσω GRUB-legacy, έτσι extlinux δεν είναι μέρος της προκαθορισμένης διαδρομής εκκίνησης</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Εναλλακτικός φορτωτής εκκίνησης· σε αυτό το σύστημα το extlinux δεν αποτελεί μέρος της προκαθορισμένης διαδρομής εκκίνησης</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -108,7 +108,7 @@
         <translation>Συμφιλίωση στοίβας εκκίνησης</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Περιήγηση στους φακέλους του επισκευασμένου συστήματος μόνο για ανάγνωση και στάδιο του επιλεγμένου φακέλου.</translation>
     </message>
     <message>
@@ -132,7 +132,7 @@
         <translation>Έλεγχος και επισκευή των ανιχνευθέντων συστημάτων αρχείων.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Ελέγξτε τις βάσεις του επιλεγμένου συστήματος, τα μεταδεδομένα συστήματος αρχείων, τα αρχεία εκκίνησης, τη συνέπεια χαρτογράφησης και την ετοιμότητα εξάρτησης πριν από οποιαδήποτε ενέργεια επισκευής. Πρόκειται για ανεξάρτητη προ πτήσης ασφάλεια και όχι για προαιρετικό στάδιο πλήρους επισκευής.</translation>
     </message>
     <message>
@@ -224,8 +224,8 @@
         <translation>Βοηθός της οικογένειας Debian initramfs</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Βοηθός του Debian-family initramfs· στο Etch η ανακατασκευή περνά μέσα από το φυλασσόμενο plain-chroot fallback</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Ξαναχτίζει τις εικόνες initramfs για τους εγκατεστημένους πυρήνες</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -244,7 +244,7 @@
         <translation>Χρήση δίσκου</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Εμφανίζει τον τρέχοντα υπολογιστή ή το fstab του επιλεγμένου συστήματος επισκευής.</translation>
     </message>
     <message>
@@ -364,7 +364,7 @@
         <translation>Επαλήθευση Initramfs</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Επιθεωρεί τα στοιχεία EFI/UKI· δεν είναι διαθέσιμα σε αυτό το frontend κληρονομιάς BIOS με τον λόγο ανίχνευσης του βοηθού.</translation>
     </message>
     <message>
@@ -528,8 +528,8 @@
         <translation>Επισκευή με σύστημα offline</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Ένα φυλασσόμενο πέρασμα (επικύρωση mapper/crypttab, ανακατασκευή initramfs, αναγέννηση grUB-legacy) μέσω του fallback plain-chroot</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Ένα φυλασσόμενο πέρασμα: επικύρωση mapper/crypttab, αποκατάσταση initramfs και αναγέννηση διαμόρφωσης bootloader</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Απομόνωση χώρου ονομάτων διεργασίας</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Δυνατότητα ανάγνωσης μόνο σε αυτό το περιβάλλον; kernel αφαίρεση/καθαρισμός/εγκατάσταση τρέχει μέσω του διαδραστικού μενού του βοηθού</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>Απομάκρυνση, καθαρισμός και εγκατάσταση kernel τρέχει μέσω του διαδραστικού μενού του βοηθού; τίποτα δεν αφαιρείται ή τροποποιείται μέχρι να επιλέξετε μια ενέργεια και να το επιβεβαιώσετε</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Δυνατότητα ανάγνωσης μόνο σε αυτό το περιβάλλον· η επισκευή του οδηγού GPU τρέχει μέσω του βοηθού</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Επισκευή οδηγού GPU με βάση στοιχεία μέσω του διαδραστικού μενού του βοηθού</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Έλεγχος μόνο ανάγνωσης των συστημάτων αρχείων root και /boot του επιλεγμένου συστήματος, κατόπιν επισκευή μόνο των συσκευών που αναφέρουν σφάλματα (e2fsck για ext2/ext3)</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Έλεγχος μόνο ανάγνωσης των συστημάτων αρχείων root και /boot του επιλεγμένου συστήματος, κατόπιν επισκευή μόνο των συσκευών που αναφέρουν σφάλματα</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -628,8 +628,8 @@
         <translation>Ξαναχτίστε το initramfs για το επιλεγμένο πεδίο; Ο βοηθός κρατάει το χαρτονόμισμα και το αντίγραφο ασφαλείας του.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>Επανακατασκευάζει μονάδες εκτός δένδρων kernel· απαιτείται μόνο όταν ο στόχος χρησιμοποιεί μονάδες dkms</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Ανακατασκευάζει μονάδες εκτός δένδρων kernel· απαιτείται μόνο όταν το σύστημα χρησιμοποιεί σύστημα κατασκευής μονάδων</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,7 +640,7 @@
         <translation>Συμφιλιώστε τη στοίβα εκκίνησης.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Συνδέστε τη στοίβα εκκίνησης του επιλεγμένου συστήματος επισκευής σε ένα φυλασσόμενο κληροδοτημένο πάσο: mapper/crypttab validation, initramfs ανακατασκευή και αναγέννηση διαμόρφωσης legacy GRUB, με το εξάρτημα backups και preflights αμετάβλητα. Αυτό είναι το ισοδύναμο Etch της σύγχρονης συμφιλίωσης μποτών-stack και μένει έξω από το σχέδιο πλήρους επισκευής.</translation>
     </message>
     <message>
@@ -688,16 +688,16 @@
         <translation>Επαναδημιουργία της διαμόρφωσης extlinux.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Αναδημιουργήστε το μενού/ρυθμίσεις GRUB του επιλεγμένου συστήματος επισκευής μετά την υποχρεωτική προ πτήσης ασφάλειας. Ο βοηθός υποστηρίζει menu.lst, διατηρεί κάθε υπάρχουσα είσοδο εκκίνησης και γυρίζει πίσω σε οποιαδήποτε αποτυχία.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Αναδημιουργία ρυθμίσεων φορτωτή εκκίνησης extlinux του επιλεγμένου συστήματος. Αυτό το frontend κληρονομιάς δεν αποκαλύπτει καμία δράση extlinux.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Ανανεώνει το μενού Etch GRUB-legacy.lst διαμόρφωση (backup, κάθε καταχώρηση που διατηρείται)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>Ανανεώνει τη διαμόρφωση GRUB (που υποστηρίζεται, κάθε καταχώρηση διατηρείται)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>Επισκευή της διαδρομής εκκίνησης EFI / UKI.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Επισκευή της διαδρομής εκκίνησης EFI / UKI του επιλεγμένου συστήματος. Αυτό το frontend κληρονομιά εκθέτει καμία δράση EFI; ο στόχος Etch είναι ένα σύστημα BIOS/GRUB-legacy.</translation>
     </message>
     <message>
@@ -812,11 +812,11 @@
         <translation>Επαναφορά της κληρονομιάς του διαχειριστή εμφάνισης sysv που έχει ρυθμιστεί για το επιλεγμένο σύστημα: η καταχώρηση /etc/X11/default-display-manager και το χαμένο runlevel S-symlink, με ένα αντίγραφο ασφαλείας και rollback, δεν ξεκινά ποτέ το GUI. Όταν η εκκίνηση περιμένει μια προτροπή διαγραφής δίσκου, η δρομολόγηση κονσόλας επιδιορθώνεται επίσης: η κονσόλα=tty0 προσαρτάται τελευταία στη γραμμή εντολών bootloader (menu.lst σε αυτή την κληρονομιά GRUB; η σειριακή κονσόλα παραμένει) έτσι η προτροπή παραμένει στην ορατή οθόνη αντί να γίνει μαύρη. Διατίθεται για τον τρέχοντα ξενιστή και έναν αφοσιωμένο στόχο επισκευής.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Επαναφορά /etc/X11/προκαθορισμένος-διαχειριστής αναπαραγωγής και το λείπει sysv runlevel S-symlink χωρίς εκκίνηση του GUI</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>Επαναφέρει τον ρυθμισμένο διαχειριστή οθόνης και τον σύνδεσμο εκκίνησης του χωρίς εκκίνηση του GUI</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Επανεξετάστε την εγκατεστημένη απογραφή του πυρήνα και επιλέξτε μία ενέργεια επισκευής του πυρήνα σκυροδέματος: αφαιρέστε τον παλαιότερο/υπερκατασκευασμένο ή νεότερο πυρήνα, αφαιρέστε ορφανές κεφαλίδες/συστατικά/υποστήριξη κατασκευής, εγκαταστήστε τις ελλείπουσες κεφαλίδες, επανεγκαταστήστε έναν ημιτελή πυρήνα, ή εγκαταστήστε τον πυρήνα αποθετηρίου-τελευταία. Τίποτα δεν αφαιρείται ή τροποποιείται μέχρι να επιλέξετε μια ενέργεια και να το επιβεβαιώσετε. Ο τρέχοντας πυρήνας προστατεύεται πάντα, και οι υπόλοιπες εικόνες initramfs των πυρήνων και η διαμόρφωση του φορτωτή εκκίνησης αναγεννώνται μετά από μια αφαίρεση.</translation>
     </message>
     <message>
@@ -856,11 +856,11 @@
         <translation>Να τρέξουμε την επιδιορθωμένη επισκευή; Ο βοηθός κρατάει την πρώτη του πτήση και τους φύλακες.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Εκτέλεση του ελέγχου του συστήματος αρχείων μόνο ανάγνωσης για τα συστήματα αρχείων root και /boot του επιλεγμένου συστήματος και αναφορά του εργαλείου ελέγχου της κάθε συσκευής και αποτέλεσμα χωρίς αλλαγή τίποτα. Αυτό το ιστορικό περιβάλλον εκθέτει μόνο τον έλεγχο ανάγνωσης, η επισκευή της συσκευής δεν είναι ενσύρματη.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Εκτελέστε τον έλεγχο του συστήματος αρχείων μόνο ανάγνωσης στη ρίζα του επιλεγμένου συστήματος και /boot συστήματα αρχείων, στη συνέχεια, επισκευάστε μόνο τις συσκευές που αναφέρουν σφάλματα. Τα εργαλεία ελέγχου Etch (e2fsck για ext2/ext3) τρέχουν μόνο αφού ο βοηθός απελευθερώσει τις βάσεις μόνο ανάγνωσης του.Ένα σύστημα αρχείων που είναι ακόμα προσαρτημένο δεν επισκευάζεται ποτέ εκτός σύνδεσης και τα μη υποστηριζόμενα συστήματα αρχείων αναφέρονται παρά μαντεύονται.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Εκτελέστε την προ πτήσης μόνο για ανάγνωση.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Εκτέλεση ελέγχου του συστήματος αρχείων μόνο ανάγνωσης για τη ρίζα του επιλεγμένου συστήματος, /boot και άλλα συστήματα αρχείων.</translation>
     </message>
     <message>
@@ -1008,7 +1008,7 @@
         <translation>Το επιλεγμένο πεδίο εφαρμογής δεν έχει υποστηριζόμενο τύπο συστήματος αρχείων για έλεγχο μόνο ανάγνωσης.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Η ρίζα του επιλεγμένου πεδίου εφαρμογής, /boot, ESP και /home συστήματα αρχείων δεν μπόρεσε να επιλυθεί.</translation>
     </message>
     <message>
@@ -1120,8 +1120,8 @@
         <translation>Επικύρωση περιβάλλοντος</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Περπατήστε σε μια διαδραστική συνεδρία που καθοδηγείται από στοιχεία για την επισκευή του οδηγού GPU πυρήνα (nvidia/nouveau/amdgpu/radeon/mesa), εφαρμόζοντας μόνο το μικρό φυλασσόμενο βήμα που επιλέγετε με τη δική του επιστροφή. Δύο σημεία απόφασης καθοδηγούν τη συνεδρία: ο οδηγός πυρήνα-vs (αντικαθιστά το νεότερο πυρήνα που ο οδηγός δεν μπορεί να κατασκευάσει ενάντια, ή να αφαιρέσει τον παλαιότερο πυρήνα στον οποίο είναι καθηλωμένος ο οδηγός) και ο λανθασμένος οδηγός (εκκαθάριση του εσφαλμένου οδηγού, εγκατάσταση του σωστού, και ανακατασκευή του ενάντια σε κάθε εγκατεστημένο πυρήνα). Ένα ξεχωριστό one-boot nomodeset fallback φτάνει σε μια κονσόλα σε ένα σπασμένο οδηγό.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>Περπατήστε μια διαδραστική συνεδρία με γνώμονα στοιχεία για την επισκευή του οδηγού GPU; το μενού προσαρμόζεται στα διαγνωστικά στοιχεία, κάθε φυλασσόμενο βήμα επαληθεύεται εκ νέου σε αυτό το παράθυρο πριν από την επόμενη επιλογή, και ένα one-boot nomodeset fallback κρατά μια κονσόλα προσβάσιμη σε ένα σπασμένο οδηγό.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1177,7 +1177,7 @@
     </message>
     <message>
         <source>dpkg configuration is not available on Arch; use the Arch package transaction stages instead.</source>
-        <translation>Οι ρυθμίσεις του dpkg δεν είναι διαθέσιμες στην Arch. Χρησιμοποιήστε τα στάδια συναλλαγών πακέτο Arch αντ 'αυτού.</translation>
+        <translation>Οι ρυθμίσεις του dpkg δεν είναι διαθέσιμες στην Arch. Χρησιμοποιήστε τα στάδια συναλλαγών πακέτο Arch αντ &apos;αυτού.</translation>
     </message>
     <message>
         <source>dpkg is not installed in the target.</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>η επικύρωση είναι μόνο για ανάγνωση</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Συσκευές εισόδου / πληκτρολόγιο</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Δίκτυο / συνδεσιμότητα</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Αναθεωρεί τη στοίβα συσκευών εισόδου: ανιχνευμένες συσκευές και κατηγορίες πληκτρολογίου/μουσικού/τουπάζ, φορτωμένη, ενσωματωμένη, διαθέσιμη και μαύρη λίστα μονάδων HID/keyboard kernel, κατάσταση ελεγκτή λεωφορείου, η διάταξη πληκτρολογίου, η συμπερίληψη initramfs και η ενσωματωμένη απόδειξη του πληκτρολογίου-μονάδας εικόνας για το LUKS ξεκλειδώσετε άμεση, καθώς και πρόσφατες αποδείξεις εκκίνησης.</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Επανεξετάζει τη στοίβα δικτύου: το σύστημα υποστήριξης ρυθμίσεων που ανιχνεύεται, προσαρμογείς και τους δεμένους οδηγούς/μοντέλες τους, blacklist και firmware state, και τη διαδρομή του εκτελούμενου υπολογιστή, DNS και οριοθετημένα στοιχεία προσιτότητας, χωρίς να αλλάζει τίποτα.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>συσκευή εισόδου μόνο για ανάγνωση και επιθεώρηση πληκτρολογίου initramfs</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>προσαρμογέα δικτύου μόνο για ανάγνωση και επιθεώρηση συνδεσιμότητας</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Επισκευή συσκευής εισόδου</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Συσκευές εισόδου για την επισκευή</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Περπατήστε μια διαδραστική συνεδρία με βάση τα στοιχεία για την επισκευή πληκτρολογίου, ποντικιού και αφής εισόδου; το μενού προσαρμόζεται στα διαγνωστικά στοιχεία, κάθε ενέργεια επανεπιβεβαιώνεται σε αυτό το παράθυρο πριν από την επόμενη επιλογή, και τα φυλασσόμενα βήματα καλύπτουν οδηγούς, ενότητες, firmware, μαύρες λίστες, το HID fallback και τις ενότητες πληκτρολογίου initramfs.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Επιλέξτε μια ενέργεια επισκευής συσκευής εισόδου από τα στοιχεία.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Επισκευή δικτύου / συνδεσιμότητας</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Δίκτυο επισκευής</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Περπατήστε μια διαδραστική συνεδρία με βάση τα στοιχεία για την επισκευή της στοίβας δικτύου· το μενού προσαρμόζεται στα διαγνωστικά στοιχεία, κάθε ενέργεια επανεπιβεβαιώνεται σε αυτό το παράθυρο πριν από την επόμενη επιλογή, και τα φυλασσόμενα βήματα καλύπτουν οδηγούς, ενότητες, firmware, μαύρες λίστες, ενότητες initramfs NIC, διεύθυνση, διαδρομές και DNS. Οι ζωντανές αλλαγές συνδεσιμότητας δεν αγγίζουν ποτέ τη διασύνδεση που κρατά την προκαθορισμένη διαδρομή.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Επιλέξτε μια ενέργεια επισκευής δικτύου από τα στοιχεία.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Unavailable: %1</source>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1433,7 +1489,7 @@ Unavailable: %1</source>
     </message>
     <message>
         <source>%1 results: [OK] %2 successful | [FAIL] %3 failed | [-] %4 no repair needed - %5</source>
-        <translation type="unfinished" />
+        <translation>%1 αποτελέσματα: [OK] %2 επιτυχή | [FAIL] %3 απέτυχαν | [-] %4 δεν χρειάζεται επισκευή - %5</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
@@ -1445,7 +1501,7 @@ Unavailable: %1</source>
     </message>
     <message>
         <source>%1 stopped at your request: [OK] %2 successful | [-] %3 no repair needed - %4</source>
-        <translation type="unfinished" />
+        <translation>%1 σταμάτησε κατόπιν αιτήματός σας: [OK] %2 επιτυχή | [-] %3 δεν χρειάζεται επισκευή - %4</translation>
     </message>
     <message>
         <source>&amp;About Boot Bitch</source>
@@ -1564,7 +1620,7 @@ Unavailable: %1</source>
         <translation>· καλύτερο ανιχνευμένο συστατικό του συστήματος: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Αναπτήρας:&lt;/b&gt; Captain Morgan12&lt;/p&gt;&lt;p&gt; Αυτό το GUI είναι το σημείο εισόδου του πακέτου: ένα γραφικό περιβάλλον Qt 3.3.x με το φορητό φυλασσόμενο βοηθό για τα συστήματα Etch-era του Debian. &lt;/p&gt;&lt;p&gt;&lt;b&gt;Εγγυημένη λειτουργία επισκευής: &lt;/b&gt; Μόνο για ανάγνωση τα διαγνωστικά μπορούν να επιθεωρήσουν είτε τον προστατευόμενο υπολογιστή που τρέχει είτε μια ρητά επιλεγμένη μονάδα επισκευής. Τα φυλασσόμενα στάδια πακέτων Debian/APT (διακοπτόμενες ρυθμίσεις, διακοπτόμενες εξαρτήσεις, ανανέωση μεταδεδομένων, αναβάθμιση), αναγέννηση ρυθμίσεων GRUB-legacy, στόχος LUKS ξεκλειδώνει και φυλασσόμενη επεξεργασία αρχείου-στόχου τρέχει μέσα από τον φορητό βοηθό μετά την επιβεβαίωση; Συντήρηση υπολογιστή επιτρέπει τα ίδια υποστηριζόμενα στάδια εγγενώς στο ενεργό σύστημα μετά την επανάληψη της ταυτότητας του υπολογιστή και ελέγχου εκκίνησης-προσάρτησης.&lt;/p&gt;&lt;p&gt; Τα σύγχρονα μόνο χαρακτηριστικά - επαληθευμένη αντιγραφή αρχείων, στιγμιότυπα Btrfs rollback, επισκευή EFI/UKI και extlinux, συμφιλίωση εκκίνησης-stack και προκαθορισμένο - είναι γκριζωσμένα με τους λόγους καθετήρα του βοηθού σε αυτό το frontend; Arch/Alpine/Fedora πακέτα υποστήριξης παραμένουν διαγνωστικά μόνο εδώ. &lt;/p&gt;&lt;p&gt; Η πρώτη προνομιακή ενέργεια επιτρέπει μια κρυφή συνεδρία διαχειριστή ανά πεδίο εφαρμογής μέσω ενός μέσου κρυφής εισόδου (το GUI Qt παραμένει μη προνομιούχο). Μπορεί να τερματιστεί ανά πάσα στιγμή από τη συνεδρία διαχειριστή αρχείων - κλειδώματος.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1772,7 +1828,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Η αυτόματη εγκατάσταση απαιτεί σαφή χαρτογράφηση πακέτων και εξουσιοδότηση προνομίων.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Η αυτόματη εγκατάσταση θα απαιτήσει σαφή χαρτογράφηση πακέτων και εξουσιοδότηση προνομίων. Εγκαθιστά το επιλεγμένο πακέτο της δυνατότητας που λείπει στο τρέχον πεδίο εφαρμογής (τρέχοντας τον υπολογιστή ή δεσμευμένο στόχο επισκευής) μέσω του φυλασσόμενου βοηθού.</translation>
     </message>
     <message>
@@ -1824,7 +1880,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Boot Bitch κληρονομιά GUI έτοιμη. Κάθε προνομιακή εντολή τρέχει μέσω του θυρωρού βοηθού· οι ενέργειες παραμένουν απενεργοποιημένες μέχρι να δεσμευτεί ένας στόχος επισκευής (ή η συντήρηση Host είναι ενεργή) και τα διαγνωστικά αναφέρουν τη γραμμή ικανότητας τους.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch πρέπει να τρέξει από ένα διαφορετικό περιβάλλον Linux εκκίνησης από το σύστημα που επισκευάζεται. Χρησιμοποιήστε ένα Linux ζωντανό μέσο ή μια άλλη εγκατάσταση Linux σε μια διαφορετική φυσική κίνηση.&lt;br&gt;&lt;br&gt; Ο τρέχοντας υπολογιστής προστατεύεται από τη συνηθισμένη επιλογή επιδιόρθωσης-στόχου, αλλά μπορεί να επιλεγεί ρητά μέσω της συντήρησης &lt;b&gt;Host &lt;/b&gt; για φυλασσόμενα τοπικά διαγνωστικά και υποστηριζόμενα στάδια συντήρησης.&lt;br&gt;&lt;br&gt; Τα διαγνωστικά ακολουθούν τη σελίδα των Συστημάτων: η αφοσιωμένη μονάδα επισκευής ενώ η συντήρηση του υπολογιστή είναι εκτός λειτουργίας, ή ο προστατευόμενος τρέχοντας υπολογιστής ενώ είναι ενεργός.&lt;br&gt;&lt;br&gt; Η πρώτη προνομιακή ενέργεια ζητά εξουσιοδότηση διαχειριστή μία φορά για αυτό το παράθυρο Boot Bitch? &lt;b&gt;Αρχείο - Κλείδωμα συνεδρία διαχειριστή&lt;/b&gt; τελειώνει αμέσως αυτή τη συνεδρία βοηθού. Κάθε επισκευή κρατάει το δικό του χρόνο πτήσης.</translation>
     </message>
     <message>
@@ -1844,11 +1900,11 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Περιήγηση φακέλων επισκευής...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Περιήγηση στους φακέλους του επισκευασμένου συστήματος μόνο για ανάγνωση και στάδιο του επιλεγμένου φακέλου.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Περιήγηση στο επιλεγμένο σύστημα επισκευής μέσω των προσωρινών προσαρτημάτων μόνο ανάγνωσης του βοηθού και επιλογή μιας διαδρομής απόλυτου προορισμού. Δεν αλλάζουν τα αρχεία προορισμού κατά την περιήγηση.</translation>
     </message>
     <message>
@@ -1904,7 +1960,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Επιλογή φακέλου προορισμού υπολογιστή</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Επιλέξτε τις δυνατότητες του πίνακα.</translation>
     </message>
     <message>
@@ -2064,7 +2120,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Αντιγραφή και επαλήθευση</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
         <translation>Αντιγραφή και επαλήθευση αρχείων προς οποιαδήποτε κατεύθυνση μέσω του φυλασσόμενου βοηθού (cp -a συν αποκατάσταση ιδιοκτησίας και ένα ανά αρχείο byte-compare). Ο ανιχνευτής αρχείων του βοηθού ανοίγει τα χειριστήρια και ελέγχει την κατεύθυνση και την πορεία.</translation>
     </message>
     <message>
@@ -2252,13 +2308,13 @@ The helper keeps its direction and path containment checks; a sensitive repair-s
         <translation>Εισάγετε την εντολή για να εκτελέσετε πρώτοι.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Εισάγετε τους αριθμούς της συσκευής για την επισκευή (διαστημικό- ή κόμμα-χωρισμένο, για παράδειγμα "1 3"), ή 0 για να παραλείψετε.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Εισάγετε τους αριθμούς της συσκευής για την επισκευή (διαστημικό- ή κόμμα-χωρισμένο, για παράδειγμα &quot;1 3&quot;), ή 0 για να παραλείψετε.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>Εισάγετε τη φράση πρόσβασης για το %1.
 
 Αποστέλλεται μόνο στην κρυπτογράφηση πάνω από την τυπική είσοδο του βοηθού και ποτέ δεν καταγράφεται ή τοποθετείται σε γραμμή εντολών.</translation>
@@ -2276,7 +2332,7 @@ It is sent only to cryptsetup over the helper's standard input and is never logg
         <translation>Καθιερώστε την προνομιακή συνεδρία βοηθού για το τρέχον πεδίο εφαρμογής τώρα.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Τα αρχεία ρυθμίσεων στόχων Etch-era· η διαθεσιμότητα ελέγχεται μόνο από τα διαγνωστικά του βοηθού.</translation>
     </message>
     <message>
@@ -2554,12 +2610,12 @@ The helper independently re-checks that the selected disk backs /, /boot and /bo
         <translation>Εγκατάσταση ελλείπουσας υποστήριξης...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Εγκαταστήστε το πακέτο '%1' στον επιλεγμένο στόχο επισκευής μέσω του φυλασσόμενου συστήματος υποστήριξης πακέτου; Αυτό τροποποιεί τον στόχο επισκευής και ακυρώνει τα κρυφά διαγνωστικά.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Εγκαταστήστε το πακέτο &apos;%1&apos; στον επιλεγμένο στόχο επισκευής μέσω του φυλασσόμενου συστήματος υποστήριξης πακέτου; Αυτό τροποποιεί τον στόχο επισκευής και ακυρώνει τα κρυφά διαγνωστικά.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
-        <translation>Εγκαταστήστε το πακέτο '%1' στον τρέχοντα υπολογιστή μέσω του φυλασσόμενου συστήματος υποστήριξης πακέτου; Αυτό τροποποιεί τον τρέχοντα υπολογιστή και ακυρώνει τα αποθηκευμένα διαγνωστικά.</translation>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <translation>Εγκαταστήστε το πακέτο &apos;%1&apos; στον τρέχοντα υπολογιστή μέσω του φυλασσόμενου συστήματος υποστήριξης πακέτου; Αυτό τροποποιεί τον τρέχοντα υπολογιστή και ακυρώνει τα αποθηκευμένα διαγνωστικά.</translation>
     </message>
     <message>
         <source>Install unavailable</source>
@@ -2650,6 +2706,50 @@ The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive 
         <translation>Λείπει διαχειριστής οθόνης: εγκαταστήστε το πακέτο %1 από τον πίνακα δυνατοτήτων.</translation>
     </message>
     <message>
+        <source>GRUB EFI tooling</source>
+        <translation>Εργαλειοθήκη GRUB EFI</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>Εργαλείο διαμόρφωσης GRUB</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>Εργαλείο εγκατάστασης GRUB</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Λείπει %1: εγκαταστήστε το πακέτο(α) που ταιριάζει %2 από τον πίνακα δυνατοτήτων εκκίνησης.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Λείπει %1: εγκαταστήστε το πακέτο που ταιριάζει από τον πίνακα δυνατοτήτων εκκίνησης.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>Κατασκευαστής TUXEDO UKI</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>Προϋπόθεση εκκίνησης</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>εργαλεία initramfs</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
+    </message>
+    <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
         <translation>Λείπουν κεφαλίδες (το τελευταίο kernel δεν έχει αντιστοιχισμένες κεφαλίδες): %1.</translation>
     </message>
@@ -2694,8 +2794,12 @@ The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive 
         <translation>Νεότερες εγκατεστημένες kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Δεν είναι κρυμμένη η γραμμή λειτουργίας 'Λεγκέι'· εκτελέστε τα διαγνωστικά για το επιλεγμένο πεδίο για να αξιολογήσετε τους καθετήρες περιορισμού chroot/timeout του βοηθού (αποτυχία κλεισίματος).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Μεταγλωττιστής κατασκευής πυρήνα: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Δεν είναι κρυμμένη η γραμμή λειτουργίας &apos;Λεγκέι&apos;· εκτελέστε τα διαγνωστικά για το επιλεγμένο πεδίο για να αξιολογήσετε τους καθετήρες περιορισμού chroot/timeout του βοηθού (αποτυχία κλεισίματος).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2762,7 +2866,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Δεν υπάρχουν διαγνωστικά αποτελέσματα για αποθήκευση ακόμα.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>Δεν εντοπίστηκαν σφάλματα συστήματος αρχείων στη ρίζα %1, /boot ή /home συστήματα αρχείων. Δεν έγινε επισκευή.</translation>
     </message>
     <message>
@@ -2786,7 +2890,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Δεν επιλέχθηκε εργαλείο επισκευής.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>Δεν εντοπίστηκαν διορθώσιμα σφάλματα συστήματος αρχείων στη ρίζα %1, /boot ή /home filesystems, αλλά %2. Δεν έγινε επισκευή.</translation>
     </message>
     <message>
@@ -2838,7 +2942,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Εντάξει.</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
         <translation>Οι εντολές offline τρέχουν ένα κάθε φορά σε ένα φρέσκο chroot και δεν μπορούν να απαντήσουν σε διαδραστικές εντολές (apt-get -y αναβαθμίσεις εργασίες). Οι εντολές host-shell εκτελούνται απευθείας στον τρέχοντα υπολογιστή. Οι γραμμές του καθετήρα ανοίγουν το πεδίο εντολών. Ο ακριβής λόγος εμφανίζεται στην εργαλειοθήκη.</translation>
     </message>
     <message>
@@ -3026,11 +3130,11 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Ανανέωση συσκευών</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>Αναδημιουργία της ρύθμισης %1 GRUB</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>Αναδημιουργία της ρύθμισης %1 extlinux</translation>
     </message>
     <message>
@@ -3186,7 +3290,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Εκτέλεση μιας εντολής στο εσωτερικό του επιλεγμένου συστήματος επισκευής ως ρίζα (δεν απαιτείται sudo). Οι εντολές εκτελούνται ένα-ένα σε ένα φρέσκο chroot και δεν μπορούν να απαντήσουν σε διαδραστικές υποδείξεις?Χρησιμοποιήστε μη-διαδραστικές σημαίες, όπως apt-get -y αναβάθμιση. Η έξοδος διατηρείται σε αυτό το παράθυρο και στο αρχείο καταγραφής εφαρμογών.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Εκτελέστε μια εντολή στον τρέχοντα υπολογιστή ως ρίζα (Host Shell) ή στο εσωτερικό του επιλεγμένου συστήματος επισκευής ως ρίζα (Chroot Shell)· το sudo δεν χρειάζεται ούτε σε αυτό. Οι εντολές Host-Shell εκτελούνται απευθείας στο ενεργό σύστημα· οι εντολές chroot εκτελούνται μία κάθε φορά σε ένα φρέσκο chroot και δεν μπορούν να απαντήσουν σε διαδραστικές υποδείξεις, οπότε μη διαδραστικές σημαίες όπως apt-get -y αναβάθμιση εξακολουθούν να συνιστώνται για αφύλακτες διαδρομές. Η έξοδος διατηρείται σε αυτό το παράθυρο και στο αρχείο καταγραφής εφαρμογών. Ο βοηθός ανιχνεύει μόνο ανάγνωση πύλη το πεδίο εντολών? ενώ το Shell δεν είναι διαθέσιμο η σελίδα δείχνει τον ακριβή λόγο κάτω από το πεδίο.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Εκτέλεση διαγνωστικών για αυτό το πεδίο για να ξεκλειδώσετε τις ενέργειες πύλη. Τα διαγνωστικά είναι μόνο για ανάγνωση και η μόνη πηγή στοιχείων.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Εκτελέστε τα διαγνωστικά για να διερευνήσετε ποια αρχεία ρυθμίσεων του στόχου υπάρχουν.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
         <translation>Εκτέλεση σε υπολογιστή</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Εκτελέστε ένα εργαλείο επισκευής ή χρησιμοποιήστε το πλήρες σχέδιο επισκευής κατά της επιλεγμένης μονάδας επισκευής. Επιλέξτε Συντήρηση Host στα Συστήματα για να εκτελέσετε τα ίδια υποστηριζόμενα, φυλασσόμενα στάδια ενάντια στον προστατευόμενο Running Host. Επιλέξτε τα στάδια πλήρους επισκευής στις Settings. Ενεργοποιημένα στάδια εκτελούνται με τη σειρά που εμφανίζεται. Κάθε διαμορφωμένο στάδιο εμφανίζεται επίσης παρακάτω ως ένα μεμονωμένο εργαλείο.Η στήλη Full Repair καθρεφτίζει την τρέχουσα κατάσταση ρυθμίσεων. Τα εργαλεία εκκίνησης (διαμόρφωση GRUB, συμφιλίωση εκκίνησης-stack και Make Default) είναι ανεξάρτητα: εκτελέστε τα με οποιαδήποτε σειρά, και μια μεταγενέστερη ενέργεια επαναβεβαιώνει τι άλλαξε ένα προηγούμενο και αναφέρει το δικό του αποτέλεσμα. Το ενεργό πεδίο δράσης εμφανίζεται δίπλα στην Επισκευή: επιλεγμένη μονάδα επισκευής ή λειτουργία συντήρησης Host. Κάθε ενέργεια παραμένει απενεργοποιημένη μέχρι οι κρυμμένες γραμμές δυνατότητας να είναι διαθέσιμες και ο βοηθός να διατηρεί το χρόνο εκτέλεσης προ πτήσης. Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί 'αμετάβλητη' ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Εκτελέστε ένα εργαλείο επισκευής ή χρησιμοποιήστε το πλήρες σχέδιο επισκευής κατά της επιλεγμένης μονάδας επισκευής. Επιλέξτε Συντήρηση Host στα Συστήματα για να εκτελέσετε τα ίδια υποστηριζόμενα, φυλασσόμενα στάδια ενάντια στον προστατευόμενο Running Host. Επιλέξτε τα στάδια πλήρους επισκευής στις Settings. Ενεργοποιημένα στάδια εκτελούνται με τη σειρά που εμφανίζεται. Κάθε διαμορφωμένο στάδιο εμφανίζεται επίσης παρακάτω ως ένα μεμονωμένο εργαλείο.Η στήλη Full Repair καθρεφτίζει την τρέχουσα κατάσταση ρυθμίσεων. Τα εργαλεία εκκίνησης (διαμόρφωση GRUB, συμφιλίωση εκκίνησης-stack και Make Default) είναι ανεξάρτητα: εκτελέστε τα με οποιαδήποτε σειρά, και μια μεταγενέστερη ενέργεια επαναβεβαιώνει τι άλλαξε ένα προηγούμενο και αναφέρει το δικό του αποτέλεσμα. Το ενεργό πεδίο δράσης εμφανίζεται δίπλα στην Επισκευή: επιλεγμένη μονάδα επισκευής ή λειτουργία συντήρησης Host. Κάθε ενέργεια παραμένει απενεργοποιημένη μέχρι οι κρυμμένες γραμμές δυνατότητας να είναι διαθέσιμες και ο βοηθός να διατηρεί το χρόνο εκτέλεσης προ πτήσης. Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί &apos;αμετάβλητη&apos; ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Εκτελέστε μια αναθεωρημένη εντολή ως ρίζα μέσα στο στόχο chroot μέσα από το φυλασσόμενο verbήμα κέλυφος του βοηθού.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Εκτέλεση μιας αναθεωρημένης εντολής ως ρίζα στον τρέχοντα υπολογιστή μέσω του φυλασσόμενου verbήματος host-shell του βοηθού.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Press Authorize on the Systems or Repair tab to establish the session, or enter 
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Να εκτελέσω το σχέδιο πλήρους επισκευής;
@@ -3386,7 +3490,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
         <translation>Επιλέξτε μια φυσική κίνηση στη λίστα με τους διαθέσιμους στόχους επισκευής στην καρτέλα Systems πρώτα, ή χρησιμοποιήστε τη συντήρηση Host για τον προστατευμένο υπολογιστή που εκτελείται.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Επιλέξτε μια φυσική κίνηση; Boot Bitch επιλύει το πιο πιθανό όγκο του συστήματος Linux αυτόματα. Ο τρέχοντας ξενιστής παραμένει προστατευμένος από τις συνήθεις επισκευές στόχου, με ξεχωριστή ρητή διαδρομή φιλοξενίας-συντήρησης για το δικό του σύστημα. Το κουμπί Λεπτομέρειες δείχνει τα δεδομένα του προστατευμένου υπολογιστή στο πλαίσιο λεπτομέρειες; επιλέγοντας οποιαδήποτε σειρά κίνησης αποκαθιστά το πάσσαλο ανά οδηγό.</translation>
     </message>
     <message>
@@ -3475,7 +3579,7 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     </message>
     <message>
         <source>Settings</source>
-        <translation>Settings</translation>
+        <translation>Ρυθμίσεις</translation>
     </message>
     <message>
         <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
@@ -3512,6 +3616,14 @@ The helper keeps its runtime preflights; the command is passed as one argument a
     <message>
         <source>Show devices without an identified Linux installation</source>
         <translation>Εμφάνιση συσκευών χωρίς καθορισμένη εγκατάσταση Linux</translation>
+    </message>
+    <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Όταν απενεργοποιηθεί, κρύβει μόνο ανάγνωση squashfs όγκους εμπορευματοκιβωτίων (snap-style) που δεν μπορούν να είναι στόχοι εγκατάστασης Linux.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>Εμφάνιση συσκευών βρόχου squashfs</translation>
     </message>
     <message>
         <source>Show encrypted devices before unlocking</source>
@@ -3694,8 +3806,8 @@ Method: helper-confirmed mapping from the last read-only diagnostics.</source>
         <translation>Σταματώντας την εκτέλεση της εντολής Shell... Η καρτέλα Logs κρατά το πλήρες αντίγραφο.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Προτεινόμενη συσκευασία</translation>
+        <source>Packages</source>
+        <translation>Πακέτα</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3756,8 +3868,8 @@ The running host is independently re-checked and refused by the privileged helpe
         <translation>Το σχέδιο Full Repair τρέχει τα επιλεγμένα στάδια κληρονομιάς σε τάξη μέσω του φυλασσόμενου βοηθού; τα μεμονωμένα εργαλεία τρέχει ένα στάδιο κάθε φορά. Κάθε ενέργεια παραμένει απενεργοποιημένη μέχρι οι κρυμμένες γραμμές δυνατότητας να είναι διαθέσιμες και ο βοηθός να διατηρεί το χρόνο εκτέλεσης προ πτήσης.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Το σχέδιο Full Repair τρέχει τα επιλεγμένα στάδια κληρονομιάς σε τάξη μέσω του φυλασσόμενου βοηθού; τα μεμονωμένα εργαλεία τρέχει ένα στάδιο κάθε φορά. Κάθε ενέργεια παραμένει απενεργοποιημένη μέχρι οι κρυμμένες γραμμές δυνατότητας να είναι διαθέσιμες και ο βοηθός να διατηρεί το χρόνο εκτέλεσης προ πτήσης. Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί 'αμετάβλητη' ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Το σχέδιο Full Repair τρέχει τα επιλεγμένα στάδια κληρονομιάς σε τάξη μέσω του φυλασσόμενου βοηθού; τα μεμονωμένα εργαλεία τρέχει ένα στάδιο κάθε φορά. Κάθε ενέργεια παραμένει απενεργοποιημένη μέχρι οι κρυμμένες γραμμές δυνατότητας να είναι διαθέσιμες και ο βοηθός να διατηρεί το χρόνο εκτέλεσης προ πτήσης. Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί &apos;αμετάβλητη&apos; ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
@@ -3900,7 +4012,7 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
         <translation>Το επιλεγμένο πεδίο εφαρμογής δεν έχει επιλυμένο συστατικό ρίζας.Χρησιμοποιήστε Refresh Devices και δεσμεύστε ξανά τον στόχο επισκευής.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Ο δίσκος και το συστατικό ρίζας του επιλεγμένου πεδίου δεν μπόρεσαν να επιλυθούν.</translation>
     </message>
     <message>
@@ -3916,8 +4028,8 @@ Press Authorize on the Systems or Repair tab to re-establish the session, then r
         <translation>Αυτή η κρυπτογραφημένη κίνηση δεν έχει ορατό σύστημα αρχείων Linux ακόμα. Χρησιμοποιήστε Ξεκλειδώστε, ανανεώστε τις συσκευές και επιλέξτε το στόχο μετά την ανίχνευση της ρίζας του Linux.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Αυτό το frontend κληρονομιά εκθέτει καμία ενέργεια %1; ο βοηθός αναφέρει την ικανότητα ως διαθέσιμη.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Διατίθεται μόνο ως διαγνωστικό/ικανότητα - αυτό το κληρονομικό frontend δεν εκθέτει καμία ενέργεια επισκευής· εκτελέστε τη διαδραστική επισκευή από το σύγχρονο GUI.</translation>
     </message>
     <message>
         <source>Tool</source>
@@ -4040,6 +4152,18 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>ΠΡΟΕΙΔΟΠΟΙΗΣΗ: το αποθηκευμένο αρχείο ρυθμίσεων GUI %1 δεν μπορεί να διαβαστεί· οι επιλογές του διαβάζονται ως προκαθορισμένες, όχι ως αποθηκευμένες τιμές.</translation>
     </message>
     <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>ΠΡΟΕΙΔΟΠΟΙΗΣΗ: το αποθηκευμένο αρχείο ρυθμίσεων GUI %1 δεν μπορεί να διαβαστεί ή να αφαιρεθεί· οι επιλογές του διαβάζονται ως προκαθορισμένες. Αφαιρέστε το (ή κάντε το ~/.qt εγγράψιμο) ώστε οι αποθηκευμένες ρυθμίσεις να επιμένουν και πάλι.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Αφαιρέθηκαν %1 μη αναγνώσιμα παρωχημένα αρχεία ρυθμίσεων: %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Αδύνατη η αφαίρεση των μη αναγνώσιμων παρωχημένων αρχείων ρυθμίσεων %1. Οι προκαθορισμένες ρυθμίσεις ισχύουν μέχρι να αφαιρεθούν.</translation>
+    </message>
+    <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
         <translation>Όταν είναι κλειστό, οι οδηγοί με μια κρυπτογραφημένη συσκευή είναι κρυμμένοι μέχρι να ξεκλειδωθεί η ένταση.</translation>
     </message>
@@ -4064,8 +4188,8 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>Τύλιξε μακριές γραμμές καταγραφής</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί 'αμετάβλητη' ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Γράψτε τις ενέργειες ζητήστε επιβεβαίωση και στη συνέχεια εκτελέστε τις προ πτήσης του ίδιου του βοηθού, το GUI δεν τις αποδυναμώνει ποτέ. Μια επισκευή που δεν έχει αποδειχθεί &apos;αμετάβλητη&apos; ακυρώνει τα λανθάνοντα διαγνωστικά και απενεργοποιεί τις κλειστές ενέργειες μέχρι τα διαγνωστικά να τρέξουν ξανά.</translation>
     </message>
     <message>
         <source>Write target configuration</source>
@@ -4100,8 +4224,8 @@ The helper opens a temporary device-mapper mapping with cryptsetup and keeps it 
         <translation>Άδεια διαχειριστή</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>Η ανύψωση απαιτεί ένα διαδραστικό κωδικό πρόσβασης sudo; εκτελέστε τον καπνό ως ρίζα ή μετά `sudo -S -v` με -- αφαιρέστε 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>Η ανύψωση απαιτεί ένα διαδραστικό κωδικό πρόσβασης sudo; εκτελέστε τον καπνό ως ρίζα ή μετά `sudo -S -v` με -- αφαιρέστε &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4180,7 +4304,7 @@ The command was not started.</source>
         <translation>Μη διαθέσιμο - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
         <translation>Μη διαθέσιμο: δείτε το χαρακτηριστικό Legacy του βοηθού: παραπάνω λόγος ανίχνευσης</translation>
     </message>
     <message>
@@ -4191,5 +4315,409 @@ The command was not started.</source>
         <source>your account</source>
         <translation>ο λογαριασμός σας</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Τελευταία αποθήκη kernel: %1 (καινούριο από το εγκατεστημένο νεότερο; %2).</translation></message><message><source>Try Again</source><translation>Προσπάθησε ξανά.</translation></message><message><source>Enter the note text</source><translation>Εισάγετε το κείμενο σημείωσης</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Αυτή η σημείωση θα προσαρτηθεί στην επιλεγμένη καταγραφή συνεδρίας %1.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>ΣΗΜΕΙΩΣΗ προσαρτημένη στο αρχείο καταγραφής προηγούμενης συνεδρίας %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Η επιλεγμένη καταχώρηση καταγραφής δεν είναι έγκυρη καταγραφή συνεδρίας. Η σημείωση δεν γράφτηκε.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Το επιλεγμένο αρχείο καταγραφής συνεδρίας %1 δεν είναι εγγράψιμο· η σημείωση δεν προστέθηκε.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Τελευταία αποθήκη kernel: %1 (καινούριο από το εγκατεστημένο νεότερο; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Προσπάθησε ξανά.</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Εισάγετε το κείμενο σημείωσης</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Αυτή η σημείωση θα προσαρτηθεί στην επιλεγμένη καταγραφή συνεδρίας %1.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>ΣΗΜΕΙΩΣΗ προσαρτημένη στο αρχείο καταγραφής προηγούμενης συνεδρίας %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Η επιλεγμένη καταχώρηση καταγραφής δεν είναι έγκυρη καταγραφή συνεδρίας. Η σημείωση δεν γράφτηκε.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Το επιλεγμένο αρχείο καταγραφής συνεδρίας %1 δεν είναι εγγράψιμο· η σημείωση δεν προστέθηκε.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Δεν λανθάνοντα διαγνωστικά run-host; εκτελέστε μόνο ανάγνωση-διαγνωστικά host στη συντήρηση host για να εποικίσουν αυτή τη σειρά.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - ματαιώθηκε — σταμάτησε κατόπιν αιτήματός σας</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 στάδιο ή τα αναφερόμενα αλλαγές πριν από τη διακοπή; αυτές οι αλλαγές εφαρμόζονται και τα πληγείσα διαγνωστικά αναγεννήθηκαν</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>ένα στάδιο που αναφέρεται αλλαγή πριν από τη διακοπή· οι αλλαγές του μπορούν ήδη να εφαρμοστούν</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>δεν έγιναν αλλαγές</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Εγκαταστάθηκε</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>Επισκευάζει τη διαδρομή εκκίνησης EFI / UKI για συστήματα UEFI</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Επισκευή πληκτρολογίου, ποντικιού και touchpad μέσω του διαδραστικού μενού του βοηθού</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Επισκευή δικτύου με βάση στοιχεία μέσω του διαδραστικού μενού του βοηθού· ζωντανές αλλαγές συνδεσιμότητας ποτέ δεν αγγίζουν τη διασύνδεση που κρατά την προκαθορισμένη διαδρομή</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Πακέτα που δεν είναι διαθέσιμα στα αποθετήρια του συστήματος</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>Οι καταχωρήσεις εκκίνησης %1 φορτώθηκαν μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>Η προβολή firmware %1 είναι διαθέσιμη. Φόρτωση καταχωρήσεων για τη λίστα καταχωρήσεων UEFI μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Εκκίνηση</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Εκκίνηση %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Οι εγγραφές εκκίνησης απορρίφθηκαν: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Απορρίφθηκε το αποτέλεσμα της λίστας εισόδου εκκίνησης: το πεδίο εφαρμογής άλλαξε κατά την εκτέλεση της αίτησης.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Μπότες</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Κλάση</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Κατηγορία: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Άμεση (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Οδήγα</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Οδήγα: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>Καταχωρήσεις εκκίνησης EFI</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Υποχώρηση</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Υφασμάτινα είδη</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Αδυναμία φόρτωσης καταχωρήσεων εκκίνησης firmware. Δείτε τα αρχεία καταγραφής για λεπτομέρειες.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Η λίστα εκκίνησης firmware απέτυχε.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB μενού</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Ετικέτα</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Ετικέτα: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Λίστα καταχωρήσεων εκκίνησης firmware</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>Καταχωρίζεται στο BootOrder: όχι (προσδίδεται από firmware)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>Καταχωρίστηκε στο BootOrder: ναι</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Φόρτωση καταχωρήσεων</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>Φόρτωση των καταχωρήσεων firmware %1 UEFI μόνο ανάγνωσης.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Φορτωμένο %1 %2 firmware εκκίνησης endr%3 μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Φορτωτής</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Φορτωτής: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>Φόρτωση καταχωρήσεων firmware %1 UEFI μόνο για %2 (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Δίκτυο</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>Δεν βρέθηκαν καταχωρήσεις firmware UEFI — αυτό το σύστημα είναι BIOS/legacy ή στερείται efibootmgr, έτσι δεν υπάρχει εντολή εκκίνησης firmware για τη διαχείριση.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Δεν επιλέχθηκε πεδίο εφαρμογής</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Άλλα</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Στόχος επισκευής: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Στόχος επισκευής: δεν είναι έτοιμος</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Στόχος επισκευής</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Ρόλος: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Εκτέλεση υπολογιστή: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Εκτέλεση υπολογιστή: δεν επιλέχθηκε</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Εκτελωνιστής</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Επιλέξτε Συντήρηση υπολογιστή στον τρέχοντα υπολογιστή, ή έναν στόχο επισκευής στα Συστήματα, για τη διαχείριση καταχωρήσεων εκκίνησης firmware.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Επιλέξτε Συντήρηση υπολογιστή στον τρέχοντα υπολογιστή, ή έναν στόχο επισκευής στα Συστήματα, για τη διαχείριση καταχωρήσεων εκκίνησης firmware. Φόρτωση καταχωρήσεων παραθέτει τις καταχωρήσεις UEFI μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>Οι καταχωρήσεις εκκίνησης firmware UEFI (το NVRAM του εκτελούμενου υπολογιστή) παρατίθενται μόνο για ανάγνωση εδώ. Στο Host Maintenance βλέπετε τις καταχωρήσεις του τρέχοντα host? με έναν στόχο επισκευής δεσμευμένο βλέπετε τις καταχωρήσεις NVRAM των οποίων τα σημεία κατάτμησης στο χώρισμα του συστήματος EFI της κίνησης. Αυτή η προβολή δεν αλλάζει ποτέ το firmware.Ένας υπολογιστής μόνο BIOS (Etch) δεν έχει καταχωρήσεις εκκίνησης firmware και δεν απαριθμεί κανένα. Το μενού εκκίνησης GRUB (η λίστα με τους πυρήνες μέσα στο GRUB) είναι ξεχωριστό και αναγεννάται από την επισκευή GRUB ή την επισκευή μποτών.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>Οι καταχωρήσεις του λογισμικού εκκίνησης UEFI στο BootOrder, αναφέρονται μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Αυτή η εγγραφή είναι σήμερα ενεργή (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>Αδυναμία διαγραφής του %1.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>Στόχος επισκευής</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>στόχος επισκευής</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>λειτουργία του ξενιστή</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>run-host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>Καταχωρήσεις EFI</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Μενού εκκίνησης</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>Εναλλαγή μεταξύ των καταχωρήσεων firmware UEFI και του μενού εκκίνησης μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Είσοδος μενού</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Το μενού εκκίνησης μόνο ανάγνωσης (οι καταχωρήσεις πυρήνα/OS του φορτωτή εκκίνησης σε σειρά αρχείων).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>Οι καταχωρήσεις μενού εκκίνησης %1 φορτώθηκαν μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>Η προβολή μενού εκκίνησης %1 είναι διαθέσιμη. Επιλέξτε Μενού εκκίνησης για να εμφανίσετε το μενού εκκίνησης μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>Η προβολή καταχωρήσεων firmware %1 είναι διαθέσιμη. Επιλέξτε Καταχωρήσεις EFI για να εμφανίσετε τις καταχωρήσεις UEFI μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Επιλέξτε Συντήρηση υπολογιστή στον τρέχοντα υπολογιστή, ή έναν στόχο επισκευής στα Συστήματα, για να δείτε τις καταχωρήσεις εκκίνησης firmware. Επιλέξτε τις καταχωρήσεις EFI ή το μενού εκκίνησης παραπάνω για να φορτώσετε μόνο τις καταχωρήσεις του τρέχοντος πεδίου εφαρμογής.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>Φόρτωση του μενού εκκίνησης %1 μόνο για %2 (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Λίστα μενού εκκίνησης</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Άρνηση ανανέωσης μενού εκκίνησης: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Η λίστα μενού εκκίνησης απέτυχε.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Το εφεδρικό μενού εκκίνησης απορρίφθηκε: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Το αποτέλεσμα της λίστας μενού εκκίνησης απορρίφθηκε: το πεδίο εφαρμογής άλλαξε κατά την εκτέλεση της αίτησης.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Είσοδος μενού: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Αναγνωριστικό καταχώρησης: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Αυτό είναι υπομενού.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Φορτώνει τη διαμόρφωση: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Ξένο: δείχνει μια διαφορετική κίνηση ή χώρισμα.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Πυρήνας: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Προκαθορισμένη καταχώρηση: ναι</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Προκαθορισμένη καταχώρηση: όχι</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Προκαθορισμένο</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (υπομενού)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Φορτώθηκαν %1 καταχωρήσ%2 μενού εκκίνησης μόνο για ανάγνωση.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>Δεν υπάρχει κληρονομιά GRUB menu.lst σε αυτό το πεδίο; Δοκιμάστε το μενού εκκίνησης GRUB grub.cfg μόνο ανάγνωση-μόνο.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Δεν βρέθηκαν ρυθμίσεις μενού εκκίνησης σε αυτόν τον δίσκο. Το σύστημα μπορεί να μην έχει GRUB, extlinux/syslinux ή GRUB κληροδοτημένο μενού εκκίνησης, ή η διαμόρφωση του ζει αλλού.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>Οι ρυθμίσεις του μενού εκκίνησης υπάρχουν αλλά δεν αναφέρονται καταχωρήσεις.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>Το μενού εκκίνησης δεν ήταν δυνατό να φορτωθεί. Δείτε τα αρχεία καταγραφής για λεπτομέρειες.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>προκαθορισμένο</translation>
+    </message>
+</context>
 </TS>

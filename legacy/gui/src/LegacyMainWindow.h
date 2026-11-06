@@ -112,6 +112,38 @@ struct LegacyFsCheckResult {
     LegacyFsCheckResult() {}
 };
 
+// One parsed UEFI firmware boot entry from the helper's `efi-list` TAB-
+// separated protocol (modern BootEntryRow parity; round 117 — 0.2.30 #7, the
+// read-only firmware boot-entries view).  Declared in the header (not the
+// .cpp) so the tab holds the row list in member state across loads.
+struct LegacyBootEntryRow {
+    LegacyBootEntryRow() : listed(true) {}
+    QString id;
+    QString label;
+    QString loader;
+    QString entryClass;
+    QString role;
+    QString partuuid;
+    QString deviceModel;
+    bool listed;
+};
+
+// One parsed boot-menu entry from the helper's grub-legacy-list / grub-list
+// TAB-separated protocols (round 124, 0.2.30 #23 — the read-only boot-menu
+// view; modern GrubLegacyEntry/GrubMenuEntry parity).  Declared in the header
+// (not the .cpp) so the tab holds the row list in member state across loads.
+struct LegacyBootMenuRow {
+    LegacyBootMenuRow() : foreignEntry(false), isDefault(false), isSubmenu(false) {}
+    QString title;       // grub-legacy title text / grub2 menuentry title
+    QString kernelOrClass; // grub-legacy kernel path / grub2 --class token
+    QString initrd;      // grub-legacy initrd path (empty for grub2 rows)
+    QString id;          // grub2 menuentry id (empty for grub-legacy rows)
+    QString configFile;  // grub2 submenu configfile path (empty otherwise)
+    bool foreignEntry;   // grub2 foreign marker
+    bool isDefault;      // the resolved default entry
+    bool isSubmenu;      // grub2 submenu row
+};
+
 // Cycle 9 loop 2: --smoke-test runs with settings isolation so a user's
 // persisted ~/.qt/*rc overrides can never flip a smoke assertion, and the
 // smoke never reads or writes those files.
@@ -143,6 +175,8 @@ struct LogEntry {
     QString stages;     // space-separated helper stages for Repair entries
     QDateTime stamp;    // per-entry arrival time (null = synthetic/unspecified)
 };
+
+class PopupFloorHintFilter;
 
 class LegacyMainWindow : public QMainWindow
 {
@@ -230,6 +264,35 @@ private slots:
     // Item 2: QTable currentChanged; re-applies the Install button's enabled
     // state to the newly selected row.
     void capabilitySelectionChanged(int row, int col);
+    // Round 117 (0.2.30 #7): the Boot entries tab's read-only firmware view —
+    // the EFI Entries view issues the helper's read-only efi-list for the
+    // current scope (Host Maintenance or the committed repair target); the
+    // row selection handler refreshes the details pane from the parsed rows.
+    // Round 124 (0.2.30 #23): the heading dropdown switches between the
+    // firmware view and the read-only Boot Menu view (grub-legacy-list with a
+    // grub-list fallback); selecting a view loads it.
+    void bootEntriesViewChanged(int index);
+    void loadBootEntries();
+    void bootEntriesSelectionChanged(int row, int col);
+    // Round 124 (0.2.30 #23): the read-only boot-menu view — issues the
+    // helper's grub-legacy-list (falling back to grub-list for a GRUB2 scope)
+    // and repopulates the read-only menu table + details pane.
+    void loadBootMenuEntries();
+    void bootMenuSelectionChanged(int row, int col);
+    // Round 124 (0.2.30 #23): the deferred one-time grub-list fallback chain
+    // step — a new command never starts inside helperFinished's call stack
+    // (the round-29 re-entrant rule), so the continuation runs on the next
+    // event-loop turn.
+    void bootMenuFallbackContinue();
+    // Round 125 (0.2.30 #27): the EFI boot entries tab visibility gate (modern
+    // MainWindow::bootEntriesTabVisible() parity) — the tab is present only
+    // when the ACTIVE scope's cached diagnostics report the efi/grub/extlinux
+    // capability available; absent or stale evidence hides the tab (fail
+    // closed).  applyBootEntriesTabVisibility() removes/inserts the tab at its
+    // fixed logical position between Diagnostics and Repair and never leaves
+    // the user stranded on a tab that just became hidden.
+    bool bootEntriesTabVisible() const;
+    void applyBootEntriesTabVisibility();
     void helperLine(const QString &line);
     void helperFinished(bool ok, int exitCode);
     // Emits the RAW answer for a waiting interactive repair menu: the input
@@ -299,6 +362,44 @@ private slots:
     int toolIndexForTitle(const QString &title) const;
     void runScheduledAutoRefresh();
     void runSmokeStep();
+    void runPopupFloorDrill();
+    void recordPopupFloorMeasurement(QString &report, const QString &name,
+                                     QWidget *dialog);
+    // Round 152.5 (ITEM 1): the popup-floor drill — the pre-armed timer that
+    // drills the CURRENTLY EXEC'ING modal popup (measure -> shrink -> assert
+    // -> accept) while the smoke chain is blocked in its exec loop.
+    void popupFloorDrillTimer();
+    // Round 152.6 (the drag-settle re-assert): re-asserts every visible
+    // floored dialog's ~60% floor after an interactive WM drag settles.
+    void reassertPopupFloors();
+    // Round 152.8 (ITEM 1): the deferred last-writer re-assert — the filter
+    // re-writes the PMinSize hints on the next event-loop turn.
+    void reassertPopupFloorHints();
+    // Round 117 (0.2.30 #7): re-applies the Boot entries tab's control states
+    // (the view-dropdown enablement + the fail-closed status reason)
+    // after scope/run changes, mirroring the modern updateBootEntriesControls.
+    void updateBootEntriesControls();
+    // Round 117 (0.2.30 #7): resolves the Boot entries scope (Host
+    // Maintenance, or the committed repair target) with the modern
+    // bootEntriesReady semantics — the helper's own runtime preflights stay
+    // the enforcement layer.
+    bool bootEntriesScopeReady(QString *reason, QString *disk, QString *root) const;
+    // Round 117 (0.2.30 #7): the modern bootEntryBootsLabel / bootEntryDetailsText
+    // equivalents (static members so tr() resolves to the LegacyMainWindow
+    // catalog context).
+    static QString bootEntryBootsLabel(const QString &role);
+    static QString bootEntryDetailsText(const LegacyBootEntryRow &row,
+                                        bool isCurrent);
+    // Round 117 (0.2.30 #7): consumes a finished efi-list transcript — the
+    // BootCurrent/BootOrder headers + the TAB-separated entry rows — and
+    // repopulates the read-only firmware table and the details pane; a failed
+    // run clears the view and shows the honest reason.
+    void applyBootEntriesTranscript(const QString &transcript, bool ok);
+    // Round 124 (0.2.30 #23): consumes a finished grub-legacy-list/grub-list
+    // transcript — the config/default header lines + the TAB-separated rows —
+    // and repopulates the read-only boot-menu table and details pane; a
+    // "(not found)" config chains the grub-list fallback once.
+    void applyBootMenuTranscript(const QString &transcript, bool ok);
     // Re-entrant single-popup repair-plan step driver, scheduled from
     // helperFinished()/sendPromptAnswer() so a new command never starts inside
     // the finished signal's call stack. Starts the next plan command (or the
@@ -312,6 +413,10 @@ private:
     void buildMenus();
     QWidget *buildTargetsTab();
     QWidget *buildDiagnosticsTab();
+    // Round 117 (0.2.30 #7): the read-only UEFI firmware boot-entries tab
+    // (modern EFI boot entries firmware-section parity; the edit/save
+    // semantics stay out of scope).
+    QWidget *buildBootEntriesTab();
     QWidget *buildActionsTab();
     QWidget *buildChrootShellTab();
     QWidget *buildFileCopyTab();
@@ -460,6 +565,14 @@ private:
     // literal: the scope hint is a separate, evidence-gated state.
     QString displayToolUnavailableReason(
         const std::string &capabilityReason) const;
+    // Round 141 (ITEM O1/O2): the modern missingToolGuidance parity — the
+    // proven Install pointer for the initramfs/grub/efi/bootstack tools'
+    // missing-tooling reasons, derived from the helper's
+    // bootstack-installable / efi-installable side-channels (the round-39/42
+    // pattern).  Fail closed: an unrecognized reason or a missing
+    // side-channel yields empty.
+    QString missingToolGuidanceForTool(
+        const QString &toolKey, const std::string &capabilityReason) const;
     // Missing required diagnostic sections for a repair tool (empty when every
     // required section is cached in m_diagnosticSections). The fail-closed
     // repair gate uses this list, mirroring MainWindow::missingRequiredDiagnosticTitles.
@@ -619,6 +732,23 @@ private:
     // updateDiagnosticDetails and the per-diagnostic Run button tooltip.
     QString selectedDiagnosticKey() const;
     void refreshDiagnosticResultsView();
+    // Round 108 (0.2.30 #10, modern parity — the round-54 M5 progressive
+    // diagnostic cache): incremental assembly of the combined `diagnose all`
+    // stream.  Each COMPLETED section frame commits into m_diagnosticSections
+    // and the Results pane the moment its closing boundary arrives, so the
+    // per-check rows fill live instead of all at completion.  The completion
+    // re-parse overwrites the values with identical slices and the existing
+    // fail-closed paths clear the whole register, so the completion signal
+    // and the invalidation model are unchanged.
+    void resetProgressiveDiagnosticAssembly();
+    void feedProgressiveDiagnosticLine(const QString &line);
+    void finishProgressiveDiagnosticRun();
+    void commitProgressiveDiagnosticSection(const QString &key,
+                                            const QString &section);
+    // Round 118 (modern parity, performance UX): paints the diagnostics list
+    // row as running (title + " …") while its section streams, restored when
+    // the section commits or the run ends.  Display-only.
+    void setDiagnosticRowRunning(const QString &key, bool running);
     void updateAuthorizationAffordance();
     void mergeHelperDevices(const ParsedTranscript &parsed);
     void refreshSessionLogList();
@@ -692,6 +822,52 @@ private:
     // setItemChecked().
     bool m_wrapLogsMenuValid;
     int m_wrapLogsMenuId;
+    // Round 117 (0.2.30 #7): the Boot entries tab's read-only UEFI firmware
+    // view (modern EFI boot entries firmware-section parity).  The table and
+    // the details pane are read-only; the helper's efi-list protocol is the
+    // only data source and the edit/save semantics stay out of scope.
+    // Round 124 (0.2.30 #23): the heading dropdown switches between the
+    // firmware table and the read-only boot-menu table (the modern
+    // EFI Entries / Boot Menu view selector).
+    QLabel *m_bootEntriesScopeLabel;
+    QLabel *m_bootEntriesStatusLabel;
+    QComboBox *m_bootEntriesViewCombo;
+    // The CapabilityTable subclass (defined in LegacyMainWindow.cpp, the
+    // proven scrollable floor pattern; forward-declared at the top of this
+    // header) supplies the minimumSizeHint floor the read-only firmware
+    // table needs inside the tab page.
+    CapabilityTable *m_bootEntriesTable;
+    CapabilityTable *m_bootMenuTable;
+    QTextEdit *m_bootEntriesDetails;
+    bool m_bootEntriesLoaded;
+    QString m_bootEntriesBootCurrent;
+    QString m_bootEntriesBootOrder;
+    std::vector<LegacyBootEntryRow> m_bootEntriesRows;
+    // Round 124 (0.2.30 #23): the read-only boot-menu view state — the parsed
+    // rows, the resolved config path, the request verb of the in-flight load
+    // (grub-legacy-list first, grub-list as the one-time fallback) and the
+    // loaded flag (cleared on every scope change, like the firmware view).
+    std::vector<LegacyBootMenuRow> m_bootMenuRows;
+    bool m_bootMenuLoaded;
+    bool m_bootMenuUsedGrub2;
+    QString m_bootMenuConfigPath;
+    QString m_bootMenuDefaultEntry;
+    QString m_bootMenuRequestVerb;
+    // The scope the loaded rows belong to ("host:<disk>" / "target:<disk>",
+    // empty = none) and the scope key captured at Load Entries start — a
+    // scope change clears the view, and a result from an outgoing scope is
+    // discarded (modern bootEntriesScopeCacheKey parity, without the
+    // park/restore cache).
+    QString m_bootEntriesScopeKey;
+    QString m_bootEntriesRequestKey;
+    QString m_bootMenuRequestKey;
+    // Round 117 (0.2.30 #7): the smoke's boot-entries step outcome — PASS is
+    // a loaded view (UEFI hosts) or the honest efibootmgr failure
+    // presentation (BIOS-only Etch).  Round 124 (0.2.30 #23): the smoke also
+    // exercises the boot-menu load; both fold into the one "boot entries:"
+    // summary item.
+    bool m_smokeBootEntriesOk;
+    bool m_smokeBootMenuOk;
     QComboBox *m_logFilterCombo;
     QComboBox *m_configCombo;
     QListView *m_deviceList;
@@ -720,6 +896,10 @@ private:
     QCheckBox *m_showNonLinuxCheck;
     QCheckBox *m_showRemovableCheck;
     QCheckBox *m_showEncryptedCheck;
+    // Round 82 (plan item #4, modern parity): squashfs loop-device filter
+    // (default off). Dormant on Etch — the inventory never lists loop
+    // devices — but the Settings section stays contract-consistent.
+    QCheckBox *m_showSquashfsLoopsCheck;
     QCheckBox *m_autoRefreshCheck;
     QLabel *m_priorLogBanner;
     QLabel *m_headerTitle;
@@ -785,6 +965,17 @@ private:
     // so the tab-visibility hook can re-apply a deferred hug after the page
     // lays out for real (Qt3 does not re-layout a hidden tab otherwise).
     QWidget *m_repairPage;
+    // Round 125 (0.2.30 #27): every tab page is stored by WIDGET (never a
+    // numeric tab-bar index) — the Boot entries tab is dynamically
+    // removed/inserted by the visibility gate, so any numeric index >= 2
+    // shifts when it hides.  All menu/smoke/layout lookups resolve through
+    // these members (the modern logicalTabPresent/showLogicalTab pattern).
+    QWidget *m_systemsPage;
+    QWidget *m_diagnosticsPage;
+    QWidget *m_bootEntriesPage;
+    QWidget *m_fileCopyPage;
+    QWidget *m_logPage;
+    QWidget *m_settingsPage;
     QLabel *m_toolTitle;
     QLabel *m_toolDescription;
     QLabel *m_toolPlanStatus;
@@ -957,6 +1148,13 @@ private:
     QMap<QString, QString> m_factMap;
     QMap<QString, QString> m_unlockStatusCache;
     QMap<QString, QString> m_diagKeyByTitle;
+    // Round 124 (0.2.30 #9): key -> list-row map for the diagnostic checks
+    // list (the modern UserRole-keyed lookup).  The running-row marker and
+    // the selected-key resolution go through this map, never through the
+    // rendered title text — the round-118 marker appended to the title broke
+    // every title-text lookup and the marker was never restored (the mangled
+    // "check names" and the empty per-section results pane).
+    QMap<QString, QListViewItem *> m_diagRowByKey;
 
     // Per-section diagnostic results cache: a combined `diagnose all` run is
     // parsed into its per-key sections (title + body, exactly as the helper
@@ -966,6 +1164,15 @@ private:
     // cache never outlives the capability cache of record.
     QMap<QString, QString> m_diagnosticSections;
     QString m_fullDiagnosticReport;
+    // Round 108 (0.2.30 #10, modern parity): progressive per-section cache
+    // population for the combined run (see refreshDiagnosticResultsView's
+    // declaration block for the contract).
+    QStringList m_progressiveLines;
+    QString m_progressivePendingKey;
+    int m_progressiveFrameStart;
+    // Round 118 (modern parity, performance UX): the diagnostic key whose
+    // list row is currently painted as running ("…"); display-only.
+    QString m_progressiveRunningKey;
 
     QString m_transcript;
     QString m_logDirectory;
@@ -1170,6 +1377,8 @@ private:
     bool m_showNonLinux;
     bool m_showRemovable;
     bool m_showEncrypted;
+    // Round 82 (modern parity): squashfs-loop filter register (default off).
+    bool m_showSquashfsLoops;
     bool m_logWrapEnabled;
     bool m_autoRefreshEnabled;
     QString m_pendingIdentity;
@@ -1200,6 +1409,16 @@ private:
 
     bool m_smokeMode;
     int m_smokeStep;
+    // Round 152.5 (ITEM 1): the popup-floor drill state (the in-exec timer
+    // records into these; runSmokeStep appends the report + folds the verdict
+    // into the smoke summary).
+    bool m_smokePopupFloorOk;
+    QString m_smokePopupFloorReport;
+    QString m_smokePopupFloorExpect;
+    // Round 152.7 (the MAIN-window mechanism): the application-level filter
+    // that writes the PMinSize hint on every popup's Show (declared at the
+    // namespace level above, defined in the cpp).
+    PopupFloorHintFilter *m_popupFloorHintFilter;
     bool m_smokeDiagnoseOk;
     bool m_smokeValidateOk;
     // Item #4: per-scope shell transcript. The Host Shell and Chroot Shell

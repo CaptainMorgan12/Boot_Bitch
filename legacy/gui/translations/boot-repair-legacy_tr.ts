@@ -41,19 +41,19 @@
     </message>
     <message>
         <source>Alpine uses OpenRC, mkinitfs and syslinux/extlinux; boot-stack reconciliation is not enabled (run the initramfs and extlinux stages separately).</source>
-        <translation>Alp, OpenRC, mkinitfs ve syslinux /extlinux kullanıyor; boot-stack uzlaşması etkinleştirilmemektedir (N10X ve extlinux aşamalarını ayrı ayrı ayrı ayrı ayrı ayrı olarak).</translation>
+        <translation>Alp, OpenRC, mkinitfs ve syslinux /extlinux kullanıyor; boot-stack uzlaşması etkinleştirilmemektedir (N10X ve extlinux aşamalarını ayrı olarak).</translation>
     </message>
     <message>
         <source>Alpine uses apk; dpkg configuration is not available on Alpine.</source>
-        <translation>Alp apk kullanıyor; dpkg konfigürasyonu Alp'da mevcut değil.</translation>
+        <translation>Alp apk kullanıyor; dpkg konfigürasyonu Alp&apos;da mevcut değil.</translation>
     </message>
     <message>
-        <source>Alpine's main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
-        <translation>Alp'in ana havuzunun özel bir NVIDIA DKMS sürücüsü yoktur; GPU sürücü değişimi bu hedef üzerinde mevcut değildir.</translation>
+        <source>Alpine&apos;s main repository has no proprietary NVIDIA DKMS driver; the GPU driver swap is not available on this target.</source>
+        <translation>Alp&apos;in ana havuzunun özel bir NVIDIA DKMS sürücüsü yoktur; GPU sürücü değişimi bu hedef üzerinde mevcut değildir.</translation>
     </message>
     <message>
-        <source>Alternative bootloader; Etch boots through GRUB-legacy, so extlinux is not part of the default boot path</source>
-        <translation>Alternatif bootloader; Etch GRUB-legacy'den botlar, bu yüzden extlinux varsayılan önyükleme yolunun bir parçası değildir</translation>
+        <source>Alternative bootloader; on this system extlinux is not part of the default boot path</source>
+        <translation>Alternatif bootloader; Bu sistem üzerinde extlinux varsayılan önyükleme yolunun bir parçası değildir</translation>
     </message>
     <message>
         <source>Alternative initramfs generator used by Arch and other distributions</source>
@@ -85,7 +85,7 @@
     </message>
     <message>
         <source>Backend %1 has no guarded implementation for stage %2.</source>
-        <translation>Backend %1 sahne %2 için korunmuyor.</translation>
+        <translation>Backend %1, %2 aşaması için korunmuyor.</translation>
     </message>
     <message>
         <source>Bidirectional file copy</source>
@@ -93,11 +93,11 @@
     </message>
     <message>
         <source>Boot diagnostics</source>
-        <translation>Parmak teşhisleri</translation>
+        <translation>Önyükleme teşhisleri</translation>
     </message>
     <message>
         <source>Boot errors</source>
-        <translation>Parmak hataları hataları</translation>
+        <translation>Önyükleme hataları</translation>
     </message>
     <message>
         <source>Boot evidence and selection history</source>
@@ -108,7 +108,7 @@
         <translation>Bot uzlaşması</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Onarım sistemi klasörlerine göz atın sadece ve seçilmiş klasörün aşaması.</translation>
     </message>
     <message>
@@ -121,7 +121,7 @@
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Cancel Cancel Cancel Cancel</translation>
+        <translation>İptal</translation>
     </message>
     <message>
         <source>Check File Systems</source>
@@ -132,7 +132,7 @@
         <translation>Tespit edilen dosya sistemlerini kontrol edin ve onarın.</translation>
     </message>
     <message>
-        <source>Check the selected system's mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
+        <source>Check the selected system&apos;s mounts, filesystem metadata, boot files, mapper consistency and dependency readiness before any repair action. This is an independent safety preflight rather than an optional Full Repair stage.</source>
         <translation>Seçilen sistemin dağlarını kontrol edin, dosyasystem metadata, boot dosyaları, haritaper tutarlılık ve herhangi bir onarım eyleminden önce hazırlık. Bu, isteğe bağlı Full Onarım aşamasından ziyade bağımsız bir güvenlik ışığıdır.</translation>
     </message>
     <message>
@@ -185,7 +185,7 @@
     </message>
     <message>
         <source>Correlates the detected boot chain, bootloader selection, kernel/initramfs and unlock evidence.</source>
-        <translation>tespit edilen boot zincirini, bootloader seçimi, çekirdek/initramfs'i ilişkilendirir ve kanıtları açar.</translation>
+        <translation>tespit edilen boot zincirini, bootloader seçimi, çekirdek/initramfs&apos;i ilişkilendirir ve kanıtları açar.</translation>
     </message>
     <message>
         <source>Correlates the detected boot chain, bootloader selection, kernel/initramfs, snapshots, EFI and unlock evidence, including whether one or more LUKS prompts are expected.</source>
@@ -224,8 +224,8 @@
         <translation>Debian-aile initramfs yardımcı</translation>
     </message>
     <message>
-        <source>Debian-family initramfs helper; on Etch the rebuild runs through the guarded plain-chroot fallback</source>
-        <translation>Debian-aile initramfs yardımcı; Etch'da yeniden inşa edilen düz-kroot geri çekilme ile çalışır.</translation>
+        <source>Rebuilds the initramfs images for the installed kernels</source>
+        <translation>Oluşturulan çekirdekler için initramfs görüntüleri yeniden inşa eder</translation>
     </message>
     <message>
         <source>Device discovery</source>
@@ -237,14 +237,14 @@
     </message>
     <message>
         <source>Diagnostics</source>
-        <translation>Tanıklar</translation>
+        <translation>Tanılama</translation>
     </message>
     <message>
         <source>Disk usage</source>
         <translation>Disk kullanımı</translation>
     </message>
     <message>
-        <source>Displays the running host or selected repair system's fstab; repair-system inspection is mounted read-only.</source>
+        <source>Displays the running host or selected repair system&apos;s fstab; repair-system inspection is mounted read-only.</source>
         <translation>Çalışan ev sahibi veya seçilmiş onarım sistemi fstabını gösterir; onarım sistemi denetimi yalnızca okunur.</translation>
     </message>
     <message>
@@ -277,7 +277,7 @@
     </message>
     <message>
         <source>File Copy - Browse Source Folders</source>
-        <translation type="unfinished" />
+        <translation>Dosya Kopyalama - Kaynak Klasörlere Göz At</translation>
     </message>
     <message>
         <source>File copy</source>
@@ -321,7 +321,7 @@
     </message>
     <message>
         <source>GRUB detected on legacy BIOS; no EFI boot path is available.</source>
-        <translation>GRUB mirası BIOS'ta tespit edildi; EFI boot yolu mevcut değil.</translation>
+        <translation>GRUB mirası BIOS&apos;ta tespit edildi; EFI boot yolu mevcut değil.</translation>
     </message>
     <message>
         <source>Graphical login / display manager</source>
@@ -333,7 +333,7 @@
     </message>
     <message>
         <source>Host</source>
-        <translation>Host Host Host</translation>
+        <translation>Ana makine</translation>
     </message>
     <message>
         <source>Host+Target</source>
@@ -357,14 +357,14 @@
     </message>
     <message>
         <source>Initramfs rebuild</source>
-        <translation>Initramfs yeniden inşa ediliyor</translation>
+        <translation>initramfs yeniden oluşturma</translation>
     </message>
     <message>
         <source>Initramfs verification</source>
         <translation>Initramfs doğrulama</translation>
     </message>
     <message>
-        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper's probe reason.</source>
+        <source>Inspects EFI/UKI evidence; unavailable on this legacy BIOS frontend with the helper&apos;s probe reason.</source>
         <translation>Inspects EFI/UKI kanıtları; bu mirası BIOS cephesinde yardımcının son nedeni ile mevcut değildir.</translation>
     </message>
     <message>
@@ -425,7 +425,7 @@
     </message>
     <message>
         <source>No</source>
-        <translation>Hayır hayır hayır</translation>
+        <translation>Hayır hayır</translation>
     </message>
     <message>
         <source>No /boot (and no resolved EFI System Partition) is visible for the selected scope.</source>
@@ -513,7 +513,7 @@
     </message>
     <message>
         <source>No supported initramfs backend (mkinitfs, mkinitcpio, dracut or initramfs-tools) was detected.</source>
-        <translation>initramfs'i desteklemiyor (mkinitfs, mkinitcpio, dracut veya initramfs-tools) tespit edildi.</translation>
+        <translation>initramfs&apos;i desteklemiyor (mkinitfs, mkinitcpio, dracut veya initramfs-tools) tespit edildi.</translation>
     </message>
     <message>
         <source>No supported service manager (systemd or OpenRC) was detected in the target.</source>
@@ -521,15 +521,15 @@
     </message>
     <message>
         <source>OK</source>
-        <translation>Tamam tamam</translation>
+        <translation>Tamam</translation>
     </message>
     <message>
         <source>Offline systemd repair</source>
         <translation>Offline sistemid onarım</translation>
     </message>
     <message>
-        <source>One guarded pass (mapper/crypttab validation, initramfs rebuild, GRUB-legacy regeneration) through the plain-chroot fallback</source>
-        <translation>Bir bekçi geçiş (mapper/crypttab geçerliliği, initramfs yeniden inşa, GRUB-legacy yeni) düz parçalı geri dönüşler yoluyla)</translation>
+        <source>One guarded pass: mapper/crypttab validation, initramfs rebuild and bootloader configuration regeneration</source>
+        <translation>Bir muhafız geçiş: harita / şifre doğrulama, initramfs yeniden inşa ve bootloader yapılandırma Yenilenme</translation>
     </message>
     <message>
         <source>Optional LVM storage-stack support</source>
@@ -556,16 +556,16 @@
         <translation>Process namespace izolasyon</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; kernel removal/cleanup/install run through the helper's interactive menu</source>
-        <translation>Bu cephede sadece yetenek; kernel kaldırma / temizleme / yükleme yardımcı olan interaktif menü aracılığıyla çalıştırın</translation>
+        <source>Kernel removal, cleanup and install run through the helper&apos;s interactive menu; nothing is removed or modified until you pick an action and confirm it</source>
+        <translation>kernel kaldırma, temizleme ve yükleme yardımcı interaktif menü aracılığıyla çalışır; bir eylem seçmek ve onayladığınıza kadar hiçbir şey kaldırılamaz veya değiştirilemez.</translation>
     </message>
     <message>
-        <source>Read-only capability on this frontend; the GPU-driver repair runs through the helper</source>
-        <translation>Bu ön uçta sadece yetenek; GPU-vida onarım yardımcı ile çalışır</translation>
+        <source>Evidence-driven GPU driver repair through the helper&apos;s interactive menu</source>
+        <translation>Kanıta dayalı GPU sürücüsü, yardımcının interaktif menüsü aracılığıyla onarım</translation>
     </message>
     <message>
-        <source>Read-only check of the selected system's root and /boot filesystems, then repair only the devices that report errors (e2fsck for ext2/ext3)</source>
-        <translation>Seçilen sistemin kök ve /boot dosya sistemlerinin sadece kontrollerini okuyun, o zaman sadece ext2 /ext3 için rapor eden cihazlar tamir edin.</translation>
+        <source>Read-only check of the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors</source>
+        <translation>Seçilen sistemin kök ve /boot dosya sistemlerinin sadece kontrolünü okuyun, o zaman sadece hataları rapor eden cihazlar tamir edin</translation>
     </message>
     <message>
         <source>Read-only inspection of systemd-boot and generic UKI layouts</source>
@@ -589,7 +589,7 @@
     </message>
     <message>
         <source>Ready: required cached read-only diagnostics are available for the selected stages. Review them in Diagnostics or Logs before confirming.</source>
-        <translation>Hazır: gerekli önbellekli okuma-sadece tanıları seçilmiş aşamalar için mevcuttur. Onları doğrulamadan önce Teşhis veya Logs'te gözden geçirin.</translation>
+        <translation>Hazır: gerekli önbellekli okuma-sadece tanıları seçilmiş aşamalar için mevcuttur. Onları doğrulamadan önce Teşhis veya Logs&apos;te gözden geçirin.</translation>
     </message>
     <message>
         <source>Rebuild DKMS</source>
@@ -613,7 +613,7 @@
     </message>
     <message>
         <source>Rebuild initramfs images for the selected repair system only after mapper and crypttab consistency checks pass. The helper backs up each image before the apply. On Etch the stage runs through the guarded plain-chroot fallback (no unshare required).</source>
-        <translation>Seçilen onarım sistemi için initramfs görüntüleri sadece haritadan sonra ve şifre tutarlı kontroller geçer. Yardımcı her görüntüyü uygulamadan önce geri döndürür. Etch'da sahne, bekçili düz-köklü düşüşle çalışır (gösterilmedi).</translation>
+        <translation>Seçilen onarım sistemi için initramfs görüntüleri sadece haritadan sonra ve şifre tutarlı kontroller geçer. Yardımcı her görüntüyü uygulamadan önce geri döndürür. Etch&apos;da sahne, bekçili düz-köklü düşüşle çalışır (gösterilmedi).</translation>
     </message>
     <message>
         <source>Rebuild initramfs images.</source>
@@ -625,11 +625,11 @@
     </message>
     <message>
         <source>Rebuild the initramfs for the selected scope? The helper keeps its mapper/crypttab and backup preflights.</source>
-        <translation>initramfs'i seçilen kapsamı yeniden inşa etmek? Yardımcı haritasını/crypttabını ve yedekleme ön ışıklarını tutar.</translation>
+        <translation>initramfs&apos;i seçilen kapsamı yeniden inşa etmek? Yardımcı haritasını/crypttabını ve yedekleme ön ışıklarını tutar.</translation>
     </message>
     <message>
-        <source>Rebuilds out-of-tree kernel modules; required only when the target uses DKMS modules</source>
-        <translation>kernel modüllerini yeniden inşa etmek; yalnızca hedef dkms modüllerini kullandığında gereklidir</translation>
+        <source>Rebuilds out-of-tree kernel modules; required only when the system uses a module build system</source>
+        <translation>Rebuilds out-of-tree kernel modülleri; sadece sistem bir modül inşa sistemi kullandığında gerekli</translation>
     </message>
     <message>
         <source>Reconcile Boot Stack</source>
@@ -640,12 +640,12 @@
         <translation>Reconcile the boot stack.</translation>
     </message>
     <message>
-        <source>Reconcile the selected repair system's boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
+        <source>Reconcile the selected repair system&apos;s boot stack in one guarded legacy pass: mapper/crypttab validation, initramfs rebuild and GRUB-legacy configuration regeneration, with the component backups and preflights unchanged. This is the Etch equivalent of the modern boot-stack reconciliation and stays out of the Full Repair plan.</source>
         <translation>Seçilmiş onarım sisteminin önyükleme bandı tek bir bekçili miras geçişte: haritaper/crypttab geçerlilik, initramfs yeniden inşa ve GRUB-legacy configuration Yenileme, bileşen yedekleri ve ön ışıkları olmadan. Bu, modern boot-stack uzlaşmasının Etch eşdeğerdir ve Full Onarım planının dışında kalır.</translation>
     </message>
     <message>
         <source>Refresh APT metadata in the selected repair system without upgrading installed packages. This maps directly to Settings -&gt; Refresh package metadata.</source>
-        <translation>Mevcut paketleri yükseltmeden seçilmiş onarım sisteminde APT metadata'yı yenileyin. Bu haritalar doğrudan Ayarlar -&gt; Yeni paket metadata.</translation>
+        <translation>Mevcut paketleri yükseltmeden seçilmiş onarım sisteminde APT metadata&apos;yı yenileyin. Bu haritalar doğrudan Ayarlar -&gt; Yeni paket metadata.</translation>
     </message>
     <message>
         <source>Refresh Metadata</source>
@@ -688,16 +688,16 @@
         <translation>extlinux konfigürasyonunu yeniden tanımlamak.</translation>
     </message>
     <message>
-        <source>Regenerate the selected repair system's GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
+        <source>Regenerate the selected repair system&apos;s GRUB menu/configuration after the mandatory safety preflight. The helper backs up menu.lst, preserves every existing boot entry and rolls back on any failure.</source>
         <translation>Seçilmiş onarım sistemi GRUB menüsü / konfigürasyonu zorunlu güvenlik ön ışığından sonra yeniden yapılandırın. Yardımcı menüyü geri döndürür, mevcut her giriş girişi korur ve herhangi bir başarısızlıkta geri döner.</translation>
     </message>
     <message>
-        <source>Regenerate the selected system's extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
+        <source>Regenerate the selected system&apos;s extlinux bootloader configuration. This legacy frontend exposes no extlinux action.</source>
         <translation>Seçilen sistemin extlinux bootloader konfigürasyonunu yeniden tanımlamak. Bu miras cephesi hiçbir extlinux eylemi açığa çıkarmıyor.</translation>
     </message>
     <message>
-        <source>Regenerates the Etch GRUB-legacy menu.lst configuration (backed up, every entry preserved)</source>
-        <translation>Etch GRUB-legacy menüsü.lst konfigürasyonu (geri alındı, her giriş korunmuş)</translation>
+        <source>Regenerates the GRUB configuration (backed up, every entry preserved)</source>
+        <translation>GRUB konfigürasyonu (geri alındı, her giriş korunmuş)</translation>
     </message>
     <message>
         <source>Repair Dependencies</source>
@@ -744,7 +744,7 @@
         <translation>EFI / UKI boot yolunu tamir edin.</translation>
     </message>
     <message>
-        <source>Repair the selected system's EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
+        <source>Repair the selected system&apos;s EFI / UKI boot path. This legacy frontend exposes no EFI action; the Etch target is a BIOS/GRUB-legacy system.</source>
         <translation>Seçilen sistemin EFI / UKI boot yolunu tamir edin. Bu miras cephesi hiçbir EFI eylemi ortaya çıkar; Etch hedefi BIOS/GRUB-legacy sistemidir.</translation>
     </message>
     <message>
@@ -809,14 +809,14 @@
     </message>
     <message>
         <source>Restore the legacy SysV display manager configured for the selected system: the /etc/X11/default-display-manager entry and the missing runlevel S-symlink, with a backup and rollback, never starting the GUI. When the boot expects a disk-unlock prompt, the console routing is also repaired: console=tty0 is appended last to the bootloader command line (menu.lst on this legacy GRUB; the serial console stays) so the prompt remains on the visible screen instead of going black. Available for the running host and a committed repair target.</source>
-        <translation type="unfinished" />
+        <translation>Seçilen sistem için yapılandırılmış eski SysV görüntü yöneticisini geri yükleyin: /etc/X11/default-display-manager girdisi ve eksik runlevel S-symlinki, yedekleme ve geri alma ile, GUI&apos;yi asla başlatmadan. Önyükleme bir disk kilit açma istemi beklediğinde, konsol yönlendirmesi de onarılır: console=tty0 önyükleyici komut satırına en son eklenir (bu eski GRUB&apos;ta menu.lst; seri konsol kalır), böylece istem siyah ekrana gitmek yerine görünür ekranda kalır. Çalışan ev sahibi ve belirlenmiş bir onarım hedefi için kullanılabilir.</translation>
     </message>
     <message>
-        <source>Restores /etc/X11/default-display-manager and the missing SysV runlevel S-symlink without starting the GUI</source>
-        <translation>Geri yüklemeler / etc/X11/default-display-manager ve eksik sysv, GUI başlamadan önce GUI seviyesi S-symlink çalıştırıyor</translation>
+        <source>Restores the configured display manager and its startup link without starting the GUI</source>
+        <translation>yapılandırılmış ekran yöneticisini geri yükleyin ve GUI başlamadan başlangıç bağlantısını geri yükleyin</translation>
     </message>
     <message>
-        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels' initramfs images and the bootloader configuration are regenerated after a removal.</source>
+        <source>Review the installed kernel inventory and choose one concrete kernel repair action: remove the oldest/superseded or newest kernel, remove orphaned headers/components/build support, install missing headers, reinstall an incomplete kernel, or install the repository-latest kernel. Nothing is removed or modified until you pick an action and confirm it. The running kernel is always protected, and the remaining kernels&apos; initramfs images and the bootloader configuration are regenerated after a removal.</source>
         <translation>Oluşturulan çekirdek envanterini gözden geçirin ve bir beton çekirdek onarım eylemi seçin: en eski / süperleri kaldırılmış veya en yeni çekirdeği ortadan kaldırır, yetimli başlıkları/komponentler / geliştirme desteği, eksik başlıkları yüklemek, eksik bir çekirdek yüklemek veya repository-latest çekirdeği kurmak. Hiçbir şey bir eylem seçmek ve onaylayana kadar kaldırılamaz veya değiştirilemez. Koşu çekirdeği her zaman korunuyor ve kalan çekirdekler initramfs görüntüleri ve bootloader konfigürasyonu bir geri yüklemeden sonra yeniden üretilir.</translation>
     </message>
     <message>
@@ -833,7 +833,7 @@
     </message>
     <message>
         <source>Reviews the kernel GPU driver: detected hardware, the loaded and blacklisted modules, installed driver packages, the expected driver, per-kernel DKMS build status, how far this boot reached and actionable journal driver errors.</source>
-        <translation>Çekirdek GPU sürücüsünü değerlendirin: Donanım, yüklenen ve kara listelenmiş modüller, sürücü paketleri, beklenen sürücü, per-kernel DKMS, bu çizmenin ne kadar ulaştı ve uygulanabilir dergi sürücü hataları.</translation>
+        <translation>Çekirdek GPU sürücüsünü değerlendirin: Donanım, yüklenen ve kara listelenmiş modüller, sürücü paketleri, beklenen sürücü, per-kernel DKMS, bu önyüklemenin ne kadar ulaştı ve uygulanabilir dergi sürücü hataları.</translation>
     </message>
     <message>
         <source>Run All diagnostics for the selected target or running host before starting Full Repair. The report is read-only evidence used to choose and confirm repair stages.</source>
@@ -856,11 +856,11 @@
         <translation>Korumalı onarımı çalıştırın mı? Yardımcı, simülasyonu ilk ön ışığı ve runtime gardiyanlarını tutar.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check for the selected system's root and /boot filesystems and report each device's check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
+        <source>Run the read-only file system check for the selected system&apos;s root and /boot filesystems and report each device&apos;s check tool and result without changing anything. This legacy frontend exposes the read-only check only; device repair is not wired.</source>
         <translation>Seçilen sistemin kök ve /boot dosya sistemleri için sadece dosya sistemini kontrol edin ve her cihazın kontrol aracını raporlayın ve hiçbir şeyi değiştirmeden sonuç alın. Bu miras cephesi sadece okumayı ortaya çıkarır; cihaz onarımı tel değildir.</translation>
     </message>
     <message>
-        <source>Run the read-only file system check on the selected system's root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
+        <source>Run the read-only file system check on the selected system&apos;s root and /boot filesystems, then repair only the devices that report errors. The Etch check tools (e2fsck for ext2/ext3) run only after the helper releases its read-only mounts; a still-mounted filesystem is never repaired offline and unsupported filesystems are reported rather than guessed about.</source>
         <translation>Seçilen sistemin kök ve /boot dosya sistemlerindeki okuma-sadece dosya sistemini kontrol edin, o zaman sadece hataları rapor eden cihazlar tamir edin. Etch check araçları (e2fsck for ext2 /ext3) sadece yardımcı setlerini serbest bıraktıktan sonra çalışır; hala en önemli bir dosya sistemi asla çevrimdışı ve desteklenmemiş dosya sistemleri tahmin etmek yerine bildirilir.</translation>
     </message>
     <message>
@@ -868,7 +868,7 @@
         <translation>Okumanın sadece güvenlik ön ışığı çalıştırın.</translation>
     </message>
     <message>
-        <source>Runs the read-only file system check for the selected system's root, /boot and other filesystems.</source>
+        <source>Runs the read-only file system check for the selected system&apos;s root, /boot and other filesystems.</source>
         <translation>Seçilen sistemin kök, /boot ve diğer dosya sistemleri için okuma-sadece dosya sistemini kontrol edin.</translation>
     </message>
     <message>
@@ -929,11 +929,11 @@
     </message>
     <message>
         <source>Standalone APK metadata refresh is not available on Alpine; use Upgrade installed packages for one guarded apk transaction.</source>
-        <translation>Standalone Pul metadata yenilemesi, Alp'de mevcut değildir; bir bekçi apk işlemi için yüklü paketler kullanın.</translation>
+        <translation>Standalone Pul metadata yenilemesi, Alp&apos;de mevcut değildir; bir bekçi apk işlemi için yüklü paketler kullanın.</translation>
     </message>
     <message>
         <source>Standalone APT metadata refresh is not available on Arch; use Upgrade installed packages for one full pacman transaction.</source>
-        <translation>Standalone APT metadata yenileme Arch'da mevcut değildir; tam bir pacman işlemi için yüklü paketler kullanın.</translation>
+        <translation>Standalone APT metadata yenileme Arch&apos;da mevcut değildir; tam bir pacman işlemi için yüklü paketler kullanın.</translation>
     </message>
     <message>
         <source>Summarizes filesystem capacity and free space for the running host or read-only repair target.</source>
@@ -953,7 +953,7 @@
     </message>
     <message>
         <source>Target</source>
-        <translation>Hedef Hedef Hedef Hedef Hedef</translation>
+        <translation>Hedef</translation>
     </message>
     <message>
         <source>Target/Host</source>
@@ -1008,7 +1008,7 @@
         <translation>Seçilen kapsamın sadece bir kontrol için desteklenen dosya sistemi türü yoktur.</translation>
     </message>
     <message>
-        <source>The selected scope's root, /boot, ESP and /home filesystems could not be resolved.</source>
+        <source>The selected scope&apos;s root, /boot, ESP and /home filesystems could not be resolved.</source>
         <translation>Seçilen kapsamın kökü, /boot, ESP ve / ev dosya sistemleri çözülmedi.</translation>
     </message>
     <message>
@@ -1045,11 +1045,11 @@
     </message>
     <message>
         <source>The target has no enabled dnf repositories to refresh.</source>
-        <translation>Hedefin dnf repositories'i yenilemesine izin verilmiyor.</translation>
+        <translation>Hedefin dnf repositories&apos;i yenilemesine izin verilmiyor.</translation>
     </message>
     <message>
         <source>The target has no enabled dnf repositories.</source>
-        <translation>Hedef, dnf repositories'i etkinleştirmiyor.</translation>
+        <translation>Hedef, dnf repositories&apos;i etkinleştirmiyor.</translation>
     </message>
     <message>
         <source>The target has no mkinitfs configuration.</source>
@@ -1097,7 +1097,7 @@
     </message>
     <message>
         <source>Used to preserve target EFI BootOrder during TUXEDO UKI rebuilds when efivars are available</source>
-        <translation>EFI BootOrder'i TUXEDO UKI'i efivars mevcut olduğunda yeniden inşa etmek için kullanılır</translation>
+        <translation>EFI BootOrder&apos;i TUXEDO UKI&apos;i efivars mevcut olduğunda yeniden inşa etmek için kullanılır</translation>
     </message>
     <message>
         <source>Used to restore graphical.target and the configured display manager without starting the target GUI</source>
@@ -1120,8 +1120,8 @@
         <translation>Geçerli ortam</translation>
     </message>
     <message>
-        <source>Walk an evidence-guided interactive session to repair the kernel GPU driver (nvidia/nouveau/amdgpu/radeon/mesa), applying only the small guarded step you choose with its own rollback. Two decision points guide the session: kernel-vs-driver (replace the newest kernel the driver cannot build against, or remove the older kernel the driver is pinned to) and wrong-driver (purge the incorrect driver, install the correct one, and rebuild it against every installed kernel). A separate one-boot nomodeset fallback reaches a console on a broken driver.</source>
-        <translation>Çekirdek GPU sürücüsünü tamir etmek için bir kanıt kılavuzluk oturumu açın (nvidia/nouveau/amdgpu/radeon/mesa), sadece kendi rollback ile seçtiğiniz küçük bekçi adım uygulayın. Oturuma iki karar noktası rehberlik eder: çekirdek-vs-vida (en yeni çekirdeği sürücüye karşı inşa edemez veya eski çekirdeği sürücüye kilitlenir) ve yanlış sürücüyü (pürücüyü yanlış sürücüyü çalıştırın, doğru olanı çalıştırın ve her yüklü çekirdeke karşı yeniden inşa edin). Ayrı bir tane-boot nomodeback geri dönüş kırık bir sürücü üzerinde bir konsola ulaşır.</translation>
+        <source>Walk an evidence-driven interactive session to repair the GPU driver; the menu adapts to the diagnostic evidence, each guarded step is re-verified in this window before the next option, and a one-boot nomodeset fallback keeps a console reachable on a broken driver.</source>
+        <translation>GPU sürücüsünü tamir etmek için bir kanıta dayalı etkileşimli oturum açın; menü teşhis kanıtına uyum sağlar, her bir bekçi adım bir sonraki seçenekten önce bu pencerede yeniden belirlenir ve bir tek-boot nomodeback kırılabilir bir konsolu kırar.</translation>
     </message>
     <message>
         <source>Yes</source>
@@ -1137,11 +1137,11 @@
     </message>
     <message>
         <source>akms preflight found no build tree for installed kernel %1; install the matching %2 headers package (or boot a kernel that matches the installed headers) and retry.</source>
-        <translation>AKMS Preflight, kernel %1'i kurmak için bir ağaç bulamadı; eşleme %2 başlığı paketini yükleyin (veya yüklü başlıklarla oynayan bir kernel'u durdurun) ve yeniden deneme.</translation>
+        <translation>AKMS Preflight, kernel %1&apos;i kurmak için bir ağaç bulamadı; eşleme %2 başlığı paketini yükleyin (veya yüklü başlıklarla oynayan bir kernel&apos;u durdurun) ve yeniden deneme.</translation>
     </message>
     <message>
         <source>akms preflight found no build tree for kernel %1: the installed %2 headers are newer (version %3). Reboot into the kernel matching the installed headers, or install headers matching %1 if they are still available.</source>
-        <translation>AKMS Preflight, kernel %1 için bir ağaç bulamadı: yüklü %2 başlıkları yeni (vers %3). kernel, yüklü başlıkları eşleştirir veya hala mevcutlarsa %1'i eşleştirir.</translation>
+        <translation>AKMS Preflight, kernel %1 için bir ağaç bulamadı: yüklü %2 başlıkları yeni (vers %3). kernel, yüklü başlıkları eşleştirir veya hala mevcutlarsa %1&apos;i eşleştirir.</translation>
     </message>
     <message>
         <source>apk is not installed in the target.</source>
@@ -1177,7 +1177,7 @@
     </message>
     <message>
         <source>dpkg configuration is not available on Arch; use the Arch package transaction stages instead.</source>
-        <translation>dpkg konfigürasyonu Arch'da mevcut değildir; bunun yerine Arch paketi işlem aşamalarını kullanın.</translation>
+        <translation>dpkg konfigürasyonu Arch&apos;da mevcut değildir; bunun yerine Arch paketi işlem aşamalarını kullanın.</translation>
     </message>
     <message>
         <source>dpkg is not installed in the target.</source>
@@ -1293,11 +1293,11 @@
     </message>
     <message>
         <source>read-only boot mounts and /boot contents inspection</source>
-        <translation>Sadece çizme parçaları ve /boot Content denetim</translation>
+        <translation>Sadece önyükleme parçaları ve /boot Content denetim</translation>
     </message>
     <message>
         <source>read-only device-mapper state review</source>
-        <translation type="unfinished" />
+        <translation>salt okunur device-mapper durum incelemesi</translation>
     </message>
     <message>
         <source>read-only disk usage summary</source>
@@ -1321,7 +1321,7 @@
     </message>
     <message>
         <source>read-only fstab display</source>
-        <translation type="unfinished" />
+        <translation>salt okunur fstab görünümü</translation>
     </message>
     <message>
         <source>read-only helper diagnostic</source>
@@ -1353,7 +1353,7 @@
     </message>
     <message>
         <source>the OpenRC default runlevel already enabled %1</source>
-        <translation>OpenRC varsayılan seviye zaten %1'i etkinleştirdi</translation>
+        <translation>OpenRC varsayılan seviye zaten %1&apos;i etkinleştirdi</translation>
     </message>
     <message>
         <source>the display manager configuration is already correct, but the last boot stopped at a text console (the display manager did not start); the failure is likely elsewhere (driver or service crash)</source>
@@ -1399,6 +1399,62 @@
         <source>validation is read-only</source>
         <translation>Geçerlilik okunuyor-sadece</translation>
     </message>
+    <message>
+        <source>Input devices / keyboard</source>
+        <translation>Giriş cihazları / klavye</translation>
+    </message>
+    <message>
+        <source>Network / connectivity</source>
+        <translation>Ağ / bağlantı</translation>
+    </message>
+    <message>
+        <source>Reviews the input device stack: detected keyboard/mouse/touchpad devices and classes, the loaded, builtin, available and blacklisted HID/keyboard kernel modules, bus-controller state, the keyboard layout, the initramfs inclusion and the built-image keyboard-module proof for the LUKS unlock prompt, plus recent boot evidence.</source>
+        <translation>Giriş cihazı yığınına bakın: klavye/mouse / touchpad cihazları ve sınıflar, yüklenen, inşa edilen, mevcut ve kara listelenmiş HID/keyboard kernel modülleri, bus-kontrollü devlet, klavye düzeni, initramfs dahil edilmesi ve LUKS için yapılmış görüntü klavye kanıtı</translation>
+    </message>
+    <message>
+        <source>Reviews the network stack: the detected config backend, adapters and their bound drivers/modules, blacklist and firmware state, and the running host&apos;s route, DNS and bounded reachability evidence, without changing anything.</source>
+        <translation>Ağ yığınını değerlendirin: tespit edilen imar arkası, adaptörler ve onların bağlı sürücüleri /modules, karalist ve bilgisayar durumu ve çalışan ev sahibinin rotası, DNS ve herhangi bir şeyi değiştirmeden ulaşılamaz.</translation>
+    </message>
+    <message>
+        <source>read-only input device and initramfs keyboard inspection</source>
+        <translation>Sadece giriş cihazı ve initramfs klavye denetim cihazı</translation>
+    </message>
+    <message>
+        <source>read-only network adapter and connectivity inspection</source>
+        <translation>Sadece ağ adaptörü ve bağlantı denetimi</translation>
+    </message>
+    <message>
+        <source>Input device repair</source>
+        <translation>Giriş cihazı onarım cihazı</translation>
+    </message>
+    <message>
+        <source>Repair input devices</source>
+        <translation>Hasar cihazları</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair keyboard, mouse and touchpad input; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, the HID fallback and the initramfs keyboard modules.</source>
+        <translation>Bir sonraki seçenekten önce bu pencerede yeniden yönlendirilen bir kanıta dayalı interaktif seansı klavye, fare ve touchpad girişi tamir etmek için; menü teşhis kanıtına uyum sağlar, her eylem bir sonraki seçenekten önce bu pencerede tekrarlanır ve korunan adımlar kontrol sürücüleri, modüller, diskolistler, HID düşüş ve initramfs klavyeleri.</translation>
+    </message>
+    <message>
+        <source>Choose an input device repair action from the evidence.</source>
+        <translation>Kanıtlardan bir giriş cihazı onarım eylemi seçin.</translation>
+    </message>
+    <message>
+        <source>Network / connectivity repair</source>
+        <translation>Ağ / bağlantı onarımı</translation>
+    </message>
+    <message>
+        <source>Repair network</source>
+        <translation>Tamir ağı</translation>
+    </message>
+    <message>
+        <source>Walk an evidence-driven interactive session to repair the network stack; the menu adapts to the diagnostic evidence, each action is re-verified in this window before the next option, and the guarded steps cover drivers, modules, firmware, blacklists, initramfs NIC modules, addressing, routes and DNS. Live connectivity changes never touch the interface holding the default route.</source>
+        <translation>Ağ kümesini tamir etmek için bir kanıta dayalı etkileşimli oturum açın; menü teşhis kanıtına uyum sağlar, her eylem bir sonraki seçenekten önce bu pencerede yeniden belirlenir ve korunan adımlar sürücüleri, modüller, bilgisayar, kara listeler, initramfs NIC modülleri, adresleme, rotalar ve DNS. Canlı bağlantı değişiklikleri varsayılan rotayı tutan arayüze asla dokunmaz.</translation>
+    </message>
+    <message>
+        <source>Choose a network repair action from the evidence.</source>
+        <translation>Kanıtlardan bir ağ onarım eylemi seçin.</translation>
+    </message>
 </context>
 <context>
     <name>legacy::LegacyMainWindow</name>
@@ -1417,7 +1473,7 @@ Un available: %1</translation>
     <message>
         <source>  %1. %2
 </source>
-        <translation type="unfinished" />
+        <translation type="unfinished"></translation>
     </message>
     <message>
         <source>%1 changed while the confirmation was open; the delete was refused.</source>
@@ -1437,7 +1493,7 @@ Un available: %1</translation>
     </message>
     <message>
         <source>%1 stage(s) failed; review the helper output in Logs.</source>
-        <translation>%1 aşaması (s) başarısız oldu; Logs'taki yardımcı çıktıyı gözden geçirin.</translation>
+        <translation>%1 aşaması (s) başarısız oldu; Logs&apos;taki yardımcı çıktıyı gözden geçirin.</translation>
     </message>
     <message>
         <source>%1 stages selected</source>
@@ -1564,7 +1620,7 @@ Un available: %1</translation>
         <translation>En iyi tespit edilen sistem bileşeni: %1</translation>
     </message>
     <message>
-        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package's entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper's own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
+        <source>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;Developer:&lt;/b&gt; CaptainMorgan12&lt;/p&gt;&lt;p&gt;This GUI is the package&apos;s entry point: a Qt 3.3.x frontend with the ported guarded helper for Debian Etch-era systems.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded repair mode:&lt;/b&gt; read-only diagnostics can inspect either the protected Running Host or an explicitly selected repair drive. The guarded Debian/APT package stages (interrupted configuration, broken dependencies, metadata refresh, upgrade), GRUB-legacy configuration regeneration, LUKS target unlock and guarded target-file editing run through the ported helper after confirmation; Host Maintenance enables the same supported stages natively on the active system after repeating the host identity and boot-mount checks.&lt;/p&gt;&lt;p&gt;The modern-only features - verified File Copy, Btrfs snapshot rollback, EFI/UKI and extlinux repair, boot-stack reconciliation and Make Default - are greyed with the helper&apos;s own probe reasons on this frontend; Arch/Alpine/Fedora package backends stay diagnostics-only here.&lt;/p&gt;&lt;p&gt;The first privileged action authorizes one cached administrator session per scope through a hidden-input modal (the Qt GUI remains unprivileged). It can be ended at any time from File - Lock Administrator Session.&lt;/p&gt;</source>
         <translation>&lt;h3&gt;Boot Bitch %1&lt;/h3&gt;&lt;p&gt;&lt;b&gt;De Developmenter:&lt;/b&gt; KaptanMorgan12&lt;/p&gt;&lt;p&gt;&lt;p&gt; Bu GUI paketin giriş noktası: bir Qt 3.3.x önend ile ported muhafız sistemi için yardımcı olan yardımcıdır.&lt;/p&gt;&lt;p&gt;&lt;b&gt;Guarded onarım modu:&lt;/b&gt; read-only tanılamalar, korumalı Run Host veya açıkça seçilmiş bir onarım sürüşünü inceleyebilir. Korumalı Leicester/APT paket aşamaları (önemli konfigürasyon, kırık bağımlılıklar, metadata yenilenme, yükseltme), GRUB-legacy konfigürasyonu yenileme, LUKS hedefi, limanlı yardım yoluyla hareket eden hedef ayarlandığında; Host Bakım, ev sahibi kimliğini ve önbellek kontrollerini tekrarlamadan sonra aynı şekilde aktif sisteme olanak sağlar.&lt;/p&gt;&lt;p&gt;&lt;p&gt;&lt;p&gt;&lt;p&gt; Modern-sadece özellikler - doğrulanmış Dosya Kopyası, Btrfs snapshot rollback, EFI /UKI ve extlinux onarımı, boot-stack uzlaşması ve Varsayılan olun - bu cephede yardımcı olan kendi araştırma nedenleri ile grileştirilir; Arch/Alpine/Fedora paketi geri döndü. &lt;/p&gt;&lt;p&gt; İlk ayrıcalıklı eylem, gizli bir dosya aracılığıyla bir önbellek yönetici seansı yazar ( Qt GUI eksik kalır). Dosyadan herhangi bir zamanda sona erebilir - Lock Manager Session.&lt;/p&gt;</translation>
     </message>
     <message>
@@ -1629,7 +1685,7 @@ Un available: %1</translation>
     </message>
     <message>
         <source>Add Note</source>
-        <translation>Add Not Add Note Add Add Add Not Add Note Add Add Note Add Add Add Not Add Not Add Note Add Add Add Add Not Add Note Add Add Add Add Note Add Add Add Not Add Add Note Add Add Add Add Add Not Add Note Add Add Add Add Add Not Add Not Add Add Note Add Add Add Add Add Not Add Note Add Add Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Note Add Add Add Add Add Not Add Not Add Add Add Add Note Note Note Add Add Add Add Add Not Add Add Add Add Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Not Add Add Not Add Add Add Add Note Note Note Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Not Add Add Add Add Add Add Note Note Note Note Note Note Note Note Note Add Add Add Add Add Add Add Add Add Add Add Add Add Not Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Note Note Note Note Note Note Note Add Add Add Add Add Add Add Add Add Add Add Add Add Not Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add Add</translation>
+        <translation>Not ekle</translation>
     </message>
     <message>
         <source>Add files to copy</source>
@@ -1721,11 +1777,11 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>An empty passphrase was not submitted. Enter the LUKS passphrase or choose Cancel.</source>
-        <translation>Boş bir geçiş yapılmadı. LUKS passphrase girin veya Cancel'u seçin.</translation>
+        <translation>Boş bir geçiş yapılmadı. LUKS passphrase girin veya Cancel&apos;u seçin.</translation>
     </message>
     <message>
         <source>An empty password was not submitted. Enter the sudo password or choose Cancel.</source>
-        <translation>Boş bir şifre gönderilmedi. Sudo şifresini girin veya Cancel'u seçin.</translation>
+        <translation>Boş bir şifre gönderilmedi. Sudo şifresini girin veya Cancel&apos;u seçin.</translation>
     </message>
     <message>
         <source>An unlocked Linux filesystem is already visible on this drive. Boot Bitch will reuse the existing mapper and will not close or reopen a mapping created by this recovery session. Mounting happens during diagnostics (read-only) and repairs (read-write); data filesystems are never auto-mounted on selection.</source>
@@ -1753,7 +1809,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Authorization required: diagnostics and repairs fail closed until you press Authorize.</source>
-        <translation>Yazarlaşma gerekli: teşhis ve onarımlar, Yazarlarize'ye kadar kapatılamaz.</translation>
+        <translation>Yazarlaşma gerekli: teşhis ve onarımlar, Yazarlarize&apos;ye kadar kapatılamaz.</translation>
     </message>
     <message>
         <source>Authorization scope required</source>
@@ -1765,14 +1821,14 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Auto-size Device Columns</source>
-        <translation type="unfinished" />
+        <translation>Auto-size Device Columns</translation>
     </message>
     <message>
         <source>Automatic installation will require explicit package mapping and privilege authorization.</source>
         <translation>Otomatik yükleme açık paket haritalama ve ayrıcalık izni gerektirecektir.</translation>
     </message>
     <message>
-        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability's suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
+        <source>Automatic installation will require explicit package mapping and privilege authorization; installs the selected missing capability&apos;s suggested package on the current scope (running host or committed repair target) through the guarded helper.</source>
         <translation>Otomatik yükleme, açık paket haritasını haritalama ve ayrıcalık izni gerektirecektir; seçilen eksik kapasitesin önerilen paketi mevcut alanda (resmi ev sahibi veya onarım hedefi) korumalı yardımcı aracılığıyla yükleyin.</translation>
     </message>
     <message>
@@ -1785,7 +1841,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Automatic read-only diagnostics regeneration scheduled after %1.</source>
-        <translation>%1'ten sonra planlanan otomatik okuma-sadece tanı yenilenir.</translation>
+        <translation>%1&apos;ten sonra planlanan otomatik okuma-sadece tanı yenilenir.</translation>
     </message>
     <message>
         <source>Automatic read-only diagnostics regeneration skipped: %1</source>
@@ -1801,7 +1857,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Available</source>
-        <translation>Mevcut kullanılabilir</translation>
+        <translation>Kullanılabilir</translation>
     </message>
     <message>
         <source>Available repair targets</source>
@@ -1824,7 +1880,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Boot Bitch mirası GUI hazır. Her ayrıcalıklı komut limanlı yardımcı aracılığıyla çalışır; eylemler bir onarım hedefine kadar devre dışı kalır (veya Host Bakım aktiftir) ve teşhisler yeteneklerini rapor eder.</translation>
     </message>
     <message>
-        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper's own runtime preflights.</source>
+        <source>Boot Bitch must run from a different booted Linux environment than the system being repaired. Use a Linux live medium or another Linux installation on a different physical drive.&lt;br&gt;&lt;br&gt;The running host is protected from ordinary repair-target selection, but it can be explicitly selected through &lt;b&gt;Host Maintenance&lt;/b&gt; for guarded native diagnostics and supported maintenance stages.&lt;br&gt;&lt;br&gt;Diagnostics follow the Systems page: the committed repair drive while Host Maintenance is off, or the protected running host while it is active.&lt;br&gt;&lt;br&gt;The first privileged action requests administrator authorization once for this Boot Bitch window; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; ends that helper session immediately. Every repair keeps the helper&apos;s own runtime preflights.</source>
         <translation>Boot Bitch, sistem tamir edildiğinden farklı bir booted Linux ortamından geçmelidir. Farklı fiziksel bir sürücü üzerinde bir Linux canlı orta veya başka bir Linux kurulumu kullanın.&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt; Koşu ev sahibi sıradan onarım- hedef seçiminden korunuyor, ancak açıkça &lt;b&gt;Host Care&lt;/b&gt; Korumalı yerli tanılar ve bakım aşamaları için &lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt;&lt;br&gt; Tanılar Sistem sayfasını takip eder: Host Bakım kapalıyken yapılan onarım sürüşü veya aktifken korunan koşu ev sahibi.&lt;br&gt;&lt;br&gt;&lt;br&gt; İlk ayrıcalıklı eylem, bu Boot Bitch penceresi için bir kez yönetici izni talep eder; &lt;b&gt;File - Lock Administrator Session&lt;/b&gt; hemen o yardımcı seansı biter. Her onarım, yardımçının kendi koşu zamanı ön ışıklarını tutar.</translation>
     </message>
     <message>
@@ -1833,7 +1889,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Browse Target Folders...</source>
-        <translation>Hedef Folders'a göz atın...</translation>
+        <translation>Hedef Folders&apos;a göz atın...</translation>
     </message>
     <message>
         <source>Browse folders from the selected repaired system through temporary read-only mounts. Nothing is written while browsing, and the guarded copy validates the chosen path again before any write.</source>
@@ -1844,11 +1900,11 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Tamir klasörlerine göz atın...</translation>
     </message>
     <message>
-        <source>Browse the repaired system's folders read-only and stage the chosen folder.</source>
+        <source>Browse the repaired system&apos;s folders read-only and stage the chosen folder.</source>
         <translation>Onarım sistemi klasörlerine göz atın sadece ve seçilmiş klasörün aşaması.</translation>
     </message>
     <message>
-        <source>Browse the selected repair system through the helper's temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
+        <source>Browse the selected repair system through the helper&apos;s temporary read-only mounts and choose an absolute destination path. No target files are changed while browsing.</source>
         <translation>Seçilmiş onarım sistemi, yardımcının geçici okuması ile göz atın ve mutlak bir varış yolunu seçin. Tarama sırasında hedef dosyaları değiştirilemez.</translation>
     </message>
     <message>
@@ -1861,7 +1917,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Cancel</source>
-        <translation>Cancel Cancel Cancel Cancel</translation>
+        <translation>İptal</translation>
     </message>
     <message>
         <source>Capabilities and dependencies</source>
@@ -1877,7 +1933,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Check File Systems (manual)</source>
-        <translation type="unfinished" />
+        <translation>Check File Systems (manual)</translation>
     </message>
     <message>
         <source>Choose This Folder</source>
@@ -1904,7 +1960,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Ev sahibi hedef klasörü seçin</translation>
     </message>
     <message>
-        <source>Choose which cached scope's capabilities the table shows.</source>
+        <source>Choose which cached scope&apos;s capabilities the table shows.</source>
         <translation>Hangi önbellek kapsamın özelliklerini tablo şovlarını seçin.</translation>
     </message>
     <message>
@@ -1913,7 +1969,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Chroot Shell</source>
-        <translation>Chroot Shell</translation>
+        <translation>Chroot kabuğu</translation>
     </message>
     <message>
         <source>Chroot shell</source>
@@ -1921,7 +1977,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Clear</source>
-        <translation>Clear Clear Clear Clear</translation>
+        <translation>Temizle</translation>
     </message>
     <message>
         <source>Clear Output</source>
@@ -1945,7 +2001,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Close</source>
-        <translation>Close Close Close Close Close</translation>
+        <translation>Kapat</translation>
     </message>
     <message>
         <source>Close the active session file; it becomes a prior session and the next log entry starts a new file.</source>
@@ -2029,7 +2085,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
     </message>
     <message>
         <source>Configure Plan</source>
-        <translation>Configure Plan</translation>
+        <translation>Planı Yapılandır</translation>
     </message>
     <message>
         <source>Confirm LUKS unlock</source>
@@ -2064,8 +2120,8 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <translation>Kopyalama ve Doğrulama</translation>
     </message>
     <message>
-        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper's file-copy probe gates the controls and keeps the direction and path containment checks.</source>
-        <translation>Korumalı yardımcı (cp -a artı mülkiyet restorasyonu ve bir per-file byte-compare) aracılığıyla dosyaları kopyalayın ve doğrulayın. helper'in dosya-copy probe kapıları kontrolleri kontrol eder ve yön ve yol kontrolleri tutar.</translation>
+        <source>Copy and verify files in either direction through the guarded helper (cp -a plus ownership restoration and a per-file byte-compare). The helper&apos;s file-copy probe gates the controls and keeps the direction and path containment checks.</source>
+        <translation>Korumalı yardımcı (cp -a artı mülkiyet restorasyonu ve bir per-file byte-compare) aracılığıyla dosyaları kopyalayın ve doğrulayın. helper&apos;in dosya-copy probe kapıları kontrolleri kontrol eder ve yön ve yol kontrolleri tutar.</translation>
     </message>
     <message>
         <source>Copy staged items and verify the result. Existing destination names are overwritten when source content differs; unrelated destination files are never deleted.</source>
@@ -2075,7 +2131,7 @@ Enter the password for %2 (sudo). It is used only for this sudo authentication, 
         <source>Copy the %1 staged item(s) to %2?
 
 The helper keeps its direction and path containment checks; a sensitive repair-system destination is refused unless the helper approves it, and every regular file is byte-compared after the copy.</source>
-        <translation>%1 sahnelenmiş öğeyi %2'e kopyalayın?
+        <translation>%1 sahnelenmiş öğeyi %2&apos;e kopyalayın?
 
 helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladığı sürece hassas bir onarım-sistem hedefi reddedilir ve her düzenli dosya kopyadan sonra iptal edilir.</translation>
     </message>
@@ -2105,7 +2161,7 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
     </message>
     <message>
         <source>Delete</source>
-        <translation>Delete</translation>
+        <translation>Sil</translation>
     </message>
     <message>
         <source>Delete %1 permanently? This cannot be undone.</source>
@@ -2141,7 +2197,7 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
     </message>
     <message>
         <source>Device</source>
-        <translation>Device Device Device</translation>
+        <translation>Cihaz</translation>
     </message>
     <message>
         <source>Device columns auto-sized. Drag headers to fine-tune widths.</source>
@@ -2169,11 +2225,11 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
     </message>
     <message>
         <source>Diagnostic results saved to %1</source>
-        <translation>Tanı sonuçları %1'e kurtarıldı</translation>
+        <translation>Tanı sonuçları %1&apos;e kurtarıldı</translation>
     </message>
     <message>
         <source>Diagnostics</source>
-        <translation>Tanıklar</translation>
+        <translation>Tanılama</translation>
     </message>
     <message>
         <source>Diagnostics follow the committed repair target, or the protected running host while Host Maintenance is active.</source>
@@ -2209,7 +2265,7 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
     </message>
     <message>
         <source>ERROR: administrator authorization is required for %1; press Authorize (Systems or Repair tab), enter Host Maintenance or commit a repair target to authorize this session.</source>
-        <translation>ERROR: yönetici izni %1 için gereklidir; basın Authorize (Sistemler veya Onarım sekmesi), Host Bakım'ya girmek veya bu seansı yazarlaştırmak için bir onarım hedefi yapmak.</translation>
+        <translation>ERROR: yönetici izni %1 için gereklidir; basın Authorize (Sistemler veya Onarım sekmesi), Host Bakım&apos;ya girmek veya bu seansı yazarlaştırmak için bir onarım hedefi yapmak.</translation>
     </message>
     <message>
         <source>ERROR: cannot read the session log %1</source>
@@ -2225,11 +2281,11 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
     </message>
     <message>
         <source>ERROR: the interactive menu-answer file could not be created in %1; the command was not started.</source>
-        <translation>ERROR: İnteraktif menü cevap dosyası %1'te yaratılmadı; komut başlamadı.</translation>
+        <translation>ERROR: İnteraktif menü cevap dosyası %1&apos;te yaratılmadı; komut başlamadı.</translation>
     </message>
     <message>
         <source>Edit Target File</source>
-        <translation>Edit Target File</translation>
+        <translation>Hedef dosyayı düzenle</translation>
     </message>
     <message>
         <source>Edit target %1</source>
@@ -2252,13 +2308,13 @@ helper yönünü tutar ve yol kontrollerini tutar; yardımlayıcının onayladı
         <translation>İlk önce çalıştırmak için komut girin.</translation>
     </message>
     <message>
-        <source>Enter the device numbers to repair (space- or comma-separated, for example "1 3"), or 0 to skip.</source>
-        <translation>Örneğin "1 3" veya atlamak için cihaz numaralarına girin.</translation>
+        <source>Enter the device numbers to repair (space- or comma-separated, for example &quot;1 3&quot;), or 0 to skip.</source>
+        <translation>Örneğin &quot;1 3&quot; veya atlamak için cihaz numaralarına girin.</translation>
     </message>
     <message>
         <source>Enter the passphrase for %1.
 
-It is sent only to cryptsetup over the helper's standard input and is never logged or placed on a command line.</source>
+It is sent only to cryptsetup over the helper&apos;s standard input and is never logged or placed on a command line.</source>
         <translation>%1 için geçiş yapın.
 
 Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve hiçbir zaman bir komut hattına girişilir veya yerleştirilir.</translation>
@@ -2276,7 +2332,7 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
         <translation>Mevcut kapsamı için ayrıcalıklı yardım oturumu oluşturun.</translation>
     </message>
     <message>
-        <source>Etch-era target configuration files; availability is probed read-only by the helper's diagnostics.</source>
+        <source>Etch-era target configuration files; availability is probed read-only by the helper&apos;s diagnostics.</source>
         <translation>Etch-era hedef yapılandırma dosyaları; kullanılabilirlik sadece yardımcının tanıları tarafından okunur.</translation>
     </message>
     <message>
@@ -2305,11 +2361,11 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>File Copy</source>
-        <translation>File Copy</translation>
+        <translation>Dosya kopyalama</translation>
     </message>
     <message>
         <source>File Copy - Browse Source Folders</source>
-        <translation type="unfinished" />
+        <translation>Dosya Kopyalama - Kaynak Klasörlere Göz At</translation>
     </message>
     <message>
         <source>File Copy - Browse Target Folders</source>
@@ -2325,11 +2381,11 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>File Copy direction changed to %1; staged paths were cleared to avoid mixing source/destination namespaces.</source>
-        <translation>Dosya Kopya yönü %1'e değiştirildi; sahnelenen yollar kaynak/destinasyon adı alanlarından kaçınmak için temizlendi.</translation>
+        <translation>Dosya Kopya yönü %1&apos;e değiştirildi; sahnelenen yollar kaynak/destinasyon adı alanlarından kaçınmak için temizlendi.</translation>
     </message>
     <message>
         <source>File Copy unavailable</source>
-        <translation>Dosya Kopyaı Yok Yok Yok</translation>
+        <translation>Dosya kopyalama kullanılamıyor</translation>
     </message>
     <message>
         <source>File copy</source>
@@ -2365,7 +2421,7 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>File too large</source>
-        <translation>Dosya çok büyük büyük büyük büyük</translation>
+        <translation>Dosya çok büyük</translation>
     </message>
     <message>
         <source>Files and folders staged for the verified copy. The legacy backend copies with cp -a and restores ownership with chown --reference; every regular file is byte-compared after the copy.</source>
@@ -2429,7 +2485,7 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>Host</source>
-        <translation>Host Host Host</translation>
+        <translation>Ana makine</translation>
     </message>
     <message>
         <source>Host Maintenance</source>
@@ -2441,7 +2497,7 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>Host Maintenance has no target-file editing; commit an offline repair target first.</source>
-        <translation>Host Bakım'nın hedefi yoktur; ilk önce çevrimdışı bir onarım hedefi uygulayın.</translation>
+        <translation>Host Bakım&apos;nın hedefi yoktur; ilk önce çevrimdışı bir onarım hedefi uygulayın.</translation>
     </message>
     <message>
         <source>Host Maintenance is active; diagnostics and gated repairs target the protected running host.</source>
@@ -2461,7 +2517,7 @@ Sadece yardımcı standart girişi üzerinden şifrelenmek için gönderilir ve 
     </message>
     <message>
         <source>Host Shell</source>
-        <translation>Host Shell</translation>
+        <translation>Ana makine kabuğu</translation>
     </message>
     <message>
         <source>Host capabilities and dependencies</source>
@@ -2539,7 +2595,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
     </message>
     <message>
         <source>Install</source>
-        <translation>Yükleme</translation>
+        <translation>Yükle</translation>
     </message>
     <message>
         <source>Install %1</source>
@@ -2554,11 +2610,11 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
         <translation>Eksik Destek yükleyin...</translation>
     </message>
     <message>
-        <source>Install the package '%1' into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
-        <translation>Paket "%1"i koruyucu paket arka uç yoluyla seçilmiş onarım hedefine yükleyin mi? Bu, onarım hedefini değiştirir ve önbellek tanıları geçersiz kılar.</translation>
+        <source>Install the package &apos;%1&apos; into the selected repair target through the guarded package backend? This modifies the repair target and invalidates cached diagnostics.</source>
+        <translation>Paket &quot;%1&quot;i koruyucu paket arka uç yoluyla seçilmiş onarım hedefine yükleyin mi? Bu, onarım hedefini değiştirir ve önbellek tanıları geçersiz kılar.</translation>
     </message>
     <message>
-        <source>Install the package '%1' on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
+        <source>Install the package &apos;%1&apos; on the running host through the guarded package backend? This modifies the running host and invalidates cached running-host diagnostics.</source>
         <translation>Korumalı paketin geri gönderilmesiyle çalışan “%1” paketi yükleyin mi? Bu mod, çalışan ev sahibini ve önbellek koşu-host tanılarını geçersiz kılar.</translation>
     </message>
     <message>
@@ -2587,7 +2643,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
     </message>
     <message>
         <source>Leave Host Maintenance and return to repair-target mode.</source>
-        <translation>Host Bakım'yı bırakın ve onarım-target modunda geri dönün.</translation>
+        <translation>Host Bakım&apos;yı bırakın ve onarım-target modunda geri dönün.</translation>
     </message>
     <message>
         <source>Linux recovery and boot-repair utility</source>
@@ -2603,7 +2659,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
     </message>
     <message>
         <source>Lock Administrator Session</source>
-        <translation type="unfinished" />
+        <translation>Lock Administrator Session</translation>
     </message>
     <message>
         <source>Log files (*.log);;All files (*)</source>
@@ -2611,7 +2667,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
     </message>
     <message>
         <source>Logs</source>
-        <translation>Logs Logs</translation>
+        <translation>Günlükler</translation>
     </message>
     <message>
         <source>Make Default</source>
@@ -2619,7 +2675,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
     </message>
     <message>
         <source>Make Default is a running-host action on this frontend; enter Host Maintenance first.</source>
-        <translation>Varsayılanlik bu cephede çalışan bir aksiyondur; önce Host Bakım'a girin.</translation>
+        <translation>Varsayılanlik bu cephede çalışan bir aksiyondur; önce Host Bakım&apos;a girin.</translation>
     </message>
     <message>
         <source>Make Default unavailable</source>
@@ -2635,7 +2691,7 @@ Seçilmiş diskin geri döndüğünü bağımsız olarak tekrar kontrol eder /, 
 The helper verifies /boot/grub/menu.lst, sets the `default &lt;N&gt;` directive to the canonical entry, backs the menu up first and restores it on any failure.</source>
         <translation>Kanonik yüklü çekirdek girişi, çalışan ev sahibine varsayılan GRUB-legacy boot girişi yapabilir mi?
 
-Destekleyici /boot/grub/menu.lst, "default &lt;N&gt;" yönergesini ilk olarak geri döndürür ve herhangi bir başarısızlık üzerine geri döndürür.</translation>
+Destekleyici /boot/grub/menu.lst, &quot;default &lt;N&gt;&quot; yönergesini ilk olarak geri döndürür ve herhangi bir başarısızlık üzerine geri döndürür.</translation>
     </message>
     <message>
         <source>Mandatory safety controls</source>
@@ -2643,11 +2699,55 @@ Destekleyici /boot/grub/menu.lst, "default &lt;N&gt;" yönergesini ilk olarak ge
     </message>
     <message>
         <source>Missing</source>
-        <translation>Eksikliği Eksikliği Eksik</translation>
+        <translation>Eksik</translation>
     </message>
     <message>
         <source>Missing display manager: install the %1 package from the Capabilities table.</source>
         <translation>Eksik ekran yöneticisi: %1 paketi Cap yükümlülükleri masasından yükleyin.</translation>
+    </message>
+    <message>
+        <source>GRUB EFI tooling</source>
+        <translation>GRUB EFI aracı</translation>
+    </message>
+    <message>
+        <source>GRUB configuration tooling</source>
+        <translation>GRUB yapılandırma aracı</translation>
+    </message>
+    <message>
+        <source>GRUB installation tooling</source>
+        <translation>GRUB kurulum aracı</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package(s) %2 from the Boot capabilities table.</source>
+        <translation>Eksik %1: eşleşen paketi (s) %2&apos;i Boot yetenekleri masasından yükleyin.</translation>
+    </message>
+    <message>
+        <source>Missing %1: install the matching package from the Boot capabilities table.</source>
+        <translation>Eksik %1: Parmak yetenekleri masasındaki eşleşen paketi yükleyin.</translation>
+    </message>
+    <message>
+        <source>TUXEDO UKI builder</source>
+        <translation>TUXEDO UKI inşaatçı</translation>
+    </message>
+    <message>
+        <source>boot-stack prerequisite</source>
+        <translation>boot-stack önkoşul</translation>
+    </message>
+    <message>
+        <source>dracut</source>
+        <translation>dracut</translation>
+    </message>
+    <message>
+        <source>initramfs-tools</source>
+        <translation>Initramfs-tools</translation>
+    </message>
+    <message>
+        <source>mkinitcpio</source>
+        <translation>mkinitcpio</translation>
+    </message>
+    <message>
+        <source>mkinitfs</source>
+        <translation>mkinitfs</translation>
     </message>
     <message>
         <source>Missing headers (latest kernel has no matching headers): %1.</source>
@@ -2679,7 +2779,7 @@ Destekleyici /boot/grub/menu.lst, "default &lt;N&gt;" yönergesini ilk olarak ge
     </message>
     <message>
         <source>NOTE: the helper reported the unlocked root as %1, which does not belong to the unlocked disk; re-resolved to %2.</source>
-        <translation>NOT: Yardımcı kökü %1 olarak bildirilen diske ait olmayan bir kökü bildirdi; %2'e yeniden çözümlendi.</translation>
+        <translation>NOT: Yardımcı kökü %1 olarak bildirilen diske ait olmayan bir kökü bildirdi; %2&apos;e yeniden çözümlendi.</translation>
     </message>
     <message>
         <source>Never log LUKS passphrases or authentication secrets</source>
@@ -2694,8 +2794,12 @@ Destekleyici /boot/grub/menu.lst, "default &lt;N&gt;" yönergesini ilk olarak ge
         <translation>En yeni kurulan kernel: %1.</translation>
     </message>
     <message>
-        <source>No 'Legacy feature shell:' line is cached; run diagnostics for the selected scope to evaluate the helper's chroot/timeout containment probes (fail closed).</source>
-        <translation>Hiçbir 'Legacy özelliği kabuk:' hattı önbelleklenir; yardımcının chroot/timeout holdingleri (fail kapalı).</translation>
+        <source>Kernel build compiler: %1.</source>
+        <translation>Çekirdek derleme derleyicisi: %1.</translation>
+    </message>
+    <message>
+        <source>No &apos;Legacy feature shell:&apos; line is cached; run diagnostics for the selected scope to evaluate the helper&apos;s chroot/timeout containment probes (fail closed).</source>
+        <translation>Hiçbir &apos;Legacy özelliği kabuk:&apos; hattı önbelleklenir; yardımcının chroot/timeout holdingleri (fail kapalı).</translation>
     </message>
     <message>
         <source>No Full Repair stages are selected or available; use Configure Plan to choose the stages.</source>
@@ -2719,7 +2823,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine Yazarlık edin, ya da Host Ba
 Press Authorize on the Systems or Repair tab to establish the session, or enter Host Maintenance / commit a repair target on the Systems tab; the chroot shell then reuses the cached authorization.</source>
         <translation>Hiçbir yönetici oturumu aktif değildir.
 
-Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım'a girmek / Sistem sekmesine bir onarım hedefi uygulamak; o zaman önbelleği yeniden kullanın.</translation>
+Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım&apos;a girmek / Sistem sekmesine bir onarım hedefi uygulamak; o zaman önbelleği yeniden kullanın.</translation>
     </message>
     <message>
         <source>No administrator session is active; press Authorize first.</source>
@@ -2762,7 +2866,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
         <translation>Henüz kurtarmak için teşhis sonuçları yok.</translation>
     </message>
     <message>
-        <source>No file system errors were detected on the %1's root, /boot or /home filesystems. No repair was run.</source>
+        <source>No file system errors were detected on the %1&apos;s root, /boot or /home filesystems. No repair was run.</source>
         <translation>%1 kökü, /boot veya / ev dosya sistemlerinde hata tespit edilmedi. Hiçbir tamir yapılmadı.</translation>
     </message>
     <message>
@@ -2775,7 +2879,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>No repair stages are selected. Use Configure Plan to choose the stages Full Repair will run.</source>
-        <translation>Hiçbir onarım aşaması seçilir. Configure Plan kullanın Tam Onarım'ı seçmek için.</translation>
+        <translation>Hiçbir onarım aşaması seçilir. Configure Plan kullanın Tam Onarım&apos;ı seçmek için.</translation>
     </message>
     <message>
         <source>No repair target is committed. Choose Select Target on the Systems tab (or Host Maintenance for the protected running host) first.</source>
@@ -2786,7 +2890,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
         <translation>Hiçbir onarım aracı seçilir.</translation>
     </message>
     <message>
-        <source>No repairable file system errors were detected on the %1's root, /boot or /home filesystems, but %2. No repair was run.</source>
+        <source>No repairable file system errors were detected on the %1&apos;s root, /boot or /home filesystems, but %2. No repair was run.</source>
         <translation>%1 kökü, /boot veya / ev dosya sistemleri üzerinde tamir edilebilir dosya sistemi hataları tespit edilmedi, ancak %2. Hiçbir tamir yapılmadı.</translation>
     </message>
     <message>
@@ -2823,7 +2927,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Notes</source>
-        <translation>Notlar Notlar Notlar Notlar Notlar Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Notlar Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not Not</translation>
+        <translation>Notlar</translation>
     </message>
     <message>
         <source>Number of the action (0 = Abort)</source>
@@ -2835,11 +2939,11 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>OK</source>
-        <translation>Tamam tamam</translation>
+        <translation>Tamam</translation>
     </message>
     <message>
-        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper's probe lines gate the command field; the exact reason appears in the tooltip.</source>
-        <translation>Offline komutlar taze bir parçada bir seferde çalışır ve interaktif hızlı cevap veremez (apt-get -y upgrade works). Host-shell komutları doğrudan çalışan ev sahibi üzerinde çalışır. helper'in son hatları komut alanını kontrol eder; tam sebep araçtipinde görünür.</translation>
+        <source>Offline commands run one at a time in a fresh chroot and cannot answer interactive prompts (apt-get -y upgrade works). Host-shell commands run directly on the running host. The helper&apos;s probe lines gate the command field; the exact reason appears in the tooltip.</source>
+        <translation>Offline komutlar taze bir parçada bir seferde çalışır ve interaktif hızlı cevap veremez (apt-get -y upgrade works). Host-shell komutları doğrudan çalışan ev sahibi üzerinde çalışır. helper&apos;in son hatları komut alanını kontrol eder; tam sebep araçtipinde görünür.</translation>
     </message>
     <message>
         <source>Offline repair modes refuse mounted filesystems; the running host root is never repaired offline.</source>
@@ -2875,7 +2979,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Orphaned headers (no matching kernel): %1.</source>
-        <translation type="unfinished" />
+        <translation>Yetmiş Başlıklar (bağlantılı çekirdek): %1.</translation>
     </message>
     <message>
         <source>Orphaned kernel build support (kernel gone): %1.</source>
@@ -2927,7 +3031,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Preview Changes</source>
-        <translation>Preview Changes Changes</translation>
+        <translation>Preview Changes</translation>
     </message>
     <message>
         <source>Privileged operation completed successfully. Administrator authorization remains active for this session.</source>
@@ -2955,7 +3059,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Quit</source>
-        <translation>Oldukça haklı</translation>
+        <translation>Çık</translation>
     </message>
     <message>
         <source>Re-establish the privileged helper session for the current scope now. The password is requested in the hidden-input modal and is never logged.</source>
@@ -2979,7 +3083,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Read-only diagnostics completed; review the full evidence in Logs before confirming repair.</source>
-        <translation>Sadece tanılar tamamlandı; onarımı onaylamadan önce Logs'teki tam kanıtları gözden geçirin.</translation>
+        <translation>Sadece tanılar tamamlandı; onarımı onaylamadan önce Logs&apos;teki tam kanıtları gözden geçirin.</translation>
     </message>
     <message>
         <source>Read-only inventory only; run diagnostics to confirm.</source>
@@ -2999,7 +3103,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Ready</source>
-        <translation>Hazır Hazır Hazır Hazır</translation>
+        <translation>Hazır</translation>
     </message>
     <message>
         <source>Rebuild DKMS modules</source>
@@ -3011,7 +3115,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Refresh</source>
-        <translation>Yenileme</translation>
+        <translation>Yenile</translation>
     </message>
     <message>
         <source>Refresh APT package metadata</source>
@@ -3026,11 +3130,11 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
         <translation>Yenileme Cihazları</translation>
     </message>
     <message>
-        <source>Regenerate the %1's GRUB configuration</source>
+        <source>Regenerate the %1&apos;s GRUB configuration</source>
         <translation>%1 GRUB konfigürasyonunu Yeniden Üretin</translation>
     </message>
     <message>
-        <source>Regenerate the %1's extlinux configuration</source>
+        <source>Regenerate the %1&apos;s extlinux configuration</source>
         <translation>%1 extlinux konfigürasyonunu Yeniden Üretin</translation>
     </message>
     <message>
@@ -3055,11 +3159,11 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Remove</source>
-        <translation>Kaldırın</translation>
+        <translation>Kaldır</translation>
     </message>
     <message>
         <source>Repair</source>
-        <translation>Tamir onarımı</translation>
+        <translation>Onarım</translation>
     </message>
     <message>
         <source>Repair broken APT dependencies</source>
@@ -3127,7 +3231,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Results</source>
-        <translation>Sonuçlar Sonuçlar Sonuçlar Sonuçlar</translation>
+        <translation>Sonuçlar</translation>
     </message>
     <message>
         <source>Run All</source>
@@ -3175,18 +3279,18 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     </message>
     <message>
         <source>Run Repair</source>
-        <translation type="unfinished" />
+        <translation>Run Repair</translation>
     </message>
     <message>
         <source>Run Tool</source>
-        <translation>Run Tool</translation>
+        <translation>Aracı çalıştır</translation>
     </message>
     <message>
         <source>Run a command inside the selected repair system as root (sudo is not needed). Commands are executed one at a time in a fresh chroot and cannot answer interactive prompts; use non-interactive flags such as apt-get -y upgrade. Output is kept in this window and in the application log.</source>
         <translation>Seçilen onarım sisteminde kök olarak bir komut çalıştırın (sudo gerekli değildir). Komutlar taze bir kümede bir anda bir kez idam edilir ve interaktif olarak cevap veremez; apt-get -y yükseltme gibi non-interaktif bayraklar kullanın. Çıktı bu pencerede ve uygulama logunda tutulur.</translation>
     </message>
     <message>
-        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper's read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
+        <source>Run a command on the running host as root (Host shell) or inside the selected repair system as root (Chroot shell); sudo is not needed in either. Host-shell commands are executed directly on the active system; chroot commands are executed one at a time in a fresh chroot and cannot answer interactive prompts, so non-interactive flags such as apt-get -y upgrade remain recommended for unattended runs. Output is kept in this window and in the application log. The helper&apos;s read-only probes gate the command field; while the shell is unavailable the page shows the exact reason below the field.</source>
         <translation>Ya kök (Host Shell) veya kök olarak seçilmiş onarım sisteminde bir komut çalıştırın (Chroot Shell); sudo da gerekli değildir. Host-Shell komutları doğrudan aktif sistem üzerinde yürütülür; chroot komutlar taze bir parçada bir kez yapılır ve interaktif olarak cevap veremez, bu yüzden apt-get gibi geçici bayraklar - yükseltilmemiş iş için tavsiye edilir. Çıktı bu pencerede ve uygulama logunda tutulur. Kiracının okuması yalnızca komut alanını kontrol eder; Shell sayfanın aşağıdaki kesin sebebi gösterir.</translation>
     </message>
     <message>
@@ -3206,7 +3310,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
         <translation>Kapılı eylemleri kilidini açmak için bu kapsamın teşhislerini çalıştırın. Tanılar okunur ve tek kanıt kaynağı.</translation>
     </message>
     <message>
-        <source>Run diagnostics to probe which target configuration files exist; the helper's read-only probe decides the list.</source>
+        <source>Run diagnostics to probe which target configuration files exist; the helper&apos;s read-only probe decides the list.</source>
         <translation>Hangi hedef yapılandırma dosyalarının var olduğunu araştırmak için teşhis yapın; yardımcının okuması yalnızca listeye karar verir.</translation>
     </message>
     <message>
@@ -3214,15 +3318,15 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
         <translation>Host üzerinde Run</translation>
     </message>
     <message>
-        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
-        <translation>Bir onarım aracı çalıştırın veya seçilen onarım sürüşe karşı Full Tamir planını kullanın. Aynı desteklenen sistemlerde ev sahibi bakım seçin, korunan Run Host Host'a karşı korunan aşamalar. Ayarlarda Full Tamir aşamalarını seçin. Enabled aşamalar gösterilen sırayla çalışır. Her yapılandırılabilir aşama aynı zamanda bireysel bir araç olarak da görünür; Full Tamir sütunu aynaları mevcut ayarlar durumu. Önyükleme araçları (GRUB konfigürasyonu, boot-stack uzlaşması ve Notlandırması) bağımsızdır: herhangi bir sırayla onları çalıştırın ve daha sonra bir eylem daha öncekinin ne değiştirdiğini ve kendi sonuçlarını rapor eder. Aktif kapsamı Onarımın yanında gösterilir: Seçilmiş onarım sürüşü veya Host bakım. Her eylem, önbellek kapasite hatlarının mevcut olduğu zamana kadar devre dışı kalır ve yardımcı, runtime preflights tutar. Eylemler onay isteyin ve sonra yardımçının kendi koşu zaman ön ışıklarını çalıştırın; GUI onları asla zayıflatmıyor. Önbellekli tanıları geçersiz kılan ve tekrar yapılana kadar kapılı eylemleri devre dışı bırakan bir onarım.</translation>
+        <source>Run one repair tool or use the Full Repair plan against the selected repair drive. Choose Host Maintenance on Systems to run the same supported, guarded stages against the protected Running Host. Choose Full Repair stages in Settings. Enabled stages run in the order shown. Each configurable stage also appears below as an individual tool; the Full Repair column mirrors its current Settings state. The boot tools (GRUB configuration, boot-stack reconciliation and Make Default) are independent: run them in any order, and a later action re-verifies what an earlier one changed and reports its own result. The active scope is shown beside Repair: selected repair drive or Running Host maintenance. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <translation>Bir onarım aracı çalıştırın veya seçilen onarım sürüşe karşı Full Tamir planını kullanın. Aynı desteklenen sistemlerde ev sahibi bakım seçin, korunan Run Host Host&apos;a karşı korunan aşamalar. Ayarlarda Full Tamir aşamalarını seçin. Enabled aşamalar gösterilen sırayla çalışır. Her yapılandırılabilir aşama aynı zamanda bireysel bir araç olarak da görünür; Full Tamir sütunu aynaları mevcut ayarlar durumu. Önyükleme araçları (GRUB konfigürasyonu, boot-stack uzlaşması ve Notlandırması) bağımsızdır: herhangi bir sırayla onları çalıştırın ve daha sonra bir eylem daha öncekinin ne değiştirdiğini ve kendi sonuçlarını rapor eder. Aktif kapsamı Onarımın yanında gösterilir: Seçilmiş onarım sürüşü veya Host bakım. Her eylem, önbellek kapasite hatlarının mevcut olduğu zamana kadar devre dışı kalır ve yardımcı, runtime preflights tutar. Eylemler onay isteyin ve sonra yardımçının kendi koşu zaman ön ışıklarını çalıştırın; GUI onları asla zayıflatmıyor. Önbellekli tanıları geçersiz kılan ve tekrar yapılana kadar kapılı eylemleri devre dışı bırakan bir onarım.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root inside the target chroot through the helper's guarded shell verb.</source>
+        <source>Run one reviewed command as root inside the target chroot through the helper&apos;s guarded shell verb.</source>
         <translation>Hedefin içinde kök olarak bir komut çalıştırın, yardımcının bekçili kabuğu fiilinden.</translation>
     </message>
     <message>
-        <source>Run one reviewed command as root on the running host through the helper's guarded host-shell verb.</source>
+        <source>Run one reviewed command as root on the running host through the helper&apos;s guarded host-shell verb.</source>
         <translation>Bir kumandayı, yardımcının muhafız ev sahibi tarafından yönetilen koşuta kök olarak çalıştırın.</translation>
     </message>
     <message>
@@ -3236,7 +3340,7 @@ Oturumu kurmak için Sistem veya Onarım sekmesine İzin Vermek veya Host Bakım
     <message>
         <source>Run the Full Repair plan?
 
-The selected stages run in order through the helper's guarded repair command:
+The selected stages run in order through the helper&apos;s guarded repair command:
 
 </source>
         <translation>Full Tamir planını çalıştırın mı?
@@ -3271,7 +3375,7 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
     </message>
     <message>
         <source>Running %1 through the privileged helper... The Logs tab keeps the complete transcript.</source>
-        <translation>%1'i ayrıcalıklı yardımcı aracılığıyla çalıştırın... Logs sekmesi tam transkript tutar.</translation>
+        <translation>%1&apos;i ayrıcalıklı yardımcı aracılığıyla çalıştırın... Logs sekmesi tam transkript tutar.</translation>
     </message>
     <message>
         <source>Running %1...</source>
@@ -3315,7 +3419,7 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
     </message>
     <message>
         <source>Runs one read-only diagnostic for the selected scope through the helper (`diagnose &lt;key&gt;` / `host-diagnose &lt;key&gt;`); Run All is the combined report.</source>
-        <translation>Seçilmiş kapsamı sadece yardımcı aracılığıyla okunuşur ('diagnose &lt;key&gt;' / "host-diagnose &lt;key&gt;"; Run All, birleşik rapordur.</translation>
+        <translation>Seçilmiş kapsamı sadece yardımcı aracılığıyla okunuşur (&apos;diagnose &lt;key&gt;&apos; / &quot;host-diagnose &lt;key&gt;&quot;; Run All, birleşik rapordur.</translation>
     </message>
     <message>
         <source>Runs the selected stages using the cached read-only diagnostic evidence after privilege confirmation.</source>
@@ -3386,7 +3490,7 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
         <translation>Mevcut onarım hedefleri listesinde ilk olarak fiziksel bir sürücü seçin veya korumalı koşu ev sahibi için Host Bakım kullanın.</translation>
     </message>
     <message>
-        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host's facts in the details pane; selecting any drive row restores the per-drive pane.</source>
+        <source>Select a physical drive; Boot Bitch resolves the most likely Linux system volume automatically. The running host stays protected from ordinary target repairs, with a separate explicit host-maintenance path for its own system. The Details button shows the protected host&apos;s facts in the details pane; selecting any drive row restores the per-drive pane.</source>
         <translation>Fiziksel bir sürücü seçin; Boot Bitch en olası Linux sistemi hacmini otomatik olarak çözüyor. Çalışan ev sahibi sıradan hedef onarımlarından korunuyor, kendi sistemi için ayrı açık bir ev sahibi yolla. Detaylar düğmesi, korumalı ev sahibinin gerçekleri ayrıntıları panete gösterir; herhangi bir sürücü sırasını per-drive pane geri döndürür.</translation>
     </message>
     <message>
@@ -3451,7 +3555,7 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
     </message>
     <message>
         <source>Send</source>
-        <translation>Send Send Send Gönder</translation>
+        <translation>Gönder</translation>
     </message>
     <message>
         <source>Session</source>
@@ -3479,15 +3583,15 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
     </message>
     <message>
         <source>Settings are stored per user under ~/.qt/, one file per settings group (devicesrc, logsrc, diagnosticsrc, repairrc), and are saved immediately on every change and on close. The same per-user location is used whether the GUI runs as the logged-in user or as root (sudo preserves the home directory).</source>
-        <translation>Ayarlar kullanıcı başına ~ /.qt/, ayarlar grubu başına bir dosya (devicesrc, logsrc, tanısrc, onarımrc), ve hemen her değişiklik ve yakın zamanda kaydedilir. Aynı per-user lokasyonu, GUI'nin giriş kullanıcı veya kök olarak çalıştığından kullanılır (sudo ev dizinini korur).</translation>
+        <translation>Ayarlar kullanıcı başına ~ /.qt/, ayarlar grubu başına bir dosya (devicesrc, logsrc, tanısrc, onarımrc), ve hemen her değişiklik ve yakın zamanda kaydedilir. Aynı per-user lokasyonu, GUI&apos;nin giriş kullanıcı veya kök olarak çalıştığından kullanılır (sudo ev dizinini korur).</translation>
     </message>
     <message>
         <source>Settings load: repairrc read from %1; repair/grub = %2; devices/showNonLinux = %3; diagnostics/autoRefreshStale = %4</source>
-        <translation type="unfinished" />
+        <translation>Ayarlar yükleme: repairrc %1&apos;den okundu; repair/grub = %2; devices/showNonLinux = %3; diagnostics/autoRefreshStale = %4</translation>
     </message>
     <message>
         <source>Settings location: Full Repair preferences resolve to %1 (Qt 3.3.7 per-user location; User scope forced via setPath).</source>
-        <translation>Ayarlar konum: Tam Onarım tercihleri %1'e (kullanıcı başına 3.3.7 $ 3.3.7) karar verir; Kullanıcı kapsamı genişletilmişPath).</translation>
+        <translation>Ayarlar konum: Tam Onarım tercihleri %1&apos;e (kullanıcı başına 3.3.7 $ 3.3.7) karar verir; Kullanıcı kapsamı genişletilmişPath).</translation>
     </message>
     <message>
         <source>Settings save: repairrc written to %1 (sync %2).</source>
@@ -3514,6 +3618,14 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
         <translation>Tanımlanmış bir Linux yükleme olmadan ekran cihazları</translation>
     </message>
     <message>
+        <source>When off, hides read-only squashfs container volumes (snap-style) that cannot be Linux install targets.</source>
+        <translation>Ne zaman dışarıda, yalnızca squashfs konteyner hacimlerini (snap-style) saklayabilirsiniz, Linux yükleme hedefleri olamaz.</translation>
+    </message>
+    <message>
+        <source>Show squashfs loop devices</source>
+        <translation>squashfs döngü cihazları</translation>
+    </message>
+    <message>
         <source>Show encrypted devices before unlocking</source>
         <translation>Kilitlenmeden önce şifreli cihazlar göster</translation>
     </message>
@@ -3535,7 +3647,7 @@ helper runtime preflights tutuyor; komut bir argüman olarak geçti ve hiçbir z
     </message>
     <message>
         <source>Size</source>
-        <translation>Boyut Boyutu</translation>
+        <translation>Boyut</translation>
     </message>
     <message>
         <source>Size:</source>
@@ -3667,7 +3779,7 @@ Yöntem: son okuma-sadece tanılardan yardım edilen haritalama.</translation>
     </message>
     <message>
         <source>Status</source>
-        <translation>Durum durumu</translation>
+        <translation>Durum</translation>
     </message>
     <message>
         <source>Status:</source>
@@ -3694,8 +3806,8 @@ Yöntem: son okuma-sadece tanılardan yardım edilen haritalama.</translation>
         <translation>Shell komutasını durdurun... Logs sekmesi tam transkript tutar.</translation>
     </message>
     <message>
-        <source>Suggested package</source>
-        <translation>Önerilen paket</translation>
+        <source>Packages</source>
+        <translation>Paketler</translation>
     </message>
     <message>
         <source>Superseded kernel(s) available for removal: %1.</source>
@@ -3707,7 +3819,7 @@ Yöntem: son okuma-sadece tanılardan yardım edilen haritalama.</translation>
     </message>
     <message>
         <source>Target</source>
-        <translation>Hedef Hedef Hedef Hedef Hedef</translation>
+        <translation>Hedef</translation>
     </message>
     <message>
         <source>Target configuration:</source>
@@ -3731,7 +3843,7 @@ Aşağıdaki hedef sistem değişiklikleri çalışacak:
     </message>
     <message>
         <source>Target file editing needs a committed repair target. Running-host maintenance has no target-file editing; commit an offline target first.</source>
-        <translation>Hedef dosya düzenlemenin kararlı bir onarım hedefine ihtiyacı vardır. Run-host maintenance'in hedef-file düzenlemesi yoktur; önce çevrimdışı bir hedef yapın.</translation>
+        <translation>Hedef dosya düzenlemenin kararlı bir onarım hedefine ihtiyacı vardır. Run-host maintenance&apos;in hedef-file düzenlemesi yoktur; önce çevrimdışı bir hedef yapın.</translation>
     </message>
     <message>
         <source>Target:
@@ -3756,12 +3868,12 @@ Aşağıdaki hedef sistem değişiklikleri çalışacak:
         <translation>Full Tamir planı, korumalı yardımcı aracılığıyla seçilmiş miras aşamalarını işletiyor; bireysel araçlar bir seferde bir aşama yönetiyor. Her eylem, önbellek kapasite hatlarının mevcut olduğu zamana kadar devre dışı kalır ve yardımcı, runtime preflights tutar.</translation>
     </message>
     <message>
-        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <source>The Full Repair plan runs the selected legacy stages in order through the guarded helper; the individual tools run one stage at a time. Every action stays disabled until the cached capability lines say available and the helper keeps its runtime preflights. Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
         <translation>Full Tamir planı, korumalı yardımcı aracılığıyla seçilmiş miras aşamalarını işletiyor; bireysel araçlar bir seferde bir aşama yönetiyor. Her eylem, önbellek kapasite hatlarının mevcut olduğu zamana kadar devre dışı kalır ve yardımcı, runtime preflights tutar. Eylemler onay isteyin ve sonra yardımçının kendi koşu zaman ön ışıklarını çalıştırın; GUI onları asla zayıflatmıyor. Önbellekli tanıları geçersiz kılan ve tekrar yapılana kadar kapılı eylemleri devre dışı bırakan bir onarım.</translation>
     </message>
     <message>
         <source>The LUKS passphrase could not be written to a private keyfile in %1; the unlock was not started.</source>
-        <translation>LUKS passphrase %1'te özel bir dezavantajla yazılamaz; kilidini başlatmıyordu.</translation>
+        <translation>LUKS passphrase %1&apos;te özel bir dezavantajla yazılamaz; kilidini başlatmıyordu.</translation>
     </message>
     <message>
         <source>The LUKS passphrase was not accepted.
@@ -3793,11 +3905,11 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
     </message>
     <message>
         <source>The edited content could not be written to a private temporary file in %1; the write was not started.</source>
-        <translation>Düzenlenen içerik %1'te özel geçici bir dosyaya yazılamaz; yazı başlamadı.</translation>
+        <translation>Düzenlenen içerik %1&apos;te özel geçici bir dosyaya yazılamaz; yazı başlamadı.</translation>
     </message>
     <message>
         <source>The edited file is larger than 1 MiB. The guarded write refuses it; edit the file from a console instead.</source>
-        <translation>Düzenlenen dosya 1 MiB'den daha büyük. Korumalı yazı bunu reddediyor; dosyayı yerine bir konsoldan düzenler.</translation>
+        <translation>Düzenlenen dosya 1 MiB&apos;den daha büyük. Korumalı yazı bunu reddediyor; dosyayı yerine bir konsoldan düzenler.</translation>
     </message>
     <message>
         <source>The first entry is the live session; earlier files in the log directory are listed read-only below it.</source>
@@ -3815,7 +3927,7 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
         <source>The helper could not read %1:
 
 %2</source>
-        <translation>Yardımcı %1'i okumadı:
+        <translation>Yardımcı %1&apos;i okumadı:
 
 %2</translation>
     </message>
@@ -3837,11 +3949,11 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
     </message>
     <message>
         <source>The read-only check found issues on %1 mounted filesystem(s) that have no safe repair mode from this environment. Unmount the filesystem and check again, or repair it from a live system that is not using it.</source>
-        <translation>Sadece kontrol, %1 monte edilmiş dosya sistemi (s) üzerinde bu ortamda güvenli onarım modu olmayan sorunlar buldu. Filesystem'yi geride bıraktı ve tekrar kontrol edin veya onu kullanmayan canlı bir sistemden tamir edin.</translation>
+        <translation>Sadece kontrol, %1 monte edilmiş dosya sistemi (s) üzerinde bu ortamda güvenli onarım modu olmayan sorunlar buldu. Filesystem&apos;yi geride bıraktı ve tekrar kontrol edin veya onu kullanmayan canlı bir sistemden tamir edin.</translation>
     </message>
     <message>
         <source>The read-only file system check failed; review the helper output in Logs.</source>
-        <translation>Sadece dosya sistemi kontrolü başarısız oldu; Logs'taki yardımcı çıktıyı gözden geçirin.</translation>
+        <translation>Sadece dosya sistemi kontrolü başarısız oldu; Logs&apos;taki yardımcı çıktıyı gözden geçirin.</translation>
     </message>
     <message>
         <source>The read-only probe found no editable target configuration file in this target. %1</source>
@@ -3873,7 +3985,7 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
     </message>
     <message>
         <source>The running host target could not be resolved; use Refresh Devices and commit a repair target or re-enter Host Maintenance.</source>
-        <translation>Koşu ev sahibi hedefi çözülmedi; Yenileme Cihazları kullanın ve bir onarım hedefi veya yeniden giriş Host Bakım'ı işleyebilir.</translation>
+        <translation>Koşu ev sahibi hedefi çözülmedi; Yenileme Cihazları kullanın ve bir onarım hedefi veya yeniden giriş Host Bakım&apos;ı işleyebilir.</translation>
     </message>
     <message>
         <source>The running system cannot be selected as a repair target. Use Host Maintenance for the protected running host or choose another disk.</source>
@@ -3900,7 +4012,7 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
         <translation>Seçilen kapsamın bir kök bileşeni yoktur; Yenileme Cihazları kullanın ve yeniden onarım hedefi işlemeyin.</translation>
     </message>
     <message>
-        <source>The selected scope's disk and root component could not be resolved.</source>
+        <source>The selected scope&apos;s disk and root component could not be resolved.</source>
         <translation>Seçilen kapsamın diski ve kök bileşeni çözülmedi.</translation>
     </message>
     <message>
@@ -3916,16 +4028,16 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
         <translation>Bu şifreli sürücü henüz görünür Linux dosya sistemi yoktur. Unlock, yenileme cihazları kullanın ve Linux kökünün tespit edilmesinden sonra hedefi seçin.</translation>
     </message>
     <message>
-        <source>This legacy frontend exposes no %1 action; the helper reports the capability as available.</source>
-        <translation>Bu miras ön uçları %1 eylemini ortaya çıkarır; yardımcı cihazı mevcut olarak yeteneğini bildiriyor.</translation>
+        <source>Available as a diagnostic/capability only - this legacy frontend exposes no repair action; run the interactive repair from the modern GUI.</source>
+        <translation>Sadece tanı / kullanılabilirlik olarak kullanılabilir - bu miras ön uçları onarım eylemi değildir; modern GUI&apos;den interaktif onarımı çalıştırın.</translation>
     </message>
     <message>
         <source>Tool</source>
-        <translation>Tool Tool Tool</translation>
+        <translation>Araç</translation>
     </message>
     <message>
         <source>Type</source>
-        <translation>Tipi Tipi Tipi Tipi</translation>
+        <translation>Tür</translation>
     </message>
     <message>
         <source>Type any characters to show matching log entries (case-insensitive). Save As always writes every entry.</source>
@@ -3941,7 +4053,7 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
     </message>
     <message>
         <source>Unable to delete %1.</source>
-        <translation>%1'i silmek için kullanılamaz.</translation>
+        <translation>%1&apos;i silmek için kullanılamaz.</translation>
     </message>
     <message>
         <source>Unavailable</source>
@@ -3961,13 +4073,13 @@ Oturumu yeniden kurmak için Sistem veya Onarım sekmesini Yazarlaştırın, son
     </message>
     <message>
         <source>Unlock</source>
-        <translation>Unlock</translation>
+        <translation>Kilidi aç</translation>
     </message>
     <message>
         <source>Unlock %1 on %2?
 
 The helper opens a temporary device-mapper mapping with cryptsetup and keeps it open for this recovery session. The passphrase travels through a private keyfile and is never placed in command arguments or logs.</source>
-        <translation>%2'te Unlock %1?
+        <translation>%2&apos;te Unlock %1?
 
 Yardımcı, şifrele geçici bir cihaz-mapper haritasını açar ve bu kurtarma seansı için açık tutar. Geçiş özel bir dezavantajla seyahat eder ve hiçbir zaman komut argümanlarına veya loglara yerleştirilir.</translation>
     </message>
@@ -4017,7 +4129,7 @@ Yardımcı, şifrele geçici bir cihaz-mapper haritasını açar ve bu kurtarma 
     </message>
     <message>
         <source>Up</source>
-        <translation>Yukarı yukarı</translation>
+        <translation>Yukarı</translation>
     </message>
     <message>
         <source>Use an absolute path inside the repaired system. Parent-directory escape paths are not accepted.</source>
@@ -4038,6 +4150,18 @@ Yardımcı, şifrele geçici bir cihaz-mapper haritasını açar ve bu kurtarma 
     <message>
         <source>WARNING: the saved GUI settings file %1 cannot be read; its options read as their defaults, not as the saved values.</source>
         <translation>WARNING: kaydedilen GUI ayarları dosyası %1 okunabilir; seçenekleri, kurtarılan değerler olarak değil varsayılan olarak okunur.</translation>
+    </message>
+    <message>
+        <source>WARNING: the saved GUI settings file %1 cannot be read or removed; its options read as their defaults. Remove it (or make ~/.qt writable) so saved settings can persist again.</source>
+        <translation>WARNING: kaydedilen GUI ayarları dosyası %1 okunamıyor veya kaldırılamıyor; seçenekleri varsayılan olarak okunur. Onu kaldırın (veya ~/.qt yazılabilir yapın) böylece kaydedilen ayarlar yeniden kalıcı olabilir.</translation>
+    </message>
+    <message>
+        <source> Removed %1 unreadable stale settings file(s): %2.</source>
+        <translation> Kaldırılan %1 okunamayan eski ayar dosyası(ları): %2.</translation>
+    </message>
+    <message>
+        <source> Could not remove the unreadable stale settings file(s) %1; defaults apply until they are removed.</source>
+        <translation> Okunamayan eski ayar dosyası(ları) %1 kaldırılamadı; kaldırılana kadar varsayılanlar geçerlidir.</translation>
     </message>
     <message>
         <source>When off, drives with an encrypted device are hidden until the volume is unlocked.</source>
@@ -4064,7 +4188,7 @@ Yardımcı, şifrele geçici bir cihaz-mapper haritasını açar ve bu kurtarma 
         <translation>uzun log hatları</translation>
     </message>
     <message>
-        <source>Write actions ask for confirmation and then run the helper's own runtime preflights; the GUI never weakens them. A repair that is not proven 'unchanged' invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
+        <source>Write actions ask for confirmation and then run the helper&apos;s own runtime preflights; the GUI never weakens them. A repair that is not proven &apos;unchanged&apos; invalidates the cached diagnostics and disables the gated actions until diagnostics run again.</source>
         <translation>Eylemler onay isteyin ve sonra yardımçının kendi koşu zaman ön ışıklarını çalıştırın; GUI onları asla zayıflatmıyor. Önbellekli tanıları geçersiz kılan ve tekrar yapılana kadar kapılı eylemleri devre dışı bırakan bir onarım.</translation>
     </message>
     <message>
@@ -4100,8 +4224,8 @@ Yardımcı, şifrele geçici bir cihaz-mapper haritasını açar ve bu kurtarma 
         <translation>yönetici yetkilendirme</translation>
     </message>
     <message>
-        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate 'sudo -n'</source>
-        <translation>Yükseliş, interaktif bir sudo şifresi gerektirir; dumanı kök olarak çalıştırın veya sonra “sudo -S -v” ile değiştirin - 'sudo -n'</translation>
+        <source>elevation requires an interactive sudo password; run the smoke as root or after `sudo -S -v` with --elevate &apos;sudo -n&apos;</source>
+        <translation>Yükseliş, interaktif bir sudo şifresi gerektirir; dumanı kök olarak çalıştırın veya sonra “sudo -S -v” ile değiştirin - &apos;sudo -n&apos;</translation>
     </message>
     <message>
         <source>filesystem</source>
@@ -4173,15 +4297,15 @@ Komut başlamadı.</translation>
     </message>
     <message>
         <source>the plan was stopped at your request; no stage failure is reported (review the helper output in Logs).</source>
-        <translation>Plan sizin isteğinizde durduruldu; hiçbir aşama başarısızlığı bildirilmemiştir ( Logs'taki yardımçı çıktısını).</translation>
+        <translation>Plan sizin isteğinizde durduruldu; hiçbir aşama başarısızlığı bildirilmemiştir ( Logs&apos;taki yardımçı çıktısını).</translation>
     </message>
     <message>
         <source>unavailable - %1</source>
         <translation>Yok - %1</translation>
     </message>
     <message>
-        <source>unavailable: see the helper's Legacy feature file-copy: probe reason above</source>
-        <translation>Yok: helper'in Miras özelliği dosyasının kopyasını görün: Yukarıdaki son sebep:</translation>
+        <source>unavailable: see the helper&apos;s Legacy feature file-copy: probe reason above</source>
+        <translation>Yok: helper&apos;in Miras özelliği dosyasının kopyasını görün: Yukarıdaki son sebep:</translation>
     </message>
     <message>
         <source>unresolved</source>
@@ -4191,5 +4315,409 @@ Komut başlamadı.</translation>
         <source>your account</source>
         <translation>Hesabınız</translation>
     </message>
-<message><source>Repository latest kernel: %1 (newer than the installed newest; %2).</source><translation>Repository son kernel: %1 (en yeni kurulan en yeniden daha yeni; %2).</translation></message><message><source>Try Again</source><translation>Tekrar tekrar deneyin</translation></message><message><source>Enter the note text</source><translation>Not text girin</translation></message><message><source>This note will be appended to the selected session log %1.</source><translation>Bu not, seçilmiş oturum log %1'e uygulanabilir.</translation></message><message><source>NOTE appended to prior session log %1: %2</source><translation>Önceki oturum açma %1: %2</translation></message><message><source>The selected log entry is not a valid session log; the note was not written.</source><translation>Seçilen giriş geçerli bir oturum açma değildir; not yazılmamıştı.</translation></message><message><source>The selected session log %1 is not writable; the note was not added.</source><translation>Seçilen oturum log %1 tarif edilemez değildir; not eklendi.</translation></message></context>
+    <message>
+        <source>Repository latest kernel: %1 (newer than the installed newest; %2).</source>
+        <translation>Repository son kernel: %1 (en yeni kurulan en yeniden daha yeni; %2).</translation>
+    </message>
+    <message>
+        <source>Try Again</source>
+        <translation>Tekrar dene</translation>
+    </message>
+    <message>
+        <source>Enter the note text</source>
+        <translation>Not text girin</translation>
+    </message>
+    <message>
+        <source>This note will be appended to the selected session log %1.</source>
+        <translation>Bu not, seçilmiş oturum log %1&apos;e uygulanabilir.</translation>
+    </message>
+    <message>
+        <source>NOTE appended to prior session log %1: %2</source>
+        <translation>Önceki oturum açma %1: %2</translation>
+    </message>
+    <message>
+        <source>The selected log entry is not a valid session log; the note was not written.</source>
+        <translation>Seçilen giriş geçerli bir oturum açma değildir; not yazılmamıştı.</translation>
+    </message>
+    <message>
+        <source>The selected session log %1 is not writable; the note was not added.</source>
+        <translation>Seçilen oturum log %1 tarif edilemez değildir; not eklendi.</translation>
+    </message>
+    <message>
+        <source>No cached running-host diagnostics; run read-only host diagnostics in Host Maintenance to populate this row.</source>
+        <translation>Bu satırları popüle etmek için Host Bakım&apos;da sadece ev sahibi tanıları takip edin.</translation>
+    </message>
+    <message>
+        <source>[-] %1 - aborted - stopped at your request</source>
+        <translation>[-] %1 - Aborted - isteğinizde durdu</translation>
+    </message>
+    <message>
+        <source>%1 stage(s) reported changes before the stop; those changes are applied and the affected diagnostics were regenerated</source>
+        <translation>%1 aşaması (s) duraktan önce değişiklikler rapor etti; bu değişiklikler uygulanır ve etkilenen tanı yeniden oluşturuldu.</translation>
+    </message>
+    <message>
+        <source>a stage reported a change before the stop; its changes may already be applied</source>
+        <translation>Durmadan önce bir aşama rapor edildi; değişiklikleri zaten uygulanabilir</translation>
+    </message>
+    <message>
+        <source>no changes were made</source>
+        <translation>Hiçbir değişiklik yapılmadı</translation>
+    </message>
+    <message>
+        <source>Installed</source>
+        <translation>Yükleme</translation>
+    </message>
+    <message>
+        <source>Repairs the EFI / UKI boot path for UEFI systems</source>
+        <translation>EFI / UKI boot yolunu UEFI sistemleri için tamir eder</translation>
+    </message>
+    <message>
+        <source>Evidence-driven keyboard, mouse and touchpad repair through the helper&apos;s interactive menu</source>
+        <translation>Kanıta dayalı klavye, fare ve touchpad yardımlayıcının interaktif menüsü aracılığıyla onarım</translation>
+    </message>
+    <message>
+        <source>Evidence-driven network repair through the helper&apos;s interactive menu; live connectivity changes never touch the interface holding the default route</source>
+        <translation>Destekleyici ağ onarımı yardımcı menü aracılığıyla; canlı bağlantı değişiklikleri asla varsayılan rotayı tutan arayüze dokunmaz</translation>
+    </message>
+    <message>
+        <source>Packages not available in this system&apos;s repositories</source>
+        <translation>Paketler bu sistemde depolayıcılarda mevcut değildir</translation>
+    </message>
+    <message>
+        <source>%1 firmware boot entries loaded read-only.</source>
+        <translation>%1 Donanım girişleri yalnızca okunur.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Load Entries to list the UEFI entries read-only.</source>
+        <translation>%1 Donanım girişi görüntüleme mevcuttur. UEFI girişlerini listelemek için kargolar sadece okunur.</translation>
+    </message>
+    <message>
+        <source>Boot</source>
+        <translation>Önyükleme</translation>
+    </message>
+    <message>
+        <source>Boot %1</source>
+        <translation>Önyükleme %1</translation>
+    </message>
+    <message>
+        <source>Boot entries refresh refused: %1</source>
+        <translation>Önyükleme girişleri yenilendi: %1</translation>
+    </message>
+    <message>
+        <source>Boot entry list result discarded: the scope changed while the request was running.</source>
+        <translation>Parmak girişi listesi iptal edildi: İstek çalışırken kapsamı değişti.</translation>
+    </message>
+    <message>
+        <source>Boots</source>
+        <translation>Bot</translation>
+    </message>
+    <message>
+        <source>Class</source>
+        <translation>Sınıf</translation>
+    </message>
+    <message>
+        <source>Class: %1</source>
+        <translation>Sınıf: %1</translation>
+    </message>
+    <message>
+        <source>Direct (UKI)</source>
+        <translation>Doğrudan (UKI)</translation>
+    </message>
+    <message>
+        <source>Drive</source>
+        <translation>Sürücü</translation>
+    </message>
+    <message>
+        <source>Drive: %1</source>
+        <translation>Drive: %1</translation>
+    </message>
+    <message>
+        <source>EFI boot entries</source>
+        <translation>EFI boot giriş girişleri</translation>
+    </message>
+    <message>
+        <source>Fallback</source>
+        <translation>Sonbahar</translation>
+    </message>
+    <message>
+        <source>Firmware</source>
+        <translation>Şirketware</translation>
+    </message>
+    <message>
+        <source>Firmware boot entries could not be loaded. See Logs for details.</source>
+        <translation>Firmaware boot girişleri yüklenmedi. Logs&apos;i ayrıntılar için görün.</translation>
+    </message>
+    <message>
+        <source>Firmware boot entry list failed.</source>
+        <translation>Firmaware boot entry listesi başarısız oldu.</translation>
+    </message>
+    <message>
+        <source>GRUB menu</source>
+        <translation>GRUB menüsü</translation>
+    </message>
+    <message>
+        <source>Label</source>
+        <translation>Label</translation>
+    </message>
+    <message>
+        <source>Label: %1</source>
+        <translation>Etiket: %1</translation>
+    </message>
+    <message>
+        <source>List firmware boot entries</source>
+        <translation>Liste Listesi</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: no (omitted by firmware)</source>
+        <translation>BootOrder&apos;te listelendi: hiçbir (kullanıcı tarafından karşılanmamış)</translation>
+    </message>
+    <message>
+        <source>Listed in BootOrder: yes</source>
+        <translation>BootOrder&apos;te listelendi: evet</translation>
+    </message>
+    <message>
+        <source>Load Entries</source>
+        <translation>Girdileri yükle</translation>
+    </message>
+    <message>
+        <source>Load the %1 UEFI firmware boot entries read-only.</source>
+        <translation>%1 UEFI Donanım önyükleme girişleri sadece okunur.</translation>
+    </message>
+    <message>
+        <source>Loaded %1 %2 firmware boot entr%3 read-only.</source>
+        <translation>Tamamlanmış %1 %2 Donanım boot entr%3 sadece.</translation>
+    </message>
+    <message>
+        <source>Loader</source>
+        <translation>Yazıcı</translation>
+    </message>
+    <message>
+        <source>Loader: %1</source>
+        <translation>Panel: %1</translation>
+    </message>
+    <message>
+        <source>Loading %1 UEFI firmware boot entries read-only for %2 (%3).</source>
+        <translation>%1 UEFI Programlama girişleri sadece %2 için okunur (%3).</translation>
+    </message>
+    <message>
+        <source>Network</source>
+        <translation>Ağ Ağı</translation>
+    </message>
+    <message>
+        <source>No UEFI firmware boot entries were found — this system is BIOS/legacy or lacks efibootmgr, so there is no firmware boot order to manage.</source>
+        <translation>No UEFI Yazılım önyükleme girişleri bulundu - bu sistem BIOS/legacy veya eksik efibootmgr, bu yüzden yönetmek için bir bilgisayar önyüklemesi yoktur.</translation>
+    </message>
+    <message>
+        <source>No scope selected</source>
+        <translation>Hiçbir kapsamı seçilmiş</translation>
+    </message>
+    <message>
+        <source>Other</source>
+        <translation>Diğer</translation>
+    </message>
+    <message>
+        <source>PARTUUID: %1</source>
+        <translation>PARTUUID: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: %1</source>
+        <translation>Tamir hedefi: %1</translation>
+    </message>
+    <message>
+        <source>Repair target: not ready</source>
+        <translation>Tamir hedefi: hazır değil</translation>
+    </message>
+    <message>
+        <source>Repair-target</source>
+        <translation>Onarım- Hedef</translation>
+    </message>
+    <message>
+        <source>Role: %1</source>
+        <translation>Rol: %1</translation>
+    </message>
+    <message>
+        <source>Running host: %1</source>
+        <translation>Ev sahibi: %1</translation>
+    </message>
+    <message>
+        <source>Running host: not selected</source>
+        <translation>Run host: seçilmedi</translation>
+    </message>
+    <message>
+        <source>Running-host</source>
+        <translation>Run-host</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries.</source>
+        <translation>Çalışan ev sahibi veya sistemlerde bir onarım hedefi seçin, Yazılım boot girişlerini yönetmek için.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to manage firmware boot entries. Load Entries lists the current scope&apos;s UEFI entries read-only.</source>
+        <translation>Çalışan ev sahibi veya sistemlerde bir onarım hedefi seçin, Yazılım boot girişlerini yönetmek için. Load Entries, mevcut kapsamın UEFI girişlerini sadece listeler.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries (the running host&apos;s NVRAM) are listed read-only here. In Host Maintenance you see the running host&apos;s own entries; with a repair target committed you see the NVRAM entries whose partition points at that drive&apos;s EFI system partition. This view never changes the firmware; a BIOS-only host (Etch) has no firmware boot entries and lists none. The GRUB boot menu (the list of kernels inside GRUB) is separate and is regenerated by the GRUB or boot-stack repair.</source>
+        <translation>UEFI Yazılım önyükleme girişleri (işçinin NVRAM) sadece burada okunur. Host Bakım&apos;da, koşu ev sahibinin kendi girişlerini görüyorsunuz; bir onarım hedefiyle, bu sürücüdeki NVRAM giriş noktalarının EFI sistemi bölümü olduğunu görüyorsunuz. Bu görüş asla bilgisayarları değiştirmez; bir BIOS-sadece ev sahibi (Etch) hiçbir bilgisayar önyükleme girişi yoktur ve listelemez. GRUB boot menüsü (Ni71X içindeki çekirdeklerin listesi ayrıdır ve GRUB veya boot-stack onarımı ile yeniden oluşturulur.</translation>
+    </message>
+    <message>
+        <source>The UEFI firmware boot entries in BootOrder, listed read-only.</source>
+        <translation>UEFI Donanım giriş girişleri BootOrder&apos;te listelendi.</translation>
+    </message>
+    <message>
+        <source>This entry is currently active (BootCurrent).</source>
+        <translation>Bu giriş şu anda aktif (BootCurrent).</translation>
+    </message>
+    <message>
+        <source>Unable to delete %1.
+
+%2</source>
+        <translation>%1&apos;i silmek için kullanılamaz.
+
+%2</translation>
+    </message>
+    <message>
+        <source>repair target&apos;s</source>
+        <translation>onarım hedefinin</translation>
+    </message>
+    <message>
+        <source>repair-target</source>
+        <translation>onarım- hedef</translation>
+    </message>
+    <message>
+        <source>running host&apos;s</source>
+        <translation>running host&apos;s</translation>
+    </message>
+    <message>
+        <source>running-host</source>
+        <translation>running-host</translation>
+    </message>
+    <message>
+        <source>EFI Entries</source>
+        <translation>EFI Entries</translation>
+    </message>
+    <message>
+        <source>Boot Menu</source>
+        <translation>Boot Menu</translation>
+    </message>
+    <message>
+        <source>Switch between the UEFI firmware entries and the read-only boot menu.</source>
+        <translation>UEFI Hardware girişleri ve okuma-sadece çizme menüsü arasında geçiş.</translation>
+    </message>
+    <message>
+        <source>Menu entry</source>
+        <translation>Menü girişi</translation>
+    </message>
+    <message>
+        <source>The read-only boot menu (the bootloader&apos;s kernel/OS entries in file order).</source>
+        <translation>Okumaya devam eden menü (ki bootloader&apos;in çekirdek/OS girişleri dosya siparişinde).</translation>
+    </message>
+    <message>
+        <source>%1 boot menu entries loaded read-only.</source>
+        <translation>%1 boot menü girişleri yalnızca okunur.</translation>
+    </message>
+    <message>
+        <source>%1 boot menu viewing is available. Choose Boot Menu to list the boot menu read-only.</source>
+        <translation>%1 boot menu görüntüleme mevcuttur. Boot Menu&apos;ı sadece boot menüsünü listelemek için seçin.</translation>
+    </message>
+    <message>
+        <source>%1 firmware entry viewing is available. Choose EFI Entries to list the UEFI entries read-only.</source>
+        <translation>%1 Anahtarlama özelliği mevcuttur. UEFI girişlerini listelemek için EFI Entries&apos;i seçin sadece.</translation>
+    </message>
+    <message>
+        <source>Select Host Maintenance on the running host, or a repair target in Systems, to view firmware boot entries. Choose EFI Entries or Boot Menu above to load the current scope&apos;s entries read-only.</source>
+        <translation>Çalışan ev sahibi veya sistemlerde bir onarım hedefi seçin, Yazılım boot girişlerini görüntülemek için. Mevcut kapsamın girişlerini okumak için yukarıdaki EFI Entries veya Boot Menu&apos;ı seçin.</translation>
+    </message>
+    <message>
+        <source>Loading %1 boot menu read-only for %2 (%3).</source>
+        <translation>%1 boot menüsü sadece %2 için okunur (%3).</translation>
+    </message>
+    <message>
+        <source>List boot menu</source>
+        <translation>Önyükleme menüsünü listele</translation>
+    </message>
+    <message>
+        <source>Boot menu refresh refused: %1</source>
+        <translation>Önyükleme menüsü yenileme reddetti: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list failed.</source>
+        <translation>Önyükleme menüsü listesi başarısız oldu.</translation>
+    </message>
+    <message>
+        <source>Boot menu fallback refused: %1</source>
+        <translation>Boot menu fallback reddetti: %1</translation>
+    </message>
+    <message>
+        <source>Boot menu list result discarded: the scope changed while the request was running.</source>
+        <translation>Parmak menüsü listesi iptal edildi: İstek çalışırken kapsamı değişti.</translation>
+    </message>
+    <message>
+        <source>Menu entry: %1</source>
+        <translation>Menü Giriş: %1</translation>
+    </message>
+    <message>
+        <source>Entry ID: %1</source>
+        <translation>Giriş ID: %1</translation>
+    </message>
+    <message>
+        <source>This is a submenu.</source>
+        <translation>Bu bir submenu.</translation>
+    </message>
+    <message>
+        <source>Loads configuration: %1</source>
+        <translation>Yük konfigürasyonu: %1</translation>
+    </message>
+    <message>
+        <source>Foreign: points to a different drive or partition.</source>
+        <translation>Yabancı: farklı bir sürücü veya bölmeye işaret edin.</translation>
+    </message>
+    <message>
+        <source>Kernel: %1</source>
+        <translation>Teknik: %1</translation>
+    </message>
+    <message>
+        <source>Initrd: %1</source>
+        <translation>Initrd: %1</translation>
+    </message>
+    <message>
+        <source>Default entry: yes</source>
+        <translation>Varsayılan giriş: evet</translation>
+    </message>
+    <message>
+        <source>Default entry: no</source>
+        <translation>Varsayılan giriş: hayır</translation>
+    </message>
+    <message>
+        <source>Default</source>
+        <translation>Varsayılan</translation>
+    </message>
+    <message>
+        <source>%1 (submenu)</source>
+        <translation>%1 (submenu)</translation>
+    </message>
+    <message>
+        <source>Loaded %1 boot menu entr%2 read-only.</source>
+        <translation>Yüklenen %1 boot menu entr%2 okuma-sadece.</translation>
+    </message>
+    <message>
+        <source>No GRUB legacy menu.lst on this scope; trying the GRUB grub.cfg boot menu read-only.</source>
+        <translation>No GRUB mirası menüsü.lst on this scope; GRUB.cfg boot menu read-only.</translation>
+    </message>
+    <message>
+        <source>No boot menu configuration was found on this drive. The system may have no GRUB, extlinux/syslinux or GRUB legacy boot menu, or its configuration lives elsewhere.</source>
+        <translation>Bu sürücüde boot menu konfigürasyonu bulunamadı. Sistem GRUB, extlinux/syslinux veya GRUB mirası boot menüsüne sahip olmayabilir veya yapılandırma başka yerlerde yaşar.</translation>
+    </message>
+    <message>
+        <source>The boot menu configuration exists but lists no entries.</source>
+        <translation>boot menu konfigürasyonu mevcut ancak girişleri listeliyor.</translation>
+    </message>
+    <message>
+        <source>The boot menu could not be loaded. See Logs for details.</source>
+        <translation>boot menüsü yüklenemezdi. Logs&apos;i ayrıntılar için görün.</translation>
+    </message>
+    <message>
+        <source>default</source>
+        <translation>varsayılan varsayılan varsayılan varsayılan varsayılan</translation>
+    </message>
+</context>
 </TS>

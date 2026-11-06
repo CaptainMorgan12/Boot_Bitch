@@ -4,6 +4,23 @@
 # case conversion are invisible to ShellCheck; see legacy/compat.sh.
 set -Eeuo pipefail
 
+# Round 127 (C4, the pre-BEGIN diagnostic cancel): the broker's pre-BEGIN
+# cancel relay (the poll loop's first-iteration SIGUSR1) can land before this
+# child armed its USR1 trap, dying it with the default disposition (DONE 138)
+# and no msg:diagnostic-cancelled marker — the GUI then rendered "failed".
+# The broker passes BOOT_REPAIR_SESSION_PREBEGIN_CANCEL=1 for exactly that
+# dispatch; this early check emits the truthful marker and exits 0 (the
+# cancelled-diagnostic contract shape) before the relay can land.  The USR1
+# ignore is scoped to this immediate-exit path (an inherited ignore is never
+# reset later — nothing later runs).  The verb check keeps a stray env leak
+# from ever no-op'ing a mutating dispatch (fail closed).
+if [[ "${BOOT_REPAIR_SESSION_PREBEGIN_CANCEL:-0}" == "1" ]] \
+    && [[ "${1:-}" == diagnose || "${1:-}" == host-diagnose ]]; then
+    trap '' USR1
+    printf 'msg:diagnostic-cancelled\n'
+    exit 0
+fi
+
 # The helper's stdout is a machine-readable contract consumed by the GUI and
 # the contract tests, so every spawned tool whose output is parsed must produce
 # deterministic English regardless of the user's locale.  LC_ALL=C is the
@@ -1864,10 +1881,20 @@ display_locale_env()
 # line for the stage (see run_package_stage).
 REPAIR_CHANGE_STATUS_COLLECT=0
 REPAIR_CHANGE_STATUS_COLLECTED=()
+REPAIR_CHANGE_STATUS_LAST_KEY=""
+REPAIR_CHANGE_STATUS_LAST_STATE=""
 
 repair_change_status()
 {
     local key="$1" state="$2"
+    # Round 91 (the tried/chaining menu feedback): the most recent status is
+    # recorded so the interactive input/network menus can name the failing
+    # action's reason in the NEXT prompt's Found block (unchanged|reason:…).
+    # The KEY is recorded for the session-log consumers even though the menus
+    # read only the STATE.
+    # shellcheck disable=SC2034
+    REPAIR_CHANGE_STATUS_LAST_KEY="$key"
+    REPAIR_CHANGE_STATUS_LAST_STATE="$state"
     if (( REPAIR_CHANGE_STATUS_COLLECT == 1 )); then
         REPAIR_CHANGE_STATUS_COLLECTED+=("$key"$'\t'"$state")
         return 0
@@ -1880,9 +1907,16 @@ repair_change_status()
     # stale (the package list, the dkms status and the journal captures may
     # describe the pre-mutation state).  Clear it so the next probe in this
     # process re-fetches fresh; read-only diagnostics never emit a changed
-    # status and never invalidate.
+    # status and never invalidate.  Round 118: the kernel-inventory
+    # collect-once flag describes the same pre-mutation state — reset it here
+    # so the kernel menus' post-mutation recollections (kernel_inventory_
+    # recollect_after_removal/install) actually re-collect instead of reusing
+    # the stale flag.
     case "$state" in
-        changed|changed\|*) evidence_cache_invalidate ;;
+        changed|changed\|*)
+            evidence_cache_invalidate
+            KERNEL_INVENTORY_COLLECTED=0
+            ;;
     esac
 }
 
@@ -2440,12 +2474,14 @@ Usage:
   $PROGRAM_NAME config-read  <target-disk> <root-device> <config-key>
   $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> --content-file <path> --content-owner <uid>
   $PROGRAM_NAME config-write <target-disk> <root-device> <config-key> <content>   (deprecated argv transport)
-  $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id]
-  $PROGRAM_NAME host-snapshots <host-disk> <root-device> <list|inspect|plan|rollback> [snapshot-id|@rollback-before-<stamp>]
+  $PROGRAM_NAME snapshots    <target-disk> <root-device> <list|inspect|plan|rollback|create> [snapshot-id]
+  $PROGRAM_NAME host-snapshots <host-disk> <root-device> <list|inspect|plan|rollback|create> [snapshot-id|<root>-rollback-before-<stamp>]
   $PROGRAM_NAME repair       <target-disk> <root-device> <stage> [stage ...]
   $PROGRAM_NAME host-repair  <host-disk> <root-device> <stage> [stage ...]
   $PROGRAM_NAME install-target-package <target-disk> <root-device> <package> [package ...]
   $PROGRAM_NAME install-host-package <host-disk> <root-device> <package> [package ...]
+  $PROGRAM_NAME enable-snapshot-config <target-disk> <root-device>
+  $PROGRAM_NAME enable-host-snapshot-config <host-disk> <root-device>
   $PROGRAM_NAME host-reboot  <host-disk> <root-device>
   $PROGRAM_NAME host-validate <host-disk> <root-device>
   $PROGRAM_NAME host-diagnose <host-disk> <root-device> <diagnostic|all>
@@ -2490,12 +2526,16 @@ Snapshots:
   list              Enumerate Btrfs root snapshots read-only
   inspect <id>      Inspect one Btrfs root snapshot read-only
   plan <id>         Validate and show a transactional rollback plan read-only
-  rollback <id>     Promote a writable copy to @, reconcile boot stack, auto-revert on failure
+  rollback <id>     Promote a writable copy to the detected root subvolume, reconcile boot stack, auto-revert on failure
+  create            Create one single-type 'Boot Bitch manual snapshot' after the confirmation prompt
   Host actions use the same verbs with host-snapshots against the running host.
-  The selected Snapper @ snapshot is promoted to @ with a name-preserving
-  transaction, the running @ is preserved as the @rollback-before-* undo point
-  and a reboot is required before the running host starts the promoted root.
-  An existing @rollback-before-* name is accepted as the rollback target.
+  The selected Snapper snapshot is promoted to the DETECTED root subvolume
+  name (@ on an @-layout, `root` on an anaconda Fedora layout) with a
+  name-preserving transaction, the running root is preserved as the
+  <root>-rollback-before-* undo point and a reboot is required before the
+  running host starts the promoted root.
+  An existing @rollback-before-* or <root>-rollback-before-* name is accepted
+  as the rollback target.
   host-reboot schedules a reboot only after the explicit GUI confirmation.
 
 File system repair:
@@ -4586,10 +4626,17 @@ find_btrfs_root()
     while IFS= read -r candidate; do
         [[ -f "$candidate/etc/os-release" ]] || continue
         # Rollback-staging subvolumes (@rollback-new-*, @rollback-before-*,
-        # @rollback-failed-*) are never the installed root: a damaged @ with a
-        # leftover staging subvolume must fail closed (report the damaged target
-        # for rollback) instead of silently adopting the staging copy.
+        # @rollback-failed-* from the @-layout era, and the round-143
+        # name-agnostic <name>-rollback-* shapes) are never the installed
+        # root: a damaged root with a leftover staging subvolume must fail
+        # closed (report the damaged target for rollback) instead of silently
+        # adopting the staging copy.
         [[ "${candidate##*/}" == @rollback-* ]] && continue
+        case "${candidate##*/}" in
+            *-rollback-new-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) continue ;;
+            *-rollback-before-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) continue ;;
+            *-rollback-failed-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) continue ;;
+        esac
         printf '%s\n' "$candidate"
         return 0
     done < <(find "$base" -mindepth 1 -maxdepth 3 \( -type f -o -type l \) -path '*/etc/os-release' -printf '%h\n' 2>/dev/null | sed 's#/etc$##')
@@ -6036,7 +6083,7 @@ sweep_stale_target_mounts()
 # wedged with no recoverable handle (the 2026-10-19 Ubuntu incident state).
 sweep_stale_target_mounts_namespaces()
 {
-    local target_disk="$1" target_top="$2" mntinfo pid line left right
+    local target_disk="$1" target_top="$2" mntinfo pid line left right f s
     local target source source_dev top ns_id sess_root
     local -a ns_targets=() ns_sources=() ns_pids=() ns_order=()
     local -a seen_namespaces=() seen_namespaces_keys=()
@@ -6075,8 +6122,16 @@ sweep_stale_target_mounts_namespaces()
             left="${line%% - *}"
             right="${line#* - }"
             [[ -n "$right" && "$left" != "$line" ]] || continue
-            target="$(awk '{print $5}' <<<"$left" 2>/dev/null || true)"
-            source="$(awk '{print $2}' <<<"$right" 2>/dev/null || true)"
+            # Round 118 (performance): extract the mount target (5th field of
+            # the left part) and source (2nd field of the right part) with
+            # parameter expansion — the previous two-awk-spawns-per-line cost
+            # seconds per sweep on a Fedora-class host (hundreds of mountinfo
+            # lines across the service mount namespaces; measured ~5 s of the
+            # target diagnostic's preparation).
+            f="${left#* }"; f="${f#* }"; f="${f#* }"; f="${f#* }"
+            target="${f%% *}"
+            s="${right#* }"
+            source="${s%% *}"
             [[ -n "$target" && -n "$source" ]] || continue
             # Boot Bitch's own session paths only (STATE_ROOT or a clone view
             # of it, like snapd's /var/lib/snapd/hostfs/...).
@@ -6102,8 +6157,11 @@ sweep_stale_target_mounts_namespaces()
             left="${line%% - *}"
             right="${line#* - }"
             [[ -n "$right" && "$left" != "$line" ]] || continue
-            target="$(awk '{print $5}' <<<"$left" 2>/dev/null || true)"
-            source="$(awk '{print $2}' <<<"$right" 2>/dev/null || true)"
+            # Round 118 (performance): see the anchor pass above.
+            f="${left#* }"; f="${f#* }"; f="${f#* }"; f="${f#* }"
+            target="${f%% *}"
+            s="${right#* }"
+            source="${s%% *}"
             [[ -n "$target" && -n "$source" ]] || continue
             [[ "$target" == "$sess_root" || "$target" == "$sess_root"/* ]] || continue
             ns_targets+=("$target")
@@ -7027,6 +7085,67 @@ sha256_verify_failure()
     log "ERROR: $message" | tee -a "$SESSION_LOG" >&2
 }
 
+# Round 122 (TUXEDO File Copy silence): xargs -P capability probe.  The
+# parallel SHA-256 verification needs `xargs -0 -P`; GNU xargs has carried -P
+# since findutils 4.2.28 and BusyBox xargs has it too, but an older or
+# minimal xargs without it must fall back to the sequential verification loop
+# (the fail-closed counts and failure messages are identical either way).
+# Probed once per helper run with a trivial transfer; the result is cached.
+XARGS_PARALLEL_SUPPORTED=""
+
+xargs_supports_parallel()
+{
+    if [[ -n "$XARGS_PARALLEL_SUPPORTED" ]]; then
+        [[ "$XARGS_PARALLEL_SUPPORTED" == yes ]]
+        return
+    fi
+    local rc=0
+    set +e
+    printf 'probe\0' | xargs -0 -P 2 -n 1 true >/dev/null 2>&1
+    rc=$?
+    set -e
+    if (( rc == 0 )); then
+        XARGS_PARALLEL_SUPPORTED=yes
+    else
+        XARGS_PARALLEL_SUPPORTED=no
+    fi
+    [[ "$XARGS_PARALLEL_SUPPORTED" == yes ]]
+}
+
+# Round 122: one worker of the parallel SHA-256 copy-verification pool.
+# Consumes absolute source paths; hashes each source and its mirrored
+# destination file under $VERIFY_DESTBASE and prints ONE NUL-terminated
+# result record per file on stdout: `OK <relative>` or
+# `FAIL missing|unreadable|mismatch <relative>`.  Nothing else is printed
+# here — the pool master (verify_sha256_item) owns the session log, the
+# failure messages and the progress lines, and this function never writes to
+# stderr.  The relative path can contain spaces (never a NUL), so the
+# NUL-terminated record framing round-trips every name.
+verify_sha256_worker()
+{
+    local source_file relative destination_file source_hash destination_hash
+    for source_file in "$@"; do
+        relative="${source_file#"${VERIFY_SOURCE}"/}"
+        destination_file="${VERIFY_DESTBASE}/$relative"
+        if [[ ! -f "$destination_file" || -L "$destination_file" ]]; then
+            printf 'FAIL missing %s\0' "$relative"
+            continue
+        fi
+        source_hash="$(sha256sum -- "$source_file" 2>/dev/null | awk '{print $1}' || true)"
+        destination_hash="$(sha256sum -- "$destination_file" 2>/dev/null | awk '{print $1}' || true)"
+        if [[ -z "$source_hash" || -z "$destination_hash" ]]; then
+            printf 'FAIL unreadable %s\0' "$relative"
+            continue
+        fi
+        if [[ "$source_hash" != "$destination_hash" ]]; then
+            printf 'FAIL mismatch %s\0' "$relative"
+            continue
+        fi
+        printf 'OK %s\0' "$relative"
+    done
+}
+export -f verify_sha256_worker
+
 # SHA-256 verification of one copied item.  stdout is always exactly one bare
 # integer — the number of regular files verified, 0 on every failure path — so
 # command-substitution callers can consume it safely (the caller must treat
@@ -7068,31 +7187,103 @@ verify_sha256_item()
     fi
 
     if [[ -d "$source" && ! -L "$source" ]]; then
-        while IFS= read -r -d '' source_file; do
-            relative="${source_file#"$source"/}"
-            destination_file="$destination_dir/$base/$relative"
-            if [[ ! -f "$destination_file" || -L "$destination_file" ]]; then
-                sha256_verify_failure "Verification failed; destination file missing or not a regular file: $destination_file"
-                failed=$((failed + 1))
-                continue
+        # Round 122 (TUXEDO File Copy silence): the post-rsync SHA-256 pass
+        # over a large tree (71,403 files / 8.25G in the user's run) emitted
+        # no progress and hashed every file sequentially.  The file list is
+        # snapshotted first so the verified set is stable, then a parallel
+        # worker pool (xargs -P, bounded by the detected CPU count, never
+        # above 16) hashes source/destination pairs and streams one
+        # NUL-terminated result record per file back to this master loop,
+        # which counts, reports failures with the exact pre-round-122
+        # messages and emits bounded progress (every 1000 results).  The
+        # fail-closed rules are unchanged: any failed file, a vanished source
+        # directory or a worker-count shortfall returns nonzero, and stdout
+        # stays exactly one bare integer (progress and failure text go to
+        # stderr + the session log).  An xargs without -P falls back to the
+        # sequential loop (same counts, same messages).
+        local list_file="$SESSION_DIR/filecopy-sha-verify-${base}.list" total processed verify_jobs result status
+        find "$source" -type f -print0 2>/dev/null > "$list_file" || true
+        total="$(tr -cd '\0' < "$list_file" | wc -c)"
+        [[ "$total" =~ ^[0-9]+$ ]] || total=0
+        processed=0
+        msg_log copy-verify-start "$base" "$total" >&2
+        if (( total > 0 )) && xargs_supports_parallel; then
+            verify_jobs="$(nproc 2>/dev/null || getconf _NPROCESSORS_ONLN 2>/dev/null || true)"
+            [[ "$verify_jobs" =~ ^[0-9]+$ ]] || verify_jobs=2
+            (( verify_jobs < 1 )) && verify_jobs=1
+            (( verify_jobs > 16 )) && verify_jobs=16
+            while IFS= read -r -d '' result; do
+                status="${result%% *}"
+                relative="${result#* }"
+                processed=$((processed + 1))
+                case "$status" in
+                    OK)
+                        verified=$((verified + 1))
+                        ;;
+                    FAIL)
+                        failed=$((failed + 1))
+                        case "$relative" in
+                            missing\ *)
+                                sha256_verify_failure "Verification failed; destination file missing or not a regular file: $destination_dir/$base/${relative#missing }"
+                                ;;
+                            unreadable\ *)
+                                sha256_verify_failure "SHA-256 verification failed; the file disappeared or is unreadable while hashing: $source/${relative#unreadable }"
+                                ;;
+                            mismatch\ *)
+                                sha256_verify_failure "SHA-256 verification failed: $source/${relative#mismatch }"
+                                ;;
+                            *)
+                                sha256_verify_failure "SHA-256 verification failed: $source/$relative"
+                                ;;
+                        esac
+                        ;;
+                    *)
+                        sha256_verify_failure "SHA-256 verification worker produced an unrecognized result: $result"
+                        failed=$((failed + 1))
+                        ;;
+                esac
+                (( processed % 1000 == 0 )) && msg_log copy-verify-progress "$processed" "$total" >&2
+            done < <(VERIFY_SOURCE="$source" VERIFY_DESTBASE="$destination_dir/$base" \
+                xargs -0 -P "$verify_jobs" -n 100 bash -c 'verify_sha256_worker "$@"' _ < "$list_file")
+            # A worker that died without reporting (its bash never started,
+            # or the pool was killed) leaves result records missing; the
+            # count shortfall is a failure, never a silent success.
+            if (( processed < total )); then
+                sha256_verify_failure "SHA-256 verification incomplete; only $processed of $total files were processed (a verification worker failed)."
+                failed=$((failed + total - processed))
             fi
-            # `|| true` keeps a failed sha256sum (the file disappeared while
-            # the list was being verified) from killing the function under
-            # `set -euo pipefail`; the empty hash is caught below and reported.
-            source_hash="$(sha256sum -- "$source_file" 2>/dev/null | awk '{print $1}' || true)"
-            destination_hash="$(sha256sum -- "$destination_file" 2>/dev/null | awk '{print $1}' || true)"
-            if [[ -z "$source_hash" || -z "$destination_hash" ]]; then
-                sha256_verify_failure "SHA-256 verification failed; the file disappeared or is unreadable while hashing: $source_file"
-                failed=$((failed + 1))
-                continue
-            fi
-            if [[ "$source_hash" != "$destination_hash" ]]; then
-                sha256_verify_failure "SHA-256 verification failed: $source_file"
-                failed=$((failed + 1))
-                continue
-            fi
-            verified=$((verified + 1))
-        done < <(find "$source" -type f -print0 2>/dev/null)
+        else
+            while IFS= read -r -d '' source_file; do
+                relative="${source_file#"$source"/}"
+                destination_file="$destination_dir/$base/$relative"
+                processed=$((processed + 1))
+                if [[ ! -f "$destination_file" || -L "$destination_file" ]]; then
+                    sha256_verify_failure "Verification failed; destination file missing or not a regular file: $destination_file"
+                    failed=$((failed + 1))
+                    continue
+                fi
+                # `|| true` keeps a failed sha256sum (the file disappeared
+                # while the list was being verified) from killing the
+                # function under `set -euo pipefail`; the empty hash is
+                # caught below and reported.
+                source_hash="$(sha256sum -- "$source_file" 2>/dev/null | awk '{print $1}' || true)"
+                destination_hash="$(sha256sum -- "$destination_file" 2>/dev/null | awk '{print $1}' || true)"
+                if [[ -z "$source_hash" || -z "$destination_hash" ]]; then
+                    sha256_verify_failure "SHA-256 verification failed; the file disappeared or is unreadable while hashing: $source_file"
+                    failed=$((failed + 1))
+                    continue
+                fi
+                if [[ "$source_hash" != "$destination_hash" ]]; then
+                    sha256_verify_failure "SHA-256 verification failed: $source_file"
+                    failed=$((failed + 1))
+                    continue
+                fi
+                verified=$((verified + 1))
+                (( processed % 1000 == 0 )) && msg_log copy-verify-progress "$processed" "$total" >&2
+            done < "$list_file"
+        fi
+        rm -f -- "$list_file"
+        msg_log copy-verify-done "$base" "$verified" >&2
         if [[ ! -d "$source" ]]; then
             # The directory itself vanished while its file list was being
             # verified; the partial count must not look like a clean success.
@@ -7237,6 +7428,12 @@ verify_rsync_item()
 {
     local source="$1" destination="$2" chown_value="$3" strip_setid="${4:-no}" output
     local -a options=(-aHAX --numeric-ids --checksum --dry-run --itemize-changes)
+    # Round 122: the rsync metadata/content re-check is the first silent
+    # phase after the transfer finishes; a start line makes the hold legible
+    # (bounded: one line per copied item).  The re-check itself stays a
+    # single sequential rsync (its --checksum walk is one process; the
+    # parallel treatment applies to the SHA-256 pass that follows).
+    msg_log copy-rsync-recheck-start "$(basename -- "$source")"
     if [[ "$strip_setid" == yes ]]; then
         # A4-02 CRITICAL coupling: the verification must mask setuid/setgid
         # and filter security.capability exactly like the copy did, or the
@@ -8871,18 +9068,34 @@ run_chroot_try()
     local label="$1"; shift
     local output rc
     local display_locale=""
+    local try_capture_file=""
 
     if [[ -n "${RUN_CHROOT_TRY_DISPLAY_LOCALE-}" ]]; then
         display_locale="$(display_locale_env)"
     fi
 
     msg_log try-label "$label"
-    set +e
     # RUN_CHROOT_TRY_BOUND (set only by the bounded package-manager apply
     # wrapper) turns this into a wall-clock-bounded run.  It is threaded through
     # the same run_selected_chroot call shape so a contract stub of
     # run_selected_chroot or run_chroot_try still intercepts.
-    output="$(
+    #
+    # Round 149 (ITEM 4, the \r streaming): the transcript streams LIVE.  The
+    # command's raw output is teed into a session capture file (the byte-exact
+    # stream CHROOT_TRY_OUTPUT parsers keep reading) while a \r-split view
+    # streams to the GUI protocol line by line, so dnf5/apt progress bars —
+    # which update in place with carriage returns — paint as separate steps
+    # while the command runs instead of appearing all at once at completion.
+    # The session log still receives the raw output post-hoc (the evidence
+    # stays byte-true); only the live GUI view is \r-split.  When the session
+    # capture file cannot be created the historical buffered shape is kept.
+    # `${SESSION_DIR:-}` keeps the assignment safe under `set -u` in the
+    # contract harnesses (which source the helper without a session dir), and
+    # the local is named try_capture_file so a contract stub's own
+    # `capture_file` variable is never shadowed through bash's dynamic scope.
+    try_capture_file="$(mktemp "${SESSION_DIR:-}/try-output.XXXXXX" 2>/dev/null || true)"
+    set +e
+    if [[ -n "$try_capture_file" ]]; then
         RUN_SELECTED_CHROOT_BOUND="${RUN_CHROOT_TRY_BOUND:-}" run_selected_chroot /usr/bin/env \
             $display_locale \
             HOME=/root \
@@ -8890,9 +9103,26 @@ run_chroot_try()
             DEBIAN_FRONTEND=noninteractive \
             APT_LISTCHANGES_FRONTEND=none \
             GRUB_DISABLE_OS_PROBER=true \
-            "$@" 2>&1
-    )"
-    rc=$?
+            "$@" 2>&1 \
+        | tee "$try_capture_file" \
+        | tr '\r' '\n' \
+        | repair_log_filter
+        rc=${PIPESTATUS[0]}
+        output="$(cat "$try_capture_file" 2>/dev/null || true)"
+        rm -f -- "$try_capture_file"
+    else
+        output="$(
+            RUN_SELECTED_CHROOT_BOUND="${RUN_CHROOT_TRY_BOUND:-}" run_selected_chroot /usr/bin/env \
+                $display_locale \
+                HOME=/root \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                DEBIAN_FRONTEND=noninteractive \
+                APT_LISTCHANGES_FRONTEND=none \
+                GRUB_DISABLE_OS_PROBER=true \
+                "$@" 2>&1
+        )"
+        rc=$?
+    fi
     set -e
 
     CHROOT_TRY_OUTPUT="$output"
@@ -9523,6 +9753,87 @@ rpm_transaction_try()
     return 0
 }
 
+# The NAME component of an rpm package argument given in NEVRA form
+# (`name-<version>-<release>.<arch>`), or the argument unchanged when it is a
+# bare package name.  The shape gate requires at least two dots and a known
+# architecture token, so a bare name that merely contains dashes or dots
+# (linux-firmware, libX11-xcb) is never mis-split into a wrong name.  A
+# non-matching argument is returned unchanged (fail closed: no name guess).
+rpm_nevra_name_component()
+{
+    local arg="$1" arch name
+    [[ -n "$arg" ]] || { printf '%s\n' "$arg"; return 0; }
+    case "$arg" in
+        *.*.*) ;;
+        *) printf '%s\n' "$arg"; return 0 ;;
+    esac
+    arch="${arg##*.}"
+    case " $arch " in
+        *" noarch "*|*" x86_64 "*|*" i686 "*|*" i386 "*|*" aarch64 "*|*" armv7hl "*|*" armv6hl "*|*" ppc64le "*|*" ppc64 "*|*" s390x "*|*" riscv64 "*) ;;
+        *) printf '%s\n' "$arg"; return 0 ;;
+    esac
+    # Strip -<release>.<arch>, then -<version>: the remainder is the name.
+    name="${arg%-*}"
+    name="${name%-*}"
+    [[ -n "$name" && "$name" != "$arg" ]] || { printf '%s\n' "$arg"; return 0; }
+    printf '%s\n' "$name"
+    return 0
+}
+
+# Round 149 (ITEM 2): the argument dnf5 names in an "installed, but not
+# available" resolution row.  dnf5 5.x QUOTES the argument
+# (`Packages for argument 'name-…-x86_64' installed, but not available.`);
+# the quotes are stripped so the extraction matches the unquoted command
+# argument exactly.
+rpm_unavailable_argument()
+{
+    local line="$1"
+    legacy_sed_ext -n "s/^.*Packages? for argument ['\"]?([^'\"]+)['\"]? installed, but not available\..*$/\1/p" <<<"$line"
+}
+
+# Round 149 (ITEM 2): the currently available (repository) version of one
+# package name — the read-only `dnf5 repoquery --available` evidence reused
+# from the driver-package versions probe (driver_package_available_versions,
+# ascending); prints the NEWEST available "<version>-<release>" and returns 1
+# when none is resolvable.  Used only for the honest obsolete-reinstall reason
+# (never a gate, never a package mutation).
+rpm_available_version_of()
+{
+    local name="$1" line list
+    [[ -n "$name" ]] || return 1
+    line="$(driver_package_available_versions "$name" 2>/dev/null || true)"
+    [[ -n "$line" ]] || return 1
+    list="${line#*=}"
+    [[ -n "$list" && "$list" != "$line" ]] || return 1
+    printf '%s\n' "${list##*,}"
+    return 0
+}
+
+# Round 149 (ITEM 2): the honest reason for a `dnf5 reinstall` whose package
+# version is no longer available in the enabled repositories (the "Packages
+# for argument <x> installed, but not available." class, still present after
+# the bare-name re-resolution).  Names the requested package and the NEWEST
+# available version, so the user sees exactly what moved — never the false
+# "failed Boot Bitch safety checks" error and never a raw dnf5 exit code.
+rpm_reinstall_obsolete_unavailable_reason()
+{
+    local output="$1" line name version
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        name="$(rpm_unavailable_argument "$line")"
+        [[ -n "$name" ]] || continue
+        name="$(rpm_nevra_name_component "$name")"
+        break
+    done <<<"$output"
+    [[ -n "$name" ]] || name="the requested package"
+    version="$(rpm_available_version_of "$name" 2>/dev/null || true)"
+    if [[ -n "$version" ]]; then
+        reason dnf5-reinstall-obsolete-unavailable "$name" "$version"
+    else
+        reason dnf5-reinstall-obsolete-no-version "$name"
+    fi
+}
+
 # Fail-closed output policy for a dnf5 simulation/apply transcript.  The
 # --assumeno simulation exits 1 by design after "Operation aborted by the
 # user."; every other nonzero status and every removal, downgrade, untrusted
@@ -9541,7 +9852,7 @@ rpm_simulation_is_safe()
     local output="$1" rc="${2:-0}"
     shift 2 || true
     local -a reinstall_names=("$@")
-    local name allowed count line current_name replaced_name
+    local name allowed count line current_name replaced_name name_component
     local removal_count=0 downgrade_count=0 replacing_count=0 total=0
     local removed_pkg kernel_removal_only
     local -a removed_pkgs=()
@@ -9643,6 +9954,21 @@ rpm_simulation_is_safe()
                 allowed=false
                 for name in "${reinstall_names[@]:-}"; do
                     if [[ "$replaced_name" == "$name" || "$replaced_name" == "$name"-* ]]; then
+                        allowed=true
+                        break
+                    fi
+                    # A reinstall requested by NEVRA (name-<version>-<release>.<arch>,
+                    # the rpm -qf form the input/network reinstall passes) is planned
+                    # by dnf5 under the bare package name, and its same-package
+                    # self-replace sub-line names that bare name too (the same
+                    # package replacing ITSELF at the same NEVRA — a safe reinstall).
+                    # Accept an EXACT match on the NEVRA's name component; the
+                    # `-<something>` extension acceptance above is deliberately not
+                    # repeated here, so a foreign obsoletes (replacing a different
+                    # package) is still refused.
+                    name_component="$(rpm_nevra_name_component "$name")"
+                    if [[ -n "$name_component" && "$name_component" != "$name" \
+                        && "$replaced_name" == "$name_component" ]]; then
                         allowed=true
                         break
                     fi
@@ -9815,6 +10141,51 @@ adaptive_rpm_apply()
     fingerprint_before="$(rpm_database_fingerprint)"
     msg_log simulate-dnf5 "${rpm_command[*]}"
     rpm_transaction_try "dnf5 ${rpm_command[*]} simulation" "${rpm_command[@]:-}" --assumeno
+    # Round 149 (ITEM 2): an obsolete-NEVRA reinstall argument — the rpm -qf
+    # NEVRA form whose exact version the enabled repositories no longer carry
+    # (dnf5: "Packages for argument <nevra> installed, but not available.",
+    # the superseded kernel-modules-core-<v> class after an upgrade) — must
+    # NEVER surface as the false 'failed Boot Bitch safety checks' failure.
+    # Re-resolve those arguments once to their bare package NAME (the
+    # `dnf5 reinstall <name>` resolution: reinstall the CURRENTLY installed
+    # version of that package) and re-simulate; the fail-closed safety policy
+    # then runs on the RESOLVED transaction.  The round-140 self-replace
+    # acceptance and the foreign-replace guard are unchanged: reinstall_names
+    # is re-derived from the resolved command, so a replacement sub-line is
+    # still accepted only for a name being reinstalled.
+    if [[ "${rpm_command[0]:-}" == reinstall ]]; then
+        local unavailable_nevra resolved_name resolved_any=false
+        local -a unavailable_nevras=()
+        while IFS= read -r unavailable_nevra; do
+            [[ -n "$unavailable_nevra" ]] || continue
+            unavailable_nevra="$(rpm_unavailable_argument "$unavailable_nevra")"
+            [[ -n "$unavailable_nevra" ]] && unavailable_nevras+=("$unavailable_nevra")
+        done <<<"$RPM_SIM_OUTPUT"
+        local rpm_cmd_index
+        for (( rpm_cmd_index = 1; rpm_cmd_index < ${#rpm_command[@]}; ++rpm_cmd_index )); do
+            for unavailable_nevra in "${unavailable_nevras[@]:-}"; do
+                [[ "${rpm_command[$rpm_cmd_index]}" == "$unavailable_nevra" ]] || continue
+                resolved_name="$(rpm_nevra_name_component "$unavailable_nevra")"
+                if [[ -n "$resolved_name" && "$resolved_name" != "$unavailable_nevra" ]]; then
+                    msg_log dnf5-reinstall-resolved "$unavailable_nevra" "$resolved_name"
+                    rpm_command[$rpm_cmd_index]="$resolved_name"
+                    resolved_any=true
+                fi
+            done
+        done
+        if [[ "$resolved_any" == true ]]; then
+            rpm_transaction_try "dnf5 ${rpm_command[*]} simulation (re-resolved)" "${rpm_command[@]:-}" --assumeno
+            reinstall_names=("${rpm_command[@]:1}")
+        fi
+    fi
+    # When even the re-resolved transaction still reports the unavailable
+    # class, the installed version itself is no longer in the repositories:
+    # fail with the HONEST reason naming the currently available version,
+    # never the misleading safety-check failure.
+    if [[ "${rpm_command[0]:-}" == reinstall ]] \
+        && grep -Eiq 'Packages? for argument .* installed, but not available\.' <<<"$RPM_SIM_OUTPUT"; then
+        fail "$(rpm_reinstall_obsolete_unavailable_reason "$RPM_SIM_OUTPUT")"
+    fi
     rpm_simulation_is_safe "$RPM_SIM_OUTPUT" "$RPM_SIM_RC" "${reinstall_names[@]:-}" \
         || fail "The simulated dnf5 ${rpm_command[*]} transaction failed Boot Bitch safety checks."
     fingerprint_after="$(rpm_database_fingerprint)"
@@ -10088,13 +10459,21 @@ dpkg_path_owner_map_build()
 {
     local info_dir="$TARGET_ROOT/var/lib/dpkg/info" file idx
     [[ -d "$info_dir" ]] || return 1
+    # Round 118 (performance): the index is built ONCE per session into a
+    # FIXED path shared across subshells.  The previous per-call temp index
+    # lived in a shell variable that never survives a command substitution,
+    # so every $(...) lookup context rebuilt the whole map — measured ~0.2 s
+    # per rebuild, several rebuilds per kernel-inventory collect on TUXEDO.
+    # The session directory is fresh per request, and dpkg_path_owner_map_clear
+    # (the post-mutation invalidation) removes the fixed file exactly like it
+    # removed the temp index, so the freshness contract is unchanged.
+    idx="${SESSION_DIR:-${TMPDIR:-/tmp}}/dpkg-owner.index"
+    [[ -f "$idx" && -s "$idx" ]] && { DPKG_PATH_OWNER_INDEX="$idx"; return 0; }
     local -a list_files=()
     while IFS= read -r file; do
         [[ -n "$file" ]] && list_files+=("$file")
     done < <(find "$info_dir" -maxdepth 1 -type f -name '*.list' 2>/dev/null | LC_ALL=C sort)
     ((${#list_files[@]} > 0)) || return 1
-    idx="$(mktemp "${SESSION_DIR:-${TMPDIR:-/tmp}}/dpkg-owner.XXXXXX" 2>/dev/null || true)"
-    [[ -n "$idx" ]] || return 1
     awk '
         FNR == 1 {
             pkg = FILENAME
@@ -10102,7 +10481,10 @@ dpkg_path_owner_map_build()
             sub(/^.*\//, "", pkg)
         }
         length($0) > 0 { print $0 "\t" pkg }
-    ' "${list_files[@]:-}" > "$idx" 2>/dev/null || true
+    ' "${list_files[@]:-}" > "$idx.tmp.$$" 2>/dev/null \
+        || { rm -f -- "$idx.tmp.$$" 2>/dev/null || true; return 1; }
+    mv -- "$idx.tmp.$$" "$idx" 2>/dev/null \
+        || { rm -f -- "$idx.tmp.$$" 2>/dev/null || true; return 1; }
     DPKG_PATH_OWNER_INDEX="$idx"
     return 0
 }
@@ -10111,20 +10493,44 @@ dpkg_path_owner_map_build()
 # next lookup re-reads a fresh map).
 dpkg_path_owner_map_clear()
 {
+    # Round 118: the fixed per-session index file is removed regardless of
+    # whether THIS shell holds the path variable — the map is often built
+    # inside a $(...) subshell whose variable never reaches the mutating
+    # shell, and a stale file would otherwise feed pre-mutation ownership
+    # into the post-mutation lookups.
     [[ -n "$DPKG_PATH_OWNER_INDEX" ]] && rm -f -- "$DPKG_PATH_OWNER_INDEX" 2>/dev/null || true
+    rm -f -- "${SESSION_DIR:-${TMPDIR:-/tmp}}/dpkg-owner.index" 2>/dev/null || true
     DPKG_PATH_OWNER_INDEX=""
 }
 
 dpkg_path_owner()
 {
-    local path="$1"
+    local path="$1" found=""
     [[ -n "$path" ]] || return 1
     path="${path%/}"
     [[ "$path" == /* ]] || return 1
     [[ -n "$DPKG_PATH_OWNER_INDEX" && -f "$DPKG_PATH_OWNER_INDEX" ]] || dpkg_path_owner_map_build || return 1
-    awk -F '\t' -v p="$path" '
-        $1 == p || index($1, p "/") == 1 { print $2 }
-    ' "$DPKG_PATH_OWNER_INDEX" 2>/dev/null | LC_ALL=C sort -u
+    # Round 118 (performance): a FILE is owned by exactly one package, so a
+    # first-match grep answers it in milliseconds — the old awk rescanned the
+    # complete multi-hundred-thousand-line index per call, measured ~200 ms
+    # per module on TUXEDO, ~40 modules per input-evidence collect (~8 s) and
+    # up to three collects per combined run.  A DIRECTORY keeps the
+    # all-owners semantics (the kernel inventory groups the complete
+    # split-kernel package set from every package owning files under
+    # /usr/lib/modules/<v>, and collapsing that to one owner would break the
+    # TUXEDO/Ubuntu grouping) — the same line set, resolved with grep instead
+    # of a whole-file awk scan.  The explicit rc check matters: cut exits 0
+    # even on empty input, so a pipe would mask grep's "not found".
+    if [[ -d "$TARGET_ROOT$path" ]]; then
+        {
+            LC_ALL=C grep -F -- "$path/" "$DPKG_PATH_OWNER_INDEX" 2>/dev/null
+            LC_ALL=C grep -F -- "$path"$'\t' "$DPKG_PATH_OWNER_INDEX" 2>/dev/null
+        } | cut -f2 | LC_ALL=C sort -u
+        return 0
+    fi
+    found="$(LC_ALL=C grep -F -m1 -- "$path"$'\t' "$DPKG_PATH_OWNER_INDEX" 2>/dev/null | cut -f2 || true)"
+    [[ -n "$found" ]] && printf '%s\n' "$found"
+    return 0
 }
 
 # Print the dependency package names (Depends/Pre-Depends/Recommends, version
@@ -10418,6 +10824,30 @@ KERNEL_REMOVABLE=()
 KERNEL_REMOVABLE_PKGS=()
 KERNEL_LATEST_PKGS=()
 KERNEL_MISSING_HEADERS=()
+# Round 147 (ITEM 4): per-kernel header installability evidence, parallel to
+# KERNEL_MISSING_HEADERS (same index).  One entry per missing-headers kernel
+# on apt/dpkg targets: `installable`, `not installable (<reason>)` (the
+# uninstallable dependency named — e.g. the gcc-16-for-host blocker),
+# `undecidable` (the bounded simulation could not decide) or
+# `unavailable (no installation candidate)`.  Emitted as the standalone
+# `Kernel headers installability:` evidence line so the blocker is visible
+# outside the `Kernel broken` reason; empty on rpm/apk/pacman (no equivalent
+# bounded read-only probe).
+KERNEL_HEADERS_INSTALLABILITY=()
+# Round 151 (ITEM C1): the scope's own build-compiler evidence — "gcc <version>"
+# (the running system's compiler in host mode, the target's own compiler in the
+# repair chroot otherwise) or "none".  Kernel headers and DKMS builds REQUIRE a
+# compiler, so the kernel diagnostic states the compiler explicitly; when a
+# headers-installability reason names a compiler meta-package that is not
+# installable while a plain compiler IS installed (the TUXEDO gcc-16-for-host
+# packaging gap), the emitted line names BOTH so the state stays truthful.
+# Filled by the read-only bounded probe kernel_build_compiler_probe().
+KERNEL_BUILD_COMPILER=""
+# Round 151 (ITEM C1): the comma-joined compiler meta-package name(s)
+# (gcc-<n>-for-host) that a not-installable headers reason names while a plain
+# compiler IS installed — the distinction the `Kernel build compiler:` evidence
+# line surfaces (set only on apt/dpkg, where the installability reasons exist).
+KERNEL_BUILD_COMPILER_METAGAP=""
 KERNEL_ORPHANED_HEADERS=()
 # KERNEL_ORPHANED_KERNELS lists kernel versions whose on-disk artifacts (module
 # tree or boot files) exist without any owning package (zombie state after a
@@ -10509,6 +10939,59 @@ kernel_headers_installed()
     fi
 }
 
+# Round 151 (ITEM C1): read-only bounded probe of the scope's own build
+# compiler.  Prints "gcc <version>" (the compiler name plus its version token,
+# parsed from the first `gcc --version` line) or "none".  Host scope probes the
+# running system's gcc (TARGET_ROOT=/), a repair target probes its OWN gcc
+# inside the repair chroot — never the recovery host's compiler for a foreign
+# disk.  Bounded (15 s via RUN_SELECTED_CHROOT_BOUND); never mutates the scope.
+kernel_build_compiler_probe()
+{
+    local output rc ver
+    set +e
+    output="$(
+        RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
+            HOME=/root LC_ALL=C \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            gcc --version 2>/dev/null
+    )"
+    rc=$?
+    set -e
+    (( rc == 0 )) || { printf 'none\n'; return 0; }
+    # First line shapes: "gcc (Debian 16.2.0-3) 16.2.0", "gcc (GCC) 14.2.0",
+    # "gcc (Alpine 14.2.0-r2) 14.2.0".  Prefer the parenthesized vendor part's
+    # version token — the package-manager identity the user sees ("Debian
+    # 16.2.0-3" -> 16.2.0-3) — falling back to the trailing version token
+    # ("gcc (GCC) 14.2.0" -> 14.2.0).  The `|| true` keeps the assignment
+    # pipefail-safe (a no-match grep exits 1 under `set -o pipefail`).
+    ver="$(sed -n '1s/^gcc[^(]*(\([^)]*\)).*$/\1/p' <<<"$output" \
+           | grep -oE '[0-9][^[:space:]]*' | head -n1 || true)"
+    if [[ -z "$ver" ]]; then
+        ver="$(sed -n '1s/^gcc[^(]*([^)]*)[[:space:]]*\([0-9][^[:space:]]*\).*$/\1/p' <<<"$output")"
+    fi
+    [[ -n "$ver" ]] || { printf 'none\n'; return 0; }
+    printf 'gcc %s\n' "$ver"
+}
+
+# Round 151 (ITEM C1): the comma-joined compiler meta-package name(s) named by
+# a not-installable headers-installability reason — the dependency in such a
+# reason has the gcc-<n>-for-host shape (the TUXEDO compiler meta-package).
+# Prints nothing when no reason names one.  Pure parsing of the already-bounded
+# installability evidence (no new probe).
+kernel_headers_compiler_metagap_names()
+{
+    local i state metagap_list="" metagap_name
+    for i in "${!KERNEL_HEADERS_INSTALLABILITY[@]}"; do
+        state="${KERNEL_HEADERS_INSTALLABILITY[$i]}"
+        [[ -n "$state" ]] || continue
+        metagap_name="$(grep -oE 'gcc-[0-9]+-for-host' <<<"$state" | head -n1 || true)"
+        if [[ -n "$metagap_name" ]] && [[ ",$metagap_list," != *",$metagap_name,"* ]]; then
+            metagap_list="${metagap_list:+$metagap_list,}$metagap_name"
+        fi
+    done
+    printf '%s\n' "$metagap_list"
+}
+
 # Collect the read-only kernel inventory, the running/latest/managed
 # protection set and the removable complement.  Kernel identity comes from the
 # authoritative module-tree directories (/usr/lib/modules/* and
@@ -10520,6 +11003,11 @@ kernel_headers_installed()
 # token (never removed) and never a versioned kernel.
 kernel_inventory_collect()
 {
+    # Round 118 (performance): re-collect only when the state is not already
+    # fresh for this run (the combined diagnostic collects once in the main
+    # shell before the capability preamble; the repair paths re-collect after
+    # a mutation because repair_change_status resets the flag).
+    (( KERNEL_INVENTORY_COLLECTED == 1 )) && return 0
     local v pkg meta m i dir joined arch_headers vsize p rpm_paths apk_paths flavor
     local pacman_hdr_pkg pacman_stale_i pacman_stale_v pacman_stale_pkg pacman_avail_rc
     local pacman_partial_pair pacman_partial_version pacman_partial_owner
@@ -10547,6 +11035,9 @@ kernel_inventory_collect()
     KERNEL_REMOVABLE_PKGS=()
     KERNEL_LATEST_PKGS=()
     KERNEL_MISSING_HEADERS=()
+    KERNEL_HEADERS_INSTALLABILITY=()
+    KERNEL_BUILD_COMPILER=""
+    KERNEL_BUILD_COMPILER_METAGAP=""
     KERNEL_ORPHANED_HEADERS=()
     KERNEL_ORPHANED_KERNELS=()
     KERNEL_PARTIAL=()
@@ -10572,6 +11063,12 @@ kernel_inventory_collect()
     if [[ "${TARGET_PACKAGE_MANAGER:-}" == pacman ]]; then
         pacman_backend=true
     fi
+
+    # Round 151 (ITEM C1): the build-compiler evidence — one read-only bounded
+    # probe of the scope's own gcc (the running system's in host mode, the
+    # target's own compiler in the chroot otherwise).  Backend-independent: the
+    # headers/DKMS builds need a compiler on every family.
+    KERNEL_BUILD_COMPILER="$(kernel_build_compiler_probe)"
 
     # Metapackages (image + headers), never removable.
     while IFS= read -r meta; do
@@ -11129,29 +11626,49 @@ kernel_inventory_collect()
     # expected GPU kernel module is absent from its module tree (the DKMS build
     # failed).  Fail closed: only positive evidence marks a kernel broken; the
     # running kernel is never broken.
-    local broken_v broken_reason broken_state
+    local broken_v broken_reason broken_state headers_state
     # (a) headers present-but-uninstallable (apt/dpkg only: the installability
     # simulation is an apt-get probe; rpm/apk have no equivalent read-only
     # dependency-resolution probe bounded the same way).  The uninstallable
     # dependency is captured so the broken annotation can name it.
+    # Round 147 (ITEM 4): the SAME one bounded simulation per missing-headers
+    # kernel now also feeds the per-kernel `Kernel headers installability:`
+    # evidence line (KERNEL_HEADERS_INSTALLABILITY, parallel to
+    # KERNEL_MISSING_HEADERS) — the truth the user asked to see standalone,
+    # not only folded into the `Kernel broken` reason.  A second probe per
+    # kernel is never run (the simulation has a 30 s bound).
     if [[ "$rpm_backend" != true && "$apk_backend" != true && "$pacman_backend" != true ]]; then
         for broken_v in "${KERNEL_MISSING_HEADERS[@]:-}"; do
             [[ -n "$broken_v" ]] || continue
-            [[ "$broken_v" != "$KERNEL_RUNNING" ]] || continue
-            kernel_is_stale "$broken_v" && continue
-            if apt_package_available "linux-headers-$broken_v"; then
-                broken_state=""
-                broken_reason=""
+            broken_state=0
+            broken_reason=""
+            headers_state=""
+            if ! apt_package_available "linux-headers-$broken_v"; then
+                headers_state="unavailable (no installation candidate)"
+            else
                 set +e
                 broken_reason="$(apt_headers_installability "$broken_v")"
                 broken_state=$?
                 set -e
-                if (( broken_state == 1 )); then
-                    KERNEL_BROKEN+=("$broken_v")
-                    KERNEL_BROKEN_REASON+=("${broken_reason:-dependency not installable}")
-                fi
+                case "$broken_state" in
+                    0) headers_state="installable" ;;
+                    1) headers_state="not installable (${broken_reason:-dependency not installable})" ;;
+                    *) headers_state="undecidable" ;;
+                esac
+            fi
+            KERNEL_HEADERS_INSTALLABILITY+=("$headers_state")
+            if [[ "$broken_v" != "$KERNEL_RUNNING" ]] && ! kernel_is_stale "$broken_v" \
+                && (( broken_state == 1 )); then
+                KERNEL_BROKEN+=("$broken_v")
+                KERNEL_BROKEN_REASON+=("${broken_reason:-dependency not installable}")
             fi
         done
+        # Round 151 (ITEM C1): the compiler meta-package distinction — when a
+        # not-installable headers reason names a gcc-<n>-for-host dependency
+        # (the TUXEDO meta-package gap), record it so the `Kernel build
+        # compiler:` evidence line can name it alongside the installed plain
+        # compiler.  Pure parsing of the already-bounded evidence (no new probe).
+        KERNEL_BUILD_COMPILER_METAGAP="$(kernel_headers_compiler_metagap_names)"
     fi
     # (b) boot-history failure (backend-independent): a kernel that failed to
     # reach graphical in a prior boot.  The extracted version must match an
@@ -11220,6 +11737,10 @@ kernel_inventory_collect()
         KERNEL_REMOVABLE=()
         KERNEL_REMOVABLE_PKGS=()
     fi
+    # Round 118 (performance): mark the inventory fresh for this run so the
+    # combined diagnostic's preamble subshells and the kernel section reuse it
+    # (repair_change_status resets the flag on every changed mutation).
+    KERNEL_INVENTORY_COLLECTED=1
 }
 
 # Reconstruct the kernel-inventory globals from the cached `kernel` diagnostic
@@ -11255,6 +11776,9 @@ parse_cached_kernel_inventory()
     KERNEL_REMOVABLE_PKGS=()
     KERNEL_LATEST_PKGS=()
     KERNEL_MISSING_HEADERS=()
+    KERNEL_HEADERS_INSTALLABILITY=()
+    KERNEL_BUILD_COMPILER=""
+    KERNEL_BUILD_COMPILER_METAGAP=""
     KERNEL_ORPHANED_HEADERS=()
     KERNEL_ORPHANED_KERNELS=()
     KERNEL_ORPHANED_SUPPORT_VERSIONS=()
@@ -11315,6 +11839,12 @@ parse_cached_kernel_inventory()
                 ;;
             "Kernel missing headers: "*)
                 KERNEL_MISSING_HEADERS+=("${line#Kernel missing headers: }")
+                ;;
+            "Kernel headers installability: "*)
+                KERNEL_HEADERS_INSTALLABILITY+=("${line#Kernel headers installability: }")
+                ;;
+            "Kernel build compiler: "*)
+                KERNEL_BUILD_COMPILER="${line#Kernel build compiler: }"
                 ;;
             "Kernel stale: "*)
                 KERNEL_STALE+=("${line#Kernel stale: }")
@@ -11791,13 +12321,14 @@ apt_list_decompress()
 # installed, the newest installed versioned image package's own family).  Reads
 # the package indexes directly (/var/lib/apt/lists/*_Packages*) instead of
 # spawning apt-cache, so the probe is fast on targets with many repositories;
-# never writes.  Prints the canonical kernel version string (module-tree style)
-# on success and returns 1 otherwise (offline, no candidate, or no resolvable
-# image dependency).  This is informational wording only and never gates the
-# kernels capability on network.
+# never writes.  Prints the canonical kernel version string (module-tree style,
+# the real linux-image-<v> name's remainder) on success and returns 1
+# otherwise (offline, no candidate, or no resolvable image dependency).  This
+# is informational wording only and never gates the kernels capability on
+# network.
 apt_kernel_repo_latest()
 {
-    local meta img lists_dir file best_version best_img
+    local meta img rest lists_dir file best_version best_img
     # Prefer an installed linux-image-* metapackage; fall back to the newest
     # installed versioned image package so the family is still identifiable.
     meta=""
@@ -11812,13 +12343,40 @@ apt_kernel_repo_latest()
         meta="$img"
     fi
 
+    # Round 80 (the Ubuntu mapping quirk): when the selected meta IS a
+    # versioned image package (the no-metapackage fallback picked the newest
+    # installed image — Ubuntu rigs without linux-image-generic, Debian
+    # systems whose vmlinuz owner is the versioned linux-image-<v>-<flavour>),
+    # its own Depends never names another versioned image: Ubuntu's signed
+    # image depends on linux-modules-<v>-generic (plus the unsigned image),
+    # and the TUXEDO/Debian versioned images depend on modules only.  The
+    # Depends scan below would find no linux-image-<digit> token and the
+    # pre-round-80 code fell through to the bare package Version
+    # (7.0.0-38.38), which maps to the NONEXISTENT linux-image-7.0.0-38.38.
+    # Derive the canonical version from the package name's remainder instead
+    # (7.0.0-38-generic) — the real linux-image-<v> name the installability
+    # probes construct.  The optional unsigned- prefix is stripped exactly
+    # like apt_managed_kernel_versions (Ubuntu's unsigned image owns the
+    # vmlinuz on signed/unsigned systems).
+    if [[ "$meta" == linux-image-* ]]; then
+        rest="${meta#linux-image-}"
+        rest="${rest#unsigned-}"
+        if [[ "$rest" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]]; then
+            printf '%s\n' "$rest"
+            return 0
+        fi
+    fi
+
     lists_dir="$TARGET_ROOT/var/lib/apt/lists"
     [[ -d "$lists_dir" ]] || return 1
 
     # The highest-versioned stanza for the metapackage across every index file
     # names the candidate; its Depends pins the versioned linux-image-<V> whose
     # <V> is the canonical kernel version.  One awk pass over the decompressed
-    # indexes, then a version sort of the candidate set.
+    # indexes, then a version sort of the candidate set.  A stanza whose
+    # Depends names no versioned image contributes nothing (round 80: never
+    # fall back to the bare package Version — it is not a kernel version and
+    # maps to a nonexistent image name).
     best_version=""
     best_img=""
     while IFS=$'\t' read -r version img; do
@@ -11853,17 +12411,13 @@ apt_kernel_repo_latest()
                         break
                     }
                 }
-                printf "%s\t%s\n", ver, img
+                if (img != "") printf "%s\t%s\n", ver, img
             }
         ' | LC_ALL=C legacy_sort_versions -k1,1 | tail -n 1
     )
 
-    [[ -n "$best_version" ]] || return 1
-    if [[ -n "$best_img" ]]; then
-        printf '%s\n' "$best_img"
-    else
-        printf '%s\n' "$best_version"
-    fi
+    [[ -n "$best_version" && -n "$best_img" ]] || return 1
+    printf '%s\n' "$best_img"
 }
 
 # Read-only rpm mirror of apt_kernel_repo_latest: the latest kernel version
@@ -11924,6 +12478,92 @@ pacman_kernel_repo_latest()
     version="${version//.arch/-arch}"
     version="${version//.lts/-lts}"
     printf '%s\n' "$version"
+}
+
+# Read-only apk mirror of apt_kernel_repo_latest: the latest kernel version
+# available from the target's cached repository indexes — the APKINDEX
+# archives under /var/cache/apk that apk itself resolves packages from —
+# parsed directly, so the diagnostic may run on a read-only mount with no
+# network and no cache write (the same read-only discipline as the apt lists
+# and pacman sync-db probes; `apk upgrade --simulate`/`apk list --upgradable`
+# would trigger index fetches, which write the cache).  The repository kernel
+# package is flavour-named (linux-lts/linux-virt/linux-edge); the flavour is
+# evidence-based from the installed newest kernel's kernel-suffix file
+# (alpine_kernel_flavor), never parsed from a package name.  The apk package
+# version (6.18.59-r0) is mapped to the module-tree kernel release string
+# (6.18.59-0-lts) with the same rule the installed kernel already satisfies,
+# and the rule is validated against the installed package before it is
+# trusted.  Prints the mapped version and returns 1 (fail closed) when the
+# flavour, the indexes or a candidate cannot be determined, so
+# KERNEL_REPO_LATEST stays "unavailable" exactly as on an offline apt target.
+# Informational only; never gates the kernels capability on network.
+apk_kernel_repo_latest()
+{
+    local flavour pkg file best_version v rel kver iver irel ikver
+    [[ "${TARGET_PACKAGE_MANAGER:-}" == apk ]] || return 1
+    [[ -d "$TARGET_ROOT/var/cache/apk" ]] || return 1
+    flavour="$(alpine_kernel_flavor "${KERNEL_LATEST:-}" || true)"
+    [[ -n "$flavour" ]] || return 1
+    pkg="linux-$flavour"
+
+    # Highest candidate version across every cached APKINDEX archive.  The
+    # APKINDEX member is one stanza per line (P:/V:/...); paragraph-mode awk
+    # over `tar -xzOf` output is read-only and bounded by the cache size.
+    best_version=""
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        while IFS= read -r v; do
+            [[ -n "$v" ]] || continue
+            best_version="$(printf '%s\n%s\n' "${best_version:-}" "$v" \
+                | LC_ALL=C legacy_sort_versions | tail -n 1)"
+        done < <(tar -xzOf "$file" APKINDEX 2>/dev/null \
+            | awk -v pkg="$pkg" '
+                BEGIN { RS = ""; FS = "\n" }
+                {
+                    name = ""; ver = ""
+                    for (i = 1; i <= NF; i++) {
+                        if ($i ~ /^P:/) name = substr($i, 3)
+                        else if ($i ~ /^V:/) ver = substr($i, 3)
+                    }
+                    if (name == pkg && ver != "") print ver
+                }
+            ' || true)
+    done < <(find "$TARGET_ROOT/var/cache/apk" -maxdepth 1 -type f \
+        \( -name 'APKINDEX*.tar.gz' -o -name 'APKINDEX*.tar' \) 2>/dev/null | LC_ALL=C sort)
+    [[ -n "$best_version" ]] || return 1
+
+    # Map apk version -> module-tree kernel release: strip the trailing -r<rel>
+    # suffix, reinsert the rel number without the 'r' and append -<flavour>
+    # (6.18.59-r0 -> 6.18.59-0-lts).  Fail closed on any unexpected shape.
+    v="${best_version%-r*}"
+    rel="${best_version##*-r}"
+    [[ -n "$v" && "$v" != "$best_version" && "$rel" =~ ^[0-9]+$ ]] || return 1
+    kver="$v-$rel-$flavour"
+    [[ "$kver" =~ ^[0-9]+\.[0-9]+\.[0-9]+ ]] || return 1
+
+    # Validate the mapping rule against the installed kernel before trusting
+    # it: the installed package version, mapped the same way, must equal the
+    # installed newest module-tree release (KERNEL_LATEST).  A mismatch means
+    # the rule does not hold on this system (an unusual apk version layout) —
+    # fail closed rather than report a wrong kernel version.
+    iver="$(awk -v pkg="$pkg" '
+        BEGIN { RS = ""; FS = "\n" }
+        {
+            name = ""; ver = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^P:/) name = substr($i, 3)
+                else if ($i ~ /^V:/) ver = substr($i, 3)
+            }
+            if (name == pkg && ver != "") { print ver; exit }
+        }
+    ' "$TARGET_ROOT/lib/apk/db/installed" 2>/dev/null || true)"
+    if [[ -n "$iver" ]]; then
+        iv="${iver%-r*}"
+        irel="${iver##*-r}"
+        ikver="$iv-$irel-$flavour"
+        [[ "$ikver" == "${KERNEL_LATEST:-}" ]] || return 1
+    fi
+    printf '%s\n' "$kver"
 }
 
 # Extract a human-readable description of the first unsatisfiable apt
@@ -12114,22 +12754,31 @@ pacman_kernel_installability()
     return 1
 }
 
-# Read-only apk installability probe (`apk add --simulate linux-lts`).  The
-# apk repo-latest version is never populated (no read-only apk probe maps the
-# repository version to a module-tree kernel version), so this probe is
-# currently dormant; it exists so the unified reason dispatch below covers
-# every guarded backend the moment an apk repo-latest probe exists.  0 =
-# installable; 1 = an unsatisfied constraint with the concise reason on
-# stdout; 2 = undecidable.
+# Read-only apk installability probe for the repository-latest kernel: the
+# bounded `apk add -u --simulate linux-<flavour>` upgrade simulation — the
+# exact transaction a future repo-latest install would run (`--simulate`
+# never mutates the target; a plain `apk add` without -u would resolve to
+# the already-installed version instead of the repository candidate).  The
+# flavour comes from the version string's trailing flavour suffix (lts/virt/
+# edge — the value apk_kernel_repo_latest constructs), never from a package
+# name parse; an unrecognized suffix fails closed.  0 = installable; 1 = an
+# unsatisfied constraint with the concise reason on stdout; 2 = undecidable.
 apk_kernel_installability()
 {
-    local output rc reason
+    local v="$1" flavour output rc reason
+    [[ -n "$v" ]] || return 2
+    case "$v" in
+        *-lts)  flavour=lts ;;
+        *-virt) flavour=virt ;;
+        *-edge) flavour=edge ;;
+        *)      return 2 ;;
+    esac
     set +e
     output="$(
         RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env \
             HOME=/root LC_ALL=C \
             PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
-            apk add --simulate linux-lts 2>&1
+            apk add -u --simulate "linux-$flavour" 2>&1
     )"
     rc=$?
     set -e
@@ -12721,6 +13370,426 @@ install_host_packages()
     fi
 }
 
+# ---------------------------------------------------------------------------
+# Round 142 — the SNAPSHOT-CONFIG ENABLEMENT (the Install/enable path)
+# ---------------------------------------------------------------------------
+# Snapper installed WITHOUT its initial root configuration leaves snapshot
+# rollback permanently unavailable (the capability rows report
+# reason:no-snapper-root-config / reason:no-snapshot-store) and the user must
+# know the `snapper -c root create-config /` incantation by hand.  The two
+# enable verbs below create the initial configuration through the
+# capabilities Install/enable path instead: the scope's own snapper runs
+# `create-config` (snapper's own subvolume naming and fstab handling — never
+# re-derived), the .snapshots subvolume, the /etc/snapper/configs/root file
+# and the fstab entry land on the scope's own Btrfs root, and an existing
+# rollback state (snapshots, @rollback-* staging subvolumes) is never
+# touched — the creation only adds new entries.  The round-134 CONFIRM
+# prompt precedes the mutation; a proven existing config reports the honest
+# unchanged status.
+
+# The Snapper root config existence proof for ANY scope root prefix ("" = the
+# running host, "$TARGET_ROOT" = the repair target).  The same SUBVOLUME/
+# FSTYPE contract as host_snapshot_snapper_config_ok().
+snapshot_config_file_ok()
+{
+    local root="$1"
+    local cfg="$root/etc/snapper/configs/root"
+    [[ -f "$cfg" ]] || return 1
+    grep -Eq '^[[:space:]]*SUBVOLUME[[:space:]]*=[[:space:]]*"/"' "$cfg" || return 1
+    grep -Eq '^[[:space:]]*FSTYPE[[:space:]]*=[[:space:]]*"btrfs"' "$cfg" || return 1
+    return 0
+}
+
+# Confirm the initial Snapper enablement over the shared PROMPT/ANSWER
+# session channel, BEFORE any mutation (the round-134 pattern): the read-only
+# preflights (Btrfs root, the config/store state) have already run and passed.
+# Only an explicit y/Y/yes proceeds; any other answer, an empty answer or a
+# timeout within CONFIRM_ANSWER_WINDOW_SECONDS declines and the CALLER reports
+# the honest skipped outcome (no mutation ever runs).  With no active answer
+# channel (non-interactive CLI/direct helper runs — the contracts) the
+# creation proceeds WITHOUT a prompt: the CLI verb is itself the explicit
+# intent and the read-only preflights above remain the gate there, exactly
+# like the snapshot rollback.  $1 names what will be written (round 143: the
+# complete enablement — the missing packages, the configuration and the first
+# snapshot).  Returns 0 to proceed, 1 to decline.
+confirm_snapshot_config_enable()
+{
+    local what="${1:-the .snapshots subvolume and the /etc/snapper/configs/root configuration file}"
+    local prompt_text scope="the selected repair target"
+    shell_interactive_ready || return 0
+    (( RUNNING_HOST_MODE == 1 )) && scope="the running host"
+    prompt_text="CONFIRM SNAPSHOT ENABLEMENT"$'\n'
+    prompt_text+="Scope: $scope"$'\n'
+    prompt_text+="The initial Snapper snapshot functionality is about to be enabled: $what will be written on the scope's own Btrfs root."$'\n'
+    prompt_text+="Answer: type y or yes to proceed with the enablement; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip it and leave the system unchanged."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 143 (ITEM T2): the shared guarded per-backend install of ONE package
+# in the CURRENT scope (the repair target via the repair chroot, the running
+# host natively).  Every backend runs simulation-first, fail-closed, with the
+# proven no-op published exactly like install_target_packages/
+# install_host_packages.  Returns 0 (changed) / 1 (proven no-op); the caller
+# owns the preflight (promotion/identity), the package-lock gate and the
+# change-status line.
+guarded_install_one_package()
+{
+    local pkg="$1" backend
+    [[ -n "$pkg" ]] || return 1
+    backend="$(install_package_backend_for "$pkg")" \
+        || fail "No detected guarded package-manager backend can install '$pkg' (detected: ${TARGET_PACKAGE_MANAGERS[*]:-none})."
+    case "$backend" in
+        apt/dpkg)
+            SAFE_APT_INSTALL_NO_CHANGES=0
+            safe_apt_install_packages "$(install_package_apply_label "$pkg")" \
+                "Install $pkg $([[ $RUNNING_HOST_MODE == 1 ]] && printf 'on the running host' || printf 'into the repair target')" no "$pkg"
+            (( SAFE_APT_INSTALL_NO_CHANGES )) && return 1
+            ;;
+        rpm)    guarded_rpm_install_packages "$pkg" || return 1 ;;
+        apk)    guarded_apk_install_packages "$pkg" || return 1 ;;
+        pacman) guarded_pacman_install_packages "$pkg" || return 1 ;;
+        *)      fail "Unsupported install backend '$backend' for '$pkg'." ;;
+    esac
+    return 0
+}
+
+# Round 143 (ITEM T2): the snapshot enablement's package set, derived from the
+# scope's own executables (probe, don't prefilter — never a GUI-side hardcode).
+# Prints the space-joined MISSING package names; empty = both present.
+# snapper is the required snapshot producer, btrfs-progs the Btrfs subvolume
+# tool; any additional prerequisite the enable needs would be added here.
+snapshot_enable_missing_packages()
+{
+    local missing=""
+    if ! target_has_executable /usr/sbin/snapper /usr/bin/snapper; then
+        missing+=" snapper"
+    fi
+    if ! target_has_executable /usr/sbin/btrfs /usr/bin/btrfs; then
+        missing+=" btrfs-progs"
+    fi
+    printf '%s' "${missing# }"
+}
+
+# Round 143 (ITEM T2): the COMPLETE derived package set the snapshot
+# enablement needs in this scope (the providing packages of the snapshot
+# producer and the Btrfs subvolume tool — the set the Packages column lists).
+snapshot_enable_full_package_set()
+{
+    printf 'snapper btrfs-progs'
+}
+
+# The number of Snapper snapshots in the scope's root store (bounded
+# info.xml readdir count; the store may be a nested subvolume — find crosses
+# the subvolume boundary the same way snapper's own path resolution does).
+# $1 is the scope root prefix; "" names the running host root (/).
+snapshot_store_snapshot_count()
+{
+    local root="${1:-/}" count
+    [[ -d "$root/.snapshots" ]] || { printf '0\n'; return 0; }
+    count="$(find "$root/.snapshots" -mindepth 2 -maxdepth 2 -type f -name info.xml 2>/dev/null | wc -l)"
+    [[ "$count" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$count"
+}
+
+# Round 143 (ITEM T2): the FULL-ENABLE side-channels for the snapshot-rollback
+# capability rows.  `snapshot-enable-packages: <full derived set>|available`
+# names the complete package set (the Packages column) and its verdict proves
+# every MISSING piece present in the scope's own repositories;
+# `snapshot-config-enableable: available` is added only when the packages are
+# all present (the GUI then labels the button Enable instead of Install).
+# Either way the single guarded full-enable verb runs the whole enablement.
+snapshot_enable_side_channels()
+{
+    local full_set="${1:-}" missing="$2" pkg verdict=available
+    [[ -n "$full_set" ]] || return 0
+    if [[ -n "$missing" ]]; then
+        for pkg in $missing; do
+            if ! target_package_available "$pkg"; then
+                verdict=unavailable
+                break
+            fi
+        done
+    fi
+    printf 'Repair capability evidence snapshot-enable-packages: %s|%s\n' "$full_set" "$verdict"
+    if [[ -z "$missing" ]]; then
+        printf 'Repair capability evidence snapshot-config-enableable: available\n'
+    fi
+}
+
+# enable-snapshot-config verb: the FULL snapshot enablement on the selected
+# repair target — install the missing prerequisite packages (snapper and/or
+# btrfs-progs when the target lacks them, through the guarded package
+# backends), create the initial Snapper root configuration and the
+# .snapshots store, and build the FIRST snapshot.  The target's own snapper
+# (installed by this flow when missing) runs `create-config` in the repair
+# chroot, so the .snapshots subvolume, the /etc/snapper/configs/root file and
+# the fstab entry land on the target's own Btrfs root (snapper's subvolume
+# naming and fstab handling — the helper never re-derives the layout).  Never
+# auto-invoked: the GUI offers this as an explicit user action from the Boot
+# capabilities table when the snapshot-rollback row reports the missing
+# config/store/packages.  The round-134 CONFIRM precedes ALL mutations (the
+# packages, the configuration and the first snapshot); a proven
+# config+store+snapshots state reports the honest unchanged status.
+enable_snapshot_config()
+{
+    local fstype rc config_exists=false missing="" pkg
+    (($# == 0)) || fail "enable-snapshot-config does not accept extra arguments."
+    CURRENT_STAGE="enable snapshot config"
+    # NOTE: no recovery-host `need btrfs` here — the missing btrfs tool is one
+    # of the pieces the full enablement installs (the post-install proof below
+    # and the chroot btrfs invocation cover it).
+    prepare_target ro
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    [[ "$fstype" == "btrfs" ]] \
+        || fail "$(reason not-btrfs-root "${fstype:-unknown}"). Snapper snapshot configuration requires a Btrfs root."
+
+    # The guarded package installs below dispatch through the detected
+    # backends (install_target_packages' profile), so profile them here too.
+    profile_target_backends
+
+    missing="$(snapshot_enable_missing_packages)"
+
+    # Proven existing config AND store AND at least one snapshot -> the honest
+    # unchanged status, no mutation.
+    if snapshot_config_file_ok "$TARGET_ROOT" && [[ -e "$TARGET_ROOT/.snapshots" ]] \
+       && [[ "$(snapshot_store_snapshot_count "$TARGET_ROOT")" -ge 1 ]]; then
+        repair_change_status enable-snapshot-config "unchanged|$(reason config-already-exists)"
+        msg_log snapshot-config-already-exists
+        return 0
+    fi
+    # A pre-existing store WITHOUT a config is never merged or rewritten;
+    # refuse instead of disturbing it.
+    if [[ -e "$TARGET_ROOT/.snapshots" ]] && ! snapshot_config_file_ok "$TARGET_ROOT"; then
+        fail "$(reason snapshot-store-exists). The existing .snapshots store is left untouched; no automatic merge is attempted."
+    fi
+    snapshot_config_file_ok "$TARGET_ROOT" && config_exists=true
+
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the read-only
+    # preflights and BEFORE any mutation; it names the COMPLETE enablement
+    # (the missing packages, the configuration and the first snapshot).
+    local enable_what="the .snapshots subvolume, the /etc/snapper/configs/root configuration file and the first snapshot"
+    if [[ -n "$missing" ]]; then
+        enable_what="the missing prerequisite package(s) ($missing), $enable_what"
+    fi
+    if [[ "$config_exists" == true ]]; then
+        enable_what="the missing .snapshots store and the first snapshot (the Snapper root configuration already exists)"
+        [[ -n "$missing" ]] && enable_what="the missing prerequisite package(s) ($missing), $enable_what"
+    fi
+    if ! confirm_snapshot_config_enable "$enable_what"; then
+        repair_change_status enable-snapshot-config "unchanged|$(reason snapshot-config-declined)"
+        msg_log snapshot-config-declined
+        return 0
+    fi
+
+    promote_target_rw
+
+    # Step 1: install the missing prerequisite packages through the guarded
+    # backends (simulation-first, fail-closed; the CONFIRM above authorized
+    # the complete flow).
+    if [[ -n "$missing" ]]; then
+        msg_log snapshot-enable-installing "$missing"
+        for pkg in $missing; do
+            guarded_install_one_package "$pkg" || true
+        done
+        target_has_executable /usr/sbin/snapper /usr/bin/snapper \
+            || fail "snapper is still not executable in the repair target after the guarded install; refusing to continue."
+        target_has_executable /usr/sbin/btrfs /usr/bin/btrfs \
+            || fail "btrfs is still not executable in the repair target after the guarded install; refusing to continue."
+    fi
+
+    # Step 2: the configuration and the store.  A proven existing config with
+    # a deleted store creates ONLY the missing .snapshots store with snapper's
+    # own naming (nested under the scope's root subvolume), never re-running
+    # create-config (which would fail on the existing config).
+    if [[ "$config_exists" == false ]]; then
+        msg_log snapshot-config-creating
+        set +e
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            snapper --no-dbus -c root create-config / 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "The target's snapper create-config failed with exit code $rc; the snapshot configuration was not created."
+
+        # Post-proof: snapper reported success — the config and the store must
+        # both be present or the success is refused.
+        snapshot_config_file_ok "$TARGET_ROOT" \
+            || fail "Snapper reported success but the /etc/snapper/configs/root configuration file is not present; refusing to report success."
+        [[ -d "$TARGET_ROOT/.snapshots" ]] \
+            || fail "Snapper reported success but the .snapshots store was not created; refusing to report success."
+    elif [[ ! -e "$TARGET_ROOT/.snapshots" ]]; then
+        msg_log snapshot-store-creating
+        set +e
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            btrfs subvolume create /.snapshots 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "Creating the missing .snapshots store failed with exit code $rc; the store was not created."
+        [[ -d "$TARGET_ROOT/.snapshots" ]] \
+            || fail "btrfs reported success but the .snapshots store was not created; refusing to report success."
+    fi
+
+    # Step 3: the FIRST snapshot — the enablement is complete only when the
+    # store actually holds a snapshot the rollback can promote.
+    if [[ "$(snapshot_store_snapshot_count "$TARGET_ROOT")" -eq 0 ]]; then
+        msg_log snapshot-first-snapshot-creating
+        set +e
+        run_selected_chroot /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            snapper --no-dbus -c root create --type single --description "Initial snapshot" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "The target's snapper failed to create the first snapshot with exit code $rc; the snapshot was not created."
+    fi
+    [[ "$(snapshot_store_snapshot_count "$TARGET_ROOT")" -ge 1 ]] \
+        || fail "Snapper reported success but the store holds no snapshots; refusing to report success."
+
+    repair_change_status enable-snapshot-config changed
+    msg_log snapshot-enable-complete "$ROOT_DEVICE"
+}
+
+# enable-host-snapshot-config verb: the same FULL enablement on the RUNNING
+# host (natively, no chroot) — the missing packages (snapper and/or
+# btrfs-progs), the initial configuration, the store and the FIRST snapshot.
+# `snapper -c root create-config /` runs against the running root exactly as
+# the end user would type it; the .snapshots subvolume, the config file and
+# the fstab entry land on the host's own Btrfs root.  The same preflights/
+# confirm/statuses as the target verb.
+enable_host_snapshot_config()
+{
+    local fstype rc config_exists=false missing="" pkg
+    (($# == 0)) || fail "enable-host-snapshot-config does not accept extra arguments."
+    CURRENT_STAGE="enable host snapshot config"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" yes
+    # NOTE: no `need btrfs` here — the missing btrfs tool is one of the pieces
+    # the full enablement installs (the post-install proof below and the
+    # store-only btrfs invocation cover it).
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    [[ "$fstype" == "btrfs" ]] \
+        || fail "$(reason not-btrfs-root "${fstype:-unknown}"). Snapper snapshot configuration requires a Btrfs root."
+
+    # The guarded package installs below dispatch through the detected
+    # backends (install_host_packages' profile), so profile them here too.
+    profile_target_backends
+
+    missing="$(snapshot_enable_missing_packages)"
+
+    # Proven existing config AND store AND at least one snapshot -> the honest
+    # unchanged status, no mutation.
+    if snapshot_config_file_ok "" && [[ -e /.snapshots ]] \
+       && [[ "$(snapshot_store_snapshot_count "")" -ge 1 ]]; then
+        repair_change_status enable-host-snapshot-config "unchanged|$(reason config-already-exists)"
+        msg_log snapshot-config-already-exists
+        return 0
+    fi
+    # A pre-existing store WITHOUT a config is never merged or rewritten.
+    if [[ -e /.snapshots ]] && ! snapshot_config_file_ok ""; then
+        fail "$(reason snapshot-store-exists). The existing .snapshots store is left untouched; no automatic merge is attempted."
+    fi
+    if pgrep -x snapper >/dev/null 2>&1; then
+        fail "$(reason snapper-running). Refusing a concurrent Snapper transaction."
+    fi
+    snapshot_config_file_ok "" && config_exists=true
+    ( host_package_manager_gate ) >/dev/null 2>&1 \
+        || fail "A package manager or package-manager lock is active; refusing a concurrent snapshot enablement."
+    prepare_host_command_guard
+
+    # The CONFIRM names the COMPLETE enablement (the round-134 channel).
+    local enable_what="the .snapshots subvolume, the /etc/snapper/configs/root configuration file and the first snapshot"
+    if [[ -n "$missing" ]]; then
+        enable_what="the missing prerequisite package(s) ($missing), $enable_what"
+    fi
+    if [[ "$config_exists" == true ]]; then
+        enable_what="the missing .snapshots store and the first snapshot (the Snapper root configuration already exists)"
+        [[ -n "$missing" ]] && enable_what="the missing prerequisite package(s) ($missing), $enable_what"
+    fi
+    if ! confirm_snapshot_config_enable "$enable_what"; then
+        repair_change_status enable-host-snapshot-config "unchanged|$(reason snapshot-config-declined)"
+        msg_log snapshot-config-declined
+        return 0
+    fi
+
+    # Step 1: the missing prerequisite packages through the guarded backends.
+    if [[ -n "$missing" ]]; then
+        msg_log snapshot-enable-installing "$missing"
+        for pkg in $missing; do
+            guarded_install_one_package "$pkg" || true
+        done
+        command -v snapper >/dev/null 2>&1 \
+            || fail "snapper is still not installed on the running host after the guarded install; refusing to continue."
+        command -v btrfs >/dev/null 2>&1 \
+            || fail "btrfs is still not installed on the running host after the guarded install; refusing to continue."
+    fi
+
+    # Step 2: the configuration and the store (the round-142 store-only path
+    # when the config already exists).
+    if [[ "$config_exists" == false ]]; then
+        msg_log snapshot-config-creating
+        set +e
+        run_host_command_isolated /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            snapper --no-dbus -c root create-config / 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "snapper create-config failed with exit code $rc on the running host; the snapshot configuration was not created."
+
+        snapshot_config_file_ok "" \
+            || fail "Snapper reported success but the /etc/snapper/configs/root configuration file is not present; refusing to report success."
+        [[ -d /.snapshots ]] \
+            || fail "Snapper reported success but the .snapshots store was not created; refusing to report success."
+    elif [[ ! -e /.snapshots ]]; then
+        msg_log snapshot-store-creating
+        set +e
+        run_host_command_isolated /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            btrfs subvolume create /.snapshots 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "Creating the missing .snapshots store failed with exit code $rc on the running host; the store was not created."
+        [[ -d /.snapshots ]] \
+            || fail "btrfs reported success but the .snapshots store was not created; refusing to report success."
+    fi
+
+    # Step 3: the FIRST snapshot.
+    if [[ "$(snapshot_store_snapshot_count "")" -eq 0 ]]; then
+        msg_log snapshot-first-snapshot-creating
+        set +e
+        run_host_command_isolated /usr/bin/env \
+            HOME=/root \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            LC_ALL=C \
+            snapper --no-dbus -c root create --type single --description "Initial snapshot" 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+        rc=${PIPESTATUS[0]}
+        set -e
+        ((rc == 0)) || fail "snapper failed to create the first snapshot with exit code $rc on the running host; the snapshot was not created."
+    fi
+    [[ "$(snapshot_store_snapshot_count "")" -ge 1 ]] \
+        || fail "Snapper reported success but the store holds no snapshots; refusing to report success."
+
+    repair_change_status enable-host-snapshot-config changed
+    msg_log snapshot-enable-complete "$ROOT_DEVICE"
+}
+
 preflight_dkms()
 {
     local msys
@@ -12781,6 +13850,21 @@ preflight_akms()
     run_chroot_try "$(msg inspect-akms-state)" akms status
 }
 
+# A3 no-op proof (the dkms equivalent of the akms/akmods "nothing to do"
+# wording): `dkms status` prints ONE status line per registered module, so a
+# whitespace-only output proves no modules are registered and there is nothing
+# to build — regardless of the exit code (dkms exits nonzero with no modules
+# on some versions).  Sets DKMS_NO_MODULES=1 so the repair skips the CONFIRM
+# prompt and reports unchanged|reason:module-build-no-modules.  A non-empty
+# output (module lines OR dkms error text) keeps the normal preflight path.
+dkms_status_no_modules()
+{
+    [[ -z "$(printf '%s' "$1" | tr -d '[:space:]')" ]] || return 1
+    DKMS_NO_MODULES=1
+    msg_log dkms-status-no-modules
+    return 0
+}
+
 # Debian/Arch dkms preflight (unchanged): the dkms executable, a read-only
 # status probe, and the kernel/header build-tree inventory with the guarded
 # header correction on Debian-family targets.
@@ -12788,6 +13872,7 @@ preflight_dkms_backend()
 {
     local kver header_pkg alpine_dkms_pair alpine_dkms_kver rpm_dkms_pair rpm_dkms_kver
     local -a missing_headers=() available_headers=() alpine_dkms_pairs=() rpm_dkms_pairs=()
+    DKMS_NO_MODULES=0
 
     if [[ "$TARGET_INITRAMFS_BACKEND" == mkinitfs ]]; then
         [[ -x "$TARGET_ROOT/usr/bin/dkms" || -x "$TARGET_ROOT/usr/sbin/dkms" ]] \
@@ -12805,6 +13890,7 @@ preflight_dkms_backend()
             msg_log dkms-headers-present "$alpine_dkms_kver"
         done
         run_chroot_try "$(msg inspect-dkms-state)" dkms status
+        dkms_status_no_modules "$CHROOT_TRY_OUTPUT" && return 0
         return 0
     fi
 
@@ -12828,6 +13914,7 @@ preflight_dkms_backend()
             msg_log dkms-headers-present-rpm "$rpm_dkms_kver"
         done
         run_chroot_try "$(msg inspect-dkms-state)" dkms status
+        dkms_status_no_modules "$CHROOT_TRY_OUTPUT" && return 0
         return 0
     fi
 
@@ -12843,6 +13930,7 @@ preflight_dkms_backend()
             msg_log dkms-headers-present-kver "$kver"
         done < <(repair_kernel_versions arch)
         run_chroot_try "$(msg inspect-dkms-state)" dkms status
+        dkms_status_no_modules "$CHROOT_TRY_OUTPUT" && return 0
         return 0
     fi
 
@@ -12854,6 +13942,10 @@ preflight_dkms_backend()
     # dkms status may return nonzero when no modules are registered; that is not
     # itself a repair failure. The kernel/header inventory below decides whether
     # autoinstall has a viable build environment.
+    # A3: a proven-empty status short-circuits the rest of the preflight — the
+    # header correction below would be a pointless package change for a module
+    # state with nothing to build.
+    dkms_status_no_modules "$CHROOT_TRY_OUTPUT" && return 0
 
     while IFS= read -r kver; do
         [[ -n "$kver" ]] || continue
@@ -13015,6 +14107,14 @@ adaptive_dkms_repair_backend()
 {
     local target_kver=""
     preflight_dkms_backend
+    if [[ "${DKMS_NO_MODULES:-0}" == 1 ]]; then
+        # A3 invariant: the preflight proved the dkms state EMPTY (no modules
+        # registered), so there is nothing to rebuild — no CONFIRM PACKAGE
+        # CHANGE prompt fires for a stage with nothing to change, no
+        # autoinstall runs, and the stage reports the proven no-op.
+        repair_change_status dkms "unchanged|$(reason module-build-no-modules)"
+        return 0
+    fi
     if (( RUNNING_HOST_MODE != 1 )); then
         target_kver="$(dkms_target_kernel_version)"
     fi
@@ -14665,6 +15765,15 @@ adaptive_dracut_initramfs_repair()
         fi
         (( CHROOT_TRY_RC == 0 )) \
             || fail "dracut build failed for $kver; target initramfs files were not changed."
+        # Round 121 (ITEM 6): dracut logs `dracut[E]: No '/dev/log' or
+        # 'logger' included for syslog logging` when built inside a chroot
+        # that has no dev-log socket — expected inside the repair chroot and
+        # not an error: the image builds, is lsinitrd-verified next, and is
+        # installed only after the digest re-check.  Annotate the transcript
+        # so the [E] line is never mistaken for a failed build.
+        if grep -q "No '/dev/log' or 'logger'" <<<"$CHROOT_TRY_OUTPUT"; then
+            log "Note: the dracut 'No /dev/log or logger' warning is expected inside the repair chroot (no dev-log socket); the image was built and is verified with lsinitrd before any /boot write."
+        fi
         [[ -s "$TARGET_ROOT$build_path" ]] \
             || fail "dracut build for $kver produced no image."
         dracut_initramfs_verify "$build_path"
@@ -16896,6 +18005,8 @@ diagnostic_title()
         btrfs)       printf '%s\n' "Btrfs status" ;;
         mapper)      printf '%s\n' "Mapper status" ;;
         luks)        printf '%s\n' "LUKS / crypttab" ;;
+        input)       printf '%s\n' "Input devices / keyboard" ;;
+        network)     printf '%s\n' "Network / connectivity" ;;
         *)           printf '%s\n' "$1" ;;
     esac
 }
@@ -17164,12 +18275,23 @@ diagnostic_package_state()
                         echo "Package integrity issues: unavailable|dnf5 missing"
                         incomplete=1
                     else
+                        # Round 121 (ITEM 7): the one bounded call the package
+                        # diagnostic keeps (a genuine rpmdb probe, ~9 s on
+                        # Fedora).  A wedged dnf5 check must never hang the
+                        # diagnostic: a timeout is reported as unavailable
+                        # (incomplete), never misread as "reported problems".
                         set +e
-                        integrity_out="$(run_selected_chroot /usr/bin/env PATH=/usr/sbin:/usr/bin:/sbin:/bin \
-                            "$dnf_tool" check 2>&1)"
+                        integrity_out="$(
+                            RUN_SELECTED_CHROOT_BOUND=60 run_selected_chroot /usr/bin/env \
+                                PATH=/usr/sbin:/usr/bin:/sbin:/bin \
+                                "$dnf_tool" check 2>&1
+                        )"
                         rc=$?
                         set -e
-                        if (( rc != 0 )); then
+                        if (( rc == 124 )); then
+                            echo "Package integrity issues: unavailable|dnf5 check timed out"
+                            incomplete=1
+                        elif (( rc != 0 )); then
                             integrity_count="$(printf '%s\n' "$integrity_out" | grep -cE '^[[:space:]]*(Problem|package .* (requires|conflicts))' || true)"
                             if (( integrity_count > 0 )); then
                                 echo "Package integrity issues: $integrity_count dependency problem(s)"
@@ -17953,7 +19075,7 @@ kernels_unavailable_reason()
         case "${TARGET_PACKAGE_MANAGER:-}" in
             pacman) KERNEL_REPO_LATEST="$(pacman_kernel_repo_latest || true)" ;;
             rpm)    KERNEL_REPO_LATEST="$(rpm_kernel_repo_latest || true)" ;;
-            apk)    KERNEL_REPO_LATEST="" ;;
+            apk)    KERNEL_REPO_LATEST="$(apk_kernel_repo_latest || true)" ;;
             *)      KERNEL_REPO_LATEST="$(apt_kernel_repo_latest || true)" ;;
         esac
         if [[ -z "$KERNEL_REPO_LATEST" ]]; then
@@ -18430,6 +19552,14 @@ repair_capability_evidence_modern()
                 "${BOOT_REACHED:-unknown}" \
                 "${GPU_DKMS_BUILD_STATUS:-none}"
             ;;
+        input-devices)
+            input_collect_evidence
+            printf '%s' "$(input_evidence_state)"
+            ;;
+        network)
+            network_collect_evidence
+            printf '%s|%s' "${NETWORK_CONFIG_BACKEND:-none}" "$(network_evidence_state)"
+            ;;
         kernels)
             kernel_inventory_collect
             printf 'running=%s; latest=%s; removable=%d; backend=%s' \
@@ -18579,6 +19709,72 @@ filesystem_repair_tool()
         return 0
     fi
     return 1
+}
+
+# Round 143 (ITEM T4): the RECOVERY-HOST package that provides one filesystem
+# check tool.  Derived from the tool name (the same matrix the mode tables
+# use); a tool without a mapped provider (zpool's ZFS stack) returns 1 and the
+# row's Install proof fails closed for it.
+filesystem_tool_package()
+{
+    case "$1" in
+        e2fsck)     printf 'e2fsprogs' ;;
+        xfs_repair) printf 'xfsprogs' ;;
+        btrfs)      printf 'btrfs-progs' ;;
+        fsck.fat)   printf 'dosfstools' ;;
+        fsck.exfat) printf 'exfatprogs' ;;
+        ntfsfix)    printf 'ntfs-3g' ;;
+        fsck.f2fs)  printf 'f2fs-tools' ;;
+        jfs_fsck)   printf 'jfsutils' ;;
+        reiserfsck) printf 'reiserfsprogs' ;;
+        *) return 1 ;;
+    esac
+    return 0
+}
+
+# Round 143 (ITEM T4): the unique recovery-host package list for the scope's
+# MISSING check tools (the supported check-mode tools whose executable is
+# absent from the recovery host).  Prints the space-joined derived package
+# names; empty when every scope tool is present.
+filesystem_missing_tool_packages()
+{
+    local idx tool fstype pkg pkgs=""
+    local -a seen=() seen_keys=()
+    for idx in "${!FS_SCOPE_DEVICES[@]}"; do
+        fstype="${FS_SCOPE_FSTYPES[$idx]}"
+        tool="$(filesystem_mode_field "$fstype" check tool 2>/dev/null || true)"
+        [[ -n "$tool" ]] || continue
+        [[ -z "${FS_SCOPE_TOOLS[$idx]:-}" ]] || continue
+        pkg="$(filesystem_tool_package "$tool" 2>/dev/null || true)"
+        [[ -n "$pkg" ]] || continue
+        [[ -n "$(legacy_assoc_get seen "$pkg")" ]] && continue
+        legacy_assoc_set seen "$pkg" 1
+        pkgs+=" $pkg"
+    done
+    printf '%s' "${pkgs# }"
+}
+
+# Round 143 (ITEM T4): prove a package present in the RECOVERY HOST's own
+# repositories.  The package probes run through run_selected_chroot (which
+# chroots into TARGET_ROOT), so the proof temporarily targets the running
+# host root and picks the host's own package manager by its executable — the
+# filesystem check tools run on the recovery host, never in the repair
+# target.  In running-host mode this is the same probe as
+# target_package_available.  Read-only; fail-closed on an undecidable result.
+host_package_available()
+{
+    local pkg="$1" saved_root="${TARGET_ROOT:-/}" rc=1
+    [[ -n "$pkg" ]] || return 1
+    TARGET_ROOT="/"
+    if [[ -x /usr/bin/apt-cache ]]; then
+        apt_package_available "$pkg" && rc=0
+    elif [[ -x /usr/bin/dnf5 ]] || [[ -x /usr/bin/dnf ]]; then
+        rpm_package_available "$pkg" && rc=0
+    elif [[ -x /usr/bin/pacman ]]; then
+        pacman_package_availability "$pkg" >/dev/null 2>&1 && rc=0
+    fi
+    TARGET_ROOT="$saved_root"
+    return "$rc"
 }
 
 # Build FS_INSPECT_ARGUMENTS for one supported fstype:mode pair.  Read-only
@@ -19595,21 +20791,74 @@ display_manager_package_suggestion()
     esac
 }
 
+# Round 141 (ITEM O1/O2): the shared GRUB-tooling package derivation, extracted
+# from the bootstack row's round-39 GRUB part so the efi row's missing-tooling
+# suggestion reuses the identical derivation (probe, don't prefilter: the
+# DETECTED bootloader backend family + firmware mode only — debian family:
+# grub-efi-amd64 on UEFI / grub-pc on BIOS; fedora/rhel: grub2-tools; arch:
+# grub; suse: grub2).  Prints one package name; returns 1 when no package is
+# derivable for the detected family (fail closed).
+grub_tooling_install_suggestion()
+{
+    case "${TARGET_DISTRO_FAMILY:-unknown}" in
+        debian)
+            if [[ "$(boot_firmware_mode)" == UEFI ]]; then
+                printf 'grub-efi-amd64\n'
+            else
+                printf 'grub-pc\n'
+            fi
+            ;;
+        fedora|rhel|suse) printf 'grub2-tools\n' ;;
+        arch)             printf 'grub\n' ;;
+        *)                return 1 ;;
+    esac
+}
+
+# Round 141 (ITEM O1/O2): the missing-prerequisite package suggestion for the
+# EFI capability row's missing-tooling reasons (missing grub-install /
+# grub2-mkconfig / grub2-install tooling, the missing TUXEDO UKI builder and
+# the Alpine GRUB EFI package set).  Derived from the DETECTED backends only
+# (probe, don't prefilter — the round-39/42 rule) and proven present in the
+# scope's own repositories by the caller before the side-channel reports
+# available.  Prints the space-separated package list; emits nothing when a
+# missing prerequisite has no derivable package (fail closed — no Install
+# without a complete suggestion).
+efi_install_suggestion()
+{
+    if is_alpine_family; then
+        case "$(alpine_efi_backend)" in
+            grub)
+                # The Alpine GRUB EFI path needs the grub and grub-efi
+                # packages.  apk has no read-only repository-availability
+                # probe, so the caller's proof fails closed (unavailable) —
+                # the same shape as the akms/dkms-installable pattern.
+                printf 'grub grub-efi\n'
+                return 0
+                ;;
+            *) return 1 ;;
+        esac
+    fi
+    if [[ "$TARGET_OS_ID" == tuxedo ]] && ! tuxedo_uki_builder_present; then
+        printf 'tuxedo-uki\n'
+        return 0
+    fi
+    grub_tooling_install_suggestion
+}
+
 # Round 39 (Ubuntu #4): the bootstack row's missing-prerequisite package
 # suggestion for the bootstack-needs-initramfs-grub reason.  Derived from the
 # DETECTED backends only (probe, don't prefilter): the initramfs generator
 # package for the detected initramfs backend (initramfs-tools/dracut/mkinitcpio/
 # mkinitfs) when the initramfs prerequisite is the missing one, plus the GRUB
 # package for the detected bootloader backend + firmware mode when the GRUB
-# prerequisite is missing (debian family: grub-efi-amd64 on UEFI / grub-pc on
-# BIOS; fedora/rhel: grub2-tools; arch: grub; suse: grub2).  Prints the
-# space-separated package list; emits nothing when a missing prerequisite has
-# no derivable package (fail closed — no Install without a complete
-# suggestion).  Alpine never reaches the reason (its bootstack capability
-# fails closed with alpine-bootstack-*-disabled instead).
+# prerequisite is missing (the shared grub_tooling_install_suggestion
+# derivation).  Prints the space-separated package list; emits nothing when a
+# missing prerequisite has no derivable package (fail closed — no Install
+# without a complete suggestion).  Alpine never reaches the reason (its
+# bootstack capability fails closed with alpine-bootstack-*-disabled instead).
 bootstack_install_suggestion()
 {
-    local need_initramfs=false need_grub=false packages=()
+    local need_initramfs=false need_grub=false grub_pkgs="" packages=()
     if ! initramfs_unavailable_reason >/dev/null 2>&1; then
         need_initramfs=true
     fi
@@ -19626,18 +20875,8 @@ bootstack_install_suggestion()
         esac
     fi
     if [[ "$need_grub" == true ]]; then
-        case "${TARGET_DISTRO_FAMILY:-unknown}" in
-            debian)
-                if [[ "$(boot_firmware_mode)" == UEFI ]]; then
-                    packages+=(grub-efi-amd64)
-                else
-                    packages+=(grub-pc)
-                fi
-                ;;
-            fedora|rhel|suse) packages+=(grub2-tools) ;;
-            arch)             packages+=(grub) ;;
-            *)                return 1 ;;
-        esac
+        grub_pkgs="$(grub_tooling_install_suggestion)" || return 1
+        packages+=("$grub_pkgs")
     fi
     ((${#packages[@]} > 0)) || return 1
     printf '%s\n' "${packages[*]}"
@@ -19651,7 +20890,7 @@ diagnostic_repair_capabilities_modern()
 {
     local key reason
     profile_target_backends
-    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu initramfs efi grub extlinux bootstack kernels)
+    local -a keys=(validate filesystem dpkg fixbroken aptupdate upgrade dkms display gpu input-devices network initramfs efi grub extlinux bootstack kernels)
     local -a reasons=() reasons_keys=()
 
     for key in "${keys[@]:-}"; do
@@ -19670,6 +20909,11 @@ diagnostic_repair_capabilities_modern()
     if reason="$(dkms_unavailable_reason)"; then legacy_assoc_set reasons "dkms" "available"; else legacy_assoc_set reasons "dkms" "$reason"; fi
     if reason="$(display_unavailable_reason)"; then legacy_assoc_set reasons "display" "available"; else legacy_assoc_set reasons "display" "$reason"; fi
     if reason="$(gpu_unavailable_reason)"; then legacy_assoc_set reasons "gpu" "available"; else legacy_assoc_set reasons "gpu" "$reason"; fi
+    # Round 85: the input-device and network tools gate on their own evidence
+    # (the gpu pattern): available whenever the evidence exists, fail closed
+    # with no evidence / no adapter.
+    if reason="$(input_unavailable_reason)"; then legacy_assoc_set reasons "input-devices" "available"; else legacy_assoc_set reasons "input-devices" "$reason"; fi
+    if reason="$(network_unavailable_reason)"; then legacy_assoc_set reasons "network" "available"; else legacy_assoc_set reasons "network" "$reason"; fi
     if reason="$(initramfs_unavailable_reason)"; then legacy_assoc_set reasons "initramfs" "available"; else legacy_assoc_set reasons "initramfs" "$reason"; fi
     if reason="$(efi_unavailable_reason)"; then legacy_assoc_set reasons "efi" "available"; else legacy_assoc_set reasons "efi" "$reason"; fi
     if reason="$(grub_unavailable_reason)"; then legacy_assoc_set reasons "grub" "available"; else legacy_assoc_set reasons "grub" "$reason"; fi
@@ -19703,7 +20947,18 @@ diagnostic_repair_capabilities_modern()
             elif (( fs_supported == 0 )); then
                 legacy_assoc_set reasons "filesystem" "$(reason no-supported-filesystem-type)"
             else
-                legacy_assoc_set reasons "filesystem" "$(reason no-filesystem-check-tool)"
+                # Round 143 (ITEM T4): the reason names the exact missing
+                # check tool as a param so the row's note states the
+                # prerequisite (the round-141 probe-based-reason rule).
+                local fs_first_missing=""
+                for fs_index in "${!FS_SCOPE_DEVICES[@]}"; do
+                    fs_tool_name="$(filesystem_mode_field "${FS_SCOPE_FSTYPES[$fs_index]}" check tool 2>/dev/null || true)"
+                    [[ -n "$fs_tool_name" ]] || continue
+                    [[ -z "${FS_SCOPE_TOOLS[$fs_index]:-}" ]] || continue
+                    fs_first_missing="$fs_tool_name"
+                    break
+                done
+                legacy_assoc_set reasons "filesystem" "$(reason no-filesystem-check-tool "${fs_first_missing:-unknown}")"
             fi
         fi
     fi
@@ -19720,6 +20975,30 @@ diagnostic_repair_capabilities_modern()
     for key in "${keys[@]:-}"; do
         printf 'Repair capability evidence %s: %s\n' "$key" "$(repair_capability_evidence "$key")"
     done
+
+    # Round 143 (ITEM T4): the missing filesystem check tool(s) get an
+    # Install through the EXISTING filesystem-repair capability row, in the
+    # RECOVERY-HOST scope — the check tools are probed from the recovery host
+    # (filesystem_repair_tool looks them up on the host the helper runs on,
+    # never in the repair target), so a target-routed Install would fix the
+    # wrong scope.  The providing packages are derived from the scope's
+    # missing tools (filesystem_tool_package) and proven present in the
+    # RECOVERY HOST's own repositories (host_package_available); the GUI
+    # routes the Install to install-host-package regardless of the row's
+    # scope, and the round-42 completion re-probes the capability evidence.
+    if [[ "$(legacy_assoc_get reasons "filesystem")" == *"reason:no-filesystem-check-tool"* ]]; then
+        local fs_missing_pkgs fs_missing_pkg fs_verdict=available
+        fs_missing_pkgs="$(filesystem_missing_tool_packages || true)"
+        if [[ -n "$fs_missing_pkgs" ]]; then
+            for fs_missing_pkg in $fs_missing_pkgs; do
+                if ! host_package_available "$fs_missing_pkg"; then
+                    fs_verdict=unavailable
+                    break
+                fi
+            done
+            printf 'Repair capability evidence fs-tools-installable: %s|%s\n' "$fs_missing_pkgs" "$fs_verdict"
+        fi
+    fi
 
     # Item #4 (target-scope install gate): the dkms row's one-click Install is
     # offered only when the suggested build-system package is actually present
@@ -19789,6 +21068,70 @@ diagnostic_repair_capabilities_modern()
         fi
     fi
 
+    # Round 141 (ITEM O1/O2): the missing-GRUB-tooling Install suggestion for
+    # the EFI capability row, the same round-39/42 pattern as the bootstack
+    # row: the helper derives the package(s) from the DETECTED backends
+    # (efi_install_suggestion — probe, don't prefilter), proves every package
+    # present in the scope's own repositories, and reports the proven
+    # suggestion in `Repair capability evidence efi-installable:
+    # <pkg> [<pkg>]|available`.  The GUI offers the EFI row's Install button
+    # only for a matching missing-tooling reason + the proven side-channel.
+    if [[ "$(legacy_assoc_get reasons "efi")" == *"reason:missing-grub"* \
+        || "$(legacy_assoc_get reasons "efi")" == *"reason:missing-grub2-mkconfig"* \
+        || "$(legacy_assoc_get reasons "efi")" == *"reason:missing-grub2-install"* \
+        || "$(legacy_assoc_get reasons "efi")" == *"reason:missing-grub-config-tooling"* \
+        || "$(legacy_assoc_get reasons "efi")" == *"reason:missing-tuxedo-uki-builder"* ]]; then
+        local efi_suggested_pkgs=""
+        efi_suggested_pkgs="$(efi_install_suggestion || true)"
+        if [[ -n "$efi_suggested_pkgs" ]]; then
+            local efi_pkg all_available=true
+            for efi_pkg in $efi_suggested_pkgs; do
+                if ! target_package_available "$efi_pkg"; then
+                    all_available=false
+                    break
+                fi
+            done
+            if [[ "$all_available" == true ]]; then
+                printf 'Repair capability evidence efi-installable: %s|available\n' "$efi_suggested_pkgs"
+            else
+                printf 'Repair capability evidence efi-installable: %s|unavailable\n' "$efi_suggested_pkgs"
+            fi
+        fi
+    fi
+
+    # Round 85: the input-device and network Install suggestions (the
+    # dkms-installable fail-closed pattern).  The input row suggests the
+    # owning package of a missing module or the per-family firmware bundle on
+    # the proven reasons only; the network row suggests the firmware bundle
+    # only (firmware-only per the plan).  Every suggestion is proven present
+    # in the scope's own repositories before the side-channel reports
+    # available — no repo proof, no Install button.
+    local input_suggested_pkg=""
+    if [[ "$(legacy_assoc_get reasons "input-devices")" == "available" ]]; then
+        case "$INPUT_VERDICT" in
+            firmware-missing) input_suggested_pkg="$(input_firmware_package_suggestion || true)" ;;
+            module-missing) input_suggested_pkg="$(input_module_package_suggestion || true)" ;;
+        esac
+    fi
+    if [[ -n "$input_suggested_pkg" ]]; then
+        if target_package_available "$input_suggested_pkg"; then
+            printf 'Repair capability evidence input-installable: %s|available\n' "$input_suggested_pkg"
+        else
+            printf 'Repair capability evidence input-installable: %s|unavailable\n' "$input_suggested_pkg"
+        fi
+    fi
+    local network_suggested_pkg=""
+    if [[ "$(legacy_assoc_get reasons "network")" == "available" && "$NETWORK_FAILURE_CLASS" == firmware-missing ]]; then
+        network_suggested_pkg="$(network_firmware_package_suggestion || true)"
+    fi
+    if [[ -n "$network_suggested_pkg" ]]; then
+        if target_package_available "$network_suggested_pkg"; then
+            printf 'Repair capability evidence network-installable: %s|available\n' "$network_suggested_pkg"
+        else
+            printf 'Repair capability evidence network-installable: %s|unavailable\n' "$network_suggested_pkg"
+        fi
+    fi
+
     # Running-host maintenance adds the host-only capability lines (snapshot
     # rollback, reboot and the default-entry evidence).  They are deliberately
     # not `Repair tool` keys: the gating contract and the Settings/Full Repair
@@ -19802,6 +21145,22 @@ diagnostic_repair_capabilities_modern()
             printf 'Host snapshot rollback: unavailable|%s\n' "$host_reason"
         fi
         printf 'Host snapshot rollback evidence: %s\n' "$(host_snapshot_rollback_evidence)"
+        # Round 143 (ITEM T2): the FULL-ENABLE side-channels for the host
+        # snapshot row.  The enable-able reasons (a missing package or the
+        # missing config) all offer ONE guarded full-enable verb — the
+        # missing packages + the configuration + the first snapshot.  The
+        # `snapshot-enable-packages` channel names the complete derived
+        # package set (the Packages column) and proves every missing piece
+        # present in the scope's own repositories (the round-141 fail-closed
+        # pattern); `snapshot-config-enableable` is added only when the
+        # packages are all present.
+        # Round 146 (ITEM 3): the packages channel is emitted in EVERY host
+        # state — available, missing or refused (separate-boot, timeshift,
+        # pinned-subvolid …) — so the Packages column always names the
+        # COMPLETE derived set (snapper + btrfs-progs), never a partial
+        # list.  The GUI still offers the Enable/Install affordance only for
+        # the enable-able reasons.
+        snapshot_enable_side_channels "$(snapshot_enable_full_package_set)" "$(snapshot_enable_missing_packages)"
         if host_reason="$(host_reboot_unavailable_reason)"; then
             printf 'Host reboot: available\n'
         else
@@ -19836,6 +21195,16 @@ diagnostic_repair_capabilities_modern()
             printf 'Snapshot rollback: unavailable|%s\n' "${TARGET_SNAPSHOT_ROLLBACK_REASON:-reason:unknown}"
         fi
         printf 'Snapshot rollback evidence: %s\n' "$(target_snapshot_rollback_evidence)"
+        # Round 143 (ITEM T2): the FULL-ENABLE side-channels for the
+        # repair-target snapshot row (the host-row pattern above).  The
+        # enable-able reasons (a missing btrfs tool or the missing store)
+        # offer ONE guarded full-enable verb; the verdict proves every
+        # missing piece present in the TARGET's own repositories (the
+        # creation runs them in the repair chroot).
+        # Round 146 (ITEM 3): the packages channel is emitted in EVERY
+        # target state so the Packages column always names the COMPLETE
+        # derived set (snapper + btrfs-progs), never a partial list.
+        snapshot_enable_side_channels "$(snapshot_enable_full_package_set)" "$(snapshot_enable_missing_packages)"
     fi
 
     # Storage-stack inspection markers.  LVM (lvs) and software-RAID (mdadm)
@@ -19849,6 +21218,16 @@ diagnostic_repair_capabilities_modern()
     else
         printf 'Storage lvm inspection: unavailable|%s\n' "$(reason missing-lvm2)"
         printf 'Storage lvm inspection evidence: lvs\n'
+        # Round 141 (ITEM O1/O2): the missing-prerequisite Install suggestion
+        # for the LVM row (the dkms-installable fail-closed pattern): the
+        # providing package is proven present in the scope's own repositories
+        # before the side-channel reports available, so the GUI never offers
+        # an Install that would fail with "couldn't find package".
+        if target_package_available lvm2; then
+            printf 'Repair capability evidence lvm-installable: lvm2|available\n'
+        else
+            printf 'Repair capability evidence lvm-installable: lvm2|unavailable\n'
+        fi
     fi
     if target_has_executable /sbin/mdadm /usr/sbin/mdadm /bin/mdadm; then
         printf 'Storage software raid: available\n'
@@ -19856,6 +21235,13 @@ diagnostic_repair_capabilities_modern()
     else
         printf 'Storage software raid: unavailable|%s\n' "$(reason missing-mdadm)"
         printf 'Storage software raid evidence: mdadm\n'
+        # Round 141 (ITEM O1/O2): the same proven side-channel for the
+        # software-RAID row.
+        if target_package_available mdadm; then
+            printf 'Repair capability evidence mdadm-installable: mdadm|available\n'
+        else
+            printf 'Repair capability evidence mdadm-installable: mdadm|unavailable\n'
+        fi
     fi
 }
 
@@ -21356,10 +22742,10 @@ diagnostic_kernel_inventory()
     elif [[ "${TARGET_PACKAGE_MANAGER:-}" == pacman ]]; then
         KERNEL_REPO_LATEST="$(pacman_kernel_repo_latest || true)"
     elif [[ "${TARGET_PACKAGE_MANAGER:-}" == apk ]]; then
-        # Alpine has no reliable read-only apk "repo-latest" probe mapping the
-        # repository package version back to a module-tree kernel version; keep
-        # the line unavailable rather than guessing.
-        KERNEL_REPO_LATEST=""
+        # Round 80: the apk repo-latest probe maps the cached-index package
+        # version to the module-tree kernel version (6.18.59-r0 ->
+        # 6.18.59-0-lts); fail closed ("unavailable") when it cannot.
+        KERNEL_REPO_LATEST="$(apk_kernel_repo_latest || true)"
     else
         KERNEL_REPO_LATEST="$(apt_kernel_repo_latest || true)"
     fi
@@ -21383,6 +22769,19 @@ diagnostic_kernel_inventory()
         echo "Kernel repository latest status: not installable (${KERNEL_REPO_LATEST_INSTALLABILITY#not-installable: })"
     fi
     echo "Kernel state: running=${KERNEL_RUNNING:-none} installed-latest=${KERNEL_LATEST:-unknown} repo-latest=${KERNEL_REPO_LATEST:-unavailable}"
+    # Round 151 (ITEM C1): the build-compiler evidence — the installed compiler
+    # state plus the required-for-builds clause; when a headers-installability
+    # reason names an uninstallable compiler meta-package (gcc-<n>-for-host)
+    # while a plain compiler IS installed, the line names BOTH the installed
+    # compiler and the unmet meta-package dependency so the not-installable
+    # state stays truthful (the TUXEDO gcc-16-for-host distinction).
+    if [[ -n "$KERNEL_BUILD_COMPILER_METAGAP" && "$KERNEL_BUILD_COMPILER" != none ]]; then
+        echo "Kernel build compiler: ${KERNEL_BUILD_COMPILER:-none} (installed; required for kernel headers and DKMS builds; the headers additionally require ${KERNEL_BUILD_COMPILER_METAGAP}, which is not installable in the enabled repositories)"
+    elif [[ "$KERNEL_BUILD_COMPILER" == none || -z "$KERNEL_BUILD_COMPILER" ]]; then
+        echo "Kernel build compiler: none (a compiler is required for kernel headers and DKMS builds)"
+    else
+        echo "Kernel build compiler: ${KERNEL_BUILD_COMPILER} (required for kernel headers and DKMS builds)"
+    fi
     for i in "${!KERNEL_INVENTORY_VERSIONS[@]}"; do
         v="${KERNEL_INVENTORY_VERSIONS[$i]}"
         role=""
@@ -21424,6 +22823,14 @@ diagnostic_kernel_inventory()
     if (( ${#KERNEL_MISSING_HEADERS[@]} > 0 )); then
         for v in "${KERNEL_MISSING_HEADERS[@]:-}"; do
             echo "Kernel missing headers: $v"
+        done
+        # Round 147 (ITEM 4): the per-kernel header installability evidence —
+        # the uninstallable reason (e.g. the gcc-16-for-host blocker) is
+        # surfaced as its own line, not only inside the `Kernel broken`
+        # reason.  Only the apt/dpkg probes fill the parallel array.
+        for i in "${!KERNEL_MISSING_HEADERS[@]}"; do
+            [[ -n "${KERNEL_HEADERS_INSTALLABILITY[$i]:-}" ]] || continue
+            echo "Kernel headers installability: ${KERNEL_MISSING_HEADERS[$i]}: ${KERNEL_HEADERS_INSTALLABILITY[$i]}"
         done
     fi
     if (( ${#KERNEL_STALE[@]} > 0 )); then
@@ -21902,16 +23309,67 @@ unlock_console_crypttab_passphrase_entry()
     return 1
 }
 
+# Round 101: bounded read-only runner for the unlock-console initrd scan —
+# the round-100 class (input_bounded_initrd_reader): run the command under
+# setsid in its own process group with the output on a session file (never a
+# caller capture pipe) and sweep the WHOLE group after the wait — TUXEDO's
+# compiled unmkinitramfs execs a cpio child ("3cpio") that survives a
+# direct-child bound kill and holds a capture pipe open, so the group id
+# (== the leader pid, persisting after the leader is reaped) is the only
+# sweep that reaches it.  Read-only; never writes to the target.
+unlock_bounded_initrd_run()
+{
+    local bound="$1" out_file="$2" err_file="$3"
+    shift 3
+    local leader_pid=0 rc=0
+    (( SESSION_CANCEL_REQUESTED )) && return 143
+    : > "$out_file"
+    if command -v setsid >/dev/null 2>&1; then
+        if (( bound > 0 )) && [[ -n "$(legacy_real_tool_path timeout 2>/dev/null || true)" ]]; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                "$@" > "$out_file" 2>>"$err_file" &
+        else
+            setsid "$@" > "$out_file" 2>>"$err_file" &
+        fi
+        leader_pid=$!
+        wait "$leader_pid" 2>/dev/null
+        rc=$?
+        # Sweep the reader's whole process group: an exec'd grandchild dies
+        # even though its parent chain ended at the bound.
+        terminate_process_group "$leader_pid"
+        return "$rc"
+    fi
+    # No setsid (the legacy environment): the output already goes to a file,
+    # so no caller pipe can be held open; keep the bounded semantics where a
+    # real timeout binary exists (Etch has neither lsinitrd nor unmkinitramfs,
+    # so this fallback is unreachable there).
+    if (( bound > 0 )) && command -v timeout >/dev/null 2>&1; then
+        timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+            "$@" > "$out_file" 2>>"$err_file"
+    else
+        "$@" > "$out_file" 2>>"$err_file"
+    fi
+    return $?
+}
+
 # Print the crypttab content of one initramfs image (the boot flow's own
 # copy — the running system's /etc/crypttab may not carry initramfs-only
 # entries, e.g. the Ubuntu ZFS keystore zvol).  Read-only archive lookup:
 # dracut's lsinitrd extracts the single file; otherwise the generic cpio
-# extractor unmkinitramfs unpacks into a throwaway session dir.
+# extractor unmkinitramfs unpacks into a throwaway session dir.  Round 101:
+# both readers run bounded through unlock_bounded_initrd_run (the
+# round-100 setsid group-sweep pattern) so a leftover/corrupt image the
+# reader spins on can neither hang the section nor hold a capture pipe.
 unlock_console_initrd_crypttab()
 {
     local img="$1" out="" dir=""
+    local out_file="${SESSION_DIR:-/tmp}/unlock-console-initrd-crypttab.out"
+    local err_file="${SESSION_DIR:-/tmp}/unlock-console-initrd-crypttab.err"
     if command -v lsinitrd >/dev/null 2>&1; then
-        out="$(lsinitrd "$img" -f etc/crypttab 2>/dev/null || true)"
+        if unlock_bounded_initrd_run 12 "$out_file" "$err_file" \
+            lsinitrd "$img" -f etc/crypttab; then
+            out="$(cat -- "$out_file" 2>/dev/null || true)"
+        fi
         if [[ -n "$out" ]]; then
             printf '%s\n' "$out"
             return 0
@@ -21919,7 +23377,9 @@ unlock_console_initrd_crypttab()
     fi
     if command -v unmkinitramfs >/dev/null 2>&1; then
         dir="$(mktemp -d "${SESSION_DIR:-/tmp}/unlock-initrd.XXXXXX" 2>/dev/null || true)"
-        if [[ -n "$dir" ]] && unmkinitramfs "$img" "$dir" >/dev/null 2>&1; then
+        if [[ -n "$dir" ]] \
+            && unlock_bounded_initrd_run 12 "$out_file" "$err_file" \
+                unmkinitramfs "$img" "$dir"; then
             out=""
             [[ -s "$dir/cryptroot/crypttab" ]] && out="$(cat -- "$dir/cryptroot/crypttab" 2>/dev/null || true)"
             [[ -z "$out" && -s "$dir/etc/crypttab" ]] && out="$(cat -- "$dir/etc/crypttab" 2>/dev/null || true)"
@@ -21987,8 +23447,12 @@ unlock_console_classify()
                 UNLOCK_CONSOLE_PROMPT_EVIDENCE="initramfs crypttab entry '${entry_hit%% *}' requests a passphrase at boot (${entry_hit#* })"
                 break
             fi
+        # Round 101: the real-image matcher skips the non-image leftovers
+        # (.new rebuild remains, the dpkg/backup tails) — the round-100 class;
+        # each read is bounded through unlock_bounded_initrd_run.
         done < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f \
-            \( -name 'initrd.img-*' -o -name 'initramfs-*.img' \) 2>/dev/null | LC_ALL=C sort | head -8)
+            \( -name 'initrd.img-*' -o -name 'initramfs-*.img' \) 2>/dev/null \
+            | grep -vE '\.(new|dpkg-.*|bak.*)$' | LC_ALL=C sort | head -8)
     fi
 
     # 1c. ZFS keystore zvols (running host only): the initramfs zfs hook
@@ -24686,6 +26150,8012 @@ package_log_filter()
     '
 }
 
+# ---------------------------------------------------------------------------
+# Input-device diagnostic evidence (0.2.30 Phase 1 — read-only, additive)
+# ---------------------------------------------------------------------------
+# New `input` diagnostic section per Development/docs/plan-input-devices.md §1.
+# Host scope probes the live machine (/proc/bus/input/devices, /sys/class/input,
+# /proc/modules, modinfo, the modprobe.d blacklists, the keyboard layout configs
+# and the live journal); target scope probes ONLY the target's own on-disk
+# evidence (per-kernel modules.dep/modules.builtin, the blacklist files, the
+# initramfs inclusion configs, the BUILT IMAGES' actual contents — the
+# LUKS-prompt keyboard reachability proof — the target's own boot journal and
+# the owning package of an on-disk module missing from the image).  Positive
+# evidence only: a verdict other than `ok` fires only when a probe proves the
+# condition; the bound driver is READ from sysfs/journal, never guessed from a
+# vendor table.  All lines are stable `Input …:` contract lines (GPU style),
+# round-tripped by parse_cached_input_inventory() for the Phase 3 repair.
+INPUT_DEVICES=()
+INPUT_DEVICE_BUS=()
+INPUT_DEVICE_CLASS=()
+INPUT_DEVICE_DRIVER=()
+# Round 126 (ITEM 28): the per-device firmware/version evidence — the USB
+# device descriptor's bcdDevice as the kernel reports it in the
+# /proc/bus/input/devices `I:` line (Version=<hex>, device-reported, never
+# invented; the /sys fallback reads the USB device node's own bcdDevice).
+# Empty for devices without a descriptor version (PS/2, i2c, PCI audio).
+INPUT_DEVICE_VERSION=()
+INPUT_BOOTLOG_DEVICES=()
+INPUT_LAYOUT=""
+INPUT_LOADED_MODULES=""
+INPUT_BUILTIN_MODULES=""
+INPUT_AVAILABLE_MODULES=""
+INPUT_BLACKLISTED_MODULES=""
+INPUT_MISSING_MODULES=""
+# Round 104 (the Etch host verdict finding): when the host-scope
+# module-missing verdict is downgraded because the live keyboard evidence is
+# verified (the round-96 override, extended from the conflict step to this
+# step), the downgraded missing names stay visible here as an informational
+# warning-note (the round-96 INPUT_DRIVER_CONFLICT_NOTE pattern).  The names
+# are the kernel's own shape — builtin drivers invisible on pre-modules.builtin
+# kernels (2.6.18 has no modules.builtin) and modern-only names the kernel
+# never shipped — never a broken keyboard.
+INPUT_MODULE_MISSING_NOTE=""
+INPUT_BUS_CONTROLLER=""
+INPUT_INITRAMFS_INCLUSION=""
+INPUT_INITRAMFS_PROOF=""
+INPUT_MODULE_OWNERSHIP=""
+INPUT_JOURNAL_COUNT="0"
+INPUT_JOURNAL_CLASSES="none"
+INPUT_FIRMWARE_FAILURES="none"
+INPUT_QUIRK_STATE="none"
+INPUT_LUKS_EXPECTED="unknown"
+INPUT_VERDICT="ok"
+# Round 91 (the driver-fallback chain, 0.2.30 slice): the kernel probe-failure
+# evidence (`probe of … failed with error -N` lines, bounded + deduped,
+# filtered to input-relevant drivers, `<mod>=<errno>` pairs) and the candidate
+# module set (the bus-needed modules ∪ the boot-log classes ∪ hid_generic on a
+# probe-failing vendor HID) the fallback menu consumes.
+INPUT_PROBE_FAILURES="none"
+INPUT_CANDIDATE_MODULES="none"
+# Round 92 (the driver-fallback ladder, steps 3-4): the reinstall/rebuild
+# evidence — the detected module build system (dkms|akmods|akms|none, the
+# shared read-only probe) and the bound modules' modinfo versions
+# (`<mod>=<ver>` pairs; host: the live kernel, target: `-k <kver>` for the
+# newest kernel) — plus the bound-driver package's provable repository
+# versions (`<pkg>=<v1>,<v2>…`, ascending; `none` where no backend can prove
+# them — the pacman/apk fail-closed evidence).
+INPUT_DRIVER_BUILD_SYSTEM="none"
+INPUT_MODULE_VERSIONS="none"
+INPUT_PACKAGE_VERSIONS="none"
+# Round 93 (the driver-fallback ladder, step 9): the conflict evidence —
+# "<conflicting> vs <candidate>" (two modules fighting over one device,
+# derived from the reliable signals: the EBUSY -16 probe-failure shape with a
+# multi-module alias/candidate set, the host lspci bound-vs-first-candidate
+# pair, the bounded modprobe -R resolution disagreement, the sysfs
+# bind/refcnt probes, and the both-loaded cross-check).
+INPUT_DRIVER_CONFLICT="none"
+# Round 96 (ITEM 1c): the live-verified override — when a derived conflict
+# pair is downgraded because the live keyboard evidence is verified, the
+# pair is kept here as an informational warning-note (the verdict stays ok
+# and the menu never offers the blacklist-conflict action for it).
+INPUT_DRIVER_CONFLICT_NOTE=""
+INPUT_EVIDENCE_COLLECTED=0
+
+# Round 118 (performance): the kernel-inventory collect-once flag — the same
+# shape as INPUT/NETWORK_EVIDENCE_COLLECTED.  Without it the combined run
+# re-collected the full kernel inventory up to three times (the capability
+# preamble's reason probe, the preamble's evidence line and the kernel
+# section), each a ~1.2 s dpkg -S pass on TUXEDO.  Reset on every changed
+# mutation via repair_change_status so the kernel menus always re-collect
+# fresh state.
+KERNEL_INVENTORY_COLLECTED=0
+
+# Keyboard/HID kernel modules the evidence tracks (canonical underscore names;
+# the dash form is used only for on-disk .ko file matching).
+INPUT_WATCH_MODULES="atkbd i8042 serio usbhid hid_generic hid_apple hid_multitouch hid_lenovo hid_logitech_dj hid_logitech_hidpp psmouse evdev xhci_hcd ehci_hcd uhci_hcd ohci_hcd usbcore i2c_hid"
+INPUT_USB_CONTROLLER_MODULES="xhci_hcd ehci_hcd uhci_hcd ohci_hcd usbcore"
+INPUT_SERIO_CONTROLLER_MODULES="i8042 serio"
+INPUT_I2C_CONTROLLER_MODULES="i2c_hid"
+INPUT_KEYBOARD_MODULES="atkbd i8042 usbhid hid_generic hid_apple hid_multitouch hid_lenovo psmouse evdev"
+# Round 96 (ITEM 3, decision #2): the mouse-class modules (the pointer
+# drivers — a blacklisted psmouse fires the mouse-specific verdict/state,
+# never the keyboard-anchored one; the keyboard verdict chain is unchanged).
+INPUT_MOUSE_MODULES="psmouse"
+
+# `-`/`_`-agnostic alternation of the canonical names for on-disk .ko and
+# config matching.  Round 114 (ITEM 3): mirrors the round-113
+# network_module_alternation fix — the old `_`→`-` conversion missed the
+# underscore form everywhere (an underscore-written modprobe.d line, or an
+# underscore-named .ko on a kernel/build that uses one — the on-disk names
+# are not guaranteed dash-based across kernels, e.g. sl811_cs.ko), and a
+# stray whitespace token used to produce an EMPTY alternative that matched
+# empty lines.  The input is whitespace-normalized first and every
+# underscore becomes the `[_-]` class, so ONE alternation serves the on-disk
+# greps, the config greps and the `find -name` globs.
+input_module_alternation()
+{
+    local in="$1" out=""
+    in="$(printf '%s' "$in" | tr -s ' ' | sed 's/^ //; s/ $//' || true)"
+    out="${in// /|}"
+    out="${out//_/[_-]}"
+    printf '%s\n' "$out"
+}
+
+# The module set a device on one bus needs to work at the LUKS prompt.
+input_needed_for_bus()
+{
+    case "$1" in
+        usb) printf '%s\n' usbhid hid_generic usbcore xhci_hcd ehci_hcd uhci_hcd ohci_hcd ;;
+        ps2) printf '%s\n' atkbd i8042 serio ;;
+        i2c) printf '%s\n' i2c_hid hid_multitouch ;;
+        *) return 1 ;;
+    esac
+}
+
+# Host-mode device evidence from /proc/bus/input/devices with a
+# /sys/class/input fallback.  Read-only; names are sanitized (no brackets, no
+# newline, truncated).  One awk block-parser pass emits a TSV record per
+# device (name \t bus-hex \t inputN \t class), so the device list never
+# depends on the number of devices or the block ordering.
+input_collect_devices()
+{
+    INPUT_DEVICES=()
+    INPUT_DEVICE_BUS=()
+    INPUT_DEVICE_CLASS=()
+    INPUT_DEVICE_DRIVER=()
+    INPUT_DEVICE_VERSION=()
+    (( RUNNING_HOST_MODE == 1 )) || return 0
+    local nm bs in_n class bus drv clean vers
+    while IFS=$'\t' read -r nm bs in_n class vers; do
+        [[ -n "$nm" ]] || continue
+        journal_cancel_requested && return 0
+        clean="${nm//\]/}"; clean="${clean//\[/}"
+        clean="$(printf '%s' "$clean" | tr '\n' ' ' | cut -c1-60)"
+        case "$bs" in
+            0003) bus="usb" ;;
+            0011) bus="ps2" ;;
+            0018|0019|001f|001F) bus="i2c" ;;
+            0005) bus="bluetooth" ;;
+            *) bus="hex-$bs" ;;
+        esac
+        drv="none"
+        if [[ -n "$in_n" && -L "/sys/class/input/$in_n/device/driver" ]]; then
+            drv="$(basename "$(readlink "/sys/class/input/$in_n/device/driver" 2>/dev/null || true)" 2>/dev/null || true)"
+            [[ -n "$drv" ]] || drv="none"
+        fi
+        INPUT_DEVICES+=("$clean")
+        INPUT_DEVICE_BUS+=("$bus")
+        INPUT_DEVICE_CLASS+=("${class:-other}")
+        INPUT_DEVICE_DRIVER+=("$drv")
+        # A zero/absent descriptor version carries no firmware information
+        # (ACPI buttons, HDMI audio report Version=0000) — kept empty.
+        [[ -n "$vers" && "$vers" != 0000 ]] || vers=""
+        INPUT_DEVICE_VERSION+=("$vers")
+    done <<<"$(awk '
+        function class_of(name, handlers) {
+            if (handlers ~ /(^| )kbd( |$)/) return "keyboard"
+            if (handlers ~ /(^| )mouse[0-9]*( |$)/) {
+                if (name ~ /[Tt]ouchpad|[Tt]rackpoint|[Tt]rack[pP]ad|[Ss]ynaptics|[Ee]lan|ALPS/) return "touchpad"
+                return "mouse"
+            }
+            if (handlers ~ /(^| )js[0-9]+( |$)/) return "joystick"
+            return "other"
+        }
+        /^N:/ { name = substr($0, index($0, "=") + 1); sub(/^"/, "", name); sub(/"$/, "", name) }
+        /^I:/ {
+            rest = substr($0, index($0, "=") + 1)
+            bus = rest; sub(/ .*/, "", bus)
+            # Round 126 (ITEM 28): the device-reported descriptor version (the
+            # USB bcdDevice) — the kernel reports it, never guessed.  Absent
+            # on PS/2/i2c devices.
+            version = ""
+            if (rest ~ /Version=[0-9A-Fa-f]+/) { version = rest; sub(/^.*Version=/, "", version); sub(/ .*/, "", version) }
+        }
+        /^H:/ { handlers = substr($0, index($0, "=") + 1) }
+        /^S:/ { sysfs = substr($0, index($0, "=") + 1); sub(/^.*\/input/, "input", sysfs) }
+        /^$/ {
+            if (name != "") print name "\t" (bus != "" ? bus : "0000") "\t" sysfs "\t" class_of(name, handlers) "\t" version
+            name = ""; bus = ""; handlers = ""; sysfs = ""; version = ""
+        }
+        END { if (name != "") print name "\t" (bus != "" ? bus : "0000") "\t" sysfs "\t" class_of(name, handlers) "\t" version }
+    ' /proc/bus/input/devices 2>/dev/null || true)"
+    if ((${#INPUT_DEVICES[@]} > 0)); then
+        return 0
+    fi
+    # /sys fallback for systems without /proc/bus/input/devices.
+    local devdir node
+    for devdir in /sys/class/input/input[0-9]*; do
+        [[ -d "$devdir" ]] || continue
+        journal_cancel_requested && return 0
+        nm="$(cat "$devdir/name" 2>/dev/null || true)"
+        [[ -n "$nm" ]] || continue
+        clean="$(printf '%s' "$nm" | tr '\n' ' ' | cut -c1-60)"
+        drv="$(basename "$(readlink "$devdir/device/driver" 2>/dev/null || true)" 2>/dev/null || true)"
+        # Round 126 (ITEM 28): the /sys bcdDevice fallback — walk up to the
+        # first USB device node; its bcdDevice is the device-reported
+        # descriptor version (the /proc path's Version= equivalent).  Nothing
+        # is invented for non-USB devices.
+        vers=""
+        node="$(readlink -f "$devdir/device" 2>/dev/null || true)"
+        while [[ -n "$node" && "$node" != / && "$node" != /sys ]]; do
+            if [[ -r "$node/bcdDevice" ]]; then
+                vers="$(cat "$node/bcdDevice" 2>/dev/null || true)"
+                vers="${vers#0x}"
+                [[ "$vers" != 0000 ]] || vers=""
+                break
+            fi
+            node="$(dirname "$node")"
+        done
+        INPUT_DEVICES+=("$clean")
+        INPUT_DEVICE_BUS+=("unknown")
+        INPUT_DEVICE_CLASS+=("other")
+        INPUT_DEVICE_DRIVER+=("${drv:-none}")
+        INPUT_DEVICE_VERSION+=("$vers")
+    done
+}
+
+# Keyboard layout evidence from the target's own config files (host mode reads
+# the host's own, since TARGET_ROOT is "/" there).
+input_collect_layout()
+{
+    INPUT_LAYOUT="none-detected"
+    local files=(
+        "$TARGET_ROOT/etc/default/keyboard"
+        "$TARGET_ROOT/etc/vconsole.conf"
+        "$TARGET_ROOT/etc/sysconfig/keyboard"
+        "$TARGET_ROOT/etc/conf.d/keymaps"
+    )
+    local f line value
+    for f in "${files[@]:-}"; do
+        [[ -r "$f" ]] || continue
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            case "$line" in
+                \#*|[[:space:]]*\#*) continue ;;
+            esac
+            case "$line" in
+                *XKBLAYOUT=*)
+                    value="${line#*XKBLAYOUT=}"; value="${value%% *}"
+                    value="${value//\"/}"
+                    [[ -n "$value" ]] && { INPUT_LAYOUT="$value"; return 0; }
+                    ;;
+                *KEYMAP=*)
+                    value="${line#*KEYMAP=}"; value="${value%% *}"
+                    value="${value//\"/}"
+                    [[ -n "$value" ]] && { INPUT_LAYOUT="$value"; return 0; }
+                    ;;
+                *keymap=*)
+                    value="${line#*keymap=}"; value="${value%% *}"
+                    value="${value//\"/}"
+                    [[ -n "$value" ]] && { INPUT_LAYOUT="$value"; return 0; }
+                    ;;
+            esac
+        done < "$f"
+    done
+    # Xorg layout snippets (read-only, both scopes).
+    local xfile xval
+    for xfile in "$TARGET_ROOT/etc/X11/xorg.conf.d/"*[Ll]ayout*.conf; do
+        [[ -r "$xfile" ]] || continue
+        xval="$(grep -m1 'XkbLayout' "$xfile" 2>/dev/null || true)"
+        xval="${xval#*\"}"; xval="${xval%\"*}"
+        [[ -n "$xval" ]] && { INPUT_LAYOUT="$xval"; return 0; }
+    done
+}
+
+# Loaded/builtin/available/blacklisted/missing module lists.  Host: live
+# /proc/modules + the running kernel's modules.builtin + modinfo -n.  Target:
+# per-kernel modules.dep/modules.builtin on disk.  Blacklists read the three
+# modprobe.d trees plus the kernel-cmdline module_blacklist token (both scopes;
+# host-mode TARGET_ROOT "/" reads the host's own files).
+input_module_lists_collect()
+{
+    INPUT_LOADED_MODULES="none"
+    INPUT_BUILTIN_MODULES="none"
+    INPUT_AVAILABLE_MODULES="none"
+    INPUT_BLACKLISTED_MODULES="none"
+    INPUT_MISSING_MODULES="none"
+    local mod alt
+    local -a loaded=() builtin=() available=() blacklisted=() missing=()
+    local kdir kver
+    alt="$(input_module_alternation "$INPUT_WATCH_MODULES")"
+
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for mod in $INPUT_WATCH_MODULES; do
+            if grep -qw "$mod" /proc/modules 2>/dev/null || [[ -d "/sys/module/$mod" ]]; then
+                loaded+=("$mod")
+            fi
+        done
+        kver="$(running_kernel_version)"
+        for kdir in "/lib/modules/$kver/modules.builtin" "/usr/lib/modules/$kver/modules.builtin"; do
+            [[ -r "$kdir" ]] || continue
+            while IFS= read -r mod; do
+                [[ -n "$mod" ]] && builtin+=("$mod")
+            done <<<"$(grep -oE "/(${alt})\.ko$" "$kdir" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+        done
+        for mod in $INPUT_WATCH_MODULES; do
+            if [[ -n "$(modinfo -n "$mod" 2>/dev/null || true)" ]]; then
+                available+=("$mod")
+            fi
+        done
+        if grep -qE '(^|[[:space:]])module_blacklist=' /proc/cmdline 2>/dev/null; then
+            while IFS= read -r mod; do
+                [[ -n "$mod" ]] && blacklisted+=("${mod//-/_}")
+            done <<<"$(sed 's/.*module_blacklist=//; s/[[:space:]].*//' /proc/cmdline 2>/dev/null | tr ',' '\n' || true)"
+        fi
+    else
+        while IFS= read -r kdir; do
+            [[ -n "$kdir" ]] || continue
+            journal_cancel_requested && return 0
+            if [[ -r "$kdir/modules.builtin" ]]; then
+                while IFS= read -r mod; do
+                    [[ -n "$mod" ]] && builtin+=("$mod")
+                done <<<"$(grep -oE "/(${alt})\.ko$" "$kdir/modules.builtin" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+            fi
+            if [[ -r "$kdir/modules.dep" ]]; then
+                while IFS= read -r mod; do
+                    [[ -n "$mod" ]] && available+=("$mod")
+                done <<<"$(grep -oE "/(${alt})\.ko" "$kdir/modules.dep" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+            fi
+        done < <(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+            -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | sort -u || true)
+    fi
+
+    # modprobe.d blacklists: blacklist/install forms in all three trees.
+    local conf_dir
+    for conf_dir in "$TARGET_ROOT/etc/modprobe.d" "$TARGET_ROOT/usr/lib/modprobe.d" "$TARGET_ROOT/lib/modprobe.d"; do
+        [[ -d "$conf_dir" ]] || continue
+        while IFS= read -r mod; do
+            [[ -n "$mod" ]] && blacklisted+=("$mod")
+        done <<<"$(grep -rhoE "^[[:space:]]*(blacklist|install)[[:space:]]+(${alt})[[:space:]]*($|/)" "$conf_dir" 2>/dev/null \
+            | sed 's/^[[:space:]]*\(blacklist\|install\)[[:space:]]\+//; s/[[:space:]].*$//' | sort -u || true)"
+    done
+
+    if ((${#loaded[@]} > 0)); then
+        INPUT_LOADED_MODULES="$(printf '%s\n' "${loaded[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#builtin[@]} > 0)); then
+        INPUT_BUILTIN_MODULES="$(printf '%s\n' "${builtin[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#available[@]} > 0)); then
+        INPUT_AVAILABLE_MODULES="$(printf '%s\n' "${available[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#blacklisted[@]} > 0)); then
+        INPUT_BLACKLISTED_MODULES="$(printf '%s\n' "${blacklisted[@]:-}" | sort -u | paste -sd, -)"
+    fi
+
+    # Missing: the device-referenced modules with no loaded/builtin/available
+    # state (positive evidence only — an empty device set reports none).
+    local needed need
+    needed=""
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local i b
+        for i in "${!INPUT_DEVICES[@]}"; do
+            b="${INPUT_DEVICE_BUS[$i]}"
+            needed+=" $(input_needed_for_bus "$b" 2>/dev/null || true)"
+        done
+    else
+        needed+=" $(printf '%s' "${INPUT_JOURNAL_CLASSES}" | tr ',' ' ' | sed 's/-/_/g' || true)"
+    fi
+    for need in $needed; do
+        [[ -n "$need" ]] || continue
+        if ! grep -qw "$need" <<<"$INPUT_LOADED_MODULES" \
+            && ! grep -qw "$need" <<<"$INPUT_BUILTIN_MODULES" \
+            && ! grep -qw "$need" <<<"$INPUT_AVAILABLE_MODULES"; then
+            missing+=("$need")
+        fi
+    done
+    if ((${#missing[@]} > 0)); then
+        INPUT_MISSING_MODULES="$(printf '%s\n' "${missing[@]:-}" | sort -u | paste -sd, -)"
+    fi
+}
+
+# Bus-controller state: host = the loaded controller modules; target = the
+# controllers present on disk (builtin or available).
+input_bus_controller_collect()
+{
+    local source="" list mod
+    if (( RUNNING_HOST_MODE == 1 )); then
+        source="$INPUT_LOADED_MODULES"
+    else
+        source="$INPUT_BUILTIN_MODULES,$INPUT_AVAILABLE_MODULES"
+    fi
+    INPUT_BUS_CONTROLLER=""
+    for mod in $INPUT_USB_CONTROLLER_MODULES; do
+        if grep -qw "$mod" <<<"$source"; then
+            list="${list:+$list,}$mod"
+        fi
+    done
+    INPUT_BUS_CONTROLLER+="usb=${list:-none}"
+    list=""
+    for mod in $INPUT_SERIO_CONTROLLER_MODULES; do
+        if grep -qw "$mod" <<<"$source"; then
+            list="${list:+$list,}$mod"
+        fi
+    done
+    INPUT_BUS_CONTROLLER+=", serio=${list:-none}"
+    list=""
+    for mod in $INPUT_I2C_CONTROLLER_MODULES; do
+        if grep -qw "$mod" <<<"$source"; then
+            list="${list:+$list,}$mod"
+        fi
+    done
+    INPUT_BUS_CONTROLLER+=", i2c=${list:-none}"
+}
+
+# Initramfs inclusion configs per detected backend (read-only file parses).
+input_initramfs_inclusion_collect()
+{
+    INPUT_INITRAMFS_INCLUSION="none-detected"
+    local backend tokens entry
+    local -a entries=()
+    for backend in "${TARGET_INITRAMFS_BACKENDS[@]:-}"; do
+        case "$backend" in
+            initramfs-tools)
+                tokens="$(grep -hoE "^[[:space:]]*(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)[[:space:]]*($|#)" \
+                    "$TARGET_ROOT/etc/initramfs-tools/modules" 2>/dev/null \
+                    | sed 's/[[:space:]#].*$//' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("initramfs-tools: ${tokens:-none}")
+                ;;
+            dracut)
+                tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
+                    "$TARGET_ROOT/etc/dracut.conf" "$TARGET_ROOT/etc/dracut.conf.d/"*.conf 2>/dev/null \
+                    | sed 's/.*="//; s/"$//' | tr ' ' '\n' \
+                    | grep -E '^(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)$' \
+                    | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("dracut: ${tokens:-none}")
+                ;;
+            mkinitcpio)
+                tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
+                    | sed 's/^MODULES=(//; s/)$//; s/[()]//g' | tr ' ' '\n' \
+                    | grep -E '^(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)$' \
+                    | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("mkinitcpio: ${tokens:-none}")
+                ;;
+            mkinitfs)
+                # Round 155 (Finding A): the mkinitfs inclusion evidence must
+                # carry the MODULE tokens behind the boot-repair-drivers
+                # feature file, never the feature FILE names.  The include
+                # delta consumes this evidence as the "already included"
+                # truth (on a running host it IS the single truth — the host's
+                # proof line is the live-keyboard sentinel), and a feature
+                # name never satisfies a module candidate: after a successful
+                # include the fresh diagnostic still listed only
+                # "boot-repair-drivers.modules,usb.modules" and the re-run
+                # re-offered the SAME delta (the user's Alpine host loop).
+                # The round-130 N4 writer stores kernel-relative PATH GLOBS in
+                # that file (kernel/drivers/hid/hid-apple.ko*), so the module
+                # token is extracted from the glob basename.
+                tokens="$(grep -hoE "(^|/)(atkbd|i8042|serio|usbhid|hid[_-][a-z0-9_-]+|xhci[_-]hcd|ehci[_-]hcd|uhci[_-]hcd|ohci[_-]hcd|usbcore|psmouse|evdev|i2c[_-]hid)\.ko" \
+                    "$TARGET_ROOT/etc/mkinitfs/features.d/boot-repair-drivers.modules" 2>/dev/null \
+                    | sed 's#^.*/##; s/\.ko.*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("mkinitfs: ${tokens:-none}")
+                ;;
+            *) entries+=("$backend: unknown") ;;
+        esac
+    done
+    if ((${#entries[@]} > 0)); then
+        INPUT_INITRAMFS_INCLUSION=""
+        for entry in "${entries[@]:-}"; do
+            INPUT_INITRAMFS_INCLUSION+="${INPUT_INITRAMFS_INCLUSION:+; }$entry"
+        done
+    fi
+}
+
+# The owning package of one on-disk module (positive evidence; unknown when
+# the detected package backend cannot answer).
+input_module_owner()
+{
+    module_owner_for_backend "$1"
+}
+
+# Run one initrd reader for the input keyboard proof, truly bounded (round
+# 100).  The RUN_SELECTED_CHROOT_BOUND timeout only kills its direct child
+# chain; the TUXEDO OS target's compiled unmkinitramfs execs its cpio child
+# (shown in ps as "3cpio"), and that exec'd grandchild survived the bound on a
+# cancelled-rebuild leftover initrd.img-*.new, spun at 99% CPU and held the
+# caller's $(...) capture pipe open — the whole "all" diagnostic stalled
+# forever (the round-94 orphaned-killer pipe-stall class, reproduced live in
+# round 100 on the TUXEDO target).  The reader therefore runs under setsid in
+# its own process group (the run_host_command_isolated pattern) with its
+# output on a session FILE (never the caller's capture pipe), and the ENTIRE
+# group is swept after the wait — the group id equals the leader pid and
+# persists after the leader is reaped, so an exec'd grandchild can neither
+# outlive the bound nor hold a pipe open.  Never writes to the target.
+#
+# Round 121 (ITEM 5): the read-only diagnostic/preflight chroot has no /dev
+# (the private devtmpfs is installed only at the rw promotion), and a modern
+# distribution ships an EMPTY /dev on disk — the readers' own `2>/dev/null`
+# redirections then fail (BusyBox sh on the Alpine target: "can't create
+# /dev/null: Read-only file system") or degrade the listing (dracut's
+# lsinitrd on Fedora produced only the image header, which the proof read as
+# `absent` even after a successful include-rebuild — the re-verify with /dev
+# mounted found the modules, the diagnostic proof did not).  For THIS reader
+# only, overlay the chroot's /dev with a session tmpfs carrying /dev/null and
+# detach it on every return path: the target's on-disk /dev is never written,
+# nothing else runs while the overlay is up (the helper is single-threaded),
+# and every other probe keeps the read-only chroot unchanged.  When /dev/null
+# already exists (the repair window after promotion, or an Etch-era static
+# /dev) the reader runs exactly as before.
+input_bounded_initrd_reader()
+{
+    local bound="$1" out_file="$2" reader="$3" vpath="$4" err_file="$5"
+    local leader_pid=0 rc=0 dev_overlay=false
+    local -a reader_chain=()
+    (( SESSION_CANCEL_REQUESTED )) && return 143
+    if [[ "$reader" == cpio ]]; then
+        reader_chain=(/usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            sh -c 'zcat -- "$1" 2>/dev/null | cpio -t 2>/dev/null' sh "$vpath")
+    else
+        reader_chain=(/usr/bin/env HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            "$reader" "$vpath")
+    fi
+    if [[ -n "$TARGET_ROOT" && ! -c "$TARGET_ROOT/dev/null" ]] \
+        && [[ -d "$TARGET_ROOT/dev" ]] \
+        && mount -t tmpfs -o mode=0755 tmpfs "$TARGET_ROOT/dev" 2>/dev/null; then
+        dev_overlay=true
+        mknod -m 0666 "$TARGET_ROOT/dev/null" c 1 3 2>/dev/null || true
+        mknod -m 0666 "$TARGET_ROOT/dev/zero" c 1 5 2>/dev/null || true
+    fi
+    : > "$out_file"
+    if command -v setsid >/dev/null 2>&1; then
+        if (( bound > 0 )) && [[ -n "$(legacy_real_tool_path timeout 2>/dev/null || true)" ]] && [[ -n "$TARGET_ROOT" ]]; then
+            setsid timeout --foreground --kill-after="$APT_TIMEOUT_KILL_AFTER_SECONDS" "$bound" \
+                chroot "$TARGET_ROOT" "${reader_chain[@]:-}" > "$out_file" 2>>"$err_file" &
+        else
+            setsid chroot "$TARGET_ROOT" "${reader_chain[@]:-}" > "$out_file" 2>>"$err_file" &
+        fi
+        leader_pid=$!
+        wait "$leader_pid" 2>/dev/null
+        rc=$?
+        # Sweep the reader's whole process group: the group id equals the
+        # leader pid and survives the leader's reaping, so the exec'd
+        # grandchild dies even though its parent chain ended at the bound.
+        terminate_process_group "$leader_pid"
+        if [[ "$dev_overlay" == true ]]; then
+            umount "$TARGET_ROOT/dev" 2>/dev/null \
+                || mount_cleanup_leak_evidence "$TARGET_ROOT/dev"
+        fi
+        return "$rc"
+    fi
+    # No setsid (the legacy environment): the output already goes to a file,
+    # so no caller pipe can be held open; keep the bounded chroot semantics.
+    if (( bound > 0 )); then
+        RUN_SELECTED_CHROOT_BOUND="$bound" run_selected_chroot "${reader_chain[@]:-}" \
+            > "$out_file" 2>>"$err_file"
+    else
+        run_selected_chroot "${reader_chain[@]:-}" > "$out_file" 2>>"$err_file"
+    fi
+    rc=$?
+    if [[ "$dev_overlay" == true ]]; then
+        umount "$TARGET_ROOT/dev" 2>/dev/null \
+            || mount_cleanup_leak_evidence "$TARGET_ROOT/dev"
+    fi
+    return "$rc"
+}
+
+# The LUKS-relevant proof: the built images' ACTUAL contents (lsinit* / cpio).
+# Target scope only — a running host's live keyboard state is authoritative.
+# Capped at three images, each read bounded through the chroot, cancel-aware.
+input_initramfs_proof_collect()
+{
+    INPUT_INITRAMFS_PROOF=""
+    INPUT_MODULE_OWNERSHIP=""
+    if (( RUNNING_HOST_MODE == 1 )); then
+        INPUT_INITRAMFS_PROOF="running-host: live keyboard evidence applies"
+        return 0
+    fi
+    local reader=""
+    case "${TARGET_INITRAMFS_BACKEND:-}" in
+        initramfs-tools)
+            # Round 87: resolve the path that ACTUALLY exists — current
+            # initramfs-tools ships lsinitramfs at /usr/bin (the traditional
+            # /usr/sbin path is gone), and the hardcoded /usr/sbin reader
+            # silently failed every proof with a bare "unreadable".
+            if target_has_executable /usr/sbin/lsinitramfs; then
+                reader="/usr/sbin/lsinitramfs"
+            elif target_has_executable /usr/bin/lsinitramfs; then
+                reader="/usr/bin/lsinitramfs"
+            elif target_has_executable /bin/cpio /usr/bin/cpio \
+                && target_has_executable /bin/zcat /usr/bin/zcat; then
+                # Round 130 (N5): the 2.6-era initramfs-tools (0.85, Etch)
+                # ships no lsinit* reader, so the rebuild verification failed
+                # closed with a spurious input-initramfs-rebuild-unverified on
+                # a SUCCESSFUL rebuild.  Its initrd.img is a plain gzip'd cpio
+                # archive: the gzip-cpio content check (the mkinitfs reader
+                # chain) reads it, so the proof reflects the actual image
+                # state instead of claiming unreadable.
+                reader="cpio"
+            fi
+            ;;
+        dracut)
+            # dracut ships lsinitrd at /usr/bin (Fedora); keep the /usr/sbin
+            # check first for older layouts.
+            if target_has_executable /usr/sbin/lsinitrd; then
+                reader="/usr/sbin/lsinitrd"
+            elif target_has_executable /usr/bin/lsinitrd; then
+                reader="/usr/bin/lsinitrd"
+            fi
+            ;;
+        mkinitcpio)
+            target_has_executable /usr/bin/lsinitcpio /usr/sbin/lsinitcpio && reader="/usr/bin/lsinitcpio"
+            ;;
+        mkinitfs)
+            reader="cpio"
+            ;;
+    esac
+    [[ -n "$reader" ]] || { INPUT_INITRAMFS_PROOF="unreadable: no initramfs reader for backend ${TARGET_INITRAMFS_BACKEND:-none}"; return 0; }
+
+    local alt
+    alt="$(input_module_alternation "$INPUT_WATCH_MODULES")"
+    local image vpath kver listing found proof probed=0 unread_reason proof_err
+    local -a proofs=()
+    local -a image_glob_expr=()
+    proof_err="$SESSION_DIR/initramfs-proof.err"
+    # Round 100/101: skip the non-image leftovers — a cancelled rebuild's
+    # initrd.img-<v>.new (partial/corrupt, TUXEDO's compiled unmkinitramfs can
+    # spin on it forever) and the dpkg/backup leftovers (<name>.dpkg-bak sits
+    # beside the real image after a failed dpkg rename; the TUXEDO target
+    # carries both).  They are never offered to the reader and never count
+    # against the three-image cap.  The real-image matcher accepts only the
+    # initrd.img-<kver> / initramfs-<kver>.img shapes — except the mkinitfs
+    # backend, whose Alpine images are flavor-named with no .img suffix
+    # (initramfs-lts, -virt, -edge), the only bare initramfs-<flavor> shape
+    # that is a real image.  Resolved BEFORE the while loop so the loop's
+    # process substitution forks with the populated glob.
+    if [[ "${TARGET_INITRAMFS_BACKEND:-}" == mkinitfs ]]; then
+        image_glob_expr=( -name 'initramfs-*' )
+    else
+        image_glob_expr=( \( -name 'initrd.img-*' -o -name 'initramfs-*.img' \) )
+    fi
+    while IFS= read -r image; do
+        [[ -n "$image" ]] || continue
+        [[ -f "$image" ]] || continue
+        journal_cancel_requested && return 0
+        (( probed < 3 )) || break
+        probed=$((probed + 1))
+        vpath="${image#"$TARGET_ROOT"}"
+        case "$image" in
+            "$TARGET_ROOT/boot/initrd.img-"*) kver="${image##*initrd.img-}" ;;
+            "$TARGET_ROOT/boot/initramfs-"*) kver="${image##*initramfs-}"; kver="${kver%.img}" ;;
+            *) kver="${image##*/}" ;;
+        esac
+        listing=""
+        : > "$proof_err"
+        # Round 100: the truly bounded reader (output to a session file, the
+        # whole reader tree swept at the bound) — the direct $(...) capture
+        # let an orphaned reader hold the substitution pipe open forever.
+        input_bounded_initrd_reader 12 "$SESSION_DIR/initramfs-proof.out" \
+            "$reader" "$vpath" "$proof_err" || true
+        listing="$(cat -- "$SESSION_DIR/initramfs-proof.out" 2>/dev/null || true)"
+        if [[ -z "$listing" ]]; then
+            # Round 87: name the reason instead of a bare "unreadable" (a
+            # bounded first-line stderr capture; "no readable listing" when
+            # the reader failed silently).
+            unread_reason="$(sed -n '1,2p' "$proof_err" 2>/dev/null \
+                | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ *//; s/ *$//' || true)"
+            [[ -n "$unread_reason" ]] || unread_reason="no readable listing"
+            proofs+=("${kver}=unreadable: ${unread_reason}")
+            continue
+        fi
+        found="$(printf '%s\n' "$listing" | grep -oE "/(${alt})\.ko(\.xz|\.gz|\.zst)?$" \
+            | sed 's#.*/##; s/\.ko.*$//; s/-/_/g' | sort -u | paste -sd, - 2>/dev/null || true)"
+        [[ -n "$found" ]] || found="absent"
+        proofs+=("${kver}=${found}")
+    done < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f "${image_glob_expr[@]:-}" \
+        -printf '%p\n' 2>/dev/null | grep -v 'vmlinuz' \
+        | grep -vE '\.(new|dpkg-.*|bak.*)$' | LC_ALL=C sort -u || true)
+    if ((${#proofs[@]} > 0)); then
+        INPUT_INITRAMFS_PROOF=""
+        for proof in "${proofs[@]:-}"; do
+            INPUT_INITRAMFS_PROOF+="${INPUT_INITRAMFS_PROOF:+; }$proof"
+        done
+    else
+        INPUT_INITRAMFS_PROOF="no images found under /boot"
+    fi
+
+    # Ownership of an on-disk keyboard module that no built image carries (the
+    # LUKS-gap evidence): only when the module exists on disk and the images
+    # were readable (a proof string holding at least one non-absent image).
+    local any_readable=0 mod
+    for proof in "${proofs[@]:-}"; do
+        [[ "$proof" == *absent* || "$proof" == *unreadable* ]] || any_readable=1
+    done
+    if (( any_readable == 1 )); then
+        for mod in $INPUT_KEYBOARD_MODULES; do
+            grep -qw "$mod" <<<"${INPUT_INITRAMFS_PROOF//;/ }" && continue
+            [[ -n "$(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+                    -type f -name "$(input_module_alternation "$mod").ko*" 2>/dev/null | head -n1 || true)" ]] || continue
+            INPUT_MODULE_OWNERSHIP+="${INPUT_MODULE_OWNERSHIP:+; }$mod|$(input_module_owner "$mod")"
+        done
+    fi
+}
+
+# Round 131 (N9): the network twin of input_initramfs_proof_collect — the
+# per-module built-image proof for the bound/watch NIC drivers.  The same
+# per-backend reader + image-glob + bounded-reader shape; the alternation is
+# the network one and the input-specific ownership block (the LUKS-gap
+# evidence) has no network twin.  The include repair verifies every written
+# module against this proof before claiming the fix (the input twin's
+# round-130 N4 rule).
+network_initramfs_proof_collect()
+{
+    NETWORK_INITRAMFS_PROOF=""
+    if (( RUNNING_HOST_MODE == 1 )); then
+        NETWORK_INITRAMFS_PROOF="running-host: live network evidence applies"
+        return 0
+    fi
+    local reader=""
+    case "${TARGET_INITRAMFS_BACKEND:-}" in
+        initramfs-tools)
+            if target_has_executable /usr/sbin/lsinitramfs; then
+                reader="/usr/sbin/lsinitramfs"
+            elif target_has_executable /usr/bin/lsinitramfs; then
+                reader="/usr/bin/lsinitramfs"
+            elif target_has_executable /bin/cpio /usr/bin/cpio \
+                && target_has_executable /bin/zcat /usr/bin/zcat; then
+                # The round-130 N5 fallback: the 2.6-era initramfs-tools ships
+                # no lsinit* reader; the gzip-cpio content check reads its
+                # native image format.
+                reader="cpio"
+            fi
+            ;;
+        dracut)
+            if target_has_executable /usr/sbin/lsinitrd; then
+                reader="/usr/sbin/lsinitrd"
+            elif target_has_executable /usr/bin/lsinitrd; then
+                reader="/usr/bin/lsinitrd"
+            fi
+            ;;
+        mkinitcpio)
+            target_has_executable /usr/bin/lsinitcpio /usr/sbin/lsinitcpio && reader="/usr/bin/lsinitcpio"
+            ;;
+        mkinitfs)
+            reader="cpio"
+            ;;
+    esac
+    [[ -n "$reader" ]] || { NETWORK_INITRAMFS_PROOF="unreadable: no initramfs reader for backend ${TARGET_INITRAMFS_BACKEND:-none}"; return 0; }
+
+    local alt
+    alt="$(network_module_alternation "$NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES")"
+    local image vpath kver listing found proof probed=0 unread_reason proof_err
+    local -a proofs=()
+    local -a image_glob_expr=()
+    proof_err="$SESSION_DIR/network-initramfs-proof.err"
+    if [[ "${TARGET_INITRAMFS_BACKEND:-}" == mkinitfs ]]; then
+        image_glob_expr=( -name 'initramfs-*' )
+    else
+        image_glob_expr=( \( -name 'initrd.img-*' -o -name 'initramfs-*.img' \) )
+    fi
+    while IFS= read -r image; do
+        [[ -n "$image" ]] || continue
+        [[ -f "$image" ]] || continue
+        journal_cancel_requested && return 0
+        (( probed < 3 )) || break
+        probed=$((probed + 1))
+        vpath="${image#"$TARGET_ROOT"}"
+        case "$image" in
+            "$TARGET_ROOT/boot/initrd.img-"*) kver="${image##*initrd.img-}" ;;
+            "$TARGET_ROOT/boot/initramfs-"*) kver="${image##*initramfs-}"; kver="${kver%.img}" ;;
+            *) kver="${image##*/}" ;;
+        esac
+        listing=""
+        : > "$proof_err"
+        input_bounded_initrd_reader 12 "$SESSION_DIR/network-initramfs-proof.out" \
+            "$reader" "$vpath" "$proof_err" || true
+        listing="$(cat -- "$SESSION_DIR/network-initramfs-proof.out" 2>/dev/null || true)"
+        if [[ -z "$listing" ]]; then
+            unread_reason="$(sed -n '1,2p' "$proof_err" 2>/dev/null \
+                | tr '\n' ' ' | sed 's/[[:space:]]\+/ /g; s/^ *//; s/ *$//' || true)"
+            [[ -n "$unread_reason" ]] || unread_reason="no readable listing"
+            proofs+=("${kver}=unreadable: ${unread_reason}")
+            continue
+        fi
+        found="$(printf '%s\n' "$listing" | grep -oE "/(${alt})\.ko(\.xz|\.gz|\.zst)?$" \
+            | sed 's#.*/##; s/\.ko.*$//; s/-/_/g' | sort -u | paste -sd, - 2>/dev/null || true)"
+        [[ -n "$found" ]] || found="absent"
+        proofs+=("${kver}=${found}")
+    done < <(find "$TARGET_ROOT/boot" -maxdepth 1 -type f "${image_glob_expr[@]:-}" \
+        -printf '%p\n' 2>/dev/null | grep -v 'vmlinuz' \
+        | grep -vE '\.(new|dpkg-.*|bak.*)$' | LC_ALL=C sort -u || true)
+    if ((${#proofs[@]} > 0)); then
+        NETWORK_INITRAMFS_PROOF=""
+        for proof in "${proofs[@]:-}"; do
+            NETWORK_INITRAMFS_PROOF+="${NETWORK_INITRAMFS_PROOF:+; }$proof"
+        done
+    else
+        NETWORK_INITRAMFS_PROOF="no images found under /boot"
+    fi
+}
+
+# Round 91 (the driver-fallback chain, 0.2.30 slice): the kernel probe-failure
+# lines from the cached boot-journal slice, both scopes (host: the running
+# journal; target: the target's own boot log — evidence_journal_filtered reads
+# the scope's own journal either way):
+#   "<drv> <device>: probe of <device> failed with error -<N>"  ->  "<drv>=<N>"
+# (the device may be a PCI BDF or a platform/i2c/… device name), bounded (the
+# head-4000 slice + an 8-pair cap) and deduped.  Positive evidence that a
+# driver TRIED to bind and FAILED — the ladder's entry signal.
+journal_driver_probe_failures()
+{
+    local journal=""
+    journal="$(evidence_journal_filtered head-4000 2>/dev/null || true)"
+    [[ -n "$journal" ]] || return 0
+    printf '%s\n' "$journal" \
+        | grep -oE '[A-Za-z0-9_-]+ [A-Za-z0-9_.:-]+: probe of [A-Za-z0-9_.:-]+ failed with error -[0-9]+' \
+        | legacy_sed_ext 's#^([A-Za-z0-9_-]+) .*: probe of [^ ]+ failed with error -([0-9]+)$#\1=\2#' \
+        | sed 's/-/_/g' \
+        | sort -u \
+        | head -n 8 || true
+}
+
+# True when an input-relevant driver recorded a probe failure (the canonical
+# underscore names; the input driver family pattern).
+input_probe_failure_relevant()
+{
+    case "$1" in
+        hid_*|i2c_*|serio*|atkbd|psmouse|evdev|usbhid|wacom*|input*) return 0 ;;
+    esac
+    grep -qw "$1" <<<"$INPUT_WATCH_MODULES" 2>/dev/null && return 0
+    return 1
+}
+
+input_probe_failures_collect()
+{
+    INPUT_PROBE_FAILURES="none"
+    local pair mod
+    local -a kept=()
+    while IFS= read -r pair; do
+        [[ -n "$pair" ]] || continue
+        mod="${pair%%=*}"
+        input_probe_failure_relevant "$mod" || continue
+        kept+=("$pair")
+    done <<<"$(journal_driver_probe_failures)"
+    if ((${#kept[@]} > 0)); then
+        INPUT_PROBE_FAILURES="$(printf '%s\n' "${kept[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# Round 91: the input candidate-module set (where derivable): the modules the
+# live/recorded devices need on their buses (input_needed_for_bus) ∪ the
+# boot-log class set, plus the generic hid_generic fallback candidate when a
+# vendor HID driver probe-failed.
+input_candidate_modules_collect()
+{
+    INPUT_CANDIDATE_MODULES="none"
+    local -a cand=() uniq=()
+    local c need
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local i b
+        for i in "${!INPUT_DEVICES[@]}"; do
+            b="${INPUT_DEVICE_BUS[$i]}"
+            for need in $(input_needed_for_bus "$b" 2>/dev/null || true); do
+                [[ -n "$need" ]] && cand+=("$need")
+            done
+        done
+    else
+        for need in $(printf '%s' "${INPUT_JOURNAL_CLASSES}" | tr ',' ' ' | sed 's/-/_/g' || true); do
+            [[ -n "$need" ]] && cand+=("$need")
+        done
+    fi
+    if [[ "$INPUT_PROBE_FAILURES" != none ]]; then
+        local pair mod
+        for pair in ${INPUT_PROBE_FAILURES//,/ }; do
+            mod="${pair%%=*}"
+            case "$mod" in
+                hid_*) cand+=("hid_generic") ;;
+            esac
+        done
+    fi
+    local dup=0 u
+    for c in "${cand[@]:-}"; do
+        [[ -n "$c" ]] || continue
+        dup=0
+        for u in "${uniq[@]:-}"; do
+            [[ "$u" == "$c" ]] && dup=1
+        done
+        (( dup == 0 )) && uniq+=("$c")
+    done
+    if ((${#uniq[@]} > 0)); then
+        INPUT_CANDIDATE_MODULES="$(printf '%s\n' "${uniq[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# The owning package of one on-disk module (positive evidence; unknown when
+# the detected package backend cannot answer).  Shared by the input section's
+# `input_module_owner` (round 84) and the round-92 network reinstall evidence
+# so both repairs derive the bound-driver package identically.
+module_owner_for_backend()
+{
+    local mod="$1" path="" vpath="" owner=""
+    path="$(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+        -type f -name "$(input_module_alternation "$mod").ko*" 2>/dev/null | head -n1 || true)"
+    [[ -n "$path" ]] || { printf 'unknown\n'; return 0; }
+    vpath="${path#"$TARGET_ROOT"}"
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg) owner="$(dpkg_path_owner "$vpath" 2>/dev/null | head -n1 || true)" ;;
+        rpm) owner="$(RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
+                LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                rpm -qf "$vpath" 2>/dev/null | head -n1 || true)" ;;
+        pacman) owner="$(pacman_path_owner "$vpath" 2>/dev/null | head -n1 || true)" ;;
+        apk) owner="$(alpine_apk_path_owner "$vpath" 2>/dev/null | head -n1 || true)" ;;
+    esac
+    [[ -n "$owner" ]] && printf '%s\n' "$owner" || printf 'unknown\n'
+}
+
+# Round 92 (ladder step 3): the reinstall/rebuild evidence collector — the
+# detected module build system (the shared read-only probe) and the bound
+# input modules' modinfo versions, deduped, capped at four pairs.
+input_driver_rebuild_evidence_collect()
+{
+    INPUT_DRIVER_BUILD_SYSTEM="$(module_build_system)"
+    INPUT_MODULE_VERSIONS="none"
+    local mod kver ver counted=0
+    local -a mods=() uniq=() per=()
+    # The probe-failed driver leads (the ladder's broken driver), then the
+    # bus/journal-needed set, then the loaded modules.
+    for mod in $(printf '%s' "$INPUT_PROBE_FAILURES" | tr ',' ' ' | sed 's/=.*//' || true) \
+        $(input_needed_modules) \
+        $INPUT_LOADED_MODULES; do
+        [[ -n "$mod" && "$mod" != none ]] && mods+=("$mod")
+    done
+    local dup=0 u
+    for mod in "${mods[@]:-}"; do
+        dup=0
+        for u in "${uniq[@]:-}"; do
+            [[ "$u" == "$mod" ]] && dup=1
+        done
+        (( dup == 0 )) && uniq+=("$mod")
+    done
+    for mod in "${uniq[@]:-}"; do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        (( counted < 4 )) || break
+        counted=$((counted + 1))
+        if (( RUNNING_HOST_MODE == 1 )); then
+            ver="$(modinfo -F version "$mod" 2>/dev/null | head -n1 || true)"
+        else
+            kver="$(installed_kernel_versions 2>/dev/null | tail -n1 || true)"
+            [[ -n "$kver" ]] || continue
+            ver="$(RUN_SELECTED_CHROOT_BOUND=12 run_selected_chroot /usr/bin/env \
+                HOME=/root LC_ALL=C \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                modinfo -k "$kver" -F version "$mod" 2>/dev/null | head -n1 || true)"
+        fi
+        per+=("$mod=${ver:-unknown}")
+    done
+    # Round 114 (ITEM 2): the if-guard keeps the function's exit status 0 even
+    # when the per-set is empty — the previous `(( ... )) && ASSIGN` final
+    # line returned 1 for an empty set, and the standalone
+    # input_collect_evidence call (the in-window re-verify) then aborted the
+    # whole helper with exit 1 under `set -e` (the user's Ubuntu trace:
+    # 'Re-verifying the input evidence in this window…' → helper exited 1).
+    if ((${#per[@]} > 0)); then
+        INPUT_MODULE_VERSIONS="$(printf '%s\n' "${per[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# Round 92 (ladder step 4): the available-versions evidence — the bound-driver
+# package's provable repository versions (ascending), apt-cache madison /
+# dnf5 repoquery only; pacman/apk fail closed (`none`, the pin action is never
+# offered there).
+input_package_versions_collect()
+{
+    INPUT_PACKAGE_VERSIONS="none"
+    local pkg=""
+    pkg="$(input_reinstall_package || true)"
+    [[ -n "$pkg" ]] || return 0
+    INPUT_PACKAGE_VERSIONS="$(driver_package_available_versions "$pkg" || true)"
+    [[ -n "$INPUT_PACKAGE_VERSIONS" ]] || INPUT_PACKAGE_VERSIONS="none"
+}
+
+# Round 96 (ITEM 1a): the platform input nodes are not keyboard devices.
+# True when a device node is a NON-HID/USB/PS2 platform node (the Video Bus
+# / Power Button / PC Speaker / HDMI-DP ALSA nodes): class=keyboard entries
+# whose bus is i2c/hex-0000/hex-0010 or whose driver is
+# video/acpi-button/pcspkr/none.  Excluded from the conflict logic only —
+# the device listing, the other verdicts and the candidate evidence are
+# unchanged.
+input_conflict_node_excluded()
+{
+    [[ "$1" == keyboard ]] || return 1
+    case "$2" in
+        i2c|hex-0000|hex-0010) return 0 ;;
+    esac
+    case "$3" in
+        video|acpi-button|pcspkr|none) return 0 ;;
+    esac
+    return 1
+}
+
+# Round 96 (ITEM 1a): the per-device conflict candidate set — the HID-level
+# drivers that could claim the SAME device node on its bus (never the bus
+# controllers: usbcore/xhci_hcd/i8042/serio serve the bus and can never
+# replace the device's own driver).
+input_device_conflict_candidates()
+{
+    case "$1" in
+        keyboard)
+            case "$2" in
+                usb) printf '%s\n' usbhid hid_generic hid_apple hid_multitouch hid_lenovo hid_logitech_dj hid_logitech_hidpp ;;
+                ps2) printf '%s\n' atkbd ;;
+                i2c) printf '%s\n' i2c_hid hid_multitouch ;;
+                *) return 1 ;;
+            esac
+            ;;
+        mouse|touchpad)
+            case "$2" in
+                usb) printf '%s\n' usbhid hid_generic hid_apple hid_multitouch hid_lenovo hid_logitech_dj hid_logitech_hidpp ;;
+                ps2) printf '%s\n' psmouse ;;
+                i2c) printf '%s\n' i2c_hid hid_multitouch ;;
+                *) return 1 ;;
+            esac
+            ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 106 (ITEM 1): true when the running host's kernel predates the
+# modules.builtin file (2.6.27+) — the legacy shape where builtin input
+# drivers (atkbd/serio on the 2.6.18 Etch kernel) are invisible to every
+# module list and the modern device-driver resolution can come back
+# unresolved.  Used ONLY as the gate for the legacy live-keyboard fallbacks;
+# the modern host path is never weakened.
+legacy_host_kernel_shape()
+{
+    local kver=""
+    kver="$(uname -r 2>/dev/null || true)"
+    case "$kver" in
+        2.6.*) [[ ! -r "/lib/modules/$kver/modules.builtin" ]] && return 0 ;;
+    esac
+    return 1
+}
+
+# Round 106 (ITEM 1): the live PS/2 keyboard stack — positive evidence only.
+# atkbd bound to a live serio port (the 2.6.18 shape: a BUILTIN atkbd has no
+# /sys/module entry and no module list there), or the atkbd module present in
+# /sys/module (the modern builtin/loaded shape), with the i8042 controller
+# live either way.
+input_ps2_keyboard_stack_live()
+{
+    local s drv
+    if ! module_live_loaded i8042 && [[ ! -e /sys/module/i8042 ]]; then
+        return 1
+    fi
+    [[ -e /sys/module/atkbd ]] && return 0
+    for s in /sys/bus/serio/devices/serio[0-9]*; do
+        [[ -d "$s" ]] || continue
+        drv="$(basename "$(readlink "$s/driver" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ "$drv" == atkbd ]] && return 0
+    done
+    return 1
+}
+
+# Round 96 (ITEM 1c): true when the live evidence shows the keyboard works
+# (the live-verified override's condition).  Host: at least one
+# keyboard-class device node (platform nodes excluded) with a bound driver.
+# Target: the target's own boot log registered input devices (the keyboard
+# worked at that boot).
+# Round 106 (ITEM 1): on the legacy pre-modules.builtin kernel shape ONLY, the
+# host check additionally accepts positive live evidence from (a) a
+# keyboard-class device node regardless of the unresolved driver field (the
+# live input core registered the handler), (b) the live PS/2 keyboard stack
+# (the loaded/builtin atkbd + i8042 drivers), and (c) the current boot's
+# kernel-log keyboard device records — whichever the legacy host actually
+# exposes.  A modern kernel keeps the strict bound-driver rule unchanged.
+input_live_keyboard_verified()
+{
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local i
+        for i in "${!INPUT_DEVICES[@]}"; do
+            [[ "${INPUT_DEVICE_CLASS[$i]}" == keyboard ]] || continue
+            input_conflict_node_excluded "${INPUT_DEVICE_CLASS[$i]}" "${INPUT_DEVICE_BUS[$i]}" "${INPUT_DEVICE_DRIVER[$i]}" && continue
+            [[ -n "${INPUT_DEVICE_DRIVER[$i]}" && "${INPUT_DEVICE_DRIVER[$i]}" != none ]] && return 0
+        done
+        if legacy_host_kernel_shape; then
+            local k
+            for k in "${!INPUT_DEVICES[@]}"; do
+                [[ "${INPUT_DEVICE_CLASS[$k]}" == keyboard ]] || continue
+                input_conflict_node_excluded "${INPUT_DEVICE_CLASS[$k]}" "${INPUT_DEVICE_BUS[$k]}" "${INPUT_DEVICE_DRIVER[$k]}" && continue
+                return 0
+            done
+            input_ps2_keyboard_stack_live && return 0
+            ((${#INPUT_BOOTLOG_DEVICES[@]} > 0)) && return 0
+        fi
+        return 1
+    fi
+    ((${#INPUT_BOOTLOG_DEVICES[@]} > 0))
+}
+
+# Round 96 (ITEM 2, decision #5 — the 0.2.31-queued conflict-table
+# enforcement, PROCEED): the curated known-conflict table for the input
+# class.  Small and conservative — ONLY genuinely documented pairs, never
+# speculative.  Each entry "conflicting|candidate": the conflicting module
+# is the one to blacklist, the candidate the replacement.
+#   hid_apple|usbhid — the documented Apple-keyboard quirk case: hid_apple
+#     claims the device for its fnmode quirk while usbhid drives the
+#     transport; the pair is a KNOWN conflict when both modules are live
+#     and an input device binds one of them.
+INPUT_KNOWN_CONFLICT_PAIRS="hid_apple|usbhid"
+
+# True when a curated known-conflict pair is present in the scope's own
+# module evidence (host: both modules live and one bound to an input
+# device; target: both modules in the on-disk universe and the boot log
+# bound the conflicting one).  stdout: "<conflicting> <candidate>".
+input_known_conflict_table_hit()
+{
+    local pair a b i drv
+    for pair in $INPUT_KNOWN_CONFLICT_PAIRS; do
+        a="${pair%%|*}"
+        b="${pair#*|}"
+        [[ -n "$a" && -n "$b" && "$a" != "$b" ]] || continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            module_live_loaded "$a" || continue
+            module_live_loaded "$b" || continue
+            for i in "${!INPUT_DEVICES[@]}"; do
+                input_conflict_node_excluded "${INPUT_DEVICE_CLASS[$i]}" "${INPUT_DEVICE_BUS[$i]}" "${INPUT_DEVICE_DRIVER[$i]}" && continue
+                drv="${INPUT_DEVICE_DRIVER[$i]}"
+                if [[ "$drv" == "$a" || "$drv" == "$b" ]]; then
+                    printf '%s %s\n' "$a" "$b"
+                    return 0
+                fi
+            done
+        else
+            if grep -qw "$a" <<<"$INPUT_AVAILABLE_MODULES" || grep -qw "$a" <<<"$INPUT_BUILTIN_MODULES"; then
+                if grep -qw "$b" <<<"$INPUT_AVAILABLE_MODULES" || grep -qw "$b" <<<"$INPUT_BUILTIN_MODULES"; then
+                    if grep -qw "$a" <<<"$(printf '%s' "$INPUT_JOURNAL_CLASSES" | tr ',' ' ' | sed 's/-/_/g' || true)"; then
+                        printf '%s %s\n' "$a" "$b"
+                        return 0
+                    fi
+                fi
+            fi
+        fi
+    done
+    return 1
+}
+
+# Round 93 (ladder step 9) + Round 96 (ITEM 1a/1c/2): the driver-conflict
+# evidence.  Two modules fighting over ONE input device, derived from the
+# reliable signals, each scoped to the SAME device node (round 96 — never
+# cross-device, and the platform input nodes are excluded):
+# (a) the journal EBUSY (-16) probe-failure shape whose same-device-family
+# candidate is a different module (the generic/vendor HID driver for the
+# failing driver's device class; both scopes); (b) the host sysfs
+# bind/refcnt cross-check — a live device's bound driver module and a
+# DIFFERENT candidate from THAT device's own bus-derived candidate set are
+# both held (refcnt > 0); (c) the curated known-conflict table (round 96,
+# ITEM 2 — a table hit joins the evidence-derived signals).  Bounded,
+# positive evidence only; the first derived pair wins
+# ("<conflicting> vs <candidate>").  A derived pair is DOWNGRADED to the
+# informational warning-note (round 96, ITEM 1c) while the live keyboard
+# evidence is verified — the verdict stays ok and the conflict never
+# downgrades a working keyboard into "unavailable".
+input_conflict_collect()
+{
+    INPUT_DRIVER_CONFLICT="none"
+    INPUT_DRIVER_CONFLICT_NOTE=""
+    local pair mod candidate conflicting="" cand
+    # (a) The EBUSY (-16) shape, scoped to the failing driver's own family
+    # (the same-device candidate — never a bus controller, never another
+    # device's module).
+    for pair in ${INPUT_PROBE_FAILURES//,/ }; do
+        mod="${pair%%=*}"
+        [[ "${pair#*=}" == 16 ]] || continue
+        case "$mod" in
+            hid_*|usbhid) candidate="hid_generic" ;;
+            i2c_hid) candidate="hid_multitouch" ;;
+            *) continue ;;
+        esac
+        [[ "$candidate" != "$mod" ]] || continue
+        conflicting="$mod"
+        break
+    done
+    # (b) The host sysfs bind/refcnt cross-check, scoped to ONE device node:
+    # the device's bound driver vs THAT device's own bus-derived candidate
+    # set (never another device's modules).
+    if [[ -z "$conflicting" ]] && (( RUNNING_HOST_MODE == 1 )); then
+        local i drv
+        for i in "${!INPUT_DEVICES[@]}"; do
+            input_conflict_node_excluded "${INPUT_DEVICE_CLASS[$i]}" "${INPUT_DEVICE_BUS[$i]}" "${INPUT_DEVICE_DRIVER[$i]}" && continue
+            drv="${INPUT_DEVICE_DRIVER[$i]}"
+            [[ -n "$drv" && "$drv" != none ]] || continue
+            while IFS= read -r cand; do
+                [[ -n "$cand" && "$cand" != "$drv" ]] || continue
+                if module_refcnt_positive "$drv" && module_refcnt_positive "$cand"; then
+                    conflicting="$drv"
+                    candidate="$cand"
+                    break 2
+                fi
+            done <<<"$(input_device_conflict_candidates "${INPUT_DEVICE_CLASS[$i]}" "${INPUT_DEVICE_BUS[$i]}" || true)"
+        done
+    fi
+    # (c) Round 96 (ITEM 2): the curated known-conflict table.
+    if [[ -z "$conflicting" ]]; then
+        local hit
+        hit="$(input_known_conflict_table_hit || true)"
+        if [[ -n "$hit" ]]; then
+            conflicting="${hit%% *}"
+            candidate="${hit#* }"
+        fi
+    fi
+    [[ -n "$conflicting" && -n "$candidate" && "$conflicting" != "$candidate" ]] || return 0
+    # Round 96 (ITEM 1c): the live-verified override — never downgrade a
+    # live-verified working keyboard into "unavailable".
+    if input_live_keyboard_verified; then
+        INPUT_DRIVER_CONFLICT_NOTE="$conflicting vs $candidate"
+        return 0
+    fi
+    INPUT_DRIVER_CONFLICT="$conflicting vs $candidate"
+}
+
+# Journal correlation: the relevant line count, the class set, Direct firmware
+# load failures for input-relevant drivers, and the target boot-log devices.
+input_journal_collect()
+{
+    INPUT_JOURNAL_COUNT="0"
+    INPUT_JOURNAL_CLASSES="none"
+    INPUT_FIRMWARE_FAILURES="none"
+    INPUT_BOOTLOG_DEVICES=()
+    local journal=""
+    journal="$(evidence_journal_filtered head-4000 2>/dev/null || true)"
+    # Round 106 (ITEM 1): the legacy non-journald fallback — a pre-modules.builtin
+    # kernel has no journald, so the boot-log keyboard evidence comes from the
+    # live ring buffer plus /var/log/messages through the same boot-relevant
+    # filter (bounded to the 4000-line boot-head budget).  Host scope and the
+    # legacy kernel shape only: the target classifier and the modern host path
+    # stay unchanged.
+    if (( RUNNING_HOST_MODE == 1 )) && [[ -z "$journal" ]] && legacy_host_kernel_shape; then
+        journal="$({ non_systemd_kernel_log_lines; non_systemd_syslog_lines; } \
+            | syslog_boot_relevant_filter 2>/dev/null | head -n 4000 || true)"
+    fi
+    [[ -n "$journal" ]] || return 0
+    # Round 106 (ITEM 1): the 2.6.18 kernel prints "input: <name> as
+    # /class/input/inputN" (the modern /devices/ sysfs path arrived later) —
+    # both shapes count as boot-log device evidence.
+    INPUT_JOURNAL_COUNT="$(grep -cE 'input: .* as /(devices|class)/input/|usbhid:|hid-generic|atkbd:|i8042:|psmouse:' <<<"$journal" 2>/dev/null || true)"
+    INPUT_JOURNAL_COUNT="${INPUT_JOURNAL_COUNT:-0}"
+    INPUT_JOURNAL_CLASSES="$(printf '%s\n' "$journal" | grep -oE 'usbhid|hid-generic|hid-apple|hid-multitouch|atkbd|i8042|psmouse|evdev|i2c_hid|xhci-hcd|ehci-hcd' \
+        | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+    [[ -n "$INPUT_JOURNAL_CLASSES" ]] || INPUT_JOURNAL_CLASSES="none"
+    INPUT_FIRMWARE_FAILURES="$(printf '%s\n' "$journal" | grep -oE 'Direct firmware load for [^ ]+ failed' \
+        | sed 's/Direct firmware load for //; s/ failed$//' | grep -Ei 'hid|keyboard|mouse|kbd|touch|wacom|ps2' \
+        | sort -u | paste -sd, - 2>/dev/null || true)"
+    [[ -n "$INPUT_FIRMWARE_FAILURES" ]] || INPUT_FIRMWARE_FAILURES="none"
+    local count=0 line name
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        journal_cancel_requested && return 0
+        (( count < 12 )) || break
+        name="${line%% (×*}"
+        [[ -n "$name" ]] || continue
+        INPUT_BOOTLOG_DEVICES+=("$line")
+        count=$((count + 1))
+    done <<<"$(printf '%s\n' "$journal" | grep -E 'input: .* as /(devices|class)/input/' \
+        | sed 's/.*input: //; s/ as \/devices\/.*//; s/ as \/class\/input.*//' \
+        | awk '
+            {
+                n = $0
+                sub(/^[[:space:]]+/, "", n)
+                sub(/[[:space:]]+$/, "", n)
+                if (n == "") next
+                cnt[n]++
+                if (!(n in seen)) { seen[n] = 1; order[++m] = n }
+            }
+            END {
+                for (i = 1; i <= m; i++)
+                    print (cnt[order[i]] > 1) ? order[i] " (×" cnt[order[i]] ")" : order[i]
+            }' || true)"
+}
+
+# Apple-style quirk state (hid_apple fnmode): live sysfs value (host) plus the
+# modprobe.d options line (both scopes).
+input_quirk_collect()
+{
+    INPUT_QUIRK_STATE="none"
+    local value=""
+    if (( RUNNING_HOST_MODE == 1 )); then
+        value="$(cat /sys/module/hid_apple/parameters/fnmode 2>/dev/null || true)"
+        [[ -n "$value" ]] && INPUT_QUIRK_STATE="hid_apple.fnmode=$value"
+    fi
+    local conf_dir
+    for conf_dir in "$TARGET_ROOT/etc/modprobe.d" "$TARGET_ROOT/usr/lib/modprobe.d" "$TARGET_ROOT/lib/modprobe.d"; do
+        [[ -d "$conf_dir" ]] || continue
+        value="$(grep -rhE '^[[:space:]]*options[[:space:]]+hid_apple' "$conf_dir" 2>/dev/null | head -n1 || true)"
+        if [[ -n "$value" ]]; then
+            INPUT_QUIRK_STATE+="${INPUT_QUIRK_STATE:+ }(${value//[[:space:]]/ })"
+            break
+        fi
+    done
+}
+
+# True positive evidence that the selected system expects a disk-unlock prompt
+# (a passphrase-keyed crypttab entry or a bootloader cmdline declaration), the
+# gate for the initramfs-keyboard-missing verdict.  yes/no/unknown.
+input_luks_prompt_expected()
+{
+    INPUT_LUKS_EXPECTED="unknown"
+    local content="" line key
+    if [[ -r "$TARGET_ROOT/etc/crypttab" ]]; then
+        content="$(cat "$TARGET_ROOT/etc/crypttab" 2>/dev/null || true)"
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            [[ "$line" =~ ^[[:space:]]*# ]] && continue
+            key="$(printf '%s\n' "$line" | awk '{print $3}' 2>/dev/null || true)"
+            case "${key:-none}" in
+                none|-|"") INPUT_LUKS_EXPECTED="yes"; return 0 ;;
+            esac
+        done <<<"$content"
+    fi
+    local cmdline=""
+    cmdline+=" $(sed -n 's/^[[:space:]]*GRUB_CMDLINE_LINUX_DEFAULT=//p' "$TARGET_ROOT/etc/default/grub" 2>/dev/null | tr -d '"' | tr '\n' ' ' || true)"
+    cmdline+=" $(sed -n 's/^[[:space:]]*GRUB_CMDLINE_LINUX=//p' "$TARGET_ROOT/etc/default/grub" 2>/dev/null | tr -d '"' | tr '\n' ' ' || true)"
+    cmdline+=" $(sed -n 's/^[[:space:]]*APPEND[[:space:]]*\(.*\)$/\1/p' "$TARGET_ROOT/boot/extlinux.conf" "$TARGET_ROOT/extlinux.conf" 2>/dev/null | tr '\n' ' ' || true)"
+    cmdline+=" $(sed -n 's/^options[[:space:]]*\(.*\)$/\1/p' "$TARGET_ROOT/boot/loader/entries/"*.conf 2>/dev/null | tr '\n' ' ' || true)"
+    if unlock_console_cmdline_declares_unlock "$cmdline"; then
+        INPUT_LUKS_EXPECTED="yes"
+        return 0
+    fi
+    # Positively checked: configs readable and no prompt declared.
+    if [[ -r "$TARGET_ROOT/etc/crypttab" || -r "$TARGET_ROOT/etc/default/grub" \
+        || -r "$TARGET_ROOT/boot/extlinux.conf" || -r "$TARGET_ROOT/extlinux.conf" ]]; then
+        INPUT_LUKS_EXPECTED="no"
+    fi
+    return 0
+}
+
+# The stable classifier.  Precedence follows the plan's verdict vocabulary
+# order; every non-ok value requires positive evidence.
+input_verdict()
+{
+    INPUT_VERDICT="ok"
+    # 1. module-missing: a device-referenced module has no loaded/builtin/
+    #    available state anywhere.  Round 104: on the HOST scope the live
+    #    keyboard evidence is the ground truth (the round-96 rule, extended
+    #    from the conflict step): a live keyboard device with a bound driver
+    #    proves the keyboard stack works, so a missing name here is a
+    #    vocabulary artifact of the kernel's own shape, never a broken
+    #    keyboard.  Two real shapes observed on the Etch rig's 2.6.18 host:
+    #    (a) BUILTIN drivers are invisible to every module list there —
+    #    2.6.18 predates the modules.builtin file (2.6.27+), so builtin
+    #    atkbd/serio (CONFIG_KEYBOARD_ATKBD=y / CONFIG_SERIO=y) look
+    #    "missing"; (b) modern-only names the kernel never shipped
+    #    (xhci_hcd/hid_generic do not exist in 2.6.18) are demanded by the
+    #    modern-era bus-needed set.  Both cannot be "fixed" by any menu
+    #    action (modprobe finds nothing; no package owns a builtin), and the
+    #    verdict must never claim the input is broken while the user is
+    #    typing on it.  The downgraded names are kept as the informational
+    #    INPUT_MODULE_MISSING_NOTE (the round-96 conflict-note pattern) and
+    #    the verdict stays ok.
+    if [[ "$INPUT_MISSING_MODULES" != none && -n "$INPUT_MISSING_MODULES" ]]; then
+        if (( RUNNING_HOST_MODE == 1 )) && input_live_keyboard_verified; then
+            INPUT_MODULE_MISSING_NOTE="$INPUT_MISSING_MODULES"
+            INPUT_MISSING_MODULES="none"
+        else
+            INPUT_VERDICT="module-missing"
+            return 0
+        fi
+    fi
+    # 2. driver-conflict (round 93): the conflict evidence pair (two modules
+    #    fighting over one device — the refined EBUSY shape plus the host
+    #    bind/refcnt and both-loaded signals; the ladder step 9 entry).
+    if [[ "$INPUT_DRIVER_CONFLICT" != none && -n "$INPUT_DRIVER_CONFLICT" ]]; then
+        INPUT_VERDICT="driver-conflict"
+        return 0
+    fi
+    # 3. driver-probe-failed (round 91): an input-relevant driver recorded a
+    #    kernel probe failure (positive evidence the driver tried to bind and
+    #    failed — the driver-broken ladder's entry signal).
+    if [[ "$INPUT_PROBE_FAILURES" != none && -n "$INPUT_PROBE_FAILURES" ]]; then
+        INPUT_VERDICT="driver-probe-failed"
+        return 0
+    fi
+    # 4. module-blacklisted: a device-referenced module is blacklisted.
+    #    Round 114 (ITEM 1): POSITIVE blacklist evidence only.  The shared
+    #    needed-set derivation (input_needed_modules, below) skips the none
+    #    sentinel, so a target whose boot log carries no input classes
+    #    (INPUT_JOURNAL_CLASSES="none") can never collide the literal "none"
+    #    token with the "none" blacklist sentinel — the user's Etch/Ubuntu
+    #    trace misclassified module-blacklisted while
+    #    'Input kernel module blacklisted: none'.  The verdict fires only
+    #    when a real blacklist entry for a needed module exists.
+    local need
+    for need in $(input_needed_modules); do
+        [[ -n "$need" && "$need" != none ]] || continue
+        [[ "$INPUT_BLACKLISTED_MODULES" != none && -n "$INPUT_BLACKLISTED_MODULES" ]] || break
+        if grep -qw "$need" <<<"$INPUT_BLACKLISTED_MODULES"; then
+            INPUT_VERDICT="module-blacklisted"
+            return 0
+        fi
+    done
+    # 4b. mouse-blacklisted (round 96, ITEM 3 — decision #2): a blacklisted
+    #     MOUSE-class module with positive mouse-device evidence while the
+    #     keyboard stack is fine (the keyboard-anchored verdicts stay
+    #     unchanged; psmouse is a pointer driver, never keyboard evidence —
+    #     the round-94 reported gap).
+    local mouse_mod mouse_ev
+    for mouse_mod in $INPUT_MOUSE_MODULES; do
+        [[ -n "$mouse_mod" ]] || continue
+        grep -qw "$mouse_mod" <<<"$INPUT_BLACKLISTED_MODULES" || continue
+        mouse_ev=0
+        if (( RUNNING_HOST_MODE == 1 )); then
+            local mi
+            for mi in "${!INPUT_DEVICES[@]}"; do
+                case "${INPUT_DEVICE_CLASS[$mi]}" in
+                    mouse|touchpad) mouse_ev=1 ;;
+                esac
+                [[ "${INPUT_DEVICE_DRIVER[$mi]}" == "$mouse_mod" ]] && mouse_ev=1
+            done
+        else
+            grep -qw "$mouse_mod" <<<"$(printf '%s' "$INPUT_JOURNAL_CLASSES" | tr ',' ' ' | sed 's/-/_/g' || true)" && mouse_ev=1
+        fi
+        (( mouse_ev == 1 )) && { INPUT_VERDICT="mouse-blacklisted"; return 0; }
+    done
+    # 5. controller-not-loaded (host only): a live keyboard/mouse/touchpad
+    #    device whose bus-controller modules are available/builtin but none is
+    #    loaded.
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local j class_ok=0
+        for j in "${!INPUT_DEVICES[@]}"; do
+            case "${INPUT_DEVICE_CLASS[$j]}" in
+                keyboard|mouse|touchpad) class_ok=1 ;;
+            esac
+        done
+        if (( class_ok == 1 )); then
+            local controllers="" mod2
+            case "$(printf '%s\n' "${INPUT_DEVICE_BUS[@]:-}" | sort -u | tr '\n' ' ')" in
+                *usb*) controllers+=" $INPUT_USB_CONTROLLER_MODULES" ;;
+                *ps2*) controllers+=" $INPUT_SERIO_CONTROLLER_MODULES" ;;
+                *i2c*) controllers+=" $INPUT_I2C_CONTROLLER_MODULES" ;;
+            esac
+            local none_loaded=1 any_available=0
+            for mod2 in $controllers; do
+                [[ -n "$mod2" ]] || continue
+                grep -qw "$mod2" <<<"$INPUT_LOADED_MODULES" && none_loaded=0
+                if grep -qw "$mod2" <<<"$INPUT_AVAILABLE_MODULES" \
+                    || grep -qw "$mod2" <<<"$INPUT_BUILTIN_MODULES"; then
+                    any_available=1
+                fi
+            done
+            if (( none_loaded == 1 && any_available == 1 )); then
+                INPUT_VERDICT="controller-not-loaded"
+                return 0
+            fi
+        fi
+    fi
+    # 6. initramfs-keyboard-missing (target only): the LUKS prompt expects a
+    #    keyboard while the keyboard modules are neither builtin nor inside
+    #    any built image.
+    if (( RUNNING_HOST_MODE != 1 )) && [[ "$INPUT_LUKS_EXPECTED" == yes ]]; then
+        local kbd_builtin=0 mod3
+        for mod3 in $INPUT_KEYBOARD_MODULES; do
+            grep -qw "$mod3" <<<"$INPUT_BUILTIN_MODULES" && kbd_builtin=1
+        done
+        if (( kbd_builtin == 0 )); then
+            local kbd_in_image=0 mod4
+            for mod4 in $INPUT_KEYBOARD_MODULES; do
+                grep -qw "$mod4" <<<"${INPUT_INITRAMFS_PROOF//;/ }" && kbd_in_image=1
+            done
+            (( kbd_in_image == 0 )) && INPUT_VERDICT="initramfs-keyboard-missing"
+        fi
+    fi
+    [[ "$INPUT_VERDICT" != ok ]] && return 0
+    # 7. firmware-missing: a Direct firmware load failure for an input driver.
+    if [[ "$INPUT_FIRMWARE_FAILURES" != none && -n "$INPUT_FIRMWARE_FAILURES" ]]; then
+        INPUT_VERDICT="firmware-missing"
+        return 0
+    fi
+    INPUT_VERDICT="ok"
+}
+
+input_collect_evidence()
+{
+    (( INPUT_EVIDENCE_COLLECTED == 1 )) && return 0
+    # Round 114 (ITEM 2): every collector call is guarded with `|| true` —
+    # the collectors are read-only probes whose return values were never
+    # consumed, and a collector whose final statement returns 1 (the
+    # round-114 `(( ... )) && ASSIGN` class) previously aborted the whole
+    # helper with exit 1 under `set -e` when input_collect_evidence ran
+    # STANDALONE (the in-window re-verify — the diagnostic path survived
+    # only because its `diagnostic_input || rc=$?` wrapper suppressed
+    # errexit for the whole subtree).  A hard `fail`/`exit` inside a
+    # collector still terminates — this guard neutralizes only stray
+    # return-1 statuses.
+    profile_target_backends || true
+    input_collect_devices || true
+    input_collect_layout || true
+    input_journal_collect || true
+    input_probe_failures_collect || true
+    input_module_lists_collect || true
+    input_bus_controller_collect || true
+    input_initramfs_inclusion_collect || true
+    input_initramfs_proof_collect || true
+    input_quirk_collect || true
+    input_luks_prompt_expected || true
+    input_candidate_modules_collect || true
+    input_driver_rebuild_evidence_collect || true
+    input_package_versions_collect || true
+    input_conflict_collect || true
+    input_verdict || true
+    INPUT_EVIDENCE_COLLECTED=1
+}
+
+diagnostic_input()
+{
+    journal_cancel_requested && return 0
+    input_collect_evidence
+    local i count_kbd=0 count_mouse=0 count_touchpad=0 count_other=0
+    for i in "${!INPUT_DEVICES[@]}"; do
+        case "${INPUT_DEVICE_CLASS[$i]}" in
+            keyboard) count_kbd=$((count_kbd + 1)) ;;
+            mouse) count_mouse=$((count_mouse + 1)) ;;
+            touchpad) count_touchpad=$((count_touchpad + 1)) ;;
+            *) count_other=$((count_other + 1)) ;;
+        esac
+    done
+    # Round 85 (P1.b): one physical device exposes several input nodes (and a
+    # re-enumerating USB device repeats them), so identical records of the same
+    # device printed once per node.  Collapse identical name+class+bus+driver
+    # (+version, round 126) records into one line with an occurrence count; the
+    # `Input device count:` line below still counts every node, so no evidence
+    # is lost.
+    # bash-3.1-safe: indexed arrays only (the legacy port forbids assoc arrays).
+    local record i j duplicate
+    local -a seen_records=() seen_counts=()
+    for i in "${!INPUT_DEVICES[@]}"; do
+        record="${INPUT_DEVICES[$i]}|${INPUT_DEVICE_CLASS[$i]}|${INPUT_DEVICE_BUS[$i]}|${INPUT_DEVICE_DRIVER[$i]:-none}|${INPUT_DEVICE_VERSION[$i]:-}"
+        duplicate=0
+        for j in "${!seen_records[@]}"; do
+            if [[ "${seen_records[$j]}" == "$record" ]]; then
+                seen_counts[$j]=$((seen_counts[$j] + 1))
+                duplicate=1
+                break
+            fi
+        done
+        if (( duplicate == 0 )); then
+            seen_records+=("$record")
+            seen_counts+=(1)
+        fi
+    done
+    local k dev_name dev_class dev_bus dev_driver dev_version
+    for k in "${!seen_records[@]}"; do
+        IFS='|' read -r dev_name dev_class dev_bus dev_driver dev_version <<<"${seen_records[$k]}"
+        # Round 126 (ITEM 28): the device-reported descriptor version (the USB
+        # bcdDevice) joins the bracket as `version=` — real per-device firmware
+        # evidence, omitted when the device reports none (PS/2, i2c, audio).
+        if (( seen_counts[$k] > 1 )); then
+            if [[ -n "$dev_version" ]]; then
+                printf 'Input device: %s [class=%s, bus=%s, version=%s, driver=%s] (×%d)\n' \
+                    "$dev_name" "$dev_class" "$dev_bus" "$dev_version" "$dev_driver" "${seen_counts[$k]}"
+            else
+                printf 'Input device: %s [class=%s, bus=%s, driver=%s] (×%d)\n' \
+                    "$dev_name" "$dev_class" "$dev_bus" "$dev_driver" "${seen_counts[$k]}"
+            fi
+        else
+            if [[ -n "$dev_version" ]]; then
+                printf 'Input device: %s [class=%s, bus=%s, version=%s, driver=%s]\n' \
+                    "$dev_name" "$dev_class" "$dev_bus" "$dev_version" "$dev_driver"
+            else
+                printf 'Input device: %s [class=%s, bus=%s, driver=%s]\n' \
+                    "$dev_name" "$dev_class" "$dev_bus" "$dev_driver"
+            fi
+        fi
+    done
+    printf 'Input device count: %d (keyboard=%d, mouse=%d, touchpad=%d, other=%d)\n' \
+        "${#INPUT_DEVICES[@]}" "$count_kbd" "$count_mouse" "$count_touchpad" "$count_other"
+    local class_set="" c
+    for c in keyboard mouse touchpad joystick other; do
+        grep -qw "$c" <<<"$(printf '%s\n' "${INPUT_DEVICE_CLASS[@]:-}")" && class_set="${class_set:+$class_set,}$c"
+    done
+    printf 'Input class set: %s\n' "${class_set:-none}"
+    for i in "${!INPUT_BOOTLOG_DEVICES[@]}"; do
+        printf 'Input device (boot log): %s\n' "${INPUT_BOOTLOG_DEVICES[$i]}"
+    done
+    printf 'Input layout: %s\n' "$INPUT_LAYOUT"
+    printf 'Input kernel module loaded: %s\n' "$INPUT_LOADED_MODULES"
+    printf 'Input kernel module builtin: %s\n' "$INPUT_BUILTIN_MODULES"
+    printf 'Input kernel module available: %s\n' "$INPUT_AVAILABLE_MODULES"
+    printf 'Input kernel module blacklisted: %s\n' "$INPUT_BLACKLISTED_MODULES"
+    printf 'Input kernel module missing: %s\n' "$INPUT_MISSING_MODULES"
+    if [[ -n "$INPUT_MODULE_MISSING_NOTE" ]]; then
+        printf 'Input kernel module missing note: %s (warning-note: the live keyboard evidence is verified — informational only)\n' "$INPUT_MODULE_MISSING_NOTE"
+    fi
+    printf 'Input bus controller: %s\n' "$INPUT_BUS_CONTROLLER"
+    printf 'Input initramfs inclusion: %s\n' "$INPUT_INITRAMFS_INCLUSION"
+    printf 'Input initramfs keyboard proof: %s\n' "$INPUT_INITRAMFS_PROOF"
+    if [[ -n "$INPUT_MODULE_OWNERSHIP" ]]; then
+        printf 'Input module ownership: %s\n' "$INPUT_MODULE_OWNERSHIP"
+    fi
+    printf 'Input journal evidence: %s line(s) (%s)\n' "$INPUT_JOURNAL_COUNT" "$INPUT_JOURNAL_CLASSES"
+    printf 'Input firmware evidence: %s\n' "$INPUT_FIRMWARE_FAILURES"
+    printf 'Input driver probe failures: %s\n' "$INPUT_PROBE_FAILURES"
+    printf 'Input candidate modules: %s\n' "$INPUT_CANDIDATE_MODULES"
+    printf 'Input driver build system: %s\n' "$INPUT_DRIVER_BUILD_SYSTEM"
+    printf 'Input module version: %s\n' "$INPUT_MODULE_VERSIONS"
+    printf 'Input package available versions: %s\n' "$INPUT_PACKAGE_VERSIONS"
+    printf 'Input driver conflict: %s\n' "$INPUT_DRIVER_CONFLICT"
+    if [[ -n "$INPUT_DRIVER_CONFLICT_NOTE" ]]; then
+        printf 'Input driver conflict note: %s (warning-note: the live keyboard evidence is verified — informational only)\n' "$INPUT_DRIVER_CONFLICT_NOTE"
+    fi
+    printf 'Input quirk state: %s\n' "$INPUT_QUIRK_STATE"
+    printf 'Input LUKS prompt expected: %s\n' "$INPUT_LUKS_EXPECTED"
+    printf 'Input verdict: %s\n' "$INPUT_VERDICT"
+}
+
+# Reconstruct every INPUT_* global from the cached `input` diagnostic section
+# (the exact lines diagnostic_input emits) so the Phase 3 repair consumes the
+# single cached source of truth.  INPUT_BASELINE_B64 holds the base64
+# serialized section (set by parse_repair_arguments once the repair wiring
+# lands).  Fails closed when the baseline is absent, undecodable or empty.
+parse_cached_input_inventory()
+{
+    local line
+    local baseline=""
+    if [[ -z "${INPUT_BASELINE_B64:-}" ]]; then
+        fail "Run the input-device diagnostic before the input repair (no cached input baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$INPUT_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached input baseline could not be decoded; run the input diagnostic again."
+    fi
+    [[ -n "$baseline" ]] || fail "The cached input baseline is empty; run the input diagnostic again."
+
+    INPUT_DEVICES=()
+    INPUT_DEVICE_BUS=()
+    INPUT_DEVICE_CLASS=()
+    INPUT_DEVICE_DRIVER=()
+    INPUT_DEVICE_VERSION=()
+    INPUT_BOOTLOG_DEVICES=()
+    INPUT_LAYOUT=""
+    INPUT_LOADED_MODULES=""
+    INPUT_BUILTIN_MODULES=""
+    INPUT_AVAILABLE_MODULES=""
+    INPUT_BLACKLISTED_MODULES=""
+    INPUT_MISSING_MODULES=""
+    INPUT_MODULE_MISSING_NOTE=""
+    INPUT_BUS_CONTROLLER=""
+    INPUT_INITRAMFS_INCLUSION=""
+    INPUT_INITRAMFS_PROOF=""
+    INPUT_MODULE_OWNERSHIP=""
+    INPUT_JOURNAL_COUNT="0"
+    INPUT_JOURNAL_CLASSES="none"
+    INPUT_FIRMWARE_FAILURES="none"
+    INPUT_QUIRK_STATE="none"
+    INPUT_LUKS_EXPECTED="unknown"
+    INPUT_VERDICT="ok"
+    INPUT_PROBE_FAILURES="none"
+    INPUT_CANDIDATE_MODULES="none"
+    INPUT_DRIVER_BUILD_SYSTEM="none"
+    INPUT_MODULE_VERSIONS="none"
+    INPUT_PACKAGE_VERSIONS="none"
+    INPUT_DRIVER_CONFLICT="none"
+    INPUT_DRIVER_CONFLICT_NOTE=""
+    INPUT_EVIDENCE_COLLECTED=1
+
+    local rest bus drv class ver bus_rest
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            "Input device: "*) rest="${line#Input device: }"
+                [[ "$rest" == *" [class="* ]] || continue
+                # Strip the round-85 occurrence-count suffix ((×N) after the
+                # bracket) so the parsed name stays the raw device name.
+                rest="${rest%% (×*}"
+                INPUT_DEVICES+=("${rest% [class=*}")
+                class="${rest#*class=}"; class="${class%%, bus=*}"
+                # Round 126: the optional `version=` key sits between bus= and
+                # driver= (the device-reported USB descriptor version; absent
+                # for devices without one).  The bus token ends at the first
+                # comma either way, so old and new line shapes parse alike.
+                bus_rest="${rest#*bus=}"; bus="${bus_rest%%, *}"
+                ver=""
+                case "$rest" in
+                    *", version="*) ver="${rest#*, version=}"; ver="${ver%%, driver=*}" ;;
+                esac
+                drv="${rest#*driver=}"; drv="${drv%]*}"
+                INPUT_DEVICE_BUS+=("${bus}")
+                INPUT_DEVICE_CLASS+=("${class:-other}")
+                INPUT_DEVICE_DRIVER+=("${drv:-none}")
+                INPUT_DEVICE_VERSION+=("${ver}")
+                ;;
+            "Input device (boot log): "*)
+                rest="${line#Input device (boot log): }"
+                # Strip the round-85 per-name occurrence count.
+                INPUT_BOOTLOG_DEVICES+=("${rest%% (×*}")
+                ;;
+            "Input layout: "*) INPUT_LAYOUT="${line#Input layout: }" ;;
+            "Input kernel module loaded: "*) INPUT_LOADED_MODULES="${line#Input kernel module loaded: }" ;;
+            "Input kernel module builtin: "*) INPUT_BUILTIN_MODULES="${line#Input kernel module builtin: }" ;;
+            "Input kernel module available: "*) INPUT_AVAILABLE_MODULES="${line#Input kernel module available: }" ;;
+            "Input kernel module blacklisted: "*) INPUT_BLACKLISTED_MODULES="${line#Input kernel module blacklisted: }" ;;
+            "Input kernel module missing: "*) INPUT_MISSING_MODULES="${line#Input kernel module missing: }" ;;
+            "Input kernel module missing note: "*) INPUT_MODULE_MISSING_NOTE="${line#Input kernel module missing note: }" ;;
+            "Input bus controller: "*) INPUT_BUS_CONTROLLER="${line#Input bus controller: }" ;;
+            "Input initramfs inclusion: "*) INPUT_INITRAMFS_INCLUSION="${line#Input initramfs inclusion: }" ;;
+            "Input initramfs keyboard proof: "*) INPUT_INITRAMFS_PROOF="${line#Input initramfs keyboard proof: }" ;;
+            "Input module ownership: "*) INPUT_MODULE_OWNERSHIP="${line#Input module ownership: }" ;;
+            "Input journal evidence: "*)
+                rest="${line#Input journal evidence: }"
+                INPUT_JOURNAL_COUNT="${rest%% *}"
+                INPUT_JOURNAL_CLASSES="${rest#*line(s) (}"
+                INPUT_JOURNAL_CLASSES="${INPUT_JOURNAL_CLASSES%)}"
+                ;;
+            "Input firmware evidence: "*) INPUT_FIRMWARE_FAILURES="${line#Input firmware evidence: }" ;;
+            "Input driver probe failures: "*) INPUT_PROBE_FAILURES="${line#Input driver probe failures: }" ;;
+            "Input candidate modules: "*) INPUT_CANDIDATE_MODULES="${line#Input candidate modules: }" ;;
+            "Input driver build system: "*) INPUT_DRIVER_BUILD_SYSTEM="${line#Input driver build system: }" ;;
+            "Input module version: "*) INPUT_MODULE_VERSIONS="${line#Input module version: }" ;;
+            "Input package available versions: "*) INPUT_PACKAGE_VERSIONS="${line#Input package available versions: }" ;;
+            "Input driver conflict: "*) INPUT_DRIVER_CONFLICT="${line#Input driver conflict: }" ;;
+            "Input driver conflict note: "*) INPUT_DRIVER_CONFLICT_NOTE="${line#Input driver conflict note: }" ;;
+            "Input quirk state: "*) INPUT_QUIRK_STATE="${line#Input quirk state: }" ;;
+            "Input LUKS prompt expected: "*) INPUT_LUKS_EXPECTED="${line#Input LUKS prompt expected: }" ;;
+            "Input verdict: "*) INPUT_VERDICT="${line#Input verdict: }" ;;
+        esac
+    done <<<"$baseline"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Network diagnostic evidence (0.2.30 Phase 1 — read-only, additive)
+# ---------------------------------------------------------------------------
+# New `network` diagnostic section per Development/docs/plan-network-repair.md
+# §1.  The governing constraint: a chrooted target shares the recovery host's
+# kernel and network namespace, so LIVE network probes are HOST-mode only; a
+# target probe describes only the target's own on-disk evidence (config files,
+# modules.dep/builtin, blacklists, firmware files, its own boot journal) —
+# never the host's live network, and no live mutation anywhere.  No MACs and
+# no PSKs are emitted (the hygiene contract); addresses are scope-local
+# evidence.  All lines are stable `Network …:` contract lines.
+NETWORK_CONFIG_BACKEND=""
+NETWORK_CONFIG_NOTE=""
+NETWORK_ADAPTERS=()
+NETWORK_ADAPTER_STATES=()
+NETWORK_ADAPTER_NOTE=""
+NETWORK_BOUND_MODULES=""
+NETWORK_PCI_DEVICES=()
+# Round 126 (ITEM 28): the per-adapter hardware + firmware summary — the
+# controller name + PCI id + subsystem + driver (+ version) + the loaded
+# firmware VERSION (ethtool -i), the user's downgrade-visible key value.
+# HOST scope only: a target probe never reaches the collector (the isolation
+# audit — the target's own persisted boot-log evidence stays its source, and
+# ethtool -i in the shared-kernel chroot would describe the RECOVERY HOST's
+# NIC, not the foreign disk's).
+NETWORK_ADAPTER_HARDWARE=()
+NETWORK_BOOTLOG_ADAPTERS=()
+NETWORK_LOADED_MODULES="none"
+NETWORK_BUILTIN_MODULES="none"
+NETWORK_BLACKLISTED_MODULES="none"
+NETWORK_AVAILABLE_MODULES="none"
+NETWORK_INITRAMFS_INCLUSION="none-detected"
+NETWORK_INITRAMFS_PROOF=""
+NETWORK_FIRMWARE="none"
+NETWORK_FIRMWARE_MISSING="none"
+NETWORK_DEFAULT_ROUTE="none"
+NETWORK_ADDRESSES="none"
+NETWORK_DNS_CHAIN="missing"
+NETWORK_DNS_SERVERS="none"
+NETWORK_LEASE_GATEWAY="none"
+# Round 94 (P4): the lease's DNS servers (the action-7 plain-resolv.conf
+# source — evidence-derived, never invented servers).
+NETWORK_LEASE_DNS_SERVERS="none"
+NETWORK_REACHABILITY="unknown"
+NETWORK_JOURNAL_COUNT="0"
+NETWORK_JOURNAL_FIRMWARE_FAILURES="none"
+NETWORK_FAILURE_CLASS="verified"
+# Round 91 (the driver-fallback chain, 0.2.30 slice): the kernel probe-failure
+# evidence (bounded + deduped, filtered to network-relevant drivers,
+# `<mod>=<errno>` pairs), and the candidate module set the round-84 lspci pair
+# carries (host) / the offline modules.alias match (target, best-effort).
+NETWORK_PROBE_FAILURES="none"
+NETWORK_CANDIDATE_MODULES="none"
+NETWORK_CANDIDATE_MODULES_NOTE=""
+# Round 92 (the driver-fallback ladder, steps 3-4): the reinstall/rebuild
+# evidence (the detected module build system + the bound modules' modinfo
+# versions) and the bound-driver package's provable repository versions —
+# same shapes as the input section.
+NETWORK_DRIVER_BUILD_SYSTEM="none"
+NETWORK_MODULE_VERSIONS="none"
+NETWORK_PACKAGE_VERSIONS="none"
+# Round 93 (the driver-fallback ladder, step 9): the conflict evidence —
+# same shape as the input section's (host-scope primarily; the EBUSY shape
+# also derives from a target's own boot journal + its on-disk alias tables).
+NETWORK_DRIVER_CONFLICT="none"
+# Round 96 (ITEM 1c): the live-verified override note (the network twin of
+# the input note: a derived pair downgraded because `reachability: ok`
+# proves the live network works — informational only).
+NETWORK_DRIVER_CONFLICT_NOTE=""
+NETWORK_EVIDENCE_COLLECTED=0
+
+# Modules the evidence tracks; the adapter-bound modules join this set from
+# the live/target probes (evidence, never a hardcoded gate).  Round 114
+# (ITEM 4): 8139too/8139cp join the set — the Etch rig's real NIC driver (the
+# user's Etch target trace: the boot-log adapter line was never found because
+# the target's RTL8139 bind lines belong to a driver the watch set did not
+# track; the diagnostic then classified no-adapter despite the driver being
+# available on disk).
+NETWORK_WATCH_MODULES="r8169 r8168 igb igc e1000e ax88179_178a r8152 asix cdc_ether virtio_net e1000 iwlwifi iwlmvm ath9k rtw88_8822ce 8139too 8139cp"
+
+# Round 113 (ITEM 2, the Arch-rig finding): the alternation used to convert
+# `_` to `-`, which matches modprobe.d config forms but MISSES every
+# underscore-named module in the on-disk trees — modules.dep/modules.builtin
+# and the .ko files always use underscores, so virtio_net/cdc_ether/
+# ax88179_178a reported absent while present on the target (the user's Arch
+# trace: available lacked exactly the underscore-named set).  The `[_-]`
+# class matches BOTH forms, so one alternation serves the on-disk greps
+# (underscore) and the config greps (dash or underscore) alike.  The input
+# is whitespace-normalized first: a stray leading/trailing/double space (the
+# boot-log-bound-modules list carries a leading space) used to produce an
+# EMPTY alternative (`…||virtio_net`), which made `grep -E "^(${alt})$"`
+# match empty lines and flowed a `,<mod>` artifact into the initramfs
+# inclusion evidence (the round-113 Arch follow-up).
+network_module_alternation()
+{
+    local in="$1" out=""
+    in="$(printf '%s' "$in" | tr -s ' ' | sed 's/^ //; s/ $//' || true)"
+    out="${in// /|}"
+    out="${out//_/[_-]}"
+    printf '%s\n' "$out"
+}
+
+# Never emit MACs (the hygiene contract): an enx<12-hex> predictable
+# interface name embeds the MAC.  Redacted for display in every evidence line.
+network_clean_ifname()
+{
+    case "$1" in
+        enx[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]*) printf 'enx<redacted>\n' ;;
+        *) printf '%s\n' "$1" ;;
+    esac
+}
+
+# True when the (unquoted, caller-provided) glob matches at least one entry.
+# bash-3.1-safe: no compgen -G (a bash 4 addition).
+dir_glob_nonempty()
+{
+    local f
+    for f in $1; do
+        [[ -e "$f" ]] && return 0
+    done
+    return 1
+}
+
+# The network config backend from CONFIG FILES + the detected service manager,
+# never from the distribution ID (probe-don't-prefilter).  One primary profile
+# line plus a note naming every additional detected system.
+network_config_backend_collect()
+{
+    NETWORK_CONFIG_BACKEND="none"
+    NETWORK_CONFIG_NOTE=""
+    local -a detected=()
+    local netplan_renderer=""
+    # netplan (the explicit renderer decides; networkd is netplan's default).
+    if dir_glob_nonempty "$TARGET_ROOT/etc/netplan/"*.yaml; then
+        netplan_renderer="$(grep -hoE '^[[:space:]]*renderer:[[:space:]]*[A-Za-z]+' "$TARGET_ROOT/etc/netplan/"*.yaml 2>/dev/null | head -n1 || true)"
+        case "$netplan_renderer" in
+            *NetworkManager) detected+=("netplan-NetworkManager") ;;
+            *) detected+=("netplan-networkd") ;;
+        esac
+    fi
+    if [[ -f "$TARGET_ROOT/etc/NetworkManager/NetworkManager.conf" \
+        || -d "$TARGET_ROOT/etc/NetworkManager/system-connections" \
+        || -d "$TARGET_ROOT/etc/NetworkManager/conf.d" ]]; then
+        detected+=("NetworkManager")
+    fi
+    if [[ -f "$TARGET_ROOT/etc/network/interfaces" || -d "$TARGET_ROOT/etc/network/interfaces.d" ]]; then
+        detected+=("ifupdown")
+    fi
+    if dir_glob_nonempty "$TARGET_ROOT/etc/systemd/network/"*.network; then
+        detected+=("systemd-networkd")
+    fi
+    if [[ -f "$TARGET_ROOT/etc/dhcpcd.conf" || -f "$TARGET_ROOT/etc/conf.d/dhcpcd" ]]; then
+        detected+=("dhcpcd")
+    fi
+    if [[ -f "$TARGET_ROOT/etc/conf.d/net" ]]; then
+        detected+=("netifrc")
+    fi
+    if dir_glob_nonempty "$TARGET_ROOT/etc/sysconfig/network-scripts/"ifcfg-*; then
+        detected+=("sysconfig")
+    fi
+    if ((${#detected[@]} > 0)); then
+        NETWORK_CONFIG_BACKEND="${detected[0]}"
+        if ((${#detected[@]} > 1)); then
+            NETWORK_CONFIG_NOTE="also detected: $(printf '%s\n' "${detected[@]:1}" | paste -sd, -)"
+        fi
+    fi
+}
+
+# Host-mode adapter enumeration from /sys/class/net (never the target's live
+# state).  No MACs; the PCI vendor:device id and the bound driver/module are
+# the wrong-driver probe pair.  lspci -knn (when present) adds the
+# "Kernel driver in use / Kernel modules" pair for the class-0x0200/0x0280
+# devices.
+network_adapter_collect()
+{
+    NETWORK_ADAPTERS=()
+    NETWORK_ADAPTER_STATES=()
+    NETWORK_ADAPTER_NOTE=""
+    NETWORK_BOUND_MODULES=""
+    NETWORK_PCI_DEVICES=()
+    (( RUNNING_HOST_MODE == 1 )) || return 0
+    local iface name oper carrier type drv mod bus id count=0
+    for iface in /sys/class/net/*; do
+        [[ -d "$iface" ]] || continue
+        journal_cancel_requested && return 0
+        name="${iface##*/}"
+        [[ "$name" != lo ]] || continue
+        if (( count >= 12 )); then
+            NETWORK_ADAPTER_NOTE="further interfaces omitted"
+            break
+        fi
+        count=$((count + 1))
+        oper="$(cat "$iface/operstate" 2>/dev/null || true)"; [[ -n "$oper" ]] || oper="unknown"
+        carrier="$(cat "$iface/carrier" 2>/dev/null || true)"; [[ -n "$carrier" ]] || carrier="unknown"
+        type="$(cat "$iface/type" 2>/dev/null || true)"
+        drv="$(basename "$(readlink "$iface/device/driver" 2>/dev/null || true)" 2>/dev/null || true)"
+        mod="$(basename "$(readlink "$iface/device/driver/module" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$mod" ]] || mod="${drv:-none}"
+        bus="$(basename "$(readlink "$iface/device/subsystem" 2>/dev/null || true)" 2>/dev/null || true)"
+        [[ -n "$bus" ]] || bus="unknown"
+        # Round 85 (P1.c): label virtual/tunnel interfaces instead of printing
+        # a bare ARPHRD type.  DEVTYPE (wlan/tun/wireguard/…) comes from the
+        # interface's own uevent; ARPHRD_NONE (65534) is the classic tunnel
+        # marker; a driverless interface with no bus device is a software
+        # virtual interface (a VPN dummy, a bridge member without its driver
+        # bound).  Physical interfaces get the explicit `physical` label.
+        kind=""
+        devtype="$(grep -m1 '^DEVTYPE=' "$iface/uevent" 2>/dev/null | cut -d= -f2 || true)"
+        if [[ -n "$devtype" ]]; then
+            kind="$devtype"
+        elif [[ "${type:-unknown}" == 65534 ]]; then
+            kind="virtual-tunnel"
+        elif [[ "${drv:-none}" == none && "$bus" == unknown ]]; then
+            kind="virtual"
+        else
+            kind="physical"
+        fi
+        id="unknown"
+        if [[ "$bus" == pci && -r "$iface/device/vendor" && -r "$iface/device/device" ]]; then
+            id="$(sed 's/^0x//' "$iface/device/vendor" 2>/dev/null):$(sed 's/^0x//' "$iface/device/device" 2>/dev/null)"
+        elif [[ "$bus" == usb && -r "$iface/device/uevent" ]]; then
+            id="$(grep -m1 '^PRODUCT=' "$iface/device/uevent" 2>/dev/null | sed 's/^PRODUCT=\([^/]*\)\/\([^/]*\)\/.*/\1:\2/' || true)"
+        elif [[ "$bus" == virtio ]]; then
+            id="virtio"
+        fi
+        NETWORK_ADAPTERS+=("$(network_clean_ifname "$name")")
+        NETWORK_ADAPTER_STATES+=("state=$oper, carrier=$carrier, type=${type:-unknown}, kind=$kind, driver=${drv:-none}, module=$mod, bus=$bus, id=$id")
+        [[ "$mod" == none || "$mod" == unknown ]] || NETWORK_BOUND_MODULES+=" $mod"
+    done
+    # lspci -knn for the class-0x0200/0x0280 devices (the wrong-driver pair).
+    if command -v lspci >/dev/null 2>&1; then
+        local blk
+        while IFS= read -r blk; do
+            [[ -n "$blk" ]] || continue
+            journal_cancel_requested && return 0
+            NETWORK_PCI_DEVICES+=("$blk")
+        done <<<"$({ lspci -knn -d '::0200' 2>/dev/null || true; lspci -knn -d '::0280' 2>/dev/null || true; } \
+            | awk '
+                /^[0-9a-fA-F][0-9a-fA-F]:/ {
+                    if (dev != "") { print vid ":" did " [class=" cls ", driver-in-use=" drv ", modules=" mods "]" }
+                    dev = $0; drv = "none"; mods = "none"; vid = ""; did = ""; cls = "ethernet"
+                    if (dev ~ /\[[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]:[0-9a-fA-F][0-9a-fA-F][0-9a-fA-F][0-9a-fA-F]\]/) {
+                        vid = dev; sub(/^.*\[/, "", vid); sub(/:.*$/, "", vid)
+                        did = dev; sub(/^.*:/, "", did); sub(/\].*$/, "", did)
+                    }
+                    if (dev ~ /Network controller/) cls = "network"
+                    next
+                }
+                /^[[:space:]]/ {
+                    if ($0 ~ /Kernel driver in use:/) { sub(/^.*Kernel driver in use: */, "", $0); drv = $0 }
+                    else if ($0 ~ /Kernel modules:/) { sub(/^.*Kernel modules: */, "", $0); mods = $0 }
+                    next
+                }
+                END { if (dev != "") print vid ":" did " [class=" cls ", driver-in-use=" drv ", modules=" mods "]" }
+            ' || true)"
+    fi
+}
+
+# Bounded (2 s) read-only ethtool -i (driver/version/firmware-version ioctls
+# on the named RUNNING-host interface).  No network I/O; the bound only guards
+# a wedged driver — the network_reachability_probe killer pattern (the killer's
+# stdout is detached so its orphaned sleep can never hold the caller's pipe).
+network_ethtool_info()
+{
+    local iface="$1" out="$2" pid killer rc seconds=2
+    command -v ethtool >/dev/null 2>&1 || return 1
+    set +e
+    ethtool -i "$iface" > "$out" 2>/dev/null &
+    pid=$!
+    ( sleep "$seconds"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+    killer=$!
+    wait "$pid"
+    rc=$?
+    kill "$killer" 2>/dev/null
+    wait "$killer" 2>/dev/null
+    set -e
+    return "$rc"
+}
+
+# Round 126 (ITEM 28) — host scope: the concise per-adapter hardware +
+# firmware summary (the user's template: 'Realtek RTL8126 Controller,
+# 10ec:8126, Subsystem MSI [1462:7e59], driver r8169, firmware
+# rtl8126a-3_0.0.5 08/30/24').  Reads the RUNNING host's own live /sys (the
+# BDF/bus/device identity), lspci -mnn (controller name + subsystem) and the
+# bounded ethtool -i (driver/version/firmware-version).  Read-only; never
+# reached in target mode (a chrooted target shares the host's kernel, so
+# ethtool -i would describe the HOST's NIC — the isolation audit; the target's
+# own persisted evidence stays the boot-log adapter line).  Virtual/tunnel
+# interfaces (no /sys device) are skipped — no hardware to summarize.  Bounded:
+# 12 adapters, 200-char summaries, the 2 s ethtool bound, MACs never emitted.
+network_lspci_hw_row()
+{
+    # The machine-readable lspci -mnn row for a BDF, parsed with BRE sed (the
+    # -m fields are quoted and CAN contain spaces, so plain awk field-splitting
+    # breaks): device-name \t vid:did \t subsystem-vendor short name \t
+    # sub-vid[:sub-did].  Empty output when the BDF is unknown.  Fields `""`
+    # normalize to empty.
+    local want="$1" line f3 f4 f6 f7
+    local lname lvid ldid lsname lsvid lsdid subid
+    line="$(lspci -mnn -d '::0200' 2>/dev/null | grep -m1 "^$want " 2>/dev/null || true)"
+    if [[ -z "$line" ]]; then
+        line="$(lspci -mnn -d '::0280' 2>/dev/null | grep -m1 "^$want " 2>/dev/null || true)"
+    fi
+    [[ -n "$line" ]] || return 1
+    # Quoted fields in order: 2 = class, 3 = vendor name [vid], 4 = device
+    # name [did], 6 = subsystem vendor name [short-name] [subvid], 7 =
+    # subsystem device [subdid] (5/8 are the unquoted -r/-p tokens; the class
+    # field is skipped).  The sed emits them TAB-separated (one line — a
+    # multi-var read consumes one line, so a newline join could never fill
+    # more than the first variable).
+    IFS=$'\t' read -r f3 f4 f6 f7 <<<"$(printf '%s\n' "$line" \
+        | sed 's/^[^"]*"\([^"]*\)"[[:space:]]*"\([^"]*\)"[[:space:]]*"\([^"]*\)"[^"]*"\([^"]*\)"[^"]*"\([^"]*\)".*/\2\t\3\t\4\t\5/' || true)"
+    lname="${f4% \[*}"; [[ -n "$lname" && "$lname" != '""' ]] || lname=""
+    ldid="${f4##*\[}"; ldid="${ldid%]}"
+    lvid="${f3##*\[}"; lvid="${lvid%]}"
+    # The subsystem vendor short name is the FIRST bracket group of f6
+    # ('Micro-Star International Co., Ltd. [MSI] [1462]' -> MSI), the subvendor
+    # id the LAST one.
+    lsname="$(printf '%s\n' "$f6" | sed 's/^[^[]*\[\([^]]*\)\].*$/\1/' || true)"
+    [[ -n "$lsname" && "$lsname" != '""' ]] || lsname=""
+    lsvid="$(printf '%s\n' "$f6" | sed 's/^.*\[\([^]]*\)\]$/\1/' || true)"
+    [[ -n "$lsvid" && "$lsvid" != '""' ]] || lsvid=""
+    lsdid="$(printf '%s\n' "$f7" | sed 's/^.*\[\([^]]*\)\]$/\1/' || true)"
+    [[ -n "$lsdid" && "$lsdid" != '""' ]] || lsdid=""
+    subid="$lsvid"
+    [[ -n "$lsdid" ]] && subid="$subid:$lsdid"
+    [[ -n "$lvid" && "$lvid" != '""' && -n "$ldid" && "$ldid" != '""' ]] || return 1
+    printf '%s\t%s:%s\t%s\t%s\n' "$lname" "$lvid" "$ldid" "$lsname" "$subid"
+}
+
+network_adapter_hardware_collect()
+{
+    NETWORK_ADAPTER_HARDWARE=()
+    (( RUNNING_HOST_MODE == 1 )) || return 0
+    local iface name bus bdf eth_out eth_drv eth_ver eth_fw summary row count=0
+    local lname lvid_did lsname lsubid drv man prod uv up node
+    for iface in /sys/class/net/*; do
+        [[ -d "$iface" ]] || continue
+        name="${iface##*/}"
+        [[ "$name" != lo ]] || continue
+        journal_cancel_requested && return 0
+        (( count < 12 )) || break
+        # Virtual/tunnel interfaces have no hardware device node — no hardware
+        # summary applies (they stay in the plain adapter list only).
+        [[ -L "$iface/device" ]] || continue
+        count=$((count + 1))
+        bus="$(basename "$(readlink "$iface/device/subsystem" 2>/dev/null || true)" 2>/dev/null || true)"
+        drv="$(basename "$(readlink "$iface/device/driver" 2>/dev/null || true)" 2>/dev/null || true)"
+        eth_drv=""; eth_ver=""; eth_fw=""
+        eth_out="$(mktemp "${TMPDIR:-/tmp}/eth-i.XXXXXX" 2>/dev/null || true)"
+        if [[ -n "$eth_out" ]]; then
+            if network_ethtool_info "$name" "$eth_out"; then
+                eth_drv="$(awk -F': ' '$1 == "driver" { print $2; exit }' "$eth_out" 2>/dev/null || true)"
+                eth_ver="$(awk -F': ' '$1 == "version" { print $2; exit }' "$eth_out" 2>/dev/null || true)"
+                eth_fw="$(awk -F': ' '$1 == "firmware-version" { print $2; exit }' "$eth_out" 2>/dev/null || true)"
+            fi
+            rm -f -- "$eth_out"
+        fi
+        [[ -n "$eth_drv" ]] || eth_drv="$drv"
+        summary=""
+        case "$bus" in
+            pci)
+                bdf="$(basename "$(readlink "$iface/device" 2>/dev/null || true)" 2>/dev/null || true)"
+                bdf="${bdf#0000:}"
+                ;;
+            virtio)
+                # A virtio NIC's /sys device is the virtio child; its parent
+                # PCI function carries the BDF (and the lspci -mnn row).
+                bdf=""
+                node="$(readlink -f "$iface/device" 2>/dev/null || true)"
+                while [[ -n "$node" && "$node" != / && "$node" != /sys ]]; do
+                    if [[ "$(basename "$(readlink "$node/subsystem" 2>/dev/null || true)" 2>/dev/null || true)" == pci ]]; then
+                        bdf="$(basename "$node")"
+                        bdf="${bdf#0000:}"
+                        break
+                    fi
+                    node="$(dirname "$node")"
+                done
+                [[ -n "$bdf" ]] || bdf=""
+                ;;
+            *) bdf="" ;;
+        esac
+        if [[ -n "$bdf" ]] && command -v lspci >/dev/null 2>&1; then
+            row="$(network_lspci_hw_row "$bdf" 2>/dev/null || true)"
+            if [[ -n "$row" ]]; then
+                IFS=$'\t' read -r lname lvid_did lsname lsubid <<<"$row"
+                if [[ -n "$lname" ]]; then
+                    summary="$lname, $lvid_did"
+                    # Round 127 (C6, the round-126 reported polish): a bare
+                    # 4-hex "name" is not a name — lspci -mnn reports no
+                    # subsystem vendor NAME for some devices (the Fedora
+                    # virtio NIC rendered the redundant 'Subsystem 1af4
+                    # [1af4:1100]'); the id-only 'Subsystem [1af4:1100]'
+                    # shape stays truthful without the duplicated vendor id.
+                    if [[ -n "$lsname" && -n "$lsubid" ]] \
+                        && ! [[ "$lsname" =~ ^[0-9a-fA-F]{4}$ ]]; then
+                        summary="$summary, Subsystem $lsname [$lsubid]"
+                    elif [[ -n "$lsubid" ]]; then
+                        summary="$summary, Subsystem [$lsubid]"
+                    fi
+                fi
+            fi
+        fi
+        if [[ -z "$summary" && "$bus" == pci ]]; then
+            # lspci absent/unknown device: the /sys ids still resolve.
+            if [[ -r "$iface/device/vendor" && -r "$iface/device/device" ]]; then
+                summary="$(sed 's/^0x//' "$iface/device/vendor" 2>/dev/null):$(sed 's/^0x//' "$iface/device/device" 2>/dev/null)"
+            fi
+        fi
+        if [[ -z "$summary" && "$bus" == usb ]]; then
+            # The first idVendor-carrying ancestor is the USB DEVICE (the
+            # interface's own node has none); its manufacturer/product strings
+            # name the hardware.
+            man=""; prod=""; uv=""; up=""
+            node="$(readlink -f "$iface/device" 2>/dev/null || true)"
+            while [[ -n "$node" && "$node" != / && "$node" != /sys ]]; do
+                if [[ -r "$node/idVendor" ]]; then
+                    uv="$(cat "$node/idVendor" 2>/dev/null || true)"
+                    up="$(cat "$node/idProduct" 2>/dev/null || true)"
+                    man="$(cat "$node/manufacturer" 2>/dev/null | sed 's/[[:space:]]*$//' || true)"
+                    prod="$(cat "$node/product" 2>/dev/null | sed 's/[[:space:]]*$//' || true)"
+                    break
+                fi
+                node="$(dirname "$node")"
+            done
+            if [[ -n "$man" || -n "$prod" ]]; then
+                summary="$man${man:+ }$prod"
+            else
+                summary="USB network device"
+            fi
+            if [[ -n "$uv" && -n "$up" ]]; then
+                summary="$summary, $uv:$up"
+            fi
+        fi
+        [[ -n "$summary" ]] || continue
+        if [[ -n "$eth_drv" ]]; then
+            summary="$summary, driver $eth_drv"
+            [[ -n "$eth_ver" ]] && summary="$summary ($eth_ver)"
+        fi
+        if [[ -n "$eth_fw" ]]; then
+            summary="$summary, firmware $eth_fw"
+        fi
+        summary="$(printf '%s' "$summary" | cut -c1-200)"
+        NETWORK_ADAPTER_HARDWARE+=("$summary")
+    done
+}
+
+# Target-mode adapter evidence from the target's OWN boot journal (the PCI
+# enumeration and the driver bind lines), never the recovery host's /sys.
+network_bootlog_adapters_collect()
+{
+    (( RUNNING_HOST_MODE != 1 )) || return 0
+    NETWORK_BOOTLOG_ADAPTERS=()
+    NETWORK_BOUND_MODULES=""
+    NETWORK_JOURNAL_COUNT="0"
+    NETWORK_JOURNAL_FIRMWARE_FAILURES="none"
+    local journal=""
+    journal="$(evidence_journal_filtered head-4000 2>/dev/null || true)"
+    # Round 114 (ITEM 4): the round-106-style boot-log fallback — a target
+    # without a persistent journal (the Etch 2.6.18 class) keeps its boot
+    # evidence in plain-text logs.  When the journal slice is empty the
+    # adapter scan reads the TARGET's own saved dmesg + /var/log/messages +
+    # /var/log/syslog through the same boot-relevant filter, bounded to the
+    # 4000-line boot-head budget, so the target's adapter line (the Etch
+    # target's e1000) is found instead of classifying no-adapter.  A target
+    # WITH journald but an empty journal falls back the same way — the plain
+    # logs are the target's own evidence either way.
+    if [[ -z "$journal" ]]; then
+        journal="$({ non_systemd_kernel_log_lines; non_systemd_syslog_lines; } \
+            | syslog_boot_relevant_filter 2>/dev/null | head -n 4000 || true)"
+    fi
+    network_bootlog_evidence_from "$journal"
+    # Round 123 (ITEM 20): the installer-log fallback — an anaconda-installed
+    # target (the Fedora rig) persists the INSTALLER's own boot journal under
+    # /var/log/anaconda/journal.log even when the installed system's journal
+    # never persisted the early-boot PCI enumeration (the round-121 Fedora
+    # finding: the journal has user-session lines but no NIC line).  When the
+    # journal slice AND the round-114 plain-text sources yielded NO adapter
+    # line, the persisted installer log is the remaining positive source — it
+    # records the installer's own kernel enumeration (the virtio NIC
+    # 1af4:1041 class 0x020000 line).  The same bounded matcher, count and
+    # bound-module derivation apply; never a guess, and never the recovery
+    # host's /sys.
+    if ((${#NETWORK_BOOTLOG_ADAPTERS[@]} == 0)); then
+        network_bootlog_evidence_from "$(installer_bootlog_lines 2>/dev/null || true)"
+    fi
+    [[ -n "$journal" ]] || return 0
+    # Firmware failures the target's own boot log recorded for network drivers
+    # are positive firmware-missing evidence (fed into the firmware verdict
+    # below by network_firmware_collect).
+    NETWORK_JOURNAL_FIRMWARE_FAILURES="$(printf '%s\n' "$journal" | grep -oE 'Direct firmware load for [^ ]+ failed' \
+        | sed 's/Direct firmware load for //; s/ failed$//' | grep -Ei 'iwl|ath|rtw|rtl|net|e1000|igb|igc|brcm|mrvl' \
+        | sort -u | paste -sd, - 2>/dev/null || true)"
+    [[ -n "$NETWORK_JOURNAL_FIRMWARE_FAILURES" ]] || NETWORK_JOURNAL_FIRMWARE_FAILURES="none"
+}
+
+# Shared extraction (round 123, ITEM 20 — factored out of the collector above):
+# feed one boot-log text stream through the identical bounded adapter matcher,
+# evidence count and bound-module derivation, appending to the collector's
+# arrays.  Bounded at 8 adapter lines per source; the bound-module set is
+# de-duplicated across sources.
+network_bootlog_evidence_from()
+{
+    local journal="$1"
+    [[ -n "$journal" ]] || return 0
+    local line count=0
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        journal_cancel_requested && return 0
+        (( count < 8 )) || break
+        count=$((count + 1))
+        NETWORK_BOOTLOG_ADAPTERS+=("$line")
+    done <<<"$(printf '%s\n' "$journal" \
+        | grep -E '(r8169|r8168|igb|igc|e1000e|ax88179_178a|r8152|asix|cdc_ether|virtio_net|e1000|iwlwifi|iwlmvm|ath9k|rtw88_8822ce|8139too|8139cp)[[:space:]:]*[0-9a-fA-F]{4}:[0-9a-fA-F]{2}:[0-9a-fA-F]{2}\.[0-9a-fA-F]|pci .* class 0x0200|class 0x0280' \
+        | sed 's/^[^ ]* [^ ]* [^ ]* [^ ]* [^ ]*: //' \
+        | sed 's/^\[[[:space:]]*[0-9.]*\][[:space:]]*//' \
+        | sed 's/\([0-9a-fA-F]\{2\}:\)\{5\}[0-9a-fA-F]\{2\}/<redacted>/g' \
+        | cut -c1-120 \
+        | sort -u || true)"
+    local added
+    added="$(grep -cE 'class 0x0200|class 0x0280|r8169|r8168|igb|igc|e1000e|ax88179|iwlwifi' <<<"$journal" 2>/dev/null || true)"
+    NETWORK_JOURNAL_COUNT="$(( NETWORK_JOURNAL_COUNT + ${added:-0} ))"
+    # The modules the boot log actually bound (positive evidence).
+    local mod
+    for mod in $NETWORK_WATCH_MODULES; do
+        if grep -qE "(^|[[:space:]])${mod}([[:space:]]|:)" <<<"$journal"; then
+            case " $NETWORK_BOUND_MODULES " in
+                *" $mod "*) ;;
+                *) NETWORK_BOUND_MODULES+=" $mod" ;;
+            esac
+        fi
+    done
+}
+
+# Round 123 (ITEM 20): the persisted anaconda/installer boot journal — the
+# bounded source the shared matcher (network_bootlog_evidence_from) consumes
+# when every journal/plain-text source yields no adapter line.  The installer's
+# own kernel boot log (the Fedora target's /var/log/anaconda/journal.log
+# records the installer's PCI enumeration — the virtio NIC — even though the
+# installed system's journal never persisted it).  Bounded to the 4000-line
+# boot-head budget like every other boot-log source; read-only and
+# cancel-aware.
+installer_bootlog_lines()
+{
+    local file
+    for file in "$TARGET_ROOT/var/log/anaconda/journal.log" \
+                "$TARGET_ROOT/var/log/anaconda/syslog" \
+                "$TARGET_ROOT/var/log/installer/journal.log" \
+                "$TARGET_ROOT/var/log/installer/syslog"; do
+        [[ -r "$file" ]] || continue
+        journal_cancel_requested && return 0
+        head -n 4000 -- "$file" 2>/dev/null || true
+        break
+    done
+}
+
+# Round 91 (the driver-fallback chain, 0.2.30 slice): the network-relevant
+# probe-failure filter (the canonical underscore names; the ethernet/wifi
+# driver family pattern) and the collector (the shared
+# journal_driver_probe_failures parser, input-section pattern).
+network_probe_failure_relevant()
+{
+    case "$1" in
+        iwl*|ath[0-9]*|rtw*|rtl8*|b43*|brcm*|mwl*|mt7*|r816[89]|r815[23]|igb|igc|e1000*|ixgbe*|ax88*|cdc_*|asix|usbnet|virtio_net|tg3|bnx2*|8139*|sfc|mlx*) return 0 ;;
+    esac
+    grep -qw "$1" <<<"$NETWORK_WATCH_MODULES" 2>/dev/null && return 0
+    return 1
+}
+
+network_probe_failures_collect()
+{
+    NETWORK_PROBE_FAILURES="none"
+    local pair mod
+    local -a kept=()
+    while IFS= read -r pair; do
+        [[ -n "$pair" ]] || continue
+        mod="${pair%%=*}"
+        network_probe_failure_relevant "$mod" || continue
+        kept+=("$pair")
+    done <<<"$(journal_driver_probe_failures)"
+    if ((${#kept[@]} > 0)); then
+        NETWORK_PROBE_FAILURES="$(printf '%s\n' "${kept[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# Round 91: the candidate-module set.  Host: the round-84 lspci pair's
+# "Kernel modules:" list (the kernel's own candidate drivers for each
+# class-0x0200/0x0280 device) plus the bound modules.  Target: NO live lspci
+# (plan-network-repair.md §0 — a target probe would describe the recovery
+# host), so the OFFLINE match of the boot-log pci vid:did against the
+# target's own modules.alias tables is the best-effort candidate source
+# (marked in the note; bounded at 8 devices).  Round 98 (ITEM 2): the virtio
+# alias family resolves through the virtio BUS alias (virtio_net etc. — the
+# only pci alias for a modern virtio NIC can be a concrete-subvendor vDPA
+# alias like ifcvf), concrete-subvendor pci lines yield to the generic
+# `sv*sd*` wildcard, and the boot-log-bound modules are folded in so the
+# candidate line agrees with the positive bound-driver evidence.
+network_candidate_modules_collect()
+{
+    NETWORK_CANDIDATE_MODULES="none"
+    NETWORK_CANDIDATE_MODULES_NOTE=""
+    local -a cand=() uniq=()
+    local entry mod mods c vid did vid_did alias_line kdir
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for entry in "${NETWORK_PCI_DEVICES[@]:-}"; do
+            [[ "$entry" == *modules=* ]] || continue
+            mods="${entry##*modules=}"
+            mods="${mods%%]*}"
+            [[ -n "$mods" && "$mods" != none ]] || continue
+            for mod in $mods; do
+                [[ -n "$mod" ]] && cand+=("${mod//-/_}")
+            done
+        done
+        for mod in $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] && cand+=("$mod")
+        done
+    else
+        NETWORK_CANDIDATE_MODULES_NOTE="best-effort offline alias match"
+        local journal=""
+        journal="$(evidence_journal_filtered head-4000 2>/dev/null || true)"
+        [[ -n "$journal" ]] || journal=""
+        local count=0
+        while IFS= read -r vid_did; do
+            [[ -n "$vid_did" ]] || continue
+            journal_cancel_requested && return 0
+            (( count < 8 )) || break
+            count=$((count + 1))
+            vid="${vid_did%%:*}"; did="${vid_did#*:}"
+            alias_line=""
+            # Round 98 (ITEM 2): the alias-family resolution for a VIRTIO
+            # device (vendor 1af4).  The NIC function driver (virtio_net) is
+            # matched through the virtio BUS alias (`alias virtio:d<id>v*`),
+            # never through a pci alias: the only pci alias for the modern
+            # net device (1af4:1041) can be a CONCRETE-subvendor vDPA alias
+            # (ifcvf, the virtio-forwarder module, sv00008086sd0000001A) that
+            # matches a specific OEM device, not this NIC.  The virtio device
+            # id is the pci device id minus the 0x1040 modern offset (legacy
+            # ids 0x1000-0x103f map directly).
+            local virtio_id="" virtio_id_hex=""
+            if [[ "$vid" == 1af4 ]]; then
+                local did_dec=0
+                did_dec="$((16#$did))"
+                if (( did_dec >= 0x1040 && did_dec <= 0x107f )); then
+                    virtio_id=$((did_dec - 0x1040))
+                elif (( did_dec >= 0x1000 && did_dec <= 0x103f )); then
+                    virtio_id=$did_dec
+                fi
+                if [[ -n "$virtio_id" ]]; then
+                    virtio_id_hex="$(printf '%08x' "$virtio_id")"
+                    for kdir in "$TARGET_ROOT/lib/modules/"* "$TARGET_ROOT/usr/lib/modules/"*; do
+                        [[ -r "$kdir/modules.alias" ]] || continue
+                        alias_line="$(grep -m1 -iE "^alias virtio:d${virtio_id_hex}v" "$kdir/modules.alias" 2>/dev/null || true)"
+                        [[ -n "$alias_line" ]] || continue
+                        mod="${alias_line##* }"
+                        mod="${mod//-/_}"
+                        [[ -n "$mod" ]] && cand+=("$mod")
+                        break
+                    done
+                fi
+                # The virtio bus alias named the real function driver: skip the
+                # pci alias family (only a concrete-subvendor vDPA mismatch
+                # lives there, or the transport — neither is the NIC driver).
+                [[ -n "$virtio_id" && -n "$alias_line" ]] && continue
+            fi
+            for kdir in "$TARGET_ROOT/lib/modules/"* "$TARGET_ROOT/usr/lib/modules/"*; do
+                [[ -r "$kdir/modules.alias" ]] || continue
+                # Round 98 (ITEM 2): prefer the GENERIC wildcard-subvendor
+                # alias (`sv*sd*` — the driver claiming every device with this
+                # vid:did) over a concrete-sv line that only matches one OEM
+                # subsystem the boot log never named.  The concrete-sv line is
+                # the last-resort fallback.
+                alias_line="$(grep -m1 -iE "^alias pci:v0000${vid}d0000${did}sv\*sd\*" "$kdir/modules.alias" 2>/dev/null || true)"
+                [[ -n "$alias_line" ]] || alias_line="$(grep -m1 -iE "^alias pci:v0000${vid}d0000${did}sv" "$kdir/modules.alias" 2>/dev/null || true)"
+                [[ -n "$alias_line" ]] || continue
+                mod="${alias_line##* }"
+                mod="${mod//-/_}"
+                [[ -n "$mod" ]] && cand+=("$mod")
+                break
+            done
+        done <<<"$(printf '%s\n' "$journal" \
+            | grep -oE '\[[0-9a-fA-F]{4}:[0-9a-fA-F]{4}\] type [0-9a-fA-F]{2} class 0x02(00|80)' \
+            | grep -oE '[0-9a-fA-F]{4}:[0-9a-fA-F]{4}' \
+            | tr 'A-F' 'a-f' \
+            | sort -u || true)"
+        # Round 98 (ITEM 2): the boot-log-bound modules are POSITIVE evidence
+        # of the real driver — the candidate line must agree with them (the
+        # host branch already folds the bound modules the same way).  When the
+        # offline alias match mis-matches (the virtio case), the bound driver
+        # stays the truthful candidate.
+        for mod in $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] && cand+=("$mod")
+        done
+    fi
+    local dup=0 u
+    for c in "${cand[@]:-}"; do
+        [[ -n "$c" ]] || continue
+        dup=0
+        for u in "${uniq[@]:-}"; do
+            [[ "$u" == "$c" ]] && dup=1
+        done
+        (( dup == 0 )) && uniq+=("$c")
+    done
+    if ((${#uniq[@]} > 0)); then
+        NETWORK_CANDIDATE_MODULES="$(printf '%s\n' "${uniq[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# Round 92 (ladder step 3): the reinstall/rebuild evidence — the detected
+# module build system (the shared read-only probe) and the bound NIC modules'
+# modinfo versions (host: the live kernel; target: `-k <kver>` for the newest
+# kernel), deduped, capped at four pairs.
+network_driver_rebuild_evidence_collect()
+{
+    NETWORK_DRIVER_BUILD_SYSTEM="$(module_build_system)"
+    NETWORK_MODULE_VERSIONS="none"
+    local mod kver ver counted=0
+    local -a mods=() uniq=() per=()
+    for mod in $NETWORK_BOUND_MODULES \
+        $(printf '%s' "$NETWORK_PROBE_FAILURES" | tr ',' ' ' | sed 's/=.*//' || true); do
+        [[ -n "$mod" && "$mod" != none ]] && mods+=("$mod")
+    done
+    local dup=0 u
+    for mod in "${mods[@]:-}"; do
+        dup=0
+        for u in "${uniq[@]:-}"; do
+            [[ "$u" == "$mod" ]] && dup=1
+        done
+        (( dup == 0 )) && uniq+=("$mod")
+    done
+    for mod in "${uniq[@]:-}"; do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        (( counted < 4 )) || break
+        counted=$((counted + 1))
+        if (( RUNNING_HOST_MODE == 1 )); then
+            ver="$(modinfo -F version "$mod" 2>/dev/null | head -n1 || true)"
+        else
+            kver="$(installed_kernel_versions 2>/dev/null | tail -n1 || true)"
+            [[ -n "$kver" ]] || continue
+            ver="$(RUN_SELECTED_CHROOT_BOUND=12 run_selected_chroot /usr/bin/env \
+                HOME=/root LC_ALL=C \
+                PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                modinfo -k "$kver" -F version "$mod" 2>/dev/null | head -n1 || true)"
+        fi
+        per+=("$mod=${ver:-unknown}")
+    done
+    # Round 114 (ITEM 2): the if-guard keeps the function's exit status 0 even
+    # when the per-set is empty (the input section's round-114 fix, mirrored —
+    # the network re-verify aborted the same way on a target whose boot log
+    # bound no module).
+    if ((${#per[@]} > 0)); then
+        NETWORK_MODULE_VERSIONS="$(printf '%s\n' "${per[@]:-}" | paste -sd, -)"
+    fi
+}
+
+# Round 92 (ladder step 4): the available-versions evidence for the bound NIC
+# driver package (same shared lister; pacman/apk fail closed with `none`).
+network_package_versions_collect()
+{
+    NETWORK_PACKAGE_VERSIONS="none"
+    local pkg=""
+    pkg="$(network_reinstall_package || true)"
+    [[ -n "$pkg" ]] || return 0
+    NETWORK_PACKAGE_VERSIONS="$(driver_package_available_versions "$pkg" || true)"
+    [[ -n "$NETWORK_PACKAGE_VERSIONS" ]] || NETWORK_PACKAGE_VERSIONS="none"
+}
+
+# Round 96 (ITEM 2, decision #5 — the 0.2.31-queued conflict-table
+# enforcement, PROCEED): the curated known-conflict table for the network
+# class.  Small and conservative — ONLY genuinely documented pairs, never
+# speculative.  Each entry "conflicting|candidate": the conflicting module
+# is the one to blacklist, the candidate the replacement.
+#   r8168|r8169 — the documented Realtek vendor-driver conflict: the
+#     r8168-dkms module and the in-kernel r8169 both claim the Realtek
+#     8168-family NIC; the pair is a KNOWN conflict when both modules are
+#     live and a NIC binds one of them.
+NETWORK_KNOWN_CONFLICT_PAIRS="r8168|r8169"
+
+# True when a curated known-conflict pair is present in the scope's own
+# module evidence (host: both modules live and one bound to a NIC; target:
+# both modules in the on-disk universe and the boot log bound the
+# conflicting one).  stdout: "<conflicting> <candidate>".
+network_known_conflict_table_hit()
+{
+    local pair a b mod
+    for pair in $NETWORK_KNOWN_CONFLICT_PAIRS; do
+        a="${pair%%|*}"
+        b="${pair#*|}"
+        [[ -n "$a" && -n "$b" && "$a" != "$b" ]] || continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            module_live_loaded "$a" || continue
+            module_live_loaded "$b" || continue
+            for mod in $NETWORK_BOUND_MODULES; do
+                [[ -n "$mod" ]] || continue
+                if [[ "$mod" == "$a" || "$mod" == "$b" ]]; then
+                    printf '%s %s\n' "$a" "$b"
+                    return 0
+                fi
+            done
+        else
+            if grep -qw "$a" <<<"$NETWORK_AVAILABLE_MODULES" || grep -qw "$a" <<<"$NETWORK_BUILTIN_MODULES"; then
+                if grep -qw "$b" <<<"$NETWORK_AVAILABLE_MODULES" || grep -qw "$b" <<<"$NETWORK_BUILTIN_MODULES"; then
+                    for mod in $NETWORK_BOUND_MODULES; do
+                        [[ -n "$mod" ]] || continue
+                        if [[ "$mod" == "$a" ]]; then
+                            printf '%s %s\n' "$a" "$b"
+                            return 0
+                        fi
+                    done
+                fi
+            fi
+        fi
+    done
+    return 1
+}
+
+# Round 93 (ladder step 9) + Round 96 (ITEM 1b/1c/2): the driver-conflict
+# evidence.  Two modules fighting over ONE network device, derived from the
+# reliable signals in ranked order — every signal scoped to the SAME device
+# (round 96: two adapters each with a different driver is NORMAL; a
+# conflict requires two modules claiming the SAME adapter — the per-device
+# bound-vs-candidate comparison, never an aggregate across all adapters).
+# The first derived pair wins ("<conflicting> vs <candidate>"):
+# (a) the host lspci bound-vs-first-candidate pair refined by the sysfs
+# bind/refcnt shape, both members of the kernel's own candidate list for
+# THAT device (a passthrough/vfio stub never fires; the pair alone is
+# still positive evidence — the kernel prefers the first candidate for
+# this device);
+# (b) the bounded modprobe -R resolution-order disagreement for THAT
+# device's modalias;
+# (c) the journal EBUSY (-16) probe-failure shape whose candidate is a
+# member of the PCI devices' OWN kernel candidate lists (host — never a
+# module that is merely bound elsewhere; on a target the best-effort
+# offline alias match, the round-91 candidate evidence);
+# (d) the both-loaded cross-check scoped to ONE device — the bound driver
+# and a DIFFERENT candidate from THAT device's own candidate list, both
+# live and held;
+# (e) the curated known-conflict table (round 96, ITEM 2 — a table hit
+# joins the evidence-derived signals).
+# A derived pair is DOWNGRADED to the informational warning-note (round 96,
+# ITEM 1c) while `reachability: ok` proves the live network works — the
+# classification stays verified and the conflict never downgrades a
+# working network into "unavailable".
+network_conflict_collect()
+{
+    NETWORK_DRIVER_CONFLICT="none"
+    NETWORK_DRIVER_CONFLICT_NOTE=""
+    local conflicting="" candidate=""
+    local entry bound mods first bdf drv vid_did modalias resolution pair mod cand
+    local pci_candidates=""
+    # The PCI devices' OWN kernel candidate lists (the per-device candidate
+    # universe the EBUSY/both-loaded signals are scoped to — round 96).
+    for entry in "${NETWORK_PCI_DEVICES[@]:-}"; do
+        [[ -n "$entry" ]] || continue
+        [[ "$entry" == *modules=* ]] || continue
+        mods="${entry##*modules=}"
+        mods="${mods%%]*}"
+        pci_candidates+=" $mods"
+    done
+    if (( RUNNING_HOST_MODE == 1 )); then
+        # (a) The lspci pair with the sysfs/refcnt refinement.
+        for entry in "${NETWORK_PCI_DEVICES[@]:-}"; do
+            [[ -n "$entry" ]] || continue
+            [[ "$entry" == *driver-in-use=* && "$entry" == *modules=* ]] || continue
+            bound="${entry##*driver-in-use=}"; bound="${bound%%,*}"
+            mods="${entry##*modules=}"; mods="${mods%%]*}"
+            first="${mods%% *}"
+            [[ -n "$bound" && "$bound" != none && -n "$first" && "$first" != none ]] || continue
+            [[ "$bound" == "$first" ]] && continue
+            # Both must be members of the kernel's own candidate list for
+            # THIS device (a passthrough/vfio stub is never a conflict pair).
+            grep -qw "$bound" <<<"${mods// /$'\n'}" 2>/dev/null || continue
+            if module_refcnt_positive "$bound" \
+                && module_live_loaded "$first" \
+                && module_refcnt_positive "$first"; then
+                conflicting="$bound"; candidate="$first"; break
+            fi
+            # The pair alone is still positive evidence (the kernel prefers
+            # the first candidate for this device).
+            conflicting="$bound"; candidate="$first"; break
+        done
+        # (b) The bounded modprobe -R resolution-order disagreement.
+        if [[ -z "$conflicting" ]]; then
+            local count=0
+            for entry in "${NETWORK_PCI_DEVICES[@]:-}"; do
+                [[ -n "$entry" ]] || continue
+                [[ "$entry" == *driver-in-use=* ]] || continue
+                (( count < 4 )) || break
+                count=$((count + 1))
+                journal_cancel_requested && return 0
+                vid_did="${entry%% *}"
+                [[ "$vid_did" == *:* ]] || continue
+                bound="${entry##*driver-in-use=}"; bound="${bound%%,*}"
+                [[ -n "$bound" && "$bound" != none ]] || continue
+                modalias="pci:v0000${vid_did%:*}d0000${vid_did#*:}sv*sd*bc*sc*i*"
+                resolution="$(modprobe -R "$modalias" 2>/dev/null | sed 's/-/_/g' | head -n 4 || true)"
+                [[ -n "$resolution" ]] || continue
+                first="${resolution%%$'\n'*}"
+                if [[ -n "$first" && "$first" != "$bound" ]] \
+                    && grep -qw "$bound" <<<"$resolution"; then
+                    conflicting="$bound"; candidate="$first"; break
+                fi
+            done
+        fi
+        # (d) The both-loaded cross-check, scoped to ONE device (round 96):
+        # a different candidate from the SAME device's own list, both live
+        # and held — never an aggregate across adapters.
+        if [[ -z "$conflicting" ]]; then
+            for entry in "${NETWORK_PCI_DEVICES[@]:-}"; do
+                [[ -n "$entry" ]] || continue
+                [[ "$entry" == *driver-in-use=* && "$entry" == *modules=* ]] || continue
+                bound="${entry##*driver-in-use=}"; bound="${bound%%,*}"
+                mods="${entry##*modules=}"; mods="${mods%%]*}"
+                [[ -n "$bound" && "$bound" != none && -n "$mods" && "$mods" != none ]] || continue
+                module_live_loaded "$bound" || continue
+                module_refcnt_positive "$bound" || continue
+                for cand in $mods; do
+                    [[ -n "$cand" && "$cand" != "$bound" ]] || continue
+                    module_live_loaded "$cand" || continue
+                    module_refcnt_positive "$cand" || continue
+                    conflicting="$bound"; candidate="$cand"
+                    break 2
+                done
+            done
+        fi
+    fi
+    # (c) The EBUSY (-16) probe-failure shape (both scopes; the candidate
+    # scoped to the devices' own kernel candidate lists — round 96).
+    if [[ -z "$conflicting" ]]; then
+        local ebusy_cands
+        if (( RUNNING_HOST_MODE == 1 )); then
+            ebusy_cands="$pci_candidates"
+        else
+            ebusy_cands="$(printf '%s' "${NETWORK_CANDIDATE_MODULES:-none}" | tr ',' ' ' || true)"
+        fi
+        for pair in ${NETWORK_PROBE_FAILURES//,/ }; do
+            mod="${pair%%=*}"
+            [[ "${pair#*=}" == 16 ]] || continue
+            for cand in $ebusy_cands; do
+                [[ -n "$cand" && "$cand" != none && "$cand" != "$mod" ]] || continue
+                conflicting="$mod"
+                candidate="$cand"
+                break 2
+            done
+        done
+    fi
+    # (e) Round 96 (ITEM 2): the curated known-conflict table.
+    if [[ -z "$conflicting" ]]; then
+        local hit
+        hit="$(network_known_conflict_table_hit || true)"
+        if [[ -n "$hit" ]]; then
+            conflicting="${hit%% *}"
+            candidate="${hit#* }"
+        fi
+    fi
+    [[ -n "$conflicting" && -n "$candidate" && "$conflicting" != "$candidate" ]] || return 0
+    # Round 96 (ITEM 1c): the live-verified override — never downgrade a
+    # live-verified working network into "unavailable".
+    if [[ "$NETWORK_REACHABILITY" == ok ]]; then
+        NETWORK_DRIVER_CONFLICT_NOTE="$conflicting vs $candidate"
+        return 0
+    fi
+    NETWORK_DRIVER_CONFLICT="$conflicting vs $candidate"
+}
+
+# Loaded (host: /proc/modules or the builtin /sys/module entry) /
+# available-on-disk (target: modules.dep + modules.builtin) / builtin (round
+# 89: the modules.builtin lists, the evidence-aware menu's truth — kept
+# separate so the NIC inclusion delta can prove a bound driver is built
+# into the kernel, while the available fold keeps the round-85
+# classification semantics) / blacklisted (the three modprobe.d trees + the
+# cmdline token) module evidence.
+network_module_evidence_collect()
+{
+    NETWORK_LOADED_MODULES="none"
+    NETWORK_BUILTIN_MODULES="none"
+    NETWORK_AVAILABLE_MODULES="none"
+    NETWORK_BLACKLISTED_MODULES="none"
+    local alt kdir kver mod bmods
+    alt="$(network_module_alternation "$NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES")"
+    local -a loaded=() available=() builtin=() blacklisted=()
+
+    if (( RUNNING_HOST_MODE == 1 )); then
+        for mod in $NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] || continue
+            if grep -qw "$mod" /proc/modules 2>/dev/null || [[ -d "/sys/module/$mod" ]]; then
+                loaded+=("$mod")
+            fi
+        done
+        # Round 85 (P1.a): the host branch never built the AVAILABLE list
+        # before (it existed only in the target branch), so a live host
+        # reported "Network kernel module available: none" while r8169 and
+        # cdc_ncm were loaded.  Mirror the input section's host pattern:
+        # modinfo -n proves the .ko exists for the running kernel; a builtin
+        # module has no .ko on disk but /sys/module/<mod> proves it is
+        # available to the running kernel.
+        for mod in $NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] || continue
+            if [[ -n "$(modinfo -n "$mod" 2>/dev/null || true)" ]] \
+                || [[ -d "/sys/module/$mod" ]]; then
+                available+=("$mod")
+            fi
+        done
+        # Round 89: the running kernel's modules.builtin (the input section's
+        # host pattern) — the builtin evidence for the NIC inclusion delta.
+        kver="$(running_kernel_version)"
+        for kdir in "/lib/modules/$kver/modules.builtin" "/usr/lib/modules/$kver/modules.builtin"; do
+            [[ -r "$kdir" ]] || continue
+            while IFS= read -r mod; do
+                [[ -n "$mod" ]] && builtin+=("$mod")
+            done <<<"$(grep -oE "/(${alt})\.ko$" "$kdir" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+        done
+    else
+        while IFS= read -r kdir; do
+            [[ -n "$kdir" ]] || continue
+            journal_cancel_requested && return 0
+            if [[ -r "$kdir/modules.dep" ]]; then
+                while IFS= read -r mod; do
+                    [[ -n "$mod" ]] && available+=("$mod")
+                done <<<"$(grep -oE "/(${alt})\.ko" "$kdir/modules.dep" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+            fi
+            if [[ -r "$kdir/modules.builtin" ]]; then
+                # Round 89: the same read feeds BOTH the builtin list and the
+                # round-85 available fold (the classification keeps matching
+                # a builtin bound module against the available set).
+                bmods="$(grep -oE "/(${alt})\.ko$" "$kdir/modules.builtin" 2>/dev/null | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u || true)"
+                while IFS= read -r mod; do
+                    [[ -n "$mod" ]] && builtin+=("$mod")
+                done <<<"$bmods"
+                while IFS= read -r mod; do
+                    [[ -n "$mod" ]] && available+=("$mod")
+                done <<<"$bmods"
+            fi
+        done < <(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+            -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | sort -u || true)
+    fi
+
+    local conf_dir
+    for conf_dir in "$TARGET_ROOT/etc/modprobe.d" "$TARGET_ROOT/usr/lib/modprobe.d" "$TARGET_ROOT/lib/modprobe.d"; do
+        [[ -d "$conf_dir" ]] || continue
+        while IFS= read -r mod; do
+            [[ -n "$mod" ]] && blacklisted+=("$mod")
+        done <<<"$(grep -rhoE "^[[:space:]]*(blacklist|install)[[:space:]]+(${alt})[[:space:]]*($|/)" "$conf_dir" 2>/dev/null \
+            | sed 's/^[[:space:]]*\(blacklist\|install\)[[:space:]]\+//; s/[[:space:]].*$//; s/-/_/g' | sort -u || true)"
+    done
+    if (( RUNNING_HOST_MODE == 1 )) && grep -qE '(^|[[:space:]])module_blacklist=' /proc/cmdline 2>/dev/null; then
+        while IFS= read -r mod; do
+            [[ -n "$mod" ]] && blacklisted+=("${mod//-/_}")
+        done <<<"$(sed 's/.*module_blacklist=//; s/[[:space:]].*//' /proc/cmdline 2>/dev/null | tr ',' '\n' || true)"
+    fi
+
+    if ((${#loaded[@]} > 0)); then
+        NETWORK_LOADED_MODULES="$(printf '%s\n' "${loaded[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#builtin[@]} > 0)); then
+        NETWORK_BUILTIN_MODULES="$(printf '%s\n' "${builtin[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#available[@]} > 0)); then
+        NETWORK_AVAILABLE_MODULES="$(printf '%s\n' "${available[@]:-}" | sort -u | paste -sd, -)"
+    fi
+    if ((${#blacklisted[@]} > 0)); then
+        NETWORK_BLACKLISTED_MODULES="$(printf '%s\n' "${blacklisted[@]:-}" | sort -u | paste -sd, -)"
+    fi
+}
+
+# Round 89: the initramfs inclusion configs for the network watch/bound
+# modules (the input section's pattern, read-only file parses) — the
+# "already included in the initramfs" evidence for the NIC inclusion delta.
+network_initramfs_inclusion_collect()
+{
+    NETWORK_INITRAMFS_INCLUSION="none-detected"
+    local backend tokens entry
+    local -a entries=()
+    local alt
+    alt="$(network_module_alternation "$NETWORK_WATCH_MODULES $NETWORK_BOUND_MODULES")"
+    for backend in "${TARGET_INITRAMFS_BACKENDS[@]:-}"; do
+        case "$backend" in
+            initramfs-tools)
+                tokens="$(grep -hoE "^[[:space:]]*(${alt})[[:space:]]*($|#)" \
+                    "$TARGET_ROOT/etc/initramfs-tools/modules" 2>/dev/null \
+                    | sed 's/[[:space:]#].*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("initramfs-tools: ${tokens:-none}")
+                ;;
+            dracut)
+                tokens="$(grep -hoE '^[[:space:]]*(add_drivers|force_drivers)\+?="[^"]*"' \
+                    "$TARGET_ROOT/etc/dracut.conf" "$TARGET_ROOT/etc/dracut.conf.d/"*.conf 2>/dev/null \
+                    | sed 's/.*="//; s/"$//' | tr ' ' '\n' \
+                    | grep -E "^(${alt})$" \
+                    | sed 's/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("dracut: ${tokens:-none}")
+                ;;
+            mkinitcpio)
+                tokens="$(grep -m1 '^MODULES=' "$TARGET_ROOT/etc/mkinitcpio.conf" 2>/dev/null \
+                    | sed 's/^MODULES=(//; s/)$//; s/[()]//g' | tr ' ' '\n' \
+                    | grep -E "^(${alt})$" \
+                    | sed 's/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("mkinitcpio: ${tokens:-none}")
+                ;;
+            mkinitfs)
+                # Round 130 (N4): the mkinitfs inclusion lives in the
+                # boot-repair-drivers feature file (the only writer); the
+                # feature FILE NAMES are not module names, so the scan reads
+                # the file's content and matches the network modules there
+                # (the same shape as the initramfs-tools branch).
+                tokens="$(grep -hoE "^[[:space:]]*(${alt})[[:space:]]*($|#)" \
+                    "$TARGET_ROOT/etc/mkinitfs/features.d/boot-repair-drivers.modules" 2>/dev/null \
+                    | sed 's/[[:space:]#].*$//; s/-/_/g' | sort -u | tr '\n' ',' | sed 's/,$//' || true)"
+                entries+=("mkinitfs: ${tokens:-none}")
+                ;;
+            *) entries+=("$backend: unknown") ;;
+        esac
+    done
+    if ((${#entries[@]} > 0)); then
+        NETWORK_INITRAMFS_INCLUSION=""
+        for entry in "${entries[@]:-}"; do
+            NETWORK_INITRAMFS_INCLUSION+="${NETWORK_INITRAMFS_INCLUSION:+; }$entry"
+        done
+    fi
+}
+
+# Firmware evidence: modinfo -F firmware of every bound module (host: the live
+# modules; target: the newest kernel via in-chroot `modinfo -k`), each blob
+# checked against the firmware trees.  e1000e/igb/igc/r8169/ax88179_178a
+# legitimately report NO firmware blobs — the list is read from modinfo, never
+# invented (a claim otherwise would be a classifier bug).  Round 115 (ITEM 2):
+# the BUILTIN NIC drivers join the same per-module evidence line with the
+# truthful `builtin` marker — a driver compiled into the kernel image has no
+# modinfo firmware list to probe, so the line names the driver and its
+# firmware evidence state instead of collapsing to a bare `none` (the user's
+# Ubuntu target: virtio_net builtin reported `Network firmware: none` while
+# Arch/Fedora reported `virtio_net=none-required`).  A builtin driver's
+# runtime firmware failures still surface through the boot-journal failures
+# below, so the firmware-missing classification is unchanged.
+network_firmware_collect()
+{
+    NETWORK_FIRMWARE="none"
+    NETWORK_FIRMWARE_MISSING="none"
+    # Only the BOUND and BUILTIN modules are probed: the static watch list
+    # describes hardware that may not exist on this machine, and a non-bound
+    # module's missing firmware blobs are not evidence (the classifier's
+    # firmware-missing must never fire for hardware that is not present).
+    local mod blob kver counted=0 is_builtin
+    local -a mods=() per_mod=() missing=()
+    local builtin_list=""
+    builtin_list="$(printf '%s' "${NETWORK_BUILTIN_MODULES:-none}" | tr ',' ' ')"
+    for mod in $NETWORK_BOUND_MODULES $builtin_list; do
+        [[ -n "$mod" && "$mod" != none ]] || continue
+        case " ${mods[*]:-} " in
+            *" $mod "*) continue ;;
+        esac
+        (( counted < 6 )) || break
+        counted=$((counted + 1))
+        mods+=("$mod")
+    done
+    for mod in "${mods[@]:-}"; do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        local blobs=""
+        is_builtin=0
+        if grep -qw "$mod" <<<"$builtin_list"; then
+            # A builtin driver: no modinfo list exists; the kernel image
+            # carries the driver, so the honest evidence marker is `builtin`.
+            is_builtin=1
+        elif (( RUNNING_HOST_MODE == 1 )); then
+            blobs="$(modinfo -F firmware "$mod" 2>/dev/null | sort -u | paste -sd, - || true)"
+        else
+            kver="$(installed_kernel_versions 2>/dev/null | tail -n1 || true)"
+            [[ -n "$kver" ]] || continue
+            blobs="$(RUN_SELECTED_CHROOT_BOUND=12 run_selected_chroot /usr/bin/env \
+                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                modinfo -k "$kver" -F firmware "$mod" 2>/dev/null | sort -u | paste -sd, - || true)"
+        fi
+        if (( is_builtin == 1 )); then
+            per_mod+=("$mod=builtin")
+        else
+            per_mod+=("$mod=${blobs:-none-required}")
+        fi
+        if [[ "${NETWORK_JOURNAL_FIRMWARE_FAILURES:-none}" != none ]]; then
+            local jblob
+            for jblob in $(printf '%s' "$NETWORK_JOURNAL_FIRMWARE_FAILURES" | tr ',' ' '); do
+                [[ -n "$jblob" ]] || continue
+                case " ${missing[*]:-} " in
+                    *" $jblob "*) ;;
+                    *) missing+=("$jblob") ;;
+                esac
+            done
+        fi
+        if [[ -n "$blobs" ]]; then
+            local fwdir found
+            for blob in $(printf '%s' "$blobs" | tr ',' ' '); do
+                [[ -n "$blob" ]] || continue
+                found=0
+                for fwdir in "$TARGET_ROOT/lib/firmware" "$TARGET_ROOT/usr/lib/firmware"; do
+                    [[ -e "$fwdir/$blob" ]] && found=1
+                done
+                (( found == 1 )) || missing+=("$blob")
+            done
+        fi
+    done
+    if ((${#per_mod[@]} > 0)); then
+        NETWORK_FIRMWARE="$(printf '%s\n' "${per_mod[@]:-}" | paste -sd ';' -)"
+    fi
+    if ((${#missing[@]} > 0)); then
+        NETWORK_FIRMWARE_MISSING="$(printf '%s\n' "${missing[@]:-}" | sort -u | paste -sd, -)"
+    fi
+}
+
+# Bounded (5 s) host reachability probe without coreutils timeout (Etch has
+# none): getent resolves through the configured chain, which exercises the
+# real DNS path.  Returns 0 on success, 124 on overrun, else the command rc.
+# The background job is a simple command, so bash execs getent directly and
+# the kill always reaps the probe itself (no orphan).
+network_reachability_probe()
+{
+    local out="$1" pid killer rc seconds=5
+    set +e
+    getent hosts example.com > "$out" 2>&1 &
+    pid=$!
+    # Round 94 (P4 hardening, the round-84 section): the killer's stdout is
+    # detached — its orphaned `sleep` would otherwise hold the caller's
+    # stdout pipe open (the bounded-live-cmd trap class).
+    ( sleep "$seconds"; kill "$pid" 2>/dev/null ) >/dev/null 2>&1 &
+    killer=$!
+    wait "$pid"
+    rc=$?
+    kill "$killer" 2>/dev/null
+    wait "$killer" 2>/dev/null
+    set -e
+    if (( rc == 143 || rc == 137 )); then
+        return 124
+    fi
+    return "$rc"
+}
+
+# Host-only live link/route/DNS/lease/reachability evidence (read-only; the
+# /sbin/ifconfig + /sbin/route fallback covers Etch, which has no `ip`).
+network_live_collect()
+{
+    # Reset the live state BEFORE the scope guard: a target-scope diagnostic
+    # must never inherit the recovery host's live network evidence (the
+    # host/target isolation contract).
+    NETWORK_DEFAULT_ROUTE="none"
+    NETWORK_ADDRESSES="none"
+    NETWORK_DNS_CHAIN="missing"
+    NETWORK_DNS_SERVERS="none"
+    NETWORK_LEASE_GATEWAY="none"
+    NETWORK_LEASE_DNS_SERVERS="none"
+    NETWORK_REACHABILITY="unknown"
+    (( RUNNING_HOST_MODE == 1 )) || return 0
+    local out=""
+
+    # Default route.
+    if command -v ip >/dev/null 2>&1; then
+        out="$(ip route show default 2>/dev/null | head -n1 || true)"
+        if [[ -n "$out" ]]; then
+            NETWORK_DEFAULT_ROUTE="${out#default }"
+            NETWORK_DEFAULT_ROUTE="$(printf '%s' "$NETWORK_DEFAULT_ROUTE" | legacy_sed_ext 's/ dev (enx[0-9a-fA-F]{12})([[:space:]]|$)/ dev enx<redacted> /; s/[[:space:]]+$//' || true)"
+        fi
+    else
+        out="$(/sbin/route -n 2>/dev/null | awk '$1 == "0.0.0.0" { print "via " $2 " dev " $NF; exit }' || true)"
+        [[ -n "$out" ]] && NETWORK_DEFAULT_ROUTE="$(printf '%s' "$out" | legacy_sed_ext 's/ dev (enx[0-9a-fA-F]{12})([[:space:]]|$)/ dev enx<redacted> /' || true)"
+    fi
+
+    # Addresses per interface (no MACs).
+    local -a addr_lines=()
+    local line iface cidr
+    if command -v ip >/dev/null 2>&1; then
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            iface="${line#*: }"; iface="${iface%% *}"
+            [[ "$iface" != lo ]] || continue
+            cidr="${line#*inet }"; cidr="${cidr%% *}"
+            addr_lines+=("$(network_clean_ifname "$iface")=$cidr")
+        done <<<"$(ip -o addr show 2>/dev/null | grep ' inet ' || true)"
+    else
+        while IFS= read -r line; do
+            [[ -n "$line" ]] || continue
+            iface="${line%% *}"
+            [[ "$iface" != lo ]] || continue
+            cidr="${line#*inet addr:}"; cidr="${cidr%% *}"
+            [[ "$cidr" == "$line" ]] && continue
+            addr_lines+=("$(network_clean_ifname "$iface")=$cidr")
+        done <<<"$(/sbin/ifconfig -a 2>/dev/null || true)"
+    fi
+    if ((${#addr_lines[@]} > 0)); then
+        NETWORK_ADDRESSES="$(printf '%s\n' "${addr_lines[@]:-}" | paste -sd ', ' -)"
+    fi
+
+    # DNS chain + servers.
+    local resolved=""
+    if [[ -e /etc/resolv.conf ]]; then
+        resolved="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
+        if [[ -f "$resolved" ]]; then
+            case "$resolved" in
+                /run/systemd/resolve/*) NETWORK_DNS_CHAIN="systemd-resolved stub" ;;
+                /etc/resolv.conf) NETWORK_DNS_CHAIN="plain file" ;;
+                *) NETWORK_DNS_CHAIN="symlink to $resolved" ;;
+            esac
+            NETWORK_DNS_SERVERS="$(grep -E '^nameserver[[:space:]]' "$resolved" 2>/dev/null \
+                | awk '{print $2}' | sort -u | paste -sd, - || true)"
+            [[ -n "$NETWORK_DNS_SERVERS" ]] || NETWORK_DNS_SERVERS="none"
+        else
+            NETWORK_DNS_CHAIN="dangling symlink"
+        fi
+    fi
+
+    # The authoritative expected gateway from the lease files.
+    local lease_file
+    for lease_file in /var/lib/dhcp*/*.lease /var/lib/dhclient/*.leases /run/systemd/netif/leases/[0-9]* \
+        /var/lib/NetworkManager/*.lease /run/NetworkManager/devices/[0-9]*; do
+        [[ -r "$lease_file" ]] || continue
+        out="$(grep -m1 -E '^[[:space:]]*option routers ' "$lease_file" 2>/dev/null \
+            | awk '{print $3}' | tr -d ';' || true)"
+        if [[ -z "$out" ]]; then
+            out="$(grep -m1 -E '^GATEWAY=' "$lease_file" 2>/dev/null | cut -d= -f2 || true)"
+        fi
+        if [[ -z "$out" ]]; then
+            # Round 85 (P1.d): NetworkManager keeps the lease in its internal
+            # device state (dhcp4.routers=<ip>), not in the dhclient-style
+            # lease files — the probe missed it and reported
+            # "Network lease gateway: none" on the most common backend.
+            out="$(grep -m1 -E '^dhcp4\.routers=' "$lease_file" 2>/dev/null | cut -d= -f2 || true)"
+        fi
+        [[ -n "$out" ]] && { NETWORK_LEASE_GATEWAY="$out"; break; }
+    done
+
+    # Round 94 (P4): the lease's DNS servers (the action-7 plain-resolv.conf
+    # source).  The dhclient-style `option domain-name-servers a, b, c;` and
+    # the NetworkManager internal `dhcp4.domain_name_servers=` shapes,
+    # normalized to a comma-joined list — never invented servers.
+    local dns_list
+    for lease_file in /var/lib/dhcp*/*.lease /var/lib/dhclient/*.leases /run/systemd/netif/leases/[0-9]* \
+        /var/lib/NetworkManager/*.lease /run/NetworkManager/devices/[0-9]*; do
+        [[ -r "$lease_file" ]] || continue
+        dns_list="$(grep -m1 -E '^[[:space:]]*option domain-name-servers ' "$lease_file" 2>/dev/null \
+            | legacy_sed_ext 's/^[[:space:]]*option domain-name-servers[[:space:]]+//; s/;[[:space:]]*$//' \
+            | tr -d ',' | tr ' ' '\n' | grep -vE '^[[:space:]]*$' | paste -sd, - || true)"
+        if [[ -z "$dns_list" ]]; then
+            dns_list="$(grep -m1 -E '^dhcp4\.domain_name_servers=' "$lease_file" 2>/dev/null \
+                | cut -d= -f2- | tr ' ' '\n' | grep -vE '^[[:space:]]*$' | paste -sd, - || true)"
+        fi
+        [[ -n "$dns_list" ]] && { NETWORK_LEASE_DNS_SERVERS="$dns_list"; break; }
+    done
+
+    # The bounded reachability probe (only when a route and servers exist —
+    # the classification short-circuits the probe otherwise).
+    local prc=0
+    if [[ "$NETWORK_DEFAULT_ROUTE" != none && "$NETWORK_DNS_SERVERS" != none ]]; then
+        local probe_out
+        probe_out="$(mktemp "${TMPDIR:-/tmp}/net-probe.XXXXXX" 2>/dev/null || true)"
+        if [[ -n "$probe_out" ]]; then
+            network_reachability_probe "$probe_out" || prc=$?
+            if (( prc == 0 )) && [[ -s "$probe_out" ]]; then
+                NETWORK_REACHABILITY="ok"
+            else
+                NETWORK_REACHABILITY="blocked"
+            fi
+            rm -f -- "$probe_out"
+        fi
+    elif [[ "$NETWORK_DEFAULT_ROUTE" == none ]]; then
+        NETWORK_REACHABILITY="no-route"
+    else
+        NETWORK_REACHABILITY="no-dns"
+    fi
+}
+
+# The shared failure classifier (the boot_failure_classification pattern):
+# maps the collected evidence to the stable 11-way vocabulary, positive
+# evidence only, precedence per the plan's list order.
+network_failure_classification()
+{
+    NETWORK_FAILURE_CLASS="verified"
+    local mod
+    # 1. no-adapter.
+    if (( RUNNING_HOST_MODE == 1 )); then
+        ((${#NETWORK_ADAPTERS[@]} > 0)) || { NETWORK_FAILURE_CLASS="no-adapter"; return 0; }
+    else
+        # Round 114 (ITEM 4): positive NIC-driver evidence keeps the target
+        # OUT of no-adapter even when the boot log named no adapter line.  A
+        # watch NIC driver BUILT INTO the kernel is positive evidence the
+        # NIC driver stack exists (nothing to do — never "no adapter
+        # evidence"; the user's Ubuntu target: virtio_net builtin while the
+        # classification was no-adapter and the repair disabled).  The
+        # classification then falls through to the target boundary and
+        # reports verified.  A genuinely evidence-less target (no adapter
+        # line AND no builtin NIC driver) keeps no-adapter.
+        if ((${#NETWORK_BOOTLOG_ADAPTERS[@]} == 0)); then
+            if [[ "$NETWORK_BUILTIN_MODULES" == none || -z "$NETWORK_BUILTIN_MODULES" ]]; then
+                NETWORK_FAILURE_CLASS="no-adapter"
+                return 0
+            fi
+        fi
+    fi
+    # 2. module-not-loaded (target scope; a bound host driver is loaded or
+    #    builtin by definition): the boot-log-bound module has no on-disk
+    #    modules.dep/builtin state.
+    if (( RUNNING_HOST_MODE != 1 )); then
+        for mod in $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] || continue
+            if ! grep -qw "$mod" <<<"$NETWORK_AVAILABLE_MODULES"; then
+                NETWORK_FAILURE_CLASS="module-not-loaded"
+                return 0
+            fi
+        done
+    fi
+    # 3. driver-conflict (round 93, both scopes): the conflict evidence pair
+    #    (two modules fighting over one device — the refined EBUSY shape plus
+    #    the host bind/refcnt, lspci-pair, modprobe -R and both-loaded
+    #    signals; the ladder step 9 entry).
+    if [[ "$NETWORK_DRIVER_CONFLICT" != none && -n "$NETWORK_DRIVER_CONFLICT" ]]; then
+        NETWORK_FAILURE_CLASS="driver-conflict"
+        return 0
+    fi
+    # 4. driver-probe-failed (round 91, both scopes): a network-relevant
+    #    driver recorded a kernel probe failure (positive evidence the driver
+    #    tried to bind and failed — the driver-broken ladder's entry signal).
+    if [[ "$NETWORK_PROBE_FAILURES" != none && -n "$NETWORK_PROBE_FAILURES" ]]; then
+        NETWORK_FAILURE_CLASS="driver-probe-failed"
+        return 0
+    fi
+    # 5. module-blacklisted: a bound module is blacklisted on disk (a
+    #    next-boot hazard even while currently loaded).
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] || continue
+        if grep -qw "$mod" <<<"$NETWORK_BLACKLISTED_MODULES"; then
+            NETWORK_FAILURE_CLASS="module-blacklisted"
+            return 0
+        fi
+    done
+    # 6. firmware-missing.
+    [[ "$NETWORK_FIRMWARE_MISSING" != none && -n "$NETWORK_FIRMWARE_MISSING" ]] \
+        && { NETWORK_FAILURE_CLASS="firmware-missing"; return 0; }
+    # 7. wrong-driver-bound (target only, positive): the boot log bound a
+    #    module that the on-disk blacklists now forbid.
+    if (( RUNNING_HOST_MODE != 1 )); then
+        for mod in $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] || continue
+            if grep -qw "$mod" <<<"$NETWORK_BLACKLISTED_MODULES"; then
+                NETWORK_FAILURE_CLASS="wrong-driver-bound"
+                return 0
+            fi
+        done
+    fi
+    # Live-only classes (a target has no live link state).
+    (( RUNNING_HOST_MODE == 1 )) || { NETWORK_FAILURE_CLASS="verified"; return 0; }
+    # 8. no-carrier: no adapter reports carrier=1.
+    local st any_carrier=0
+    for st in "${NETWORK_ADAPTER_STATES[@]:-}"; do
+        [[ "$st" == *carrier=1* ]] && any_carrier=1
+    done
+    (( any_carrier == 1 )) || { NETWORK_FAILURE_CLASS="no-carrier"; return 0; }
+    # 9. no-dhcp: a DHCP-configured system with no address on any interface.
+    if [[ "$NETWORK_CONFIG_BACKEND" == NetworkManager || "$NETWORK_CONFIG_BACKEND" == netplan-* \
+        || "$NETWORK_CONFIG_BACKEND" == dhcpcd || "$NETWORK_CONFIG_BACKEND" == ifupdown ]]; then
+        if [[ "$NETWORK_ADDRESSES" == none ]]; then
+            NETWORK_FAILURE_CLASS="no-dhcp"
+            return 0
+        fi
+    fi
+    # 10. no-default-route.
+    [[ "$NETWORK_DEFAULT_ROUTE" == none ]] && { NETWORK_FAILURE_CLASS="no-default-route"; return 0; }
+    # 11. no-dns.
+    if [[ "$NETWORK_DNS_CHAIN" == dangling* || "$NETWORK_DNS_CHAIN" == missing ]] \
+        || [[ "$NETWORK_DNS_SERVERS" == none ]]; then
+        NETWORK_FAILURE_CLASS="no-dns"
+        return 0
+    fi
+    # 12. blocked.
+    [[ "$NETWORK_REACHABILITY" == blocked ]] && { NETWORK_FAILURE_CLASS="blocked"; return 0; }
+    NETWORK_FAILURE_CLASS="verified"
+}
+
+network_collect_evidence()
+{
+    (( NETWORK_EVIDENCE_COLLECTED == 1 )) && return 0
+    # Round 114 (ITEM 2): the input section's `|| true` guard, mirrored —
+    # the network collectors have the same return-1 hazard class (the
+    # round-114 network_driver_rebuild_evidence_collect final line) and the
+    # in-window re-verify runs network_collect_evidence STANDALONE.
+    profile_target_backends || true
+    network_config_backend_collect || true
+    network_adapter_collect || true
+    network_adapter_hardware_collect || true
+    network_bootlog_adapters_collect || true
+    network_probe_failures_collect || true
+    network_module_evidence_collect || true
+    network_initramfs_inclusion_collect || true
+    network_initramfs_proof_collect || true
+    network_firmware_collect || true
+    network_live_collect || true
+    network_candidate_modules_collect || true
+    network_driver_rebuild_evidence_collect || true
+    network_package_versions_collect || true
+    network_conflict_collect || true
+    network_failure_classification || true
+    NETWORK_EVIDENCE_COLLECTED=1
+}
+
+diagnostic_network()
+{
+    journal_cancel_requested && return 0
+    network_collect_evidence
+    printf 'Network config backend: %s\n' "$NETWORK_CONFIG_BACKEND"
+    if [[ -n "$NETWORK_CONFIG_NOTE" ]]; then
+        printf 'Network config backend note: %s\n' "$NETWORK_CONFIG_NOTE"
+    fi
+    local i
+    for i in "${!NETWORK_ADAPTERS[@]}"; do
+        printf 'Network adapter: %s [%s]\n' "${NETWORK_ADAPTERS[$i]}" "${NETWORK_ADAPTER_STATES[$i]}"
+    done
+    for i in "${!NETWORK_ADAPTER_HARDWARE[@]}"; do
+        printf 'Network adapter hardware: %s\n' "${NETWORK_ADAPTER_HARDWARE[$i]}"
+    done
+    if [[ -n "$NETWORK_ADAPTER_NOTE" ]]; then
+        printf 'Network adapter note: %s\n' "$NETWORK_ADAPTER_NOTE"
+    fi
+    for i in "${!NETWORK_PCI_DEVICES[@]}"; do
+        printf 'Network pci device: %s\n' "${NETWORK_PCI_DEVICES[$i]}"
+    done
+    for i in "${!NETWORK_BOOTLOG_ADAPTERS[@]}"; do
+        printf 'Network adapter (boot log): %s\n' "${NETWORK_BOOTLOG_ADAPTERS[$i]}"
+    done
+    # Round 113 (ITEM 2): the boot-log-bound modules as an explicit evidence
+    # line — the repair's cached-baseline parse must not have to reconstruct
+    # them from the adapter lines (the emitted boot-log line can carry only
+    # the pci device, no module name, which lost the bound driver on the
+    # Arch target and emptied the menu's inclusion delta).
+    printf 'Network bound modules: %s\n' "${NETWORK_BOUND_MODULES:-none}"
+    printf 'Network kernel module loaded: %s\n' "$NETWORK_LOADED_MODULES"
+    printf 'Network kernel module builtin: %s\n' "$NETWORK_BUILTIN_MODULES"
+    printf 'Network kernel module available: %s\n' "$NETWORK_AVAILABLE_MODULES"
+    printf 'Network kernel module blacklisted: %s\n' "$NETWORK_BLACKLISTED_MODULES"
+    printf 'Network initramfs inclusion: %s\n' "$NETWORK_INITRAMFS_INCLUSION"
+    # Round 131 (N9): the built-image proof for the bound NIC drivers (the
+    # input twin's keyboard proof) — the include repair's post-rebuild
+    # verification and the re-run offer read this single source of truth.
+    printf 'Network initramfs driver proof: %s\n' "$NETWORK_INITRAMFS_PROOF"
+    printf 'Network firmware: %s\n' "$NETWORK_FIRMWARE"
+    printf 'Network firmware missing: %s\n' "$NETWORK_FIRMWARE_MISSING"
+    printf 'Network driver probe failures: %s\n' "$NETWORK_PROBE_FAILURES"
+    printf 'Network candidate modules: %s\n' "$NETWORK_CANDIDATE_MODULES"
+    if [[ -n "$NETWORK_CANDIDATE_MODULES_NOTE" ]]; then
+        printf 'Network candidate modules note: %s\n' "$NETWORK_CANDIDATE_MODULES_NOTE"
+    fi
+    printf 'Network driver build system: %s\n' "$NETWORK_DRIVER_BUILD_SYSTEM"
+    printf 'Network module version: %s\n' "$NETWORK_MODULE_VERSIONS"
+    printf 'Network package available versions: %s\n' "$NETWORK_PACKAGE_VERSIONS"
+    printf 'Network driver conflict: %s\n' "$NETWORK_DRIVER_CONFLICT"
+    if [[ -n "$NETWORK_DRIVER_CONFLICT_NOTE" ]]; then
+        printf 'Network driver conflict note: %s (warning-note: reachability is verified — informational only)\n' "$NETWORK_DRIVER_CONFLICT_NOTE"
+    fi
+    printf 'Network default route: %s\n' "$NETWORK_DEFAULT_ROUTE"
+    printf 'Network addresses: %s\n' "$NETWORK_ADDRESSES"
+    printf 'Network DNS resolv chain: %s\n' "$NETWORK_DNS_CHAIN"
+    printf 'Network DNS servers: %s\n' "$NETWORK_DNS_SERVERS"
+    printf 'Network lease gateway: %s\n' "$NETWORK_LEASE_GATEWAY"
+    printf 'Network lease DNS servers: %s\n' "$NETWORK_LEASE_DNS_SERVERS"
+    printf 'Network reachability: %s\n' "$NETWORK_REACHABILITY"
+    printf 'Network journal evidence: %s line(s)\n' "$NETWORK_JOURNAL_COUNT"
+    printf 'Network classification: %s\n' "$NETWORK_FAILURE_CLASS"
+}
+
+# ---------------------------------------------------------------------------
+# Input-device repair (0.2.30 Phase 2/3 — capability + interactive menu)
+# ---------------------------------------------------------------------------
+# The gpu/kernel interactive pattern: the evidence-driven action menu over the
+# shared PROMPT/ANSWER channel, apply -> focused re-verify IN THE SAME WINDOW
+# (never a full diagnostic re-run) -> fixed/not-fixed -> next option.  The
+# reboot note is an informational line in the window, never a popup.  Every
+# mutation is simulation/backup/fingerprint-guarded and chains the initramfs
+# rebuild; the never-do list (no blacklist of the only live input module, no
+# live Apple-HID reload, no unverified LUKS claim) is enforced per action.
+
+# The named evidence state the capability rows and the menu consume (the
+# round-85 vocabulary): the three unavailable states plus the healthy state.
+input_evidence_state()
+{
+    case "${INPUT_VERDICT:-ok}" in
+        initramfs-keyboard-missing) printf 'keyboard unavailable at decrypt prompt\n' ;;
+        module-missing|module-blacklisted|controller-not-loaded|firmware-missing|driver-probe-failed|driver-conflict)
+            printf 'input unavailable at login prompt\n' ;;
+        mouse-blacklisted)
+            # Round 96 (ITEM 3): the mouse-specific state (the
+            # keyboard-anchored verdicts are unchanged).
+            printf 'mouse unavailable at login prompt\n' ;;
+        *)
+            if ((${#INPUT_DEVICES[@]} == 0)) && ((${#INPUT_BOOTLOG_DEVICES[@]} == 0)) \
+                && [[ "$INPUT_LOADED_MODULES" == none && "$INPUT_AVAILABLE_MODULES" == none \
+                    && "$INPUT_BUILTIN_MODULES" == none && "$INPUT_MISSING_MODULES" == none ]] \
+                && [[ "$INPUT_JOURNAL_CLASSES" == none && "$INPUT_LAYOUT" == none-detected ]]; then
+                printf 'no input evidence\n'
+            else
+                printf 'input verified\n'
+            fi
+            ;;
+    esac
+}
+
+# Capability gate (the gpu_unavailable_reason fail-closed pattern): the tool
+# is unavailable only when no input evidence exists anywhere; every broken
+# state is exactly what the menu acts on.
+input_unavailable_reason()
+{
+    input_collect_evidence
+    [[ "$(input_evidence_state)" == "no input evidence" ]] || return 0
+    reason no-input-evidence
+    return 1
+}
+
+# The module set the live/recorded input devices actually reference (the same
+# derivation input_verdict and input_module_lists_collect use; kept as a
+# separate new function so the repair never diverges from the classifier).
+# Round 114 (ITEM 1): the none sentinel (INPUT_JOURNAL_CLASSES="none") is
+# never emitted as a module token — the sentinel previously collided with the
+# "none" blacklist sentinel in the verdict AND flowed a phantom "none" entry
+# into the remove-blacklist/candidate derivations.
+input_needed_modules()
+{
+    local needed="" need
+    if (( RUNNING_HOST_MODE == 1 )); then
+        local i b
+        for i in "${!INPUT_DEVICES[@]}"; do
+            b="${INPUT_DEVICE_BUS[$i]}"
+            needed+=" $(input_needed_for_bus "$b" 2>/dev/null || true)"
+        done
+    else
+        needed+=" $(printf '%s' "${INPUT_JOURNAL_CLASSES}" | tr ',' ' ' | sed 's/-/_/g' || true)"
+    fi
+    for need in $needed; do
+        [[ -n "$need" && "$need" != none ]] || continue
+        printf '%s\n' "$need"
+    done
+}
+
+# The per-family firmware bundle for one missing blob (evidence-derived, never
+# invented; proven present in the scope's repositories before any offer).
+firmware_package_for_blob()
+{
+    local case_blob="$(legacy_lc "$1")"
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            case "$case_blob" in
+                rtl_nic/*|rtlwifi/*) printf 'firmware-realtek\n' ;;
+                iwlwifi-*) printf 'firmware-iwlwifi\n' ;;
+                ath*/*|htc_*) printf 'firmware-atheros\n' ;;
+                amdgpu/*|radeon/*) printf 'firmware-amd-graphics\n' ;;
+                *) printf 'firmware-linux\n' ;;
+            esac
+            ;;
+        pacman|rpm|apk) printf 'linux-firmware\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+# The owning package of a missing input module (positive evidence only; the
+# ownership the round-84 diagnostic recorded, re-derived on demand).
+input_module_package_suggestion()
+{
+    local mod owner
+    for mod in $(printf '%s' "${INPUT_MISSING_MODULES:-none}" | tr ',' ' '); do
+        [[ -n "$mod" && "$mod" != none ]] || continue
+        owner="$(input_module_owner "$mod")"
+        if [[ -n "$owner" && "$owner" != unknown ]]; then
+            printf '%s\n' "$owner"
+            return 0
+        fi
+    done
+    return 1
+}
+
+input_firmware_package_suggestion()
+{
+    local blob candidate
+    for blob in $(printf '%s' "${INPUT_FIRMWARE_FAILURES:-none}" | tr ',' ' '); do
+        [[ -n "$blob" && "$blob" != none ]] || continue
+        candidate="$(firmware_package_for_blob "$blob" || true)"
+        [[ -n "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+    done
+    return 1
+}
+
+# Guarded package install dispatcher for the input repair (the gpu install
+# pattern): every backend through its simulation-first guarded verb.
+input_guarded_install_packages()
+{
+    local -a pkgs=("$@")
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            safe_apt_install_packages "$(msg input-install-package "${pkgs[*]}")" "Install the input device driver package" no "${pkgs[@]:-}"
+            [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]] && return 1
+            ;;
+        rpm)
+            guarded_rpm_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        pacman)
+            guarded_pacman_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        apk)
+            guarded_apk_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        *)
+            fail "No detected guarded package-manager backend can install the input driver package (detected: ${TARGET_PACKAGE_MANAGERS[*]:-none})."
+            ;;
+    esac
+}
+
+network_guarded_install_packages()
+{
+    local -a pkgs=("$@")
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            safe_apt_install_packages "$(msg network-install-firmware "${pkgs[*]}")" "Install the network firmware package" no "${pkgs[@]:-}"
+            [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]] && return 1
+            ;;
+        rpm)
+            guarded_rpm_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        pacman)
+            guarded_pacman_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        apk)
+            guarded_apk_install_packages "${pkgs[@]:-}" || return 1
+            ;;
+        *)
+            fail "No detected guarded package-manager backend can install the network firmware package (detected: ${TARGET_PACKAGE_MANAGERS[*]:-none})."
+            ;;
+    esac
+}
+
+# True when blacklisting $1 would remove the ONLY module serving a live host
+# input device (the never-do refusal: never blacklist/unload the only module
+# keeping the live host keyboard/pointer working).
+input_blacklist_would_kill_input()
+{
+    local mod="$1" i drv other=""
+    (( RUNNING_HOST_MODE == 1 )) || return 1
+    local serves_live=0
+    for i in "${!INPUT_DEVICES[@]}"; do
+        drv="${INPUT_DEVICE_DRIVER[$i]}"
+        [[ -n "$drv" && "$drv" != none ]] || continue
+        if [[ "$drv" == "$mod" ]]; then
+            serves_live=1
+        else
+            other+=" $drv"
+        fi
+    done
+    (( serves_live == 1 )) || return 1
+    [[ -n "$(printf '%s' "$other" | tr ' ' '\n' | sort -u | grep -vE '^[[:space:]]*$' || true)" ]] || return 0
+    return 1
+}
+
+# The broken vendor HID driver the generic fallback replaces (positive
+# evidence: a blacklisted hid-* vendor module referenced by the devices, or —
+# round 91 — a probe-failing hid-* driver: a driver that tried to bind and
+# failed leaves the device dead even without a blacklist entry).
+input_broken_driver_module()
+{
+    local need
+    for need in $(input_needed_modules); do
+        [[ -n "$need" ]] || continue
+        grep -qw "$need" <<<"$INPUT_BLACKLISTED_MODULES" || continue
+        case "$need" in
+            hid_*) printf '%s\n' "$need"; return 0 ;;
+        esac
+    done
+    # Round 91 (the driver-fallback chain): the probe-failure path.
+    if [[ "$INPUT_PROBE_FAILURES" != none && -n "$INPUT_PROBE_FAILURES" ]]; then
+        local pair mod
+        for pair in ${INPUT_PROBE_FAILURES//,/ }; do
+            mod="${pair%%=*}"
+            case "$mod" in
+                hid_*) printf '%s\n' "$mod"; return 0 ;;
+            esac
+        done
+    fi
+    return 1
+}
+
+# Write a blacklist entry for one module (fingerprint + backup + rollback
+# shape, the gpu blacklist writer pattern, generic for the input/network
+# repairs).  Returns 1 when the file already blacklists the module.
+write_module_blacklist()
+{
+    local mod="$1"
+    local conf="$TARGET_ROOT/etc/modprobe.d/blacklist-${mod}.conf"
+    local fp_before
+    fp_before="$(repair_file_fingerprint "$conf")"
+    if [[ -f "$conf" ]] && grep -Eq "^[[:space:]]*blacklist[[:space:]]+${mod}([[:space:]]|$)" "$conf"; then
+        return 1
+    fi
+    mkdir -p -- "$(dirname -- "$conf")"
+    [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/blacklist-${mod}.conf.bak" || true
+    local tmp="$conf.boot-repair-tmp"
+    printf 'blacklist %s\n' "$mod" > "$tmp" || fail "Failed to write the blacklist for $mod."
+    install -m 0644 "$tmp" "$conf" || fail "Failed to install the blacklist for $mod."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && return 1
+    return 0
+}
+
+# Remove blacklist/install lines for the named modules from every modprobe.d
+# tree (backup-first, fingerprint-compared).  Returns the number of files
+# rewritten; the caller chains the initramfs rebuild.
+remove_module_blacklist_entries()
+{
+    local -a mods=("$@")
+    local conf_dir file tmp fp_before changed=0 alt
+    alt="$(printf '%s' "${mods[*]}" | sed 's/ /|/g')"
+    for conf_dir in "$TARGET_ROOT/etc/modprobe.d" "$TARGET_ROOT/usr/lib/modprobe.d" "$TARGET_ROOT/lib/modprobe.d"; do
+        [[ -d "$conf_dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            journal_cancel_requested && return 0
+            grep -Eq "^[[:space:]]*(blacklist|install)[[:space:]]+" "$file" 2>/dev/null || continue
+            fp_before="$(repair_file_fingerprint "$file")"
+            tmp="$file.boot-repair-tmp"
+            awk -v alt="$alt" '
+                ($1 == "blacklist" || $1 == "install") && $2 ~ "^(" alt ")$" { next }
+                { print }
+            ' "$file" > "$tmp" || true
+            if ! cmp -s -- "$file" "$tmp" 2>/dev/null; then
+                cp -a -- "$file" "$SESSION_DIR/$(basename -- "$file").bak" 2>/dev/null || true
+                install -m 0644 "$tmp" "$file" || fail "Failed to rewrite $file."
+                changed=$((changed + 1))
+            fi
+            rm -f -- "$tmp"
+        done < <(find "$conf_dir" -maxdepth 1 -type f -name '*.conf' -printf '%p\n' 2>/dev/null | sort -u || true)
+    done
+    printf '%d\n' "$changed"
+    return 0
+}
+
+# Write module names into the detected initramfs backend's inclusion config
+# (the per-backend writers the input/network plans name: initramfs-tools
+# `modules`, dracut `add_drivers+=`, mkinitcpio `MODULES=(…)` entry-preserving,
+# mkinitfs features.d).  Prints the number of NEW module entries written;
+# the caller chains the initramfs rebuild and the lsinit* verification.
+boot_initramfs_modules_write()
+{
+    local tag="$1" modules="$2" backend="${TARGET_INITRAMFS_BACKEND:-none}"
+    local conf tmp fp_before written=0
+    local -a missing=()
+    local mod
+    case "$backend" in
+        initramfs-tools)
+            conf="$TARGET_ROOT/etc/initramfs-tools/modules"
+            mkdir -p -- "$(dirname -- "$conf")"
+            [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/initramfs-tools-modules.bak" || true
+            for mod in $modules; do
+                [[ -n "$mod" ]] || continue
+                grep -qx "$mod" "$conf" 2>/dev/null || missing+=("$mod")
+            done
+            ((${#missing[@]} > 0)) || { printf '0\n'; return 0; }
+            tmp="$conf.boot-repair-tmp"
+            if [[ -f "$conf" ]]; then cp -a -- "$conf" "$tmp"; else : > "$tmp"; fi
+            printf '%s\n' "${missing[@]:-}" >> "$tmp"
+            fp_before="$(repair_file_fingerprint "$conf")"
+            install -m 0644 "$tmp" "$conf" || fail "Failed to write the initramfs module inclusion file $conf."
+            rm -f -- "$tmp"
+            [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && { printf '0\n'; return 0; }
+            written=${#missing[@]}
+            ;;
+        dracut)
+            conf="$TARGET_ROOT/etc/dracut.conf.d/boot-repair-drivers.conf"
+            mkdir -p -- "$(dirname -- "$conf")"
+            [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/boot-repair-drivers.conf.bak" || true
+            local existing="" list="" canonical=""
+            existing="$(grep -hoE '^[[:space:]]*add_drivers\+=("[^"]*"|[^"[:space:]]+)' "$conf" 2>/dev/null \
+                | sed 's/.*+="\?//; s/"$//' | tr ' ' '\n' || true)"
+            for mod in $modules; do
+                [[ -n "$mod" ]] || continue
+                grep -qw "$mod" <<<"$existing" 2>/dev/null || missing+=("$mod")
+            done
+            list="$(printf '%s\n' "$existing" "${missing[@]:-}" | tr '\n' ' ' \
+                | sed 's/[[:space:]][[:space:]]*/ /g; s/^ //; s/ $//' || true)"
+            [[ -n "$list" ]] || { printf '0\n'; return 0; }
+            # dracut requires the value to carry surrounding white space INSIDE
+            # the quotes (add_drivers+=" atkbd i8042 usbhid "); without it
+            # dracut warns and drops the values, so the rebuilt image would
+            # silently lack the drivers.  The canonical line is also the
+            # identity check: a complete module set in a non-canonical layout
+            # (the pre-round-88 no-space format) is rewritten and counted as a
+            # change so the rebuild genuinely includes the drivers instead of
+            # reporting an untruthful inclusion-identical.
+            canonical="$(printf 'add_drivers+=" %s "\n' "$list")"
+            if ((${#missing[@]} == 0)) \
+                && [[ -f "$conf" ]] \
+                && [[ "$(cat -- "$conf" 2>/dev/null || true)" == "$canonical" ]]; then
+                printf '0\n'
+                return 0
+            fi
+            tmp="$conf.boot-repair-tmp"
+            printf '%s\n' "$canonical" > "$tmp" || fail "Failed to write the dracut driver inclusion file."
+            fp_before="$(repair_file_fingerprint "$conf")"
+            install -m 0644 "$tmp" "$conf" || fail "Failed to install the dracut driver inclusion file."
+            rm -f -- "$tmp"
+            [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && { printf '0\n'; return 0; }
+            if ((${#missing[@]} == 0)); then
+                written=1
+            else
+                written=${#missing[@]}
+            fi
+            ;;
+        mkinitcpio)
+            conf="$TARGET_ROOT/etc/mkinitcpio.conf"
+            [[ -f "$conf" ]] || { printf '0\n'; return 0; }
+            cp -a -- "$conf" "$SESSION_DIR/mkinitcpio.conf.bak" || true
+            local current="" merged=""
+            current="$(grep -m1 '^MODULES=' "$conf" 2>/dev/null | sed 's/^MODULES=(//; s/)$//' | tr -d '()' || true)"
+            merged="$current"
+            for mod in $modules; do
+                [[ -n "$mod" ]] || continue
+                grep -qw "$mod" <<<"$merged" 2>/dev/null || merged="$merged $mod"
+            done
+            [[ "$merged" == "$current" ]] && { printf '0\n'; return 0; }
+            tmp="$conf.boot-repair-tmp"
+            sed "s/^MODULES=.*/MODULES=(${merged})/" "$conf" > "$tmp" || fail "Failed to rewrite $conf."
+            fp_before="$(repair_file_fingerprint "$conf")"
+            install -m 0644 "$tmp" "$conf" || fail "Failed to install $conf."
+            rm -f -- "$tmp"
+            [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && { printf '0\n'; return 0; }
+            written=1
+            ;;
+        mkinitfs)
+            conf="$TARGET_ROOT/etc/mkinitfs/features.d/boot-repair-drivers.modules"
+            mkdir -p -- "$(dirname -- "$conf")"
+            [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/boot-repair-drivers.modules.bak" || true
+            # Round 130 (N4, the root cause): mkinitfs's feature .modules
+            # files carry KERNEL-RELATIVE PATH GLOBS (kernel/drivers/...),
+            # never bare module names — a bare name glob-matches nothing
+            # under the kernel dir and the build silently skips it (the
+            # written names never reached the rebuilt image while the write
+            # "succeeded").  Resolve every requested module to its on-disk
+            # .ko path glob(s) across ALL installed kernels (both the - and
+            # the _ name alternation; a path absent from one kernel's tree is
+            # silently skipped by that kernel's build, so the union is safe).
+            local -a paths=()
+            local abs rel mod_alt
+            for mod in $modules; do
+                [[ -n "$mod" ]] || continue
+                mod_alt="${mod//_/-}"
+                while IFS= read -r abs; do
+                    [[ -n "$abs" ]] || continue
+                    rel="${abs#"$TARGET_ROOT"/lib/modules/}"
+                    # The feature entries are relative to EACH kernel's
+                    # module dir at build time (kernel/drivers/...), so the
+                    # per-kernel prefix is stripped as well.
+                    rel="${rel#*/}"
+                    rel="${rel%.ko.gz}"; rel="${rel%.ko.xz}"; rel="${rel%.ko.zst}"; rel="${rel%.ko}"
+                    paths+=("${rel}.ko*")
+                done < <(find "$TARGET_ROOT/lib/modules" -path '*/kernel/*' -type f \
+                    \( -name "$mod.ko" -o -name "$mod.ko.*" \
+                       -o -name "$mod_alt.ko" -o -name "$mod_alt.ko.*" \) -print 2>/dev/null \
+                    | LC_ALL=C sort -u)
+            done
+            if ((${#paths[@]} > 0)); then
+                tmp="$conf.boot-repair-tmp"
+                printf '%s\n' "${paths[@]:-}" | LC_ALL=C sort -u > "$tmp"
+                if cmp -s "$tmp" "$conf" 2>/dev/null; then
+                    rm -f -- "$tmp"
+                else
+                    fp_before="$(repair_file_fingerprint "$conf")"
+                    install -m 0644 "$tmp" "$conf" || fail "Failed to write the mkinitfs feature file."
+                    rm -f -- "$tmp"
+                    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] || written=${#paths[@]}
+                fi
+            fi
+            # Round 130 (N4): mkinitfs reads ONLY the feature names listed in
+            # mkinitfs.conf's features= line — a features.d file that is not
+            # registered there is silently ignored by the build (the written
+            # modules never reached the rebuilt image while the config-level
+            # scan reported the old state).  Register the feature idempotently
+            # so the build consumes the written modules; a registration that
+            # changes the build input counts as a change even when the module
+            # file itself was already complete (the earlier unregistered
+            # rebuild never included the modules, so the image is stale).
+            local feats_conf="$TARGET_ROOT/etc/mkinitfs/mkinitfs.conf"
+            [[ -f "$feats_conf" ]] || fail "The target has no mkinitfs.conf; the feature file cannot be registered."
+            if ! grep -E '^[[:space:]]*features=' "$feats_conf" 2>/dev/null | grep -qw 'boot-repair-drivers'; then
+                [[ -f "$SESSION_DIR/mkinitfs.conf.bak" ]] || cp -a -- "$feats_conf" "$SESSION_DIR/mkinitfs.conf.bak" || true
+                local feats_tmp="$feats_conf.boot-repair-tmp"
+                if legacy_sed_ext 's/^(features="[^"]*)"/\1 boot-repair-drivers"/' "$feats_conf" > "$feats_tmp" 2>/dev/null \
+                    && grep -q 'boot-repair-drivers' "$feats_tmp"; then
+                    install -m 0644 "$feats_tmp" "$feats_conf" \
+                        || fail "Failed to register boot-repair-drivers in mkinitfs.conf."
+                    rm -f -- "$feats_tmp"
+                    (( written == 0 )) && written=1
+                else
+                    rm -f -- "$feats_tmp"
+                    fail "Failed to register boot-repair-drivers in mkinitfs.conf."
+                fi
+            fi
+            ;;
+        *)
+            fail "No initramfs inclusion writer for backend ${backend}."
+            ;;
+    esac
+    printf '%d\n' "$written"
+    return 0
+}
+
+# The LUKS proof: a target that expects a disk-unlock prompt must carry a
+# keyboard module builtin or inside at least one built image (never claim the
+# LUKS fix unverified).
+input_luks_proof_verified()
+{
+    (( RUNNING_HOST_MODE != 1 )) && [[ "$INPUT_LUKS_EXPECTED" == yes ]] || return 0
+    local mod
+    for mod in $INPUT_KEYBOARD_MODULES; do
+        grep -qw "$mod" <<<"$INPUT_BUILTIN_MODULES" && return 0
+    done
+    for mod in $INPUT_KEYBOARD_MODULES; do
+        grep -qw "$mod" <<<"${INPUT_INITRAMFS_PROOF//;/ }" && return 0
+    done
+    return 1
+}
+
+# 1. Load every missing input module on the live host (bounded modprobe; a
+# repair target has no live kernel — its action is the initramfs inclusion).
+input_repair_load_missing_module()
+{
+    (( RUNNING_HOST_MODE == 1 )) || {
+        repair_change_status "input-devices:load-module" "unchanged|$(reason target-no-live-kernel)"
+        return 0
+    }
+    [[ "$INPUT_MISSING_MODULES" != none && -n "$INPUT_MISSING_MODULES" ]] || {
+        repair_change_status "input-devices:load-module" "unchanged|$(reason no-missing-module)"
+        return 0
+    }
+    local mod changed=0
+    for mod in $(printf '%s' "$INPUT_MISSING_MODULES" | tr ',' ' '); do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        if modprobe "$mod" 2>&1 | tee -a "$SESSION_LOG"; then
+            changed=1
+            msg_log input-module-loaded "$mod"
+        else
+            msg_log input-module-load-failed "$mod"
+        fi
+    done
+    if (( changed == 1 )); then
+        repair_change_status "input-devices:load-module" changed
+    else
+        repair_change_status "input-devices:load-module" "unchanged|$(reason no-missing-module)"
+    fi
+}
+
+# Load the bus-controller modules the live devices reference on the host.
+input_repair_load_controller()
+{
+    (( RUNNING_HOST_MODE == 1 )) || {
+        repair_change_status "input-devices:load-controller" "unchanged|$(reason target-no-live-kernel)"
+        return 0
+    }
+    local controllers="" mod changed=0
+    case "$(printf '%s\n' "${INPUT_DEVICE_BUS[@]:-}" | sort -u | tr '\n' ' ')" in
+        *usb*) controllers+=" $INPUT_USB_CONTROLLER_MODULES" ;;
+        *ps2*) controllers+=" $INPUT_SERIO_CONTROLLER_MODULES" ;;
+        *i2c*) controllers+=" $INPUT_I2C_CONTROLLER_MODULES" ;;
+    esac
+    for mod in $controllers; do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        grep -qw "$mod" <<<"$INPUT_LOADED_MODULES" && continue
+        if modprobe "$mod" 2>&1 | tee -a "$SESSION_LOG"; then
+            changed=1
+            msg_log input-module-loaded "$mod"
+        else
+            msg_log input-module-load-failed "$mod"
+        fi
+    done
+    if (( changed == 1 )); then
+        repair_change_status "input-devices:load-controller" changed
+    else
+        repair_change_status "input-devices:load-controller" "unchanged|$(reason controller-already-loaded)"
+    fi
+}
+
+# Round 155 (Finding B): true when NO kernel of the target ships a .ko for
+# the module (the `-`/`_` alternation, bounded head -n1).  A module no kernel
+# ships can never be inside any built initramfs image — the Etch 2.6.18 case:
+# hid_generic/hid_apple/hid_multitouch/hid_lenovo are modern-only names the
+# include rebuild CANNOT add, so the per-module verification must not demand
+# them in the image proof (demanding an impossible module fails a SUCCESSFUL
+# rebuild with a spurious input-initramfs-rebuild-unverified).  Every SHIPPED
+# module must still be proven in the image — an unreadable proof still fails
+# closed, and the honest verified-equivalent evidence is emitted per module.
+# Positive evidence only: the cheap module-dep availability evidence decides
+# first (the menu renders the delta on every pass), and the bounded on-disk
+# find confirms the rare absence.
+input_module_unshippable()
+{
+    local mod="$1"
+    grep -qw "$mod" <<<"$INPUT_AVAILABLE_MODULES" && return 1
+    [[ -z "$(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+            -type f -name "$(input_module_alternation "$mod").ko*" 2>/dev/null | head -n1 || true)" ]]
+}
+
+# Include the keyboard modules in the initramfs and rebuild (THE LUKS case),
+# post-verified with the lsinit* proof before any claim.
+# Every written inclusion module must be proven present — built into the
+# kernel, loaded live (host), or listed in the image proof (target).  Fails
+# closed on an unreadable proof: the include repair must never claim the fix
+# without the image evidence (the round-130 N4 fix — the LUKS-gated check
+# passed vacuously on a target that does not expect a decrypt prompt, so the
+# written modules could be absent from the rebuilt image while the re-verify
+# still reported success).
+input_inclusion_proof_verified()
+{
+    local mod unshippable=""
+    for mod in $1; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$INPUT_BUILTIN_MODULES" && continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$mod" <<<"$INPUT_LOADED_MODULES" && continue
+        elif input_module_unshippable "$mod"; then
+            # Round 155 (Finding B): unshippable on this target — cannot be in
+            # any image; emit the honest evidence, never a silent pass.
+            unshippable="${unshippable:+$unshippable,}$mod"
+            continue
+        fi
+        grep -qw "$mod" <<<"${INPUT_INITRAMFS_PROOF//;/ }" || return 1
+    done
+    if [[ -n "$unshippable" ]]; then
+        msg_log input-inclusion-unshippable "$unshippable"
+    fi
+    return 0
+}
+
+# The cached-proof form of input_inclusion_proof_verified: every module is
+# proven builtin/loaded/listed in the cached image proof (the round-130 N4
+# residual — a config that already carried the full module set while an
+# earlier unregistered-feature rebuild left the image stale must still
+# trigger the rebuild).
+input_inclusion_set_in_image()
+{
+    local mod unshippable=""
+    for mod in $1; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$INPUT_BUILTIN_MODULES" && continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$mod" <<<"$INPUT_LOADED_MODULES" && continue
+        elif input_module_unshippable "$mod"; then
+            # Round 155 (Finding B): unshippable on this target — cannot be in
+            # any image; emit the honest evidence, never a silent pass.
+            unshippable="${unshippable:+$unshippable,}$mod"
+            continue
+        fi
+        grep -qw "$mod" <<<"${INPUT_INITRAMFS_PROOF//;/ }" || return 1
+    done
+    if [[ -n "$unshippable" ]]; then
+        msg_log input-inclusion-unshippable "$unshippable"
+    fi
+    return 0
+}
+
+# Round 131 (N9): the network twin of input_inclusion_proof_verified — every
+# written NIC driver module must be proven builtin, loaded live (host) or
+# listed in the built-image proof (target).  Fails closed on an unreadable
+# proof: the include repair never claims the fix without the image evidence.
+network_inclusion_proof_verified()
+{
+    local mod
+    for mod in $1; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$NETWORK_BUILTIN_MODULES" && continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$mod" <<<"$NETWORK_LOADED_MODULES" && continue
+        fi
+        grep -qw "$mod" <<<"${NETWORK_INITRAMFS_PROOF//;/ }" || return 1
+    done
+    return 0
+}
+
+# The cached-proof form of network_inclusion_proof_verified (the round-130 N4
+# residual's network twin): a config that already carried the full module set
+# while an earlier rebuild left the image stale must still trigger the
+# rebuild.
+network_inclusion_set_in_image()
+{
+    local mod
+    for mod in $1; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$NETWORK_BUILTIN_MODULES" && continue
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$mod" <<<"$NETWORK_LOADED_MODULES" && continue
+        fi
+        grep -qw "$mod" <<<"${NETWORK_INITRAMFS_PROOF//;/ }" || return 1
+    done
+    return 0
+}
+
+input_repair_include_initramfs()
+{
+    local -a mods=() uniq=()
+    local mod candidate entry
+    local duplicate=0
+    local written=0
+    for mod in $INPUT_KEYBOARD_MODULES $INPUT_MISSING_MODULES; do
+        [[ -n "$mod" && "$mod" != none ]] && mods+=("$mod")
+    done
+    for candidate in "${mods[@]:-}"; do
+        duplicate=0
+        for entry in "${uniq[@]:-}"; do
+            [[ "$entry" == "$candidate" ]] && duplicate=1
+        done
+        (( duplicate == 0 )) && uniq+=("$candidate")
+    done
+    ((${#uniq[@]} > 0)) || {
+        repair_change_status "input-devices:include-initramfs" "unchanged|$(reason no-modules-to-include)"
+        return 0
+    }
+    written="$(boot_initramfs_modules_write "input" "${uniq[*]}")" || true
+    if [[ "$written" == 0 ]]; then
+        # Round 130 (N4): the config already carried the full module set, but
+        # an earlier unregistered-feature rebuild may have left the image
+        # stale (the user's Alpine loop: the write succeeded, the rebuild
+        # ignored the unregistered feature file, and the re-run kept
+        # re-offering the include).  When the cached proof lacks any written
+        # module, the rebuild must still run so the image catches up with the
+        # config.
+        if input_inclusion_set_in_image "${uniq[*]}"; then
+            repair_change_status "input-devices:include-initramfs" "unchanged|$(reason inclusion-identical)"
+            return 0
+        fi
+    fi
+    msg_log input-inclusion-written "${uniq[*]}"
+    adaptive_initramfs_repair
+    # Never claim the fix without the proof: the round-130 N4 fix replaces
+    # the LUKS-gated check (which passed vacuously on a target that does not
+    # expect a decrypt prompt) with the per-module image-proof verification.
+    # Round 139 (host false-failure fix): that verification is TARGET-shaped.
+    # On a running host input_initramfs_proof_collect emits only the
+    # live-evidence sentinel ("running-host: live keyboard evidence
+    # applies"), so the per-module grep had no image listing to match and
+    # failed the stage AFTER a successful lsinitrd-verified rebuild (the
+    # user's Fedora host include).  The host's own proof shape is the config
+    # write above plus the just-completed verified rebuild
+    # (adaptive_initramfs_repair fails closed: preflight, build, lsinitrd
+    # read-back, install) — the live keyboard evidence stays authoritative
+    # for the running session, so the host path never fails after a verified
+    # rebuild.  Targets keep the per-module image check unchanged.
+    INPUT_EVIDENCE_COLLECTED=0
+    input_initramfs_proof_collect
+    if (( RUNNING_HOST_MODE != 1 )); then
+        input_inclusion_proof_verified "${uniq[*]}" \
+            || fail "$(reason input-initramfs-rebuild-unverified)."
+    fi
+    repair_change_status "input-devices:include-initramfs" changed
+}
+
+# Remove the input module blacklist (all three modprobe.d trees) and
+# rebuild the initramfs on a target; config-only on the live host (the
+# round-95 decision #1 / round-127 consolidation — the network twin's
+# shape; the round-94 drill proved the host rebuild from the unchanged
+# config functionally equivalent, byte-different, so it is skipped).
+input_repair_remove_blacklist()
+{
+    local -a mods=()
+    local need removed=0
+    for need in $(input_needed_modules); do
+        [[ -n "$need" ]] || continue
+        grep -qw "$need" <<<"$INPUT_BLACKLISTED_MODULES" && mods+=("$need")
+    done
+    # Round 96 (ITEM 3, decision #2): the mouse-class blacklist — a
+    # blacklisted pointer module with positive mouse evidence joins the
+    # removal set (the mouse-blacklisted verdict's action; the
+    # keyboard-anchored needed set above is unchanged).
+    if [[ "${INPUT_VERDICT:-}" == mouse-blacklisted ]]; then
+        local mouse_mod
+        for mouse_mod in $INPUT_MOUSE_MODULES; do
+            [[ -n "$mouse_mod" ]] || continue
+            grep -qw "$mouse_mod" <<<"$INPUT_BLACKLISTED_MODULES" && mods+=("$mouse_mod")
+        done
+    fi
+    ((${#mods[@]} > 0)) || {
+        repair_change_status "input-devices:remove-blacklist" "unchanged|$(reason no-blacklist-found)"
+        return 0
+    }
+    removed="$(remove_module_blacklist_entries "${mods[@]:-}")" || true
+    if (( removed > 0 )); then
+        msg_log input-blacklist-removed "$(IFS=,; printf '%s' "${mods[*]}")"
+        if (( RUNNING_HOST_MODE != 1 )); then
+            boot_initramfs_modules_write "input" "${mods[*]}" >/dev/null || true
+            adaptive_initramfs_repair
+        fi
+        repair_change_status "input-devices:remove-blacklist" changed
+    else
+        repair_change_status "input-devices:remove-blacklist" "unchanged|$(reason no-blacklist-found)"
+    fi
+}
+
+# Install the missing input driver/firmware package (the backend-derived
+# owning package or the per-family firmware bundle), then rebuild.
+input_repair_install_package()
+{
+    local pkg=""
+    case "$INPUT_VERDICT" in
+        firmware-missing) pkg="$(input_firmware_package_suggestion || true)" ;;
+        module-missing) pkg="$(input_module_package_suggestion || true)" ;;
+    esac
+    [[ -n "$pkg" ]] || {
+        repair_change_status "input-devices:install-package" "unchanged|$(reason package-unknown)"
+        return 0
+    }
+    if ! target_package_available "$pkg"; then
+        repair_change_status "input-devices:install-package" "unchanged|$(reason package-not-in-repo "$pkg")"
+        return 0
+    fi
+    input_guarded_install_packages "$pkg" || {
+        repair_change_status "input-devices:install-package" "unchanged|$(reason install-package-no-op)"
+        return 0
+    }
+    adaptive_initramfs_repair
+    repair_change_status "input-devices:install-package" changed
+}
+
+# The generic HID fallback: load hid-generic (safe — it is the fallback
+# driver, never an unbind) and blacklist the broken vendor driver.  Config
+# only on a target; never the only-live-input-module refusal.
+input_repair_hid_fallback()
+{
+    local broken=""
+    broken="$(input_broken_driver_module || true)"
+    [[ -n "$broken" ]] || {
+        repair_change_status "input-devices:hid-fallback" "unchanged|$(reason no-broken-driver)"
+        return 0
+    }
+    if (( RUNNING_HOST_MODE == 1 )); then
+        if input_blacklist_would_kill_input "$broken"; then
+            repair_change_status "input-devices:hid-fallback" "unchanged|$(reason input-blacklist-would-kill-input "$broken")"
+            return 0
+        fi
+        if ! grep -qw hid_generic /proc/modules 2>/dev/null && [[ ! -d /sys/module/hid_generic ]]; then
+            if modprobe hid_generic 2>&1 | tee -a "$SESSION_LOG"; then
+                msg_log input-module-loaded hid_generic
+            else
+                msg_log input-module-load-failed hid_generic
+            fi
+        fi
+    fi
+    local already=0
+    write_module_blacklist "$broken" || already=1
+    local written=0
+    boot_initramfs_modules_write "input" "hid_generic" >/dev/null && written=$? || written=$?
+    (( already == 1 && written == 0 )) && {
+        repair_change_status "input-devices:hid-fallback" "unchanged|$(reason config-identical)"
+        return 0
+    }
+    msg_log input-blacklist-written "$broken"
+    adaptive_initramfs_repair
+    repair_change_status "input-devices:hid-fallback" changed
+}
+
+# The Apple fnmode quirk (config file + initramfs rebuild; NEVER live-reload
+# hid_apple on a running host — it unbinds the active input).
+input_repair_quirk_fnmode()
+{
+    local conf="$TARGET_ROOT/etc/modprobe.d/hid-apple-fnmode.conf"
+    local fp_before
+    fp_before="$(repair_file_fingerprint "$conf")"
+    if [[ -f "$conf" ]] && grep -qE '^[[:space:]]*options[[:space:]]+hid_apple[[:space:]]+fnmode=' "$conf"; then
+        repair_change_status "input-devices:quirk-fnmode" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    mkdir -p -- "$(dirname -- "$conf")"
+    [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/hid-apple-fnmode.conf.bak" || true
+    local tmp="$conf.boot-repair-tmp"
+    printf 'options hid_apple fnmode=2\n' > "$tmp" || fail "Failed to write the hid_apple quirk file."
+    install -m 0644 "$tmp" "$conf" || fail "Failed to install the hid_apple quirk file."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] \
+        && { repair_change_status "input-devices:quirk-fnmode" "unchanged|$(reason config-identical)"; return 0; }
+    msg_log input-quirk-written
+    adaptive_initramfs_repair
+    repair_change_status "input-devices:quirk-fnmode" changed
+}
+
+# ---------------------------------------------------------------------------
+# Round 92 (the driver-fallback ladder, steps 3-4): the reinstall/rebuild and
+# the older-version + -1 pin actions (plan-driver-fallback-chain.md §2 ladder
+# steps 6-8 — the "higher"/"highest" rungs).  Step 3 re-installs the
+# bound-driver package through the guarded backends (apt --reinstall /
+# dnf5 reinstall / pacman -S / apk add — each proving its no-op) and then
+# rebuilds the out-of-tree modules through the detected build system (the
+# adaptive_dkms_repair dispatcher's simulate/confirm/apply/verify semantics).
+# Step 4 installs an OLDER provable repository version (guarded
+# --allow-downgrades / dnf5 downgrade) and pins the NEWER available version at
+# Pin-Priority: -1 (apt/dpkg preferences.d only; rpm has no equivalent pin
+# file and pacman/apk cannot prove older versions — the honest fail-closed
+# path).  Both steps join the ranked ladder AFTER the 0.2.30 slice steps in
+# the menus and inherit the tried/chaining ordering.
+# ---------------------------------------------------------------------------
+
+# The bound-driver package the reinstall/pin actions target (positive
+# evidence: the backend-derived owner of the broken/needed module).  Input:
+# the probe-failed driver first, then the missing module, then the
+# bus/journal-needed set.  Returns 1 without a provable package.
+input_reinstall_package()
+{
+    local mod owner
+    if [[ "$INPUT_PROBE_FAILURES" != none && -n "$INPUT_PROBE_FAILURES" ]]; then
+        mod="${INPUT_PROBE_FAILURES%%,*}"; mod="${mod%%=*}"
+        owner="$(module_owner_for_backend "$mod")"
+        [[ -n "$owner" && "$owner" != unknown ]] && { printf '%s\n' "$owner"; return 0; }
+    fi
+    if [[ "$INPUT_MISSING_MODULES" != none && -n "$INPUT_MISSING_MODULES" ]]; then
+        mod="${INPUT_MISSING_MODULES%%,*}"; mod="${mod%%=*}"
+        owner="$(module_owner_for_backend "$mod")"
+        [[ -n "$owner" && "$owner" != unknown ]] && { printf '%s\n' "$owner"; return 0; }
+    fi
+    for mod in $(input_needed_modules); do
+        [[ -n "$mod" ]] || continue
+        owner="$(module_owner_for_backend "$mod")"
+        [[ -n "$owner" && "$owner" != unknown ]] && { printf '%s\n' "$owner"; return 0; }
+    done
+    return 1
+}
+
+# Network counterpart: the probe-failed driver first, then the bound modules.
+network_reinstall_package()
+{
+    local mod owner
+    if [[ "$NETWORK_PROBE_FAILURES" != none && -n "$NETWORK_PROBE_FAILURES" ]]; then
+        mod="${NETWORK_PROBE_FAILURES%%,*}"; mod="${mod%%=*}"
+        owner="$(module_owner_for_backend "$mod")"
+        [[ -n "$owner" && "$owner" != unknown ]] && { printf '%s\n' "$owner"; return 0; }
+    fi
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] || continue
+        owner="$(module_owner_for_backend "$mod")"
+        [[ -n "$owner" && "$owner" != unknown ]] && { printf '%s\n' "$owner"; return 0; }
+    done
+    return 1
+}
+
+# The available (repository) versions of one driver package, ascending:
+# apt/dpkg via `apt-cache madison` (the kernel-metapackage pattern,
+# apt_managed_metapackage_available_versions), rpm via a bounded read-only
+# `dnf5 repoquery --available`; pacman/apk fail closed (returns 1 — the pin
+# action is never offered there).  Prints "<pkg>=<v1>,<v2>…".
+driver_package_available_versions()
+{
+    local pkg="$1" v output
+    local -a vers=()
+    [[ -n "$pkg" ]] || return 1
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            while IFS= read -r v; do
+                [[ -n "$v" ]] && vers+=("$v")
+            done < <(apt_managed_metapackage_available_versions "$pkg" 2>/dev/null)
+            ;;
+        rpm)
+            set +e
+            output="$(
+                RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env \
+                    HOME=/root LC_ALL=C \
+                    PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    dnf5 repoquery --available --qf '%{VERSION}-%{RELEASE}\n' "$pkg" 2>/dev/null
+            )"
+            set -e
+            [[ -n "$output" ]] || return 1
+            while IFS= read -r v; do
+                [[ "$v" =~ ^[0-9] ]] && vers+=("$v")
+            done < <(printf '%s\n' "$output" \
+                | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+                | LC_ALL=C legacy_sort_versions -u)
+            ;;
+        *) return 1 ;;
+    esac
+    ((${#vers[@]} > 0)) || return 1
+    printf '%s=%s\n' "$pkg" "$(IFS=,; printf '%s' "${vers[*]}")"
+}
+
+# The reinstall gate (the menu evidence check): the action is offered when the
+# build system exists or the bound-driver package is proven present in the
+# scope's own repositories.  Returns 0 (offered) / 1 (not offered).
+input_reinstall_offered()
+{
+    if [[ "$(module_build_system)" != none ]]; then
+        return 0
+    fi
+    local pkg=""
+    pkg="$(input_reinstall_package || true)"
+    [[ -n "$pkg" ]] || return 1
+    if target_package_available "$pkg"; then
+        return 0
+    fi
+    return 1
+}
+
+network_reinstall_offered()
+{
+    if [[ "$(module_build_system)" != none ]]; then
+        return 0
+    fi
+    local pkg=""
+    pkg="$(network_reinstall_package || true)"
+    [[ -n "$pkg" ]] || return 1
+    if target_package_available "$pkg"; then
+        return 0
+    fi
+    return 1
+}
+
+# The pin gate (the menu evidence check): the available-versions evidence
+# proves at least TWO versions (an older one to downgrade to and a newer one
+# to pin).  pacman/apk never produce that evidence (fail closed).
+driver_pin_version_offered()
+{
+    local versions_line="$1" pkg list count
+    [[ -n "$versions_line" && "$versions_line" != none ]] || return 1
+    pkg="${versions_line%%=*}"
+    list="${versions_line#*=}"
+    [[ -n "$pkg" && -n "$list" ]] || return 1
+    count="$(printf '%s' "$list" | tr ',' '\n' | grep -c . || true)"
+    if (( count >= 2 )); then
+        return 0
+    fi
+    return 1
+}
+
+# The menu display label for the pin action (per-backend honesty: apt pins the
+# newer version; rpm downgrades without a pin file).
+driver_pin_version_label()
+{
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        rpm) printf 'Install an older driver version (dnf downgrade — no version pin exists on rpm)' ;;
+        *)   printf 'Install an older driver version and pin the newer one' ;;
+    esac
+}
+
+# Ladder step 3: the reinstall/rebuild action.  The package reinstall runs
+# through each backend's guarded verb (apt --reinstall proves its no-op via
+# the simulation; pacman/apk prove theirs through the fingerprint checks),
+# then the detected build system rebuilds the out-of-tree modules (the
+# adaptive_dkms_repair dispatcher, whose own `dkms` status joins the session's
+# change record).  The combined status uses the `input-devices:reinstall` key.
+input_repair_reinstall()
+{
+    local pkg="" msys="" applied=0
+    msys="$(module_build_system)"
+    pkg="$(input_reinstall_package || true)"
+    if [[ "$msys" == none ]] && [[ -z "$pkg" ]]; then
+        repair_change_status "input-devices:reinstall" "unchanged|$(reason no-driver-reinstall-target)"
+        return 0
+    fi
+    if [[ -n "$pkg" ]]; then
+        case "${TARGET_PACKAGE_MANAGER:-}" in
+            apt/dpkg)
+                if ! target_package_available "$pkg"; then
+                    repair_change_status "input-devices:reinstall" "unchanged|$(reason package-not-in-repo "$pkg")"
+                    return 0
+                fi
+                safe_apt_install_packages "$(msg input-reinstall-package "$pkg")" "Reinstall the input device driver package" yes "$pkg"
+                [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]] || applied=1
+                ;;
+            rpm)
+                adaptive_rpm_apply "$(msg input-reinstall-package "$pkg")" "Reinstall the input device driver package" "input-devices:reinstall" reinstall "$pkg"
+                [[ "${REPAIR_CHANGE_STATUS_LAST_STATE:-}" == changed ]] && applied=1
+                ;;
+            pacman)
+                guarded_pacman_install_packages "$pkg" && applied=1 || true
+                ;;
+            apk)
+                guarded_apk_install_packages "$pkg" && applied=1 || true
+                ;;
+        esac
+    fi
+    if [[ "$msys" != none ]]; then
+        adaptive_dkms_repair
+        [[ "${REPAIR_CHANGE_STATUS_LAST_STATE:-}" == changed ]] && applied=1
+    fi
+    if (( applied == 1 )); then
+        repair_change_status "input-devices:reinstall" changed
+    elif [[ "${REPAIR_CHANGE_STATUS_LAST_KEY:-}" != "input-devices:reinstall" ]]; then
+        repair_change_status "input-devices:reinstall" "unchanged|$(reason install-package-no-op)"
+    fi
+}
+
+# Network counterpart (same flow; the `network:reinstall` status key).
+network_repair_reinstall()
+{
+    local pkg="" msys="" applied=0
+    msys="$(module_build_system)"
+    pkg="$(network_reinstall_package || true)"
+    if [[ "$msys" == none ]] && [[ -z "$pkg" ]]; then
+        repair_change_status "network:reinstall" "unchanged|$(reason no-driver-reinstall-target)"
+        return 0
+    fi
+    if [[ -n "$pkg" ]]; then
+        case "${TARGET_PACKAGE_MANAGER:-}" in
+            apt/dpkg)
+                if ! target_package_available "$pkg"; then
+                    repair_change_status "network:reinstall" "unchanged|$(reason package-not-in-repo "$pkg")"
+                    return 0
+                fi
+                safe_apt_install_packages "$(msg network-reinstall-package "$pkg")" "Reinstall the network driver package" yes "$pkg"
+                [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]] || applied=1
+                ;;
+            rpm)
+                adaptive_rpm_apply "$(msg network-reinstall-package "$pkg")" "Reinstall the network driver package" "network:reinstall" reinstall "$pkg"
+                [[ "${REPAIR_CHANGE_STATUS_LAST_STATE:-}" == changed ]] && applied=1
+                ;;
+            pacman)
+                guarded_pacman_install_packages "$pkg" && applied=1 || true
+                ;;
+            apk)
+                guarded_apk_install_packages "$pkg" && applied=1 || true
+                ;;
+        esac
+    fi
+    if [[ "$msys" != none ]]; then
+        adaptive_dkms_repair
+        [[ "${REPAIR_CHANGE_STATUS_LAST_STATE:-}" == changed ]] && applied=1
+    fi
+    if (( applied == 1 )); then
+        repair_change_status "network:reinstall" changed
+    elif [[ "${REPAIR_CHANGE_STATUS_LAST_KEY:-}" != "network:reinstall" ]]; then
+        repair_change_status "network:reinstall" "unchanged|$(reason install-package-no-op)"
+    fi
+}
+
+# The per-backend downgrade body for the pin action (step 4): guarded
+# `--allow-downgrades` install of the chosen OLDER version (apt/dpkg) or
+# `dnf5 downgrade <pkg>-<ver>` (rpm); pacman/apk never reach here (the menu
+# gate proves no versions).  `display_label` is the keyed msg token, `label`
+# the plain-English prose.  Returns 0 when the downgrade applied, 1 on a
+# proven no-op, and the caller owns the status line.
+driver_package_downgrade()
+{
+    local pkg="$1" older="$2" display_label="$3" label="$4"
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            safe_apt_downgrade_packages "$display_label" "$label" "$pkg=$older"
+            [[ "${SAFE_APT_INSTALL_NO_CHANGES:-0}" == 1 ]] && return 1
+            return 0
+            ;;
+        rpm)
+            guarded_rpm_downgrade_packages "$display_label" "$label" "$pkg-$older"
+            ;;
+    esac
+}
+
+# Ladder step 4: the older-version + -1 pin action.  The available-versions
+# evidence picks the versions: the NEWEST available version is pinned (apt
+# preferences.d, Pin-Priority: -1) and the chosen older version is installed
+# through the guarded downgrade; on rpm only the downgrade runs (no pin file).
+# When several older versions exist the user chooses from a bounded follow-up
+# menu (default: the most recent older version).
+input_repair_pin_version()
+{
+    local pkg="" line="" list="" newest="" older="" choice=""
+    pkg="$(input_reinstall_package || true)"
+    [[ -n "$pkg" ]] || {
+        repair_change_status "input-devices:pin-version" "unchanged|$(reason pin-version-no-package)"
+        return 0
+    }
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg|rpm) ;;
+        *)
+            repair_change_status "input-devices:pin-version" "unchanged|$(reason pin-version-unsupported)"
+            return 0
+            ;;
+    esac
+    line="$(driver_package_available_versions "$pkg" || true)"
+    [[ -n "$line" ]] || {
+        repair_change_status "input-devices:pin-version" "unchanged|$(reason no-older-version "$pkg")"
+        return 0
+    }
+    list="${line#*=}"
+    newest="${list##*,}"
+    older="$(printf '%s' "$list" | sed "s/,$newest$//" | awk -F, '{print $NF}' || true)"
+    [[ -n "$older" && "$older" != "$newest" ]] || {
+        repair_change_status "input-devices:pin-version" "unchanged|$(reason no-older-version "$pkg")"
+        return 0
+    }
+    if [[ "$(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' '\n' | grep -c . || true)" -gt 1 ]]; then
+        local vmenu="Available older versions of $pkg:"$'\n'
+        local vidx=1 v sel_older="" cancelled=0
+        for v in $(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' ' '); do
+            [[ -n "$v" ]] || continue
+            vmenu+="$vidx) $v"$'\n'
+            vidx=$((vidx + 1))
+        done
+        vmenu+="0) Cancel"
+        if helper_menu_prompt "$vmenu" "$MENU_ANSWER_WINDOW_SECONDS" MENU \
+            && [[ "$HELPER_MENU_ANSWER" == "0" ]]; then
+            cancelled=1
+        elif [[ "$HELPER_MENU_ANSWER" =~ ^[0-9]+$ ]] \
+            && (( HELPER_MENU_ANSWER >= 1 && HELPER_MENU_ANSWER < vidx )); then
+            vidx=1
+            for v in $(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' ' '); do
+                [[ -n "$v" ]] || continue
+                (( vidx == HELPER_MENU_ANSWER )) && sel_older="$v"
+                vidx=$((vidx + 1))
+            done
+            [[ -n "$sel_older" ]] && older="$sel_older"
+        fi
+        if (( cancelled == 1 )); then
+            repair_change_status "input-devices:pin-version" "unchanged|$(reason user-declined)"
+            return 0
+        fi
+    fi
+    msg_log input-pin-chosen "$pkg" "$older" "$newest"
+    local pin_written=0 applied=0
+    # The apt preferences.d pin for the NEWER version (backup + fingerprint +
+    # post-write verification, the guarded config-write conventions).
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+        apt_driver_pin_write "$pkg" "$newest" && pin_written=1 || true
+    fi
+    if driver_package_downgrade "$pkg" "$older" \
+        "$(msg input-pin-install "$pkg" "$older")" "Install the older input driver version $pkg=$older"; then
+        applied=1
+    fi
+    if (( applied == 1 || pin_written == 1 )); then
+        repair_change_status "input-devices:pin-version" changed
+    else
+        repair_change_status "input-devices:pin-version" "unchanged|$(reason install-package-no-op)"
+    fi
+}
+
+# Network counterpart.
+network_repair_pin_version()
+{
+    local pkg="" line="" list="" newest="" older="" choice=""
+    pkg="$(network_reinstall_package || true)"
+    [[ -n "$pkg" ]] || {
+        repair_change_status "network:pin-version" "unchanged|$(reason pin-version-no-package)"
+        return 0
+    }
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg|rpm) ;;
+        *)
+            repair_change_status "network:pin-version" "unchanged|$(reason pin-version-unsupported)"
+            return 0
+            ;;
+    esac
+    line="$(driver_package_available_versions "$pkg" || true)"
+    [[ -n "$line" ]] || {
+        repair_change_status "network:pin-version" "unchanged|$(reason no-older-version "$pkg")"
+        return 0
+    }
+    list="${line#*=}"
+    newest="${list##*,}"
+    older="$(printf '%s' "$list" | sed "s/,$newest$//" | awk -F, '{print $NF}' || true)"
+    [[ -n "$older" && "$older" != "$newest" ]] || {
+        repair_change_status "network:pin-version" "unchanged|$(reason no-older-version "$pkg")"
+        return 0
+    }
+    if [[ "$(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' '\n' | grep -c . || true)" -gt 1 ]]; then
+        local vmenu="Available older versions of $pkg:"$'\n'
+        local vidx=1 v sel_older="" cancelled=0
+        for v in $(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' ' '); do
+            [[ -n "$v" ]] || continue
+            vmenu+="$vidx) $v"$'\n'
+            vidx=$((vidx + 1))
+        done
+        vmenu+="0) Cancel"
+        if helper_menu_prompt "$vmenu" "$MENU_ANSWER_WINDOW_SECONDS" MENU \
+            && [[ "$HELPER_MENU_ANSWER" == "0" ]]; then
+            cancelled=1
+        elif [[ "$HELPER_MENU_ANSWER" =~ ^[0-9]+$ ]] \
+            && (( HELPER_MENU_ANSWER >= 1 && HELPER_MENU_ANSWER < vidx )); then
+            vidx=1
+            for v in $(printf '%s' "$list" | sed "s/,$newest$//" | tr ',' ' '); do
+                [[ -n "$v" ]] || continue
+                (( vidx == HELPER_MENU_ANSWER )) && sel_older="$v"
+                vidx=$((vidx + 1))
+            done
+            [[ -n "$sel_older" ]] && older="$sel_older"
+        fi
+        if (( cancelled == 1 )); then
+            repair_change_status "network:pin-version" "unchanged|$(reason user-declined)"
+            return 0
+        fi
+    fi
+    msg_log network-pin-chosen "$pkg" "$older" "$newest"
+    local pin_written=0 applied=0
+    if [[ "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
+        apt_driver_pin_write "$pkg" "$newest" && pin_written=1 || true
+    fi
+    if driver_package_downgrade "$pkg" "$older" \
+        "$(msg network-pin-install "$pkg" "$older")" "Install the older network driver version $pkg=$older"; then
+        applied=1
+    fi
+    if (( applied == 1 || pin_written == 1 )); then
+        repair_change_status "network:pin-version" changed
+    else
+        repair_change_status "network:pin-version" "unchanged|$(reason install-package-no-op)"
+    fi
+}
+
+# The apt preferences.d pin file for the NEWER available version
+# (Pin-Priority: -1 — the upgrade guard): backup + fingerprint + post-write
+# verification (the guarded config-write conventions).  Returns 0 when the
+# file changed, 1 when it already carried the identical pin (a proven no-op).
+apt_driver_pin_write()
+{
+    local pkg="$1" newer="$2"
+    local conf="$TARGET_ROOT/etc/apt/preferences.d/boot-repair-pin-${pkg}.pref"
+    local fp_before
+    fp_before="$(repair_file_fingerprint "$conf")"
+    mkdir -p -- "$(dirname -- "$conf")"
+    [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/boot-repair-pin-${pkg}.pref.bak" || true
+    local tmp="$conf.boot-repair-tmp"
+    printf 'Package: %s\nPin: version %s\nPin-Priority: -1\n' "$pkg" "$newer" > "$tmp" \
+        || fail "Failed to write the apt pin file for $pkg."
+    install -m 0644 "$tmp" "$conf" || fail "Failed to install the apt pin file for $pkg."
+    rm -f -- "$tmp"
+    if [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]]; then
+        return 1
+    fi
+    msg_log driver-pin-written "$pkg" "$newer"
+    return 0
+}
+
+# Guarded apt DOWNGRADE of one package to an older repository version
+# (`pkg=ver`, --allow-downgrades): the safe_apt_install_packages flow
+# (simulation-first with the downgrade flag, the shared safety validator, the
+# interrupted-dpkg/deps retries, the no-op proof, the bounded apply) — the
+# caller owns the change status line and the pin file.  A version spec apt
+# cannot resolve fails closed.
+safe_apt_downgrade_packages()
+{
+    local display_label="$1" label="$2" output rc fix_output fix_rc dep
+    shift 2
+    local -a packages=("$@") sim_args=(-s -o Debug::NoLocking=1 --allow-downgrades)
+    local -a real_args=(-y --allow-downgrades)
+
+    ((${#packages[@]} > 0)) || return 0
+    [[ -x "$TARGET_ROOT/usr/bin/apt-get" ]] || fail "apt-get is unavailable; cannot perform known package downgrade: $label"
+    sim_args+=(install "${packages[@]:-}")
+    real_args+=(install "${packages[@]:-}")
+
+    simulate_install_once()
+    {
+        set +e
+        output="$(
+            run_apt_bounded probe /usr/bin/env \
+                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+                apt-get "${sim_args[@]:-}" 2>&1
+        )"
+        rc=$?
+        set -e
+        printf '%s\n' "$output" | tee -a "$SESSION_LOG"
+        msg_log correction-simulation-exit-code "$rc" "$display_label"
+    }
+
+    msg_log simulate-correction "$display_label"
+    simulate_install_once
+
+    if ((rc != 0 && rc != 124)) && grep -Eiq 'dpkg was interrupted|dpkg --configure -a' <<<"$output"; then
+        msg_log apt-correction-blocked-dpkg
+        run_chroot_keyed complete-interrupted-dpkg-before-correction "Complete interrupted package configuration before correction" dpkg --configure -a
+        simulate_install_once
+    fi
+
+    if ((rc != 0 && rc != 124)) && grep -Eiq 'unmet dependencies|you might want to run.*apt.*--fix-broken|apt --fix-broken install' <<<"$output"; then
+        msg_log apt-correction-blocked-deps
+        set +e
+        fix_output="$(
+            run_apt_bounded probe /usr/bin/env \
+                HOME=/root PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                DEBIAN_FRONTEND=noninteractive APT_LISTCHANGES_FRONTEND=none \
+                apt-get -s -o Debug::NoLocking=1 -f install 2>&1
+        )"
+        fix_rc=$?
+        set -e
+        printf '%s\n' "$fix_output" | tee -a "$SESSION_LOG"
+        if ((fix_rc == 0)) && apt_simulation_is_safe "$fix_output"; then
+            run_chroot_keyed repair-broken-deps-before-correction "Repair broken dependencies before known package correction" apt-get -y -f install
+            simulate_install_once
+        fi
+    fi
+
+    if ((rc != 0)); then
+        if (( rc == 124 )); then
+            fail "$(reason package-manager-timeout "$label")."
+        fi
+        dep="$(apt_unsatisfiable_dependency "$output" || true)"
+        [[ -n "$dep" ]] \
+            && fail "$dep from enabled repositories; enable the repository or sync apt package lists and retry."
+    fi
+    ((rc == 0)) || fail "Known package downgrade simulation failed: $label"
+    apt_simulation_is_safe "$output" || fail "Known package downgrade was rejected by Boot Bitch safety policy: $label"
+
+    SAFE_APT_INSTALL_NO_CHANGES=0
+    if apt_transaction_reported_no_changes "$output"; then
+        SAFE_APT_INSTALL_NO_CHANGES=1
+    fi
+
+    msg_log auto-correct "$display_label"
+    run_chroot_try_display_bounded "$display_label" apt-get "${real_args[@]:-}"
+    if (( CHROOT_TRY_RC == 124 )); then
+        fail "$(reason package-manager-timeout "$label")."
+    fi
+    (( CHROOT_TRY_RC == 0 )) || fail "$label failed with exit code $CHROOT_TRY_RC."
+}
+
+# The rpm downgrade safety validator: the rpm_simulation_is_safe guards (exit
+# code, conflicts, dependent-package removals, signatures, locks, metadata,
+# unrecognized errors, critical-package obsoletes) with the DOWNGRADE
+# transaction accepted ONLY when every downgraded package is the requested
+# one.  A downgrade of anything else (a dependency cascade) fails closed.
+rpm_downgrade_simulation_is_safe()
+{
+    local output="$1" rc="${2:-0}" spec="$3" name
+    local removal_count downgrade_count
+
+    name="${spec%%-*-[0-9]*}"
+    [[ -n "$name" ]] || return 1
+    if (( rc != 0 )); then
+        if (( rc != 1 )) || ! grep -Fq 'Operation aborted by the user.' <<<"$output"; then
+            msg_log dnf5-refused-exit-code "$rc"
+            return 1
+        fi
+    fi
+    if grep -Eiq 'Failed to resolve the transaction|conflicting requests|nothing provides|unresolvable|^[[:space:]]*Problem:' <<<"$output"; then
+        msg_log dnf5-refused-conflicts
+        return 1
+    fi
+    removal_count="$(legacy_sed_ext -n 's/^[[:space:]]*Removing:[[:space:]]+([0-9]+)[[:space:]]+packages?$/\1/p' <<<"$output" | head -n1)"
+    downgrade_count="$(legacy_sed_ext -n 's/^[[:space:]]*Downgrading:[[:space:]]+([0-9]+)[[:space:]]+packages?$/\1/p' <<<"$output" | head -n1)"
+    [[ "$removal_count" =~ ^[0-9]+$ ]] || removal_count=0
+    [[ "$downgrade_count" =~ ^[0-9]+$ ]] || downgrade_count=0
+    if grep -Eq '^[[:space:]]*Removing (dependent packages|unused dependencies):' <<<"$output"; then
+        msg_log dnf5-refused-removals
+        return 1
+    fi
+    if (( removal_count > 0 )) || grep -Eq '^[[:space:]]*Removing:[[:space:]]*$' <<<"$output"; then
+        local -a removed_pkgs=()
+        legacy_readarray -t removed_pkgs < <(awk '
+            /^[[:space:]]*Removing:[[:space:]]*$/ { in_removing = 1; next }
+            /^[[:space:]]*Removing (dependent packages|unused dependencies):/ { in_removing = 0; next }
+            /^[[:space:]]*[^[:space:]][^:]*:[[:space:]]*$/ { in_removing = 0; next }
+            in_removing && /^[[:space:]][^[:space:]]/ {
+                line = $0
+                sub(/^[[:space:]]+/, "", line)
+                split(line, a, /[[:space:]]+/)
+                if (a[1] !~ /:$/) print a[1]
+            }
+        ' <<<"$output")
+        local removed_pkg
+        for removed_pkg in "${removed_pkgs[@]:-}"; do
+            [[ "$removed_pkg" == "$name" || "$removed_pkg" == "$name"-* ]] || {
+                msg_log dnf5-refused-removals
+                return 1
+            }
+        done
+    fi
+    if (( downgrade_count > 0 )) || grep -Eq '^[[:space:]]*Downgrading:[[:space:]]*$' <<<"$output"; then
+        local -a downgraded_pkgs=()
+        legacy_readarray -t downgraded_pkgs < <(awk '
+            /^[[:space:]]*Downgrading:[[:space:]]*$/ { in_downgrading = 1; next }
+            /^[[:space:]]*[^[:space:]][^:]*:[[:space:]]*$/ { in_downgrading = 0; next }
+            in_downgrading && /^[[:space:]][^[:space:]]/ {
+                line = $0
+                sub(/^[[:space:]]+/, "", line)
+                split(line, a, /[[:space:]]+/)
+                if (a[1] !~ /:$/) print a[1]
+            }
+        ' <<<"$output")
+        local downgraded_pkg
+        for downgraded_pkg in "${downgraded_pkgs[@]:-}"; do
+            [[ "$downgraded_pkg" == "$name" || "$downgraded_pkg" == "$name"-* ]] || {
+                msg_log dnf5-refused-downgrade
+                return 1
+            }
+        done
+    fi
+    if grep -Eiq 'Public key is not installed\.|signature is valid, but the key is not trusted\.|Public key import failed\.|Failed to import OpenPGP keys|NOKEY|not signed' <<<"$output"; then
+        msg_log dnf5-refused-signature
+        return 1
+    fi
+    if grep -Eiq 'Waiting for a lock on the system repository|Failed to obtain lock|Failed to obtain rpm transaction lock|installroot locked by transaction' <<<"$output"; then
+        msg_log dnf5-refused-locked
+        return 1
+    fi
+    if grep -Eiq 'Failed to download metadata|Cannot download|repomd\.xml.*failed|Temporary failure' <<<"$output"; then
+        msg_log dnf5-refused-metadata
+        return 1
+    fi
+    if grep -Eq '^[[:space:]]*(Error|error|Transaction failed):' <<<"$output"; then
+        msg_log dnf5-refused-unrecognized
+        return 1
+    fi
+    return 0
+}
+
+# Guarded rpm/dnf downgrade of one package to a chosen older NEVRA
+# (the guarded_rpm_install_packages simulate-then-apply flow with the
+# downgrade-specific safety validator + the user confirm).  Returns 0 when the
+# downgrade applied, 1 on a proven no-op.
+guarded_rpm_downgrade_packages()
+{
+    local display_label="$1" label="$2" spec="$3"
+    local fingerprint_before fingerprint_after no_changes=false
+    [[ -n "$spec" ]] || return 1
+    rpm_preflight
+    fingerprint_before="$(rpm_database_fingerprint)"
+    msg_log simulate-dnf5 "downgrade $spec"
+    rpm_transaction_try "dnf5 downgrade simulation" downgrade "$spec" --assumeno
+    rpm_downgrade_simulation_is_safe "$RPM_SIM_OUTPUT" "$RPM_SIM_RC" "$spec" \
+        || fail "The simulated dnf5 downgrade transaction failed Boot Bitch safety checks."
+    fingerprint_after="$(rpm_database_fingerprint)"
+    [[ "$fingerprint_before" == "$fingerprint_after" ]] \
+        || fail "The dnf5 downgrade simulation modified the rpm database; refusing to continue."
+    if rpm_transaction_reported_no_changes "$RPM_SIM_OUTPUT"; then
+        no_changes=true
+    fi
+    if ! confirm_mutating_stage "$label"; then
+        msg_log stage-confirmation-declined "$spec" "${RPM_DNF_TOOL:-dnf5}"
+        return 1
+    fi
+    run_chroot_try_display "$display_label" "${RPM_DNF_TOOL:-dnf5}" downgrade "$spec" -y
+    (( CHROOT_TRY_RC == 0 )) || fail "dnf5 downgrade failed with exit code $CHROOT_TRY_RC."
+    fingerprint_after="$(rpm_database_fingerprint)"
+    if [[ "$no_changes" == true && "$fingerprint_before" == "$fingerprint_after" ]]; then
+        return 1
+    fi
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Round 93 (the driver-fallback ladder, step 9 + STEP 6): the conflict
+# resolution (blacklist-one/switch-one) and the user-supplied artifact path.
+# ---------------------------------------------------------------------------
+# Step 9 — the conflict resolution: blacklist the conflicting module and
+# switch to the candidate (the write_module_blacklist writer + the candidate
+# initramfs inclusion + rebuild).  On the live host the RUNTIME SWAP runs
+# first (modprobe -r <conflicting> + modprobe <candidate>), gated by the two
+# refusal patterns: NEVER when the conflicting module serves the live network
+# uplink (network_conflict_would_kill_uplink — the network twin of
+# input_blacklist_would_kill_input) and NEVER when the module is the only
+# live input module; a busy module fails its unload and the config-only path
+# still applies for the next boot (the in-window reboot note).  The candidate
+# must be proven available/builtin on disk (replacement-module-unavailable
+# otherwise); nothing is downloaded — the candidate is the kernel's own
+# alternative driver for the device.
+# Step 6 — the user-supplied artifact path (the vendor/OEM ruling): the
+# helper NEVER auto-queries or downloads from vendor/OEM servers.  The user
+# may point it at a local package FILE they downloaded themselves; the file
+# is installed through the guarded local-file verb (dpkg -i / rpm -U) with
+# the existing confirmation, a post-install verification, and the explicit
+# transcript warning that the file is user-supplied and unverified by the
+# tool.  pacman/apk are never offered (no guarded local-package install verb
+# there — the honest Found note).
+# ---------------------------------------------------------------------------
+
+# True when blacklisting/unloading $1 would remove the module serving the
+# live network uplink (the network twin of input_blacklist_would_kill_input —
+# the round-90 investigation's named gap): host-only, positive evidence that
+# the module serves the interface holding the default route (re-derived from
+# the live routing table, never the redacted evidence line).
+network_conflict_would_kill_uplink()
+{
+    local mod="$1" iface="" uplink_mod=""
+    (( RUNNING_HOST_MODE == 1 )) || return 1
+    [[ -n "$mod" ]] || return 1
+    # The live default-route interface through the SHARED uplink derivation
+    # (the ip -> /sbin/route fallback keeps the guard alive on userlands
+    # without the iproute2 tool — the round-103 Etch finding: the former
+    # bare `ip route show default` probe silently disabled the conflict
+    # guard on the legacy rig, which has no `ip` binary).
+    iface="$(network_uplink_interface)"
+    [[ -n "$iface" ]] || return 1
+    uplink_mod="$(basename "$(readlink "/sys/class/net/$iface/device/driver/module" 2>/dev/null || true)" 2>/dev/null || true)"
+    [[ -n "$uplink_mod" && "$uplink_mod" == "$mod" ]]
+}
+
+# The shared live-module membership probe (/proc/modules + the builtin
+# /sys/module entry) and the sysfs refcnt>0 probe — single internal stub
+# points so the conflict collectors, the resolve actions and the synthetic
+# drills all share the same definition.
+module_live_loaded()
+{
+    grep -qw "$1" /proc/modules 2>/dev/null || [[ -d "/sys/module/$1" ]]
+}
+
+module_refcnt_positive()
+{
+    local mod="$1" v=""
+    [[ -n "$mod" && -r "/sys/module/$mod/refcnt" ]] || return 1
+    v="$(cat "/sys/module/$mod/refcnt" 2>/dev/null || true)"
+    [[ -n "$v" && "$v" != 0 ]]
+}
+
+# Ladder step 9 (input): blacklist-one/switch-one for the evidenced conflict
+# pair.  Host: the refusal + the runtime swap + the persistent config +
+# rebuild; target: config-only.  Status key `input-devices:resolve-conflict`.
+input_repair_resolve_conflict()
+{
+    local conflicting="" candidate=""
+    [[ "$INPUT_DRIVER_CONFLICT" != none && -n "$INPUT_DRIVER_CONFLICT" ]] || {
+        repair_change_status "input-devices:resolve-conflict" "unchanged|$(reason no-driver-conflict)"
+        return 0
+    }
+    conflicting="${INPUT_DRIVER_CONFLICT%% vs *}"
+    candidate="${INPUT_DRIVER_CONFLICT#* vs }"
+    # Round 96 (ITEM 1c): the live-verified override's refusal — never
+    # blacklist a conflicting module while the live keyboard evidence is
+    # verified (the menu never offers the action in this state; the belt).
+    if input_live_keyboard_verified; then
+        repair_change_status "input-devices:resolve-conflict" "unchanged|$(reason input-conflict-live-verified "$conflicting")"
+        return 0
+    fi
+    if ! grep -qw "$candidate" <<<"$INPUT_AVAILABLE_MODULES" \
+        && ! grep -qw "$candidate" <<<"$INPUT_BUILTIN_MODULES"; then
+        repair_change_status "input-devices:resolve-conflict" "unchanged|$(reason replacement-module-unavailable "$candidate")"
+        return 0
+    fi
+    local applied=0 already=0 written=0
+    if (( RUNNING_HOST_MODE == 1 )); then
+        if input_blacklist_would_kill_input "$conflicting"; then
+            repair_change_status "input-devices:resolve-conflict" "unchanged|$(reason input-blacklist-would-kill-input "$conflicting")"
+            return 0
+        fi
+        # The runtime swap (bounded, one pass): unload the conflicting module
+        # first, then load the candidate.  A busy module fails the unload; the
+        # config-only path below still applies for the next boot.
+        msg_log input-conflict-runtime-swap "$conflicting" "$candidate"
+        if module_live_loaded "$conflicting"; then
+            if modprobe -r "$conflicting" 2>&1 | tee -a "$SESSION_LOG"; then
+                applied=1
+            else
+                msg_log input-module-unload-failed "$conflicting"
+            fi
+        fi
+        if ! module_live_loaded "$candidate"; then
+            if modprobe "$candidate" 2>&1 | tee -a "$SESSION_LOG"; then
+                applied=1
+                msg_log input-module-loaded "$candidate"
+            else
+                msg_log input-module-load-failed "$candidate"
+            fi
+        fi
+    fi
+    write_module_blacklist "$conflicting" || already=1
+    if (( already == 0 )); then
+        msg_log input-blacklist-written "$conflicting"
+        applied=1
+    fi
+    written="$(boot_initramfs_modules_write "input" "$candidate" 2>/dev/null || true)"
+    (( written > 0 )) && applied=1
+    if (( applied == 0 )); then
+        repair_change_status "input-devices:resolve-conflict" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    adaptive_initramfs_repair
+    repair_change_status "input-devices:resolve-conflict" changed
+}
+
+# Ladder step 9 (network): the same pair with the uplink refusal pattern.
+network_repair_resolve_conflict()
+{
+    local conflicting="" candidate=""
+    [[ "$NETWORK_DRIVER_CONFLICT" != none && -n "$NETWORK_DRIVER_CONFLICT" ]] || {
+        repair_change_status "network:resolve-conflict" "unchanged|$(reason no-driver-conflict)"
+        return 0
+    }
+    conflicting="${NETWORK_DRIVER_CONFLICT%% vs *}"
+    candidate="${NETWORK_DRIVER_CONFLICT#* vs }"
+    # Round 96 (ITEM 1c): the live-verified override's refusal — the live
+    # reachability proves the network works, so the conflict pair is
+    # informational and the blacklist is refused (the uplink guard below
+    # covers the kill-the-uplink case for a genuinely broken network).
+    if [[ "$NETWORK_REACHABILITY" == ok ]]; then
+        repair_change_status "network:resolve-conflict" "unchanged|$(reason network-conflict-live-verified "$conflicting")"
+        return 0
+    fi
+    if ! grep -qw "$candidate" <<<"$NETWORK_AVAILABLE_MODULES" \
+        && ! grep -qw "$candidate" <<<"$NETWORK_BUILTIN_MODULES"; then
+        repair_change_status "network:resolve-conflict" "unchanged|$(reason replacement-module-unavailable "$candidate")"
+        return 0
+    fi
+    local applied=0 already=0 written=0
+    if (( RUNNING_HOST_MODE == 1 )); then
+        if network_conflict_would_kill_uplink "$conflicting"; then
+            repair_change_status "network:resolve-conflict" "unchanged|$(reason network-conflict-would-kill-uplink "$conflicting")"
+            return 0
+        fi
+        msg_log network-conflict-runtime-swap "$conflicting" "$candidate"
+        if module_live_loaded "$conflicting"; then
+            if modprobe -r "$conflicting" 2>&1 | tee -a "$SESSION_LOG"; then
+                applied=1
+            else
+                msg_log network-module-unload-failed "$conflicting"
+            fi
+        fi
+        if ! module_live_loaded "$candidate"; then
+            if modprobe "$candidate" 2>&1 | tee -a "$SESSION_LOG"; then
+                applied=1
+                msg_log network-module-loaded "$candidate"
+            else
+                msg_log network-module-load-failed "$candidate"
+            fi
+        fi
+    fi
+    write_module_blacklist "$conflicting" || already=1
+    if (( already == 0 )); then
+        msg_log network-blacklist-written "$conflicting"
+        applied=1
+    fi
+    written="$(boot_initramfs_modules_write "network" "$candidate" 2>/dev/null || true)"
+    (( written > 0 )) && applied=1
+    if (( applied == 0 )); then
+        repair_change_status "network:resolve-conflict" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    adaptive_initramfs_repair
+    repair_change_status "network:resolve-conflict" changed
+}
+
+# Ladder step 10 (STEP 6, rank LAST): the shared user-supplied-artifact body.
+# status_key = the map/status key; kind = "input"/"network" for the apply
+# label.  Prompts for the local file path over the PROMPT channel (free
+# text), proves the file is a readable package of the backend's format
+# (dpkg-deb -f / rpm -qp — never the filename suffix), stages it into the
+# target (target scope; removed after), installs through the guarded
+# local-file verb (dpkg -i / rpm -U after the existing confirmation), and
+# verifies the package manager reports it installed before claiming the fix.
+driver_user_artifact_install()
+{
+    local status_key="$1" kind="$2" path="" pkg="" ext="" in_target="" scope="the selected repair target"
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg) ext=".deb" ;;
+        rpm) ext=".rpm" ;;
+        *)
+            repair_change_status "$status_key" "unchanged|$(reason user-artifact-unsupported)"
+            return 0
+            ;;
+    esac
+    (( RUNNING_HOST_MODE == 1 )) && scope="the running host"
+    # The free-text path prompt (the PROMPT channel the shell question uses;
+    # an empty answer / a timeout cancels).
+    if ! helper_menu_prompt "$(printf 'User-supplied driver package\nEnter the full path to the driver package file you downloaded yourself (%s).\nWARNING: this file is user-supplied and unverified by Boot Bitch — only the package-manager checks below apply.\nAnswer: type the full path, or leave the answer empty (or let the %d-second window expire) to cancel.' "$ext" "$MENU_ANSWER_WINDOW_SECONDS")" \
+        "$MENU_ANSWER_WINDOW_SECONDS" PROMPT; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    path="${HELPER_MENU_ANSWER:-}"
+    path="${path#"${path%%[![:space:]]*}"}"
+    path="${path%"${path##*[![:space:]]}"}"
+    [[ -n "$path" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    }
+    [[ -f "$path" && -r "$path" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason user-artifact-not-readable "$path")"
+        return 0
+    }
+    # Prove the package format from the file itself (never the suffix).
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg) pkg="$(dpkg-deb -f "$path" Package 2>/dev/null | head -n1 || true)" ;;
+        rpm) pkg="$(rpm -qp --qf '%{NAME}' "$path" 2>/dev/null | head -n1 || true)" ;;
+    esac
+    [[ -n "$pkg" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason user-artifact-not-a-package "$path")"
+        return 0
+    }
+    msg_log user-artifact-warning "$path"
+    if ! confirm_mutating_stage "Install the user-supplied ${kind} driver package $pkg"; then
+        msg_log stage-confirmation-declined "$pkg" "${TARGET_PACKAGE_MANAGER:-}"
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    if (( RUNNING_HOST_MODE != 1 )); then
+        # Target scope: stage the file inside the target (the chroot's package
+        # tool sees only target paths); removed on every path below.
+        in_target="$TARGET_ROOT/var/tmp/boot-repair-user-artifact$ext"
+        mkdir -p -- "$(dirname -- "$in_target")"
+        install -m 0644 -- "$path" "$in_target" \
+            || fail "Failed to stage the user-supplied package file inside the repair target."
+        path="$in_target"
+    fi
+    local verify_ok=0 rc=0 check_out="" check_rc=0
+    case "${TARGET_PACKAGE_MANAGER:-}" in
+        apt/dpkg)
+            RUN_CHROOT_TRY_BOUND=30 run_chroot_try_display "$(msg user-artifact-install "$pkg" dpkg)" dpkg -i -- "$path"
+            rc="$CHROOT_TRY_RC"
+            if (( rc == 0 )); then
+                set +e
+                check_out="$(RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
+                    LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                    dpkg -s "$pkg" 2>/dev/null)"
+                check_rc=$?
+                set -e
+                if (( check_rc == 0 )) && grep -q '^Status: install ok installed' <<<"$check_out"; then
+                    verify_ok=1
+                fi
+            fi
+            ;;
+        rpm)
+            # rpm -U --test is the simulation-first preflight (proven before
+            # the real apply).
+            msg_log user-artifact-preflight "rpm -U --test $pkg"
+            set +e
+            RUN_SELECTED_CHROOT_BOUND=60 run_selected_chroot /usr/bin/env \
+                LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                rpm -U --test -- "$path" >/dev/null 2>&1
+            check_rc=$?
+            set -e
+            if (( check_rc == 0 )); then
+                RUN_CHROOT_TRY_BOUND=30 run_chroot_try_display "$(msg user-artifact-install "$pkg" rpm)" rpm -U -- "$path"
+                rc="$CHROOT_TRY_RC"
+                if (( rc == 0 )); then
+                    set +e
+                    RUN_SELECTED_CHROOT_BOUND=15 run_selected_chroot /usr/bin/env \
+                        LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+                        rpm -q "$pkg" >/dev/null 2>&1
+                    check_rc=$?
+                    set -e
+                    (( check_rc == 0 )) && verify_ok=1
+                fi
+            fi
+            ;;
+    esac
+    if (( RUNNING_HOST_MODE != 1 )); then
+        rm -f -- "$in_target" 2>/dev/null || true
+    fi
+    if (( rc != 0 )); then
+        fail "The user-supplied package install failed (${TARGET_PACKAGE_MANAGER:-} exit code $rc)."
+    fi
+    if (( verify_ok == 0 )); then
+        repair_change_status "$status_key" "unchanged|$(reason user-artifact-verify-failed "$pkg")"
+        return 0
+    fi
+    msg_log user-artifact-verified "$pkg" "${TARGET_PACKAGE_MANAGER:-}"
+    repair_change_status "$status_key" changed
+}
+
+input_repair_user_artifact()
+{
+    driver_user_artifact_install "input-devices:user-artifact" "input"
+}
+
+network_repair_user_artifact()
+{
+    driver_user_artifact_install "network:user-artifact" "network"
+}
+
+
+# The focused re-verify (the same window, never a full diagnostic re-run):
+# re-collect the input evidence and report fixed / not-fixed.
+input_reverify()
+{
+    local before="${INPUT_VERDICT:-unknown}"
+    msg_log input-reverify
+    INPUT_EVIDENCE_COLLECTED=0
+    input_collect_evidence
+    local after="${INPUT_VERDICT:-unknown}"
+    msg_log input-reverify-verdict "$before" "$after"
+    if [[ "$after" == ok ]]; then
+        msg_log input-reverify-fixed
+    else
+        msg_log input-reverify-not-fixed "$after"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Round 89 (ITEM 1): the evidence-aware initramfs-inclusion delta.  The
+# include-initramfs action is offered ONLY for the needed-but-not-satisfied
+# module set computed from the diagnostic single-truth evidence:
+#   needed    = the menu's candidate set (what the include action writes);
+#   satisfied = builtin ∪ already-included ∪ (host) already-loaded-live.
+# On a target the built-image proof (INPUT_INITRAMFS_PROOF) is the single
+# truth for "already included" whenever it carries a readable listing; the
+# config inclusion evidence is the fallback and the host's truth (the host
+# proof line is the running-host marker).  In the decrypt-prompt state the
+# config NEVER counts: that verdict means the built images provably lack
+# the keyboard modules, so a config-listed module is still missing from
+# the initramfs.  An empty delta = nothing to do (the verified terminal).
+# ---------------------------------------------------------------------------
+
+# The members of the space-joined $menu_cand_list present in the
+# comma/space/newline-joined $evidence, minus the members of $minus (the
+# round-89 menu evidence lines; bash-3.1-safe, no assoc arrays).
+menu_candidates_in_evidence_minus()
+{
+    local menu_cand_list="$1" evidence="$2" minus="$3" candidate
+    local -a menu_out_arr=()
+    for candidate in $menu_cand_list; do
+        [[ -n "$candidate" ]] || continue
+        grep -qw "$candidate" <<<"${evidence//,/ }" || continue
+        grep -qw "$candidate" <<<"${minus//,/ }" && continue
+        menu_out_arr+=("$candidate")
+    done
+    ((${#menu_out_arr[@]} > 0)) || return 0
+    printf '%s' "${menu_out_arr[*]}"
+}
+
+# The deduplicated keyboard-module candidate set the include action writes
+# (space-joined; empty when the evidence names none).
+input_include_initramfs_candidates()
+{
+    local candidate
+    local -a menu_cand_arr=() menu_uniq_arr=()
+    for candidate in $INPUT_KEYBOARD_MODULES $INPUT_MISSING_MODULES; do
+        [[ -n "$candidate" && "$candidate" != none ]] && menu_cand_arr+=("$candidate")
+    done
+    ((${#menu_cand_arr[@]} > 0)) || return 0
+    local dup=0 u
+    for candidate in "${menu_cand_arr[@]:-}"; do
+        dup=0
+        for u in "${menu_uniq_arr[@]:-}"; do
+            [[ "$u" == "$candidate" ]] && dup=1
+        done
+        (( dup == 0 )) && menu_uniq_arr+=("$candidate")
+    done
+    printf '%s' "${menu_uniq_arr[*]}"
+}
+
+# The config-inclusion tokens (the module names behind the per-backend
+# "backend: a,b" entries of INPUT_INITRAMFS_INCLUSION).
+input_menu_config_included_modules()
+{
+    local entry list mod
+    local -a menu_mods_arr=()
+    while IFS= read -r entry; do
+        case "$entry" in
+            *": "*) list="${entry#*: }" ;;
+            *) continue ;;
+        esac
+        [[ -n "$list" && "$list" != none && "$list" != none-detected ]] || continue
+        # shellcheck disable=SC2086 # the comma-split is the intended expansion
+        for mod in ${list//,/ }; do
+            [[ -n "$mod" ]] && menu_mods_arr+=("$mod")
+        done
+    done <<<"$(printf '%s' "$INPUT_INITRAMFS_INCLUSION" | tr ';' '\n' || true)"
+    ((${#menu_mods_arr[@]} > 0)) || return 0
+    printf '%s\n' "${menu_mods_arr[@]:-}"
+}
+
+# The "already included in the initramfs" truth for the input menu (the
+# proof-based rule above; newline-joined module names).
+input_menu_included_modules()
+{
+    local state="$1"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        input_menu_config_included_modules
+        return 0
+    fi
+    local entry mod list conclusive=0
+    local -a menu_mods_arr=()
+    while IFS= read -r entry; do
+        case "$entry" in
+            *=unreadable:*|running-host:*|"") continue ;;
+            *=*)
+                conclusive=1
+                list="${entry#*=}"
+                [[ -n "$list" && "$list" != absent ]] || continue
+                # shellcheck disable=SC2086 # the comma-split is the intended expansion
+                for mod in ${list//,/ }; do
+                    [[ -n "$mod" ]] && menu_mods_arr+=("$mod")
+                done
+                ;;
+        esac
+    done <<<"$(printf '%s' "$INPUT_INITRAMFS_PROOF" | tr ';' '\n' || true)"
+    if (( conclusive == 1 )) || [[ "$state" == "keyboard unavailable at decrypt prompt" ]]; then
+        ((${#menu_mods_arr[@]} > 0)) && printf '%s\n' "${menu_mods_arr[@]:-}"
+        return 0
+    fi
+    # No readable image listing: the config evidence is the best available.
+    input_menu_config_included_modules
+    return 0
+}
+
+# The needed-but-not-satisfied initramfs-inclusion delta for the keyboard
+# module candidates (space-separated; empty = nothing to do).
+input_include_initramfs_delta()
+{
+    local state="$1" candidate cand_str=""
+    cand_str="$(input_include_initramfs_candidates)"
+    [[ -n "$cand_str" ]] || return 0
+    local -a menu_sat_arr=() menu_delta_arr=()
+    local included=""
+    included="$(input_menu_included_modules "$state")"
+    for candidate in $cand_str; do
+        # Round 155 (Finding B): a candidate no kernel of the target ships can
+        # never be included by this action — the built-image proof can never
+        # list it, so it would sit in the delta forever and the menu would
+        # re-offer an impossible include after every successful rebuild (the
+        # Etch 2.6.18 modern-only names).  Exclude it from the delta on the
+        # target scope (counted satisfied so the assembly loop below never
+        # re-adds it); the host keeps every candidate (a missing module can
+        # still be provided there by the install-package action or another
+        # kernel).
+        if (( RUNNING_HOST_MODE != 1 )) && input_module_unshippable "$candidate"; then
+            menu_sat_arr+=("$candidate")
+            continue
+        fi
+        grep -qw "$candidate" <<<"$INPUT_BUILTIN_MODULES" && { menu_sat_arr+=("$candidate"); continue; }
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$candidate" <<<"$INPUT_LOADED_MODULES" && { menu_sat_arr+=("$candidate"); continue; }
+        fi
+        grep -qw "$candidate" <<<"$included" && menu_sat_arr+=("$candidate")
+    done
+    for candidate in $cand_str; do
+        local already=0 s
+        for s in "${menu_sat_arr[@]:-}"; do
+            [[ "$s" == "$candidate" ]] && already=1
+        done
+        (( already == 0 )) && menu_delta_arr+=("$candidate")
+    done
+    ((${#menu_delta_arr[@]} > 0)) || return 0
+    printf '%s' "${menu_delta_arr[*]}"
+}
+
+# The round-89 satisfied-evidence lines for the input menu's Found block:
+# the builtin / included (and, host-only, live-loaded) keyboard modules the
+# single-truth diagnostic evidence proves are already satisfied.
+input_menu_inclusion_evidence()
+{
+    local state="$1" cand_str="" included="" builtin_line="" included_line="" loaded_line=""
+    cand_str="$(input_include_initramfs_candidates)"
+    [[ -n "$cand_str" ]] || return 0
+    builtin_line="$(menu_candidates_in_evidence_minus "$cand_str" "$INPUT_BUILTIN_MODULES" "")"
+    if [[ -n "$builtin_line" ]]; then
+        printf 'keyboard modules already built into the kernel: %s\n' "$builtin_line"
+    fi
+    included="$(input_menu_included_modules "$state")"
+    included_line="$(menu_candidates_in_evidence_minus "$cand_str" "$included" "$builtin_line")"
+    if [[ -n "$included_line" ]]; then
+        printf 'keyboard modules already included in the initramfs: %s\n' "$included_line"
+    fi
+    if (( RUNNING_HOST_MODE == 1 )); then
+        loaded_line="$(menu_candidates_in_evidence_minus "$cand_str" "$INPUT_LOADED_MODULES" "$builtin_line $included_line")"
+        if [[ -n "$loaded_line" ]]; then
+            printf 'keyboard modules already loaded in the running kernel: %s\n' "$loaded_line"
+        fi
+    fi
+}
+
+# The healthy terminal state: the verified summary, then return without
+# prompting (a verify action would never terminate).  Round 89: when the
+# verified state's inclusion delta is empty the summary names the
+# nothing-to-do proof (the modules are already built into the kernel and/or
+# included in the initramfs — the kernel/gpu already-ok presentation).
+# Round 90: the terminal is a PROVEN no-op, so it emits the truthful
+# unchanged status (the repair_gpu_verify pattern).  A missing verdict
+# would make the GUI's evidence-driven invalidation fail safe to "changed"
+# and regenerate the mapped diagnostics even though nothing changed.
+input_repair_verify()
+{
+    local state="" summary=""
+    state="$(input_evidence_state)"
+    summary="$state"
+    if [[ "$state" == "input verified" ]] && [[ -z "$(input_include_initramfs_delta "$state")" ]]; then
+        summary="$state (nothing to do — the keyboard modules are already built into the kernel and/or included in the initramfs)"
+    fi
+    msg_log input-verify "$summary"
+    case "$state" in
+        "input verified") repair_change_status input-devices "unchanged|$(reason input-verified)" ;;
+        *)                repair_change_status input-devices "unchanged|$(reason no-input-evidence)" ;;
+    esac
+    return 0
+}
+
+# Interactive input-device repair session (the gpu/kernel menu pattern):
+# the action menu CHANGES with the evidence; the first entry is the
+# most-likely fix; after an action the evidence is re-verified in this same
+# window and the next menu reports fixed / not-fixed with the next options.
+# Round 89: the include-initramfs action is evidence-aware — it appears only
+# while the inclusion delta (needed minus builtin/included/live-loaded) is
+# non-empty and is labeled with the delta; an all-satisfied verified stack
+# reports nothing to do instead of a misleading include offer.
+input_interactive_menu()
+{
+    # A direct CLI invocation (no session protocol) has no interactive
+    # channel: fall back to the non-interactive adaptive repair.
+    if ! shell_interactive_enabled; then
+        adaptive_input_repair
+        return
+    fi
+    # The interactive session is evidence-guided: fail closed when the caller
+    # did not supply the cached baseline (the GUI always passes
+    # --input-baseline).
+    [[ -n "${INPUT_BASELINE_B64:-}" ]] \
+        || fail "Run the input-device diagnostic before the input-device repair (no cached input baseline was supplied)."
+
+    local idx answer choice menu="" found="" dispatched=0 reboot_pending=0 state="" delta=""
+    local -a labels=() stages=()
+    # Round 114 (ITEM 2, the round-97 no-op semantics): after a dispatched
+    # sub-action the menu is rebuilt from the then-current evidence; a
+    # byte-identical menu means the sub-action made no observable progress,
+    # but an actionable option may still be present, so identity alone must
+    # NOT terminate the session — the menu re-prompts so the user can pick
+    # it.  The session ends through the verify terminal when nothing
+    # actionable is left, or after the identical menu has been re-presented
+    # INPUT_MENU_NO_PROGRESS_LIMIT times in a row (a repeated no-op), which
+    # keeps the loop bounded; real progress (a different menu) resets the
+    # streak.  (The kernel menu's round-97 guard, mirrored.)
+    local prev_menu="" no_progress_streak=0
+    # Round 92 (ladder steps 3-4): the pin action's fail-closed Found note.
+    local input_pin_note=""
+    # Round 93 (STEP 6): the user-artifact action's fail-closed Found note.
+    local input_user_artifact_note=""
+    # Round 91 (ITEM 3d): the per-session tried set (annotated `(tried)`, the
+    # auto-default/chaining order) + the last attempt's result line.
+    local -a tried=()
+    local last_result="" label_plain="" t
+
+    while :; do
+        mutating_cancel_checkpoint
+        if [[ -n "${INPUT_BASELINE_B64:-}" ]]; then
+            # Pre-mutation display: consume the cached diagnostic baseline.
+            parse_cached_input_inventory
+        else
+            # Post-mutation display: reflect the then-current target state.
+            INPUT_EVIDENCE_COLLECTED=0
+            input_collect_evidence
+        fi
+        labels=()
+        stages=()
+        input_pin_note=""
+        input_user_artifact_note=""
+        state="$(input_evidence_state)"
+        # Round 89 (ITEM 1): the evidence-aware inclusion delta — the
+        # include-initramfs action is offered only for the modules the
+        # diagnostic single-truth evidence does NOT already prove satisfied
+        # (builtin / included in the initramfs / loaded on the live host).
+        delta="$(input_include_initramfs_delta "$state")"
+
+        case "$state" in
+            "keyboard unavailable at decrypt prompt")
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing keyboard modules in the initramfs and rebuild (fix the decrypt prompt): $delta")
+                    stages+=("include-initramfs")
+                fi
+                labels+=("Install the missing input module package")
+                stages+=("install-package")
+                labels+=("Generic HID fallback (hid-generic + blacklist the broken driver)")
+                stages+=("hid-fallback")
+                ;;
+            "input unavailable at login prompt")
+                case "$INPUT_VERDICT" in
+                    module-missing)
+                        if (( RUNNING_HOST_MODE == 1 )); then
+                            labels+=("Load the missing input module now")
+                            stages+=("load-module")
+                        fi
+                        if [[ -n "$delta" ]]; then
+                            labels+=("Include missing keyboard modules in the initramfs and rebuild: $delta")
+                            stages+=("include-initramfs")
+                        fi
+                        labels+=("Install the missing input module package")
+                        stages+=("install-package")
+                        ;;
+                    module-blacklisted)
+                        labels+=("Remove the input module blacklist and rebuild the initramfs")
+                        stages+=("remove-blacklist")
+                        labels+=("Generic HID fallback (hid-generic + blacklist the broken driver)")
+                        stages+=("hid-fallback")
+                        ;;
+                    controller-not-loaded)
+                        labels+=("Load the missing bus-controller module now")
+                        stages+=("load-controller")
+                        if [[ -n "$delta" ]]; then
+                            labels+=("Include missing keyboard modules in the initramfs and rebuild: $delta")
+                            stages+=("include-initramfs")
+                        fi
+                        ;;
+                    firmware-missing)
+                        labels+=("Install the missing input firmware package")
+                        stages+=("install-package")
+                        labels+=("Generic HID fallback (hid-generic + blacklist the broken driver)")
+                        stages+=("hid-fallback")
+                        ;;
+                    driver-probe-failed)
+                        # Round 91 (the driver-fallback chain): a driver tried
+                        # to bind and failed — the generic-HID fallback for a
+                        # probe-failing vendor HID driver (ITEM 3c, no
+                        # blacklist membership required) + the inclusion
+                        # delta.
+                        if [[ -n "$(input_broken_driver_module || true)" ]]; then
+                            labels+=("Generic HID fallback (hid-generic + blacklist the broken driver)")
+                            stages+=("hid-fallback")
+                        fi
+                        if [[ -n "$delta" ]]; then
+                            labels+=("Include missing keyboard modules in the initramfs and rebuild: $delta")
+                            stages+=("include-initramfs")
+                        fi
+                        ;;
+                    driver-conflict)
+                        # Round 93 (STEP 5): the conflict state — the
+                        # resolve-conflict action joins the ladder AFTER the
+                        # round-92 steps (appended below); here only the
+                        # inclusion delta stays as a state action.
+                        if [[ -n "$delta" ]]; then
+                            labels+=("Include missing keyboard modules in the initramfs and rebuild: $delta")
+                            stages+=("include-initramfs")
+                        fi
+                        ;;
+                esac
+                ;;
+            "mouse unavailable at login prompt")
+                # Round 96 (ITEM 3, decision #2): the mouse-specific state —
+                # the blacklisted pointer module's removal (the
+                # keyboard-anchored verdicts and menu states are unchanged).
+                labels+=("Remove the input module blacklist and rebuild the initramfs")
+                stages+=("remove-blacklist")
+                ;;
+            "input verified")
+                if (( dispatched == 0 )); then
+                    # Maintenance actions for a healthy, identified stack
+                    # (initial display only, the gpu pattern).  The include
+                    # action appears only while the delta is non-empty (round
+                    # 89); an all-satisfied stack reports nothing to do.
+                    if [[ -n "$delta" ]]; then
+                        labels+=("Include missing keyboard modules in the initramfs and rebuild: $delta")
+                        stages+=("include-initramfs")
+                    fi
+                    if [[ "$INPUT_QUIRK_STATE" == *hid_apple* ]] \
+                        || grep -qw hid_apple <<<"$INPUT_LOADED_MODULES" 2>/dev/null; then
+                        labels+=("Set the Apple fnmode quirk (config + initramfs rebuild)")
+                        stages+=("quirk-fnmode")
+                    fi
+                fi
+                ;;
+        esac
+
+        # Round 92 (ladder steps 3-4): the reinstall/rebuild and the
+        # older-version + -1 pin actions join the ranked ladder AFTER the
+        # 0.2.30 slice steps; the build-system/package/version evidence gates
+        # decide availability (no build system + no provable package -> not
+        # offered; no provable older version -> the pin is not offered).  A
+        # verified post-action state never re-opens the menu through them and
+        # the pin never appears on a healthy stack (there is no broken newest
+        # version to pin away from).  pacman/apk name the honest fail-closed
+        # reason in the Found block.
+        if [[ "$state" != "input verified" || "$dispatched" == 0 ]]; then
+            if input_reinstall_offered; then
+                labels+=("Reinstall/rebuild the input driver (guarded package reinstall + module rebuild)")
+                stages+=("reinstall")
+            fi
+            if [[ "$state" != "input verified" ]]; then
+                if driver_pin_version_offered "$INPUT_PACKAGE_VERSIONS"; then
+                    labels+=("$(driver_pin_version_label)")
+                    stages+=("pin-version")
+                else
+                    case "${TARGET_PACKAGE_MANAGER:-}" in
+                        pacman|apk)
+                            if [[ -n "$(input_reinstall_package || true)" ]]; then
+                                input_pin_note="older-version pinning: not offered (this package backend cannot prove repository versions)"
+                            fi
+                            ;;
+                    esac
+                fi
+            fi
+            # Round 93 (STEP 5, ladder step 9): the conflict resolution joins
+            # the ladder AFTER the round-92 steps (the addendum's rank),
+            # gated on the conflict evidence.
+            if [[ "$INPUT_DRIVER_CONFLICT" != none && -n "$INPUT_DRIVER_CONFLICT" ]]; then
+                labels+=("Blacklist the conflicting module and switch to ${INPUT_DRIVER_CONFLICT#* vs }")
+                stages+=("resolve-conflict")
+            fi
+            # Round 93 (STEP 6, ladder rank LAST): the user-supplied artifact
+            # path (the vendor/OEM ruling — the helper NEVER auto-queries or
+            # downloads from vendor/OEM servers; the user provides a local
+            # file).  pacman/apk name the honest reason in the Found block.
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg|rpm)
+                    labels+=("Install a driver package you downloaded yourself (advanced)")
+                    stages+=("user-artifact")
+                    ;;
+                pacman|apk)
+                    input_user_artifact_note="user-supplied driver package: not offered (this package backend has no guarded local-package install verb)"
+                    ;;
+            esac
+        fi
+
+        if ((${#labels[@]} == 0)); then
+            input_repair_verify
+            return 0
+        fi
+
+        # Round 91 (ITEM 3d): the tried/chaining pass — untried steps first in
+        # their original rank order (position 1 = the auto-default: the
+        # highest-ranked untried step), tried steps last annotated `(tried)`.
+        local -a ordered_labels=() ordered_stages=()
+        local k tried_flag=0
+        for k in "${!labels[@]}"; do
+            tried_flag=0
+            for t in "${tried[@]:-}"; do
+                [[ "$t" == "${stages[$k]}" ]] && tried_flag=1
+            done
+            (( tried_flag == 0 )) && { ordered_labels+=("${labels[$k]}"); ordered_stages+=("${stages[$k]}"); }
+        done
+        for k in "${!labels[@]}"; do
+            tried_flag=0
+            for t in "${tried[@]:-}"; do
+                [[ "$t" == "${stages[$k]}" ]] && tried_flag=1
+            done
+            (( tried_flag == 1 )) && { ordered_labels+=("${labels[$k]} (tried)"); ordered_stages+=("${stages[$k]}"); }
+        done
+        labels=("${ordered_labels[@]:-}")
+        stages=("${ordered_stages[@]:-}")
+
+        menu=""
+        menu+="Found:"$'\n'
+        found=""
+        found+="input state: $state"$'\n'
+        found+="input verdict: $INPUT_VERDICT"$'\n'
+        # Round 91: the probe-failure + candidate evidence lines (the
+        # driver-broken ladder's signals).
+        if [[ "$INPUT_PROBE_FAILURES" != none && -n "$INPUT_PROBE_FAILURES" ]]; then
+            found+="driver probe failures: $INPUT_PROBE_FAILURES"$'\n'
+        fi
+        if [[ "$INPUT_CANDIDATE_MODULES" != none && -n "$INPUT_CANDIDATE_MODULES" ]]; then
+            found+="candidate modules: $INPUT_CANDIDATE_MODULES"$'\n'
+        fi
+        # Round 92 (ladder steps 3-4): the rebuild + available-version
+        # evidence lines and the pin action's fail-closed note.
+        if [[ "$INPUT_DRIVER_BUILD_SYSTEM" != none ]]; then
+            found+="driver build system: $INPUT_DRIVER_BUILD_SYSTEM"$'\n'
+        fi
+        if [[ "$INPUT_MODULE_VERSIONS" != none && -n "$INPUT_MODULE_VERSIONS" ]]; then
+            found+="module versions: $INPUT_MODULE_VERSIONS"$'\n'
+        fi
+        if [[ "$INPUT_PACKAGE_VERSIONS" != none && -n "$INPUT_PACKAGE_VERSIONS" ]]; then
+            found+="package available versions: $INPUT_PACKAGE_VERSIONS"$'\n'
+        fi
+        # Round 93 (STEP 5): the conflict evidence line (the ladder step 9
+        # signal the resolve action consumes).
+        if [[ "$INPUT_DRIVER_CONFLICT" != none && -n "$INPUT_DRIVER_CONFLICT" ]]; then
+            found+="driver conflict: $INPUT_DRIVER_CONFLICT"$'\n'
+        fi
+        # Round 96 (ITEM 1c): the live-verified override's informational
+        # warning-note (the conflict pair is present but the live keyboard
+        # evidence is verified — no conflict verdict, no resolve offer).
+        if [[ -n "$INPUT_DRIVER_CONFLICT_NOTE" ]]; then
+            found+="driver conflict note: $INPUT_DRIVER_CONFLICT_NOTE (informational)"$'\n'
+        fi
+        if [[ -n "$input_pin_note" ]]; then
+            found+="$input_pin_note"$'\n'
+        fi
+        if [[ -n "$input_user_artifact_note" ]]; then
+            found+="$input_user_artifact_note"$'\n'
+        fi
+        # Round 89: the satisfied-evidence lines (the single-truth proof the
+        # delta computation consumes).
+        found+="$(input_menu_inclusion_evidence "$state")"
+        if [[ "$INPUT_MISSING_MODULES" != none && -n "$INPUT_MISSING_MODULES" ]]; then
+            found+="missing modules: $INPUT_MISSING_MODULES"$'\n'
+        fi
+        # Round 104: the live-keyboard override's informational warning-note
+        # (the round-96 conflict-note pattern — the names are kernel-builtin
+        # or never-shipped modules, not a repair defect; the verdict stays ok
+        # and no load/install action is offered for them).
+        if [[ -n "$INPUT_MODULE_MISSING_NOTE" ]]; then
+            found+="missing modules note: $INPUT_MODULE_MISSING_NOTE (informational)"$'\n'
+        fi
+        if [[ "$INPUT_BLACKLISTED_MODULES" != none && -n "$INPUT_BLACKLISTED_MODULES" ]]; then
+            found+="blacklisted modules: $INPUT_BLACKLISTED_MODULES"$'\n'
+        fi
+        if [[ "$INPUT_LUKS_EXPECTED" == yes ]]; then
+            found+="LUKS prompt expected: yes"$'\n'
+        fi
+        if [[ "$INPUT_FIRMWARE_FAILURES" != none && -n "$INPUT_FIRMWARE_FAILURES" ]]; then
+            found+="firmware load failures: $INPUT_FIRMWARE_FAILURES"$'\n'
+        fi
+        if [[ -n "$INPUT_INITRAMFS_PROOF" && "$INPUT_INITRAMFS_PROOF" != running-host:* && "$INPUT_INITRAMFS_PROOF" != none-detected ]]; then
+            found+="initramfs keyboard proof: $INPUT_INITRAMFS_PROOF"$'\n'
+        fi
+        # Round 91 (ITEM 3d): the failing action's status feeds the next
+        # prompt (the unchanged|reason:… of the last attempt).
+        if [[ -n "$last_result" ]]; then
+            found+="$last_result"$'\n'
+        fi
+        menu+="$found"$'\n'
+        menu+="Input device repair:"$'\n'
+        for idx in "${!labels[@]}"; do
+            menu+="$((idx + 1))) ${labels[$idx]}"$'\n'
+        done
+        menu+="0) Abort"
+        if (( reboot_pending == 1 )); then
+            # Informational in-window note, never a popup.
+            menu+=$'\n'"Note: input-module and initramfs changes take effect on the next boot — reboot to verify the fix."
+        fi
+
+        # Round 114 (ITEM 2, the round-97 no-progress guard): see the
+        # preamble comment.  The last attempt's unchanged|reason:… line is
+        # part of the menu, so a repeated identical no-op produces the same
+        # menu twice and the streak bounds it; any different menu (the
+        # truthful post-fix verdict re-shapes the option list) resets it.
+        # At the limit the session ends cleanly (exit 0, the kernel menu's
+        # round-97 shape): the last dispatched sub-action's status line is
+        # the accurate final state, and the verify terminal above still
+        # handles the nothing-actionable-left case with the honest wording.
+        if (( dispatched == 1 )); then
+            if [[ "$menu" == "$prev_menu" ]]; then
+                no_progress_streak=$((no_progress_streak + 1))
+            else
+                no_progress_streak=0
+            fi
+        else
+            no_progress_streak=0
+        fi
+        prev_menu="$menu"
+        if (( no_progress_streak >= INPUT_MENU_NO_PROGRESS_LIMIT )); then
+            return 0
+        fi
+
+        if ! helper_menu_prompt "$menu" "$MENU_ANSWER_WINDOW_SECONDS" MENU || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+            repair_change_status input-devices "unchanged|$(reason input-aborted)"
+            return 0
+        fi
+        answer="$HELPER_MENU_ANSWER"
+        if [[ "$answer" == "0" ]]; then
+            repair_change_status input-devices "unchanged|$(reason input-aborted)"
+            return 0
+        fi
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+            choice="${stages[$((answer - 1))]}"
+        else
+            continue
+        fi
+        label_plain="${labels[$((answer - 1))]}"
+        label_plain="${label_plain%% (tried)}"
+
+        case "$choice" in
+            load-module) input_repair_load_missing_module ;;
+            load-controller) input_repair_load_controller ;;
+            include-initramfs) input_repair_include_initramfs; reboot_pending=1 ;;
+            remove-blacklist) input_repair_remove_blacklist; reboot_pending=1 ;;
+            install-package) input_repair_install_package; reboot_pending=1 ;;
+            hid-fallback) input_repair_hid_fallback; reboot_pending=1 ;;
+            quirk-fnmode) input_repair_quirk_fnmode; reboot_pending=1 ;;
+            reinstall) input_repair_reinstall; reboot_pending=1 ;;
+            pin-version) input_repair_pin_version; reboot_pending=1 ;;
+            resolve-conflict) input_repair_resolve_conflict; reboot_pending=1 ;;
+            user-artifact) input_repair_user_artifact; reboot_pending=1 ;;
+        esac
+        # Round 91 (ITEM 3d): record the attempted step (annotation) and the
+        # failing action's status for the next prompt.
+        local already_tried=0
+        for t in "${tried[@]:-}"; do
+            [[ "$t" == "$choice" ]] && already_tried=1
+        done
+        (( already_tried == 0 )) && tried+=("$choice")
+        local last_state="${REPAIR_CHANGE_STATUS_LAST_STATE:-}"
+        if [[ "$last_state" == changed ]]; then
+            last_result="last attempt: ${label_plain} — applied"
+        elif [[ "${last_state%%|*}" == unchanged ]]; then
+            last_result="last attempt: ${label_plain} — not fixed (${last_state#unchanged|})"
+        else
+            last_result="last attempt: ${label_plain} — not fixed"
+        fi
+        # The chosen sub-action may have mutated the scope: drop the cached
+        # baseline and re-verify in this window so the next menu reflects the
+        # post-apply state (fixed / not-fixed) and the remaining options.
+        INPUT_BASELINE_B64=""
+        input_reverify
+        dispatched=1
+    done
+}
+
+# Automated `input-devices` stage (Full Repair / non-interactive CLI): a
+# healthy stack is verified unchanged; a broken stack defers to the
+# interactive menu (the plan's conservative choice for the automated stage).
+adaptive_input_repair()
+{
+    input_collect_evidence
+    if [[ "$INPUT_VERDICT" == ok ]]; then
+        repair_change_status input-devices "unchanged|$(reason input-verified)"
+        return 0
+    fi
+    repair_change_status input-devices "unchanged|$(reason input-requires-interactive-menu)"
+    return 0
+}
+
+# ---------------------------------------------------------------------------
+# Network-stack repair (0.2.30 Phase 2/3 — capability + interactive menu)
+# ---------------------------------------------------------------------------
+# The governing constraint (plan §0): a chrooted target shares the recovery
+# host's kernel and network namespace, so live network mutations are
+# HOST-mode only and NEVER run through the chroot; a target repair mutates
+# ONLY the target's persistent config (modules-load.d / modprobe.d /
+# initramfs inclusion / firmware via the guarded installs), never the host's
+# live network.  No MACs/PSKs are emitted.  The connectivity repairs
+# (DHCP/route/DNS actions 5-7) arrive with the plan's P4; this round ships
+# the module/driver/firmware actions (1-4) + the initramfs inclusion (8).
+
+# The named evidence state the capability rows and the menu consume.
+network_evidence_state()
+{
+    if [[ "$NETWORK_FAILURE_CLASS" == verified ]]; then
+        printf 'network verified\n'
+    else
+        printf 'network unavailable (%s)\n' "$NETWORK_FAILURE_CLASS"
+    fi
+}
+
+# Capability gate (fail closed): the tool is unavailable only when there is
+# no adapter evidence to act on anywhere; every broken class is exactly what
+# the menu acts on.
+network_unavailable_reason()
+{
+    network_collect_evidence
+    [[ "$NETWORK_FAILURE_CLASS" == no-adapter ]] || return 0
+    reason network-unavailable
+    return 1
+}
+
+network_firmware_package_suggestion()
+{
+    local blob candidate
+    for blob in $(printf '%s' "${NETWORK_FIRMWARE_MISSING:-none}" | tr ',' ' '); do
+        [[ -n "$blob" && "$blob" != none ]] || continue
+        candidate="$(firmware_package_for_blob "$blob" || true)"
+        [[ -n "$candidate" ]] && { printf '%s\n' "$candidate"; return 0; }
+    done
+    return 1
+}
+
+# 1. Load the network driver persistently (target: the modules-load.d entry
+# + initramfs rebuild — a target has no live kernel, never a chroot modprobe).
+# Round 100 (ITEM 2): resolve the candidate modules against the target's
+# ACTUAL on-disk module tree (modules.dep + modules.builtin — the same
+# resolution the initramfs builder uses for the include action).  The round-98
+# candidate gate grepped NETWORK_AVAILABLE_MODULES, which is collected only
+# for the watch/bound alternation, so a real on-disk candidate (virtio_net on
+# the Debian-modern target) failed as candidate-not-resolvable while the
+# include-initramfs action wrote it fine.  Round 113 (ITEM 2): generalized
+# into `network_modules_resolvable` below so the load AND include actions
+# gate on the same tree truth.
+network_modules_resolvable()
+{
+    local modules="$1" alt kdir out=""
+    alt="$(network_module_alternation "$modules")"
+    [[ -n "$alt" && "$alt" != none ]] || return 0
+    while IFS= read -r kdir; do
+        [[ -n "$kdir" ]] || continue
+        journal_cancel_requested && return 0
+        if [[ -r "$kdir/modules.dep" ]]; then
+            out+=" $(grep -oE "/(${alt})\.ko" "$kdir/modules.dep" 2>/dev/null \
+                | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u | tr '\n' ' ' || true)"
+        fi
+        if [[ -r "$kdir/modules.builtin" ]]; then
+            out+=" $(grep -oE "/(${alt})\.ko$" "$kdir/modules.builtin" 2>/dev/null \
+                | sed 's#.*/##; s/\.ko$//; s/-/_/g' | sort -u | tr '\n' ' ' || true)"
+        fi
+    done < <(find "$TARGET_ROOT/lib/modules" "$TARGET_ROOT/usr/lib/modules" \
+        -mindepth 1 -maxdepth 1 -type d -printf '%p\n' 2>/dev/null | sort -u || true)
+    # Round 113: the two module-tree roots can be two REAL directories on the
+    # same target (/lib and /usr/lib both exist), so a module can be emitted
+    # once per root — the final dedup keeps the output a clean set.
+    out="$(printf '%s' "$out" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/^ //; s/ $//' || true)"
+    printf '%s\n' "$out"
+}
+
+# The candidate set's resolvable subset (space-separated; empty = none).
+network_candidate_modules_resolvable()
+{
+    network_modules_resolvable "$(printf '%s' "${NETWORK_CANDIDATE_MODULES:-none}" | tr ',' ' ' || true)"
+}
+
+network_repair_module_load()
+{
+    (( RUNNING_HOST_MODE != 1 )) || {
+        repair_change_status "network:module-load" "unchanged|$(reason module-already-loaded)"
+        return 0
+    }
+    local -a bound=()
+    local mod
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] && bound+=("$mod")
+    done
+    # Round 98 (ITEM 3): when the boot log named no bound driver, fall back
+    # to the candidate set (a NIC exists — the class evidence — but no driver
+    # bound).  Only a candidate that RESOLVES to a module the target actually
+    # carries is writable; everything else stays out of the modules-load.d
+    # entry.  Round 113 (ITEM 2): the boot-log-bound set is resolved against
+    # the on-disk tree the same way — a bound module absent from every
+    # installed kernel's tree would otherwise write a modules-load.d entry
+    # and an inclusion line the initramfs builder cannot satisfy.
+    local resolvable="" mod2
+    local -a filtered=()
+    if ((${#bound[@]} > 0)); then
+        resolvable="$(network_modules_resolvable "${bound[*]}")"
+        for mod2 in $resolvable; do
+            [[ -n "$mod2" ]] && filtered+=("$mod2")
+        done
+        bound=("${filtered[@]:-}")
+    else
+        # Round 100 (ITEM 2): resolve against the target's on-disk module
+        # tree directly (the include action's resolution), not the
+        # watch/bound-scoped available set.
+        resolvable="$(network_candidate_modules_resolvable)"
+        for mod2 in $(printf '%s' "${NETWORK_CANDIDATE_MODULES:-none}" | tr ',' ' '); do
+            [[ -n "$mod2" && "$mod2" != none ]] || continue
+            grep -qw "$mod2" <<<"$resolvable" && bound+=("$mod2")
+        done
+    fi
+    ((${#bound[@]} > 0)) || {
+        # Round 98 (ITEM 3): name the actual why instead of the generic
+        # network-unavailable state: a boot-log-bound module absent from the
+        # target's tree (round 113), no candidate evidence at all, or
+        # candidates that none of which resolved to a writable module.
+        if [[ "${NETWORK_BOUND_MODULES:-none}" != none && -n "${NETWORK_BOUND_MODULES:-}" ]]; then
+            repair_change_status "network:module-load" "unchanged|$(reason module-not-in-target-tree "$(printf '%s' "$NETWORK_BOUND_MODULES" | tr ' ' ',')")"
+        elif [[ "${NETWORK_CANDIDATE_MODULES:-none}" == none || -z "${NETWORK_CANDIDATE_MODULES:-}" ]]; then
+            repair_change_status "network:module-load" "unchanged|$(reason no-module-to-load)"
+        else
+            repair_change_status "network:module-load" "unchanged|$(reason candidate-not-resolvable)"
+        fi
+        return 0
+    }
+    local conf="$TARGET_ROOT/etc/modules-load.d/boot-repair-network.conf"
+    local fp_before
+    local -a missing=()
+    fp_before="$(repair_file_fingerprint "$conf")"
+    mkdir -p -- "$(dirname -- "$conf")"
+    [[ -f "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/boot-repair-network.conf.bak" || true
+    for mod2 in "${bound[@]:-}"; do
+        grep -qx "$mod2" "$conf" 2>/dev/null || missing+=("$mod2")
+    done
+    if ((${#missing[@]} > 0)); then
+        local tmp="$conf.boot-repair-tmp"
+        if [[ -f "$conf" ]]; then cp -a -- "$conf" "$tmp"; else : > "$tmp"; fi
+        # shellcheck disable=SC2086 # the word-split is the intended expansion
+        printf '%s\n' "${missing[@]:-}" >> "$tmp"
+        install -m 0644 "$tmp" "$conf" || fail "Failed to write the modules-load.d entry."
+        rm -f -- "$tmp"
+    fi
+    if [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]]; then
+        repair_change_status "network:module-load" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    msg_log network-modules-load-written "${bound[*]}"
+    boot_initramfs_modules_write "network" "${bound[*]}" >/dev/null || true
+    adaptive_initramfs_repair
+    repair_change_status "network:module-load" changed
+}
+
+# Remove the network module blacklist (all three modprobe.d trees) and
+# rebuild the initramfs on a target; config-only on the live host.
+network_repair_remove_blacklist()
+{
+    local -a mods=()
+    local mod removed=0
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$NETWORK_BLACKLISTED_MODULES" && mods+=("$mod")
+    done
+    ((${#mods[@]} > 0)) || {
+        repair_change_status "network:remove-blacklist" "unchanged|$(reason no-blacklist-found)"
+        return 0
+    }
+    removed="$(remove_module_blacklist_entries "${mods[@]:-}")" || true
+    if (( removed > 0 )); then
+        msg_log network-blacklist-removed "$(IFS=,; printf '%s' "${mods[*]}")"
+        if (( RUNNING_HOST_MODE != 1 )); then
+            boot_initramfs_modules_write "network" "${mods[*]}" >/dev/null || true
+            adaptive_initramfs_repair
+        fi
+        repair_change_status "network:remove-blacklist" changed
+    else
+        repair_change_status "network:remove-blacklist" "unchanged|$(reason no-blacklist-found)"
+    fi
+}
+
+# Install the missing network firmware (the per-family bundle, proven present
+# in the scope's repositories; the host connectivity preflight fails in
+# seconds instead of a 600 s package-manager timeout).
+network_repair_install_firmware()
+{
+    [[ "$NETWORK_FIRMWARE_MISSING" != none && -n "$NETWORK_FIRMWARE_MISSING" ]] || {
+        repair_change_status "network:firmware-install" "unchanged|$(reason no-missing-firmware)"
+        return 0
+    }
+    if (( RUNNING_HOST_MODE == 1 )) && [[ "$NETWORK_REACHABILITY" != ok ]]; then
+        repair_change_status "network:firmware-install" "unchanged|$(reason network-connectivity-required)"
+        return 0
+    fi
+    local pkg=""
+    pkg="$(network_firmware_package_suggestion || true)"
+    [[ -n "$pkg" ]] || {
+        repair_change_status "network:firmware-install" "unchanged|$(reason firmware-package-unknown)"
+        return 0
+    }
+    if ! target_package_available "$pkg"; then
+        repair_change_status "network:firmware-install" "unchanged|$(reason package-not-in-repo "$pkg")"
+        return 0
+    fi
+    network_guarded_install_packages "$pkg" || {
+        repair_change_status "network:firmware-install" "unchanged|$(reason install-package-no-op)"
+        return 0
+    }
+    adaptive_initramfs_repair
+    repair_change_status "network:firmware-install" changed
+}
+
+# Round 91 (the driver-fallback chain, 0.2.30 slice): the CURATED driver-switch
+# table (the round-90 investigation).  Prints "replacement vendor_pkg" for a
+# table member (vendor_pkg empty for an in-kernel replacement); returns 1
+# outside the table.  Guarded install semantics: a vendor package is installed
+# only through the guarded verbs after the repo proof; an in-kernel
+# replacement installs nothing.
+network_driver_switch_table()
+{
+    local broken="$1"
+    case "$broken" in
+        r8169)
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg) printf 'r8168 r8168-dkms\n' ;;
+                rpm|pacman|apk) printf 'r8168 r8168\n' ;;
+                *) printf 'r8168\n' ;;
+            esac
+            return 0
+            ;;
+        r8168) printf 'r8169\n'; return 0 ;;
+        igb) printf 'igc\n'; return 0 ;;
+        igc) printf 'igb\n'; return 0 ;;
+        iwlwifi|iwlmvm)
+            # The iwlwifi-family fallback: the vendor backport build (proven
+            # present in the scope's repositories, the vendor/OEM ruling —
+            # never auto-queried from vendor servers).
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg) printf 'iwlwifi backport-iwlwifi-dkms\n'; return 0 ;;
+                *) return 1 ;;
+            esac
+            ;;
+    esac
+    return 1
+}
+
+# The broken table member the switch acts on (positive evidence only): the
+# boot-log-bound module (target) or a probe-failed driver (both scopes).
+network_driver_switch_broken()
+{
+    local mod pair
+    if (( RUNNING_HOST_MODE != 1 )); then
+        for mod in $NETWORK_BOUND_MODULES; do
+            [[ -n "$mod" ]] || continue
+            network_driver_switch_table "$mod" >/dev/null 2>&1 || continue
+            printf '%s\n' "$mod"
+            return 0
+        done
+    fi
+    if [[ "$NETWORK_PROBE_FAILURES" != none && -n "$NETWORK_PROBE_FAILURES" ]]; then
+        for pair in ${NETWORK_PROBE_FAILURES//,/ }; do
+            mod="${pair%%=*}"
+            network_driver_switch_table "$mod" >/dev/null 2>&1 || continue
+            printf '%s\n' "$mod"
+            return 0
+        done
+    fi
+    return 1
+}
+
+# Switch to the fallback driver (blacklist the broken one + the guarded vendor
+# install for the table's package + the initramfs inclusion of the REPLACEMENT
+# + rebuild).  Round 91: widened from the r8169 singleton to the curated table
+# and from the target-only wrong-driver-bound trigger to BOTH scopes on the
+# probe-failure evidence; the inclusion now writes the replacement (the
+# round-85 line wrote the broken module).
+network_repair_driver_switch()
+{
+    local broken="" replacement="" vendor_pkg=""
+    broken="$(network_driver_switch_broken || true)"
+    [[ -n "$broken" ]] || {
+        repair_change_status "network:driver-switch" "unchanged|$(reason no-wrong-driver)"
+        return 0
+    }
+    read -r replacement vendor_pkg <<<"$(network_driver_switch_table "$broken")"
+    if [[ -n "$vendor_pkg" ]]; then
+        # Guarded install semantics: the vendor package must be proven present
+        # in the scope's repositories (the vendor/OEM ruling).
+        if ! target_package_available "$vendor_pkg"; then
+            repair_change_status "network:driver-switch" "unchanged|$(reason package-not-in-repo "$vendor_pkg")"
+            return 0
+        fi
+    elif [[ -n "$replacement" ]]; then
+        # An in-kernel replacement installs nothing — it must be proven
+        # available/builtin on disk before the switch claims it.
+        if ! grep -qw "$replacement" <<<"$NETWORK_AVAILABLE_MODULES" \
+            && ! grep -qw "$replacement" <<<"$NETWORK_BUILTIN_MODULES"; then
+            repair_change_status "network:driver-switch" "unchanged|$(reason replacement-module-unavailable "$replacement")"
+            return 0
+        fi
+    fi
+    local already=0
+    write_module_blacklist "$broken" || already=1
+    local installed=0 applied=0
+    if (( already == 0 )); then
+        msg_log network-blacklist-written "$broken"
+        applied=1
+    fi
+    if [[ -n "$vendor_pkg" ]]; then
+        network_guarded_install_packages "$vendor_pkg" && { installed=1; applied=1; } || true
+        [[ -n "$replacement" ]] && boot_initramfs_modules_write "network" "$replacement" >/dev/null || true
+    else
+        local written=0
+        written="$(boot_initramfs_modules_write "network" "$replacement" 2>/dev/null || true)"
+        (( written > 0 )) && applied=1
+    fi
+    adaptive_initramfs_repair
+    if (( applied == 0 )); then
+        repair_change_status "network:driver-switch" "unchanged|$(reason install-package-no-op)"
+        return 0
+    fi
+    repair_change_status "network:driver-switch" changed
+}
+
+# Round 91 (the host unbound-NIC fix): load the candidate NIC driver modules
+# on the live host (bounded modprobe, one pass, host-only — a repair target
+# has no live kernel).  The candidates come from the diagnostic single-truth
+# evidence (the lspci pair's Kernel modules list); the action replaces the
+# no-carrier/driverless-up dead end with ladder step 1.
+network_repair_load_candidate()
+{
+    (( RUNNING_HOST_MODE == 1 )) || {
+        repair_change_status "network:load-candidate" "unchanged|$(reason target-no-live-kernel)"
+        return 0
+    }
+    [[ "$NETWORK_CANDIDATE_MODULES" != none && -n "$NETWORK_CANDIDATE_MODULES" ]] || {
+        repair_change_status "network:load-candidate" "unchanged|$(reason no-candidate-module)"
+        return 0
+    }
+    local mod changed=0
+    for mod in $(printf '%s' "$NETWORK_CANDIDATE_MODULES" | tr ',' ' '); do
+        [[ -n "$mod" ]] || continue
+        journal_cancel_requested && return 0
+        grep -qw "$mod" /proc/modules 2>/dev/null && continue
+        if modprobe "$mod" 2>&1 | tee -a "$SESSION_LOG"; then
+            changed=1
+            msg_log network-module-loaded "$mod"
+        else
+            msg_log network-module-load-failed "$mod"
+        fi
+    done
+    if (( changed == 1 )); then
+        repair_change_status "network:load-candidate" changed
+    else
+        repair_change_status "network:load-candidate" "unchanged|$(reason candidate-already-loaded)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Round 94 (P4): the connectivity actions 5-7 (DHCP renew, default route,
+# DNS resolver) — the plan's deferred P4 set.  Host: the live per-backend
+# verbs with the uplink guard (never the interface holding the default
+# route); target: the persistent per-backend config writers with trial
+# validation (config-only — a chrooted target shares the recovery host's
+# kernel and network namespace, so no live mutation ever runs through it).
+# ---------------------------------------------------------------------------
+
+# The live default-route interface (the uplink the guard rules protect),
+# re-derived from the live routing table — never the cached evidence line
+# (the round-93 uplink-guard pattern).
+network_uplink_interface()
+{
+    local iface=""
+    if command -v ip >/dev/null 2>&1; then
+        iface="$(ip route show default 2>/dev/null \
+            | awk '{for (i=1;i<=NF;i++) if ($i=="dev") {print $(i+1); exit}}' \
+            | head -n1 || true)"
+    else
+        iface="$(/sbin/route -n 2>/dev/null | awk '$1 == "0.0.0.0" { print $NF; exit }' || true)"
+    fi
+    printf '%s\n' "$iface"
+}
+
+# The host interfaces a connectivity action may act on, re-derived LIVE from
+# /sys (the cached evidence line redacts MAC-named interfaces — never act on
+# a redacted name): carrier present, not the uplink, and — when
+# require_no_addr — without an inet address.  Newline-joined; empty = none.
+network_action_eligible_interfaces()
+{
+    local require_no_addr="$1" name carrier uplink="" sys_if
+    local -a eligible=()
+    uplink="$(network_uplink_interface)"
+    for sys_if in /sys/class/net/*; do
+        [[ -d "$sys_if" ]] || continue
+        name="${sys_if##*/}"
+        [[ -n "$name" && "$name" != lo ]] || continue
+        carrier="$(cat "$sys_if/carrier" 2>/dev/null || true)"
+        [[ "$carrier" == 1 ]] || continue
+        [[ -n "$uplink" && "$name" == "$uplink" ]] && continue
+        if (( require_no_addr == 1 )); then
+            if command -v ip >/dev/null 2>&1; then
+                ip -o addr show dev "$name" 2>/dev/null | grep -q ' inet ' && continue
+            else
+                /sbin/ifconfig "$name" 2>/dev/null | grep -q 'inet addr:' && continue
+            fi
+        fi
+        eligible+=("$name")
+    done
+    ((${#eligible[@]} > 0)) || return 0
+    printf '%s\n' "${eligible[@]:-}"
+}
+
+# One bounded live-host command with a self-managed watchdog (the
+# network_reachability_probe pattern: no coreutils `timeout` — Etch).  The
+# watchdog subshell's stdout/stderr are detached: its orphaned `sleep` would
+# otherwise hold the caller's stdout pipe open and stall the pipe reader
+# (the GUI session pump) long after the command finished.
+network_bounded_live_cmd()
+{
+    local secs_bound="$1" cmd_out="$2" rc=0 pid killer
+    shift 2
+    set +e
+    "$@" > "$cmd_out" 2>&1 &
+    pid=$!
+    ( sleep "$secs_bound"; kill "$pid" 2>/dev/null; sleep 0.5; kill -9 "$pid" 2>/dev/null ) \
+        >/dev/null 2>&1 &
+    killer=$!
+    wait "$pid"
+    rc=$?
+    kill "$killer" 2>/dev/null
+    wait "$killer" 2>/dev/null
+    set -e
+    return "$rc"
+}
+
+# Confirm a live/network-config mutation (the connectivity actions' confirm
+# prompt — the CONFIRM pattern, but never the package-confirm text: this is
+# not a package stage).  With no active answer channel the action proceeds
+# (the evidence gates stay), mirroring confirm_mutating_stage.
+confirm_network_mutation()
+{
+    local label="$1" prompt_text scope="the running host"
+    shell_interactive_ready || return 0
+    (( RUNNING_HOST_MODE == 1 )) || scope="the selected repair target"
+    prompt_text="CONFIRM NETWORK CHANGE"$'\n'
+    prompt_text+="Action: $label"$'\n'
+    prompt_text+="Scope: $scope"$'\n'
+    prompt_text+="This network change is about to be APPLIED for real."$'\n'
+    prompt_text+="Answer: type y or yes to proceed; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip this action."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# ---------------------------------------------------------------------------
+# 5. Establish connectivity — the DHCP/lease repair (P4).
+# ---------------------------------------------------------------------------
+# Host: the per-backend restart/renew on the broken, address-less
+# interface(s) only — NEVER the interface holding the default route (the
+# uplink guard).  Target: the persistent per-backend DHCP config write with
+# trial validation (config-only — never a live mutation through the chroot).
+network_repair_dhcp_renew()
+{
+    local status_key="network:dhcp-renew"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        network_dhcp_renew_host "$status_key"
+    else
+        network_dhcp_config_write_target "$status_key"
+    fi
+}
+
+network_dhcp_renew_host()
+{
+    local status_key="$1" iface uplink=""
+    local -a targets=()
+    local eligible_list=""
+    eligible_list="$(network_action_eligible_interfaces 1)"
+    [[ -n "$eligible_list" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-dhcp-no-interface)"
+        return 0
+    }
+    while IFS= read -r iface; do
+        [[ -n "$iface" ]] && targets+=("$iface")
+    done <<<"$eligible_list"
+    # The uplink guard (the eligible set already excludes the uplink; this is
+    # the live re-check against a route that appeared since the diagnostic).
+    uplink="$(network_uplink_interface)"
+    for iface in "${targets[@]:-}"; do
+        [[ -n "$uplink" && "$iface" == "$uplink" ]] && {
+            repair_change_status "$status_key" "unchanged|$(reason network-dhcp-would-kill-uplink "$iface")"
+            return 0
+        }
+    done
+    # The per-backend live verb (the plan's nmcli/dhcpcd/dhclient/networkctl
+    # set; netplan delegates to its renderer).  netifrc/sysconfig have no
+    # single-interface live verb (their restart touches EVERY interface,
+    # including the uplink) — refused honestly.
+    local verb=""
+    case "${NETWORK_CONFIG_BACKEND:-}" in
+        NetworkManager|netplan-NetworkManager)
+            command -v nmcli >/dev/null 2>&1 || {
+                repair_change_status "$status_key" "unchanged|$(reason network-dhcp-no-backend-tool "${NETWORK_CONFIG_BACKEND:-}")"
+                return 0
+            }
+            verb="nmcli device connect" ;;
+        dhcpcd)
+            command -v dhcpcd >/dev/null 2>&1 || {
+                repair_change_status "$status_key" "unchanged|$(reason network-dhcp-no-backend-tool "${NETWORK_CONFIG_BACKEND:-}")"
+                return 0
+            }
+            verb="dhcpcd -n" ;;
+        ifupdown)
+            command -v ifup >/dev/null 2>&1 || {
+                repair_change_status "$status_key" "unchanged|$(reason network-dhcp-no-backend-tool "${NETWORK_CONFIG_BACKEND:-}")"
+                return 0
+            }
+            verb="ifdown+ifup" ;;
+        systemd-networkd|netplan-networkd)
+            command -v networkctl >/dev/null 2>&1 || {
+                repair_change_status "$status_key" "unchanged|$(reason network-dhcp-no-backend-tool "${NETWORK_CONFIG_BACKEND:-}")"
+                return 0
+            }
+            verb="networkctl reconfigure" ;;
+        *)
+            repair_change_status "$status_key" "unchanged|$(reason network-dhcp-backend-unsupported "${NETWORK_CONFIG_BACKEND:-none}")"
+            return 0
+            ;;
+    esac
+    if ! confirm_network_mutation "Renew the DHCP lease on $(printf '%s' "${targets[*]}")"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    local run_out="" applied=0
+    run_out="$(mktemp "${TMPDIR:-/tmp}/net-dhcp.XXXXXX" 2>/dev/null || true)"
+    for iface in "${targets[@]:-}"; do
+        journal_cancel_requested && { rm -f -- "${run_out:-/dev/null}"; return 0; }
+        case "$verb" in
+            nmcli*)
+                msg_log network-dhcp-renew "$iface" nmcli
+                if network_bounded_live_cmd 30 "${run_out:-/dev/null}" nmcli device connect "$iface"; then
+                    applied=1
+                else
+                    msg_log network-dhcp-renew-failed "$iface"
+                fi
+                ;;
+            dhcpcd*)
+                msg_log network-dhcp-renew "$iface" dhcpcd
+                if network_bounded_live_cmd 30 "${run_out:-/dev/null}" dhcpcd -n "$iface" \
+                    || network_bounded_live_cmd 60 "${run_out:-/dev/null}" dhcpcd "$iface"; then
+                    applied=1
+                else
+                    msg_log network-dhcp-renew-failed "$iface"
+                fi
+                ;;
+            ifdown+ifup)
+                msg_log network-dhcp-renew "$iface" ifupdown
+                network_bounded_live_cmd 20 "${run_out:-/dev/null}" ifdown "$iface" 2>/dev/null || true
+                if network_bounded_live_cmd 60 "${run_out:-/dev/null}" ifup "$iface"; then
+                    applied=1
+                else
+                    msg_log network-dhcp-renew-failed "$iface"
+                fi
+                ;;
+            networkctl*)
+                msg_log network-dhcp-renew "$iface" networkctl
+                if network_bounded_live_cmd 30 "${run_out:-/dev/null}" networkctl reconfigure "$iface"; then
+                    applied=1
+                else
+                    msg_log network-dhcp-renew-failed "$iface"
+                fi
+                ;;
+        esac
+    done
+    rm -f -- "${run_out:-/dev/null}"
+    if (( applied == 1 )); then
+        repair_change_status "$status_key" changed
+    else
+        repair_change_status "$status_key" "unchanged|$(reason network-dhcp-renew-failed "${targets[0]}")"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# The per-backend persistent-DHCP gap probes (target scope, read-only): the
+# enabled interface(s) whose config provides NEITHER a DHCP method NOR a
+# static address.  `network_<backend>_dhcp_gap_targets` prints the raw
+# targets (interface names or full config-file paths, newline-joined);
+# `network_target_dhcp_gap_interfaces` renders them for the menu label.
+# ---------------------------------------------------------------------------
+network_ifupdown_dhcp_gap_targets()
+{
+    local conf="$TARGET_ROOT/etc/network/interfaces"
+    [[ -r "$conf" ]] || return 0
+    local -a enabled=() gaps=()
+    local line iface dup g
+    while IFS= read -r line; do
+        case "$line" in
+            auto\ *)
+                for iface in ${line#auto }; do
+                    [[ -n "$iface" && "$iface" != lo ]] || continue
+                    dup=0
+                    for g in "${enabled[@]:-}"; do
+                        [[ "$g" == "$iface" ]] && dup=1
+                    done
+                    (( dup == 0 )) && enabled+=("$iface")
+                done
+                ;;
+        esac
+    done < "$conf"
+    for iface in "${enabled[@]:-}"; do
+        grep -Eq "^[[:space:]]*iface[[:space:]]+${iface}([[:space:]]|$)" "$conf" || gaps+=("$iface")
+    done
+    ((${#gaps[@]} > 0)) || return 0
+    printf '%s\n' "${gaps[@]:-}"
+}
+
+network_networkd_dhcp_gap_targets()
+{
+    local dir file
+    for dir in "$TARGET_ROOT/etc/systemd/network" "$TARGET_ROOT/usr/lib/systemd/network" "$TARGET_ROOT/lib/systemd/network"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            local saw_network=0 in_network=0 net_has_method=0 line
+            local re_method='^[[:space:]]*(DHCP|Address|Gateway)='
+            while IFS= read -r line; do
+                [[ "$line" == "[Network]" ]] && { saw_network=1; in_network=1; continue; }
+                [[ "$line" == "["* ]] && { in_network=0; continue; }
+                (( in_network == 1 )) || continue
+                [[ "$line" =~ $re_method ]] && net_has_method=1
+            done < "$file"
+            (( saw_network == 1 && net_has_method == 0 )) && printf '%s\n' "$file"
+        done < <(find "$dir" -maxdepth 1 -type f -name '*.network' -printf '%p\n' 2>/dev/null | sort -u || true)
+    done
+}
+
+network_nm_dhcp_gap_targets()
+{
+    local dir="$TARGET_ROOT/etc/NetworkManager/system-connections" file
+    [[ -d "$dir" ]] || return 0
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        grep -q '^\[ipv4\]' "$file" || continue
+        # Only a keyfile whose [ipv4] section lacks BOTH method= and
+        # address1= is the half-written shape (no [ipv4] at all = NM's
+        # default method=auto — healthy, never rewritten).
+        awk '/^\[ipv4\]/{f=1;next} /^\[/{f=0} f' "$file" | grep -Eq '^[[:space:]]*(method|address1)=' && continue
+        printf '%s\n' "$file"
+    done < <(find "$dir" -maxdepth 1 -type f \( -name '*.nmconnection' -o -name '*.conf' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+}
+
+network_dhcpcd_dhcp_gap_targets()
+{
+    local conf="$TARGET_ROOT/etc/dhcpcd.conf"
+    [[ -r "$conf" ]] || return 0
+    local -a gapped=()
+    local iface="" in_block=0 has_static=0 has_addr=0 line dup g
+    while IFS= read -r line; do
+        if [[ "$line" =~ ^[[:space:]]*interface[[:space:]]+[^[:space:]]+ ]]; then
+            if (( in_block == 1 )) && (( has_static == 1 )) && (( has_addr == 0 )); then
+                dup=0
+                for g in "${gapped[@]:-}"; do
+                    [[ "$g" == "$iface" ]] && dup=1
+                done
+                (( dup == 0 )) && gapped+=("$iface")
+            fi
+            iface="${line#*interface }"
+            iface="${iface#"${iface%%[![:space:]]*}"}"
+            in_block=1; has_static=0; has_addr=0
+            continue
+        fi
+        (( in_block == 1 )) || continue
+        local re_static='^[[:space:]]*static([[:space:]]|$)'
+        [[ "$line" =~ $re_static ]] && has_static=1
+        [[ "$line" =~ ^[[:space:]]*static[[:space:]]+ip_address= ]] && has_addr=1
+    done < "$conf"
+    if (( in_block == 1 )) && (( has_static == 1 )) && (( has_addr == 0 )); then
+        dup=0
+        for g in "${gapped[@]:-}"; do
+            [[ "$g" == "$iface" ]] && dup=1
+        done
+        (( dup == 0 )) && gapped+=("$iface")
+    fi
+    ((${#gapped[@]} > 0)) || return 0
+    printf '%s\n' "${gapped[@]:-}"
+}
+
+network_netplan_dhcp_gap_targets()
+{
+    # The bounded layout rule (netplan's own 2-space convention):
+    # `network:` at indent 0, the section keys (ethernets:/wifis:/…) at
+    # indent 2, the interface keys at indent 4, the per-interface method keys
+    # (dhcp4/dhcp6/addresses) at indent 6.  An interface key inside a section
+    # without a method key = the fixable gap.
+    local dir file
+    for dir in "$TARGET_ROOT/etc/netplan" "$TARGET_ROOT/run/netplan" "$TARGET_ROOT/lib/netplan"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            local line indent="" in_section=0 cur="" saw_method=0
+            local -a gapped=()
+            while IFS= read -r line; do
+                [[ -n "$line" ]] || continue
+                indent="${line%%[^[:space:]]*}"
+                case "${#indent}" in
+                    2)
+                        [[ "$line" =~ ^[[:space:]]{2}[A-Za-z0-9_-]+:[[:space:]]*$ ]] || continue
+                        if [[ -n "$cur" ]] && (( saw_method == 0 )); then
+                            gapped+=("$cur")
+                        fi
+                        cur=""; saw_method=0
+                        case "${line#"${line%%[![:space:]]*}"}" in
+                            ethernets:|wifis:|vlans:|bonds:|bridges:|modems:|tunnels:) in_section=1 ;;
+                            *) in_section=0 ;;
+                        esac
+                        ;;
+                    4)
+                        (( in_section == 1 )) || continue
+                        [[ "$line" =~ ^[[:space:]]{4}[A-Za-z0-9_-]+:[[:space:]]*$ ]] || continue
+                        if [[ -n "$cur" ]] && (( saw_method == 0 )); then
+                            gapped+=("$cur")
+                        fi
+                        cur="${line#"${line%%[![:space:]]*}"}"; cur="${cur%%:*}"
+                        saw_method=0
+                        ;;
+                    6)
+                        [[ -n "$cur" ]] || continue
+                        local re_plan='^[[:space:]]{6}(dhcp4|dhcp6|addresses):'
+                        [[ "$line" =~ $re_plan ]] && saw_method=1
+                        ;;
+                esac
+            done < "$file"
+            if [[ -n "$cur" ]] && (( saw_method == 0 )); then
+                gapped+=("$cur")
+            fi
+            ((${#gapped[@]} > 0)) || continue
+            printf '%s|%s\n' "$file" "$(IFS=,; printf '%s' "${gapped[*]}")"
+        done < <(find "$dir" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+    done
+}
+
+network_target_dhcp_gap_interfaces()
+{
+    (( RUNNING_HOST_MODE != 1 )) || return 0
+    local backend="${NETWORK_CONFIG_BACKEND:-none}" raw="" target
+    case "$backend" in
+        ifupdown|netifrc) raw="$(network_ifupdown_dhcp_gap_targets)" ;;
+        netplan-*) raw="$(network_netplan_dhcp_gap_targets)" ;;
+        systemd-networkd) raw="$(network_networkd_dhcp_gap_targets)" ;;
+        NetworkManager) raw="$(network_nm_dhcp_gap_targets)" ;;
+        dhcpcd) raw="$(network_dhcpcd_dhcp_gap_targets)" ;;
+        *) return 0 ;;
+    esac
+    [[ -n "$raw" ]] || return 0
+    local -a labels=()
+    while IFS= read -r target; do
+        [[ -n "$target" ]] || continue
+        case "$backend" in
+            systemd-networkd|netplan-networkd|NetworkManager|netplan-NetworkManager)
+                labels+=("$(basename -- "$target")") ;;
+            netplan-*)
+                labels+=("${target##*/}") ;;
+            *)
+                labels+=("$target") ;;
+        esac
+    done <<<"$raw"
+    printf '%s' "${labels[*]}"
+}
+
+# The persistent per-backend DHCP config writers (backup + fingerprint +
+# trial validation where a validator exists).  Each prints the number of
+# files rewritten, 0 = nothing fixable, -1 = the trial rejected the write
+# (the previous config was restored).
+network_ifupdown_dhcp_write()
+{
+    local conf="$TARGET_ROOT/etc/network/interfaces" fp_before tmp trial_rc=0
+    local -a gaps=()
+    local g
+    local raw=""
+    raw="$(network_ifupdown_dhcp_gap_targets)"
+    [[ -n "$raw" ]] || { printf '0\n'; return 0; }
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && gaps+=("$g")
+    done <<<"$raw"
+    cp -a -- "$conf" "$SESSION_DIR/interfaces.bak" 2>/dev/null || true
+    fp_before="$(repair_file_fingerprint "$conf")"
+    tmp="$conf.boot-repair-tmp"
+    cp -a -- "$conf" "$tmp"
+    {
+        printf '\n# Boot Bitch (network DHCP repair): %s\n' "${gaps[*]}"
+        for g in "${gaps[@]:-}"; do
+            printf 'iface %s inet dhcp\n' "$g"
+        done
+    } >> "$tmp"
+    install -m 0644 "$tmp" "$conf" || fail "Failed to write the repaired interfaces file."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && { printf '0\n'; return 0; }
+    if [[ -x "$TARGET_ROOT/sbin/ifup" || -x "$TARGET_ROOT/usr/sbin/ifup" ]]; then
+        set +e
+        RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env LC_ALL=C ifup -n -a >/dev/null 2>&1
+        trial_rc=$?
+        set -e
+        if (( trial_rc != 0 )); then
+            cp -a -- "$SESSION_DIR/interfaces.bak" "$conf" 2>/dev/null || true
+            printf '%s\n' -1
+            return 0
+        fi
+    fi
+    printf '%d\n' "${#gaps[@]}"
+}
+
+network_networkd_dhcp_write()
+{
+    local dir file found=0
+    for dir in "$TARGET_ROOT/etc/systemd/network" "$TARGET_ROOT/usr/lib/systemd/network" "$TARGET_ROOT/lib/systemd/network"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            local saw_network=0 in_network=0 net_has_method=0 line fp_before tmp
+            local re_method='^[[:space:]]*(DHCP|Address|Gateway)='
+            while IFS= read -r line; do
+                [[ "$line" == "[Network]" ]] && { saw_network=1; in_network=1; continue; }
+                [[ "$line" == "["* ]] && { in_network=0; continue; }
+                (( in_network == 1 )) || continue
+                [[ "$line" =~ $re_method ]] && net_has_method=1
+            done < "$file"
+            (( saw_network == 1 && net_has_method == 0 )) || continue
+            cp -a -- "$file" "$SESSION_DIR/$(basename -- "$file").bak" 2>/dev/null || true
+            fp_before="$(repair_file_fingerprint "$file")"
+            tmp="$file.boot-repair-tmp"
+            awk '/^[[:space:]]*\[Network\][[:space:]]*$/ { print; print "DHCP=yes"; next } { print }' "$file" > "$tmp" || true
+            install -m 0644 "$tmp" "$file" || fail "Failed to write the repaired networkd file."
+            rm -f -- "$tmp"
+            [[ "$(repair_file_fingerprint "$file")" == "$fp_before" ]] && continue
+            found=$((found + 1))
+        done < <(find "$dir" -maxdepth 1 -type f -name '*.network' -printf '%p\n' 2>/dev/null | sort -u || true)
+    done
+    printf '%d\n' "$found"
+}
+
+network_nm_dhcp_write()
+{
+    local dir="$TARGET_ROOT/etc/NetworkManager/system-connections" file found=0
+    [[ -d "$dir" ]] || { printf '0\n'; return 0; }
+    while IFS= read -r file; do
+        [[ -n "$file" ]] || continue
+        grep -q '^\[ipv4\]' "$file" || continue
+        awk '/^\[ipv4\]/{f=1;next} /^\[/{f=0} f' "$file" | grep -Eq '^[[:space:]]*(method|address1)=' && continue
+        cp -a -- "$file" "$SESSION_DIR/$(basename -- "$file").bak" 2>/dev/null || true
+        local fp_before tmp
+        fp_before="$(repair_file_fingerprint "$file")"
+        tmp="$file.boot-repair-tmp"
+        awk '/^[[:space:]]*\[ipv4\][[:space:]]*$/ { print; print "method=auto"; next } { print }' "$file" > "$tmp" || true
+        install -m 0644 "$tmp" "$file" || fail "Failed to write the repaired NetworkManager keyfile."
+        rm -f -- "$tmp"
+        [[ "$(repair_file_fingerprint "$file")" == "$fp_before" ]] && continue
+        found=$((found + 1))
+    done < <(find "$dir" -maxdepth 1 -type f \( -name '*.nmconnection' -o -name '*.conf' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+    printf '%d\n' "$found"
+}
+
+network_dhcpcd_dhcp_write()
+{
+    local conf="$TARGET_ROOT/etc/dhcpcd.conf" fp_before tmp
+    local -a gapped=()
+    local g raw=""
+    raw="$(network_dhcpcd_dhcp_gap_targets)"
+    [[ -n "$raw" ]] || { printf '0\n'; return 0; }
+    while IFS= read -r g; do
+        [[ -n "$g" ]] && gapped+=("$g")
+    done <<<"$raw"
+    cp -a -- "$conf" "$SESSION_DIR/dhcpcd.conf.bak" 2>/dev/null || true
+    fp_before="$(repair_file_fingerprint "$conf")"
+    tmp="$conf.boot-repair-tmp"
+    {
+        local line cur="" in_block=0 skip=0 gg
+        local re_static='^[[:space:]]*static([[:space:]]|$)'
+        while IFS= read -r line; do
+            if [[ "$line" =~ ^[[:space:]]*interface[[:space:]]+[^[:space:]]+ ]]; then
+                cur="${line#*interface }"
+                cur="${cur#"${cur%%[![:space:]]*}"}"
+                in_block=1; skip=0
+                for gg in "${gapped[@]:-}"; do
+                    [[ "$gg" == "$cur" ]] && skip=1
+                done
+                printf '%s\n' "$line"
+                continue
+            fi
+            if (( in_block == 1 )) && (( skip == 1 )) \
+                && [[ "$line" =~ $re_static ]] \
+                && [[ "$line" != *ip_address=* ]]; then
+                continue
+            fi
+            printf '%s\n' "$line"
+        done < "$conf"
+    } > "$tmp" || true
+    install -m 0644 "$tmp" "$conf" || fail "Failed to write the repaired dhcpcd.conf."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && { printf '0\n'; return 0; }
+    printf '%d\n' "${#gapped[@]}"
+}
+
+network_netplan_dhcp_write()
+{
+    local dir file found=0
+    for dir in "$TARGET_ROOT/etc/netplan" "$TARGET_ROOT/run/netplan" "$TARGET_ROOT/lib/netplan"; do
+        [[ -d "$dir" ]] || continue
+        while IFS= read -r file; do
+            [[ -n "$file" ]] || continue
+            local gapped_keys="" fp_before tmp trial_rc=0
+            local -a gapped=()
+            gapped_keys="$(network_netplan_dhcp_gap_targets | grep -m1 -F "$file|" | cut -d'|' -f2 || true)"
+            [[ -n "$gapped_keys" ]] || continue
+            IFS=',' read -r -a gapped <<<"$gapped_keys"
+            ((${#gapped[@]} > 0)) || continue
+            cp -a -- "$file" "$SESSION_DIR/$(basename -- "$file").bak" 2>/dev/null || true
+            fp_before="$(repair_file_fingerprint "$file")"
+            tmp="$file.boot-repair-tmp"
+            awk -v keys="$gapped_keys" '
+                BEGIN { n = split(keys, k, ","); for (i = 1; i <= n; i++) wanted[k[i]] = 1 }
+                /^[[:space:]]*[A-Za-z0-9_-]+:[[:space:]]*$/ {
+                    print
+                    name = $0; sub(/^[[:space:]]*/, "", name); sub(/:.*/, "", name)
+                    if (wanted[name]) print "    dhcp4: true"
+                    next
+                }
+                { print }
+            ' "$file" > "$tmp" || true
+            install -m 0644 "$tmp" "$file" || fail "Failed to write the repaired netplan file."
+            rm -f -- "$tmp"
+            [[ "$(repair_file_fingerprint "$file")" == "$fp_before" ]] && continue
+            found=$((found + 1))
+            # Trial validation: netplan generate validates the YAML
+            # (best-effort — an absent netplan falls through to the shape
+            # check).
+            if [[ -x "$TARGET_ROOT/usr/sbin/netplan" || -x "$TARGET_ROOT/sbin/netplan" || -x "$TARGET_ROOT/usr/bin/netplan" ]]; then
+                set +e
+                RUN_SELECTED_CHROOT_BOUND=60 run_selected_chroot /usr/bin/env LC_ALL=C netplan generate --root-dir / >/dev/null 2>&1
+                trial_rc=$?
+                set -e
+                if (( trial_rc != 0 )); then
+                    cp -a -- "$SESSION_DIR/$(basename -- "$file").bak" "$file" 2>/dev/null || true
+                    printf '%s\n' -1
+                    return 0
+                fi
+            fi
+        done < <(find "$dir" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+    done
+    printf '%d\n' "$found"
+}
+
+network_dhcp_config_write_target()
+{
+    local status_key="$1" backend="${NETWORK_CONFIG_BACKEND:-none}" gap_labels="" written=0
+    gap_labels="$(network_target_dhcp_gap_interfaces)"
+    [[ -n "$gap_labels" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-dhcp-config-not-needed "$backend")"
+        return 0
+    }
+    if ! confirm_network_mutation "Repair the persistent DHCP configuration ($backend) for: $gap_labels"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    case "$backend" in
+        ifupdown|netifrc) written="$(network_ifupdown_dhcp_write)" ;;
+        netplan-*) written="$(network_netplan_dhcp_write)" ;;
+        systemd-networkd) written="$(network_networkd_dhcp_write)" ;;
+        NetworkManager) written="$(network_nm_dhcp_write)" ;;
+        dhcpcd) written="$(network_dhcpcd_dhcp_write)" ;;
+        *) repair_change_status "$status_key" "unchanged|$(reason network-dhcp-config-not-needed "$backend")"; return 0 ;;
+    esac
+    if (( written < 0 )); then
+        repair_change_status "$status_key" "unchanged|$(reason network-config-trial-failed "$backend")"
+        return 0
+    fi
+    if (( written > 0 )); then
+        msg_log network-dhcp-config-written "$backend" "$gap_labels"
+        repair_change_status "$status_key" changed
+    else
+        repair_change_status "$status_key" "unchanged|$(reason config-identical)"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# 6. Repair the default route (P4).  Host: the lease's routers value applied
+# with `ip route replace default …` ONLY while no default route exists (a
+# present one is the live uplink — the guard refuses to mutate it); a failed
+# apply rolls back.  Target: the per-backend gateway stanza write (config-
+# only), gated on the host lease-gateway evidence (the only network evidence
+# available for an offline target).
+# ---------------------------------------------------------------------------
+network_repair_default_route()
+{
+    local status_key="network:default-route"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        network_default_route_host "$status_key"
+    else
+        network_default_route_config_target "$status_key"
+    fi
+}
+
+network_default_route_host()
+{
+    local status_key="$1" gw="${NETWORK_LEASE_GATEWAY:-none}"
+    [[ "$gw" != none && -n "$gw" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-route-no-gateway)"
+        return 0
+    }
+    # The uplink guard: a default route that exists NOW is the live uplink —
+    # replacing it would cut the recovery host's connectivity.
+    local existing=""
+    if command -v ip >/dev/null 2>&1; then
+        existing="$(ip route show default 2>/dev/null | head -n1 || true)"
+    else
+        existing="$(/sbin/route -n 2>/dev/null | awk '$1 == "0.0.0.0" { print "via " $2; exit }' || true)"
+    fi
+    [[ -n "$existing" ]] && {
+        repair_change_status "$status_key" "unchanged|$(reason network-route-exists)"
+        return 0
+    }
+    local iface=""
+    iface="$(network_action_eligible_interfaces 0 | head -n1 || true)"
+    [[ -n "$iface" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-route-no-interface)"
+        return 0
+    }
+    if ! confirm_network_mutation "Add the default route via $gw on $iface"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    local route_out="" rc=0
+    route_out="$(mktemp "${TMPDIR:-/tmp}/net-route.XXXXXX" 2>/dev/null || true)"
+    msg_log network-route-apply "$gw" "$iface"
+    if network_bounded_live_cmd 15 "${route_out:-/dev/null}" ip route replace default via "$gw" dev "$iface"; then
+        rm -f -- "${route_out:-/dev/null}"
+        repair_change_status "$status_key" changed
+        return 0
+    fi
+    # Rollback: remove the partially-applied default (best-effort).
+    network_bounded_live_cmd 10 "${route_out:-/dev/null}" ip route del default via "$gw" dev "$iface" || true
+    rm -f -- "${route_out:-/dev/null}"
+    msg_log network-route-rollback "$iface"
+    repair_change_status "$status_key" "unchanged|$(reason network-route-apply-failed)"
+}
+
+# The per-backend static-gateway state on a repair target (read-only): a
+# static-configured interface without a gateway line.  Prints the config file
+# the gateway stanza belongs in (the fixable gap), or the token `configured`
+# when the static shape already carries a gateway; empty = not applicable
+# (DHCP provides the route).
+network_route_gap_target()
+{
+    local backend="${NETWORK_CONFIG_BACKEND:-none}" dir file conf="" gap_file="" configured=""
+    case "$backend" in
+        ifupdown|netifrc)
+            conf="$TARGET_ROOT/etc/network/interfaces"
+            [[ -r "$conf" ]] || return 0
+            grep -Eq '^[[:space:]]*iface[[:space:]]+[^[:space:]]+[[:space:]]+inet[[:space:]]+static' "$conf" || return 0
+            if grep -Eq '^[[:space:]]*(gateway|up[[:space:]]+ip route add default)[[:space:]]' "$conf"; then
+                printf 'configured\n'
+            else
+                printf '%s\n' "$conf"
+            fi
+            ;;
+        systemd-networkd)
+            for dir in "$TARGET_ROOT/etc/systemd/network" "$TARGET_ROOT/usr/lib/systemd/network" "$TARGET_ROOT/lib/systemd/network"; do
+                [[ -d "$dir" ]] || continue
+                while IFS= read -r file; do
+                    [[ -n "$file" ]] || continue
+                    grep -Eq '^[[:space:]]*Address=' "$file" || continue
+                    if grep -Eq '^[[:space:]]*Gateway=' "$file"; then
+                        configured="$file"
+                    else
+                        gap_file="$file"
+                    fi
+                done < <(find "$dir" -maxdepth 1 -type f -name '*.network' -printf '%p\n' 2>/dev/null | sort -u || true)
+            done
+            if [[ -n "$gap_file" ]]; then printf '%s\n' "$gap_file"
+            elif [[ -n "$configured" ]]; then printf 'configured\n'
+            fi
+            ;;
+        NetworkManager)
+            for dir in "$TARGET_ROOT/etc/NetworkManager/system-connections" "$TARGET_ROOT/run/NetworkManager/system-connections"; do
+                [[ -d "$dir" ]] || continue
+                while IFS= read -r file; do
+                    [[ -n "$file" ]] || continue
+                    grep -q '^\[ipv4\]' "$file" || continue
+                    awk '/^\[ipv4\]/{f=1;next} /^\[/{f=0} f' "$file" | grep -Eq '^[[:space:]]*address1=' || continue
+                    if awk '/^\[ipv4\]/{f=1;next} /^\[/{f=0} f' "$file" | grep -Eq '^[[:space:]]*(gateway|route1)='; then
+                        configured="$file"
+                    else
+                        gap_file="$file"
+                    fi
+                done < <(find "$dir" -maxdepth 1 -type f \( -name '*.nmconnection' -o -name '*.conf' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+            done
+            if [[ -n "$gap_file" ]]; then printf '%s\n' "$gap_file"
+            elif [[ -n "$configured" ]]; then printf 'configured\n'
+            fi
+            ;;
+        netplan-*)
+            for dir in "$TARGET_ROOT/etc/netplan" "$TARGET_ROOT/run/netplan" "$TARGET_ROOT/lib/netplan"; do
+                [[ -d "$dir" ]] || continue
+                while IFS= read -r file; do
+                    [[ -n "$file" ]] || continue
+                    grep -Eq '^[[:space:]]+addresses:' "$file" || continue
+                    if grep -Eq '^[[:space:]]+(routes:|gateway4:)' "$file"; then
+                        configured="$file"
+                    else
+                        gap_file="$file"
+                    fi
+                done < <(find "$dir" -maxdepth 1 -type f \( -name '*.yaml' -o -name '*.yml' \) -printf '%p\n' 2>/dev/null | sort -u || true)
+            done
+            if [[ -n "$gap_file" ]]; then printf '%s\n' "$gap_file"
+            elif [[ -n "$configured" ]]; then printf 'configured\n'
+            fi
+            ;;
+        dhcpcd)
+            conf="$TARGET_ROOT/etc/dhcpcd.conf"
+            [[ -r "$conf" ]] || return 0
+            grep -Eq '^[[:space:]]*static[[:space:]]+ip_address=' "$conf" || return 0
+            if grep -Eq '^[[:space:]]*static[[:space:]]+routers=' "$conf"; then
+                printf 'configured\n'
+            else
+                printf '%s\n' "$conf"
+            fi
+            ;;
+    esac
+}
+
+network_default_route_config_target()
+{
+    local status_key="$1" backend="${NETWORK_CONFIG_BACKEND:-none}" file="" gw=""
+    gw="${NETWORK_LEASE_GATEWAY:-none}"
+    [[ "$gw" != none && -n "$gw" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-route-no-gateway)"
+        return 0
+    }
+    file="$(network_route_gap_target)"
+    if [[ "$file" == configured ]]; then
+        repair_change_status "$status_key" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    [[ -n "$file" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-route-config-not-applicable "$backend")"
+        return 0
+    }
+    if ! confirm_network_mutation "Write the persistent default-route gateway $gw ($backend)"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    cp -a -- "$file" "$SESSION_DIR/$(basename -- "$file").bak" 2>/dev/null || true
+    local fp_before tmp trial_rc=0
+    fp_before="$(repair_file_fingerprint "$file")"
+    tmp="$file.boot-repair-tmp"
+    case "$backend" in
+        ifupdown|netifrc)
+            awk -v gw="$gw" '
+                /^[[:space:]]*iface[[:space:]]+[^[:space:]]+[[:space:]]+inet[[:space:]]+static/ && !inserted {
+                    print; print "    gateway " gw; inserted = 1; next
+                }
+                { print }
+            ' "$file" > "$tmp" || true
+            ;;
+        systemd-networkd)
+            awk -v gw="$gw" '/^[[:space:]]*\[Network\][[:space:]]*$/ { print; print "Gateway=" gw; next } { print }' "$file" > "$tmp" || true
+            ;;
+        NetworkManager)
+            awk -v gw="$gw" '/^[[:space:]]*\[ipv4\][[:space:]]*$/ { print; print "gateway=" gw; next } { print }' "$file" > "$tmp" || true
+            ;;
+        netplan-*)
+            awk -v gw="$gw" '/^[[:space:]]+addresses:/ && !inserted {
+                print; print "      routes:"; print "        - to: default"; print "          via: " gw; inserted = 1; next
+            }
+            { print }' "$file" > "$tmp" || true
+            ;;
+        dhcpcd)
+            awk -v gw="$gw" '/^[[:space:]]*static[[:space:]]+ip_address=/ && !inserted { print; print "static routers=" gw; inserted = 1; next } { print }' "$file" > "$tmp" || true
+            ;;
+    esac
+    install -m 0644 "$tmp" "$file" || fail "Failed to write the persistent gateway configuration."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$file")" == "$fp_before" ]] && {
+        repair_change_status "$status_key" "unchanged|$(reason config-identical)"
+        return 0
+    }
+    # Trial validation (best-effort: netplan generate / ifup -n — the
+    # validators the backends ship; a rejected write restores the backup).
+    if [[ "$backend" == netplan-* ]] \
+        && [[ -x "$TARGET_ROOT/usr/sbin/netplan" || -x "$TARGET_ROOT/sbin/netplan" || -x "$TARGET_ROOT/usr/bin/netplan" ]]; then
+        set +e
+        RUN_SELECTED_CHROOT_BOUND=60 run_selected_chroot /usr/bin/env LC_ALL=C netplan generate --root-dir / >/dev/null 2>&1
+        trial_rc=$?
+        set -e
+    elif [[ "$backend" == ifupdown || "$backend" == netifrc ]] \
+        && [[ -x "$TARGET_ROOT/sbin/ifup" || -x "$TARGET_ROOT/usr/sbin/ifup" ]]; then
+        set +e
+        RUN_SELECTED_CHROOT_BOUND=30 run_selected_chroot /usr/bin/env LC_ALL=C ifup -n -a >/dev/null 2>&1
+        trial_rc=$?
+        set -e
+    fi
+    if (( trial_rc != 0 )); then
+        cp -a -- "$SESSION_DIR/$(basename -- "$file").bak" "$file" 2>/dev/null || true
+        repair_change_status "$status_key" "unchanged|$(reason network-config-trial-failed "$backend")"
+        return 0
+    fi
+    msg_log network-route-config-written "$gw" "$backend"
+    repair_change_status "$status_key" changed
+}
+
+# ---------------------------------------------------------------------------
+# 7. Repair DNS (P4).  Host: restart the resolver when the resolv.conf chain
+# is dangling, else a plain resolv.conf written from the lease DNS — never
+# overwriting a working plain resolv.conf.  Target: replace the dangling
+# /run symlink with a regular file (backup + rollback); the content is the
+# target's own systemd-resolved stub when it ships one, else the recovery
+# host's current DNS servers (evidence-derived — never invented servers).
+# ---------------------------------------------------------------------------
+network_repair_dns()
+{
+    local status_key="network:dns-repair"
+    if (( RUNNING_HOST_MODE == 1 )); then
+        network_dns_host "$status_key"
+    else
+        network_dns_target "$status_key"
+    fi
+}
+
+# The shared plain-resolv.conf writer (host and target): fingerprint + backup
+# + dangling-symlink removal + install.  Returns 0 when the content changed,
+# 1 when it is already identical (the caller reports config-identical).
+network_resolv_write_plain()
+{
+    local conf="$1" servers="$2" fp_before tmp srv
+    fp_before="$(repair_file_fingerprint "$conf")"
+    [[ -e "$conf" || -L "$conf" ]] && cp -a -- "$conf" "$SESSION_DIR/resolv.conf.bak" 2>/dev/null || true
+    tmp="$conf.boot-repair-tmp"
+    {
+        for srv in ${servers//,/ }; do
+            [[ -n "$srv" ]] && printf 'nameserver %s\n' "$srv"
+        done
+    } > "$tmp" || fail "Failed to write the temporary resolv.conf."
+    # A dangling symlink destination must never be followed (GNU install
+    # would create the file at the link target).
+    [[ -L "$conf" ]] && rm -f -- "$conf"
+    install -m 0644 "$tmp" "$conf" || fail "Failed to install the repaired resolv.conf."
+    rm -f -- "$tmp"
+    [[ "$(repair_file_fingerprint "$conf")" == "$fp_before" ]] && return 1
+    return 0
+}
+
+network_dns_host()
+{
+    local status_key="$1" chain="${NETWORK_DNS_CHAIN:-missing}" servers="${NETWORK_DNS_SERVERS:-none}"
+    # Never touch a working plain resolv.conf (the never-overwrite rule).
+    if [[ "$chain" == "plain file" && "$servers" != none ]]; then
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-working-config)"
+        return 0
+    fi
+    # The dangling-resolver-chain shape: restart the resolver first (the
+    # plan's order); a still-broken chain falls through to the plain-file
+    # write below.
+    if [[ "$chain" == dangling* ]] && command -v systemctl >/dev/null 2>&1 \
+        && systemctl -q is-enabled systemd-resolved 2>/dev/null; then
+        if ! confirm_network_mutation "Restart the systemd-resolved resolver"; then
+            repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+            return 0
+        fi
+        msg_log network-resolver-restart
+        local dns_out="" rc=0 resolved=""
+        dns_out="$(mktemp "${TMPDIR:-/tmp}/net-dns.XXXXXX" 2>/dev/null || true)"
+        network_bounded_live_cmd 30 "${dns_out:-/dev/null}" systemctl restart systemd-resolved || rc=$?
+        resolved="$(readlink -f /etc/resolv.conf 2>/dev/null || true)"
+        if (( rc == 0 )) && [[ -f "$resolved" ]]; then
+            rm -f -- "${dns_out:-/dev/null}"
+            repair_change_status "$status_key" changed
+            return 0
+        fi
+        rm -f -- "${dns_out:-/dev/null}"
+        # Fall through to the plain-file write below.
+    fi
+    # The plain resolv.conf from the lease DNS (never invented servers).
+    local lease_dns="${NETWORK_LEASE_DNS_SERVERS:-none}"
+    [[ "$lease_dns" != none && -n "$lease_dns" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-no-servers)"
+        return 0
+    }
+    if ! confirm_network_mutation "Write a plain resolv.conf from the lease DNS servers"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    # Live re-check: a plain resolv.conf with nameservers that appeared since
+    # the diagnostic is a working config — never overwrite it.
+    if [[ ! -L /etc/resolv.conf && -f /etc/resolv.conf ]] \
+        && grep -qE '^nameserver[[:space:]]' /etc/resolv.conf 2>/dev/null; then
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-working-config)"
+        return 0
+    fi
+    if ! network_resolv_write_plain "/etc/resolv.conf" "$lease_dns"; then
+        repair_change_status "$status_key" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    msg_log network-resolv-written
+    repair_change_status "$status_key" changed
+}
+
+# The target's broken-resolv.conf gap (read-only): a missing file or a
+# dangling symlink (the /run-systemd stub shape) — never a working plain
+# resolv.conf with nameserver lines.
+network_target_dns_gap()
+{
+    (( RUNNING_HOST_MODE != 1 )) || return 1
+    local conf="$TARGET_ROOT/etc/resolv.conf" link="" resolved=""
+    if [[ -f "$conf" && ! -L "$conf" ]] \
+        && grep -qE '^nameserver[[:space:]]' "$conf" 2>/dev/null; then
+        return 1
+    fi
+    if [[ -L "$conf" ]]; then
+        link="$(readlink "$conf" 2>/dev/null || true)"
+        [[ -n "$link" ]] || return 1
+        # Resolve the link RELATIVE TO ITS DIRECTORY (like the kernel does),
+        # never against the recovery host's root.
+        resolved="$(realpath -m "$TARGET_ROOT/etc/$link" 2>/dev/null || true)"
+        [[ "$resolved" == "$TARGET_ROOT"* ]] || return 1
+        [[ -e "$resolved" ]] && return 1
+    fi
+    return 0
+}
+
+network_dns_target()
+{
+    local status_key="$1" conf="$TARGET_ROOT/etc/resolv.conf" servers=""
+    # Never overwrite a working plain resolv.conf (the never-overwrite rule).
+    if [[ -f "$conf" && ! -L "$conf" ]] \
+        && grep -qE '^nameserver[[:space:]]' "$conf" 2>/dev/null; then
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-working-config)"
+        return 0
+    fi
+    if ! network_target_dns_gap; then
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-working-config)"
+        return 0
+    fi
+    # The replacement content: the target's own systemd-resolved stub when it
+    # ships one, else the recovery host's current DNS servers.
+    if [[ -x "$TARGET_ROOT/usr/bin/resolvectl" ]] \
+        || [[ -e "$TARGET_ROOT/usr/lib/systemd/systemd-resolved" ]] \
+        || [[ -e "$TARGET_ROOT/lib/systemd/systemd-resolved" ]]; then
+        servers="127.0.0.53"
+    else
+        servers="${NETWORK_DNS_SERVERS:-none}"
+    fi
+    [[ "$servers" != none && -n "$servers" ]] || {
+        repair_change_status "$status_key" "unchanged|$(reason network-dns-no-servers)"
+        return 0
+    }
+    if ! confirm_network_mutation "Replace the broken resolv.conf chain with a plain file"; then
+        repair_change_status "$status_key" "unchanged|$(reason user-declined)"
+        return 0
+    fi
+    if ! network_resolv_write_plain "$conf" "$servers"; then
+        repair_change_status "$status_key" "unchanged|$(reason config-identical)"
+        return 0
+    fi
+    msg_log network-dns-config-written
+    repair_change_status "$status_key" changed
+}
+
+# 8. Include the NIC drivers in the initramfs and rebuild (offered as the
+# trailing step of a driver/firmware change or on its own).
+network_repair_include_initramfs()
+{
+    local -a mods=()
+    local mod
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] && mods+=("$mod")
+    done
+    ((${#mods[@]} > 0)) || {
+        repair_change_status "network:include-initramfs" "unchanged|$(reason no-modules-to-include)"
+        return 0
+    }
+    # Round 113 (ITEM 2): only modules the target's tree actually carries are
+    # includable — the initramfs builders resolve the written names against
+    # the on-disk tree, so an absent module is reported truthfully, never as
+    # a silent `inclusion-identical` while the diagnostic's inclusion is
+    # empty (the user's Arch finding: inclusion-identical with
+    # "mkinitcpio inclusion: none" is a lie).
+    local resolvable="" skipped="" inc_mod
+    local -a inc=()
+    resolvable="$(network_modules_resolvable "${mods[*]}")"
+    for inc_mod in $resolvable; do
+        [[ -n "$inc_mod" ]] && inc+=("$inc_mod")
+    done
+    for mod in "${mods[@]:-}"; do
+        grep -qw "$mod" <<<"$resolvable" || skipped+="${skipped:+,}$mod"
+    done
+    if ((${#inc[@]} == 0)); then
+        repair_change_status "network:include-initramfs" "unchanged|$(reason module-not-in-target-tree "${skipped:-$(printf '%s' "${mods[*]}" | tr ' ' ',')}")"
+        return 0
+    fi
+    local written=0
+    written="$(boot_initramfs_modules_write "network" "${inc[*]}")" || true
+    if [[ "$written" == 0 ]]; then
+        # Only truthful now: every requested module was resolvable and the
+        # config already carried the whole resolvable set.
+        if [[ -n "$skipped" ]]; then
+            repair_change_status "network:include-initramfs" "unchanged|$(reason module-not-in-target-tree "$skipped")"
+            return 0
+        fi
+        # Round 131 (N9, the round-130 N4 input twin's rule): the config
+        # carried the full module set, but when the cached image proof lacks
+        # a written module an earlier rebuild may have ignored the
+        # unregistered config — the rebuild must still run so the image
+        # catches up with the config.
+        if network_inclusion_set_in_image "${inc[*]}"; then
+            repair_change_status "network:include-initramfs" "unchanged|$(reason inclusion-identical)"
+            return 0
+        fi
+    fi
+    msg_log network-inclusion-written "${inc[*]}"
+    adaptive_initramfs_repair
+    # Round 131 (N9): never claim the fix without the per-module image proof
+    # (the input twin's round-130 N4 verification).  Round 139 (host
+    # false-failure fix): the verification is TARGET-shaped — on a running
+    # host the proof collector emits the live-evidence sentinel
+    # ("running-host: live network evidence applies"), so the per-module
+    # check would fail the stage AFTER a verified rebuild.  The host's own
+    # proof shape is the config write plus the just-completed verified
+    # rebuild; the host path never fails after it.  Targets keep the
+    # per-module image check unchanged.
+    NETWORK_EVIDENCE_COLLECTED=0
+    network_initramfs_proof_collect
+    if (( RUNNING_HOST_MODE != 1 )); then
+        network_inclusion_proof_verified "${inc[*]}" \
+            || fail "$(reason network-initramfs-rebuild-unverified)."
+    fi
+    repair_change_status "network:include-initramfs" changed
+}
+
+# The focused re-verify (the same window, never a full diagnostic re-run).
+network_reverify()
+{
+    local before="${NETWORK_FAILURE_CLASS:-unknown}"
+    msg_log network-reverify
+    NETWORK_EVIDENCE_COLLECTED=0
+    network_collect_evidence
+    local after="${NETWORK_FAILURE_CLASS:-unknown}"
+    msg_log network-reverify-verdict "$before" "$after"
+    if [[ "$after" == verified ]]; then
+        msg_log network-reverify-fixed
+    else
+        msg_log network-reverify-not-fixed "$after"
+    fi
+}
+
+# ---------------------------------------------------------------------------
+# Round 89 (ITEM 1): the evidence-aware NIC-inclusion delta (the input
+# section's pattern): needed = the bound-module candidate set the include
+# action writes; satisfied = builtin ∪ config-included ∪ (host)
+# already-loaded-live.  An empty delta = nothing to do (the verified
+# terminal).
+# ---------------------------------------------------------------------------
+
+# The config-inclusion tokens (the module names behind the per-backend
+# "backend: a,b" entries of NETWORK_INITRAMFS_INCLUSION).
+network_menu_config_included_modules()
+{
+    local entry list mod
+    local -a menu_mods_arr=()
+    while IFS= read -r entry; do
+        case "$entry" in
+            *": "*) list="${entry#*: }" ;;
+            *) continue ;;
+        esac
+        [[ -n "$list" && "$list" != none && "$list" != none-detected ]] || continue
+        # shellcheck disable=SC2086 # the comma-split is the intended expansion
+        for mod in ${list//,/ }; do
+            [[ -n "$mod" ]] && menu_mods_arr+=("$mod")
+        done
+    done <<<"$(printf '%s' "$NETWORK_INITRAMFS_INCLUSION" | tr ';' '\n' || true)"
+    ((${#menu_mods_arr[@]} > 0)) || return 0
+    printf '%s\n' "${menu_mods_arr[@]:-}"
+}
+
+# Round 131 (N9, the input twin's round-130 N4 rule): the "already included
+# in the initramfs" truth for the network menu.  On a target the built-image
+# proof (NETWORK_INITRAMFS_PROOF) is the single truth whenever it carries a
+# readable listing; the config inclusion evidence is the fallback and the
+# host's truth.
+network_menu_included_modules()
+{
+    if (( RUNNING_HOST_MODE == 1 )); then
+        network_menu_config_included_modules
+        return 0
+    fi
+    local entry mod list conclusive=0
+    local -a menu_mods_arr=()
+    while IFS= read -r entry; do
+        case "$entry" in
+            *=unreadable:*|running-host:*|"") continue ;;
+            *=*)
+                conclusive=1
+                list="${entry#*=}"
+                [[ -n "$list" && "$list" != absent ]] || continue
+                # shellcheck disable=SC2086 # the comma-split is the intended expansion
+                for mod in ${list//,/ }; do
+                    [[ -n "$mod" ]] && menu_mods_arr+=("$mod")
+                done
+                ;;
+        esac
+    done <<<"$(printf '%s' "$NETWORK_INITRAMFS_PROOF" | tr ';' '\n' || true)"
+    if (( conclusive == 1 )); then
+        ((${#menu_mods_arr[@]} > 0)) && printf '%s\n' "${menu_mods_arr[@]:-}"
+        return 0
+    fi
+    # No readable image listing: the config evidence is the best available.
+    network_menu_config_included_modules
+    return 0
+}
+
+# Round 113 (ITEM 2): the bound modules the cached evidence proves present in
+# the scope's kernel module tree (available ∪ builtin — the diagnostic
+# single-truth), space-separated; empty = none.
+network_bound_modules_in_evidence()
+{
+    local mod out=""
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] || continue
+        if grep -qw "$mod" <<<"$NETWORK_AVAILABLE_MODULES" \
+            || grep -qw "$mod" <<<"$NETWORK_BUILTIN_MODULES"; then
+            out+=" $mod"
+        fi
+    done
+    printf '%s\n' "${out# }"
+}
+
+# The complement: the boot-log-bound modules the evidence proves ABSENT from
+# the tree (unresolvable — the load/include actions cannot act on them and
+# the menu must not re-offer futile writes for them).
+network_bound_modules_unresolvable()
+{
+    local mod out="" present=""
+    present="$(network_bound_modules_in_evidence)"
+    for mod in $NETWORK_BOUND_MODULES; do
+        [[ -n "$mod" ]] || continue
+        grep -qw "$mod" <<<"$present" || out+=" $mod"
+    done
+    printf '%s\n' "${out# }"
+}
+
+# True when a candidate set (space-separated module names) contains at least
+# one module the cached evidence proves in the tree.
+network_any_in_evidence()
+{
+    local c present=""
+    [[ -n "$1" && "$1" != none ]] || return 1
+    present=" $NETWORK_AVAILABLE_MODULES $NETWORK_BUILTIN_MODULES "
+    for c in $1; do
+        [[ -n "$c" && "$c" != none ]] || continue
+        grep -qw "$c" <<<"$present" && return 0
+    done
+    return 1
+}
+
+# The needed-but-not-satisfied initramfs-inclusion delta for the bound NIC
+# driver modules (space-separated; empty = nothing to do).
+network_include_initramfs_delta()
+{
+    local candidate present=""
+    present="$(network_bound_modules_in_evidence)"
+    local -a menu_cand_arr=() menu_sat_arr=() menu_delta_arr=()
+    for candidate in $NETWORK_BOUND_MODULES; do
+        [[ -n "$candidate" ]] || continue
+        # Round 113 (ITEM 2): a module the tree does not carry can never be
+        # included — it is dropped from the delta (the Found block's
+        # unresolvable note names it) so the include offer cannot re-offer a
+        # write the initramfs builder cannot satisfy.
+        grep -qw "$candidate" <<<"$present" || continue
+        menu_cand_arr+=("$candidate")
+    done
+    ((${#menu_cand_arr[@]} > 0)) || return 0
+    local included=""
+    # Round 131 (N9): the proof-aware included set (the input twin's N4 rule).
+    included="$(network_menu_included_modules)"
+    for candidate in "${menu_cand_arr[@]:-}"; do
+        grep -qw "$candidate" <<<"$NETWORK_BUILTIN_MODULES" && { menu_sat_arr+=("$candidate"); continue; }
+        if (( RUNNING_HOST_MODE == 1 )); then
+            grep -qw "$candidate" <<<"$NETWORK_LOADED_MODULES" && { menu_sat_arr+=("$candidate"); continue; }
+        fi
+        grep -qw "$candidate" <<<"$included" && menu_sat_arr+=("$candidate")
+    done
+    for candidate in "${menu_cand_arr[@]:-}"; do
+        local already=0 s
+        for s in "${menu_sat_arr[@]:-}"; do
+            [[ "$s" == "$candidate" ]] && already=1
+        done
+        (( already == 0 )) && menu_delta_arr+=("$candidate")
+    done
+    ((${#menu_delta_arr[@]} > 0)) || return 0
+    printf '%s' "${menu_delta_arr[*]}"
+}
+
+# The round-89 satisfied-evidence lines for the network menu's Found block.
+network_menu_inclusion_evidence()
+{
+    local cand_str="" included="" builtin_line="" included_line="" loaded_line=""
+    cand_str="$(printf '%s' "$NETWORK_BOUND_MODULES" | tr ' ' '\n' | sort -u | tr '\n' ' ' | sed 's/ $//' || true)"
+    [[ -n "$cand_str" ]] || return 0
+    builtin_line="$(menu_candidates_in_evidence_minus "$cand_str" "$NETWORK_BUILTIN_MODULES" "")"
+    if [[ -n "$builtin_line" ]]; then
+        printf 'NIC drivers already built into the kernel: %s\n' "$builtin_line"
+    fi
+    included="$(network_menu_config_included_modules)"
+    included_line="$(menu_candidates_in_evidence_minus "$cand_str" "$included" "$builtin_line")"
+    if [[ -n "$included_line" ]]; then
+        printf 'NIC drivers already included in the initramfs: %s\n' "$included_line"
+    fi
+    if (( RUNNING_HOST_MODE == 1 )); then
+        loaded_line="$(menu_candidates_in_evidence_minus "$cand_str" "$NETWORK_LOADED_MODULES" "$builtin_line $included_line")"
+        if [[ -n "$loaded_line" ]]; then
+            printf 'NIC drivers already loaded in the running kernel: %s\n' "$loaded_line"
+        fi
+    fi
+}
+
+# The healthy terminal state: the verified summary, then return.  Round 89:
+# a verified state with an empty inclusion delta names the nothing-to-do
+# proof (the kernel/gpu already-ok presentation).  Round 90: the terminal
+# is a PROVEN no-op — emit the truthful unchanged status so the GUI keeps
+# the cached diagnostics (a missing verdict would fail safe to a
+# regeneration of the whole mapped set).
+network_repair_verify()
+{
+    local state="" summary="" unres_term=""
+    state="$(network_evidence_state)"
+    summary="$state"
+    if [[ "$state" == "network verified" ]] && [[ -z "$(network_include_initramfs_delta)" ]]; then
+        summary="$state (nothing to do — the NIC drivers are already built into the kernel and/or included in the initramfs)"
+        # Round 114 (ITEM 4): name the positive builtin evidence when the boot
+        # log bound no module (the classifier's verified terminal for a
+        # builtin-only target): the NIC driver is built in — no repair action
+        # applies (the user's Ubuntu target: virtio_net builtin).
+        if [[ -z "${NETWORK_BOUND_MODULES// /}" || "${NETWORK_BOUND_MODULES:-none}" == none ]] \
+            && [[ "$NETWORK_BUILTIN_MODULES" != none && -n "$NETWORK_BUILTIN_MODULES" ]]; then
+            summary="$summary (the NIC driver is built into the kernel: $(printf '%s' "$NETWORK_BUILTIN_MODULES" | tr ',' ' ') — no repair action applies)"
+        fi
+    elif [[ "$state" == "network unavailable (module-not-loaded)" ]]; then
+        # Round 113 (ITEM 2): the terminal for a boot-log-bound module the
+        # tree does not carry — no load/include option can act on it, so the
+        # menu must reach this state instead of re-offering futile options.
+        unres_term="$(network_bound_modules_unresolvable)"
+        if [[ -n "$unres_term" ]]; then
+            summary="$state (nothing to do: candidate $(printf '%s' "$unres_term" | tr ' ' '\n' | sort -u | paste -sd, -) not resolvable on this target — the module is not present in the target's kernel module tree)"
+        fi
+    fi
+    msg_log network-verify "$summary"
+    case "$state" in
+        "network verified")               repair_change_status network "unchanged|$(reason network-verified)" ;;
+        "network unavailable (no-adapter)") repair_change_status network "unchanged|$(reason network-unavailable)" ;;
+        *)                                 repair_change_status network unchanged ;;
+    esac
+    return 0
+}
+
+# Interactive network-repair session (the gpu/kernel menu pattern): the
+# action menu CHANGES with the evidence, the first entry is the most-likely
+# fix, and after an action the evidence is re-verified in this same window
+# with the fixed / not-fixed report and the next options.  Round 89: the
+# include-initramfs action is evidence-aware (offered only while the NIC
+# inclusion delta is non-empty, labeled with it; an all-satisfied verified
+# stack reports nothing to do).
+network_interactive_menu()
+{
+    # A direct CLI invocation (no session protocol) has no interactive
+    # channel: fall back to the non-interactive adaptive repair.
+    if ! shell_interactive_enabled; then
+        adaptive_network_repair
+        return
+    fi
+    [[ -n "${NETWORK_BASELINE_B64:-}" ]] \
+        || fail "Run the network diagnostic before the network repair (no cached network baseline was supplied)."
+
+    local idx answer choice menu="" found="" dispatched=0 reboot_pending=0 state="" delta=""
+    local -a labels=() stages=()
+    # Round 114 (ITEM 2, the round-97 no-op semantics): the input menu's
+    # no-progress guard, mirrored — a byte-identical rebuilt menu re-prompts
+    # while an actionable option remains and ends cleanly (exit 0) after
+    # INPUT_MENU_NO_PROGRESS_LIMIT identical re-presentations of a repeated
+    # no-op; real progress resets the streak.
+    local prev_menu="" no_progress_streak=0
+    # Round 92 (ladder steps 3-4): the pin action's fail-closed Found note.
+    local network_pin_note=""
+    # Round 93 (STEP 6): the user-artifact action's fail-closed Found note.
+    local network_user_artifact_note=""
+    # Round 91 (ITEM 3d): the per-session tried set (annotated `(tried)`, the
+    # auto-default/chaining order) + the last attempt's result line.
+    local -a tried=()
+    local last_result="" label_plain="" t
+
+    while :; do
+        mutating_cancel_checkpoint
+        if [[ -n "${NETWORK_BASELINE_B64:-}" ]]; then
+            # Pre-mutation display: consume the cached diagnostic baseline.
+            parse_cached_network_inventory
+        else
+            # Post-mutation display: reflect the then-current target state.
+            NETWORK_EVIDENCE_COLLECTED=0
+            network_collect_evidence
+        fi
+        labels=()
+        stages=()
+        network_pin_note=""
+        network_user_artifact_note=""
+        state="$(network_evidence_state)"
+        # Round 89 (ITEM 1): the evidence-aware inclusion delta — the
+        # include-initramfs action is offered only for the NIC drivers the
+        # diagnostic single-truth evidence does NOT already prove satisfied
+        # (builtin / included in the initramfs / loaded on the live host).
+        delta="$(network_include_initramfs_delta)"
+
+        case "$NETWORK_FAILURE_CLASS" in
+            verified)
+                if (( dispatched == 0 )); then
+                    # Maintenance action for a healthy, identified stack
+                    # (initial display only, the gpu pattern); an
+                    # all-satisfied stack reports nothing to do (round 89).
+                    if [[ -n "$delta" ]]; then
+                        labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                        stages+=("include-initramfs")
+                    fi
+                fi
+                ;;
+            module-not-loaded)
+                # Round 113 (ITEM 2): the load offer is gated on a module the
+                # scope's own tree actually carries (the bound set resolved,
+                # or the candidate fallback resolved) — an unresolvable bound
+                # module is named in the Found block and the load/include
+                # options are NOT re-offered for it (the user's Arch finding:
+                # the same options kept re-appearing with (tried) tags).
+                local load_gate=""
+                if [[ -n "$(network_bound_modules_in_evidence)" ]]; then
+                    load_gate=1
+                elif [[ -z "${NETWORK_BOUND_MODULES// /}" || "${NETWORK_BOUND_MODULES}" == none ]]; then
+                    if network_any_in_evidence "$(printf '%s' "${NETWORK_CANDIDATE_MODULES:-none}" | tr ',' ' ' || true)"; then
+                        load_gate=1
+                    fi
+                fi
+                if [[ -n "$load_gate" ]]; then
+                    labels+=("Load the network driver persistently (modules-load.d) and rebuild the initramfs")
+                    stages+=("module-load")
+                fi
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                    stages+=("include-initramfs")
+                fi
+                ;;
+            module-blacklisted)
+                labels+=("Remove the network module blacklist and rebuild the initramfs")
+                stages+=("remove-blacklist")
+                ;;
+            firmware-missing)
+                labels+=("Install the missing network firmware package")
+                stages+=("firmware-install")
+                ;;
+            wrong-driver-bound)
+                labels+=("Switch to the fallback driver (blacklist + install + rebuild)")
+                stages+=("driver-switch")
+                ;;
+            driver-probe-failed)
+                # Round 91: a driver tried to bind and failed — ladder step 1
+                # on the live host (the candidate from the evidence), the
+                # widened switch for a table member, the blacklist removal
+                # when a bound module is blacklisted, and the inclusion delta.
+                if (( RUNNING_HOST_MODE == 1 )) \
+                    && [[ "$NETWORK_CANDIDATE_MODULES" != none && -n "$NETWORK_CANDIDATE_MODULES" ]]; then
+                    labels+=("Load the candidate NIC driver now: $(printf '%s' "$NETWORK_CANDIDATE_MODULES" | tr ',' ' ')")
+                    stages+=("load-candidate")
+                fi
+                if [[ -n "$(network_driver_switch_broken || true)" ]]; then
+                    labels+=("Switch to the fallback driver (blacklist + install + rebuild)")
+                    stages+=("driver-switch")
+                fi
+                local bl_mod
+                for bl_mod in $NETWORK_BOUND_MODULES; do
+                    [[ -n "$bl_mod" ]] || continue
+                    grep -qw "$bl_mod" <<<"${NETWORK_BLACKLISTED_MODULES//,/ }" && {
+                        labels+=("Remove the network module blacklist and rebuild the initramfs")
+                        stages+=("remove-blacklist")
+                        break
+                    }
+                done
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                    stages+=("include-initramfs")
+                fi
+                ;;
+            driver-conflict)
+                # Round 93 (STEP 5): the conflict state — the
+                # resolve-conflict action joins the ladder AFTER the round-92
+                # steps (appended below); here only the inclusion delta stays
+                # as a state action.
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                    stages+=("include-initramfs")
+                fi
+                ;;
+            no-adapter)
+                # Nothing actionable: the verify summary reports the state.
+                ;;
+            no-carrier)
+                # Round 91 (ITEM 3b): the host unbound-NIC dead-end fix — when
+                # the host NIC's driver never bound (no-carrier /
+                # driverless-up), ladder step 1 loads the candidate from the
+                # evidence instead of dead-ending.
+                if (( RUNNING_HOST_MODE == 1 )) \
+                    && [[ "$NETWORK_CANDIDATE_MODULES" != none && -n "$NETWORK_CANDIDATE_MODULES" ]]; then
+                    labels+=("Load the candidate NIC driver now: $(printf '%s' "$NETWORK_CANDIDATE_MODULES" | tr ',' ' ')")
+                    stages+=("load-candidate")
+                fi
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                    stages+=("include-initramfs")
+                fi
+                ;;
+            no-dhcp|no-default-route|no-dns|blocked)
+                # Round 91 (ITEM 3b): the host unbound-NIC dead-end fix (see
+                # no-carrier above).
+                if (( RUNNING_HOST_MODE == 1 )) \
+                    && [[ "$NETWORK_CANDIDATE_MODULES" != none && -n "$NETWORK_CANDIDATE_MODULES" ]]; then
+                    labels+=("Load the candidate NIC driver now: $(printf '%s' "$NETWORK_CANDIDATE_MODULES" | tr ',' ' ')")
+                    stages+=("load-candidate")
+                fi
+                if [[ -n "$delta" ]]; then
+                    labels+=("Include missing NIC drivers in the initramfs and rebuild: $delta")
+                    stages+=("include-initramfs")
+                fi
+                # Round 94 (P4): the connectivity actions 5-7 join the menu in
+                # their evidence classes (host-live only — a target never
+                # classifies the live connectivity states); the uplink guard
+                # rules are enforced inside each action.
+                case "$NETWORK_FAILURE_CLASS" in
+                    no-dhcp)
+                        if (( RUNNING_HOST_MODE == 1 )); then
+                            labels+=("Renew the DHCP lease on the address-less interface(s) (never the uplink)")
+                            stages+=("dhcp-renew")
+                        fi
+                        ;;
+                    no-default-route)
+                        if (( RUNNING_HOST_MODE == 1 )); then
+                            labels+=("Repair the missing default route from the lease gateway")
+                            stages+=("default-route")
+                        fi
+                        ;;
+                    no-dns)
+                        if (( RUNNING_HOST_MODE == 1 )); then
+                            labels+=("Repair the broken DNS resolver chain")
+                            stages+=("dns-repair")
+                        fi
+                        ;;
+                esac
+                ;;
+        esac
+
+        # Round 94 (P4): the connectivity actions' TARGET branch — the
+        # persistent config repairs (a target shares the recovery host's
+        # kernel/network namespace, so these are config-only, never live
+        # mutations; the target's connectivity problems are invisible to the
+        # host-scoped live classes, so the per-backend config gaps gate the
+        # offers instead, in every target state incl. the verified
+        # maintenance state).
+        if (( RUNNING_HOST_MODE != 1 )); then
+            local gap_targets=""
+            gap_targets="$(network_target_dhcp_gap_interfaces)"
+            if [[ -n "$gap_targets" ]]; then
+                labels+=("Repair the persistent DHCP configuration for: $gap_targets")
+                stages+=("dhcp-renew")
+            fi
+            if [[ "$NETWORK_LEASE_GATEWAY" != none && -n "$NETWORK_LEASE_GATEWAY" ]] \
+                && [[ -n "$(network_route_gap_target)" && "$(network_route_gap_target)" != configured ]]; then
+                labels+=("Write the persistent default-route gateway ($NETWORK_LEASE_GATEWAY)")
+                stages+=("default-route")
+            fi
+            if network_target_dns_gap; then
+                labels+=("Replace the broken resolv.conf chain with a plain file")
+                stages+=("dns-repair")
+            fi
+        fi
+
+        # Round 92 (ladder steps 3-4): the reinstall/rebuild and the
+        # older-version + -1 pin actions join the ranked ladder AFTER the
+        # 0.2.30 slice steps (the addendum's positions); the
+        # build-system/package/version evidence gates decide availability.  A
+        # verified post-action state never re-opens the menu through them and
+        # the pin never appears on a healthy stack.  pacman/apk name the
+        # honest fail-closed reason in the Found block.
+        if [[ "$state" != "network verified" || "$dispatched" == 0 ]]; then
+            if network_reinstall_offered; then
+                labels+=("Reinstall/rebuild the network driver (guarded package reinstall + module rebuild)")
+                stages+=("reinstall")
+            fi
+            if [[ "$state" != "network verified" ]]; then
+                if driver_pin_version_offered "$NETWORK_PACKAGE_VERSIONS"; then
+                    labels+=("$(driver_pin_version_label)")
+                    stages+=("pin-version")
+                else
+                    case "${TARGET_PACKAGE_MANAGER:-}" in
+                        pacman|apk)
+                            if [[ -n "$(network_reinstall_package || true)" ]]; then
+                                network_pin_note="older-version pinning: not offered (this package backend cannot prove repository versions)"
+                            fi
+                            ;;
+                    esac
+                fi
+            fi
+            # Round 93 (STEP 5, ladder step 9): the conflict resolution joins
+            # the ladder AFTER the round-92 steps (the addendum's rank),
+            # gated on the conflict evidence.
+            if [[ "$NETWORK_DRIVER_CONFLICT" != none && -n "$NETWORK_DRIVER_CONFLICT" ]]; then
+                labels+=("Blacklist the conflicting module and switch to ${NETWORK_DRIVER_CONFLICT#* vs }")
+                stages+=("resolve-conflict")
+            fi
+            # Round 93 (STEP 6, ladder rank LAST): the user-supplied artifact
+            # path (the vendor/OEM ruling — the helper NEVER auto-queries or
+            # downloads from vendor/OEM servers; the user provides a local
+            # file).  pacman/apk name the honest reason in the Found block.
+            case "${TARGET_PACKAGE_MANAGER:-}" in
+                apt/dpkg|rpm)
+                    labels+=("Install a driver package you downloaded yourself (advanced)")
+                    stages+=("user-artifact")
+                    ;;
+                pacman|apk)
+                    network_user_artifact_note="user-supplied driver package: not offered (this package backend has no guarded local-package install verb)"
+                    ;;
+            esac
+        fi
+
+        if ((${#labels[@]} == 0)); then
+            network_repair_verify
+            return 0
+        fi
+
+        # Round 91 (ITEM 3d): the tried/chaining pass — untried steps first in
+        # their original rank order (position 1 = the auto-default: the
+        # highest-ranked untried step), tried steps last annotated `(tried)`.
+        local -a ordered_labels=() ordered_stages=()
+        local k tried_flag=0
+        for k in "${!labels[@]}"; do
+            tried_flag=0
+            for t in "${tried[@]:-}"; do
+                [[ "$t" == "${stages[$k]}" ]] && tried_flag=1
+            done
+            (( tried_flag == 0 )) && { ordered_labels+=("${labels[$k]}"); ordered_stages+=("${stages[$k]}"); }
+        done
+        for k in "${!labels[@]}"; do
+            tried_flag=0
+            for t in "${tried[@]:-}"; do
+                [[ "$t" == "${stages[$k]}" ]] && tried_flag=1
+            done
+            (( tried_flag == 1 )) && { ordered_labels+=("${labels[$k]} (tried)"); ordered_stages+=("${stages[$k]}"); }
+        done
+        labels=("${ordered_labels[@]:-}")
+        stages=("${ordered_stages[@]:-}")
+
+        menu=""
+        menu+="Found:"$'\n'
+        found=""
+        found+="network state: $state"$'\n'
+        found+="config backend: $NETWORK_CONFIG_BACKEND"$'\n'
+        if [[ -n "$NETWORK_BOUND_MODULES" ]]; then
+            found+="bound modules: $(printf '%s' "$NETWORK_BOUND_MODULES" | tr ' ' '\n' | sort -u | paste -sd, -)"$'\n'
+        fi
+        # Round 91: the probe-failure + candidate evidence lines (the
+        # driver-broken ladder's signals).
+        if [[ "$NETWORK_PROBE_FAILURES" != none && -n "$NETWORK_PROBE_FAILURES" ]]; then
+            found+="driver probe failures: $NETWORK_PROBE_FAILURES"$'\n'
+        fi
+        if [[ "$NETWORK_CANDIDATE_MODULES" != none && -n "$NETWORK_CANDIDATE_MODULES" ]]; then
+            found+="candidate modules: $NETWORK_CANDIDATE_MODULES"
+            [[ -n "$NETWORK_CANDIDATE_MODULES_NOTE" ]] && found+=" (${NETWORK_CANDIDATE_MODULES_NOTE})"
+            found+=$'\n'
+        fi
+        # Round 113 (ITEM 2): the unresolvable-module note — a boot-log-bound
+        # module the scope's tree does not carry; the load and inclusion
+        # actions are unavailable for it (the terminal names the candidate).
+        local unres_note=""
+        unres_note="$(network_bound_modules_unresolvable)"
+        if [[ -n "$unres_note" ]]; then
+            found+="unresolvable modules: $(printf '%s' "$unres_note" | tr ' ' '\n' | sort -u | paste -sd, -) (not present in the kernel module tree — load/include unavailable for them)"$'\n'
+        fi
+        # Round 92 (ladder steps 3-4): the rebuild + available-version
+        # evidence lines and the pin action's fail-closed note.
+        if [[ "$NETWORK_DRIVER_BUILD_SYSTEM" != none ]]; then
+            found+="driver build system: $NETWORK_DRIVER_BUILD_SYSTEM"$'\n'
+        fi
+        if [[ "$NETWORK_MODULE_VERSIONS" != none && -n "$NETWORK_MODULE_VERSIONS" ]]; then
+            found+="module versions: $NETWORK_MODULE_VERSIONS"$'\n'
+        fi
+        if [[ "$NETWORK_PACKAGE_VERSIONS" != none && -n "$NETWORK_PACKAGE_VERSIONS" ]]; then
+            found+="package available versions: $NETWORK_PACKAGE_VERSIONS"$'\n'
+        fi
+        # Round 93 (STEP 5): the conflict evidence line (the ladder step 9
+        # signal the resolve action consumes).
+        if [[ "$NETWORK_DRIVER_CONFLICT" != none && -n "$NETWORK_DRIVER_CONFLICT" ]]; then
+            found+="driver conflict: $NETWORK_DRIVER_CONFLICT"$'\n'
+        fi
+        # Round 96 (ITEM 1c): the live-verified override's informational
+        # warning-note (the conflict pair is present but `reachability: ok`
+        # proves the live network works — no conflict classification, no
+        # resolve offer).
+        if [[ -n "$NETWORK_DRIVER_CONFLICT_NOTE" ]]; then
+            found+="driver conflict note: $NETWORK_DRIVER_CONFLICT_NOTE (informational)"$'\n'
+        fi
+        if [[ -n "$network_pin_note" ]]; then
+            found+="$network_pin_note"$'\n'
+        fi
+        if [[ -n "$network_user_artifact_note" ]]; then
+            found+="$network_user_artifact_note"$'\n'
+        fi
+        # Round 89: the satisfied-evidence lines (the single-truth proof the
+        # delta computation consumes).
+        found+="$(network_menu_inclusion_evidence)"
+        if [[ "$NETWORK_BLACKLISTED_MODULES" != none && -n "$NETWORK_BLACKLISTED_MODULES" ]]; then
+            found+="blacklisted modules: $NETWORK_BLACKLISTED_MODULES"$'\n'
+        fi
+        if [[ "$NETWORK_FIRMWARE_MISSING" != none && -n "$NETWORK_FIRMWARE_MISSING" ]]; then
+            found+="missing firmware: $NETWORK_FIRMWARE_MISSING"$'\n'
+        fi
+        if [[ "$NETWORK_DEFAULT_ROUTE" != none ]]; then
+            found+="default route: $NETWORK_DEFAULT_ROUTE"$'\n'
+        fi
+        # Round 94 (P4): the connectivity actions' evidence gates (the lease
+        # gateway the route repair writes; the lease DNS the resolv.conf
+        # repair writes).
+        if [[ "$NETWORK_LEASE_GATEWAY" != none && -n "$NETWORK_LEASE_GATEWAY" ]]; then
+            found+="lease gateway: $NETWORK_LEASE_GATEWAY"$'\n'
+        fi
+        if [[ "$NETWORK_LEASE_DNS_SERVERS" != none && -n "$NETWORK_LEASE_DNS_SERVERS" ]]; then
+            found+="lease DNS servers: $NETWORK_LEASE_DNS_SERVERS"$'\n'
+        fi
+        if [[ "$NETWORK_REACHABILITY" != unknown ]]; then
+            found+="reachability: $NETWORK_REACHABILITY"$'\n'
+        fi
+        # Round 91 (ITEM 3d): the failing action's status feeds the next
+        # prompt (the unchanged|reason:… of the last attempt).
+        if [[ -n "$last_result" ]]; then
+            found+="$last_result"$'\n'
+        fi
+        menu+="$found"$'\n'
+        menu+="Network repair:"$'\n'
+        for idx in "${!labels[@]}"; do
+            menu+="$((idx + 1))) ${labels[$idx]}"$'\n'
+        done
+        menu+="0) Abort"
+        if (( reboot_pending == 1 )); then
+            # Informational in-window note, never a popup.
+            menu+=$'\n'"Note: network-module and initramfs changes take effect on the next boot — reboot to verify the fix."
+        fi
+
+        # Round 114 (ITEM 2, the round-97 no-progress guard): see the
+        # preamble comment (the input menu's guard, mirrored).
+        if (( dispatched == 1 )); then
+            if [[ "$menu" == "$prev_menu" ]]; then
+                no_progress_streak=$((no_progress_streak + 1))
+            else
+                no_progress_streak=0
+            fi
+        else
+            no_progress_streak=0
+        fi
+        prev_menu="$menu"
+        if (( no_progress_streak >= NETWORK_MENU_NO_PROGRESS_LIMIT )); then
+            return 0
+        fi
+
+        if ! helper_menu_prompt "$menu" "$MENU_ANSWER_WINDOW_SECONDS" MENU || [[ -z "$HELPER_MENU_ANSWER" ]]; then
+            repair_change_status network "unchanged|$(reason network-aborted)"
+            return 0
+        fi
+        answer="$HELPER_MENU_ANSWER"
+        if [[ "$answer" == "0" ]]; then
+            repair_change_status network "unchanged|$(reason network-aborted)"
+            return 0
+        fi
+        if [[ "$answer" =~ ^[0-9]+$ ]] && (( answer >= 1 && answer <= ${#labels[@]} )); then
+            choice="${stages[$((answer - 1))]}"
+        else
+            continue
+        fi
+        label_plain="${labels[$((answer - 1))]}"
+        label_plain="${label_plain%% (tried)}"
+
+        case "$choice" in
+            module-load) network_repair_module_load; reboot_pending=1 ;;
+            remove-blacklist) network_repair_remove_blacklist; reboot_pending=1 ;;
+            firmware-install) network_repair_install_firmware; reboot_pending=1 ;;
+            driver-switch) network_repair_driver_switch; reboot_pending=1 ;;
+            include-initramfs) network_repair_include_initramfs; reboot_pending=1 ;;
+            load-candidate) network_repair_load_candidate ;;
+            reinstall) network_repair_reinstall; reboot_pending=1 ;;
+            pin-version) network_repair_pin_version; reboot_pending=1 ;;
+            resolve-conflict) network_repair_resolve_conflict; reboot_pending=1 ;;
+            user-artifact) network_repair_user_artifact; reboot_pending=1 ;;
+            dhcp-renew) network_repair_dhcp_renew; (( RUNNING_HOST_MODE == 1 )) || reboot_pending=1 ;;
+            default-route) network_repair_default_route; (( RUNNING_HOST_MODE == 1 )) || reboot_pending=1 ;;
+            dns-repair) network_repair_dns; (( RUNNING_HOST_MODE == 1 )) || reboot_pending=1 ;;
+        esac
+        # Round 91 (ITEM 3d): record the attempted step (annotation) and the
+        # failing action's status for the next prompt.
+        local already_tried=0
+        for t in "${tried[@]:-}"; do
+            [[ "$t" == "$choice" ]] && already_tried=1
+        done
+        (( already_tried == 0 )) && tried+=("$choice")
+        local last_state="${REPAIR_CHANGE_STATUS_LAST_STATE:-}"
+        if [[ "$last_state" == changed ]]; then
+            last_result="last attempt: ${label_plain} — applied"
+        elif [[ "${last_state%%|*}" == unchanged ]]; then
+            last_result="last attempt: ${label_plain} — not fixed (${last_state#unchanged|})"
+        else
+            last_result="last attempt: ${label_plain} — not fixed"
+        fi
+        NETWORK_BASELINE_B64=""
+        network_reverify
+        dispatched=1
+    done
+}
+
+# Automated `network` stage (Full Repair / non-interactive CLI): a verified
+# stack is unchanged; the only proven least-invasive automated fix is the
+# blacklist removal; every other broken class defers to the interactive menu
+# (the connectivity actions arrive with the plan's P4).
+adaptive_network_repair()
+{
+    network_collect_evidence
+    if [[ "$NETWORK_FAILURE_CLASS" == verified ]]; then
+        repair_change_status network "unchanged|$(reason network-verified)"
+        return 0
+    fi
+    case "$NETWORK_FAILURE_CLASS" in
+        module-blacklisted)
+            network_repair_remove_blacklist
+            return 0
+            ;;
+    esac
+    repair_change_status network "unchanged|$(reason network-requires-interactive-menu)"
+    return 0
+}
+
+# Reconstruct every NETWORK_* global from the cached `network` diagnostic
+# section (the exact lines diagnostic_network emits) so the repair consumes
+# the single cached source of truth.  Fails closed without a baseline.
+parse_cached_network_inventory()
+{
+    local line
+    local baseline=""
+    if [[ -z "${NETWORK_BASELINE_B64:-}" ]]; then
+        fail "Run the network diagnostic before the network repair (no cached network baseline was supplied)."
+    fi
+    if ! baseline="$(printf '%s' "$NETWORK_BASELINE_B64" | base64 -d 2>/dev/null)"; then
+        fail "The cached network baseline could not be decoded; run the network diagnostic again."
+    fi
+    [[ -n "$baseline" ]] || fail "The cached network baseline is empty; run the network diagnostic again."
+
+    NETWORK_CONFIG_BACKEND="none"
+    NETWORK_CONFIG_NOTE=""
+    NETWORK_ADAPTERS=()
+    NETWORK_ADAPTER_STATES=()
+    NETWORK_ADAPTER_NOTE=""
+    NETWORK_BOUND_MODULES=""
+    NETWORK_PCI_DEVICES=()
+    NETWORK_ADAPTER_HARDWARE=()
+    NETWORK_BOOTLOG_ADAPTERS=()
+    NETWORK_LOADED_MODULES="none"
+    NETWORK_BUILTIN_MODULES="none"
+    NETWORK_BLACKLISTED_MODULES="none"
+    NETWORK_AVAILABLE_MODULES="none"
+    NETWORK_INITRAMFS_INCLUSION="none-detected"
+    NETWORK_INITRAMFS_PROOF=""
+    NETWORK_FIRMWARE="none"
+    NETWORK_FIRMWARE_MISSING="none"
+    NETWORK_DEFAULT_ROUTE="none"
+    NETWORK_ADDRESSES="none"
+    NETWORK_DNS_CHAIN="missing"
+    NETWORK_DNS_SERVERS="none"
+    NETWORK_LEASE_GATEWAY="none"
+    NETWORK_LEASE_DNS_SERVERS="none"
+    NETWORK_REACHABILITY="unknown"
+    NETWORK_JOURNAL_COUNT="0"
+    NETWORK_JOURNAL_FIRMWARE_FAILURES="none"
+    NETWORK_FAILURE_CLASS="verified"
+    NETWORK_PROBE_FAILURES="none"
+    NETWORK_CANDIDATE_MODULES="none"
+    NETWORK_CANDIDATE_MODULES_NOTE=""
+    NETWORK_DRIVER_BUILD_SYSTEM="none"
+    NETWORK_MODULE_VERSIONS="none"
+    NETWORK_PACKAGE_VERSIONS="none"
+    NETWORK_DRIVER_CONFLICT="none"
+    NETWORK_DRIVER_CONFLICT_NOTE=""
+    NETWORK_EVIDENCE_COLLECTED=1
+
+    local rest nm st bl mod
+    local bound_explicit=""
+    while IFS= read -r line; do
+        line="${line%$'\r'}"
+        case "$line" in
+            "Network config backend: "*) NETWORK_CONFIG_BACKEND="${line#Network config backend: }" ;;
+            "Network config backend note: "*) NETWORK_CONFIG_NOTE="${line#Network config backend note: }" ;;
+            "Network adapter: "*)
+                rest="${line#Network adapter: }"
+                nm="${rest% \[*}"
+                st="${rest#*\[}"; st="${st%]}"
+                NETWORK_ADAPTERS+=("$nm")
+                NETWORK_ADAPTER_STATES+=("$st")
+                ;;
+            "Network adapter note: "*) NETWORK_ADAPTER_NOTE="${line#Network adapter note: }" ;;
+            "Network adapter hardware: "*) NETWORK_ADAPTER_HARDWARE+=("${line#Network adapter hardware: }") ;;
+            "Network pci device: "*) NETWORK_PCI_DEVICES+=("${line#Network pci device: }") ;;
+            "Network adapter (boot log): "*) NETWORK_BOOTLOG_ADAPTERS+=("${line#Network adapter (boot log): }") ;;
+            "Network bound modules: "*) bound_explicit="${line#Network bound modules: }" ;;
+            "Network kernel module loaded: "*) NETWORK_LOADED_MODULES="${line#Network kernel module loaded: }" ;;
+            "Network kernel module builtin: "*) NETWORK_BUILTIN_MODULES="${line#Network kernel module builtin: }" ;;
+            "Network kernel module available: "*) NETWORK_AVAILABLE_MODULES="${line#Network kernel module available: }" ;;
+            "Network kernel module blacklisted: "*) NETWORK_BLACKLISTED_MODULES="${line#Network kernel module blacklisted: }" ;;
+            "Network initramfs inclusion: "*) NETWORK_INITRAMFS_INCLUSION="${line#Network initramfs inclusion: }" ;;
+            "Network initramfs driver proof: "*) NETWORK_INITRAMFS_PROOF="${line#Network initramfs driver proof: }" ;;
+            "Network firmware: "*) NETWORK_FIRMWARE="${line#Network firmware: }" ;;
+            "Network firmware missing: "*) NETWORK_FIRMWARE_MISSING="${line#Network firmware missing: }" ;;
+            "Network driver probe failures: "*) NETWORK_PROBE_FAILURES="${line#Network driver probe failures: }" ;;
+            "Network candidate modules: "*) NETWORK_CANDIDATE_MODULES="${line#Network candidate modules: }" ;;
+            "Network candidate modules note: "*) NETWORK_CANDIDATE_MODULES_NOTE="${line#Network candidate modules note: }" ;;
+            "Network driver build system: "*) NETWORK_DRIVER_BUILD_SYSTEM="${line#Network driver build system: }" ;;
+            "Network module version: "*) NETWORK_MODULE_VERSIONS="${line#Network module version: }" ;;
+            "Network package available versions: "*) NETWORK_PACKAGE_VERSIONS="${line#Network package available versions: }" ;;
+            "Network driver conflict: "*) NETWORK_DRIVER_CONFLICT="${line#Network driver conflict: }" ;;
+            "Network driver conflict note: "*) NETWORK_DRIVER_CONFLICT_NOTE="${line#Network driver conflict note: }" ;;
+            "Network default route: "*) NETWORK_DEFAULT_ROUTE="${line#Network default route: }" ;;
+            "Network addresses: "*) NETWORK_ADDRESSES="${line#Network addresses: }" ;;
+            "Network DNS resolv chain: "*) NETWORK_DNS_CHAIN="${line#Network DNS resolv chain: }" ;;
+            "Network DNS servers: "*) NETWORK_DNS_SERVERS="${line#Network DNS servers: }" ;;
+            "Network lease gateway: "*) NETWORK_LEASE_GATEWAY="${line#Network lease gateway: }" ;;
+            "Network lease DNS servers: "*) NETWORK_LEASE_DNS_SERVERS="${line#Network lease DNS servers: }" ;;
+            "Network reachability: "*) NETWORK_REACHABILITY="${line#Network reachability: }" ;;
+            "Network journal evidence: "*)
+                rest="${line#Network journal evidence: }"
+                NETWORK_JOURNAL_COUNT="${rest%% *}"
+                ;;
+            "Network classification: "*) NETWORK_FAILURE_CLASS="${line#Network classification: }" ;;
+        esac
+    done <<<"$baseline"
+
+    # Reconstruct the bound modules from the adapter module fields (host) and
+    # the boot-log lines (target) — the positive evidence the sub-actions act
+    # on.  Round 113: the diagnostic's explicit `Network bound modules:`
+    # line wins when present (the round-trip must not depend on the adapter
+    # lines carrying the module name).  Indexed-array membership
+    # (bash-3.1-safe).
+    local -a bound=()
+    if [[ -n "$bound_explicit" && "$bound_explicit" != none ]]; then
+        for mod in $bound_explicit; do
+            [[ -n "$mod" ]] && bound+=("$mod")
+        done
+    fi
+    if ((${#bound[@]} == 0)); then
+    for st in "${NETWORK_ADAPTER_STATES[@]:-}"; do
+        mod="${st#*module=}"; mod="${mod%%,*}"
+        if [[ -n "$mod" && "$mod" != none && "$mod" != unknown ]]; then
+            local already=0 b2
+            for b2 in "${bound[@]:-}"; do
+                [[ "$b2" == "$mod" ]] && already=1
+            done
+            (( already == 0 )) && bound+=("$mod")
+        fi
+    done
+    for bl in "${NETWORK_BOOTLOG_ADAPTERS[@]:-}"; do
+        for mod in $NETWORK_WATCH_MODULES; do
+            grep -qE "(^|[[:space:]])${mod}([[:space:]]|:)" <<<"$bl" 2>/dev/null || continue
+            local already=0 b2
+            for b2 in "${bound[@]:-}"; do
+                [[ "$b2" == "$mod" ]] && already=1
+            done
+            (( already == 0 )) && bound+=("$mod")
+        done
+    done
+    fi
+    NETWORK_BOUND_MODULES="$(printf '%s\n' "${bound[@]:-}" | sort -u | tr '\n' ' ' | sed 's/ $//' || true)"
+    return 0
+}
+
 # Bounded package-manager log errors for the detected backend: apk.log on
 # Alpine and dnf5.log (with one rotation) on Fedora/RHEL.  The dnf4 log names
 # (dnf.log, dnf.rpm.log) are not probed as primary sources because Fedora 44
@@ -24937,6 +34407,8 @@ run_one_diagnostic()
         btrfs)       diagnostic_btrfs || rc=$? ;;
         mapper)      diagnostic_mapper || rc=$? ;;
         luks)        diagnostic_luks || rc=$? ;;
+        input)       diagnostic_input || rc=$? ;;
+        network)     diagnostic_network || rc=$? ;;
         *) fail "Unknown diagnostic: $key" ;;
     esac
     echo
@@ -24980,16 +34452,22 @@ target_root_needs_snapshot_recovery()
     prepare_target_snapshots_only quiet
 
     # Reuse the exact rollback-availability probe (Btrfs root + btrfs + a
-    # resolvable @.snapshots/.snapshots store + a normal top-level @ root + free
-    # space).  It mounts the top-level filesystem and returns 0 only when a
-    # rollback is actually possible; missing btrfs-progs or a missing store
-    # degrade to 1 instead of a hard refusal.
-    if target_snapshot_rollback_unavailable_reason; then
-        # The damaged-target symptom: no subvolume anywhere in the top-level
-        # tree carries /etc/os-release (find_btrfs_root returns nothing).  A
-        # healthy Btrfs root still has it, so prepare_target ro handles it.
-        mounted_root="$(find_btrfs_root "$SNAPSHOT_TOP" 2>/dev/null || true)"
-        [[ -z "$mounted_root" ]] && recovery=0
+    # resolvable @.snapshots/.snapshots store + a detectable top-level root +
+    # free space).  It mounts the top-level filesystem; missing btrfs-progs or
+    # a missing store degrade to a reason instead of a hard refusal.  Round 143
+    # (ITEM T1): the probe's root detection uses the same os-release evidence
+    # as find_btrfs_root, so a DAMAGED root (no reachable /etc/os-release)
+    # reports no-top-level-root here — the damaged-target symptom is then
+    # decided independently: no reachable os-release AND a rollback-capable
+    # store (the probe's store/space steps proved) is the recovery case.
+    target_snapshot_rollback_unavailable_reason || true
+    mounted_root="$(find_btrfs_root "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    if [[ -z "$mounted_root" ]]; then
+        case "${TARGET_SNAPSHOT_ROLLBACK_REASON:-}" in
+            # Only the root-detection gap is recoverable through the reduced
+            # report; a missing store or missing btrfs tool is NOT.
+            *"reason:no-top-level-root"*) recovery=0 ;;
+        esac
     fi
 
     if (( recovery == 0 )); then
@@ -25094,6 +34572,17 @@ run_target_diagnostic()
     fi
 
     if [[ "$requested" == "all" || "$requested" == "report" ]]; then
+        # Round 118 (performance): collect the heavy per-run evidence ONCE in
+        # the main shell before the capability preamble.  The preamble's
+        # reason/evidence probes run in $(...) subshells whose collect-once
+        # state never returns to this shell, so without this pre-collect the
+        # input, network and kernel evidence were each re-collected up to
+        # three times per combined run (the round-118 probe measured ~16 s of
+        # duplicate input collection alone on TUXEDO).  The flags set here are
+        # inherited by every subshell consumer and every section below.
+        input_collect_evidence || true
+        network_collect_evidence || true
+        kernel_inventory_collect || true
         # The capability preamble is shared by every section: emit it once at
         # the top of the combined report and omit it from each section.
         REPORT_SHARED_PREAMBLE=1
@@ -25102,7 +34591,7 @@ run_target_diagnostic()
         # The File systems section runs last: its read-only check tools require
         # the helper-owned mounts to be released, while every earlier section
         # still reads the mounted target.
-        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input network filesystem; do
             run_one_target_diagnostic "$key" || true
             if (( SESSION_CANCEL_REQUESTED )) || legacy_cancel_requested; then
                 msg_log diagnostic-cancelled
@@ -25116,6 +34605,17 @@ run_target_diagnostic()
             msg_log diagnostic-cancelled
         fi
     else
+        # Round 118 (performance): pre-collect the requested heavy sections'
+        # evidence in the main shell so the preamble's subshell probes and
+        # the sections reuse it (the "all" path above); only the requested
+        # collectors run, so a narrow regeneration pays nothing extra.
+        for key in "$@"; do
+            case "$key" in
+                input)   input_collect_evidence || true ;;
+                network) network_collect_evidence || true ;;
+                kernel)  kernel_inventory_collect || true ;;
+            esac
+        done
         # Round 17: see run_host_diagnostic — several sections in one helper
         # invocation share the preamble and the per-run evidence cache.
         # "$@" names every requested section exactly once.
@@ -25162,6 +34662,13 @@ run_host_diagnostic_modern()
     fi
 
     if [[ "$requested" == all || "$requested" == report ]]; then
+        # Round 118 (performance): see run_target_diagnostic — collect the
+        # heavy per-run evidence once in the main shell so the preamble's
+        # subshell probes and the sections reuse it instead of re-collecting
+        # it up to three times per combined run.
+        input_collect_evidence || true
+        network_collect_evidence || true
+        kernel_inventory_collect || true
         # See run_target_diagnostic: the shared capability preamble is emitted
         # once at the top of the combined running-host report.
         REPORT_SHARED_PREAMBLE=1
@@ -25169,7 +34676,7 @@ run_host_diagnostic_modern()
         echo
         # See run_target_diagnostic: the File systems section is last because
         # it releases the helper's read-only mounts for the offline check tools.
-        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks filesystem; do
+        for key in environment backend package boot boot-evidence kernel grub uki display gpu errors usage fstab btrfs mapper luks input network filesystem; do
             run_one_diagnostic "$key" "$DIAGNOSTIC_SCOPE" || true
             if (( SESSION_CANCEL_REQUESTED )) || legacy_cancel_requested; then
                 msg_log diagnostic-cancelled
@@ -25183,6 +34690,15 @@ run_host_diagnostic_modern()
             msg_log diagnostic-cancelled
         fi
     else
+        # Round 118 (performance): pre-collect the requested heavy sections'
+        # evidence in the main shell (see run_target_diagnostic's "all" path).
+        for key in "$@"; do
+            case "$key" in
+                input)   input_collect_evidence || true ;;
+                network) network_collect_evidence || true ;;
+                kernel)  kernel_inventory_collect || true ;;
+            esac
+        done
         # Round 17: several sections in ONE helper invocation.  The shared
         # capability preamble is emitted once and every section reuses the
         # per-run evidence cache (journal boot range, package lists, dkms
@@ -25409,15 +34925,74 @@ mount_snapshot_top()
     mount_recorded "$ROOT_DEVICE" "$SNAPSHOT_TOP" -o ro,subvolid=5
 }
 
-# Enumerate numeric Snapper/Btrfs snapshot directories below every top-level
-# @.snapshots directory, printing "<id>\t<absolute path>" in id order.
+# Round 142 (the Fedora-rig enable finding): READDIR-based snapshot-store
+# discovery — the same shape snapshot_paths (the list verb) uses — instead of
+# a name lookup.  A name lookup of a JUST-CREATED nested subvolume under a
+# fresh ro top-level mount intermittently returns ENOENT on this kernel (the
+# btrfs subvol-inode lookup race — readdir and `btrfs subvolume list` see the
+# entry while stat/fstatat flip between success and ENOENT second by second),
+# which made the capability probe and its evidence line flap between
+# no-snapshot-store and available.  Prints the store path relative to the
+# Btrfs top level (@.snapshots / .snapshots / @/.snapshots) and returns 0
+# when a store exists within three levels of the top level.
+snapshot_store_path()
+{
+    local found
+    found="$(find "$SNAPSHOT_TOP" -mindepth 1 -maxdepth 3 -type d \
+        \( -name '@.snapshots' -o -name '.snapshots' \) -print -quit 2>/dev/null)"
+    [[ -n "$found" ]] || return 1
+    printf '%s\n' "${found#"$SNAPSHOT_TOP"/}"
+}
+
+# Enumerate numeric Snapper/Btrfs snapshot directories below the ROOT-SCOPE
+# @.snapshots/.snapshots store(s), printing "<id>\t<absolute path>" in id
+# order.  Round 147 (ITEM 3): the enumeration is filtered to the stores that
+# belong to the ROOT scope — the top-level .snapshots/@.snapshots store and
+# the detected root subvolume's own nested <root>/.snapshots store.  A
+# different subvolume's store (e.g. @home/.snapshots — the /home subvolume's
+# own Snapper configuration) is a DIFFERENT rollback scope: its snapshots are
+# snapshots of /home, never boot-rollback targets, so they are never listed
+# here and a root-list row never shows the "Incomplete/non-root snapshot"
+# validation for a foreign store.  Round 152.3 (the chained replacement
+# rollback): in the STAGED state the detection resolves the PROMOTED root
+# name (see host_snapshot_detect_root_name), so the migrated store inside the
+# promoted root IS the $root_name/.snapshots match — the catalogue stays
+# listed after a successful rollback — and the foreign-store exclusion is
+# unchanged (a staged list never admits @home/.snapshots or any other
+# non-root store).  When the root name cannot be detected
+# (the damaged-target recovery case — no reachable /etc/os-release AND no
+# default-subvolume binding), the filter fails open to the pre-round-147
+# enumeration so the recovery list still shows every store; the plan/rollback
+# then resolves the root name from the selected snapshot's fstab as before.
 snapshot_paths()
 {
-    local base id snap
+    local base id snap root_name="" rel
     local -a bases=()
 
+    [[ -n "${SNAPSHOT_ROOT_NAME:-}" ]] && root_name="$SNAPSHOT_ROOT_NAME"
+    if [[ -z "$root_name" ]]; then
+        if (( RUNNING_HOST_MODE == 1 )); then
+            host_snapshot_detect_root_name 2>/dev/null || true
+        else
+            snapshot_detect_target_root_name 2>/dev/null || true
+        fi
+        root_name="${SNAPSHOT_ROOT_NAME:-}"
+    fi
+
     while IFS= read -r base; do
-        [[ -d "$base" ]] && bases+=("$base")
+        [[ -d "$base" ]] || continue
+        if [[ -n "$root_name" ]]; then
+            rel="${base#"$SNAPSHOT_TOP"/}"
+            case "$rel" in
+                ".snapshots"|"@.snapshots"|"$root_name/.snapshots")
+                    ;;
+                *)
+                    # A foreign store (another subvolume's .snapshots): skip.
+                    continue
+                    ;;
+            esac
+        fi
+        bases+=("$base")
     done < <(
         find "$SNAPSHOT_TOP" -mindepth 1 -maxdepth 3 -type d \
             \( -name '@.snapshots' -o -name '.snapshots' \) -print 2>/dev/null | sort -u
@@ -25521,10 +35096,229 @@ snapshot_has_separate_boot()
     ' "$snap/etc/fstab" 2>/dev/null
 }
 
+# ---------------------------------------------------------------------------
+# Separate /boot file-level capture (round 149, ITEM 1)
+# ---------------------------------------------------------------------------
+# A separate /boot filesystem (stock anaconda Fedora: the ext4 /boot beside
+# the Btrfs root) is NOT part of the root snapshot.  The rollback therefore
+# captures /boot as a BOUNDED file-level backup into the session — the
+# complete content of the separate /boot filesystem (the kernel images, the
+# initramfs images and the loader/GRUB2 files, ~300 MiB-class on a stock
+# install) — with a fingerprint guard, and RESTORES it over the live /boot as
+# part of the promote step, BEFORE the boot-stack reconcile, verified against
+# the capture fingerprint.  The same capture is the /boot undo point for the
+# automatic restore-on-critical-failure path.  A separate /boot/efi ESP stays
+# out of the capture (a submount under /boot refuses the capture, fail-closed)
+# and is reconciled by the boot-stack stages exactly like the in-Btrfs
+# TUXEDO layout — whose /boot is part of the root subvolume and needs no
+# capture at all (the root snapshot already carries it).
+#
+# The capture never touches the running host's data outside /boot and never
+# crosses a mount boundary; the restore is a dd-style exact materialization
+# that removes only the content of the mounted separate /boot filesystem (the
+# verified capture is its undo point), never a directory inside the promoted
+# root.
+
+# Safety bound for one /boot capture archive (env-overridable for the tests).
+SNAPSHOT_BOOT_CAPTURE_MAX_BYTES="${BOOT_REPAIR_BOOT_CAPTURE_MAX_BYTES:-1073741824}"
+
+# Total byte size of a mounted /boot tree (du -sk, BusyBox-safe); prints
+# nothing on failure so callers fail closed instead of guessing.
+snapshot_boot_tree_size()
+{
+    local root="$1" kib
+    [[ -n "$root" && -d "$root" ]] || return 1
+    kib="$(du -sk -- "$root" 2>/dev/null | awk '{ print $1 }')"
+    [[ "$kib" =~ ^[0-9]+$ ]] || return 1
+    printf '%s\n' "$(( kib * 1024 ))"
+    return 0
+}
+
+# True (prints the mountpoint) when a filesystem is mounted BENEATH $root
+# (an ESP at /boot/efi, for example).  The capture and the restore both
+# refuse that shape: tar would either mix the submount's files into the
+# archive or the restore's content removal would recurse through the mount.
+snapshot_boot_submount()
+{
+    local root="$1" _spec mnt
+    [[ -n "$root" && -r /proc/self/mounts ]] || return 1
+    while read -r _spec mnt _rest; do
+        [[ "$mnt" == "$root" ]] && continue
+        case "$mnt" in
+            "$root"/*) printf '%s\n' "$mnt"; return 0 ;;
+        esac
+    done < /proc/self/mounts
+    return 1
+}
+
+# Capture feasibility gate for one mounted separate /boot tree: the content
+# must fit the safety bound, carry no submount and the session directory
+# must hold the archive plus a working margin.  On failure prints a
+# `reason:` token naming the exact cause and returns 1 (used by the host
+# capability probe and re-checked by the plan/rollback, fail-closed).
+snapshot_boot_capture_feasible()
+{
+    local source="$1" total avail_kib submount
+    [[ -n "$source" && -d "$source" ]] || { reason boot-capture-source-missing; return 1; }
+    submount="$(snapshot_boot_submount "$source" 2>/dev/null || true)"
+    if [[ -n "$submount" ]]; then
+        reason boot-capture-submount "$submount"
+        return 1
+    fi
+    total="$(snapshot_boot_tree_size "$source" 2>/dev/null || true)"
+    if [[ -z "$total" || ! "$total" =~ ^[0-9]+$ ]]; then
+        reason boot-capture-size-unreadable
+        return 1
+    fi
+    if (( total > SNAPSHOT_BOOT_CAPTURE_MAX_BYTES )); then
+        reason boot-capture-too-large "$(( (total + 1048575) / 1048576 ))" "$(( SNAPSHOT_BOOT_CAPTURE_MAX_BYTES / 1048576 ))"
+        return 1
+    fi
+    [[ -n "$SESSION_DIR" && -d "$SESSION_DIR" ]] || { reason boot-capture-no-session; return 1; }
+    avail_kib="$(df -Pk "$SESSION_DIR" 2>/dev/null | awk 'NR==2 { print $4 }')"
+    [[ "$avail_kib" =~ ^[0-9]+$ ]] || avail_kib=0
+    # The archive plus a 64 MiB working margin must fit the session filesystem.
+    if (( (avail_kib * 1024) < total + 67108864 )); then
+        reason boot-capture-space-insufficient
+        return 1
+    fi
+    return 0
+}
+
+# Capture the content of one mounted separate /boot tree into the session as
+# the rollback's /boot undo point: a tar archive plus its sorted entry
+# listing (the restore-verification fingerprint) and its sha256.  Bounded by
+# SNAPSHOT_BOOT_CAPTURE_MAX_BYTES; any failure fails the caller while the
+# target is still untouched (the capture is a pure read of /boot).
+snapshot_boot_capture()
+{
+    local source="$1" entries
+    local archive="$SESSION_DIR/boot-capture.tar"
+    local listing="$SESSION_DIR/boot-capture.listing"
+    local digest="$SESSION_DIR/boot-capture.sha256"
+    rm -f -- "$archive" "$listing" "$digest" 2>/dev/null || true
+    [[ -n "$source" && -d "$source" ]] \
+        || fail "Boot capture requires a mounted separate /boot filesystem; $source is not a directory."
+    snapshot_boot_capture_feasible "$source" \
+        || fail "Boot capture: the separate /boot content does not fit the bounded capture limits; refusing the rollback."
+    need tar
+    need sha256sum
+    msg_log boot-capture-start "$source"
+    if ! tar -C "$source" -cf "$archive" . ; then
+        rm -f -- "$archive" 2>/dev/null || true
+        fail "Boot capture failed while archiving $source; the rollback was not performed."
+    fi
+    sha256sum "$archive" 2>/dev/null | awk '{ print $1 }' > "$digest"
+    [[ -s "$digest" ]] || {
+        rm -f -- "$archive" "$listing" "$digest" 2>/dev/null || true
+        fail "Boot capture: unable to fingerprint the archive; the rollback was not performed."
+    }
+    tar -tf "$archive" 2>/dev/null | LC_ALL=C sort > "$listing" \
+        || { rm -f -- "$archive" "$listing" "$digest" 2>/dev/null || true
+             fail "Boot capture: unable to verify the archive listing; the rollback was not performed."; }
+    entries="$(grep -c . "$listing" 2>/dev/null || true)"
+    [[ "$entries" =~ ^[0-9]+$ ]] && (( entries > 0 )) \
+        || { rm -f -- "$archive" "$listing" "$digest" 2>/dev/null || true
+             fail "Boot capture: the archive is empty; the rollback was not performed."; }
+    msg_log boot-capture-complete "$archive" "$entries"
+    return 0
+}
+
+# True when a verified /boot capture exists for this transaction.
+snapshot_boot_capture_present()
+{
+    [[ -s "$SESSION_DIR/boot-capture.tar" && -s "$SESSION_DIR/boot-capture.listing" \
+        && -s "$SESSION_DIR/boot-capture.sha256" ]]
+}
+
+# Restore the captured /boot content over a MOUNTED separate /boot
+# filesystem (the dd-style exact restore: the mount's current content is
+# removed and the archive extracted) and verify the restored tree against
+# the capture listing.  Fail-closed guards: the destination must be a real
+# mountpoint whose source differs from the promoted root device (never a
+# directory inside the promoted root — restoring over it would destroy the
+# snapshot's own /boot files), no submount may sit beneath it, and the
+# listing comparison must match exactly.
+snapshot_boot_restore_capture()
+{
+    local dest="$1" root_src boot_src submount restored_listing
+    local archive="$SESSION_DIR/boot-capture.tar"
+    local listing="$SESSION_DIR/boot-capture.listing"
+    [[ -s "$archive" && -s "$listing" ]] \
+        || fail "Boot restore: no verified /boot capture exists in this session."
+    [[ -n "$dest" && -d "$dest" ]] || fail "Boot restore: destination $dest is not a directory."
+    mountpoint -q "$dest" 2>/dev/null \
+        || fail "Boot restore: $dest is not a mounted separate /boot filesystem; refusing to restore over the promoted root's own /boot directory."
+    root_src="$(findmnt -rn -o SOURCE --target "$TARGET_ROOT" 2>/dev/null | head -n1 || true)"
+    boot_src="$(findmnt -rn -o SOURCE --target "$dest" 2>/dev/null | head -n1 || true)"
+    [[ -n "$root_src" && -n "$boot_src" && "$root_src" != "$boot_src" ]] \
+        || fail "Boot restore: $dest is backed by the root filesystem, not a separate /boot; refusing."
+    submount="$(snapshot_boot_submount "$dest" 2>/dev/null || true)"
+    [[ -z "$submount" ]] \
+        || fail "Boot restore: a filesystem is mounted beneath $dest ($submount); refusing to remove content through a mount."
+    need tar
+    msg_log boot-restore-start "$dest"
+    # Remove the current content first so the restore is exact (no leftovers).
+    # The guards above prove this is the mounted separate /boot filesystem and
+    # that the verified capture is its undo point.
+    find "$dest" -mindepth 1 -maxdepth 1 -exec rm -rf -- {} + 2>/dev/null || true
+    if ! tar -C "$dest" -xf "$archive"; then
+        fail "Boot restore: extraction into $dest failed; the separate /boot may be incomplete. The capture is preserved in the session."
+    fi
+    restored_listing="$(mktemp "$SESSION_DIR/boot-restored.XXXXXX" 2>/dev/null || true)"
+    if [[ -n "$restored_listing" ]]; then
+        tar -C "$dest" -cf - . 2>/dev/null | tar -tf - 2>/dev/null | LC_ALL=C sort > "$restored_listing" \
+            || { rm -f -- "$restored_listing"; fail "Boot restore: unable to list the restored /boot tree."; }
+        if cmp -s "$restored_listing" "$listing"; then
+            rm -f -- "$restored_listing"
+            msg_log boot-restore-verified "$dest"
+            return 0
+        fi
+        rm -f -- "$restored_listing"
+        fail "Boot restore: the restored /boot tree does not match the capture fingerprint; refusing to continue the rollback."
+    fi
+    # Without a temp file the verification cannot run: fail closed.
+    fail "Boot restore: unable to verify the restored /boot tree."
+}
+
+# Resolve a snapshot's separate /boot fstab entry to its block device (the
+# capture source for the target-scope transaction).  Prints the resolved
+# device; returns 1 fail-closed on any unresolvable or unsafe shape (no
+# entry, a btrfs /boot entry, an unresolvable source, a device outside the
+# selected target disk or the root device itself).
+snapshot_separate_boot_device()
+{
+    local snap="$1" entry spec fstype resolved canonical
+    [[ -f "$snap/etc/fstab" ]] || return 1
+    entry="$(awk -v mp=/boot '
+        /^[[:space:]]*#/ { next }
+        NF >= 4 && $2 == mp { print $1 "\t" $3; exit }
+    ' "$snap/etc/fstab")"
+    [[ -n "$entry" ]] || return 1
+    spec="${entry%%$'\t'*}"
+    fstype="${entry#*$'\t'}"
+    # A btrfs /boot entry names a subvolume of the snapshotted filesystem,
+    # not a filesystem outside the snapshot; the capture does not apply.
+    [[ "$fstype" == "btrfs" ]] && return 1
+    resolved="$(resolve_fstab_source "$spec")"
+    [[ -n "$resolved" && -b "$resolved" ]] || return 1
+    canonical="$(canonical_block "$resolved" 2>/dev/null || true)"
+    [[ -n "$canonical" && "$canonical" != "$ROOT_CANONICAL" ]] || return 1
+    same_single_top_disk "$TARGET_DISK" "$resolved" || return 1
+    printf '%s\n' "$resolved"
+    return 0
+}
+
 validate_snapshot_fstab_for_rollback()
 {
     local snap="$1" spec mp fstype options _rest resolved option has_root=0
+    local expected_root="${2:-${SNAPSHOT_ROOT_NAME:-}}"
     [[ -f "$snap/etc/fstab" ]] || return 1
+    # Round 143 (ITEM T1): the expected root subvolume name is the DETECTED
+    # name, never a hardcoded '@' — a stock anaconda Fedora root (subvol=root)
+    # must validate the same way as an @-layout root.
+    snapshot_root_name_usable "$expected_root" \
+        || { msg_log rollback-preflight-subvol "${expected_root:-unresolved}"; return 1; }
 
     while read -r spec mp fstype options _rest; do
         [[ -n "$spec" && "${spec:0:1}" != "#" ]] || continue
@@ -25558,7 +35352,7 @@ validate_snapshot_fstab_for_rollback()
                 subvol=*)
                     option="${option#subvol=}"
                     option="${option#/}"
-                    [[ "$option" == "@" ]] || {
+                    [[ "$option" == "$expected_root" ]] || {
                         msg_log rollback-preflight-subvol "$option"
                         return 1
                     }
@@ -25680,12 +35474,190 @@ btrfs_subvol_id()
     printf '%s\n' "$id"
 }
 
+# Round 143 (ITEM T1, the LAYOUT EXTENSION): the snapshot rollback machinery
+# is NAME-AGNOSTIC.  The detected root subvolume NAME (one top-level path
+# component) parameterizes every preserve/promote/restore step, the fstab
+# `subvol=` parameter and the promoted-root mounts.  @-layouts keep their
+# exact historical behaviour byte-for-byte (staging names `@rollback-*`,
+# existing undo points stay recognizable); a stock anaconda Fedora root named
+# `root` is handled the same way, honestly — the tool serves the system as the
+# user has it, never requires a developer-renamed layout.
+SNAPSHOT_ROOT_NAME=""
+
+# True when $1 is a usable top-level root subvolume NAME: one path component,
+# non-empty, not '/' (the raw top-level tree itself), not '.'/'..'.  The
+# rollback renames/mounts exactly that name, so a nested path or the raw
+# top-level root is refused fail-closed.
+snapshot_root_name_usable()
+{
+    local name="${1:-}"
+    [[ -n "$name" ]] || return 1
+    [[ "$name" != "/" ]] || return 1
+    [[ "$name" == "${name#*/}" ]] || return 1
+    [[ "$name" == "." || "$name" == ".." ]] && return 1
+    return 0
+}
+
+# Staging-name prefix for Boot Bitch's own rollback subvolumes.  The @ layout
+# keeps the historical `@rollback-*` names (an undo point created by an older
+# release stays a recognized rollback target); every other detected root name
+# uses `<name>-rollback-*`.
+snapshot_staging_prefix()
+{
+    if [[ "${SNAPSHOT_ROOT_NAME:-}" == "@" ]]; then
+        printf '@rollback'
+    else
+        printf '%s-rollback' "${SNAPSHOT_ROOT_NAME:-}"
+    fi
+}
+
+# Target scope: detect the installed-root subvolume NAME from the mounted
+# top-level tree.  Prefers the os-release discovery (find_btrfs_root, which
+# skips rollback-staging subvolumes); the result must be a top-level
+# subvolume.  A damaged current root (no reachable /etc/os-release — the
+# damaged-target recovery case) falls back to the Btrfs default subvolume
+# resolved to its top-level path, then to the selected snapshot's own fstab
+# root entry ($1, the name the snapshot was taken from and the promotion must
+# target).  Sets SNAPSHOT_ROOT_NAME and returns 0, or fails closed.
+snapshot_detect_target_root_name()
+{
+    local hint="${1:-}" found name default_line default_id
+    [[ -n "${SNAPSHOT_TOP:-}" ]] || return 1
+    found="$(find_btrfs_root "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    if [[ -n "$found" ]]; then
+        name="${found#"$SNAPSHOT_TOP"/}"
+        snapshot_root_name_usable "$name" && { SNAPSHOT_ROOT_NAME="$name"; return 0; }
+    fi
+    # The Btrfs default subvolume resolved to its top-level path — the
+    # subvolume the system boots (a damaged current root keeps its default
+    # binding when one was set).
+    default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$default_line" | head -1)"
+    if [[ -n "$default_id" && "$default_id" != "5" ]]; then
+        name="$(btrfs subvolume list "$SNAPSHOT_TOP" 2>/dev/null \
+            | sed -n "s/^ID[[:space:]]\+${default_id}[[:space:]].*[[:space:]]path[[:space:]]\+\(.*\)$/\\1/p" \
+            | head -n1)"
+        snapshot_root_name_usable "$name" && { SNAPSHOT_ROOT_NAME="$name"; return 0; }
+    fi
+    # The damaged-current-root case: the selected snapshot was taken from the
+    # current root, so its fstab root entry names the root subvolume.
+    if [[ -n "$hint" && -f "$hint/etc/fstab" ]]; then
+        name="$(awk '
+            /^[[:space:]]*#/ { next }
+            NF >= 4 && $2 == "/" && $3 == "btrfs" {
+                n = split($4, parts, ",")
+                for (i = 1; i <= n; i++) {
+                    if (parts[i] ~ /^subvol=/) {
+                        sub(/^subvol=/, "", parts[i]); sub(/^\//, "", parts[i])
+                        print parts[i]; exit
+                    }
+                }
+                exit
+            }' "$hint/etc/fstab")"
+        snapshot_root_name_usable "$name" && { SNAPSHOT_ROOT_NAME="$name"; return 0; }
+    fi
+    return 1
+}
+
+# Host scope: the running root subvolume name, validated as a usable top-level
+# name.  Sets SNAPSHOT_ROOT_NAME and returns 0, or fails closed (a nested
+# running root or the raw top-level tree cannot be renamed safely).
+host_snapshot_detect_root_name()
+{
+    local running
+    # Round 152.3 (the chained replacement rollback): in the STAGED state the
+    # canonical root name is the PROMOTED root (the Btrfs default subvolume),
+    # never the running root's staging name.  After a first rollback the
+    # running root is still the preserved <name>-rollback-before-<stamp>
+    # subvolume while the promoted root already owns the canonical name AND
+    # the migrated .snapshots store; every consumer of SNAPSHOT_ROOT_NAME
+    # (the store filter, the capability, the plan and the promote) must
+    # resolve the promoted name so the list shows the migrated store and a
+    # second rollback replaces the staged root under the SAME name the first
+    # rollback used.  Fail-closed: a half-resolvable staged state returns 1
+    # and the callers refuse with their existing reasons.
+    if host_snapshot_staged_state; then
+        SNAPSHOT_ROOT_NAME="$SNAPSHOT_STAGED_PROMOTED_NAME"
+        return 0
+    fi
+    running="$(host_snapshot_running_path 2>/dev/null || true)"
+    snapshot_root_name_usable "$running" || return 1
+    SNAPSHOT_ROOT_NAME="$running"
+    return 0
+}
+
+# Round 152.3 (the chained replacement rollback): probe the STAGED state of
+# the running host — a first rollback promoted a new root (the Btrfs default
+# points at it) while the running system still executes the old root, which
+# that first rollback renamed to <name>-rollback-before-<stamp>.  Returns 0
+# and records SNAPSHOT_STAGED_RUNNING_NAME (the running root's current name)
+# and SNAPSHOT_STAGED_PROMOTED_NAME (the promoted root's name, resolved from
+# the Btrfs default subvolume) only when EVERY part resolves; a half-resolvable
+# state returns 1 (the callers treat it as not-staged and their preflights
+# fail closed on the inconsistent names).
+host_snapshot_staged_state()
+{
+    local running default_line default_id promoted
+    running="$(host_snapshot_running_path 2>/dev/null || true)"
+    [[ -n "$running" ]] || return 1
+    # The running root must carry a <name>-rollback-before-<stamp> name.
+    host_snapshot_target_is_undo "$running" || return 1
+    [[ -n "${SNAPSHOT_TOP:-}" ]] || return 1
+    default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$default_line" | head -1)"
+    [[ -n "$default_id" && "$default_id" != "5" ]] || return 1
+    promoted="$(btrfs subvolume list "$SNAPSHOT_TOP" 2>/dev/null \
+        | sed -n "s/^ID[[:space:]]\+${default_id}[[:space:]].*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p" \
+        | head -n1)"
+    snapshot_root_name_usable "$promoted" || return 1
+    # The promoted root must NOT itself be a staging name (a staged default
+    # would be an inconsistent state; fail closed, never guess).
+    host_snapshot_target_is_undo "$promoted" && return 1
+    [[ "$promoted" != "$running" ]] || return 1
+    [[ -d "$SNAPSHOT_TOP/$promoted" ]] || return 1
+    SNAPSHOT_STAGED_RUNNING_NAME="$running"
+    SNAPSHOT_STAGED_PROMOTED_NAME="$promoted"
+    return 0
+}
+
 snapshot_current_root_path()
 {
-    local path="$SNAPSHOT_TOP/@"
+    [[ -n "${SNAPSHOT_ROOT_NAME:-}" ]] || snapshot_detect_target_root_name || return 1
+    local path="$SNAPSHOT_TOP/${SNAPSHOT_ROOT_NAME}"
     [[ -d "$path" ]] || return 1
     btrfs subvolume show "$path" >/dev/null 2>&1 || return 1
     printf '%s\n' "$path"
+}
+
+# Round 147 (ITEM 5b): true when the selected target's current root carries a
+# nested <root>/.snapshots child subvolume (the bare `snapper create-config`
+# layout the round-142 enable creates — e.g. @/.snapshots or the anaconda
+# root/.snapshots) that must be migrated into the promoted root on rollback.
+# Mirrors host_snapshot_nested_snapshots_child on the mounted top-level tree,
+# but matches against the FULL `btrfs subvolume list` output instead of the
+# `-o` variant: `-o` lists only the level directly below the given path on
+# some kernels (the Fedora-44 rig prints only the top-level @), while the
+# full list carries both path shapes — the top-level-relative
+# "<root>/.snapshots" and the parent-relative ".snapshots" with a `top level`
+# column naming the parent — so the child is matched by path AND by the
+# detected root's subvolume id, never by a hardcoded @.
+snapshot_nested_snapshots_child()
+{
+    local root="${SNAPSHOT_ROOT_NAME:-}" root_id line p
+    [[ -n "$root" ]] || snapshot_detect_target_root_name 2>/dev/null || return 1
+    snapshot_root_name_usable "$root" || return 1
+    root_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/$root" 2>/dev/null || true)"
+    [[ "$root_id" =~ ^[0-9]+$ ]] || return 1
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        p="$(sed -n 's/.*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p' <<<"$line")"
+        [[ -n "$p" ]] || continue
+        if [[ "$p" == "$root/.snapshots" ]] \
+            || { [[ "$p" == ".snapshots" ]] && [[ "$line" == *"top level $root_id "* ]]; }; then
+            return 0
+        fi
+    done < <(btrfs subvolume list "$SNAPSHOT_TOP" 2>/dev/null)
+    return 1
 }
 
 snapshot_free_space_ok()
@@ -25710,19 +35682,52 @@ snapshot_separate_subvolumes()
     done < "$snap/etc/fstab"
 }
 
-# Validate one snapshot for a safe @ rollback and print the complete
-# transactional plan (read-only; emits the PLAN_OK=1 marker for the GUI).
+# Validate one snapshot for a safe name-preserving rollback and print the
+# complete transactional plan (read-only; emits the PLAN_OK=1 marker for the
+# GUI).  Round 143 (ITEM T1): the preserved/promoted root name is the
+# DETECTED top-level root subvolume (SNAPSHOT_ROOT_NAME), never a hardcoded @.
 snapshot_rollback_plan()
 {
-    local requested="$1" snap current info pretty created root_id default_line rel
+    local requested="$1" snap current info pretty created root_id default_line rel root_name
     snap="$(snapshot_find_path "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the selected Btrfs filesystem."
+    [[ -n "${SNAPSHOT_ROOT_NAME:-}" ]] || snapshot_detect_target_root_name "$snap" \
+        || fail "The selected Btrfs filesystem has no detectable top-level root subvolume; transactional rollback requires the installed root to be a top-level subvolume."
+    root_name="$SNAPSHOT_ROOT_NAME"
     snapshot_root_valid "$snap" || fail "Snapshot $requested is not a valid Linux root snapshot (/etc/os-release and /etc/fstab are required)."
-    validate_snapshot_fstab_for_rollback "$snap" || fail "Snapshot $requested fstab is not compatible with a safe @ rollback."
+    validate_snapshot_fstab_for_rollback "$snap" "$root_name" || fail "Snapshot $requested fstab is not compatible with a safe $root_name rollback."
     validate_snapshot_crypttab_for_rollback "$snap" || fail "Snapshot $requested crypttab does not resolve safely on the selected target disk."
     current="$(snapshot_current_root_path || true)"
-    [[ -n "$current" ]] || fail "The selected Btrfs filesystem has no top-level @ root subvolume; transactional rollback is limited to @-root layouts in this release."
+    [[ -n "$current" ]] || fail "The selected Btrfs filesystem has no detectable top-level root subvolume; transactional rollback requires the installed root to be a top-level subvolume."
     snapshot_free_space_ok || fail "Less than 1 GiB of free Btrfs space is available; refusing transactional rollback."
+    # Round 149 (ITEM 1): a separate /boot (the stock anaconda Fedora ext4
+    # layout) is supported through the bounded file-level capture; its fstab
+    # device must resolve safely on the selected target disk AND the capture
+    # must be feasible (the bound, the submount and the session space are
+    # probed through a read-only mount, detached immediately) — fail-closed
+    # at the plan, never only at the rollback.
+    if snapshot_has_separate_boot "$snap"; then
+        local boot_dev boot_fstype boot_mount_options
+        boot_dev="$(snapshot_separate_boot_device "$snap" 2>/dev/null || true)"
+        [[ -n "$boot_dev" ]] \
+            || fail "Snapshot $requested has a separate /boot entry that cannot be resolved for the bounded capture; refusing transactional rollback."
+        boot_fstype="$(lsblk -ndo FSTYPE "$boot_dev" 2>/dev/null | head -n1 || true)"
+        boot_mount_options="ro"
+        case "$boot_fstype" in
+            ext2|ext3|ext4) boot_mount_options+=",noload" ;;
+            xfs) boot_mount_options+=",norecovery" ;;
+        esac
+        if ! mount_recorded "$boot_dev" "$SESSION_DIR/boot-capture-src" -o "$boot_mount_options"; then
+            fail "Snapshot $requested's separate /boot filesystem could not be mounted read-only for the capture feasibility check; refusing transactional rollback."
+        fi
+        if ! snapshot_boot_capture_feasible "$SESSION_DIR/boot-capture-src"; then
+            umount "$SESSION_DIR/boot-capture-src" 2>/dev/null || true
+            mount_records_prune
+            fail "The separate /boot capture is not feasible on this target; refusing transactional rollback."
+        fi
+        umount "$SESSION_DIR/boot-capture-src" 2>/dev/null || true
+        mount_records_prune
+    fi
 
     info="$(snapshot_info_file "$snap" || true)"
     pretty="$(awk -F= '$1=="PRETTY_NAME" {sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$snap/etc/os-release")"
@@ -25736,7 +35741,7 @@ snapshot_rollback_plan()
     echo "========================================"
     echo "Target disk: $TARGET_DISK"
     echo "Btrfs filesystem: $ROOT_DEVICE"
-    echo "Current normal root: @${root_id:+ (subvolume ID $root_id)}"
+    echo "Current normal root: ${root_name}${root_id:+ (subvolume ID $root_id)}"
     echo "Current default subvolume: ${default_line:-unknown}"
     echo
     echo "Selected snapshot: $requested"
@@ -25745,6 +35750,11 @@ snapshot_rollback_plan()
     [[ -n "$created" ]] && echo "Created: $created"
     [[ -n "$info" ]] && echo "Snapper type: $(snapshot_xml_value "$info" type || true)"
     [[ -n "$info" ]] && echo "Description: $(snapshot_xml_value "$info" description || true)"
+    # Round 147 (ITEM 5b): the nested-child migration is part of the plan —
+    # the promoted root carries the store the rollback took its target from.
+    if snapshot_nested_snapshots_child; then
+        echo "Nested ${root_name}/.snapshots child subvolume: will be migrated into the promoted ${root_name}."
+    fi
     echo
     echo "Preflight kernel/initramfs evidence:"
     snapshot_kernel_pair_audit "$snap" || true
@@ -25752,18 +35762,59 @@ snapshot_rollback_plan()
     echo "Separate Btrfs subvolumes are retained rather than rolled back:"
     snapshot_separate_subvolumes "$snap"
     echo
+    echo "  /home is retained BY DESIGN: a system rollback must never revert the"
+    echo "  user's documents — the rollback restores the operating system, never"
+    echo "  the user's files."
+    # Round 150 (ITEM 4): a separate /home subvolume is retained by default;
+    # including it is an EXPLICIT opt-in asked at the confirmation (the
+    # full-restore semantics for a foreign disk).  The plan names the offer
+    # and its consequence.  (Target scope only — the host plan keeps the
+    # retain with no opt-in, below.)
+    if snapshot_separate_home_subvol "$snap" >/dev/null 2>&1; then
+        echo "  A separate /home subvolume is present: including /home in this rollback"
+        echo "  is offered as an EXPLICIT opt-in at the confirmation prompt.  Opting in"
+        echo "  is the full-restore semantics for a foreign disk — the current /home"
+        echo "  subvolume is preserved as an undo point and /home is replaced with the"
+        echo "  selected snapshot's own /home state (the target's user files are"
+        echo "  reverted).  Declining the opt-in keeps /home RETAINED BY DESIGN."
+    fi
+    echo
+    if snapshot_has_separate_boot "$snap"; then
+        echo "Separate /boot capture (round 149):"
+        echo "  The separate /boot filesystem (kernel, initramfs and loader/GRUB2 files)"
+        echo "  is captured file-level into the session (bounded, fingerprint-guarded) and"
+        echo "  restored over the mounted /boot as part of the promote step — BEFORE the"
+        echo "  boot-stack reconcile — verified against the capture fingerprint.  The"
+        echo "  capture is also the /boot undo point for the automatic restore-on-failure."
+    else
+        echo "/boot is part of the root snapshot: the kernel, initramfs and loader"
+        echo "files roll back WITH the root (no separate capture is needed)."
+    fi
+    echo
     echo "Rollback transaction:"
     echo "  1. Keep the selected snapshot unchanged/read-only."
-    echo "  2. Create a new writable snapshot candidate."
-    echo "  3. Preserve the existing @ under a timestamped @rollback-before-* name."
-    echo "  4. Promote the candidate to @ and set it as the Btrfs default subvolume."
-    echo "  5. Mount the promoted @ with its real fstab Btrfs subvolumes."
-    echo "  6. Validate fstab/crypttab and installed kernel state."
-    echo "  7. Rebuild initramfs, TUXEDO UKI when applicable, and GRUB configuration."
-    echo "  8. Verify the promoted root and boot artifacts."
-    echo "  9. If a critical post-switch stage fails, restore the preserved @ automatically and reconcile its boot stack."
+    if snapshot_has_separate_boot "$snap"; then
+        echo "  2. Capture the separate /boot filesystem into the session (bounded, fingerprint-guarded)."
+        echo "  3. Create a new writable snapshot candidate."
+        echo "  4. Preserve the existing ${root_name} under a timestamped $(snapshot_staging_prefix)-before-* name."
+        echo "  5. Promote the candidate to ${root_name} and set it as the Btrfs default subvolume."
+        echo "  6. Mount the promoted ${root_name} with its real fstab Btrfs subvolumes and restore the /boot capture (verified)."
+        echo "  7. Validate fstab/crypttab and installed kernel state."
+        echo "  8. Rebuild initramfs, TUXEDO UKI when applicable, and GRUB configuration."
+        echo "  9. Verify the promoted root and boot artifacts."
+        echo "  10. If a critical post-switch stage fails, restore the preserved ${root_name} AND the captured /boot automatically and reconcile the boot stack."
+    else
+        echo "  2. Create a new writable snapshot candidate."
+        echo "  3. Preserve the existing ${root_name} under a timestamped $(snapshot_staging_prefix)-before-* name."
+        echo "  4. Promote the candidate to ${root_name} and set it as the Btrfs default subvolume."
+        echo "  5. Mount the promoted ${root_name} with its real fstab Btrfs subvolumes."
+        echo "  6. Validate fstab/crypttab and installed kernel state."
+        echo "  7. Rebuild initramfs, TUXEDO UKI when applicable, and GRUB configuration."
+        echo "  8. Verify the promoted root and boot artifacts."
+        echo "  9. If a critical post-switch stage fails, restore the preserved ${root_name} automatically and reconcile its boot stack."
+    fi
     echo
-    echo "No source snapshot will be deleted. The previous @ remains preserved after a successful rollback."
+    echo "No source snapshot will be deleted. The previous ${root_name} remains preserved after a successful rollback."
     echo "PLAN_OK=1"
 }
 
@@ -25801,16 +35852,56 @@ snapshot_unmount_target_keep_top()
     return 0
 }
 
-# Mount the promoted @ subvolume read-write with its fstab subvolumes, boot
-# entries and chroot pseudo-filesystems so post-switch reconciliation runs
-# against the rolled-back root.
+# Round 147 (ITEM 5a): release the rollback's OWN tmpfs mounts — the target
+# /run tmpfs and the dedicated dracut build tmpfs beneath it — while the
+# transaction is still inside the request.  On a dracut target the rollback's
+# exit used to leak these (MOUNT_LEAK evidence: a lingering build child held
+# the initramfs tmpfs through the EXIT cleanup's bounded retry, and the /run
+# tmpfs plus the promoted root then stayed attached because their children
+# leaked; the release machinery itself — filesystem_release_all_mounts /
+# mount_special / cleanup() — is unchanged, so the leak path is here, the
+# missing release).  Plain non-lazy umount with the cleanup()-style bounded
+# retry: a still-busy mount keeps its MOUNT_LEAK evidence and is never
+# lazy-detached.  The promoted root and the Btrfs top deliberately stay
+# mounted for the EXIT cleanup (it appends the session log into the target
+# and detaches everything else).  Returns 0 even when a mount leaks — the
+# rollback result is already honest and the evidence stays visible.
+snapshot_release_rollback_tmpfs()
+{
+    local path attempt
+    for path in "$TARGET_ROOT/run/boot-repair-initramfs" "$TARGET_ROOT/run"; do
+        [[ -n "$path" && -e "$path" ]] || continue
+        mountpoint -q "$path" 2>/dev/null || continue
+        umount "$path" 2>/dev/null || true
+        attempt=0
+        while mountpoint -q "$path" 2>/dev/null && (( attempt < 4 )); do
+            sleep 0.4
+            umount "$path" 2>/dev/null || true
+            attempt=$((attempt + 1))
+        done
+        if mountpoint -q "$path" 2>/dev/null; then
+            mount_cleanup_leak_evidence "$path"
+        fi
+    done
+    # Drop the released records so the EXIT cleanup never re-umounts a
+    # detached path; still-mounted records are kept by the prune.
+    mount_records_prune
+    return 0
+}
+
+# Mount the promoted root subvolume (the DETECTED name) read-write with its
+# fstab subvolumes, boot entries and chroot pseudo-filesystems so post-switch
+# reconciliation runs against the rolled-back root.
 snapshot_mount_promoted_root_rw()
 {
+    local root_name="${SNAPSHOT_ROOT_NAME:-}"
+    snapshot_root_name_usable "$root_name" \
+        || fail "The promoted root subvolume name is not usable; refusing to mount the promoted root."
     ROOT_DEVICE="$(preferred_block_path "$ROOT_DEVICE" "$ROOT_CANONICAL")"
     mkdir -p "$MOUNT_BASE"
-    mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o rw,subvol=@
+    mount_recorded "$ROOT_DEVICE" "$MOUNT_BASE" -o "rw,subvol=$root_name"
     TARGET_ROOT="$MOUNT_BASE"
-    TARGET_SUBVOL="@"
+    TARGET_SUBVOL="$root_name"
     read_target_os
     prepare_mapper_compatibility_aliases
     mount_target_btrfs_subvolumes rw
@@ -25863,9 +35954,9 @@ snapshot_verify_installed_kernels()
 # makes the caller restore the preserved pre-rollback root.
 snapshot_post_switch_reconcile()
 {
-    local audit="" current
-    [[ "$TARGET_SUBVOL" == "@" ]] || fail "Post-rollback root is not mounted from @."
-    [[ -f "$TARGET_ROOT/etc/os-release" && -f "$TARGET_ROOT/etc/fstab" ]] || fail "Promoted @ is missing required Linux root metadata."
+    local audit="" current root_name="${SNAPSHOT_ROOT_NAME:-}"
+    [[ "$TARGET_SUBVOL" == "$root_name" ]] || fail "Post-rollback root is not mounted from ${root_name:-the detected root subvolume}."
+    [[ -f "$TARGET_ROOT/etc/os-release" && -f "$TARGET_ROOT/etc/fstab" ]] || fail "Promoted ${root_name:-root} is missing required Linux root metadata."
     validate_mapper_crypttab
     snapshot_verify_installed_kernels
 
@@ -25892,7 +35983,7 @@ snapshot_post_switch_reconcile()
     grub_cfg="$(grub_config_path)"
     [[ -s "$TARGET_ROOT$grub_cfg" ]] || fail "GRUB regeneration completed but $grub_cfg is missing or empty."
     current="$(current_btrfs_subvol 2>/dev/null || true)"
-    [[ "$current" == "@" ]] || fail "Post-rollback mount verification resolved '${current:-unknown}' instead of @."
+    [[ "$current" == "${SNAPSHOT_ROOT_NAME:-}" ]] || fail "Post-rollback mount verification resolved '${current:-unknown}' instead of ${SNAPSHOT_ROOT_NAME:-the detected root subvolume}."
     msg_log rollback-promoted-validated
 }
 
@@ -25900,10 +35991,42 @@ snapshot_post_switch_reconcile()
 # failed candidate out of @, promote the preserved @rollback-before-* root back
 # to @, restore the previous Btrfs default subvolume and reconcile its boot
 # stack.  Returns non-zero when any step leaves the system without a safe root.
+# Round 150 (ITEM 4): undo the /home inclusion swap — delete the fresh
+# promoted-era /home subvolume and move the preserved one back.  Only called
+# while SNAPSHOT_HOME_SWAPPED=1 (the swap actually happened), so the delete
+# can never hit a subvolume the opt-in did not create.
+snapshot_home_swap_restore()
+{
+    local top="${1:-$SNAPSHOT_TOP}" subvol="${SNAPSHOT_HOME_SUBVOL:-}" backup="${SNAPSHOT_HOME_BACKUP:-}"
+    [[ -n "$subvol" && -n "$backup" ]] || return 1
+    if btrfs subvolume show "$top/$subvol" >/dev/null 2>&1; then
+        btrfs subvolume delete "$top/$subvol" >/dev/null 2>&1 || return 1
+    fi
+    if [[ -e "$top/$backup" ]]; then
+        mv -- "$top/$backup" "$top/$subvol" || return 1
+    fi
+    SNAPSHOT_HOME_SWAPPED=0
+    return 0
+}
+
 snapshot_restore_preserved_root()
 {
     local top="$1" backup_name="$2" failed_name="$3" old_default_id="$4" current_id restore_rc=0
+    local root_name="${SNAPSHOT_ROOT_NAME:-}"
     msg_log rollback-recovery
+    # Round 150 (ITEM 4): the /home inclusion swap restores BEFORE the root
+    # name move (independent moves; the fresh /home subvolume is deleted and
+    # the preserved one returns, so the later promoted-root mount sees the
+    # original /home state again).
+    if (( ${SNAPSHOT_HOME_SWAPPED:-0} == 1 )); then
+        snapshot_home_swap_restore "$top" \
+            || msg_log rollback-cannot-move-snapshots
+    fi
+    # Fail closed when the root name was never detected: guessing a name here
+    # could restore the preserved root under the WRONG subvolume name and
+    # leave the installed system unbootable.
+    snapshot_root_name_usable "$root_name" \
+        || { msg_log rollback-root-name-unknown; return 1; }
 
     if ! snapshot_unmount_target_keep_top; then
         msg_log rollback-cannot-detach
@@ -25918,13 +36041,26 @@ snapshot_restore_preserved_root()
         msg_log rollback-preserved-missing "$backup_name"
         return 1
     fi
-    if [[ -e "$top/@" ]]; then
-        if ! mv -- "$top/@" "$top/$failed_name"; then
+    # Round 147 (ITEM 5b): a nested <root>/.snapshots child that was migrated
+    # into the promoted root moves BACK into the preserved root so the
+    # restored root is a complete Snapper root again (the host-restore
+    # pattern).
+    if btrfs subvolume show "$top/$root_name/.snapshots" >/dev/null 2>&1; then
+        if [[ -d "$top/$backup_name/.snapshots" ]]; then
+            rmdir -- "$top/$backup_name/.snapshots" 2>/dev/null || true
+        fi
+        if ! mv -- "$top/$root_name/.snapshots" "$top/$backup_name/.snapshots"; then
+            msg_log rollback-cannot-move-snapshots
+            return 1
+        fi
+    fi
+    if [[ -e "$top/$root_name" ]]; then
+        if ! mv -- "$top/$root_name" "$top/$failed_name"; then
             msg_log rollback-cannot-move-candidate
             return 1
         fi
     fi
-    mv -- "$top/$backup_name" "$top/@" || return 1
+    mv -- "$top/$backup_name" "$top/$root_name" || return 1
 
     if [[ "$old_default_id" =~ ^[0-9]+$ ]]; then
         if ! btrfs subvolume set-default "$old_default_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
@@ -25932,7 +36068,7 @@ snapshot_restore_preserved_root()
             return 1
         fi
     else
-        current_id="$(btrfs_subvol_id "$top/@" || true)"
+        current_id="$(btrfs_subvol_id "$top/$root_name" || true)"
         if [[ -n "$current_id" ]]; then
             if ! btrfs subvolume set-default "$current_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
                 msg_log rollback-cannot-restore-default
@@ -25944,18 +36080,25 @@ snapshot_restore_preserved_root()
         fi
     fi
 
-    # The restored @ is the recovery's goal: the @ name and the Btrfs default
+    # The restored root is the recovery's goal: the name and the Btrfs default
     # subvolume have been restored above.  If the preserved root is damaged
     # (missing /etc/os-release), its boot stack cannot be reconciled — treat
     # that as the expected recovery outcome, report the restored name/default
     # and return success so the caller still reports the preserved root as
     # restored, instead of hard-failing in read_target_os.
-    if [[ ! -f "$top/@/etc/os-release" ]]; then
+    if [[ ! -f "$top/$root_name/etc/os-release" ]]; then
         msg_log rollback-preserved-root-damaged "$failed_name"
         return 0
     fi
 
     snapshot_mount_promoted_root_rw || return 1
+    # Round 149 (ITEM 1): restore the /boot capture before the recovery's
+    # own reconcile, so a failed rollback returns the separate /boot to its
+    # exact pre-transaction state (the capture is the /boot undo point).
+    if snapshot_boot_capture_present && ! snapshot_boot_restore_capture "$TARGET_ROOT/boot"; then
+        msg_log rollback-boot-restore-recovery-failed
+        return 1
+    fi
     set +e
     ( snapshot_post_switch_reconcile ) 2>&1 | tee -a "$SESSION_LOG"
     restore_rc=${PIPESTATUS[0]}
@@ -25964,44 +36107,120 @@ snapshot_restore_preserved_root()
         msg_log rollback-original-restored-bootstack-failed
         return 1
     fi
+    # Round 147 (ITEM 5a): the restore's reconcile rebuilds the boot stack the
+    # same way (dracut build tmpfs included) — release the tmpfs mounts here
+    # too, exactly like the success path.
+    snapshot_release_rollback_tmpfs
     msg_log rollback-original-restored "$failed_name"
     return 0
 }
 
 # Execute the transactional rollback: snapshot to a writable candidate,
-# preserve the current @ under @rollback-before-*, promote the candidate,
-# reconcile initramfs/UKI/GRUB and automatically restore the preserved root
-# when any critical post-switch stage fails.
+# preserve the current root under <name>-rollback-before-*, promote the
+# candidate, reconcile initramfs/UKI/GRUB and automatically restore the
+# preserved root when any critical post-switch stage fails.
 rollback_snapshot()
 {
     local requested="$1" snap current stamp candidate_name backup_name failed_name candidate_path
-    local old_default_line old_default_id candidate_id rc output pretty
+    local old_default_line old_default_id candidate_id rc output pretty root_name nested=0
+    # Round 150 (ITEM 4): the /home opt-in state (per-request reset; the
+    # restore helper reads the same globals).  Default: retain by design.
+    SNAPSHOT_HOME_ROLLBACK=0
+    SNAPSHOT_HOME_SUBVOL=""
+    SNAPSHOT_HOME_BACKUP=""
+    SNAPSHOT_HOME_SWAPPED=0
 
     snap="$(snapshot_find_path "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the selected Btrfs filesystem."
+    [[ -n "${SNAPSHOT_ROOT_NAME:-}" ]] || snapshot_detect_target_root_name "$snap" \
+        || fail "Transactional rollback requires a detectable named top-level root subvolume."
+    root_name="$SNAPSHOT_ROOT_NAME"
     snapshot_root_valid "$snap" || fail "Snapshot $requested is not a valid Linux root snapshot."
-    validate_snapshot_fstab_for_rollback "$snap" || fail "Snapshot $requested fstab is not compatible with a safe @ rollback."
+    validate_snapshot_fstab_for_rollback "$snap" "$root_name" || fail "Snapshot $requested fstab is not compatible with a safe $root_name rollback."
     validate_snapshot_crypttab_for_rollback "$snap" || fail "Snapshot $requested crypttab does not resolve safely on the selected target disk."
     current="$(snapshot_current_root_path || true)"
-    [[ -n "$current" ]] || fail "Transactional rollback requires a normal top-level @ root subvolume."
+    [[ -n "$current" ]] || fail "Transactional rollback requires a detectable named top-level root subvolume."
     snapshot_free_space_ok || fail "Less than 1 GiB of free Btrfs space is available; refusing rollback."
+    # Round 147 (ITEM 5b): a nested <root>/.snapshots child of the CURRENT
+    # root must be migrated into the promoted root (the host-path behaviour
+    # extended to the target path) — without it the promoted root carries an
+    # empty shadow directory and the real store stays under the preserved
+    # root.
+    if snapshot_nested_snapshots_child; then
+        nested=1
+    fi
 
     pretty="$(awk -F= '$1=="PRETTY_NAME" {sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$snap/etc/os-release")"
     old_default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
     old_default_id="$(sed -n 's/^ID[[:space:]]\+\([0-9][0-9]*\).*/\1/p' <<< "$old_default_line" | head -1)"
     stamp="$(date +%Y%m%d-%H%M%S)"
-    candidate_name="@rollback-new-$stamp"
-    backup_name="@rollback-before-$stamp"
-    failed_name="@rollback-failed-$stamp"
+    candidate_name="$(snapshot_staging_prefix)-new-$stamp"
+    backup_name="$(snapshot_staging_prefix)-before-$stamp"
+    failed_name="$(snapshot_staging_prefix)-failed-$stamp"
     candidate_path="$SNAPSHOT_TOP/$candidate_name"
 
     for path in "$candidate_path" "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$failed_name"; do
         [[ ! -e "$path" ]] || fail "Rollback staging path already exists: ${path#"$SNAPSHOT_TOP"/}"
     done
 
+    # Round 134 (ITEM R1): the complete read-only plan is re-emitted here so the
+    # CONFIRM prompt below renders right after the plan (PLAN_OK=1) in the same
+    # popup.  The helper never trusts the GUI's earlier plan request — the plan
+    # verb re-runs every preflight fail-closed and emits the marker as evidence.
+    snapshot_rollback_plan "$requested"
+
     msg_log rollback-selected "$requested" "${pretty:-Linux}"
     msg_log rollback-preserved-name "$backup_name"
     msg_log rollback-source-unchanged
+
+    # Round 150 (ITEM 4): the /home inclusion opt-in (target scope only).
+    # Asked AFTER the plan is displayed and BEFORE the round-134 CONFIRM, so
+    # the confirmation can name the chosen mode.  An explicit y is the
+    # full-restore semantics; the decline/expiry (and the no-interactive-
+    # channel default) keeps /home retained BY DESIGN.
+    local home_subvol=""
+    home_subvol="$(snapshot_separate_home_subvol "$snap" 2>/dev/null || true)"
+    if [[ -n "$home_subvol" ]]; then
+        if confirm_snapshot_home_optin "$home_subvol"; then
+            SNAPSHOT_HOME_ROLLBACK=1
+            SNAPSHOT_HOME_SUBVOL="$home_subvol"
+            msg_log snapshot-home-rollback-optin "$home_subvol"
+        else
+            msg_log snapshot-home-rollback-retained "$home_subvol"
+        fi
+    fi
+
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the plan is
+    # displayed and BEFORE any mutation — the GUI renders the answer box inside
+    # the open plan popup (the package-stage channel).  A decline/expiry emits
+    # the honest skipped/aborted outcome and never touches the target.
+    if ! confirm_snapshot_rollback; then
+        log "ROLLBACK_RESULT=DECLINED" | tee -a "$SESSION_LOG"
+        msg_log snapshot-rollback-declined
+        return 0
+    fi
+
+    # Round 149 (ITEM 1): the separate /boot capture (target scope).  Mount
+    # the snapshot-fstab /boot device read-only, capture its content into the
+    # session with the fingerprint guard and detach the read-only source
+    # mount — all BEFORE the first mutation of the target.  A failed capture
+    # aborts the rollback with the target untouched.
+    if snapshot_has_separate_boot "$snap"; then
+        local boot_dev boot_fstype boot_mount_options
+        boot_dev="$(snapshot_separate_boot_device "$snap" 2>/dev/null || true)"
+        [[ -n "$boot_dev" ]] \
+            || fail "The snapshot has a separate /boot entry that cannot be resolved for the bounded capture; refusing the rollback."
+        boot_fstype="$(lsblk -ndo FSTYPE "$boot_dev" 2>/dev/null | head -n1 || true)"
+        boot_mount_options="ro"
+        case "$boot_fstype" in
+            ext2|ext3|ext4) boot_mount_options+=",noload" ;;
+            xfs) boot_mount_options+=",norecovery" ;;
+        esac
+        mount_recorded "$boot_dev" "$SESSION_DIR/boot-capture-src" -o "$boot_mount_options"
+        snapshot_boot_capture "$SESSION_DIR/boot-capture-src"
+        umount "$SESSION_DIR/boot-capture-src" 2>/dev/null || true
+        mount_records_prune
+    fi
 
     # This is the exact point where rollback crosses from read-only planning to
     # a modifying transaction.  Anything before this line must leave the target
@@ -26012,31 +36231,106 @@ rollback_snapshot()
     btrfs subvolume snapshot "$snap" "$candidate_path" 2>&1 | tee -a "$SESSION_LOG"
     snapshot_root_valid "$candidate_path" || {
         btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
-        fail "Writable rollback candidate failed Linux-root validation; current @ was not changed."
+        fail "Writable rollback candidate failed Linux-root validation; current $root_name was not changed."
     }
 
     msg_log rollback-detaching-mounts
     snapshot_unmount_target_keep_top || {
         btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
-        fail "Could not cleanly detach the target; current @ was not changed."
+        fail "Could not cleanly detach the target; current $root_name was not changed."
     }
 
-    mv -- "$SNAPSHOT_TOP/@" "$SNAPSHOT_TOP/$backup_name" || {
+    mv -- "$SNAPSHOT_TOP/$root_name" "$SNAPSHOT_TOP/$backup_name" || {
         btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
-        fail "Could not preserve current @; rollback was not performed."
+        fail "Could not preserve current $root_name; rollback was not performed."
     }
-    if ! mv -- "$candidate_path" "$SNAPSHOT_TOP/@"; then
-        if mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/@" 2>/dev/null; then
-            fail "Could not promote rollback candidate to @; original @ name was restored."
+    if ! mv -- "$candidate_path" "$SNAPSHOT_TOP/$root_name"; then
+        if mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$root_name" 2>/dev/null; then
+            fail "Could not promote rollback candidate to $root_name; original $root_name name was restored."
         fi
-        fail "Could not promote rollback candidate or restore the original @ name. Do not reboot."
+        fail "Could not promote rollback candidate or restore the original $root_name name. Do not reboot."
     fi
 
-    candidate_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/@" || true)"
+    # Round 147 (ITEM 5b): migrate the nested <root>/.snapshots child from the
+    # preserved root into the promoted root (the host-path pattern).  A btrfs
+    # snapshot of a subvolume copies nested subvolumes as empty directories,
+    # so the promoted root's .snapshots entry is the empty shadow — it must be
+    # empty and removable, or the migration fails with the preserved root
+    # restored.
+    if (( nested == 1 )); then
+        msg_log rollback-migrating-snapshots "$root_name"
+        if [[ -d "$SNAPSHOT_TOP/$root_name/.snapshots" && ! -L "$SNAPSHOT_TOP/$root_name/.snapshots" ]]; then
+            if ! rmdir -- "$SNAPSHOT_TOP/$root_name/.snapshots" 2>/dev/null; then
+                snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+                fail "The promoted $root_name contains a non-empty .snapshots directory; cannot migrate the nested child subvolume. Original root restoration was attempted."
+            fi
+        elif [[ -e "$SNAPSHOT_TOP/$root_name/.snapshots" ]]; then
+            snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "The promoted $root_name contains an unexpected .snapshots entry; cannot migrate the nested child subvolume. Original root restoration was attempted."
+        fi
+        if ! mv -- "$SNAPSHOT_TOP/$backup_name/.snapshots" "$SNAPSHOT_TOP/$root_name/.snapshots"; then
+            snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "Could not migrate the nested $root_name/.snapshots child subvolume. Original root restoration was attempted."
+        fi
+    fi
+
+    candidate_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/$root_name" || true)"
     [[ -n "$candidate_id" ]] || {
         snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
-        fail "Unable to determine promoted @ subvolume ID. Original root restoration was attempted."
+        fail "Unable to determine promoted $root_name subvolume ID. Original root restoration was attempted."
     }
+
+    # Round 150 (ITEM 4): the /home inclusion swap (opt-in only).  The live
+    # separate /home subvolume is preserved as an undo point and a fresh
+    # subvolume is created at the same path carrying the promoted root's own
+    # /home state (the snapshot's view — for a root-only snapshot typically
+    # empty).  Every step fails closed: a failure restores the /home swap and
+    # then routes through the automatic preserved-root recovery, so a failed
+    # opt-in rollback never leaves a half-swapped /home.  The placeholder
+    # /home directory inside the promoted root is emptied only AFTER the
+    # content moved (a plain, never-mounted directory — the never-rm-rf-
+    # through-a-mount invariant holds: nothing is mounted beneath it at this
+    # point of the transaction).
+    if (( SNAPSHOT_HOME_ROLLBACK == 1 )) && [[ -n "$SNAPSHOT_HOME_SUBVOL" ]]; then
+        SNAPSHOT_HOME_BACKUP="${SNAPSHOT_HOME_SUBVOL}-rollback-before-$stamp"
+        [[ ! -e "$SNAPSHOT_TOP/$SNAPSHOT_HOME_BACKUP" ]] || {
+            snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "The /home rollback undo-point path already exists: $SNAPSHOT_HOME_BACKUP. Original root restoration was attempted."
+        }
+        msg_log snapshot-home-preserving "$SNAPSHOT_HOME_SUBVOL" "$SNAPSHOT_HOME_BACKUP"
+        if ! mv -- "$SNAPSHOT_TOP/$SNAPSHOT_HOME_SUBVOL" "$SNAPSHOT_TOP/$SNAPSHOT_HOME_BACKUP"; then
+            snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "Could not preserve the current /home subvolume $SNAPSHOT_HOME_SUBVOL. Original root restoration was attempted."
+        fi
+        if ! btrfs subvolume create "$SNAPSHOT_TOP/$SNAPSHOT_HOME_SUBVOL" 2>&1 | tee -a "$SESSION_LOG"; then
+            mv -- "$SNAPSHOT_TOP/$SNAPSHOT_HOME_BACKUP" "$SNAPSHOT_TOP/$SNAPSHOT_HOME_SUBVOL" 2>/dev/null || true
+            snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "Could not create the promoted /home subvolume $SNAPSHOT_HOME_SUBVOL. Original root and /home restoration was attempted."
+        fi
+        SNAPSHOT_HOME_SWAPPED=1
+        # The promoted root's placeholder /home (a plain, never-mounted
+        # directory inside @ at this point of the transaction — the
+        # never-rm-rf-through-a-mount invariant holds) moves into the fresh
+        # subvolume.  The explicit non-empty guards below keep the paths
+        # unexpandable (an empty SNAPSHOT_TOP/root_name must never resolve
+        # to a bare /home — shellcheck SC2115, the same data-loss class).
+        local promoted_home_dir=""
+        promoted_home_dir="$SNAPSHOT_TOP/$root_name/home"
+        if [[ -n "$SNAPSHOT_TOP" && -n "$root_name" \
+            && -n "$SNAPSHOT_HOME_SUBVOL" && -d "$promoted_home_dir" ]]; then
+            if ! mountpoint -q -- "$promoted_home_dir" 2>/dev/null; then
+                if ! cp -a -- "$promoted_home_dir/." \
+                    "$SNAPSHOT_TOP/$SNAPSHOT_HOME_SUBVOL/"; then
+                    snapshot_home_swap_restore || true
+                    snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+                    fail "Could not move the promoted root's /home content into the new /home subvolume. Original root and /home restoration was attempted."
+                fi
+                rm -rf -- "$promoted_home_dir"
+            fi
+        fi
+        msg_log snapshot-home-swapped "$SNAPSHOT_HOME_SUBVOL"
+    fi
+
     set +e
     btrfs subvolume set-default "$candidate_id" "$SNAPSHOT_TOP" 2>&1 | tee -a "$SESSION_LOG"
     rc=${PIPESTATUS[0]}
@@ -26061,6 +36355,19 @@ rollback_snapshot()
         fi
         return 1
     fi
+    # Round 149 (ITEM 1): restore the captured /boot over the mounted
+    # separate /boot BEFORE the boot-stack reconcile, verified against the
+    # capture fingerprint.  A failed restore goes through the automatic
+    # preserved-root recovery (which restores the capture again).
+    if snapshot_boot_capture_present && ! snapshot_boot_restore_capture "$TARGET_ROOT/boot"; then
+        msg_log rollback-boot-restore-failed
+        if snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+            msg_log rollback-failed-safely-boot "$failed_name"
+        else
+            msg_log rollback-critical-boot
+        fi
+        return 1
+    fi
     set +e
     output="$( ( snapshot_post_switch_reconcile ) 2>&1 )"
     rc=$?
@@ -26078,6 +36385,9 @@ rollback_snapshot()
     fi
 
     sync
+    # Round 147 (ITEM 5a): release the rollback's own tmpfs mounts here (see
+    # the function) so the dracut target's exit cannot leak them.
+    snapshot_release_rollback_tmpfs
     msg_log separator
     msg_log snapshot-rollback-complete
     msg_log snapshot-selected "$requested"
@@ -26087,6 +36397,222 @@ rollback_snapshot()
     msg_log snapshot-default-points-promoted
     msg_log snapshot-bootstack-pass
     log "ROLLBACK_RESULT=SUCCESS" | tee -a "$SESSION_LOG"
+}
+
+# Round 146 (ITEM 2): the guarded MANUAL snapshot creation.  Creates ONE
+# single-type Snapper snapshot ("Boot Bitch manual snapshot") on the scope's
+# own Btrfs root through the scope's own snapper — the repair target's snapper
+# runs in the repair chroot (its own configuration and store), the running
+# host's natively.  The round-134 CONFIRM precedes the mutation; a decline or
+# expiry reports the honest skipped outcome and creates nothing.  A missing
+# prerequisite fails with the same reason keys the capability row reports
+# (missing-snapper / missing-btrfs-progs / no-snapper-root-config /
+# no-snapshot-store) so the GUI can point at the Enable/Install affordance.
+
+# Target scope: create the manual snapshot in the selected repair target.
+create_snapshot_target()
+{
+    local fstype rc before=0 after=0
+    (($# == 0)) || fail "snapshots create does not accept extra arguments."
+    CURRENT_STAGE="create target snapshot"
+    prepare_target ro
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    [[ "$fstype" == "btrfs" ]] \
+        || fail "$(reason not-btrfs-root "${fstype:-unknown}"). Snapshot creation requires a Btrfs repair root."
+    target_has_executable /usr/sbin/snapper /usr/bin/snapper \
+        || fail "$(reason missing-snapper). Snapper is the required snapshot producer; enable snapshot configuration (Boot capabilities) first."
+    target_has_executable /usr/sbin/btrfs /usr/bin/btrfs \
+        || fail "$(reason missing-btrfs-progs). Snapshot creation requires btrfs-progs."
+    snapshot_config_file_ok "$TARGET_ROOT" \
+        || fail "$(reason no-snapper-root-config). The Snapper root configuration does not exist; enable snapshot configuration (Boot capabilities) first."
+    [[ -d "$TARGET_ROOT/.snapshots" ]] \
+        || fail "$(reason no-snapshot-store). The .snapshots store does not exist; enable snapshot configuration (Boot capabilities) first."
+    before="$(snapshot_store_snapshot_count "$TARGET_ROOT")"
+
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the read-only
+    # preflights and BEFORE any mutation.
+    if ! confirm_snapshot_create; then
+        printf 'SNAPSHOT_CREATE_RESULT=DECLINED\n'
+        msg_log snapshot-create-declined
+        return 0
+    fi
+
+    promote_target_rw
+    set +e
+    run_selected_chroot /usr/bin/env \
+        HOME=/root \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        LC_ALL=C \
+        snapper --no-dbus -c root create --type single --description 'Boot Bitch manual snapshot' 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+    rc=${PIPESTATUS[0]}
+    set -e
+    ((rc == 0)) || fail "The target's snapper failed to create the manual snapshot with exit code $rc; no snapshot was created."
+
+    after="$(snapshot_store_snapshot_count "$TARGET_ROOT")"
+    [[ "$after" -gt "$before" ]] \
+        || fail "Snapper reported success but the store's snapshot count did not increase; refusing to report success."
+    repair_change_status snapshots-create changed
+    msg_log snapshot-create-complete "$ROOT_DEVICE"
+    printf 'SNAPSHOT_CREATE_RESULT=SUCCESS\n'
+}
+
+# Host scope: create the manual snapshot on the running host natively.
+# Round 152.4 (ITEM 1): the STAGED-state manual snapshot creation.  A
+# rollback migrated the nested .snapshots store into the promoted root, so
+# snapper (config SUBVOLUME=/ -> the running view) cannot create there and
+# the store preflight above resolved the staged state.  The new snapshot is
+# a read-only btrfs snapshot of the RUNNING root (the currently running
+# system — exactly what a manual snapshot must capture) written INTO the
+# active store with the Snapper-format metadata; the top level is remounted
+# rw for this verb's window only (and returned to ro best-effort), the count
+# is proven after, and every mount-release/no-lazy/never-rm-rf-through-a-
+# mount invariant stays unchanged — the promoted root's files OUTSIDE the
+# store are never touched.  The round-146 CONFIRM prompt and the decline
+# outcome are identical to the non-staged path.
+create_snapshot_host_staged()
+{
+    local promoted="${SNAPSHOT_STAGED_PROMOTED_NAME}" running="${SNAPSHOT_STAGED_RUNNING_NAME}"
+    local store="$SNAPSHOT_TOP/$promoted/.snapshots" before after new_num=1 created src dest max_id
+    [[ -n "$promoted" && -n "$running" ]] \
+        || fail "$(reason no-snapshot-store). The staged snapshot state could not be resolved; refusing host snapshot creation."
+    [[ -d "$store" ]] \
+        || fail "$(reason no-snapshot-store). The promoted root's .snapshots store does not exist; refusing host snapshot creation."
+    [[ -d "$SNAPSHOT_TOP/$running" ]] \
+        || fail "The running root subvolume is not reachable at the Btrfs top level; refusing staged host snapshot creation."
+    before="$(snapshot_store_snapshot_count "$SNAPSHOT_TOP/$promoted")"
+
+    prepare_host_command_guard
+
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the read-only
+    # preflights and BEFORE any mutation (identical to the non-staged path).
+    if ! confirm_snapshot_create; then
+        printf 'SNAPSHOT_CREATE_RESULT=DECLINED\n'
+        msg_log snapshot-create-declined
+        return 0
+    fi
+
+    # The mutation window: the top level is rw ONLY for this verb.
+    TARGET_WRITE_INTENT=1
+    if ! mount -o remount,rw "$SNAPSHOT_TOP" 2>/dev/null; then
+        fail "Could not remount the Btrfs top level writable for the staged snapshot creation; no snapshot was created."
+    fi
+
+    max_id="$(find "$store" -mindepth 1 -maxdepth 1 -type d -printf '%f\n' 2>/dev/null \
+        | grep -E '^[0-9]+$' | sort -n | tail -n1)"
+    [[ -z "$max_id" || "$max_id" =~ ^[0-9]+$ ]] \
+        || fail "The snapshot store's numbering is not parseable; refusing staged host snapshot creation."
+    if [[ -n "$max_id" ]]; then
+        new_num=$((max_id + 1))
+    fi
+    dest="$store/$new_num"
+    [[ ! -e "$dest" ]] \
+        || fail "The next snapshot directory $new_num already exists in the store; refusing staged host snapshot creation."
+    mkdir -p -- "$dest" \
+        || fail "Could not create the snapshot directory in the store; no snapshot was created."
+
+    src="$SNAPSHOT_TOP/$running"
+    if ! btrfs subvolume snapshot -r "$src" "$dest/snapshot" 2>&1 | tee -a "$SESSION_LOG"; then
+        rmdir -- "$dest" 2>/dev/null || true
+        fail "The read-only btrfs snapshot of the running root failed; no snapshot was created."
+    fi
+    created="$(date '+%Y-%m-%d %H:%M:%S')"
+    {
+        printf '%s\n' '<?xml version="1.0"?>'
+        printf '%s\n' '<snapshot>'
+        printf '  <type>single</type>\n'
+        printf '  <num>%s</num>\n' "$new_num"
+        printf '  <date>%s</date>\n' "$created"
+        printf '  <description>Boot Bitch manual snapshot</description>\n'
+        printf '%s\n' '</snapshot>'
+    } > "$dest/info.xml" \
+        || fail "Could not write the Snapper metadata for snapshot $new_num; the snapshot directory was left without metadata (no existing snapshot is affected)."
+    sync
+    # Best-effort: return the top to read-only for the remainder of the
+    # session (the EXIT cleanup detaches it regardless).
+    mount -o remount,ro "$SNAPSHOT_TOP" 2>/dev/null || true
+
+    after="$(snapshot_store_snapshot_count "$SNAPSHOT_TOP/$promoted")"
+    [[ "$after" -gt "$before" ]] \
+        || fail "The staged snapshot creation reported success but the store's snapshot count did not increase; refusing to report success."
+    repair_change_status snapshots-create changed
+    msg_log snapshot-create-complete "$ROOT_DEVICE"
+    printf 'SNAPSHOT_CREATE_RESULT=SUCCESS\n'
+}
+
+create_snapshot_host()
+{
+    local fstype rc before=0 after=0 staged=0
+    CURRENT_STAGE="create host snapshot"
+    RUNNING_HOST_MODE=1
+    prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" no
+
+    fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
+    [[ "$fstype" == "btrfs" ]] \
+        || fail "$(reason not-btrfs-root "${fstype:-unknown}"). Host snapshot creation requires a Btrfs running host root."
+    command -v snapper >/dev/null 2>&1 \
+        || fail "$(reason missing-snapper). Snapper is the required snapshot producer; enable snapshot configuration (Boot capabilities) first."
+    command -v btrfs >/dev/null 2>&1 \
+        || fail "$(reason missing-btrfs-progs). Host snapshot creation requires btrfs-progs."
+    host_snapshot_snapper_config_ok \
+        || fail "$(reason no-snapper-root-config). No Snapper root configuration manages /; enable snapshot configuration (Boot capabilities) first."
+    # Round 152.4 (ITEM 1): in the STAGED state the nested .snapshots store
+    # was migrated into the promoted root by the rollback — the running
+    # view's /.snapshots is gone BY DESIGN, so the store gate must resolve
+    # the staged state instead of refusing.  Mount the top level read-only
+    # and probe; when staged AND the promoted root carries the store, the
+    # creation routes through the staged create below (a read-only btrfs
+    # snapshot of the RUNNING root written into the active store).  Any
+    # other missing-store state keeps the honest refusal.
+    if [[ -d /.snapshots && -z "${FAKE_NO_RUNNING_STORE:-}" ]]; then
+        :
+    else
+        mount_snapshot_top
+        if host_snapshot_staged_state 2>/dev/null \
+            && [[ -d "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_PROMOTED_NAME/.snapshots" ]]; then
+            staged=1
+        else
+            fail "$(reason no-snapshot-store). The /.snapshots store does not exist; enable snapshot configuration (Boot capabilities) first."
+        fi
+    fi
+    if pgrep -x snapper >/dev/null 2>&1; then
+        fail "$(reason snapper-running). Refusing a concurrent Snapper transaction."
+    fi
+    ( host_package_manager_gate ) >/dev/null 2>&1 \
+        || fail "A package manager or package-manager lock is active; refusing a concurrent host snapshot creation."
+
+    if (( staged == 1 )); then
+        create_snapshot_host_staged
+        return 0
+    fi
+    before="$(snapshot_store_snapshot_count "")"
+
+    prepare_host_command_guard
+
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the read-only
+    # preflights and BEFORE any mutation.
+    if ! confirm_snapshot_create; then
+        printf 'SNAPSHOT_CREATE_RESULT=DECLINED\n'
+        msg_log snapshot-create-declined
+        return 0
+    fi
+
+    set +e
+    run_host_command_isolated /usr/bin/env \
+        HOME=/root \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        LC_ALL=C \
+        snapper --no-dbus -c root create --type single --description 'Boot Bitch manual snapshot' 2>&1 | repair_log_filter | tee -a "$SESSION_LOG"
+    rc=${PIPESTATUS[0]}
+    set -e
+    ((rc == 0)) || fail "snapper failed to create the manual snapshot with exit code $rc on the running host; no snapshot was created."
+
+    after="$(snapshot_store_snapshot_count "")"
+    [[ "$after" -gt "$before" ]] \
+        || fail "Snapper reported success but the store's snapshot count did not increase; refusing to report success."
+    repair_change_status snapshots-create changed
+    msg_log snapshot-create-complete "$ROOT_DEVICE"
+    printf 'SNAPSHOT_CREATE_RESULT=SUCCESS\n'
 }
 
 # snapshots dispatch: list|inspect|plan|rollback against the mounted top-level
@@ -26110,10 +36636,21 @@ run_snapshots_modern()
         inspect|plan|rollback)
             [[ $# -eq 2 ]] || fail "snapshots $action requires exactly one snapshot id."
             ;;
+        create)
+            [[ $# -eq 1 ]] || fail "snapshots create does not accept extra arguments."
+            ;;
         *)
-            fail "Unknown snapshots action: ${action:-missing}. Use list, inspect, plan or rollback."
+            fail "Unknown snapshots action: ${action:-missing}. Use list, inspect, plan, rollback or create."
             ;;
     esac
+
+    # Round 146 (ITEM 2): the guarded manual snapshot creation runs against
+    # the mounted repair target (the target's own snapper in the repair
+    # chroot), not against the read-only top-level snapshot store.
+    if [[ "$action" == "create" ]]; then
+        create_snapshot_target
+        return 0
+    fi
 
     prepare_target_snapshots_only
     fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
@@ -26126,7 +36663,15 @@ run_snapshots_modern()
         fi
         fail "Snapshot inspection requires a Btrfs repair root; detected ${fstype:-unknown}."
     fi
-    need btrfs
+    # Round 145 (ITEM E2): the load's tool-missing failure carries the
+    # truthful reason marker, so the GUI never shows the bare "Btrfs snapshot
+    # inventory failed" error when the honest reason is the missing
+    # btrfs-progs package (the same fact the capability row reports as
+    # reason:missing-btrfs-progs).
+    if ! command -v btrfs >/dev/null 2>&1; then
+        printf 'SNAPSHOT_INVENTORY_UNAVAILABLE_REASON=reason:missing-btrfs-progs\n'
+        fail "Required host command not found: btrfs"
+    fi
     mount_snapshot_top
 
     case "$action" in
@@ -26240,38 +36785,92 @@ host_snapshot_timeshift_managed()
     return 1
 }
 
-# Nested child subvolumes of the running @ root.  Only @/.snapshots is
-# migrated by this release; the empty systemd-managed @/var/lib/portables and
-# @/var/lib/machines subvolumes are tolerated (systemd-tmpfiles recreates them
-# on the promoted @ at the next boot), and any other nested subvolume would be
-# dragged into the preserved backup root and is refused instead of silently
-# losing data.  `btrfs subvolume list -o` prints top-level-relative paths,
-# unlike the default list output whose nested paths are relative to their
-# parent subvolume.
+# Nested child subvolumes of the running root subvolume.  Only
+# <root>/.snapshots is migrated by this release; the empty systemd-managed
+# <root>/var/lib/portables and <root>/var/lib/machines subvolumes are
+# tolerated (systemd-tmpfiles recreates them on the promoted root at the next
+# boot), and any other nested subvolume would be dragged into the preserved
+# backup root and is refused instead of silently losing data.  `btrfs
+# subvolume list -o` prints top-level-relative paths, unlike the default list
+# output whose nested paths are relative to their parent subvolume.
 host_snapshot_nested_child_paths()
 {
-    btrfs subvolume list -o / 2>/dev/null \
-        | sed -n 's/.*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p'
+    local probe_name="${SNAPSHOT_ROOT_NAME:-}" probe_root_id line p
+    [[ -n "$probe_name" ]] || probe_name="$(host_snapshot_running_path 2>/dev/null || true)"
+    snapshot_root_name_usable "$probe_name" || return 0
+    # Without the mounted top-level tree (the capability-preamble context) the
+    # probe keeps the pre-round-152.3 shape: the running view's direct
+    # children, top-level-relative paths.
+    if [[ -z "${SNAPSHOT_TOP:-}" ]]; then
+        btrfs subvolume list -o / 2>/dev/null \
+            | sed -n 's/.*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p'
+        return 0
+    fi
+    # Round 152.3 (the chained replacement rollback): in the STAGED state the
+    # nested-child question must be asked of the PROMOTED root — the subvolume
+    # that carries the migrated .snapshots store and is the one the chained
+    # transaction preserves/promotes — never of the running root (whose store
+    # was migrated out by the first rollback, which made the old -o / probe
+    # miss the store and skip the migration).
+    if [[ -n "${SNAPSHOT_TOP:-}" ]] && host_snapshot_staged_state 2>/dev/null; then
+        probe_name="$SNAPSHOT_STAGED_PROMOTED_NAME"
+    fi
+    probe_root_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/$probe_name" 2>/dev/null || true)"
+    [[ "$probe_root_id" =~ ^[0-9]+$ ]] || return 0
+    # Normalize to the top-level-relative "<name>/<child>" shape: the full
+    # subvolume list carries both shapes (the round-147 note — `-o` prints
+    # only one level on some kernels), the parent-relative "<child>" lines
+    # carry a `top level <id>` column naming the parent.
+    while IFS= read -r line; do
+        [[ -n "$line" ]] || continue
+        p="$(sed -n 's/.*[[:space:]]path[[:space:]]\+\(.*\)$/\1/p' <<<"$line")"
+        [[ -n "$p" ]] || continue
+        if [[ "$p" == "$probe_name/"* ]]; then
+            printf '%s\n' "$p"
+        elif [[ "$line" == *"top level $probe_root_id "* ]]; then
+            printf '%s\n' "$probe_name/$p"
+        fi
+    done < <(btrfs subvolume list "$SNAPSHOT_TOP" 2>/dev/null)
 }
 
-# Nested children of @ that are not migrated and not a documented safe,
-# service-managed placeholder.  @/.snapshots (and its children) is migrated;
-# the exact empty @/var/lib/portables and @/var/lib/machines subvolumes are
-# systemd-tmpfiles `Q` placeholders (systemd-portabled/systemd-machined) that
-# are recreated on the promoted @ on the next boot.  Everything else — and any
-# child nested *beneath* those two placeholders, i.e. an actual machine or
-# portable image — is user data that must not be silently left behind.
+# Nested children of the running root subvolume that are not migrated and not
+# a documented safe, service-managed placeholder.  <root>/.snapshots (and its
+# children) is migrated; the exact empty <root>/var/lib/portables and
+# <root>/var/lib/machines subvolumes are systemd-tmpfiles `Q` placeholders
+# (systemd-portabled/systemd-machined) that are recreated on the promoted root
+# at the next boot.  Everything else — and any child nested *beneath* those two
+# placeholders, i.e. an actual machine or portable image — is user data that
+# must not be silently left behind.  Round 143 (ITEM T1): the root name is the
+# DETECTED running root (SNAPSHOT_ROOT_NAME), never a hardcoded @.
 host_snapshot_other_nested_children()
 {
-    host_snapshot_nested_child_paths \
-        | awk '$0 ~ /^@\// && $0 !~ /^@\/\.snapshots(\/|$)/ && $0 != "@/var/lib/portables" && $0 != "@/var/lib/machines" { print }'
+    local root="${SNAPSHOT_ROOT_NAME:-}" prefix p
+    [[ -n "$root" ]] || root="$(host_snapshot_running_path 2>/dev/null || true)"
+    snapshot_root_name_usable "$root" || return 0
+    prefix="$root/"
+    while IFS= read -r p; do
+        [[ -n "$p" ]] || continue
+        [[ "$p" == "$prefix"* ]] || continue
+        [[ "$p" == "$prefix.snapshots" || "$p" == "$prefix.snapshots"/* ]] && continue
+        [[ "$p" == "${prefix}var/lib/portables" || "$p" == "${prefix}var/lib/machines" ]] && continue
+        printf '%s\n' "$p"
+    done < <(host_snapshot_nested_child_paths)
 }
 
-# True when the running @ root carries a nested @/.snapshots child subvolume
-# (bare `snapper create-config` layout) that must be migrated on promotion.
+# True when the running root carries a nested <root>/.snapshots child
+# subvolume (bare `snapper create-config` layout) that must be migrated on
+# promotion.  Round 143 (ITEM T1): the root name is the detected running root.
 host_snapshot_nested_snapshots_child()
 {
-    host_snapshot_nested_child_paths | grep -Fxq '@/.snapshots'
+    local root="${SNAPSHOT_ROOT_NAME:-}" paths
+    [[ -n "$root" ]] || root="$(host_snapshot_running_path 2>/dev/null || true)"
+    snapshot_root_name_usable "$root" || return 1
+    # Round 152.3 (the SIGPIPE class): never pipe the producer into
+    # `grep -Fq` under `set -o pipefail` — the -q exit sends SIGPIPE to the
+    # still-writing producer, its 141 becomes the pipeline status and a
+    # MATCHING store reads as absent.  Capture first, grep the captured text.
+    paths="$(host_snapshot_nested_child_paths)"
+    printf '%s\n' "$paths" | grep -Fxq "$root/.snapshots"
 }
 
 host_snapshot_free_space_ok()
@@ -26285,11 +36884,17 @@ host_snapshot_free_space_ok()
 }
 
 # Resolve a host rollback target: a numeric Snapper snapshot id under the
-# top-level snapshot store, or one of Boot Bitch's own @rollback-before-*
-# undo points.  Any other name is refused fail-closed.
+# top-level snapshot store, or one of Boot Bitch's own undo points
+# (`@rollback-before-*` from the @-layout era, or `<name>-rollback-before-*`
+# for any other detected root name).  Any other name is refused fail-closed.
 host_snapshot_target_is_undo()
 {
-    [[ "${1:-}" =~ ^@rollback-before-[0-9]{8}-[0-9]{6}$ ]]
+    local name="${1:-}"
+    case "$name" in
+        @rollback-before-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;
+        *-rollback-before-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]-[0-9][0-9][0-9][0-9][0-9][0-9]) return 0 ;;
+        *) return 1 ;;
+    esac
 }
 
 host_snapshot_resolve_target()
@@ -26344,13 +36949,16 @@ target_snapshot_rollback_unavailable_reason()
         TARGET_SNAPSHOT_ROLLBACK_REASON="$(reason no-snapshot-store)"
         return 1
     fi
-    if [[ ! -e "$SNAPSHOT_TOP/@.snapshots" && ! -e "$SNAPSHOT_TOP/.snapshots" ]]; then
+    if ! snapshot_store_path >/dev/null; then
         TARGET_SNAPSHOT_ROLLBACK_REASON="$(reason no-snapshot-store)"
         return 1
     fi
     # The transactional rollback promotes a writable copy of the selected
-    # snapshot to a normal top-level @ root; a @-less layout supports only
-    # list/inspect and must not report rollback as available.
+    # snapshot to the DETECTED top-level root subvolume name (round 143: the
+    # name is never hardcoded — an anaconda `root` layout rolls back exactly
+    # like an @ layout); a layout whose installed root is not a detectable
+    # top-level subvolume supports only list/inspect and must not report
+    # rollback as available.
     snapshot_current_root_path >/dev/null 2>&1 || {
         TARGET_SNAPSHOT_ROLLBACK_REASON="$(reason no-top-level-root)"
         return 1
@@ -26365,29 +36973,41 @@ target_snapshot_rollback_unavailable_reason()
 # Read-only capability detail line for the repair-target scope; never fails.
 target_snapshot_rollback_evidence()
 {
-    local store="snapshot store not mounted"
-    if [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/@.snapshots" ]]; then
-        store="top-level @.snapshots"
-    elif [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/.snapshots" ]]; then
-        store="top-level .snapshots"
+    local store="snapshot store not mounted" rel=""
+    if [[ -n "${SNAPSHOT_TOP:-}" ]]; then
+        rel="$(snapshot_store_path || true)"
     fi
+    case "$rel" in
+        @.snapshots|.snapshots) store="top-level $rel" ;;
+        @/.snapshots) store="@/.snapshots (nested)" ;;
+    esac
     printf 'btrfs root %s; %s' "${ROOT_CANONICAL:-unknown}" "$store"
 }
 
 # Read-only capability detail line; never fails.
 host_snapshot_rollback_evidence()
 {
-    local version running store
+    local version running store rel="" root
     version="$(LC_ALL=C snapper --version 2>/dev/null | head -n1 || true)"
     running="$(host_snapshot_running_path 2>/dev/null || true)"
+    # Round 143 (ITEM T1): the nested-store label names the DETECTED running
+    # root (SNAPSHOT_ROOT_NAME when set), never a hardcoded @.
+    root="${SNAPSHOT_ROOT_NAME:-}"
+    [[ -n "$root" ]] || root="$running"
     if host_snapshot_nested_snapshots_child 2>/dev/null; then
-        store="@/.snapshots (nested; migration supported)"
-    elif [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/@.snapshots" ]]; then
-        store="top-level @.snapshots"
-    elif [[ -n "${SNAPSHOT_TOP:-}" && -e "$SNAPSHOT_TOP/.snapshots" ]]; then
-        store="top-level .snapshots"
+        store="$root/.snapshots (nested; migration supported)"
     else
-        store="snapshot store not mounted"
+        # Round 142: the same READDIR-based discovery as the target evidence
+        # (see snapshot_store_path) — a name lookup of a just-created nested
+        # subvolume under a fresh ro top mount flaps on this kernel.
+        if [[ -n "${SNAPSHOT_TOP:-}" ]]; then
+            rel="$(snapshot_store_path || true)"
+        fi
+        case "$rel" in
+            @.snapshots|.snapshots) store="top-level $rel" ;;
+            @/.snapshots) store="@/.snapshots (nested)" ;;
+            *) store="snapshot store not mounted" ;;
+        esac
     fi
     printf 'snapper %s; running root %s; %s' \
         "${version:-not detected}" "${running:-unknown}" "$store"
@@ -26398,7 +37018,7 @@ host_snapshot_rollback_evidence()
 # prerequisite on stdout.  Read-only and never fails the calling diagnostic.
 host_snapshot_rollback_unavailable_reason()
 {
-    local fstype running nested
+    local fstype nested
 
     fstype="$(lsblk -ndo FSTYPE "$ROOT_CANONICAL" 2>/dev/null | head -n1 || true)"
     if [[ "$fstype" != "btrfs" ]]; then
@@ -26409,9 +37029,12 @@ host_snapshot_rollback_unavailable_reason()
     command -v snapper >/dev/null 2>&1 || { reason missing-snapper; return 1; }
     host_snapshot_snapper_config_ok \
         || { reason no-snapper-root-config; return 1; }
-    running="$(host_snapshot_running_path 2>/dev/null || true)"
-    if [[ "$running" != "@" ]]; then
-        reason not-top-level-subvol "${running:-unknown}"
+    # Round 143 (ITEM T1): the running root name is the DETECTED top-level
+    # subvolume name (an anaconda Fedora `root` layout rolls back exactly like
+    # an @ layout); a nested running root or the raw top-level tree is still
+    # refused (the rollback renames the top-level root subvolume).
+    if ! host_snapshot_detect_root_name; then
+        reason not-top-level-subvol "$(host_snapshot_running_path 2>/dev/null || true)"
         return 1
     fi
     if host_snapshot_subvolid_pinned; then
@@ -26419,8 +37042,16 @@ host_snapshot_rollback_unavailable_reason()
         return 1
     fi
     if host_snapshot_has_separate_boot; then
-        reason separate-boot
-        return 1
+        # Round 149 (ITEM 1): a separate /boot filesystem is SUPPORTED through
+        # the bounded file-level capture; the capability refuses only when the
+        # capture is infeasible (too large, no session space, a submount such
+        # as an ESP mounted beneath /boot).  /boot itself must be mounted for
+        # the capture to read it.
+        mountpoint -q /boot 2>/dev/null \
+            || { reason boot-capture-source-missing; return 1; }
+        if ! snapshot_boot_capture_feasible /boot; then
+            return 1
+        fi
     fi
     if host_snapshot_timeshift_managed; then
         reason timeshift-present
@@ -26463,9 +37094,10 @@ host_reboot_unavailable_reason()
     return 1
 }
 
-# Host inventory: Snapper root snapshots plus Boot Bitch @rollback-before-*
-# undo points, with the currently running snapshot marked and never offered as
-# a rollback target.  Read-only.
+# Host inventory: Snapper root snapshots plus Boot Bitch rollback undo points
+# (`@rollback-before-*` from the @-layout era and `<name>-rollback-before-*`
+# for any other detected root name), with the currently running snapshot
+# marked and never offered as a rollback target.  Read-only.
 host_list_snapshots()
 {
     local active_id output count name path created ro_prop status rel
@@ -26497,25 +37129,27 @@ host_list_snapshots()
             "$(snapshot_b64 "$status")" \
             "$(snapshot_b64 "$rel")"
         count=$((count + 1))
-    done < <(find "$SNAPSHOT_TOP" -mindepth 1 -maxdepth 1 -type d -name '@rollback-before-*' 2>/dev/null | sort)
+    done < <(find "$SNAPSHOT_TOP" -mindepth 1 -maxdepth 1 -type d \
+        \( -name '@rollback-before-*' -o -name '*-rollback-before-*' \) 2>/dev/null | sort)
 
     printf 'Host snapshot inventory: %s root snapshot(s)\n' "$count"
 }
 
 host_inspect_snapshot()
 {
-    local requested="$1" snap running default_line
+    local requested="$1" snap running default_line root
 
     snap="$(host_snapshot_resolve_target "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the running host's Btrfs filesystem."
     running="$(host_snapshot_running_path 2>/dev/null || true)"
     default_line="$(btrfs subvolume get-default "$SNAPSHOT_TOP" 2>/dev/null || true)"
+    root="${SNAPSHOT_ROOT_NAME:-$running}"
 
     echo "Running host context:"
     echo "  Running root subvolume: ${running:-unknown}"
     echo "  Current default subvolume: ${default_line:-unknown}"
     if host_snapshot_nested_snapshots_child; then
-        echo "  Nested @/.snapshots child subvolume: present (migrated into the promoted @)"
+        echo "  Nested ${root}/.snapshots child subvolume: present (migrated into the promoted ${root})"
     fi
     echo
 
@@ -26548,8 +37182,10 @@ host_inspect_snapshot()
     echo "Inspection is read-only. No snapshot, subvolume, boot file or package state was modified."
 }
 
-# Complete read-only preflight and transactional plan for a running-host @
-# rollback.  Creates nothing; emits PLAN_OK=1 only after every check passes.
+# Complete read-only preflight and transactional plan for a running-host
+# name-preserving rollback.  Creates nothing; emits PLAN_OK=1 only after every
+# check passes.  Round 143 (ITEM T1): the root name is the DETECTED running
+# top-level subvolume (SNAPSHOT_ROOT_NAME), never a hardcoded @.
 host_snapshot_rollback_plan()
 {
     local requested="$1" snap info type current pretty created root_id default_line rel backup_preview
@@ -26565,9 +37201,19 @@ host_snapshot_rollback_plan()
     command -v snapper >/dev/null 2>&1 \
         || fail "snapper is not installed on the running host; Snapper is the required snapshot producer."
     host_snapshot_snapper_config_ok \
-        || fail "No Snapper root configuration manages / with FSTYPE=btrfs; host rollback is limited to Snapper-managed @ roots."
-    if ! ( LC_ALL=C snapper --no-dbus -c root list >/dev/null 2>&1 ); then
-        fail "The Snapper root configuration could not be queried (snapper --no-dbus list failed); refusing an unhealthy or concurrent Snapper state."
+        || fail "No Snapper root configuration manages / with FSTYPE=btrfs; host rollback is limited to Snapper-managed root subvolumes."
+    # Round 152.3 (the chained replacement rollback): in the STAGED state the
+    # running root's nested .snapshots store was migrated into the promoted
+    # root by the first rollback, so snapper's own list query (config
+    # SUBVOLUME=/ → the running view) ALWAYS fails by design.  The health
+    # gates stay intact — the config gate above, the concurrent-snapper gate
+    # and the package-lock gate below — and the read-only store reachability
+    # is proven by the snapshot resolution itself (the selected snapshot was
+    # just resolved from the promoted root's migrated store above).
+    if ! host_snapshot_staged_state 2>/dev/null; then
+        if ! ( LC_ALL=C snapper --no-dbus -c root list >/dev/null 2>&1 ); then
+            fail "The Snapper root configuration could not be queried (snapper --no-dbus list failed); refusing an unhealthy or concurrent Snapper state."
+        fi
     fi
     if pgrep -x snapper >/dev/null 2>&1; then
         fail "Another snapper command is running; refusing a concurrent Snapper transaction."
@@ -26575,15 +37221,23 @@ host_snapshot_rollback_plan()
     ( host_package_manager_gate ) >/dev/null 2>&1 \
         || fail "A package manager or package-manager lock is active; refusing a concurrent host rollback."
 
-    current="$(host_snapshot_running_path || true)"
-    [[ "$current" == "@" ]] \
-        || fail "The running root subvolume is '${current:-unknown}', not the top-level @; this release supports Snapper @ roots only."
+    if ! host_snapshot_detect_root_name; then
+        current="$(host_snapshot_running_path 2>/dev/null || true)"
+        fail "The running root subvolume is '${current:-unknown}' and not a top-level root subvolume name; host rollback renames the top-level root subvolume."
+    fi
     host_snapshot_subvolid_pinned \
         && fail "The running host pins subvolid= in fstab or the kernel command line; a name-preserving rollback cannot change it."
-    host_snapshot_has_separate_boot \
-        && fail "The running host has a separate /boot filesystem outside the root snapshot; refusing host rollback."
+    # Round 149 (ITEM 1): a separate /boot filesystem is SUPPORTED through
+    # the bounded file-level capture; refuse only when the capture cannot be
+    # made (unmounted /boot or infeasible capture bounds).
+    if host_snapshot_has_separate_boot; then
+        mountpoint -q /boot 2>/dev/null \
+            || fail "The running host has a separate /boot filesystem that is not currently mounted; refusing host rollback."
+        snapshot_boot_capture_feasible /boot \
+            || fail "The separate /boot capture is not feasible on this host; refusing host rollback."
+    fi
     host_snapshot_timeshift_managed \
-        && fail "A Timeshift btrfs snapshot inventory is present; Snapper @ rollback is not supported on this host."
+        && fail "A Timeshift btrfs snapshot inventory is present; Snapper root rollback is not supported on this host."
     target_path_is_mounted_rw / \
         || fail "The running host root filesystem is read-only; refusing host rollback."
     host_snapshot_free_space_ok \
@@ -26591,7 +37245,7 @@ host_snapshot_rollback_plan()
 
     legacy_readarray -t other_children < <(host_snapshot_other_nested_children)
     ((${#other_children[@]} == 0)) \
-        || fail "The running @ root contains nested subvolume(s) that this release does not migrate: ${other_children[*]}; refusing host rollback."
+        || fail "The running ${SNAPSHOT_ROOT_NAME} root contains nested subvolume(s) that this release does not migrate: ${other_children[*]}; refusing host rollback."
 
     if host_snapshot_target_is_undo "$requested"; then
         type="rollback-backup"
@@ -26603,17 +37257,31 @@ host_snapshot_rollback_plan()
         [[ -n "$info" ]] \
             || fail "Snapshot $requested has no Snapper info.xml metadata; non-Snapper Btrfs snapshots are not supported as host rollback targets."
         type="$(snapshot_xml_value "$info" type || true)"
-        [[ "$type" == "single" ]] \
-            || fail "Snapshot $requested is a Snapper '$type' snapshot; only single snapshots can be promoted to @."
+        # Round 146 (ITEM 1): a Snapper pre/post snapshot IS a complete
+        # read-only root snapshot and a legitimate rollback target — the
+        # promotion machinery is type-neutral and both pre and post are
+        # independent subvolumes (a pre restores the before-change state, a
+        # post the after-change state; no pair-interdependency).  The single-
+        # only gate was conservatism, not necessity; the plan prints the
+        # truthful "Snapper type: pre|post" line.
+        case "$type" in
+            single|pre|post) ;;
+            *) fail "Snapshot $requested is a Snapper '$type' snapshot; only single, pre and post snapshots can be promoted to ${SNAPSHOT_ROOT_NAME}." ;;
+        esac
         snapshot_root_valid "$snap" \
             || fail "Snapshot $requested is not a valid Linux root snapshot (/etc/os-release and /etc/fstab are required)."
     fi
-    validate_snapshot_fstab_for_rollback "$snap" \
-        || fail "Snapshot $requested fstab is not compatible with a safe @ rollback."
+    validate_snapshot_fstab_for_rollback "$snap" "$SNAPSHOT_ROOT_NAME" \
+        || fail "Snapshot $requested fstab is not compatible with a safe ${SNAPSHOT_ROOT_NAME} rollback."
     validate_snapshot_crypttab_for_rollback "$snap" \
         || fail "Snapshot $requested crypttab does not resolve safely on the running host disk."
-    snapshot_has_separate_boot "$snap" \
-        && fail "Snapshot $requested has a separate /boot entry; refusing host rollback."
+    # Round 149 (ITEM 1): the snapshot's separate /boot fstab entry is
+    # supported through the bounded capture; its device must still resolve
+    # safely on the host disk (fail-closed when it cannot).
+    if snapshot_has_separate_boot "$snap"; then
+        snapshot_separate_boot_device "$snap" >/dev/null 2>&1 \
+            || fail "Snapshot $requested has a separate /boot entry that cannot be resolved for the bounded capture; refusing host rollback."
+    fi
 
     running_id="$(btrfs_subvol_id / 2>/dev/null || true)"
     snap_id="$(btrfs_subvol_id "$snap" 2>/dev/null || true)"
@@ -26626,18 +37294,27 @@ host_snapshot_rollback_plan()
         fail "Snapshot $requested is the current Btrfs default subvolume; refusing to roll back to the active root."
     fi
 
-    root_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/@" || true)"
+    root_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/${SNAPSHOT_ROOT_NAME}" || true)"
     pretty="$(awk -F= '$1=="PRETTY_NAME" {sub(/^[^=]*=/, ""); gsub(/^"|"$/, ""); print; exit}' "$snap/etc/os-release")"
     created="$(btrfs subvolume show "$snap" 2>/dev/null | sed -n 's/^[[:space:]]*Creation time:[[:space:]]*//p' | head -1)"
     rel="${snap#"$SNAPSHOT_TOP"/}"
-    backup_preview="@rollback-before-$(date +%Y%m%d-%H%M%S)"
+    backup_preview="$(snapshot_staging_prefix)-before-$(date +%Y%m%d-%H%M%S)"
 
     echo "========================================"
     echo "RUNNING-HOST BTRFS ROLLBACK PLAN"
     echo "========================================"
     echo "Host disk: $TARGET_DISK"
     echo "Btrfs filesystem: $ROOT_DEVICE"
-    echo "Running root subvolume: @${root_id:+ (subvolume ID $root_id)}"
+    # Round 152.3 (the chained replacement rollback): in the staged state the
+    # plan names BOTH subvolumes truthfully — the running root (still the
+    # preserved <name>-rollback-before-<stamp> name) and the promoted root
+    # (the current Btrfs default that owns the canonical name).
+    if [[ -n "${SNAPSHOT_STAGED_RUNNING_NAME:-}" && -n "${SNAPSHOT_STAGED_PROMOTED_NAME:-}" ]]; then
+        echo "Running root subvolume: $SNAPSHOT_STAGED_RUNNING_NAME (staged state — a previous rollback is pending the next reboot)"
+        echo "Promoted root subvolume: ${SNAPSHOT_ROOT_NAME}${root_id:+ (subvolume ID $root_id)}"
+    else
+        echo "Running root subvolume: ${SNAPSHOT_ROOT_NAME}${root_id:+ (subvolume ID $root_id)}"
+    fi
     echo "Current default subvolume: ${default_line:-unknown}"
     echo
     echo "Selected rollback target: $requested"
@@ -26653,18 +37330,52 @@ host_snapshot_rollback_plan()
     echo "Separate Btrfs subvolumes are retained rather than rolled back:"
     snapshot_separate_subvolumes "$snap"
     echo
+    echo "  /home is retained BY DESIGN: a system rollback must never revert the"
+    echo "  user's documents — the rollback restores the operating system, never"
+    echo "  the user's files."
+    echo
+    if snapshot_has_separate_boot "$snap"; then
+        echo "Separate /boot capture (round 149):"
+        echo "  The mounted separate /boot filesystem (kernel, initramfs and loader/GRUB2"
+        echo "  files) is captured file-level into the session (bounded, fingerprint-guarded)"
+        echo "  and restored over the live /boot as part of the promote step — BEFORE the"
+        echo "  boot-stack reconcile — verified against the capture fingerprint.  The capture"
+        echo "  is also the /boot undo point for the automatic restore-on-failure path."
+    else
+        echo "/boot is part of the root snapshot: the kernel, initramfs and loader"
+        echo "files roll back WITH the root (no separate capture is needed)."
+    fi
+    echo
     if host_snapshot_nested_snapshots_child; then
-        echo "Nested @/.snapshots child subvolume: will be migrated into the promoted @."
+        echo "Nested ${SNAPSHOT_ROOT_NAME}/.snapshots child subvolume: will be migrated into the promoted ${SNAPSHOT_ROOT_NAME}."
     fi
     echo
     echo "Host rollback transaction:"
     echo "  1. Keep the selected snapshot/backup unchanged."
-    echo "  2. Create a new writable snapshot candidate @rollback-new-<stamp>."
-    echo "  3. Preserve the running @ as $backup_preview (the automatic undo point)."
-    echo "  4. Promote the candidate to @ and set it as the Btrfs default subvolume."
-    echo "  5. Migrate a nested @/.snapshots child subvolume when present."
-    echo "  6. Mount the promoted @ in a scratch chroot and reconcile initramfs/UKI/GRUB."
-    echo "  7. If a critical post-switch stage fails, restore the preserved @ automatically."
+    echo "  2. Create a new writable snapshot candidate $(snapshot_staging_prefix)-new-<stamp>."
+    if [[ -n "${SNAPSHOT_STAGED_RUNNING_NAME:-}" && -n "${SNAPSHOT_STAGED_PROMOTED_NAME:-}" ]]; then
+        # Round 152.3 (the chained replacement rollback): the staged state
+        # re-preserves the RUNNING root under the fresh stamp (the recorded
+        # undo point) and demotes the earlier staged root to the name the
+        # running root just left — it stays on disk, no longer the recorded
+        # undo point, exactly as the GUI replacement warning describes.
+        echo "  3. Re-preserve the running $SNAPSHOT_STAGED_RUNNING_NAME root as $backup_preview (the recorded undo point)."
+        echo "  4. Move the earlier staged root ${SNAPSHOT_ROOT_NAME} aside to the vacated $SNAPSHOT_STAGED_RUNNING_NAME name (kept on disk, no longer the undo point)."
+        echo "  5. Promote the candidate to ${SNAPSHOT_ROOT_NAME} and set it as the Btrfs default subvolume."
+        echo "  6. Migrate the nested ${SNAPSHOT_ROOT_NAME}/.snapshots child subvolume (the snapshot store) into the newly promoted ${SNAPSHOT_ROOT_NAME}."
+    else
+        echo "  3. Preserve the running ${SNAPSHOT_ROOT_NAME} as $backup_preview (the automatic undo point)."
+        echo "  4. Promote the candidate to ${SNAPSHOT_ROOT_NAME} and set it as the Btrfs default subvolume."
+        echo "  5. Migrate a nested ${SNAPSHOT_ROOT_NAME}/.snapshots child subvolume when present."
+    fi
+    if snapshot_has_separate_boot "$snap"; then
+        echo "  6. Capture the separate /boot into the session and restore it over the live /boot (verified)."
+        echo "  7. Mount the promoted ${SNAPSHOT_ROOT_NAME} in a scratch chroot and reconcile initramfs/UKI/GRUB."
+        echo "  8. If a critical post-switch stage fails, restore the preserved ${SNAPSHOT_ROOT_NAME} AND the captured /boot automatically."
+    else
+        echo "  6. Mount the promoted ${SNAPSHOT_ROOT_NAME} in a scratch chroot and reconcile initramfs/UKI/GRUB."
+        echo "  7. If a critical post-switch stage fails, restore the preserved ${SNAPSHOT_ROOT_NAME} automatically."
+    fi
     echo
     echo "The running host keeps running the current root until reboot."
     echo "A reboot is required and is never performed automatically."
@@ -26694,17 +37405,20 @@ host_snapshot_unmount_scratch()
     return 0
 }
 
-# Mount the promoted @ read-write at a scratch path (never over the live /)
-# with its fstab subvolumes, boot entries and chroot pseudo-filesystems.
+# Mount the promoted root (the DETECTED name) read-write at a scratch path
+# (never over the live /) with its fstab subvolumes, boot entries and chroot
+# pseudo-filesystems.
 host_snapshot_mount_promoted_root_rw()
 {
-    local scratch="$SESSION_DIR/host-promoted-root"
+    local scratch="$SESSION_DIR/host-promoted-root" root_name="${SNAPSHOT_ROOT_NAME:-}"
+    snapshot_root_name_usable "$root_name" \
+        || fail "The promoted root subvolume name is not usable; refusing to mount the promoted root."
     ROOT_DEVICE="$(preferred_block_path "$ROOT_DEVICE" "$ROOT_CANONICAL")"
     mkdir -p -- "$scratch"
-    mount_recorded "$ROOT_DEVICE" "$scratch" -o rw,subvol=@
+    mount_recorded "$ROOT_DEVICE" "$scratch" -o "rw,subvol=$root_name"
     MOUNT_BASE="$scratch"
     TARGET_ROOT="$scratch"
-    TARGET_SUBVOL="@"
+    TARGET_SUBVOL="$root_name"
     read_target_os
     # The shared post-switch reconcile selects the initramfs/GRUB backend from
     # the promoted root's own probes, exactly like a target repair.
@@ -26728,7 +37442,12 @@ host_snapshot_mount_promoted_root_rw()
 host_snapshot_restore_preserved_root()
 {
     local top="$1" backup_name="$2" failed_name="$3" old_default_id="$4" current_id restore_rc=0
+    local root_name="${SNAPSHOT_ROOT_NAME:-}"
     msg_log host-rollback-recovery
+    # Fail closed when the root name was never detected: restoring the
+    # preserved root under the WRONG name would leave the host unbootable.
+    snapshot_root_name_usable "$root_name" \
+        || { msg_log rollback-root-name-unknown; return 1; }
 
     if ! host_snapshot_unmount_scratch; then
         msg_log host-rollback-cannot-detach
@@ -26739,13 +37458,13 @@ host_snapshot_restore_preserved_root()
         return 1
     fi
 
-    # A nested @/.snapshots child was migrated into the promoted @; move it
-    # back so the preserved root is a complete Snapper root again.
-    if btrfs subvolume show "$top/@/.snapshots" >/dev/null 2>&1; then
+    # A nested <root>/.snapshots child was migrated into the promoted root;
+    # move it back so the preserved root is a complete Snapper root again.
+    if btrfs subvolume show "$top/$root_name/.snapshots" >/dev/null 2>&1; then
         if [[ -d "$top/$backup_name/.snapshots" ]]; then
             rmdir -- "$top/$backup_name/.snapshots" 2>/dev/null || true
         fi
-        if ! mv -- "$top/@/.snapshots" "$top/$backup_name/.snapshots"; then
+        if ! mv -- "$top/$root_name/.snapshots" "$top/$backup_name/.snapshots"; then
             msg_log host-rollback-cannot-move-snapshots
             return 1
         fi
@@ -26755,13 +37474,13 @@ host_snapshot_restore_preserved_root()
         msg_log rollback-preserved-missing "$backup_name"
         return 1
     fi
-    if [[ -e "$top/@" ]]; then
-        if ! mv -- "$top/@" "$top/$failed_name"; then
+    if [[ -e "$top/$root_name" ]]; then
+        if ! mv -- "$top/$root_name" "$top/$failed_name"; then
             msg_log host-rollback-cannot-move-candidate
             return 1
         fi
     fi
-    mv -- "$top/$backup_name" "$top/@" || return 1
+    mv -- "$top/$backup_name" "$top/$root_name" || return 1
 
     if [[ "$old_default_id" =~ ^[0-9]+$ ]]; then
         if ! btrfs subvolume set-default "$old_default_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
@@ -26769,7 +37488,7 @@ host_snapshot_restore_preserved_root()
             return 1
         fi
     else
-        current_id="$(btrfs_subvol_id "$top/@" || true)"
+        current_id="$(btrfs_subvol_id "$top/$root_name" || true)"
         if [[ -n "$current_id" ]]; then
             if ! btrfs subvolume set-default "$current_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
                 msg_log rollback-cannot-restore-default
@@ -26782,6 +37501,115 @@ host_snapshot_restore_preserved_root()
     fi
 
     host_snapshot_mount_promoted_root_rw || return 1
+    # Round 149 (ITEM 1): restore the /boot capture before the recovery's
+    # own reconcile, so a failed rollback returns the separate /boot to its
+    # exact pre-transaction state (the capture is the /boot undo point).
+    if snapshot_boot_capture_present && ! snapshot_boot_restore_capture "$TARGET_ROOT/boot"; then
+        msg_log host-rollback-boot-restore-recovery-failed
+        return 1
+    fi
+    set +e
+    ( snapshot_post_switch_reconcile ) 2>&1 | tee -a "$SESSION_LOG"
+    restore_rc=${PIPESTATUS[0]}
+    set -e
+    if ((restore_rc != 0)); then
+        msg_log host-rollback-original-restored-bootstack-failed
+        return 1
+    fi
+    msg_log host-rollback-original-restored "$failed_name"
+    return 0
+}
+
+# Round 152.3 (the chained replacement rollback): the STAGED-state analogue
+# of host_snapshot_restore_preserved_root.  The pre-transaction layout was:
+#   <root_name>                    = the earlier staged root (the first
+#                                    rollback's promoted root, carrying the
+#                                    migrated .snapshots store)
+#   SNAPSHOT_STAGED_RUNNING_NAME   = the running root (preserved by the
+#                                    first rollback under its own stamp)
+#   Btrfs default                  = the earlier staged root
+# The transaction renames: running -> backup_name (the fresh stamp), staged
+# -> running-name (kept on disk), candidate -> root_name.  Restoring means:
+# move the store back into the demoted staged root, tombstone the promoted
+# candidate as failed_name, move the staged root back to root_name, move the
+# running root back to its staging name, and re-point the Btrfs default at
+# the staged root's id.  Same invariants as the non-chained restore: plain
+# non-lazy renames only, the store moves exactly once, and every step fails
+# closed with the existing rollback-cannot-* evidence.
+host_snapshot_restore_preserved_root_chained()
+{
+    local top="$1" backup_name="$2" failed_name="$3" old_default_id="$4" current_id restore_rc=0
+    local root_name="${SNAPSHOT_ROOT_NAME:-}" running_staging="${SNAPSHOT_STAGED_RUNNING_NAME:-}"
+    msg_log host-rollback-recovery
+    snapshot_root_name_usable "$root_name" \
+        || { msg_log rollback-root-name-unknown; return 1; }
+    [[ -n "$running_staging" ]] \
+        || { msg_log rollback-preserved-missing "<staged-running>"; return 1; }
+
+    if ! host_snapshot_unmount_scratch; then
+        msg_log host-rollback-cannot-detach
+        return 1
+    fi
+    if ! mount -o remount,rw "$top" 2>/dev/null; then
+        msg_log host-rollback-cannot-remount
+        return 1
+    fi
+
+    # The migrated store moves BACK into the demoted staged root (the
+    # round-147 ITEM 5b inverse, the chained demote's home for the store).
+    if btrfs subvolume show "$top/$root_name/.snapshots" >/dev/null 2>&1; then
+        if [[ -d "$top/$running_staging/.snapshots" ]]; then
+            rmdir -- "$top/$running_staging/.snapshots" 2>/dev/null || true
+        fi
+        if ! mv -- "$top/$root_name/.snapshots" "$top/$running_staging/.snapshots"; then
+            msg_log host-rollback-cannot-move-snapshots
+            return 1
+        fi
+    fi
+
+    if [[ ! -d "$top/$backup_name" ]]; then
+        msg_log rollback-preserved-missing "$backup_name"
+        return 1
+    fi
+    if [[ ! -d "$top/$running_staging" ]]; then
+        msg_log rollback-preserved-missing "$running_staging"
+        return 1
+    fi
+    if [[ -e "$top/$root_name" ]]; then
+        if ! mv -- "$top/$root_name" "$top/$failed_name"; then
+            msg_log host-rollback-cannot-move-candidate
+            return 1
+        fi
+    fi
+    if ! mv -- "$top/$running_staging" "$top/$root_name"; then
+        msg_log host-rollback-cannot-move-candidate
+        return 1
+    fi
+    mv -- "$top/$backup_name" "$top/$running_staging" || return 1
+
+    if [[ "$old_default_id" =~ ^[0-9]+$ ]]; then
+        if ! btrfs subvolume set-default "$old_default_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
+            msg_log rollback-cannot-restore-default
+            return 1
+        fi
+    else
+        current_id="$(btrfs_subvol_id "$top/$root_name" || true)"
+        if [[ -n "$current_id" ]]; then
+            if ! btrfs subvolume set-default "$current_id" "$top" 2>&1 | tee -a "$SESSION_LOG"; then
+                msg_log rollback-cannot-restore-default
+                return 1
+            fi
+        else
+            msg_log rollback-cannot-determine-id
+            return 1
+        fi
+    fi
+
+    host_snapshot_mount_promoted_root_rw || return 1
+    if snapshot_boot_capture_present && ! snapshot_boot_restore_capture "$TARGET_ROOT/boot"; then
+        msg_log host-rollback-boot-restore-recovery-failed
+        return 1
+    fi
     set +e
     ( snapshot_post_switch_reconcile ) 2>&1 | tee -a "$SESSION_LOG"
     restore_rc=${PIPESTATUS[0]}
@@ -26803,11 +37631,12 @@ host_rollback_snapshot()
 {
     local requested="$1" snap stamp candidate_name backup_name failed_name candidate_path
     local old_default_line old_default_id candidate_id rc output nested=0
-    local pre_fstab pre_grub pre_cmdline pre_uki path
+    local pre_fstab pre_grub pre_cmdline pre_uki path root_name
 
     # The complete read-only preflight runs again here; the helper never trusts
     # the GUI's earlier plan request.  PLAN_OK=1 is printed again as evidence.
     host_snapshot_rollback_plan "$requested"
+    root_name="${SNAPSHOT_ROOT_NAME:-}"
     snap="$(host_snapshot_resolve_target "$requested" || true)"
     [[ -n "$snap" ]] || fail "Snapshot $requested was not found on the running host's Btrfs filesystem."
 
@@ -26816,9 +37645,9 @@ host_rollback_snapshot()
     fi
 
     stamp="$(date +%Y%m%d-%H%M%S)"
-    candidate_name="@rollback-new-$stamp"
-    backup_name="@rollback-before-$stamp"
-    failed_name="@rollback-failed-$stamp"
+    candidate_name="$(snapshot_staging_prefix)-new-$stamp"
+    backup_name="$(snapshot_staging_prefix)-before-$stamp"
+    failed_name="$(snapshot_staging_prefix)-failed-$stamp"
     candidate_path="$SNAPSHOT_TOP/$candidate_name"
 
     for path in "$candidate_path" "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$failed_name"; do
@@ -26841,6 +37670,26 @@ host_rollback_snapshot()
     msg_log host-rollback-source-unchanged
     msg_log host-rollback-fingerprints "$pre_fstab" "$pre_grub" "$pre_cmdline" "$pre_uki"
 
+    # Round 134 (ITEM R1): the CONFIRM prompt arrives after the complete plan
+    # was re-emitted above (PLAN_OK=1, the read-only preflight re-run) and
+    # BEFORE any mutation — the GUI renders the answer box inside the open plan
+    # popup (the package-stage channel).  A decline/expiry emits the honest
+    # skipped/aborted outcome and never touches the running host.
+    if ! confirm_snapshot_rollback; then
+        printf 'HOST_ROLLBACK_RESULT=DECLINED\n'
+        msg_log host-rollback-declined
+        return 0
+    fi
+
+    # Round 149 (ITEM 1): a separate /boot is captured file-level into the
+    # session BEFORE the first mutation — the /boot undo point and the
+    # deterministic baseline the promote-step restore materializes before the
+    # boot-stack reconcile.  The capture is a pure read of the live /boot; a
+    # failure aborts the rollback with the running host untouched.
+    if host_snapshot_has_separate_boot; then
+        snapshot_boot_capture /boot
+    fi
+
     # This is the exact point where the host rollback crosses from read-only
     # planning to a modifying transaction.
     TARGET_WRITE_INTENT=1
@@ -26853,38 +37702,68 @@ host_rollback_snapshot()
         fail "Writable host rollback candidate failed Linux-root validation; the running root was not changed."
     }
 
-    mv -- "$SNAPSHOT_TOP/@" "$SNAPSHOT_TOP/$backup_name" || {
-        btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
-        fail "Could not preserve the running @ subvolume; host rollback was not performed."
-    }
-    if ! mv -- "$candidate_path" "$SNAPSHOT_TOP/@"; then
-        if mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/@" 2>/dev/null; then
-            fail "Could not promote the host rollback candidate to @; the original @ name was restored."
+    # Round 152.3 (the chained replacement rollback): in the STAGED state the
+    # preserve/promote steps act on THREE names — the running staging root
+    # (re-preserved under the fresh backup stamp = the recorded undo point),
+    # the earlier staged root (moved aside to the name the running root just
+    # vacated — kept on disk, no longer the recorded undo point), and the
+    # canonical promoted name (the new candidate).  Every failed step is
+    # reversed in-process with plain renames (never a lazy detach), and the
+    # post-promote failure paths restore through the chained restore below.
+    local chained=0 migrate_source="$backup_name" restore_fn=host_snapshot_restore_preserved_root
+    if [[ -n "${SNAPSHOT_STAGED_RUNNING_NAME:-}" && -n "${SNAPSHOT_STAGED_PROMOTED_NAME:-}" ]]; then
+        chained=1
+        migrate_source="$SNAPSHOT_STAGED_RUNNING_NAME"
+        restore_fn=host_snapshot_restore_preserved_root_chained
+        msg_log host-rollback-chained-preserve "$SNAPSHOT_STAGED_RUNNING_NAME" "$backup_name"
+        mv -- "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_RUNNING_NAME" "$SNAPSHOT_TOP/$backup_name" || {
+            btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
+            fail "Could not re-preserve the running $SNAPSHOT_STAGED_RUNNING_NAME root under $backup_name; host rollback was not performed."
+        }
+        if ! mv -- "$SNAPSHOT_TOP/$root_name" "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_RUNNING_NAME"; then
+            mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_RUNNING_NAME" 2>/dev/null || true
+            btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
+            fail "Could not move the earlier staged $root_name root aside; the running root name was restored and host rollback was not performed."
         fi
-        fail "Could not promote the host rollback candidate or restore the original @ name. Do not reboot."
+    else
+        mv -- "$SNAPSHOT_TOP/$root_name" "$SNAPSHOT_TOP/$backup_name" || {
+            btrfs subvolume delete "$candidate_path" >/dev/null 2>&1 || true
+            fail "Could not preserve the running $root_name subvolume; host rollback was not performed."
+        }
+    fi
+    if ! mv -- "$candidate_path" "$SNAPSHOT_TOP/$root_name"; then
+        if (( chained == 1 )); then
+            if mv -- "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_RUNNING_NAME" "$SNAPSHOT_TOP/$root_name" 2>/dev/null \
+                && mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$SNAPSHOT_STAGED_RUNNING_NAME" 2>/dev/null; then
+                fail "Could not promote the host rollback candidate to $root_name; the earlier staged root and the re-preserved running root were restored."
+            fi
+        elif mv -- "$SNAPSHOT_TOP/$backup_name" "$SNAPSHOT_TOP/$root_name" 2>/dev/null; then
+            fail "Could not promote the host rollback candidate to $root_name; the original $root_name name was restored."
+        fi
+        fail "Could not promote the host rollback candidate or restore the original $root_name name. Do not reboot."
     fi
 
     if (( nested == 1 )); then
         msg_log host-rollback-migrating-snapshots
-        if [[ -d "$SNAPSHOT_TOP/@/.snapshots" && ! -L "$SNAPSHOT_TOP/@/.snapshots" ]]; then
-            if ! rmdir -- "$SNAPSHOT_TOP/@/.snapshots" 2>/dev/null; then
-                host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
-                fail "The promoted @ contains a non-empty .snapshots directory; cannot migrate the nested child subvolume. Original root restoration was attempted."
+        if [[ -d "$SNAPSHOT_TOP/$root_name/.snapshots" && ! -L "$SNAPSHOT_TOP/$root_name/.snapshots" ]]; then
+            if ! rmdir -- "$SNAPSHOT_TOP/$root_name/.snapshots" 2>/dev/null; then
+                "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+                fail "The promoted $root_name contains a non-empty .snapshots directory; cannot migrate the nested child subvolume. Original root restoration was attempted."
             fi
-        elif [[ -e "$SNAPSHOT_TOP/@/.snapshots" ]]; then
-            host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
-            fail "The promoted @ contains an unexpected .snapshots entry; cannot migrate the nested child subvolume. Original root restoration was attempted."
+        elif [[ -e "$SNAPSHOT_TOP/$root_name/.snapshots" ]]; then
+            "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "The promoted $root_name contains an unexpected .snapshots entry; cannot migrate the nested child subvolume. Original root restoration was attempted."
         fi
-        if ! mv -- "$SNAPSHOT_TOP/$backup_name/.snapshots" "$SNAPSHOT_TOP/@/.snapshots"; then
-            host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
-            fail "Could not migrate the nested @/.snapshots child subvolume. Original root restoration was attempted."
+        if ! mv -- "$SNAPSHOT_TOP/$migrate_source/.snapshots" "$SNAPSHOT_TOP/$root_name/.snapshots"; then
+            "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+            fail "Could not migrate the nested $root_name/.snapshots child subvolume. Original root restoration was attempted."
         fi
     fi
 
-    candidate_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/@" || true)"
+    candidate_id="$(btrfs_subvol_id "$SNAPSHOT_TOP/$root_name" || true)"
     if [[ -z "$candidate_id" ]]; then
-        host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
-        fail "Unable to determine the promoted @ subvolume ID. Original root restoration was attempted."
+        "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id" || true
+        fail "Unable to determine the promoted $root_name subvolume ID. Original root restoration was attempted."
     fi
     set +e
     btrfs subvolume set-default "$candidate_id" "$SNAPSHOT_TOP" 2>&1 | tee -a "$SESSION_LOG"
@@ -26892,7 +37771,7 @@ host_rollback_snapshot()
     set -e
     if ((rc != 0)); then
         msg_log host-rollback-default-failed
-        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+        if "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
             printf 'HOST_ROLLBACK_RECOVERY=ok\n'
         else
             printf 'HOST_ROLLBACK_RECOVERY=failed\n'
@@ -26903,12 +37782,25 @@ host_rollback_snapshot()
 
     if ! host_snapshot_mount_promoted_root_rw; then
         msg_log host-rollback-mount-failed
-        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+        if "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
             printf 'HOST_ROLLBACK_RECOVERY=ok\n'
         else
             printf 'HOST_ROLLBACK_RECOVERY=failed\n'
         fi
         fail "Host rollback failed while mounting the promoted @; the preserved root restoration was attempted."
+    fi
+    # Round 149 (ITEM 1): restore the captured /boot over the mounted
+    # separate /boot BEFORE the boot-stack reconcile, verified against the
+    # capture fingerprint.  A failed restore goes through the automatic
+    # preserved-root recovery (which restores the capture again).
+    if snapshot_boot_capture_present && ! snapshot_boot_restore_capture "$TARGET_ROOT/boot"; then
+        msg_log host-rollback-boot-restore-failed
+        if "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+            printf 'HOST_ROLLBACK_RECOVERY=ok\n'
+        else
+            printf 'HOST_ROLLBACK_RECOVERY=failed\n'
+        fi
+        fail "Host rollback failed while restoring the separate /boot capture; the preserved root restoration was attempted."
     fi
     set +e
     output="$( ( snapshot_post_switch_reconcile ) 2>&1 )"
@@ -26918,7 +37810,7 @@ host_rollback_snapshot()
 
     if ((rc != 0)); then
         msg_log host-rollback-validation-failed
-        if host_snapshot_restore_preserved_root "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
+        if "$restore_fn" "$SNAPSHOT_TOP" "$backup_name" "$failed_name" "$old_default_id"; then
             printf 'HOST_ROLLBACK_RECOVERY=ok\n'
         else
             printf 'HOST_ROLLBACK_RECOVERY=failed\n'
@@ -26927,14 +37819,24 @@ host_rollback_snapshot()
     fi
 
     sync
+    # Round 152.2 (the round-147 ITEM 5a mirror for the HOST rollback): the
+    # reconcile's dracut build leaves a lingering child holding the initramfs
+    # tmpfs through the EXIT cleanup's bounded retry, and the /run tmpfs plus
+    # the promoted root then stay attached because their children leaked (the
+    # Fedora 17:56 MOUNT_LEAK evidence).  Release the rollback's own tmpfs
+    # mounts here — while the transaction is still inside the request — exactly
+    # like the target-side success path; plain non-lazy umount with the
+    # cleanup()-style bounded retry, a still-busy mount keeps its MOUNT_LEAK
+    # evidence and is never lazy-detached.
+    snapshot_release_rollback_tmpfs
     msg_log separator
     msg_log host-rollback-complete
     msg_log host-rollback-target "$requested"
     msg_log host-rollback-promoted "$candidate_id"
     msg_log snapshot-previous-root "$backup_name"
     printf 'HOST_ROLLBACK_OLD_DEFAULT=%s\n' "${old_default_id:-unknown}"
-    printf 'HOST_ROLLBACK_OLD_ROOT=@\n'
-    printf 'HOST_ROLLBACK_NEW_ROOT=@\n'
+    printf 'HOST_ROLLBACK_OLD_ROOT=%s\n' "$root_name"
+    printf 'HOST_ROLLBACK_NEW_ROOT=%s\n' "$root_name"
     printf 'HOST_ROLLBACK_BACKUP_ROOT=%s\n' "$backup_name"
     printf 'HOST_ROLLBACK_REBOOT_REQUIRED=1\n'
     printf 'HOST_ROLLBACK_RESULT=SUCCESS\n'
@@ -26959,15 +37861,25 @@ run_host_snapshots_modern()
             [[ $# -eq 1 ]] || fail "host-snapshots list does not accept a snapshot id."
             ;;
         inspect|plan|rollback)
-            [[ $# -eq 2 ]] || fail "host-snapshots $action requires exactly one snapshot id or @rollback-before-* name."
+            [[ $# -eq 2 ]] || fail "host-snapshots $action requires exactly one snapshot id or a <root>-rollback-before-<stamp> undo-point name."
+            ;;
+        create)
+            [[ $# -eq 1 ]] || fail "host-snapshots create does not accept extra arguments."
             ;;
         *)
-            fail "Unknown host-snapshots action: ${action:-missing}. Use list, inspect, plan or rollback."
+            fail "Unknown host-snapshots action: ${action:-missing}. Use list, inspect, plan, rollback or create."
             ;;
     esac
 
     CURRENT_STAGE="host snapshot $action"
     RUNNING_HOST_MODE=1
+    # Round 146 (ITEM 2): the guarded manual snapshot creation runs against
+    # the running host natively (its own snapper), never through the
+    # read-only top-level snapshot store.
+    if [[ "$action" == "create" ]]; then
+        create_snapshot_host
+        return 0
+    fi
     if [[ "$action" == "rollback" ]]; then
         prepare_running_host "$TARGET_DISK" "$ROOT_DEVICE" yes
     else
@@ -26984,7 +37896,12 @@ run_host_snapshots_modern()
         fi
         fail "Host snapshot $action requires a Btrfs running host root; detected ${fstype:-unknown}."
     fi
-    need btrfs
+    # Round 145 (ITEM E2): the load's tool-missing failure carries the
+    # truthful reason marker (the target-scope pattern above).
+    if ! command -v btrfs >/dev/null 2>&1; then
+        printf 'SNAPSHOT_INVENTORY_UNAVAILABLE_REASON=reason:missing-btrfs-progs\n'
+        fail "Required host command not found: btrfs"
+    fi
     mount_snapshot_top
 
     case "$action" in
@@ -27115,6 +38032,10 @@ FILECOPY_CHANGE_MARKER=""        # the per-copy ctime marker (the shared session
 # once after a single no-op and ends the session on the next consecutive
 # no-progress menu.
 KERNEL_MENU_NO_PROGRESS_LIMIT=2
+# Round 114 (ITEM 2): the input/network menus mirror the round-97 no-progress
+# guard with their own limits (same semantics and default as the kernel menu).
+INPUT_MENU_NO_PROGRESS_LIMIT=2
+NETWORK_MENU_NO_PROGRESS_LIMIT=2
 
 # ---------------------------------------------------------------------------
 # Shell output transcript filter
@@ -27363,11 +38284,90 @@ shell_interactive_ready()
 # instead of blocking the request.  The answer window defaults to
 # MENU_ANSWER_WINDOW_SECONDS; the package-mutation confirmation passes its own
 # shorter CONFIRM_ANSWER_WINDOW_SECONDS as $2.
+# Round 131 (N8): transport-aware bounded answer read for the interactive
+# menu.  Bash's `read -t` never fires its timeout on a FIFO — the mutating
+# child's stdin is the broker-fed ANSWER FIFO (session-in.<broker-pid>), so
+# the round-130 observation: the menu's `read -t 600` blocked forever while
+# the pump held the FIFO open with no record, and a lost menu answer hung the
+# repair indefinitely.  On a PIPE the timed read fires only in a subshell
+# (the round-125 rule: the main shell of the last pipeline element blocks
+# forever).  The transport is distinguished by the /proc magic-link target
+# (`pipe:[…]` vs a real FIFO path) — `-p` cannot tell them apart: a pipe
+# inode IS a FIFO inode.  A FIFO read is bounded by a background
+# single-record reader plus a deadline loop; the reader is killed on the
+# deadline, and a record that landed in the race window is still consumed.
+# The parsed record lands in the result file; return 0 with a record, 1 on
+# timeout or EOF.
+helper_menu_read_answer()
+{
+    local window="${1:-$MENU_ANSWER_WINDOW_SECONDS}" result_file="$2"
+    local tag="" id="" encoded="" captured="" st="" reader_pid="" start="" now="" leftover=""
+    [[ -n "$result_file" ]] || return 1
+    if [[ "$(readlink -- /proc/self/fd/0 2>/dev/null)" == pipe:* ]]; then
+        # Pipe transport: the timed read must live in a subshell (the
+        # session_read_header_timed pattern); the rc and the record come back
+        # on stdout.  errexit stays off inside so a timed-out read (rc 142)
+        # cannot abort the substitution before it reports.
+        captured="$( { set +e
+                        trap - TERM USR1 INT HUP EXIT
+                        IFS=$'\t' read -r -t "$window" tag id encoded
+                        st=$?
+                        printf '%s\t%s\t%s\t%s\n' "$st" "$tag" "$id" "$encoded"
+                      } )"
+        IFS=$'\t' read -r st tag id encoded <<<"$captured"
+        [[ "$st" =~ ^[0-9]+$ ]] || return 1
+        if (( st > 128 )); then
+            # Round 147 (ITEM 2): the window expired mid-line.  The subshell
+            # consumed the partial; finish and DISCARD the rest of that line
+            # with a bounded blocking read so the fragment can never leak
+            # into the broker's header stream and be misparsed as a
+            # malformed request header (the sibling fix in
+            # session_read_header_timed keeps the partial itself intact).
+            if [[ -n "${tag}${id}${encoded}" ]]; then
+                LC_ALL=C IFS= read -r -n 262144 leftover 2>/dev/null || true
+            fi
+            return 1
+        fi
+        if (( st != 0 )); then
+            return 1
+        fi
+        printf '%s\t%s\t%s\n' "$tag" "$id" "$encoded" > "$result_file"
+        return 0
+    fi
+    # FIFO transport (the production mutating topology): no bash timed read
+    # can ever fire here, so bound the wait around a background reader that
+    # consumes exactly one record (or EOF) and parks it in the result file.
+    # The reader clears every inherited trap first: a reaped reader must die
+    # SILENTLY — the mutating child's TERM/USR1 traps would otherwise run
+    # abort_mutating_request (the spurious abort evidence) or set the
+    # session cancel flag on every menu timeout, and the EXIT trap must never
+    # run the shared teardown from a killed reader subshell.
+    ( trap - TERM USR1 INT HUP EXIT
+      IFS=$'\t' read -r tag id encoded
+      printf '%s\t%s\t%s\n' "$tag" "$id" "$encoded" > "$result_file" ) <&0 &
+    reader_pid=$!
+    start="$(shell_now_epoch)"
+    while :; do
+        if ! kill -0 "$reader_pid" 2>/dev/null; then
+            break            # a record arrived (or the transport hit EOF)
+        fi
+        now="$(shell_now_epoch)"
+        (( now - start >= window )) && break
+        sleep 0.2
+    done
+    # The deadline passed while the reader was still blocked: kill it and
+    # consume whatever record landed in the race window, exactly like the
+    # pipe transport's timed read does.
+    kill "$reader_pid" 2>/dev/null || true
+    wait "$reader_pid" 2>/dev/null || true
+    [[ -s "$result_file" ]]
+}
+
 helper_menu_prompt()
 {
     local prompt_text="$1" answer_window="${2:-$MENU_ANSWER_WINDOW_SECONDS}"
     local record_tag="${3:-PROMPT}"
-    local token="" encoded="" tag="" id=""
+    local token="" encoded="" tag="" id="" answer_file=""
     HELPER_MENU_ANSWER=""
     command -v od >/dev/null 2>&1 || return 1
     command -v base64 >/dev/null 2>&1 || return 1
@@ -27392,7 +38392,9 @@ helper_menu_prompt()
     # package-mutation CONFIRM prompt (which keeps the mid-prompt-cancel
     # behaviour).  The broker forwards MENU exactly like PROMPT.
     printf '%s\t%s\t%s\t%s\n' "$record_tag" "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$token" "$encoded"
-    if IFS=$'\t' read -r -t "$answer_window" tag id encoded; then
+    answer_file="$(mktemp -- "$SESSION_DIR/menu-answer.XXXXXX" 2>/dev/null || true)"
+    if [[ -n "$answer_file" ]] && helper_menu_read_answer "$answer_window" "$answer_file"; then
+        IFS=$'\t' read -r tag id encoded < "$answer_file"
         # A10-01: the record-level cancel forwarded by the broker's input
         # pump aborts the whole repair run immediately.  The direct-signal
         # path is blocked by the pkexec real-uid boundary (the unprivileged
@@ -27406,6 +38408,7 @@ helper_menu_prompt()
             HELPER_MENU_ANSWER="$(printf '%s' "$encoded" | base64 -d 2>/dev/null || true)"
         fi
     fi
+    [[ -n "$answer_file" ]] && rm -f -- "$answer_file"
     # A9-01: a cancel that was signalled while this prompt was waiting must
     # abort the whole repair run, never decline the stage and continue with
     # the remaining stages.  (The USR1/TERM traps already exit 143 directly
@@ -27438,6 +38441,129 @@ confirm_mutating_stage()
     prompt_text+="Scope: $scope"$'\n'
     prompt_text+="The simulated package transaction above is about to be APPLIED for real and will change packages."$'\n'
     prompt_text+="Answer: type y or yes to proceed with this change; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip this stage and continue with the remaining stages."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Confirm a snapshot rollback over the shared PROMPT/ANSWER session channel,
+# AFTER the complete read-only plan/preflight has passed (the PLAN_OK=1 plan is
+# on screen in the same popup) and BEFORE the first mutation.  Only an explicit
+# y/Y/yes proceeds; any other answer, an empty answer or a timeout within
+# CONFIRM_ANSWER_WINDOW_SECONDS declines and the CALLER reports the honest
+# skipped/aborted outcome (no mutation ever runs).  With no active answer
+# channel (non-interactive CLI/direct helper runs — the contracts) the rollback
+# proceeds WITHOUT a prompt: the CLI verb is itself the explicit intent and the
+# read-only preflights above remain the gate there, exactly like the package
+# stages' upfront plan confirmation.  Returns 0 to proceed, 1 to decline.
+confirm_snapshot_rollback()
+{
+    local prompt_text scope="the selected repair target"
+    shell_interactive_ready || return 0
+    (( RUNNING_HOST_MODE == 1 )) && scope="the running host"
+    prompt_text="CONFIRM SNAPSHOT ROLLBACK"$'\n'
+    prompt_text+="Scope: $scope"$'\n'
+    prompt_text+="The transactional rollback plan above is about to be APPLIED for real: the active Btrfs root will be replaced by a writable copy of the selected snapshot and the boot stack will be rebuilt."$'\n'
+    # Round 150 (ITEM 4, the target-side /home opt-in): the confirmation
+    # names the chosen /home mode so the applied transaction is exactly what
+    # the user accepted.
+    if (( RUNNING_HOST_MODE != 1 )) && (( ${SNAPSHOT_HOME_ROLLBACK:-0} == 1 )); then
+        prompt_text+="The separate /home subvolume (${SNAPSHOT_HOME_SUBVOL:-unknown}) WILL roll back with the root (the full-restore opt-in): the current /home subvolume is preserved as an undo point and /home is restored to the snapshot's own /home state."$'\n'
+    else
+        prompt_text+="/home is RETAINED BY DESIGN: the rollback restores the operating system, never the user's files."$'\n'
+    fi
+    prompt_text+="Answer: type y or yes to proceed with this rollback; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip it and leave the current root unchanged."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 150 (ITEM 4): the target-side /home inclusion opt-in.  A separate
+# /home Btrfs subvolume on a foreign repair target is retained by the
+# data-loss guard; a user who wants the FULL restore (the disk returned to
+# the selected snapshot's exact state, the target's own user files included)
+# opts in EXPLICITLY here.  The answer is a deliberate y/n choice; a decline
+# or an expired window keeps /home retained.  Without an interactive channel
+# (a direct CLI drive) the safe default is the decline — nothing is ever
+# destroyed by a question that could not be asked.  The HOST rollback has no
+# opt-in: the running host's /home stays retained BY DESIGN.
+confirm_snapshot_home_optin()
+{
+    local home_subvol="$1" prompt_text
+    shell_interactive_ready || return 1
+    prompt_text="INCLUDE /HOME IN THIS ROLLBACK?"$'\n'
+    prompt_text+="Scope: the selected repair target"$'\n'
+    prompt_text+="A separate /home subvolume ($home_subvol) was detected.  Including it is the FULL-RESTORE semantics for a foreign disk: the current /home subvolume is preserved as an undo point and /home is replaced with the selected snapshot's own /home state — the target's user files are reverted to the snapshot's."$'\n'
+    prompt_text+="Answer: type y or yes to include /home in this rollback; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to RETAIN /home BY DESIGN (recommended) — the system rollback then never touches the target's user files."
+    if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
+        return 1
+    fi
+    case "$HELPER_MENU_ANSWER" in
+        y|Y|yes) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
+# Round 150 (ITEM 4): resolve the snapshot's separate /home Btrfs subvolume.
+# Prints the subvolume's live-relative path (e.g. @home or home) when the
+# snapshot fstab declares a btrfs /home entry on the ROOT device whose
+# subvolume exists on the live disk; prints nothing and returns 1 otherwise
+# (including a /home that is a plain directory inside the root snapshot —
+# that content already rolls back with the root and needs no opt-in).
+snapshot_separate_home_subvol()
+{
+    local snap="$1" spec mp fstype options _rest subvol part option resolved
+    [[ -f "$snap/etc/fstab" ]] || return 1
+    while read -r spec mp fstype options _rest; do
+        [[ -n "$spec" && "${spec:0:1}" != "#" ]] || continue
+        mp="$(fstab_unescape "$mp")"
+        [[ "$mp" == "/home" ]] || continue
+        [[ "$fstype" == "btrfs" ]] || return 1
+        options="$(fstab_unescape "$options")"
+        subvol=""
+        IFS=',' read -ra part <<< "$options"
+        for option in "${part[@]:-}"; do
+            case "$option" in
+                subvol=*)
+                    subvol="${option#subvol=}"
+                    subvol="${subvol#/}"
+                    ;;
+            esac
+        done
+        [[ -n "$subvol" ]] || return 1
+        [[ "$subvol" == "${SNAPSHOT_ROOT_NAME:-}" ]] && return 1
+        resolved="$(resolve_fstab_source "$spec")"
+        [[ -n "$resolved" ]] && is_block_device "$resolved" || return 1
+        resolved="$(canonical_block "$resolved")" || return 1
+        [[ "$resolved" == "$ROOT_CANONICAL" ]] || return 1
+        [[ -d "$SNAPSHOT_TOP/$subvol" ]] || return 1
+        btrfs subvolume show "$SNAPSHOT_TOP/$subvol" >/dev/null 2>&1 || return 1
+        printf '%s\n' "$subvol"
+        return 0
+    done < "$snap/etc/fstab"
+    return 1
+}
+
+# Round 146 (ITEM 2): the manual snapshot creation CONFIRM (the round-134
+# channel).  A decline or expiry emits the honest skipped outcome; the
+# creation is a mutation on the scope's own Btrfs root.
+confirm_snapshot_create()
+{
+    local prompt_text scope="the selected repair target"
+    shell_interactive_ready || return 0
+    (( RUNNING_HOST_MODE == 1 )) && scope="the running host"
+    prompt_text="CONFIRM CREATE SNAPSHOT"$'\n'
+    prompt_text+="Scope: $scope"$'\n'
+    prompt_text+="One Snapper snapshot (type single, description 'Boot Bitch manual snapshot') is about to be created on the scope's own Btrfs root."$'\n'
+    prompt_text+="Answer: type y or yes to create the snapshot; type n or no (or let the ${CONFIRM_ANSWER_WINDOW_SECONDS}-second window expire) to skip it and change nothing."
     if ! helper_menu_prompt "$prompt_text" "$CONFIRM_ANSWER_WINDOW_SECONDS"; then
         return 1
     fi
@@ -27715,6 +38841,70 @@ elif os.WIFSIGNALED(status):
     code=128+os.WTERMSIG(status)
 sys.exit(code)'
 
+# Round 132 (F3): the round-125 transport rule applied to the shell-question
+# poll — on a PIPE transport the main shell's `read -t` never fires its
+# timeout (the round-131 N8 class), so an inline timed read can block this
+# poll forever and freeze both the runner pump and the answer window.  The
+# transport-aware bounded single-record read below (the
+# helper_menu_read_answer shape) works on both transports: 0 = a record is
+# parked in the result file, 1 = timeout, 2 = EOF (no answer can ever
+# arrive).  The background reader clears every inherited trap first: a
+# reaped reader must die silently, never run the abort machinery or the
+# shared EXIT cleanup.
+shell_protocol_poll_read()
+{
+    local window="${1:-1}" result_file="$2" tag="" id="" encoded=""
+    local st="" captured="" reader_pid="" start="" now=""
+    [[ -n "$result_file" ]] || return 2
+    if [[ "$(readlink -- /proc/self/fd/0 2>/dev/null)" == pipe:* ]]; then
+        # Pipe transport: the timed read must live in a trap-cleared command
+        # substitution (the session_read_header_timed pattern); the rc and
+        # the record come back on stdout.
+        captured="$( { set +e
+                        trap - TERM USR1 INT HUP EXIT
+                        IFS=$'\t' read -r -t "$window" tag id encoded
+                        st=$?
+                        printf '%s\t%s\t%s\t%s\n' "$st" "$tag" "$id" "$encoded"
+                      } )"
+        IFS=$'\t' read -r st tag id encoded <<<"$captured"
+        [[ "$st" =~ ^[0-9]+$ ]] || return 2
+        if (( st > 128 )); then
+            return 1
+        fi
+        if (( st != 0 )); then
+            return 2
+        fi
+        printf '%s\t%s\t%s\n' "$tag" "$id" "$encoded" > "$result_file"
+        return 0
+    fi
+    # FIFO transport: bound the wait around a background single-record
+    # reader with a deadline loop; a record that landed in the race window
+    # is still consumed.  The reader writes exactly the three-field record
+    # (the same shape the pipe branch produces); an EOF leaves the fields
+    # empty, which the caller distinguishes from a real record by the tag.
+    ( trap - TERM USR1 INT HUP EXIT
+      IFS=$'\t' read -r tag id encoded
+      printf '%s\t%s\t%s\n' "$tag" "$id" "$encoded" > "$result_file" ) <&0 &
+    reader_pid=$!
+    start="$(shell_now_epoch)"
+    while :; do
+        if ! kill -0 "$reader_pid" 2>/dev/null; then
+            break
+        fi
+        now="$(shell_now_epoch)"
+        (( now - start >= window )) && break
+        sleep 0.2
+    done
+    kill "$reader_pid" 2>/dev/null || true
+    wait "$reader_pid" 2>/dev/null || true
+    if [[ -s "$result_file" ]]; then
+        IFS=$'\t' read -r tag _ _ < "$result_file"
+        [[ -n "$tag" ]] && return 0
+        return 2
+    fi
+    return 1
+}
+
 shell_run_interactive()
 {
     local transcript="$1" deadline="$2" command_string="$3"
@@ -27723,7 +38913,8 @@ shell_run_interactive()
     local tail_buf="" ch="" clean="" bytes="" encoded="" tag="" id="" answer=""
     local script_bin="" pty3_bin="" setsid_bin="" newline_done=1 wait_rc=0
     local read_rc=0 old_pipe_trap="" pump_token=""
-    local answer_deadline=0 ans_rc=0 drained=0
+    local answer_deadline=0 drained=0
+    local poll_rc=0 proto_answer_file=""
     local redact_active=0 redact_pos=0 echo_expected="" suppress_until_nl=0
 
     command -v script >/dev/null 2>&1 && script_bin=script
@@ -27923,6 +39114,9 @@ shell_run_interactive()
                 # actual question reaches the dialog.  The answer still arrives
                 # on the protocol pipe (fd 0) within the window.
                 answer_deadline=$(( $(shell_now_epoch) + SHELL_ANSWER_WINDOW_SECONDS ))
+                if [[ -z "$proto_answer_file" ]]; then
+                    proto_answer_file="$(mktemp -- "$SESSION_DIR/shell-answer.XXXXXX" 2>/dev/null || true)"
+                fi
                 while :; do
                     drained=0
                     while IFS= read -r -n 1 -t 1 -u 8 ch; do
@@ -27954,19 +39148,27 @@ shell_run_interactive()
                         printf 'PROMPT\t%s\t%s\t%s\n' "${BOOT_REPAIR_SESSION_REQUEST:-0}" "$pump_token" "$encoded"
                         encoded=""
                     fi
-                    if IFS=$'\t' read -r -t 1 tag id encoded; then
+                    # Round 132 (F3): the transport-aware bounded poll — the
+                    # inline `read -t 1` above is the round-131 N8 class (a
+                    # PIPE transport never fires the main shell's timeout,
+                    # freezing this loop and the deadline check).  The result
+                    # file is truncated before every poll so a stale record
+                    # from a previous iteration can never be re-read.
+                    : > "$proto_answer_file"
+                    poll_rc=1
+                    if shell_protocol_poll_read 1 "$proto_answer_file" \
+                        && IFS=$'\t' read -r tag id encoded < "$proto_answer_file"; then
                         wait_rc=0
                         break
-                    else
-                        ans_rc=$?
                     fi
+                    poll_rc=$?
                     # EOF on the protocol pipe means no answer can ever arrive
                     # (the GUI/broker closed it); otherwise keep pumping until
                     # the answer window expires.  The runner's death is handled
                     # by the A5-09 checks after the loop, exactly as before, so
                     # an answer that arrives just after the runner died still
                     # takes the death path (not a 125-cancel).
-                    if (( ans_rc <= 128 )); then
+                    if (( poll_rc == 2 )); then
                         break
                     fi
                     if (( $(shell_now_epoch) >= answer_deadline )); then
@@ -28745,7 +39947,15 @@ run_host_shell_modern()
         # with nothing changed — the user answered n to an interactive
         # question, or a clean failure) as "unchanged" and keep the cached
         # diagnostics instead of regenerating the complete set.
-        shell_failure_change_verdict "" "$run_command" "$transcript" "$interactive_run" || true
+        # Round 117 (0.2.30 #9): an interactive decline is a WARNING, never a
+        # FAIL marker — the command did exactly what the user answered
+        # (nothing changed), mirroring the round-70 interactive-decline
+        # demotion of the target shell.  A genuine failure keeps the
+        # host-shell-fail marker.
+        if shell_failure_change_verdict "" "$run_command" "$transcript" "$interactive_run"; then
+            msg_log host-shell-declined "$rc"
+            exit "$rc"
+        fi
         msg_log host-shell-fail "$rc"
         exit "$rc"
     fi
@@ -28817,7 +40027,7 @@ validate_running_host_modern()
 validate_stage()
 {
     case "$1" in
-        dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux|kernels|gpu|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot|nomodeset|kernel-remove-oldest|kernel-remove-newest|kernel-remove-stale|kernel-remove-orphaned-headers|kernel-remove-orphaned-kernels|kernel-remove-orphaned-support|kernel-install-headers|kernel-reinstall|kernel-install-repo-latest) return 0 ;;
+        dpkg-configure|fix-broken|apt-update|apt-upgrade|dkms|display-manager|initramfs|efi|boot-stack|grub|extlinux|kernels|gpu|input-devices|network|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot|nomodeset|kernel-remove-oldest|kernel-remove-newest|kernel-remove-stale|kernel-remove-orphaned-headers|kernel-remove-orphaned-kernels|kernel-remove-orphaned-support|kernel-install-headers|kernel-reinstall|kernel-install-repo-latest) return 0 ;;
         *) fail "Unknown repair stage: $1" ;;
     esac
 }
@@ -28841,6 +40051,8 @@ stage_rank()
         apt-upgrade) printf '40\n' ;;
         dkms) printf '50\n' ;;
         gpu) printf '55\n' ;;
+        input-devices) printf '56\n' ;;
+        network) printf '57\n' ;;
         gpu-remove-older-kernel) printf '55\n' ;;
         gpu-replace-kernel) printf '55\n' ;;
         gpu-purge-wrong-driver) printf '55\n' ;;
@@ -28958,6 +40170,12 @@ EXTLINUX_CONFIG_PATH=""   # /boot/extlinux.conf|/boot/syslinux/syslinux.cfg|/boo
 EXTLINUX_DEFAULT=""       # default= from /etc/update-extlinux.conf, or empty
 EXTLINUX_OVERWRITE=""     # overwrite= from /etc/update-extlinux.conf, or empty
 EXTLINUX_ENTRY_KEYS=""    # newline-joined guard-compatible LABEL/LINUX/INITRD/KERNEL key set
+# Round 150 (ITEM 4): the /home inclusion opt-in state (per-request reset; the
+# restore helper reads the same globals).  Default: retain by design.
+SNAPSHOT_HOME_ROLLBACK=0
+SNAPSHOT_HOME_SUBVOL=""
+SNAPSHOT_HOME_BACKUP=""
+SNAPSHOT_HOME_SWAPPED=0
 
 # Map an --evidence section key to its baseline storage variable.  Only the
 # diagnostic sections with a helper-side baseline consumer are accepted; any
@@ -28968,6 +40186,8 @@ store_evidence_baseline()
     case "$1" in
         kernel)        KERNEL_BASELINE_B64="$2" ;;
         gpu)           GPU_BASELINE_B64="$2" ;;
+        input)         INPUT_BASELINE_B64="$2" ;;
+        network)       NETWORK_BASELINE_B64="$2" ;;
         display)       DISPLAY_BASELINE_B64="$2" ;;
         uki)           UKI_BASELINE_B64="$2" ;;
         grub)          GRUB_BASELINE_B64="$2" ;;
@@ -28986,6 +40206,8 @@ parse_cached_evidence_section()
     case "$1" in
         kernel)  parse_cached_kernel_inventory ;;
         gpu)     parse_cached_gpu_inventory ;;
+        input)   parse_cached_input_inventory ;;
+        network) parse_cached_network_inventory ;;
         display) parse_cached_display_inventory ;;
         uki)     parse_cached_uki_inventory ;;
         grub)    parse_cached_grub_inventory ;;
@@ -29013,6 +40235,8 @@ parse_repair_arguments()
     REPAIR_CLEAN_ORPHANED_HEADERS=false
     KERNEL_BASELINE_B64=""
     GPU_BASELINE_B64=""
+    INPUT_BASELINE_B64=""
+    NETWORK_BASELINE_B64=""
     DISPLAY_BASELINE_B64=""
     UKI_BASELINE_B64=""
     GRUB_BASELINE_B64=""
@@ -29054,6 +40278,16 @@ parse_repair_arguments()
             --gpu-baseline)
                 (($# > 0)) || fail "The --gpu-baseline GPU repair baseline requires a value."
                 GPU_BASELINE_B64="$1"
+                shift
+                ;;
+            --input-baseline)
+                (($# > 0)) || fail "The --input-baseline input-device repair baseline requires a value."
+                INPUT_BASELINE_B64="$1"
+                shift
+                ;;
+            --network-baseline)
+                (($# > 0)) || fail "The --network-baseline network repair baseline requires a value."
+                NETWORK_BASELINE_B64="$1"
                 shift
                 ;;
             --evidence)
@@ -29132,6 +40366,16 @@ validate_repair_stages_against_backends()
                 ;;
             gpu|gpu-remove-older-kernel|gpu-replace-kernel|gpu-purge-wrong-driver|gpu-install-correct-driver|gpu-blacklist-module|gpu-rebuild-dkms|gpu-rebuild-boot)
                 if ! reason="$(gpu_unavailable_reason)"; then
+                    fail "$reason."
+                fi
+                ;;
+            input-devices)
+                if ! reason="$(input_unavailable_reason)"; then
+                    fail "$reason."
+                fi
+                ;;
+            network)
+                if ! reason="$(network_unavailable_reason)"; then
                     fail "$reason."
                 fi
                 ;;
@@ -34584,7 +45828,12 @@ kernel_interactive_menu()
                     fi
                     ;;
                 *)
-                    # apk has no repo-latest probe; the historical shape stays.
+                    # apk now HAS a repo-latest probe (round 80) but no
+                    # install-repo-latest action (repair_kernel_install_repo_latest
+                    # fails closed for apk — the apk image install is a guarded
+                    # `apk add -u` upgrade, not a versioned-package install), so
+                    # the menu never offers the action; the diagnostic and the
+                    # verify note still report the version and the reason.
                     ;;
             esac
         fi
@@ -34792,7 +46041,12 @@ kernel_interactive_menu()
                         # The chosen sub-action may have mutated the target: drop
                         # the cached baseline so the next display re-collects
                         # fresh and no later sub-action re-parses a stale one.
+                        # Round 118: the collect-once flag is reset alongside —
+                        # the sub-action ran in a subshell, so a flag reset it
+                        # emitted (repair_change_status changed) never reaches
+                        # this shell, and the re-display must re-collect.
                         KERNEL_BASELINE_B64=""
+                        KERNEL_INVENTORY_COLLECTED=0
                         dispatched=1
                         break
                     fi
@@ -34824,11 +46078,13 @@ kernel_interactive_menu()
                     if [[ "$kanswer" == "1" ]]; then
                         ( repair_kernel_reinstall ) || true
                         KERNEL_BASELINE_B64=""
+                        KERNEL_INVENTORY_COLLECTED=0
                         dispatched=1
                         break
                     elif [[ "$kanswer" == "2" && "${TARGET_PACKAGE_MANAGER:-}" == apt/dpkg ]]; then
                         ( repair_kernel_remove_partial "$pv" ) || true
                         KERNEL_BASELINE_B64=""
+                        KERNEL_INVENTORY_COLLECTED=0
                         dispatched=1
                         break
                     fi
@@ -34850,7 +46106,10 @@ kernel_interactive_menu()
                 esac
                 # The chosen sub-action may have mutated the target: drop the
                 # cached baseline so the next display re-collects fresh.
+                # Round 118: see the per-kernel action drop above — the
+                # collect-once flag is reset with the baseline.
                 KERNEL_BASELINE_B64=""
+                KERNEL_INVENTORY_COLLECTED=0
                 dispatched=1
                 continue
             fi
@@ -35661,8 +46920,8 @@ repair_kernel_verify()
         # Round 71: the note names WHY the repository kernel is not installable
         # (the per-backend simulation reason).  apt/dpkg keeps its pre-round-71
         # fail-closed shape: any non-installable state gets the note (an
-        # undecidable probe keeps the reason-less wording); rpm/pacman add the
-        # note only on a PROVEN not-installable state so an undecidable new
+        # undecidable probe keeps the reason-less wording); rpm/pacman/apk add
+        # the note only on a PROVEN not-installable state so an undecidable new
         # probe never changes their pre-round-71 output.
         repo_state="$(kernel_repo_latest_installability "$KERNEL_REPO_LATEST")"
         case "${TARGET_PACKAGE_MANAGER:-}" in
@@ -35673,7 +46932,7 @@ repair_kernel_verify()
                     repo_note=" (a newer repository kernel $KERNEL_REPO_LATEST is available but not installable)"
                 fi
                 ;;
-            pacman|rpm)
+            pacman|rpm|apk)
                 if [[ "$repo_state" == not-installable:* ]]; then
                     repo_note=" (a newer repository kernel $KERNEL_REPO_LATEST is available but not installable: ${repo_state#not-installable: })"
                 fi
@@ -35693,9 +46952,12 @@ repair_kernel_verify()
 repair_kernel_install_repo_latest()
 {
     repair_kernel_prepare_inventory
-    # Alpine has no reliable read-only apk "repo-latest" probe that maps the
-    # repository kernel package version (e.g. 6.18.55-r0) back to a module-tree
-    # kernel version (6.18.55-0-lts); fail closed rather than guess a package.
+    # Alpine has no install-repo-latest ACTION: the apk backend installs a
+    # newer kernel through the guarded `apk add -u linux-<flavour>` upgrade
+    # path (apk_repair_kernel_reinstall), not through a versioned package
+    # install, so fail closed here rather than guess an action.  (The round-80
+    # apk_kernel_repo_latest probe still reports the repository kernel version
+    # and installability for the diagnostic, menu and verify wording.)
     if [[ "${TARGET_PACKAGE_MANAGER:-}" == apk ]]; then
         repair_change_status "kernels:install-repo-latest" "unchanged|$(reason no-repo-latest-kernel)"
         return 0
@@ -36037,6 +47299,8 @@ run_host_repair_modern()
             kernel-reinstall) repair_kernel_reinstall ;;
             kernel-install-repo-latest) repair_kernel_install_repo_latest ;;
             gpu) gpu_interactive_menu ;;
+            input-devices) input_interactive_menu ;;
+            network) network_interactive_menu ;;
             gpu-remove-older-kernel) repair_gpu_remove_older_kernel ;;
             gpu-replace-kernel) repair_gpu_replace_kernel ;;
             gpu-purge-wrong-driver) repair_gpu_purge_wrong_driver ;;
@@ -37792,6 +49056,12 @@ run_repair()
             gpu)
                 gpu_interactive_menu
                 ;;
+            input-devices)
+                input_interactive_menu
+                ;;
+            network)
+                network_interactive_menu
+                ;;
             gpu-remove-older-kernel)
                 repair_gpu_remove_older_kernel
                 ;;
@@ -37892,6 +49162,107 @@ session_read_bounded()
     return 2
 }
 
+# Round 125 (ITEM 25): the LOOP-TOP header read — a timed variant of
+# session_read_bounded used ONLY between requests on a PIPE transport (the
+# caller selects it; a FIFO stdin keeps the plain read — bash's `read -t`
+# never times out on a FIFO).  The first read carries a short timeout so an
+# in-place helper install is noticed within ~2 s even while the broker sits
+# idle blocked in the read: on a timeout with NOTHING consumed the function
+# returns 3 and the caller re-checks the self-change hash and retries — the
+# next request is then dispatched entirely by the re-exec'd broker instead of
+# the pre-install dispatcher (the round-123 residual).  Once bytes start
+# arriving the line finishes through plain blocking reads (bash returns the
+# timed read's partial data in REPLY and leaves the stream at the unconsumed
+# remainder), so hostile split records are never corrupted and a re-exec can
+# only fire with no partial line in flight.  Return codes are the
+# session_read_bounded set plus 3 (timed out, nothing consumed).
+session_read_header_timed()
+{
+    local max="${1:-512}" st pending="" want=0 extra="" chunk="" captured=""
+    REPLY=""
+    while :; do
+        if [[ -z "$pending" ]]; then
+            # The timed read runs inside a command substitution: empirically,
+            # bash's `read -t` never fires its timeout in the MAIN shell of
+            # the last pipeline element (the broker's topology — verified on
+            # the rig: it blocks forever on an empty pipe with an open
+            # writer), while a subshell read times out correctly.  The rc and
+            # the partial data come back on stdout (REPLY is newline-free by
+            # construction: `read -n` stops at the line delimiter).  errexit
+            # is disabled inside so a timed-out read (rc 142) cannot abort
+            # the substitution before it reports.
+            captured="$( { set +e; LC_ALL=C IFS= read -r -n "$max" -t "${SESSION_BROKER_SELFCHECK_SECONDS:-2}" REPLY; printf '%s\n%s\n' "$?" "$REPLY"; } )"
+            if [[ "$captured" == *$'\n'* ]]; then
+                st="${captured%%$'\n'*}"
+                REPLY="${captured#*$'\n'}"
+            else
+                # Round 150 (the QUIT-less loop fix): the command-substitution
+                # trailing-newline strip collapses a bare rc capture to one
+                # number ("1" on EOF, "142" on a bare idle timeout) — there is
+                # NO data line.  Treating the rc as REPLY made a pipe closed
+                # WITHOUT a QUIT record (a crashed GUI) parse as the bogus
+                # line "1" -> SESSION_ERROR 0 + DONE 0 2 forever.  A bare rc
+                # is never data: st=1 falls through to the clean-EOF return
+                # below and the broker exits, st>128 reaches the timeout
+                # branch with an empty REPLY and returns 3 (the round-148
+                # "idle -> return 3" design — the loop-top self-change check
+                # re-runs and the broker re-reads).
+                st="$captured"
+                REPLY=""
+            fi
+            [[ "$st" =~ ^[0-9]+$ ]] || st=1
+            if (( st > 128 )); then
+                # Timeout.  A timed-out partial is reported in REPLY; a
+                # partial means bytes are flowing — finish the line below
+                # with the plain blocking read.  Nothing consumed at all
+                # means the caller may re-check and retry.
+                if [[ -n "$REPLY" ]]; then
+                    pending="$REPLY"
+                    REPLY=""
+                else
+                    return 3
+                fi
+            elif (( st != 0 )); then
+                # EOF before max bytes: clean EOF, or an unterminated final
+                # line (the session_read_bounded semantics).
+                [[ -n "$REPLY" ]] || return 1
+                REPLY="${REPLY%$'\n'}"
+                return 0
+            fi
+        else
+            want=$(( max - ${#pending} ))
+            if (( want > 0 )); then
+                if ! LC_ALL=C IFS= read -r -n "$want" REPLY; then
+                    [[ -n "$REPLY" ]] || return 1
+                fi
+            else
+                REPLY=""
+            fi
+            REPLY="$pending$REPLY"
+            pending=""
+        fi
+        # Completion check (identical to session_read_bounded): the read
+        # stopped on the newline, or hit exactly max bytes so the line may
+        # continue.
+        if (( ${#REPLY} < max )); then
+            return 0
+        fi
+        if ! LC_ALL=C IFS= read -r -n 1 -d '' extra; then
+            return 0
+        fi
+        if [[ "$extra" == $'\n' ]]; then
+            return 0
+        fi
+        while LC_ALL=C IFS= read -r -n 65536 chunk; do
+            if (( ${#chunk} < 65536 )); then
+                break
+            fi
+        done
+        REPLY=""
+        return 2
+    done
+}
+
 # A1-06: after an overrun inside a request, consume input up to (and
 # including) the request's END record with a bounded line counter, so one
 # hostile request can never wedge the broker in a skip loop.
@@ -37926,6 +49297,10 @@ session_skip_to_end()
 session_forward_request()
 {
     local request_id="$1" line="" pump_token="" prompt_payload=""
+    # Round 121 (ITEM 4): the forwarder is the broker's own writer to the GUI
+    # pipe — it ignores SIGPIPE itself (the A1-09 guard) instead of depending
+    # on the broker's disposition, which the child spawns now reset.
+    trap '' PIPE
     while IFS= read -r line || [[ -n "$line" ]]; do
         if [[ -z "$pump_token" && "$line" == "PUMP"$'\t'"$request_id"$'\t'?* ]]; then
             pump_token="${line#*$'\t'}"
@@ -38029,6 +49404,13 @@ SESSION_MUTATING_DISPATCH_SECONDS=7200
 # the request still fails closed either way.
 SESSION_MUTATING_CANCEL_GRACE_SECONDS=30
 
+# Round 125 (ITEM 25): how long the broker's idle-blocked header read waits
+# before re-checking the helper self-change hash.  Short enough that an
+# in-place helper install is noticed (and the broker re-exec'd) within a
+# couple of seconds even with no request traffic, long enough that the idle
+# poll costs nothing measurable (one timed read + one sha256sum per interval).
+SESSION_BROKER_SELFCHECK_SECONDS=2
+
 # A1-14 (cancellable read-only diagnostic dispatch): run a `diagnose` /
 # `host-diagnose` child in the BACKGROUND so the broker's own SIGUSR1 trap
 # (which sets SESSION_CANCEL_REQUESTED) can fire while the child runs, stream
@@ -38060,6 +49442,12 @@ session_run_cancellable_diagnostic()
     shift 5
     local out_fifo="" child_pid=0 forwarder_pid=0 pump_pid=0 rc=0 begin=0 now=0 cancel_sent=0
     local -a dispatch_cmd
+    # Round 127 (C4): a pre-BEGIN cancel is already recorded in the broker's
+    # flag at dispatch time (nothing else can set it before the pump starts):
+    # pass it to the child so it emits the truthful marker + DONE 0 instead of
+    # dying 138 on the relay that lands before its USR1 trap is armed.
+    local prebegin_cancel=0
+    (( SESSION_CANCEL_REQUESTED )) && prebegin_cancel=1
 
     dispatch_cmd=(bash "$SESSION_HELPER_COPY" "$command")
     [[ -n "$dispatch_setsid" ]] \
@@ -38075,14 +49463,32 @@ session_run_cancellable_diagnostic()
         return 126
     fi
 
+    # Round 121 (ITEM 4, the Fedora target stall): the broker ignores SIGPIPE
+    # (A1-09, so a dying GUI reader can never kill it mid-record) and a child
+    # spawned by it INHERITS the ignored disposition — which bash cannot reset
+    # inside the child (a signal ignored at shell entry stays ignored).  Every
+    # SIGPIPE-bounded pipeline in the child (the journal head-4000 captures,
+    # transcript filters, package-transcript head caps) then ran its producer
+    # to completion instead of stopping at the bound: on the Fedora target
+    # `journalctl | head -n 4000` streamed the target's whole multi-day
+    # journal (~46 s) — the user's consistent ~49 s repair-prelude stall
+    # between the /boot mount and the rw remount, and the same cost in every
+    # diagnostic regen.  Reset the disposition for the spawn and re-ignore
+    # immediately after (the broker runs nothing in between): the broker's
+    # own writers keep the A1-09 guard — session_forward_request and both
+    # input pumps ignore SIGPIPE themselves.
+    trap - PIPE
     if [[ "$has_secret" == "1" ]]; then
         printf '%s' "$secret" |
             BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" BOOT_REPAIR_SESSION_BROKER="$$" \
+            BOOT_REPAIR_SESSION_PREBEGIN_CANCEL="$prebegin_cancel" \
             "${dispatch_cmd[@]:-}" "$@" > "$out_fifo" 2>&1 &
     else
         BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" BOOT_REPAIR_SESSION_BROKER="$$" \
+            BOOT_REPAIR_SESSION_PREBEGIN_CANCEL="$prebegin_cancel" \
             "${dispatch_cmd[@]:-}" "$@" > "$out_fifo" 2>&1 &
     fi
+    trap '' PIPE
     child_pid=$!
 
     # The forwarder reads the FIFO instead of the pipe; the framing and the
@@ -38296,8 +49702,13 @@ session_run_cancellable_mutating()
     # Mutating requests never carry a session secret (A1-07 accepts one only
     # for the unlock verb), so the child's stdin is the ANSWER transport: a
     # broker-fed input FIFO instead of the protocol pipe (A10-01).
+    # Round 121 (ITEM 4): reset the broker's ignored SIGPIPE for the spawn
+    # (the diagnostic dispatch above carries the full rationale), then
+    # re-ignore before anything else runs.
+    trap - PIPE
     BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" BOOT_REPAIR_SESSION_BROKER="$$" \
         "${dispatch_cmd[@]:-}" "$@" < "$in_fifo" > "$out_fifo" 2>&1 &
+    trap '' PIPE
     child_pid=$!
 
     session_forward_request "$request_id" < "$out_fifo" &
@@ -38383,6 +49794,60 @@ session_run_cancellable_mutating()
     return "$rc"
 }
 
+# Round 125 (ITEM 25): re-exec the broker into the CURRENT tree when the
+# installed helper changed underneath it.  The round-123 hardening re-snapshots
+# the CHILD copy per request (msg:helper-resnapshot), but the broker's own
+# dispatcher code (the SIGPIPE reset around child spawns — the round-121 fix)
+# still ran the pre-upgrade snapshot: a GUI authorized before a helper install
+# kept the stale dispatcher until the application restarted, which is exactly
+# the user's recurring ~50-60 s Fedora stall after every helper install.
+#
+# The re-exec replaces this broker process (exec keeps the PID, the protocol
+# pipe and every open fd) with the newly installed helper run as `session`
+# again, so the NEXT request is dispatched entirely by the new code — no GUI
+# restart.  It runs only between requests (the request loop re-checks before
+# reading the next record), so no request records are in flight: nothing is
+# stranded, no partial read is lost, and the per-disk flock is never held.
+# Safety rules:
+#   - only a root-owned, non-symlink SELF_PATH is ever re-exec'd (the same
+#     A1-xx snapshot rule as the per-request resnapshot);
+#   - the new code must parse (`bash -n`) BEFORE the exec — a broken installed
+#     helper can never take the broker down; the old broker continues and the
+#     authenticated snapshot stays authoritative;
+#   - the pending pre-BEGIN cancels and the session-owned LUKS mappers are
+#     carried across the exec in root-owned environment variables (the exec
+#     keeps the PID, so the pid-scoped cancel-marker namespace is unchanged);
+#   - the re-exec'd broker suppresses its SESSION_READY line
+#     (BOOT_REPAIR_SESSION_REEXEC=1) so the GUI never sees a second one;
+#   - the old snapshot copy is removed first (no child is running between
+#     requests) so re-execs never accumulate stale copies in STATE_ROOT.
+# Returns 0 when the exec succeeded (never reached), 1 when it failed so the
+# caller keeps serving with the old broker code and the per-request
+# resnapshot fallback.
+session_reexec_broker()
+{
+    local cancels="$1"
+    rm -f -- "$SESSION_HELPER_COPY" 2>/dev/null || true
+    printf 'Broker self-update: re-executing into the newly installed helper (same PID, same session, no GUI restart needed).\n'
+    export BOOT_REPAIR_SESSION_REEXEC=1
+    export BOOT_REPAIR_SESSION_PENDING_CANCELS="$cancels"
+    export BOOT_REPAIR_SESSION_OWNED_MAPPERS="${SESSION_OWNED_MAPPERS[*]:-}"
+    if exec bash -- "$SELF_PATH" session; then
+        # Unreachable: a successful exec replaces this process.
+        return 0
+    fi
+    unset BOOT_REPAIR_SESSION_REEXEC BOOT_REPAIR_SESSION_PENDING_CANCELS BOOT_REPAIR_SESSION_OWNED_MAPPERS
+    # The exec failed (the new code parsed but could not be exec'd): the old
+    # broker keeps serving, so its removed child snapshot must be restored —
+    # the dispatcher can never run without the authenticated copy.
+    if cp -- "$SELF_PATH" "$SESSION_HELPER_COPY" 2>/dev/null; then
+        chown root:root -- "$SESSION_HELPER_COPY"
+        chmod 0700 -- "$SESSION_HELPER_COPY"
+    fi
+    printf 'Broker self-update failed to re-exec; continuing with the authenticated snapshot (the per-request re-snapshot still applies).\n'
+    return 1
+}
+
 # Long-lived pkexec broker: snapshot this helper into the root-owned state
 # directory, then read tab-separated BEGIN/ARG/SECRET/END requests and run each
 # whitelisted command through the authenticated copy, streaming OUT lines and
@@ -38396,6 +49861,8 @@ session_server()
     local dispatch_setsid=""
     local dispatch_rc_set=0
     local pending_pre_begin_cancels=""
+    local helper_hash=""
+    local reexec_carried=""
     local -a fields op_args dispatch_cmd
 
     need base64
@@ -38404,6 +49871,7 @@ session_server()
     need chmod
     need bash
     need timeout
+    need sha256sum
 
     # A5-02 (d): each per-request dispatch runs in its own session when
     # setsid is available, so the child and its process group can never
@@ -38429,8 +49897,37 @@ session_server()
     cp -- "$SELF_PATH" "$SESSION_HELPER_COPY"
     chown root:root -- "$SESSION_HELPER_COPY"
     chmod 0700 -- "$SESSION_HELPER_COPY"
+    SESSION_HELPER_HASH="$(sha256sum -- "$SESSION_HELPER_COPY" 2>/dev/null | awk '{print $1}' || true)"
+    # Round 125 (ITEM 25): the hash of the code THIS broker runs.  It is set
+    # only at startup and by the re-exec'd successor — the per-request
+    # re-snapshot below updates SESSION_HELPER_HASH (the child copy) and must
+    # never touch this, or the loop-top self-change check would be blinded
+    # exactly when it matters (an upgrade that lands while the broker is
+    # blocked in the protocol read: the next request would re-snapshot the
+    # child but the stale dispatcher would still run it — the round-123
+    # residual the re-exec closes).
+    SESSION_BROKER_HASH="$SESSION_HELPER_HASH"
 
-    printf 'SESSION_READY\t1\n'
+    # Round 125 (ITEM 25): a broker re-exec'd by session_reexec_broker carries
+    # its cross-request state in root-owned environment variables.  Re-seed it
+    # here (validated, then unset so the children never see it) and suppress
+    # the second SESSION_READY the GUI's startup parser would otherwise log.
+    if [[ "${BOOT_REPAIR_SESSION_REEXEC:-0}" == "1" ]]; then
+        BOOT_REPAIR_SESSION_REEXEC=""
+        reexec_carried="${BOOT_REPAIR_SESSION_PENDING_CANCELS:-}"
+        BOOT_REPAIR_SESSION_PENDING_CANCELS=""
+        if [[ "$reexec_carried" =~ ^[[:space:]0-9]*$ ]]; then
+            pending_pre_begin_cancels="$reexec_carried"
+        fi
+        reexec_carried="${BOOT_REPAIR_SESSION_OWNED_MAPPERS:-}"
+        BOOT_REPAIR_SESSION_OWNED_MAPPERS=""
+        if [[ "$reexec_carried" =~ ^[[:space:]A-Za-z0-9._-]*$ ]]; then
+            # shellcheck disable=SC2206
+            SESSION_OWNED_MAPPERS=($reexec_carried)
+        fi
+    else
+        printf 'SESSION_READY\t1\n'
+    fi
 
     # A1-06: every protocol line is read through the bounded reader (header
     # <= 512 bytes, ARG/SECRET <= 262144 encoded bytes, END <= 512 bytes,
@@ -38438,13 +49935,71 @@ session_server()
     # offending line, reports SESSION_ERROR + DONE 2 and skips to the
     # request's END with a bounded counter.
     while :; do
-        if session_read_bounded 512; then
-            read_st=0
+        # Round 125 (ITEM 25): the broker self-change check runs at the TOP of
+        # the loop — BEFORE the next request's records are read — so a helper
+        # install re-execs the broker into the new code with no request in
+        # flight (nothing is stranded) and the next request is dispatched
+        # entirely by the new dispatcher (the round-123 residual: the
+        # per-request re-snapshot heals the child code but not the broker's
+        # own dispatcher — the SIGPIPE-reset class).  The comparison uses
+        # SESSION_BROKER_HASH (this broker's own code), NEVER the child-copy
+        # hash the per-request re-snapshot updates — otherwise an install
+        # landing while the broker is blocked in the read would update the
+        # child hash first and blind this check (the exact race observed on
+        # the rig).  The timed header read below makes the check fire within
+        # ~2 s even while the broker is idle-blocked.  The A1-xx rule is
+        # unchanged: only a root-owned, non-symlink SELF_PATH is ever re-read,
+        # and the new code must parse before the exec.  A failed/refused
+        # re-exec keeps the old broker running; the per-request resnapshot
+        # below still refreshes the child copy on the next dispatch.
+        if [[ -O "$SELF_PATH" && ! -L "$SELF_PATH" ]]; then
+            helper_hash="$(sha256sum -- "$SELF_PATH" 2>/dev/null | awk '{print $1}' || true)"
+            # The re-exec compares against the hash of the code THIS broker
+            # runs.  Both hashes must be non-empty: in a stubbed/sourced
+            # harness (the chroot-shell contract topology the snapshot is a
+            # no-op stub, so SESSION_BROKER_HASH is empty) an empty baseline
+            # would make every loop iteration look "changed" and re-exec the
+            # HARNESS script as `session` — infinite recursion.  A real
+            # broker always computed both hashes from real files.
+            if [[ -n "$helper_hash" && -n "$SESSION_BROKER_HASH" && "$helper_hash" != "$SESSION_BROKER_HASH" ]]; then
+                if bash -n -- "$SELF_PATH" 2>/dev/null; then
+                    session_reexec_broker "$pending_pre_begin_cancels" || true
+                else
+                    printf 'Broker self-update refused: the installed helper fails bash -n; the authenticated snapshot stays authoritative.\n'
+                fi
+            fi
+        fi
+        # Round 125 (ITEM 25): the loop-top header read.  On a PIPE (the GUI's
+        # QProcess protocol channel) the timed read notices an in-place helper
+        # install within ~2 s even while the broker is idle-blocked — the
+        # timed-out read returns 3 without consuming anything, the loop
+        # re-checks the self-change hash and re-execs BEFORE the next request
+        # is read.  On a FIFO the timed read cannot work (bash's `read -t`
+        # never times out there — verified empirically: it blocks forever), so
+        # the FIFO transport keeps the plain bounded read and the loop-top
+        # check alone (the re-exec then fires between requests); the FIFO is
+        # only ever a test-harness/direct-driving transport, never the GUI.
+        # The transport is distinguished by the /proc magic-link target
+        # (`pipe:[…]` for an anonymous pipe, a real path for a FIFO) — the
+        # `-p` test cannot tell them apart: a pipe inode IS a FIFO inode.
+        if [[ "$(readlink -- /proc/$$/fd/0 2>/dev/null)" == pipe:* ]]; then
+            if session_read_header_timed 512; then
+                read_st=0
+            else
+                read_st=$?
+            fi
         else
-            read_st=$?
+            if session_read_bounded 512; then
+                read_st=0
+            else
+                read_st=$?
+            fi
         fi
         if (( read_st == 1 )); then
             break                       # clean EOF
+        fi
+        if (( read_st == 3 )); then
+            continue                    # timed out: re-check the self-change
         fi
         if (( read_st == 2 )); then
             session_protocol_error 0 "Privileged-session line exceeds the protocol bound."
@@ -38470,6 +50025,21 @@ session_server()
         fi
         if [[ "$tag" == "QUIT" ]]; then
             return 0
+        fi
+        # Round 147 (ITEM 2): a stray ANSWER record — an answer whose request
+        # already finished (the child consumed its answer, or the prompt's
+        # window closed and the child declined on its own) — can still be in
+        # flight when the broker returns to the header read.  Consume it
+        # silently: the request it belonged to is gone, the answer is inert,
+        # and treating it as a malformed header would destroy the NEXT
+        # request's dispatch (the user's TUXEDO observation: the first
+        # inspection after a manual snapshot create failed with "Malformed
+        # privileged-session request header." while the re-selection worked).
+        # A CANCEL is consumed above with the same reasoning.  The header
+        # loop only ever runs BETWEEN requests, so an ANSWER read here can
+        # never belong to a live prompt.
+        if [[ "$tag" == "ANSWER" ]]; then
+            continue
         fi
         if [[ "$tag" != "BEGIN" || ! "$request_id" =~ ^[0-9]+$ || ! "$argc" =~ ^[0-9]+$ || ! "$has_secret" =~ ^[01]$ ]]; then
             session_protocol_error "${request_id:-0}" "Malformed privileged-session request header."
@@ -38586,8 +50156,8 @@ session_server()
             continue
         fi
         case "$command" in
-            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair|install-target-package|install-host-package) ;;
-            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot|efi-list|grub-list|extlinux-list|grub-legacy-list|efi-reorder|efi-delete|efi-rename) ;;
+            unlock|validate|diagnose|config-read|config-write|snapshots|repair|shell|browse-target|copy-preview|copy|fs-inspect|fs-repair|install-target-package|install-host-package|enable-snapshot-config) ;;
+            host-validate|host-diagnose|host-repair|host-default|host-shell|host-fs-inspect|host-fs-repair|host-snapshots|host-reboot|enable-host-snapshot-config|efi-list|grub-list|extlinux-list|grub-legacy-list|efi-reorder|efi-delete|efi-rename) ;;
             session-log-delete) ;;   # round 51 (modern GUI): GUI housekeeping delete of session logs in the caller's own log directory
             *)
                 secret=""
@@ -38672,6 +50242,32 @@ session_server()
             rm -f -- "$(mutating_cancel_marker_file "$$" "$request_id")" 2>/dev/null || true
         fi
 
+        # Round 123 (ITEM 18): when the installed helper is upgraded while this
+        # broker runs, the NEXT request re-snapshots it instead of executing the
+        # pre-upgrade code until the GUI restarts.  The user's Fedora stall ran
+        # through exactly that: the broker was authorized two minutes before the
+        # round-122 helper was installed, so every later repair kept executing
+        # the pre-SIGPIPE-fix snapshot (the repair prelude's journal capture ran
+        # the whole journal — 54 s).  The A1-xx snapshot rule is unchanged for a
+        # user-writable helper path: only a root-owned, non-symlink SELF_PATH is
+        # ever re-read (the original snapshot stays authoritative otherwise).
+        # Round 125 (ITEM 25): the round-123 hardening is now the FALLBACK — the
+        # loop-top check re-execs the broker itself when the helper changed, so
+        # this branch only fires when the re-exec was refused/failed.  The new
+        # code must parse before it is snapshotted (bash -n): a broken installed
+        # helper can never replace the authenticated child copy.
+        if [[ -O "$SELF_PATH" && ! -L "$SELF_PATH" ]]; then
+            helper_hash="$(sha256sum -- "$SELF_PATH" 2>/dev/null | awk '{print $1}' || true)"
+            if [[ -n "$helper_hash" && -n "$SESSION_HELPER_HASH" && "$helper_hash" != "$SESSION_HELPER_HASH" ]]; then
+                if bash -n -- "$SELF_PATH" 2>/dev/null && cp -- "$SELF_PATH" "$SESSION_HELPER_COPY" 2>/dev/null; then
+                    chown root:root -- "$SESSION_HELPER_COPY"
+                    chmod 0700 -- "$SESSION_HELPER_COPY"
+                    SESSION_HELPER_HASH="$helper_hash"
+                    printf 'OUT\t%s\t%s\n' "$request_id" "msg:helper-resnapshot"
+                fi
+            fi
+        fi
+
         dispatch_cmd=(bash "$SESSION_HELPER_COPY" "$command")
         [[ -n "$dispatch_setsid" ]] \
             && dispatch_cmd=(setsid bash "$SESSION_HELPER_COPY" "$command")
@@ -38711,6 +50307,11 @@ session_server()
             dispatch_rc_set=1
         fi
         if (( dispatch_rc_set == 0 )) || (( rc == 126 )); then
+            # Round 121 (ITEM 4): the foreground fallback spawns the child the
+            # same way — reset the broker's ignored SIGPIPE so the child's
+            # bounded pipelines stop at their bounds, then restore the guard
+            # (PIPESTATUS is captured first: a trap command would reset it).
+            trap - PIPE
             if [[ "$has_secret" == "1" ]]; then
                 printf '%s' "$secret" |
                     BOOT_REPAIR_SESSION_PROTOCOL=1 BOOT_REPAIR_SESSION_REQUEST="$request_id" BOOT_REPAIR_SESSION_BROKER="$$" \
@@ -38723,6 +50324,7 @@ session_server()
                     session_forward_request "$request_id"
                 rc=${PIPESTATUS[0]}
             fi
+            trap '' PIPE
         fi
         set -e
         release_disk_lock "$request_lock_fd"
@@ -38915,6 +50517,12 @@ main()
         install-host-package)
             (($# >= 1)) || fail "install-host-package requires at least one package name."
             install_host_packages "$@"
+            ;;
+        enable-snapshot-config)
+            enable_snapshot_config "$@"
+            ;;
+        enable-host-snapshot-config)
+            enable_host_snapshot_config "$@"
             ;;
         repair)
             run_repair "$@"
@@ -42414,6 +54022,17 @@ function helper_menu_prompt {
             if legacy_answer_file_read_record; then
                 HELPER_MENU_ANSWER="$LEGACY_ANSWER_RAW"
                 break
+            fi
+            # Round 101 (abort parity for the interactive GPU/kernels menus):
+            # the popup Cancel touches the cancel surface, but the stage-
+            # boundary checks cannot see it while this poll owns the request
+            # — without this check the run ignores the stop, the menu expires
+            # into a "finished" no-op and any answer typed after the cancel
+            # still proceeds with a mutation the user wanted stopped.  The
+            # modern CANCEL record wakes the same wait through the broker
+            # pipe; the file-based channel needs the explicit poll.
+            if legacy_cancel_requested; then
+                abort_mutating_request
             fi
             now="$(shell_now_epoch)"
             (( now >= deadline )) && break
