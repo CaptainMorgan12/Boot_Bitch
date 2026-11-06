@@ -80,7 +80,7 @@ cmake --build build -j"$(nproc)"
 
 A source install uses `-DCMAKE_INSTALL_PREFIX=/usr/local` (or another prefix) followed by `sudo cmake --install build`.
 
-`./scripts/build.sh` performs the same Release build plus the Debian-family `.deb` and AppImage in one command, and the per-distribution package scripts (`package-deb.sh`, `package-legacy.sh`, `package-arch.sh`, `package-rpm.sh`, `package-alpine.sh`) each build one native package for the matching system without installing it; each script needs its distribution's own packaging tools (`dpkg-dev`, `rpmbuild`, `makepkg`, `abuild`). Nothing is installed on your system unless you run `install.sh`.
+`./scripts/build.sh` does the Release build plus the Debian-family `.deb` (on Debian-family hosts) and the AppImage (when linuxdeploy/appimagetool are available); on OTHER distributions run the ONE package script that matches your system — `package-arch.sh` (Arch), `package-rpm.sh` (Fedora/RHEL), `package-alpine.sh` (Alpine) — each building a single native package without installing it, using the distribution's own packaging tools (dpkg-dev, rpmbuild, makepkg, abuild). Nothing is installed unless you run `install.sh`.
 
 ## Safety model
 
